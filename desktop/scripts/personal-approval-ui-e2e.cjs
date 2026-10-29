@@ -9,7 +9,7 @@ const { chromium } = require(process.env.WUU_REVIEW_PLAYWRIGHT_PATH || 'playwrig
 const target = path.resolve(__dirname, '../out/personal-fixture/index.html');
 const output = path.resolve(process.env.WUU_REVIEW_UI_OUTPUT || path.join(__dirname, '../out/personal-approval-e2e'));
 fs.mkdirSync(output, {recursive:true});
-const report = {scope:'Current compiled production Personal contribution and conversation shell; synthetic in-memory owner service; no native host, model, account, or file effects', fixture_sha256:createHash('sha256').update(fs.readFileSync(target)).digest('hex'), cases:[], screenshots:[], errors:[]};
+const report = {scope:'Current compiled production Personal contribution and conversation shell; synthetic in-memory owner service; no native host, model, account, or file effects', fixture_sha256:createHash('sha256').update(fs.readFileSync(target)).digest('hex'), cases:[], screenshots:[], identity_checks:[], errors:[]};
 let browser, context, page;
 const wait = selector => page.waitForSelector(selector, {state:'attached',timeout:15000});
 async function open(scenario='ready', extra={}, viewport={width:1100,height:950}, sidebarCollapsed=false) {
@@ -36,6 +36,17 @@ async function capture(name) {
   await page.evaluate(()=>document.fonts.ready);
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   const geometry=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,dpr:devicePixelRatio,controls:[...document.querySelectorAll('[data-personal-action-review] button')].filter(node=>node.checkVisibility()).map(node=>{const r=node.getBoundingClientRect();return {text:node.textContent,left:r.left,right:r.right,top:r.top,bottom:r.bottom,disabled:node.disabled};})}));
+  const identity=await page.evaluate(()=>{
+    const conversation=document.querySelector('.mosaic-main > .plugin-conversation');
+    if(!conversation?.checkVisibility())return null;
+    const rect=selector=>conversation.querySelector(selector).getBoundingClientRect().toJSON();
+    return {header:rect('.plugin-conversation-titlebar'),identity:rect('.mosaic-identity'),viewport:rect('.plugin-conversation-scroll'),scrollTop:conversation.querySelector('.plugin-conversation-scroll').scrollTop};
+  });
+  if(identity){
+    report.identity_checks.push({name,...identity});
+    assert(identity.identity.top>=identity.header.top-1 && identity.identity.bottom<=identity.header.bottom+1,`${name}: identity escapes its header footprint`);
+    assert(identity.header.bottom<=identity.viewport.top+1,`${name}: identity header covers the scrolling reading area`);
+  }
   assert(geometry.scrollWidth<=geometry.width+1, `${name}: page horizontal overflow`);
   for(const control of geometry.controls) assert(control.left>=-1 && control.right<=geometry.width+1,`${name}: clipped review control ${control.text}`);
   const file=`${name}.png`;await page.screenshot({path:path.join(output,file)});report.screenshots.push({file,geometry,navigation:await navigationGeometry()});
@@ -56,8 +67,34 @@ async function capture(name) {
     if(['expired','uncertain','stale','denied','revoked','succeeded'].includes(scenario))assert.equal(await page.locator('[data-review-choice="approve_once"]:enabled').count(),0);
   }
   report.cases.push('Main chat renders consequential file approval and saved terminal states; expired/stale/unknown actions are not confirmable');
-  await open('empty');await wait('.mosaic-main textarea');assert.equal(await page.locator('[data-personal-action-review]').count(),0);assert(await page.locator('.mosaic-main textarea').isEnabled());await capture('home-empty-actions');
-  await open('unavailable');await wait('.mosaic-main textarea');assert.equal(await page.locator('[data-personal-action-review]').count(),0);await capture('home-no-approval-service');report.cases.push('No approval card for empty/unavailable action state; ordinary conversation remains usable');
+  for(const [scenario,name] of [['empty','home-empty-actions'],['unavailable','home-no-approval-service']]){
+    for(const narrow of [false,true]){
+      await open(scenario,narrow?{font:'20'}:{},narrow?{width:430,height:1100}:{width:1100,height:950});await wait('.mosaic-main textarea');
+      assert.equal(await page.locator('[data-personal-action-review]').count(),0);assert(await page.locator('.mosaic-main textarea').isEnabled());await capture(name+(narrow?'-narrow':''));
+    }
+  }
+  report.cases.push('Empty/unavailable action state retains the identity footprint and ordinary composer at default wide and large-text narrow sizes');
+  for(const narrow of [false,true]){
+    const name=narrow?'identity-scroll-narrow-large':'identity-scroll-wide';
+    await open('long',{replies:'1',...(narrow?{font:'20',theme:'dark'}:{})},narrow?{width:430,height:1100}:{width:1100,height:950});
+    await wait('[data-review-choice="approve_once"]');
+    const viewport=page.locator('.mosaic-main > .plugin-conversation > .plugin-conversation-scroll');
+    await page.locator('[data-review-choice="approve_once"]').scrollIntoViewIfNeeded();
+    const before=await viewport.evaluate(node=>node.scrollTop);
+    await viewport.hover();await page.mouse.wheel(0,before>0?-240:240);
+    await page.waitForFunction(previous=>document.querySelector('.mosaic-main > .plugin-conversation > .plugin-conversation-scroll').scrollTop!==previous,before);
+    await capture(name);
+    const composer=page.locator('.mosaic-main textarea'),draft=`Keep draft ${name}`;
+    await composer.fill(draft);
+    const readingPosition=await viewport.evaluate(node=>node.scrollTop);
+    await page.locator('[data-action="toggle-personal-panel"]').click();await wait('[data-personal-panel]:not([hidden])');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>document.querySelector('[data-personal-panel]')?.hidden && document.activeElement===document.querySelector('[data-action="toggle-personal-panel"]'));
+    assert.equal(await composer.inputValue(),draft,`${name}: profile interaction replaced the draft`);
+    assert(Math.abs(await viewport.evaluate(node=>node.scrollTop)-readingPosition)<=1,`${name}: profile interaction moved the reading position`);
+    await capture(`${name}-profile-return`);
+    report.cases.push(`${name}: real wheel scrolling keeps identity outside the reading viewport; profile/Escape preserves draft, reading position and focus`);
+  }
   // Real pointer input catches an invisible navigation drawer over the card;
   // DOM dispatch would approve successfully even when the owner cannot click.
   for(const [name,viewport,sidebarCollapsed,extra] of [

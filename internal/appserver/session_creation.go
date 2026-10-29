@@ -25,6 +25,7 @@ const (
 // hostSessionCreateParams is the host's creation contract. Callers validate
 // their entry-point requirements before creating an ordinary persisted session.
 type hostSessionCreateParams struct {
+	inheritModelOptions      bool
 	UserSpaceID              string
 	ProductDomain            string
 	AgentID                  string
@@ -149,10 +150,14 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	if params.Provider != "" || params.Model != "" {
 		selection.Provider = params.Provider
 		selection.Model = params.Model
-		selection.Variant = params.Variant
-		selection.Effort = params.Effort
-		selection.Speed = params.Speed
-		selection.ModelOptions = params.ModelOptions
+		// Resolving an omitted delegated model pins its admitted provider/model,
+		// but must not turn omission into a caller-requested options reset.
+		if !params.inheritModelOptions {
+			selection.Variant = params.Variant
+			selection.Effort = params.Effort
+			selection.Speed = params.Speed
+			selection.ModelOptions = params.ModelOptions
+		}
 		if params.PermissionMode != "" {
 			selection.PermissionMode = params.PermissionMode
 		}

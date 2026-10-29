@@ -54,6 +54,9 @@ const report = { started_at: new Date().toISOString(), binary, scratch, status: 
 };
 const providerEvents = new EventEmitter(), providerCalls = [], active = new Set(), held = new Map();
 const heldTags = new Set();
+// These scenarios exercise agent turns whose admitted delivery intentionally
+// disables tools. Tool presence cannot distinguish them from title generation.
+const replyOnlyTags = new Set(["delivery-success", "question-main", "routine-reminder", "offline-routine"]);
 const toolPlans = new Map(), planCalls = new Map();
 let personal, coding, personalConfigOwner, main, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission, firstReplySeq, replyChainSeq;
 
@@ -129,7 +132,8 @@ function answer(response, body, message, finishReason = "stop") {
 const provider = createServer(async (request, response) => {
   try {
     let raw = ""; for await (const chunk of request) raw += chunk;
-    const body = JSON.parse(raw), tag = tagOf(body), isAgent = Boolean(body.tools?.length);
+    const body = JSON.parse(raw), tag = tagOf(body), isAgent = Boolean(body.tools?.length) || replyOnlyTags.has(tag);
+    if (replyOnlyTags.has(tag)) assert.equal(body.tools?.length ?? 0, 0, `${tag} must remain a tool-free delivery`);
     const call = { tag, kind: isAgent ? "agent" : "auxiliary", url: request.url, body, at: new Date().toISOString() };
     response.on("close", () => {
       if (response.writableEnded) return;
@@ -886,7 +890,10 @@ try {
     const a = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "parallel-a", title: "Review design", goal: "MOSAIC_E2E_CASE:background-parallel-a" })).task;
     const b = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "parallel-b", title: "Find discussion", goal: "MOSAIC_E2E_CASE:background-parallel-b" })).task;
     assert.notEqual(a.task_id, b.task_id); assert.notEqual(a.execution.session_id, b.execution.session_id);
-    for (const tag of ["background-parallel-a", "background-parallel-b"]) await waitFor(providerEvents, "request", providerCalls, call => call.tag === tag && call.kind === "agent", tag);
+    for (const tag of ["background-parallel-a", "background-parallel-b"]) {
+      const call = await waitFor(providerEvents, "request", providerCalls, call => call.tag === tag && call.kind === "agent", tag);
+      assert.equal(call.body.model, "mosaic-fixture", "delegated task drifted from its main conversation's admitted model to the changed default");
+    }
     await personal.send("chat-with-two-background-tasks");
     const currentA = (await personal.client("tasks.get", { task_id: a.task_id })).task;
     const revised = (await personal.client("tasks.update", { task_id: a.task_id, expected_revision: currentA.revision, goal: "MOSAIC_E2E_CASE:background-parallel-a-revised" })).task;
@@ -995,6 +1002,11 @@ try {
     task = (await personal.client("tasks.stop", { task_id: task.task_id, expected_revision: task.revision })).task;
     assert(task.cancel_requested); assert(["stopped", "waiting_external"].includes(task.state));
     await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "background-one" && call.cancelled, "task cancellation reaches provider");
+    // A closed model transport precedes durable host settlement. Reconcile
+    // only after this exact admitted execution reports its terminal receipt.
+    await waitFor(personal.events, "message", personal.transcript, frame =>
+      ["turn/completed", "turn/error"].includes(frame.method) && frame.params?.thread_id === task.execution.session_id &&
+      (frame.params?.turn?.id ?? frame.params?.turn_id) === task.execution.turn_id, "cancelled task host settlement", 45_000);
     task = (await personal.client("tasks.reconcile", { task_id: task.task_id })).task;
     assert.equal(task.state, "stopped"); held.get("background-one")?.();
     await personal.close(); personal = await new Host("personal-task-restarted", "personal").start();
@@ -1187,17 +1199,23 @@ try {
     const removed = await personal.awaitPackage("personal", true, "inactive");
     assert.notEqual(removed.graph_generation, item.graph_generation, "Personal did not publish its explicit removal");
     const ownerItem = control.package("personal");
+    const ownerObserved = control.transcript.length;
     await control.rpc("extension/package/update", { id: ownerItem.id, fingerprint: ownerItem.fingerprint, action: "disable" });
+    const ownerPublication = await waitFor(control.events, "message", control.transcript.slice(ownerObserved), frame => frame.method === "plugin/inventory/changed" && frame.params?.extension_inventory?.some(entry => entry.id === ownerItem.id && !entry.enabled), "owner publishes Personal policy removal");
+    assert(Number.isSafeInteger(ownerPublication.params.epoch));
     await personal.awaitPackage("personal", false);
     await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "background-disable" && call.cancelled, "explicit Personal removal must cancel its active owner session", 8_000);
     await assert.rejects(personal.client("agents.list"), /inactive|disabled|unavailable|not approved and enabled/i);
     const before = providerCalls.length;
     await assert.rejects(personal.rpc("turn/start", { thread_id: main.main_session_id, prompt: "MOSAIC_E2E_CASE:disabled-owner-bypass" }), /user host client method is unavailable/);
     assert.equal(providerCalls.length, before, "disabled owner admitted generic model inference");
+    // The package catalog epoch is shared even though Coding uses another
+    // config. Observe its publication before admitting new work on that host.
+    const codingPublication = await waitFor(coding.events, "message", coding.transcript, frame => frame.method === "plugin/inventory/changed" && frame.params?.epoch >= ownerPublication.params.epoch, "Coding observes the committed catalog epoch");
     const notebook = await coding.client("memory.read", {}, "memory"); assert(JSON.stringify(notebook).includes(codingMarker));
     const sent = await coding.rpc("turn/start", { thread_id: codingThread, prompt: "MOSAIC_E2E_CASE:coding-after-disable" });
     await coding.settled({ thread_id: codingThread, turn_id: sent.turn.id });
-    return { cancelled_execution_session_id: activeTask.execution.session_id, explicit_profile_transition: "personal -> minimal", config_path: personal.configPath };
+    return { cancelled_execution_session_id: activeTask.execution.session_id, explicit_profile_transition: "personal -> minimal", config_path: personal.configPath, owner_epoch: ownerPublication.params.epoch, coding_epoch: codingPublication.params.epoch };
   });
   for (const call of providerCalls.filter(call => !call.tag.startsWith("coding-"))) {
     for (const marker of privateMarkers) assert(!JSON.stringify(call).includes(marker), `${call.tag} leaked ${marker}`);

@@ -1466,7 +1466,8 @@ ${personalReviewStyles}
     .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
-    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    /* The identity owns its intrinsic row so scrolled text cannot pass beneath it. */
+    .mosaic-main > .plugin-conversation { grid-template-rows:auto minmax(0,1fr); }
     .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }

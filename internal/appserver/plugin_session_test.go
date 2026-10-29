@@ -1416,3 +1416,41 @@ func TestHandoffPreservesSelectedUnlimitedPlan(t *testing.T) {
 		t.Fatalf("selected unlimited handoff rejected: bytes=%d attempts=%d err=%v", len(result.Seed.Body), attempts, err)
 	}
 }
+
+func TestDelegatedChildResolvedModelPreservesParentOptions(t *testing.T) {
+	for _, inherit := range []bool{true, false} {
+		t.Run(map[bool]string{true: "omitted", false: "explicit"}[inherit], func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			parent := session.Session{ID: "model-parent", Owner: "plugin:subagent", Visibility: "plugin", CWD: rt.RootDir,
+				Provider: "fake-provider", Model: "fake-model", Variant: "retained-variant", Effort: "high", Speed: "fast", ModelOptions: map[string]string{"reasoning": "retained"}, PermissionMode: "standard"}
+			if _, err := rt.Sessions.CreateInitialized(parent, nil); err != nil {
+				t.Fatal(err)
+			}
+			binding := testRuntimeState(t, rt)
+			defer binding.Close()
+			created, err := srv.createPluginSessionThread(binding, parent.Owner, pluginhost.SessionCreateParams{
+				RequestID: "resolved-child", ParentSessionID: parent.ID, ContextSource: "fresh", Visibility: "plugin",
+				Provider: parent.Provider, Model: parent.Model, PermissionMode: parent.PermissionMode,
+			}, inherit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, found, err := rt.Sessions.Find(created.ID)
+			if err != nil || !found {
+				t.Fatalf("created child missing: %v", err)
+			}
+			if child.Provider != parent.Provider || child.Model != parent.Model || child.PermissionMode != parent.PermissionMode {
+				t.Fatalf("admitted selection changed: %+v", child)
+			}
+			if inherit {
+				if child.Variant != parent.Variant || child.Effort != parent.Effort || child.Speed != parent.Speed || !reflect.DeepEqual(child.ModelOptions, parent.ModelOptions) {
+					t.Fatalf("omitted selection lost inherited options: %+v", child)
+				}
+			} else if child.Variant != "" || child.Effort != "" || child.Speed != "" || len(child.ModelOptions) != 0 {
+				t.Fatalf("explicit model selection no longer resets inherited options: %+v", child)
+			}
+		})
+	}
+}

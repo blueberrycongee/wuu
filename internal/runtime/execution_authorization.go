@@ -552,56 +552,71 @@ func ExecutionCreationResources(ctx context.Context) ([]access.Resource, bool) {
 
 // RestoreExecutionCreation admits one exact, provider-observed pending child.
 // It does not turn a task-lineage grant into authority over arbitrary sessions.
-func (s *Session) RestoreExecutionCreation(ctx context.Context, pluginID string, params pluginhost.SessionCreateParams) (context.Context, error) {
+func (s *Session) RestoreExecutionCreation(ctx context.Context, pluginID string, params pluginhost.SessionCreateParams) (context.Context, pluginhost.SessionCreateParams, error) {
 	if params.ExecutionAuthorization == nil || params.AuthorizationTaskID == "" || params.RequestID == "" {
-		return ctx, errors.New("pending child creation authorization required")
+		return ctx, params, errors.New("pending child creation authorization required")
 	}
 	state, err := s.executionState(ctx)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	defer state.Close()
 	item, err := executionPackage(state, pluginID)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	client, err := executionClient(state, params.ExecutionAuthorization)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	parent, err := client.Inspect(ctx, executionauth.InspectRequest{Reference: *params.ExecutionAuthorization, Consumer: item.SubjectID})
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	if parent.Scope.Kind != "task-lineage" {
-		return ctx, errors.New("child creation requires explicit task-lineage authority")
+		return ctx, params, errors.New("child creation requires explicit task-lineage authority")
 	}
 	resources := grantResources(parent.Scope)
 	ctx, err = s.RestoreExecutionAuthorization(ctx, pluginID, *params.ExecutionAuthorization, "", "user/session/create", resources...)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	// The parent observer supplies its actual responsible session; a plugin cannot
 	// redirect source history or a launch payload through an unrelated session.
 	root, err := s.resolveExecutionLineage(ctx, state, item, parent.Scope.Authority, ExecutionAuthorizationIntent{Kind: parent.Scope.Kind, TaskID: parent.Scope.TaskID}, nil)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	if params.ParentSessionID != "" && params.ParentSessionID != root.SessionID {
-		return ctx, errors.New("creation source is outside parent task authority")
+		return ctx, params, errors.New("creation source is outside parent task authority")
 	}
 	if params.Seed != nil || params.Launch != nil || (params.ContextSource != "fresh" && params.ContextSource != "fork") {
-		return ctx, errors.New("delegated creation cannot introduce an unadmitted seed or launch")
+		return ctx, params, errors.New("delegated creation cannot introduce an unadmitted seed or launch")
 	}
 	if params.ModelAlias != "" || ((params.Provider == "") != (params.Model == "")) {
-		return ctx, errors.New("delegated creation requires an exact model selection")
+		return ctx, params, errors.New("delegated creation requires an exact model selection")
 	}
-	provider, model, mode, err := s.executionSelection(state, session.Session{Provider: params.Provider, Model: params.Model, PermissionMode: params.PermissionMode})
+	selection := session.Session{Provider: params.Provider, Model: params.Model, PermissionMode: params.PermissionMode}
+	// Omission consumes the exact choice persisted at grant admission, never
+	// whichever global default happens to be selected when dispatch resumes.
+	if selection.Provider == "" {
+		if len(parent.Scope.Bounds.ModelProviders) != 1 || len(parent.Scope.Bounds.Models) != 1 {
+			return ctx, params, errors.New("delegated creation requires an exact admitted model selection")
+		}
+		selection.Provider, selection.Model = parent.Scope.Bounds.ModelProviders[0], parent.Scope.Bounds.Models[0]
+	}
+	if selection.PermissionMode == "" {
+		if len(parent.Scope.Bounds.PermissionModes) != 1 {
+			return ctx, params, errors.New("delegated creation requires an exact admitted permission mode")
+		}
+		selection.PermissionMode = parent.Scope.Bounds.PermissionModes[0]
+	}
+	provider, model, mode, err := s.executionSelection(state, selection)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	if !slices.Contains(parent.Scope.Bounds.ModelProviders, provider) || !slices.Contains(parent.Scope.Bounds.Models, model) || !slices.Contains(parent.Scope.Bounds.PermissionModes, mode) || parent.Scope.Depth+1 > parent.Scope.Bounds.MaxDepth {
-		return ctx, errors.New("child creation exceeds admitted execution bounds")
+		return ctx, params, errors.New("child creation exceeds admitted execution bounds")
 	}
 	creation := params
 	creation.ExecutionAuthorization = nil
@@ -614,25 +629,28 @@ func (s *Session) RestoreExecutionCreation(ctx context.Context, pluginID string,
 	}{parent, "exact-run", params.AuthorizationTaskID, params.RequestID, creation}
 	raw, err := json.Marshal(request)
 	if err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	result, callErr := state.Host.CallService(ctx, executionauth.ConsumerModule, parent.Scope.Authority.Service, "resolve-lineage", raw)
 	if callErr != nil {
-		return ctx, callErr
+		return ctx, params, callErr
 	}
 	var observed struct {
 		executionauth.Lineage
 		Creation pluginhost.SessionCreateParams `json:"creation"`
 	}
 	if err = json.Unmarshal(result, &observed); err != nil {
-		return ctx, err
+		return ctx, params, err
 	}
 	want, _ := json.Marshal(creation)
 	got, _ := json.Marshal(observed.Creation)
 	if string(want) != string(got) || observed.TaskID != params.AuthorizationTaskID || observed.ParentTaskID != parent.Scope.TaskID || observed.ParentRevision != parent.Scope.Revision || observed.SessionID != "" || observed.RunID == "" || observed.Revision < 1 || observed.ContextDigest == "" {
-		return ctx, errors.New("selected authority did not attest exact pending creation")
+		return ctx, params, errors.New("selected authority did not attest exact pending creation")
 	}
-	return context.WithValue(ctx, executionCreationKey{}, resources), nil
+	// The authority attested the original durable intent above. Carry its
+	// resolved bounds into actual creation so that it cannot read defaults again.
+	params.Provider, params.Model, params.PermissionMode = provider, model, mode
+	return context.WithValue(ctx, executionCreationKey{}, resources), params, nil
 }
 
 type executionValidationKey struct{}

@@ -99,11 +99,12 @@ func (f *executionLineageFixture) InvokeService(_ context.Context, p pluginhost.
 		Parent                             *executionauth.IssueResult `json:"parent"`
 	}
 	var wire struct {
-		Kind      string                     `json:"kind"`
-		TaskID    string                     `json:"task_id"`
-		SessionID string                     `json:"session_id"`
-		RequestID string                     `json:"request_id"`
-		Parent    *executionauth.IssueResult `json:"parent"`
+		Kind      string                          `json:"kind"`
+		TaskID    string                          `json:"task_id"`
+		SessionID string                          `json:"session_id"`
+		RequestID string                          `json:"request_id"`
+		Parent    *executionauth.IssueResult      `json:"parent"`
+		Creation  *pluginhost.SessionCreateParams `json:"creation"`
 	}
 	if err := json.Unmarshal(p.Params, &wire); err != nil {
 		return nil, err
@@ -113,6 +114,17 @@ func (f *executionLineageFixture) InvokeService(_ context.Context, p pluginhost.
 		return nil, errors.New("unrecognized task")
 	}
 	out := executionauth.Lineage{TaskID: "task-one", Revision: f.revision, ContextDigest: "requirements-one", SessionID: "main-one"}
+	if wire.Creation != nil {
+		if input.Kind != "exact-run" || input.RequestID != "create-one" || input.Parent == nil {
+			return nil, errors.New("unrecognized pending creation")
+		}
+		out.SessionID, out.RunID = "", "run-one"
+		out.ParentTaskID, out.ParentRevision = input.Parent.Scope.TaskID, input.Parent.Scope.Revision
+		return json.Marshal(struct {
+			executionauth.Lineage
+			Creation pluginhost.SessionCreateParams `json:"creation"`
+		}{out, *wire.Creation})
+	}
 	if input.Kind == "exact-run" {
 		if input.SessionID != f.worker || input.RequestID != "run-one" {
 			return nil, errors.New("unrecognized actual run")
@@ -230,6 +242,36 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 	retry, err := invoke(owner, intent)
 	if err != nil || retry.Reference != parent.Reference {
 		t.Fatalf("lost-reply retry changed authority: %+v %v", retry, err)
+	}
+	// Publish a replacement model snapshot after admission while the selected
+	// fixture storage/authority providers remain unchanged. Do not mutate the
+	// original generation's model selection retained by existing invocations.
+	nextModels := *gen.models
+	nextModels.roles.Main.Model = "changed-default"
+	nextModels.roles.Main.APIModel = "changed-default"
+	next := &PluginGeneration{id: "changed-default-generation", state: kernel.state, host: host, active: gen.active, models: &nextModels}
+	next.refs.Store(1)
+	core.pluginGenerationMu.Lock()
+	core.pluginGeneration = next
+	core.pluginGenerationMu.Unlock()
+	if gen.models.roles.Main.Model != "model-one" {
+		t.Fatal("replacement changed an admitted model snapshot")
+	}
+	// The responsible conversation keeps its selected model after a global
+	// default changes. Omitted child fields must consume the grant's captured
+	// choice rather than retargeting or rejecting its already admitted task.
+	creation := pluginhost.SessionCreateParams{RequestID: "create-one", AuthorizationTaskID: "task-one", ParentSessionID: "main-one", ContextSource: "fresh", ExecutionAuthorization: &parent.Reference}
+	if _, resolved, err := core.RestoreExecutionCreation(context.Background(), item.ID, creation); err != nil || resolved.Provider != "synthetic" || resolved.Model != "model-one" || resolved.PermissionMode != "standard" {
+		t.Fatalf("captured child selection drifted to changed defaults: %+v %v", resolved, err)
+	}
+	explicit := creation
+	explicit.Provider, explicit.Model = "synthetic", "changed-default"
+	if _, _, err := core.RestoreExecutionCreation(context.Background(), item.ID, explicit); err == nil {
+		t.Fatal("explicit outside-bound model widened the grant")
+	}
+	explicit.Model = "model-one"
+	if _, resolved, err := core.RestoreExecutionCreation(context.Background(), item.ID, explicit); err != nil || resolved.Model != "model-one" {
+		t.Fatalf("explicit admitted model was rejected: %+v %v", resolved, err)
 	}
 	childIntent := intent
 	childIntent.Kind = "exact-run"

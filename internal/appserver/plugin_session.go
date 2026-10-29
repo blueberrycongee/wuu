@@ -71,9 +71,10 @@ func (s *Server) notifyPluginTurnDiscardedWithRetry(binding *runtime.State, thre
 }
 
 func (s *Server) createPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionCreateParams) (pluginhost.SessionCreateResult, error) {
+	inheritModelOptions := params.ExecutionAuthorization != nil && params.Provider == "" && params.Model == ""
 	if params.ExecutionAuthorization != nil {
 		var err error
-		ctx, err = s.rt.RestoreExecutionCreation(ctx, pluginID, params)
+		ctx, params, err = s.rt.RestoreExecutionCreation(ctx, pluginID, params)
 		if err != nil {
 			return pluginhost.SessionCreateResult{}, err
 		}
@@ -223,7 +224,7 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		return pluginhost.SessionCreateResult{}, err
 	}
 	params = prepared
-	th, err := s.createPluginSessionThread(binding, owner, params)
+	th, err := s.createPluginSessionThread(binding, owner, params, inheritModelOptions)
 	if err != nil {
 		if existing, ok, findErr := binding.Sessions.FindManagedByRequest(owner, params.RequestID); findErr == nil && ok {
 			return pluginhost.SessionCreateResult{SessionID: existing.ID, Created: false, WorkspaceRoot: existing.CWD}, nil
@@ -1213,8 +1214,10 @@ func pluginSessionRequestFromClientID(clientID string) (string, string, bool) {
 	return pluginID, requestID, ok && pluginID != "" && requestID != ""
 }
 
-func (s *Server) createPluginSessionThread(binding *runtime.State, owner string, params pluginhost.SessionCreateParams) (*threadState, error) {
-	return s.createHostSessionThread(binding, owner, pluginSessionSource(owner, params), "", hostSessionCreateParamsFromPlugin(params))
+func (s *Server) createPluginSessionThread(binding *runtime.State, owner string, params pluginhost.SessionCreateParams, inheritModelOptions bool) (*threadState, error) {
+	creation := hostSessionCreateParamsFromPlugin(params)
+	creation.inheritModelOptions = inheritModelOptions
+	return s.createHostSessionThread(binding, owner, pluginSessionSource(owner, params), "", creation)
 }
 
 // hostSessionCreateParamsFromPlugin converts the extension contract at the host boundary.
