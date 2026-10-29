@@ -24,6 +24,7 @@ export function useWorkspaceToolState({
   workspaceViewTabs: WorkspaceViewTab[];
   workspaceActiveViewTabID: string | undefined;
   workspaceActiveFileTabID: string | undefined;
+  workspaceConversationOpen: boolean;
   workspaceConversationActive: boolean;
   focusWorkspaceConversation: () => void;
   ensureWorkspaceToolTab: (view: WorkspacePanelView) => void;
@@ -49,6 +50,11 @@ export function useWorkspaceToolState({
   const workspaceActiveViewTabID = snapshot.activeTabId;
   const workspaceActiveFileTabID = snapshot.activeFileTabId;
   const conversationSelected = snapshot.conversationSelected;
+  useLayoutEffect(() => {
+    if (!rightPanelGlobalized && snapshot.conversationOpen === false) {
+      void application.invoke("preview.open-conversation", {}).catch(showErrorToast);
+    }
+  }, [application, rightPanelGlobalized, snapshot.conversationOpen]);
   useLayoutEffect(() => {
     if (rightPanelOpen && !conversationSelected && !application.getSnapshot().previewWorkspace.activeTabId) {
       void application.invoke("preview.new-tab", {}).catch(showErrorToast);
@@ -155,6 +161,7 @@ export function useWorkspaceToolState({
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
+    workspaceConversationOpen: snapshot.conversationOpen !== false,
     workspaceConversationActive: rightPanelGlobalized && conversationSelected,
     focusWorkspaceConversation,
     ensureWorkspaceToolTab,

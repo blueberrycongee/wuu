@@ -515,14 +515,11 @@ func TestStopRefusesReusedProcessID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pgid, err := syscall.Getpgid(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
+	cmd, pgid, _ := startExternalProcessGroup(t, root)
 	record := &Process{
 		ID:               "proc-stale",
 		Status:           StatusRunning,
-		PID:              os.Getpid(),
+		PID:              cmd.Process.Pid,
 		PGID:             pgid,
 		ProcessStartTime: "a different process start time",
 	}
@@ -536,6 +533,9 @@ func TestStopRefusesReusedProcessID(t *testing.T) {
 	}
 	if got.Status != StatusRunning {
 		t.Fatalf("rejected stop changed status to %s", got.Status)
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("rejected stop signaled the live process: %v", err)
 	}
 }
 

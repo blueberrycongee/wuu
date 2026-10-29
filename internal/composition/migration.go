@@ -5,12 +5,15 @@ import "fmt"
 // Compatibility is applied only across explicit schema versions, never to
 // repair missing providers in a current-version composition. Resolution leaves
 // the source unchanged so older executables can still read it.
-func projectLegacyProviders(version int, resolved *Resolved, bindings map[string]Binding, excluded map[string]bool) {
+func projectLegacyProviders(version int, resolved *Resolved, bindings map[string]Binding, excluded map[string]bool, metadata Metadata) {
 	if version < 3 {
 		projectLegacyExecutionProviders(version, resolved, bindings, excluded)
 	}
 	if version < 4 {
 		projectLegacyResourceAuthority(version, resolved, bindings, excluded)
+	}
+	if version < 5 {
+		projectLegacyFeaturePresentation(version, resolved, bindings, excluded, metadata)
 	}
 }
 
@@ -104,5 +107,69 @@ func projectLegacyResourceAuthority(version int, resolved *Resolved, bindings ma
 	}
 	if added {
 		resolved.Layers = append(resolved.Layers, source)
+	}
+}
+
+// Version 5 splits feature presentation from its business provider. Older
+// explicit desktop selections keep their former presentation; headless graphs
+// and explicit removals never acquire a UI dependency through this migration.
+func projectLegacyFeaturePresentation(version int, resolved *Resolved, bindings map[string]Binding, excluded map[string]bool, metadata Metadata) {
+	renderer := false
+	for id, services := range metadata.RendererServices {
+		if _, selected := resolved.ModuleSources[id]; !selected {
+			continue
+		}
+		for _, service := range services {
+			if applicationSurfaceService(service) {
+				renderer = true
+				break
+			}
+		}
+	}
+	// Historical built-in identities remain statically resolvable for callers
+	// that validate configuration before discovering the admitted catalog.
+	for _, id := range []string{"wuu.default-shell", "wuu.default-application", "wuu.default-composer", "wuu.default-navigation", "wuu.default-conversation", "wuu.default-preview", "wuu.default-settings"} {
+		if _, selected := resolved.ModuleSources[id]; selected {
+			renderer = true
+			break
+		}
+	}
+	if !renderer {
+		for _, binding := range bindings {
+			if applicationSurfaceService(binding.Service) {
+				if _, selected := resolved.ModuleSources[binding.Provider]; selected {
+					renderer = true
+				}
+			}
+		}
+	}
+	if !renderer {
+		return
+	}
+	source := fmt.Sprintf("migration:v%d-to-v5", version)
+	added := false
+	for _, feature := range []struct{ provider, presentation string }{{"goal", "goal-ui"}, {"automation-client", "automation-ui"}} {
+		if _, selected := resolved.ModuleSources[feature.provider]; !selected || excluded[feature.presentation] {
+			continue
+		}
+		if _, selected := resolved.ModuleSources[feature.presentation]; selected {
+			continue
+		}
+		resolved.ModuleSources[feature.presentation] = source
+		added = true
+	}
+	if added {
+		resolved.Layers = append(resolved.Layers, source)
+	}
+}
+
+// An auxiliary desktop contribution does not turn a headless composition into
+// an application. Only independently selected application surfaces do that.
+func applicationSurfaceService(service string) bool {
+	switch service {
+	case "ui.shell", "ui.application", "ui.composer", "ui.navigation", "ui.conversation", "ui.preview", "ui.settings":
+		return true
+	default:
+		return false
 	}
 }

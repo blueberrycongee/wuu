@@ -1,0 +1,19 @@
+{
+  "name": "@wuu/generative-ui-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=generative-ui"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/generative-ui/plugin.json",
+        "../../internal/plugin/bundled/generative-ui/desktop.js"
+      ]
+    }
+  }
+}

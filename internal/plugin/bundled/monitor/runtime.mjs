@@ -8,18 +8,24 @@ import { setTimeout as delay } from "node:timers/promises";
 function requireProcessService() {
   return { name: "host.process", major_version: 1, required: true };
 }
-async function startProcess(host, input) {
-  return await host.call("host.service.call", { service: "host.process", method: "start", params: input });
+async function getProcessEnvironment(host, options) {
+  return await host.call("host.service.call", { service: "host.process", method: "environment", params: {} }, options);
 }
-async function readProcess(host, input) {
-  return await host.call("host.service.call", { service: "host.process", method: "read", params: input });
+async function startProcess(host, input, options) {
+  return await host.call("host.service.call", { service: "host.process", method: "start", params: input }, options);
 }
-async function sendProcessEvent(host, process_id, message) {
-  return await host.call("host.service.call", { service: "host.process", method: "send", params: { process_id, message } });
+async function readProcess(host, input, options) {
+  return await host.call("host.service.call", { service: "host.process", method: "read", params: input }, options);
 }
-async function stopProcess(host, process_id) {
-  return await host.call("host.service.call", { service: "host.process", method: "stop", params: { process_id } });
+async function sendProcessEvent(host, process_id, message, options) {
+  return await host.call("host.service.call", { service: "host.process", method: "send", params: { process_id, message } }, options);
 }
+async function stopProcess(host, process_id, options) {
+  return await host.call("host.service.call", { service: "host.process", method: "stop", params: { process_id } }, options);
+}
+
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 // packages/plugin-sdk/src/persistence.ts
 var DOCUMENT_STORE_SERVICE = "state.documents";
@@ -598,6 +604,14 @@ function scopedRuntimeHost(host, execution) {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
       const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
@@ -629,6 +643,7 @@ var JSONLRuntimeHost = class {
     this.supported = new Set(methods ?? []);
   }
   supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
   call(method, params, options) {
@@ -637,6 +652,9 @@ var JSONLRuntimeHost = class {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise((resolve, reject) => {
@@ -660,8 +678,8 @@ var JSONLRuntimeHost = class {
         reject: fail
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
-      if (options?.cleanup) {
+      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
         frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
       }
       void this.send(frame).catch(fail);
@@ -1105,11 +1123,11 @@ ${String(failure)}`;
       if (index < 0) throw new Error("monitor history is awaiting event delivery");
       tasks.splice(index, 1);
     }
+    const environment = await getProcessEnvironment(scoped);
     const process2 = await startProcess(scoped, {
       key: params.call_id || randomUUID(),
       command: `export PYTHONUNBUFFERED=1
 ${args.command}`,
-      cwd: params.cwd,
       timeout_ms: timeout,
       follow_parent: true
     });
@@ -1120,7 +1138,7 @@ ${args.command}`,
       thread_id: threadID,
       command: args.command,
       description: args.description.trim(),
-      cwd: params.cwd,
+      cwd: process2.environment?.root ?? environment.root,
       persistent: !!args.persistent,
       timeout_ms: timeout,
       started_at: (/* @__PURE__ */ new Date()).toISOString(),

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { requireKernelService, type RuntimeHost, type RuntimePlugin, type ToolExecuteParams, type AgentPreStepInput, type TurnLifecycleInput, type AgentTurnInterruptedInput, type AgentTurnCompletedInput, type HostServiceContracts } from "@wuu/plugin-sdk";
+import { GOAL_CONTROL_SERVICE_DESCRIPTOR, requireKernelService, type RuntimeHost, type RuntimePlugin, type ToolExecuteParams, type AgentPreStepInput, type TurnLifecycleInput, type AgentTurnInterruptedInput, type AgentTurnCompletedInput, type HostServiceContracts } from "@wuu/plugin-sdk";
 
 const storageKey = "goal.state";
 const maxObjectiveBytes = 8192;
@@ -171,10 +171,19 @@ export function createGoalPlugin(): RuntimePlugin {
     } else await continueGoal(host, goal);
   }
 
+  async function clientRequest(host: RuntimeHost, value: unknown): Promise<unknown> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected one goal request object");
+    const envelope = value as { method: string; input: unknown };
+    if (envelope.method === "update_goal") throw new Error("use model tool for completion; user controls support pause, resume and clear");
+    const args = decode(envelope.input, envelope.method === "create_goal" ? ["thread_id", "objective"] : ["thread_id"]);
+    return mutate(host, envelope.method, args, "", true);
+  }
+
   return {
     initialize(_params, runtimeHost) {
       host = runtimeHost; goals = {}; stopped = false;
       return {
+        provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
           { id: "create_goal", description: "Create a persistent goal only when the user explicitly asks for a goal. An unfinished goal cannot be replaced.", input_schema: schema({ objective: { type: "string", minLength: 1, maxLength: maxObjectiveBytes } }, ["objective"]) },
           { id: "get_goal", description: "Read this session's goal, status, settled token usage and active time.", input_schema: schema({}), activity: { read_only: true, concurrency_safe: true, risk: "low" } },
@@ -259,15 +268,19 @@ export function createGoalPlugin(): RuntimePlugin {
       const result = await locked(() => mutate(host, call.tool_id, args, call.turn_id || "", false));
       return { result: { content: [{ type: "text" as const, text: JSON.stringify(result) }], structured_content: result } };
     },
+    async invokeService(call, host) {
+      if (call.service !== "goal.control") throw new Error("unknown goal service");
+      if (call.method !== "request") throw new Error("unknown goal service method");
+      return locked(() => clientRequest(host, call.params));
+    },
     async invokeCapability(call, host) { return locked(async () => {
       if (stopped) throw new Error("goal plugin is stopped");
       switch (call.capability) {
         case "agent.system_prompt.section": return { output: { text: "Use create_goal only when the user explicitly requests a persistent goal. Ordinary tasks do not create goals. get_goal reads the goal; update_goal may only mark verified completion or a blocker persisting for three consecutive goal turns. Goal controls belong to the user. Active goals continue across turns until completed, blocked, or paused." } };
         case "plugin.client.request": {
-          const envelope = call.input as { method: string; input: unknown };
-          const args = decode(envelope.input, ["thread_id", "objective", "status"]);
-          if (envelope.method === "update_goal") throw new Error("use model tool for completion; user controls support pause, resume and clear");
-          return { output: { result: await mutate(host, envelope.method, args, "", true) } };
+          // Retain old combined-package clients until the v1 client-request
+          // capability is retired. Both paths use the same state and controls.
+          return { output: { result: await clientRequest(host, call.input) } };
         }
         case "agent.pre_step": {
           const input = call.input as AgentPreStepInput, goal = goals[input.session_id || input.thread_id || ""];

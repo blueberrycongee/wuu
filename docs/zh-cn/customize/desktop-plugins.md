@@ -87,6 +87,14 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 富结果正文由宿主单独放置：`inline` 输出位于回答之前，`turn_end` 输出位于回答之后。应使用 `tool-result` renderer 定制这些正文，而不是在工具活动贡献中重复渲染 `structuredResult.content`。
 
+## 交互内容渲染器
+
+内容渲染器也接收 `host.actions` 和 `host.invoke`。已完成的会话资源公布 `conversation.composer.submit` 时，接受 `{ text, context? }`：文本最多 8,000 字符，可选 JSON 上下文最多 16,384 字符。必须在真实按钮点击或该点击引发的原生表单提交中同步调用，键盘激活按钮同样有效。表单提交必须匹配该次点击的表单与提交按钮；单独调用 `requestSubmit()` 不构成动作授权。宿主一次性消费交互凭据，绑定来源会话和产物，再通过普通轮次准入与权限流程提交。会话运行中、来源被替换或卸载、插件被禁用时会拒绝动作，并保留输入框草稿和附件。`metadata.interaction` 提供 `running`、`readOnly` 和可选 `disabledReason`；调用时仍会重新检查。此输入契约仅用于内容渲染器；输入框 Presenter 提交现有草稿，仍不接受动作输入。
+
+需要预览工具参数流时，`tool-result` 注册可声明 `toolInput: { capability }`，并使用字面 MIME `match`。只有当前实际负责该 MIME 的渲染器会收到预览。`content.preview` 标识临时输出；`metadata.toolInput` 提供累计且可能合并的 `argumentsText`、`turnId`、`status` 和可选 `error`。只解析完整且有界的数据单元，保留最近有效预览，不要执行动作或持久化尚未完成的状态。首个匹配的最终资源会沿用预览的 part 标识。
+
+通过普通插件存储保存交互状态，并以宿主提供的会话和产物标识隔离实例。保存的数据只属于当前 Wuu 存储，不提供跨设备同步。恢复状态不得触发提交，也不得覆盖读取尚未完成时用户已经做出的修改。
+
 ## View、卡片和状态
 
 View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。
@@ -96,6 +104,8 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 网站页面可以在同一个已注册 View 内，将 `api.ui.WebPage({ url, title? })` 作为组件渲染。此组件仅支持 Wuu 桌面主工作台窗口，不支持弹出的会话窗口或远程 Web／移动客户端。它复用桌面 Chromium 页面和共享浏览器登录会话，包括通过现有浏览器设置导入的 Cookie；不会自动读取其他浏览器的 Cookie 库。初始 `url` 必须使用 HTTP(S)，修改后会导航到新地址。宿主提供导航控件，并将原生页面限制在可见区域内。切换到其他工作台视图只会隐藏网页，同一个页面及其内部状态会保留。显式关闭 View、卸载 WebPage 组件、禁用扩展或重新加载其 generation 时，会关闭页面及其弹窗，Cookie 保留在 Wuu 浏览器会话中。恢复 durable View 时打开配置的网址，不恢复之前的网页内部状态。不需要网站专用插件注册表或 manifest。参见[网站页面配方](plugin-recipes.md#添加网站页面)。
 
 会话和插件主视图使用侧栏导航，包括通过 API 打开、没有声明导航入口的视图。它们的标题栏不提供 `tabs`、`activeTabId` 或 tab 操作。插件主视图提供 `canNavigateBack` 和 `header.navigate-back`。只有关闭会把页面从侧栏移除时，宿主才另外提供关闭控件，即通过 API 打开的视图和额外实例；已声明导航入口的页面通过返回或侧栏离开。紧凑工作区标题栏同样提供返回，并为当前标签提供关闭控件。这些仍是 contract version 1 的可选字段和动作，应检查快照和 `host.actions`，不要从已保存视图重建顶部标签栏。辅助面板和插件内容内部仍可使用各自的标签页。
+
+当提供者不支持关闭某个工作区标题栏标签时，该标签可报告 `closable: false`；旧版宿主不提供此字段。支持关闭展开工作区中会话的应用提供者会发布 `previewWorkspace.conversationOpen`，并实现 `preview.open-conversation` 和 `preview.close-conversation`；旧版 V1 提供者省略该字段，会话入口保持打开。调用这些动作前应检查该字段。
 
 会话卡片用于临时交互，不是保存的历史或持久页面；卡片句柄可以更新状态或关闭卡片。输入框状态源通过 `getSnapshot(context)` 返回结构化条目，通过 `subscribe` 通知变化，数据未变时应保持快照引用稳定。状态行、溢出和可选的 `open-session` 动作由 Wuu 渲染处理，不接收每个条目的任意 React 内容。
 

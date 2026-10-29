@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "example.session-progress",
+  "name": "Session progress example",
+  "version": "1.0.0",
+  "description": "Bot status-card and fleet projections of owned request progress through the public SDK.",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": ["dist/runtime.mjs"]
+  }
+}

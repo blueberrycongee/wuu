@@ -423,6 +423,8 @@ export type ExecutionEnvironmentProfile = {
   cpus?: number;
   memory_mb?: number;
   lifetime_seconds?: number;
+  /** Total EOF drain/cleanup budget in milliseconds; zero selects the backend default. */
+  shutdown_timeout_ms?: number;
   forward_env?: string[];
   command?: string[];
 };
@@ -715,6 +717,23 @@ export type ConfigChangedNotification = {
 
 export type PluginPackageSourceKind = "directory" | "zip";
 
+export type PluginPackageDistribution = {
+  lock_version: 1;
+  registry: string;
+  name: string;
+  version: string;
+  plugin_id: string;
+  tarball: string;
+  integrity: string;
+};
+
+export type PluginPackageSourceParams = {
+  /** Local directory/ZIP, npm:name@exact-version, or lock:path. */
+  path: string;
+  registry?: string;
+  integrity?: string;
+};
+
 export type PluginPackageMetadata = {
   id: string;
   name?: string;
@@ -729,6 +748,7 @@ export type PluginPackageMetadata = {
   requested_permissions?: string[];
   effective_permissions?: string[];
   unsupported_fields?: string[];
+  distribution?: PluginPackageDistribution;
 };
 
 export type PluginPackageInstallResult = {

@@ -1,7 +1,9 @@
 export async function activate(api) {
+  if (!api.supportedFeatures?.includes("ui.selected-slot-target.v1")) throw new Error("Goal controls require renderer feature ui.selected-slot-target.v1");
   const React = api.react;
   const h = React.createElement;
   const { Button, TextArea, ComposerDrawer } = api.ui;
+  const requestGoal = (method, input) => api.invokeService({ service: "goal.control", method: "request", params: { method, input } });
   api.registerLocale({ id: "goal-en", locale: "en-US", entries: {
     "goal.status.active": "Active", "goal.status.paused": "Paused", "goal.status.blocked": "Blocked", "goal.status.complete": "Complete",
     "goal.label": "Session goal", "goal.expand": "Show goal", "goal.collapse": "Hide goal", "goal.set": "Set a goal",
@@ -44,7 +46,7 @@ export async function activate(api) {
     const revision = (revisions.get(id) || 0) + 1;
     revisions.set(id, revision);
     try {
-      const value = await api.invokeRuntime("get_goal", { thread_id: id });
+      const value = await requestGoal("get_goal", { thread_id: id });
       if (disposed || revisions.get(id) !== revision) return;
       const goal = value?.goal || null;
       publish(id, { goal, error: "", loaded: true });
@@ -94,7 +96,7 @@ export async function activate(api) {
     const goal = state.goal;
     const canCreate = !goal || goal.status === "complete";
     const active = goal?.status === "active";
-    const disabled = busy || readOnly;
+    const disabled = busy || readOnly || !!state.error;
     function close() {
       setOpen(false);
     }
@@ -104,7 +106,7 @@ export async function activate(api) {
       try {
         const input = { thread_id: threadId };
         if (method === "create_goal") input.objective = objective.trim();
-        await api.invokeRuntime(method, input);
+        await requestGoal(method, input);
         if (method === "create_goal" || method === "clear") setObjective("");
         await refresh(threadId);
         if (method === "create_goal" || method === "clear") close();
@@ -112,7 +114,7 @@ export async function activate(api) {
       finally { setBusy(false); }
     }
     const visibleError = error || state.error || goal?.error;
-    if (!goal && !open) return null;
+    if (!goal && !open && !visibleError) return null;
     return h(ComposerDrawer, {
       className: "plugin-goal",
       "aria-label": tr("goal.label"),
@@ -157,7 +159,7 @@ export async function activate(api) {
       ) : null,
     );
   }
-  api.registerUIContribution({ target: "wuu.default-composer/composer.above",
+  api.registerUIContribution({ target: { service: "ui.composer", slot: "composer.above" },
     id: "goal-controls", title: "目标", order: 20,
     render: ({ context: { threadId, mainConversation, readOnly }, translate, locale }) => threadId && mainConversation
       ? h(Controls, { key: threadId, threadId, readOnly, tr: translate, locale }) : null,

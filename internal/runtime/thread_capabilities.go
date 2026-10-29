@@ -91,8 +91,15 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		if err != nil {
 			return nil, err
 		}
+		environment, err := s.selectedExecutionEnvironment(id, artifactDir)
+		if err != nil {
+			return nil, err
+		}
+		if remote, ok := environment.(*environmentToolExecutor); ok {
+			manager = remote.ProcessManager()
+		}
 		result.ProcessManager = manager
-		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: runtimeFileScopeRoots(root, wuuHome, s.UserBinding(), artifactDir), ProtectedPaths: memoryProtectedPaths(wuuHome, s.UserBinding())}
+		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, ExecutionEnvironment: environment, GitAttributionEnabled: processGitAttribution(generation), RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: runtimeFileScopeRoots(root, wuuHome, s.UserBinding(), artifactDir), ProtectedPaths: memoryProtectedPaths(wuuHome, s.UserBinding())}
 		result.processHooks = dispatcher
 		if host != nil && selectsRuntimeModule(host, toolExecutionConsumer) {
 			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)

@@ -12,7 +12,7 @@ For a fixed task list, independent grading, process isolation and retained resul
 
 ## Configuration upgrades
 
-Composition versions 1–3 remain readable. Version 4 makes resource authorization
+Composition versions 1–4 remain readable. New configurations use version 5. Version 4 makes resource authorization
 an explicit provider boundary and introduces the minimal session host. When an
 older selection includes `kernel`, `wuu.session-state` or `wuu.session-execution`,
 resolution adds `wuu.resource-access` and, unless another `resource.authorization@1`
@@ -25,6 +25,23 @@ new optional sharing providers or reapply version 1/2 execution migrations.
 Version 4 never repairs missing authority. Before changing an old configuration's
 version to 4, explicitly retain the projected modules or choose replacements.
 Missing or disabled policy still fails closed; migration is not a runtime fallback.
+
+Version 5 separates feature UI from runtime business providers. When a version
+1–4 selection includes a desktop renderer and `goal` or
+`automation-client`, resolution adds `goal-ui` or
+`automation-ui`, respectively, with `migration:vN-to-v5` provenance.
+Explicit UI exclusions win; headless and empty selections gain no presentation.
+A version-5 explicit composition selects the runtime and UI independently. Fresh
+product defaults discover both packages through ordinary extension admission.
+Existing goal and automation runtime IDs and persisted state do not change.
+
+The native product is a constructor catalog, not a fallback registry. Selection
+happens before constructing a provider; embedding applications can supply an
+explicit constructor for a catalog entry. Native and process implementations use
+the same service bindings, preparation, activation and dependency cleanup. The
+shipped `agent.policy` implementation is separate from the contract client and
+validation; replacing it keeps the loop and its consumers. Removing the selected
+policy stops admission rather than restoring native retries or parallelism.
 
 ## Minimal session host
 

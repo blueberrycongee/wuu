@@ -26,3 +26,26 @@ assert.equal(calls.length,2,'delegate failure must not retry');
 assert.throws(() => delegateService(descriptor,{typo:()=>null}),/declare/);
 await assert.rejects(async () => invoke({service:'other.store',method:'write',caller:'upstream'},host,execution),/declare/);
 await assert.rejects(async () => invoke({service:'example.store',method:'unknown',caller:'upstream'},host,execution),/declare/);
+
+// Continuation is a different gateway, never an upgraded ordinary call. The
+// request must contain only the token; the runtime binds the actual callback.
+const { continueService } = await import('./index.js');
+calls.length = 0; fail = false;
+await continueService(host, {service:'agent.tools',method:'execute',caller:'forged',execution_id:'forged',continuation_id:'opaque',params:{forged:true}});
+assert.deepEqual(calls,[{method:'host.service.continue',params:{continuation_id:'opaque'}}]);
+await assert.rejects(() => continueService(host,{service:'agent.tools',method:'execute',caller:'upstream'}),/continuation/);
+
+const { handleRuntimeRequest } = await import('./index.js');
+calls.length = 0;
+const callback = new AbortController();
+const response = await handleRuntimeRequest({
+  initialize: () => ({protocol_version: 3}),
+  invokeService: async (input, boundHost) => {
+    await boundHost.call('host.service.continue', {continuation_id:input.continuation_id!,execution_id:'forged'});
+    await assert.rejects(() => boundHost.call('host.service.continue',{continuation_id:'opaque'},{cleanup:true}),/cleanup/);
+    return {};
+  },
+}, {id:'invoke',method:'service.invoke',params:{service:'agent.tools',method:'execute',caller:'upstream',execution_id:'actual',continuation_id:'opaque'}}, host,
+{executionId:'actual',signal:callback.signal});
+assert.ok('result' in response);
+assert.deepEqual(calls,[{method:'host.service.continue',params:{continuation_id:'opaque',execution_id:'actual'}}]);

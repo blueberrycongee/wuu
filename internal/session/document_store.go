@@ -17,11 +17,12 @@ import (
 // not open a database or choose a backend. Its owner retains the generation and
 // supplies an operation context; a retired binding cannot reopen local files.
 type documentStore struct {
-	ctx        context.Context
-	caller     string
-	providerID string
-	admission  *pluginhost.ServiceAdmission
-	documents  persistence.Documents
+	ctx                        context.Context
+	caller                     string
+	providerID                 string
+	admission                  *pluginhost.ServiceAdmission
+	documents                  persistence.Documents
+	journalBackgroundDocuments persistence.Documents
 }
 
 func newDocumentStore(ctx context.Context, documents persistence.Documents) *documentStore {
@@ -29,7 +30,7 @@ func newDocumentStore(ctx context.Context, documents persistence.Documents) *doc
 }
 
 func (s *documentStore) WithContext(ctx context.Context) *documentStore {
-	return &documentStore{ctx: ctx, documents: s.documents, caller: s.caller, providerID: s.providerID, admission: s.admission}
+	return &documentStore{ctx: ctx, documents: s.documents, caller: s.caller, providerID: s.providerID, admission: s.admission, journalBackgroundDocuments: s.journalBackgroundDocuments}
 }
 
 func documentNamespace(table string) string { return "wuu." + table + ".v1" }

@@ -394,6 +394,13 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 	if input.State == "parent" {
 		runtime.productCompositions = owner.productCompositions
 	}
+	// The initial static resolution validates syntax before preparing sources.
+	// Published diagnostics use the same admitted metadata as the actual host,
+	// including renderer packages supplied by this composition's local paths.
+	scope.selection, err = resolveCompositionSelection(&input.Selection, runtime.pluginGeneration.active)
+	if err != nil {
+		return nil, err
+	}
 	scope.runtime = runtime
 	for _, item := range runtime.pluginGeneration.active {
 		scope.plugins = append(scope.plugins, pluginhost.CompositionPackage{ID: item.ID, Fingerprint: item.Fingerprint})

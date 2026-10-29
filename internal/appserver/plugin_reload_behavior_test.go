@@ -24,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -115,6 +116,66 @@ func TestPluginReloadBehaviorProcess(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+// A detached managed process still belongs to its original plugin graph.
+// A new user turn must neither discard that graph nor block the conversation.
+func TestPluginReloadFollowupRetainsLiveManagedProcess(t *testing.T) {
+	client := &fakeClient{response: providers.ChatResponse{Content: "conversation continued"}}
+	rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
+	manager := attachTestProcessManager(t, rt)
+	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
+	oldHost := rt.PluginHost
+	shutdown := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"create","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	id := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+	start := func(request string) {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(`{"id":%q,"method":"turn/start","params":{"thread_id":%q,"prompt":%q}}`, request, id, request))
+		if err := srv.handleLine(context.Background(), raw); err != nil {
+			t.Fatal(err)
+		}
+		if response := responseByID(t, parseOutput(t, out.String()), request); response["error"] != nil {
+			t.Fatalf("turn rejected: %+v", response)
+		}
+	}
+	start("first")
+	waitForReloadTurnCompletions(t, out, id, 1)
+	waitPluginGenerationWatchTest(t, func() bool { return !threadIsRunning(srv.thread(id)) })
+	th := srv.thread(id)
+	job, err := manager.Start(context.Background(), process.StartOptions{Command: "read signal", OwnerKind: process.OwnerMainAgent, OwnerID: id, RootThreadID: id, Lifecycle: process.LifecycleManaged, CompletionMode: process.CompletionModeDetached})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = manager.Stop(job.ID) })
+	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read the updated fixture")
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	srv.retireIdlePluginRuntimes()
+	start("follow-up")
+	waitForReloadTurnCompletions(t, out, id, 2)
+	if current := srv.thread(id); current != th || current.state.Generation == nil || rt.IsCurrentPluginGeneration(current.state.Generation) {
+		t.Fatal("follow-up replaced the graph while its managed process was live")
+	}
+	if _, err := os.Stat(shutdown); !os.IsNotExist(err) {
+		t.Fatalf("old plugin shut down while its process was live: %v", err)
+	}
+	if got, err := manager.Get(job.ID); err != nil || got.Status != process.StatusRunning {
+		t.Fatalf("managed process stopped during follow-up: %+v, %v", got, err)
+	}
+	if _, err := manager.Stop(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitPluginGenerationWatchTest(t, func() bool { _, err := os.Stat(shutdown); return err == nil })
+	select {
+	case <-oldHost.ShutdownDone():
+	case <-time.After(3 * time.Second):
+		t.Fatal("old plugin graph did not drain after process exit")
+	}
 }
 
 func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T) {
@@ -556,7 +617,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 					srv.agentCompletionMu.Lock()
 					draining := srv.drainingAgentCompletionTurns[th.ID]
 					srv.agentCompletionMu.Unlock()
-					return next != th && !draining && !threadIsRunning(next)
+					return next != nil && !draining && !threadIsRunning(next)
 				})
 				assertFakeClientRequestCount(t, client, 0)
 				dispatchPayload(t, srv, "resume-frozen", MethodTurnStart, TurnStartParams{ThreadID: th.ID, Prompt: "resume after reload", ClientID: "resume-frozen"})
@@ -566,6 +627,13 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			}
 			waitForReloadTurnCompletions(t, out, th.ID, 1)
 			waitPluginGenerationWatchTest(t, func() bool { return !srv.hasQueuedAgentCompletionWork(th.ID) && !threadIsRunning(srv.thread(th.ID)) })
+			// The completion may run on the retained graph before finalization
+			// finishes. The next admission must adopt the published graph.
+			admitted, _, err := srv.retainThreadAdmissionState(th.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = admitted.Close()
 			current := srv.thread(th.ID)
 			if current == nil || current == th || th.state != originalState || current.state.Sessions != rt.Sessions {
 				t.Fatal("new admission did not replace the old projection without mutating its binding")
@@ -579,9 +647,18 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			if !strings.Contains(requestMessagesText(requests[0].Messages), "history before reload") || !strings.Contains(requestMessagesText(requests[0].Messages), "worker finished") {
 				t.Fatalf("completion lost retained history or worker result: %+v", requests[0].Messages)
 			}
-			pending, err := current.execRuntime.AgentControl.PendingRootAgentCompletions()
+			// An idle projection may not have a runtime until its next turn.
+			srv.releaseThreadRuntime(current)
+			currentRuntime, err := srv.ensureThreadRuntime(current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if currentRuntime.AgentControl == nil {
+				t.Fatal("rebuilt runtime has no agent control")
+			}
+			pending, err := currentRuntime.AgentControl.PendingRootAgentCompletions()
 			if err != nil || len(pending) != 0 {
-				t.Fatalf("completion acknowledgement missing: %+v %v", pending, err)
+				t.Fatalf("completion acknowledgement missing after runtime rebuild: %+v %v", pending, err)
 			}
 			var completed subagent.SubAgentSnapshot
 			for _, snap := range control.List() {
@@ -914,6 +991,80 @@ func TestPluginReloadRetiresAfterLeaseReleasedBeforePoll(t *testing.T) {
 		raw, err := os.ReadFile(shutdownPath)
 		return retired && err == nil && string(raw) == "old implementation"
 	})
+}
+
+func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
+	for _, ephemeral := range []bool{false, true} {
+		for _, mode := range []string{"steer", "queue"} {
+			t.Run(fmt.Sprintf("ephemeral_%t_%s", ephemeral, mode), func(t *testing.T) {
+				entered, release := make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				unblock := func() { once.Do(func() { close(release) }) }
+				t.Cleanup(unblock)
+				client := &fakeClient{response: providers.ChatResponse{Content: "answer"}, onChat: func(call int, _ providers.ChatRequest) {
+					if call == 1 {
+						close(entered)
+						<-release
+					}
+				}}
+				rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
+				publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
+				out := &lockedBuffer{}
+				srv := New(rt, out)
+				defer func() { unblock(); srv.Close(); _, _ = rt.Cleanup() }()
+				dispatchPayload(t, srv, "create", MethodThreadStart, ThreadStartParams{Ephemeral: ephemeral})
+				threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+				dispatchPayload(t, srv, "start", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+				started := responseByID(t, parseOutput(t, out.String()), "start")
+				if started["error"] != nil {
+					t.Fatalf("start: %+v", started)
+				}
+				turnID := remarshal[TurnStartResult](t, started["result"]).Turn.ID
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("first model call did not start")
+				}
+				original := srv.thread(threadID)
+				publishReloadBehaviorGeneration(t, rt, "new implementation", "Read fixture")
+				if original.state.Sessions == rt.Sessions {
+					t.Fatal("fixture did not replace the session authority")
+				}
+				check := func(id, method string, params any) map[string]any {
+					t.Helper()
+					dispatchPayload(t, srv, id, method, params)
+					response := responseByID(t, parseOutput(t, out.String()), id)
+					if response["error"] != nil {
+						t.Fatalf("%s during retained turn: %+v", method, response)
+					}
+					return response
+				}
+				if mode == "steer" {
+					check("guide-cancel", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "cancel this guide", ClientID: "guide-cancel"})
+					if result := remarshal[OKResult](t, check("unsteer", MethodTurnUnsteer, TurnUnsteerParams{ThreadID: threadID, SteerID: "guide-cancel"})["result"]); !result.OK {
+						t.Fatal("guide could not be removed")
+					}
+					check("guide-queue", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "convert this guide", ClientID: "guide-queue"})
+					if result := remarshal[TurnRequeueResult](t, check("requeue", MethodTurnRequeue, TurnRequeueParams{ThreadID: threadID, SteerID: "guide-queue"})["result"]); !result.OK || result.State != "queued" {
+						t.Fatalf("guide could not be queued: %+v", result)
+					}
+				} else {
+					check("queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queue this message", ClientID: "guide-queue"})
+				}
+				if result := remarshal[TurnUpdateQueuedResult](t, check("edit", MethodTurnUpdateQueued, TurnUpdateQueuedParams{ThreadID: threadID, QueueID: "guide-queue", Prompt: "edited queued message"})["result"]); !result.OK {
+					t.Fatal("queued input could not be edited")
+				}
+				if result := remarshal[OKResult](t, check("dequeue", MethodTurnDequeue, TurnDequeueParams{ThreadID: threadID, QueueID: "guide-queue"})["result"]); !result.OK {
+					t.Fatal("queued input could not be removed")
+				}
+				if current := srv.thread(threadID); current != original {
+					t.Fatal("input changed the running turn's state owner")
+				}
+				unblock()
+				waitForReloadTurnCompletions(t, out, threadID, 1)
+			})
+		}
+	}
 }
 
 func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {

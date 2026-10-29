@@ -34,6 +34,7 @@ export * from "./ui.js";
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
+export * from "./execution-backend.js";
 export * from "./settings.js";
 export * from "./driver.js";
 export * from "./composition.js";
@@ -41,7 +42,8 @@ export * from "./engine-admin.js";
 export * from "./engine.js";
 export * from "./persistence.js";
 import { DOCUMENT_AUTHORITY_HOST_FEATURE, DOCUMENT_STORE_SERVICE } from "./persistence.js";
-export { delegateService, type ServiceMethodOverride } from "./service-delegation.js";
+export { continueService, delegateService, SERVICE_CONTINUATION_HOST_FEATURE, type ServiceMethodOverride } from "./service-delegation.js";
+export { GOAL_CONTROL_SERVICE_DESCRIPTOR, type GoalSnapshotV1, type GoalControlRequestV1, type GoalControlResultV1 } from "./goal.js";
 
 import type {
   PublicIconName,
@@ -503,7 +505,40 @@ export interface RendererDefinition {
   category: RendererCategory;
   match: string | RegExp;
   priority?: number;
+  /** Opt into cumulative/coalesced tool argument snapshots for one dispatch
+   * capability. Requires a literal MIME match and the tool-result category.
+   * The host supplies content.preview and metadata.toolInput with turnId,
+   * argumentsText, status, and optional error. Previews are transient: do not
+   * execute effects or persist input state. The first matching final resource
+   * reuses the preview's part identity. */
+  toolInput?: Readonly<{ capability: string }>;
   render: unknown; // React.ComponentType<RendererProps> — opaque in SDK
+}
+
+/** Props supplied to a registered content renderer. */
+export interface RendererProps {
+  readonly content: unknown;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly host: PresentationHost;
+}
+
+/** Input to conversation.composer.submit when advertised by a content renderer.
+ * Call synchronously from a trusted button click or its native form submission
+ * (including keyboard activation). Text is limited to 8,000
+ * characters; optional JSON context to 16,384 characters. The host binds the
+ * origin, rejects running/stale sources and preserves composer drafts. */
+export interface RendererSubmissionV1 {
+  readonly text: string;
+  readonly context?: unknown;
+}
+
+/** Host-owned metadata.interaction on conversation artifact renderers. */
+export interface RendererInteractionSnapshotV1 {
+  readonly contractVersion: 1;
+  readonly threadId?: string;
+  readonly running: boolean;
+  readonly readOnly: boolean;
+  readonly disabledReason?: string;
 }
 
 export interface ThemeTokens {
@@ -761,6 +796,7 @@ export const HOST_SERVICE_METHODS = [
   "host.workspace.apply",
   "host.workspace.discard",
   "host.service.call",
+  "host.service.continue",
 ] as const;
 
 export type HostServiceMethod = (typeof HOST_SERVICE_METHODS)[number];
@@ -773,6 +809,8 @@ export const USER_QUESTION_OFFER_SERVICE = "host.user-question.offer" as const;
 export const ARTIFACT_IMPORT_SERVICE = "host.artifact.import" as const;
 export const FILE_LOCK_SERVICE = "host.file-lock" as const;
 export const MODEL_REQUEST_SERVICE = "host.model.request" as const;
+/** Opt-in, bounded live session progress; not event replay or an input receipt. */
+export const SESSION_PROGRESS_HOST_FEATURE = "session.progress.v1" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -800,7 +838,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.workspace.status": "host.workspace.status",
   "host.workspace.apply": "host.workspace.apply",
   "host.workspace.discard": "host.workspace.discard",
-} as const satisfies Record<Exclude<HostServiceMethod, "host.service.call">, string>;
+} as const satisfies Record<Exclude<HostServiceMethod, "host.service.call" | "host.service.continue">, string>;
 
 export type KernelHostServiceMethod = keyof typeof KERNEL_SERVICE_NAMES;
 
@@ -840,7 +878,7 @@ export type ProductComposition = {
   version: 1;
   profiles?: Record<string, { modules: string[]; services?: ServiceBinding[] }>;
 } | {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   profiles?: Record<string, CompositionProfile>;
   bundles?: Record<string, CompositionBundle>;
   /** Applied last. Without a profile/modules, patches start from an empty set. */
@@ -1026,6 +1064,8 @@ export interface ServiceInvokeParams<TParams = unknown> {
   method: string;
   caller: string;
   execution_id?: string;
+  /** Single-use unchanged selected-tool dispatch; never generic call authority. */
+  continuation_id?: string;
   /** Authenticated caller attribution; never use its ID to issue host calls. */
   caller_scope?: CallerExecutionScope;
   params?: TParams;
@@ -1435,6 +1475,36 @@ export interface CredentialRequestResult {
   body: string;
 }
 
+/** Replace the entire display snapshot on each read; do not merge it as events.
+ * Only the caller's owned session and an exclusively correlated request can be
+ * projected. Shared/mixed-input turns are unavailable rather than misattributed.
+ * There is no replay, persistence, delivery, admission or control-authority grant.
+ */
+export type SessionProgressSnapshotV1 =
+  | { readonly version: 1; readonly available: false; readonly reason: "session_not_owned" | "request_not_exclusive" | "turn_unavailable" }
+  | {
+    readonly version: 1;
+    readonly available: true;
+    readonly session_id: string;
+    readonly request_id: string;
+    readonly turn_id: string;
+    /** Latest eligible display items, in conversation order. No prompts,
+     * reasoning, tool arguments/results, attachments or private provider state. */
+    readonly items: readonly SessionProgressItemV1[];
+    /** An item or text was omitted. The entire JSON projection is at most
+     * 32 KiB and contains at most 32 items; text is at most 4096 UTF-8 bytes. */
+    readonly truncated: boolean;
+  };
+
+export interface SessionProgressItemV1 {
+  readonly id: string;
+  readonly type: "assistant" | "tool";
+  readonly status: "in_progress" | "completed" | "failed";
+  readonly text?: string;
+  readonly name?: string;
+  readonly truncated?: boolean;
+}
+
 export interface HostServiceContracts {
   "host.session.route": {
     params: import("./session-transport.js").SessionRouteRequest;
@@ -1560,6 +1630,9 @@ export interface HostServiceContracts {
       request_id?: string;
       wait?: "none" | "terminal";
       timeout_ms?: number;
+      /** Requires explicit request_id and session.progress.v1 host feature.
+       * Samples current display progress without subscribing or changing work. */
+      include_progress?: boolean;
     };
     result: {
       receipt?: ClientInputReceipt;
@@ -1594,6 +1667,7 @@ export interface HostServiceContracts {
       };
       workspace?: { kind: "shared" | "worktree"; dirty?: boolean; changed_files?: string[] };
       timed_out?: boolean;
+      progress?: SessionProgressSnapshotV1;
     };
   };
   "host.session.attachment.read": {
@@ -1690,6 +1764,10 @@ export interface HostServiceContracts {
   };
   "host.service.call": {
     params: { service: string; method: string; execution_id?: string; cleanup?: boolean; params?: unknown };
+    result: unknown;
+  };
+  "host.service.continue": {
+    params: { continuation_id: string; execution_id?: string };
     result: unknown;
   };
 }
@@ -2136,6 +2214,13 @@ function scopedRuntimeHost(host: RuntimeHost, execution: RuntimeExecutionContext
       const signal = options?.cleanup ? options.signal : options?.signal
         ? AbortSignal.any([execution.signal, options.signal])
         : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params as HostServiceContracts["host.service.continue"]["params"];
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id, execution_id: execution.executionId,
+        }, {signal});
+      }
       const serviceParams = method === "host.service.call"
         ? params as HostServiceContracts["host.service.call"]["params"]
         : { service: KERNEL_SERVICE_NAMES[method as KernelHostServiceMethod], method: KERNEL_SERVICE_METHOD, params };
@@ -2178,6 +2263,7 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 
   supports(method: HostServiceMethod): boolean {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
 
@@ -2191,6 +2277,9 @@ class JSONLRuntimeHost implements RuntimeHost {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise<HostServiceContracts[M]["result"]>((resolve, reject) => {
@@ -2211,10 +2300,12 @@ class JSONLRuntimeHost implements RuntimeHost {
         reject: fail,
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame: { id: string; method: "host.service.call"; params: HostServiceContracts["host.service.call"]["params"] } = method === "host.service.call"
+      const frame = method === "host.service.continue"
+        ? { id, method, params: params as HostServiceContracts["host.service.continue"]["params"] }
+        : method === "host.service.call"
         ? { id, method: "host.service.call", params: params as HostServiceContracts["host.service.call"]["params"] }
-        : kernelServiceCall(id, method, params as HostServiceContracts[KernelHostServiceMethod]["params"]);
-      if (options?.cleanup) {
+        : kernelServiceCall(id, method as KernelHostServiceMethod, params as HostServiceContracts[KernelHostServiceMethod]["params"]);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
         frame.params = { ...frame.params, execution_id: undefined, cleanup: true };
       }
       void this.send(frame).catch(fail);
@@ -2682,6 +2773,8 @@ export interface HeaderTabDescriptorV1 {
   readonly busy?: boolean;
   readonly dirty?: boolean;
   readonly disabled?: boolean;
+  /** Whether this tab can be closed; omitted by older hosts. */
+  readonly closable?: boolean;
 }
 
 export interface HeaderSnapshotV1 {

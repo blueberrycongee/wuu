@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["main.ts", "runtime.ts", "projections.ts"]
+}

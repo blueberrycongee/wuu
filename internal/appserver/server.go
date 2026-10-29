@@ -336,8 +336,10 @@ type Server struct {
 	engineScopes                 map[agentengine.EngineID]engineScope
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
-	nativeHistoryCtx             context.Context
-	nativeHistoryCancel          context.CancelFunc
+	sessionOperationCtx          context.Context
+	sessionOperationCancel       context.CancelFunc
+	packageDownloadCtx           context.Context
+	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
@@ -360,7 +362,11 @@ type Server struct {
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 
-	controlMu sync.Mutex
+	controlLocksMu sync.Mutex
+	controlLocks   map[string]*sessionControlLock
+
+	stdioResumeMu   sync.Mutex
+	stdioResumeTail map[string]*stdioResumeRequest
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
 	inboxMu    sync.Mutex
@@ -369,11 +375,13 @@ type Server struct {
 }
 
 func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
-	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
+	sessionOperationCtx, sessionOperationCancel := context.WithCancel(context.Background())
+	packageDownloadCtx, packageDownloadCancel := context.WithCancel(context.Background())
 	s := &Server{
-		rpcTiming:        newRPCTimingRecorder(),
-		access:           connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
-		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
+		rpcTiming:           newRPCTimingRecorder(),
+		access:              connectionAccess{principal: principal.LocalOwner(), policy: access.PolicyFunc(rt.AuthorizeResource)},
+		sessionOperationCtx: sessionOperationCtx, sessionOperationCancel: sessionOperationCancel,
+		packageDownloadCtx: packageDownloadCtx, packageDownloadCancel: packageDownloadCancel,
 		rt:      rt,
 		out:     out,
 		threads: make(map[string]*threadState),
@@ -816,11 +824,14 @@ func (s *Server) Close() {
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		if s.packageDownloadCancel != nil {
+			s.packageDownloadCancel()
+		}
 		s.cancelPluginAdditivePreparation()
 		s.closeRendererClients()
 		s.closeChatGPTLogins()
-		if s.nativeHistoryCancel != nil {
-			s.nativeHistoryCancel()
+		if s.sessionOperationCancel != nil {
+			s.sessionOperationCancel()
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
@@ -1149,6 +1160,16 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		s.deliverClientResponse(raw)
 		return nil
 	}
+	// Ingress dispatch is ordered, but admitted handlers may still be running.
+	// Reject a reused ID before any early error response can consume the first
+	// request's pending principal/scope and make it fall back to the pipe owner.
+	// Reverse client responses above belong to a separate pending table.
+	s.access.mu.Lock()
+	_, pending := s.access.pending[string(req.ID)]
+	s.access.mu.Unlock()
+	if pending {
+		return errors.New("request id is already in flight")
+	}
 
 	if strings.HasPrefix(req.Method, "transport/") {
 		return s.handleTrustedTransport(ctx, req)
@@ -1166,6 +1187,15 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return err
 	}
 	ctx = s.captureAuthorizedResponse(ctx, req)
+	if _, ordered := ctx.Value(stdioResumeDispatchKey{}).(bool); ordered {
+		if deferred, err := s.deferStdioResume(ctx, req); deferred {
+			return err
+		}
+	}
+	return s.dispatchAuthorizedRequest(ctx, req)
+}
+
+func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) error {
 	switch req.Method {
 	case "session/federation":
 		return s.handleSessionFederation(ctx, req)
@@ -1202,10 +1232,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		return s.handleExtensionCatalogRefresh(req)
 	case MethodExtensionPackageUpdate:
 		return s.handleExtensionPackageUpdate(req)
-	case MethodPluginPackageInspect:
-		return s.handlePluginPackageInspect(req)
-	case MethodPluginPackageInstall:
-		return s.handlePluginPackageInstall(req)
+	case MethodPluginPackageInspect, MethodPluginPackageInstall:
+		return s.handlePluginPackageSource(ctx, req)
 	case MethodPluginPackageRemove:
 		return s.handlePluginPackageRemove(req)
 	case MethodPluginDesktopModuleRead:
@@ -1320,7 +1348,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 				// per-thread mutation lease still serializes its own conversation.
 				if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
 					operationCtx, cancel := context.WithCancel(ctx)
-					stop := context.AfterFunc(s.nativeHistoryCtx, cancel)
+					stop := context.AfterFunc(s.sessionOperationCtx, cancel)
 					defer stop()
 					defer cancel()
 					if err := handle(binding, operationCtx, req); err != nil {
@@ -1390,7 +1418,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 	case MethodSessionFolderDelete:
 		return s.handleOrganizationGroupDelete(req)
 	case MethodThreadArchive:
-		return s.handleThreadArchive(req)
+		return s.handleThreadArchive(ctx, req)
 	case MethodThreadCompactStart:
 		return s.handleThreadCompactStart(ctx, req)
 	case MethodThreadRename:
@@ -1407,7 +1435,23 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 		}
 		return nil
 	case MethodWorkspaceDirectoryList, MethodWorkspaceFileRead, MethodWorkspaceFileResolve, MethodWorkspaceFileChunk:
-		return s.handleWorkspaceView(req)
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer binding.Close()
+		// Workspace views can wait on providers or the filesystem after
+		// authorization. Keep that work off the serial stdio reader and retain
+		// the admitted authority until physical completion. Shutdown owns this
+		// worker through the existing background drain.
+		if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
+			if err := s.handleWorkspaceView(binding, req); err != nil {
+				log.Printf("wuu: %s: %v", req.Method, err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)
 	case MethodWorkspaceStateCleanup:

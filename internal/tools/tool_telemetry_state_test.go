@@ -64,21 +64,16 @@ func TestWorkspaceRevisionExcludesConfiguredRuntimeHome(t *testing.T) {
 				if err != nil || result.IsError {
 					t.Fatalf("read workspace file: %+v %v", result, err)
 				}
-				records := kit.ToolTelemetry()
-				value := records[len(records)-1].RevisionBefore
-				if value == "" {
-					t.Fatal("workspace revision is unavailable")
-				}
 				var payload struct {
 					WorkspaceRevision string `json:"workspace_revision"`
 				}
 				if err := json.Unmarshal([]byte(result.TextProjection()), &payload); err != nil {
 					t.Fatal(err)
 				}
-				if payload.WorkspaceRevision != value {
-					t.Fatalf("file result revision %q differs from telemetry %q", payload.WorkspaceRevision, value)
+				if payload.WorkspaceRevision == "" {
+					t.Fatal("file result workspace revision is unavailable")
 				}
-				return value
+				return payload.WorkspaceRevision
 			}
 			before := revision(kit)
 			if err := os.WriteFile(stateFile, []byte("runtime changed"), 0600); err != nil {

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
+import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
 import { Composer, SplitPaneComposer } from "../ComposerView";
 import { createComposerControls } from "../ComposerControls";
 import { ComposerServicesProvider } from "../ComposerServicesContext";
@@ -90,6 +91,8 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   // branch control for a known non-repository or an as-yet unknown target.
   const branchPickerPending = environmentPending && liveEnvironment.status?.is_repo !== false && Boolean(liveEnvironment.root)
     && Boolean(liveEnvironment.status?.is_repo || settledVisual.current.environment.status?.is_repo);
+  const tab = view.tabs.items.find(row => row.id === ownerTabId);
+  const textOwner = JSON.stringify([pane, ownerTabId, tab?.workspaceId, tab?.workspaceRoot]);
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
   const [, redraw] = useReducer(value => value + 1, 0);
@@ -109,9 +112,55 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const contentRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
   const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
+  const pendingText = useRef<{ owner: string; text: string } | undefined>(undefined);
+  const [deferredSubmission, setDeferredSubmission] = useState<{
+    application: ApplicationServiceV1; owner: string; mode: "queue" | "steer";
+    text?: string; contentParts?: MessageContentPart[]; expectedText: string; attachments: string; context: string;
+  }>();
+  const submitAfterRebind = useRef<{ application: ApplicationServiceV1; context: string;
+    invoke(mode: "queue" | "steer", text?: string, parts?: MessageContentPart[]): Promise<boolean> } | undefined>(undefined);
+  const setText = useCallback((text: string) => {
+    const edit = { owner: textOwner, text };
+    pendingText.current = edit;
+    void controls.setText(text).then(() => {
+      if (pendingText.current === edit) pendingText.current = undefined;
+    }, error => {
+      if (!isPluginLifecycleCancellation(error)) {
+        if (pendingText.current === edit) pendingText.current = undefined;
+        reportPresentedNavigationError(error);
+      }
+    });
+  }, [controls, textOwner]);
+  useEffect(() => {
+    const edit = pendingText.current;
+    if (!edit) return;
+    // Only replay text into the same draft after its application rebinds.
+    if (edit.owner !== textOwner) { pendingText.current = undefined; return; }
+    setText(edit.text);
+  }, [setText, textOwner]);
+  useEffect(() => {
+    if (!deferredSubmission) return;
+    if (deferredSubmission.owner !== textOwner) { setDeferredSubmission(undefined); return; }
+    if (deferredSubmission.application === application) return;
+    const target = submitAfterRebind.current;
+    if (!target || target.application !== application) return;
+    setDeferredSubmission(undefined);
+    const current = view.drafts[pane];
+    const text = pendingText.current?.owner === textOwner ? pendingText.current.text
+      : contentRef.current?.querySelector("textarea")?.value ?? current.text;
+    const attachments = JSON.stringify([current.imageIds, current.fileIds, current.selections]);
+    // Only a request proven not to have started may be retried, and only while
+    // its original draft still owns the exact input the user chose to send.
+    if (text !== deferredSubmission.expectedText || attachments !== deferredSubmission.attachments || target.context !== deferredSubmission.context) {
+      showApplicationActionError(new Error(t("composer.sendFailedDraftRetained")));
+      return;
+    }
+    void target.invoke(deferredSubmission.mode, deferredSubmission.text, deferredSubmission.contentParts)
+      .then(accepted => { if (!accepted) showApplicationActionError(new Error(t("composer.sendFailedDraftRetained"))); })
+      .catch(showApplicationActionError);
+  }, [application, deferredSubmission, pane, t, textOwner, view]);
   useEffect(() => { run(controls.refreshEngines()); }, [controls, run, liveRuntime?.engineSelectionPending]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
-  const tab = view.tabs.items.find(row => row.id === ownerTabId);
   const draft = view.drafts[pane];
   if (!runtime || !tab || draft.ownerTabId !== ownerTabId) return null;
   const Input = view.drafts.split ? SplitPaneComposer : Composer;
@@ -127,7 +176,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const queued = (rows: readonly ApplicationPendingComposerMessageV1[] = []): QueuedComposerMessage[] => rows.filter(row => !retained.some(operation => operation.messageID === row.id)).map(row => ({ ...row, images: images(row.imageIds), files: files(row.fileIds) }));
   const visibleResources = [...draft.imageIds, ...draft.fileIds, ...(pending?.queued ?? []).flatMap(row => [...row.imageIds, ...row.fileIds]), ...(pending?.guides ?? []).flatMap(row => [...row.imageIds, ...row.fileIds])];
   attachments.retainVisible(visibleResources);
-  const failedSend = view.submission.operations.find(row => row.mode === "send" && row.phase === "failed" && row.error
+  const failedSend = view.submission.operations.find(row => row.mode && row.phase === "failed" && row.error
     && (row.ownerTabId === ownerTabId || Boolean(presentation.threadId && row.threadId === presentation.threadId)));
   const creation = view.submission.pendingCreations.find(row => row.ownerTabId === ownerTabId);
   const stop = view.submission.stopRequests.find(row => row.threadId === presentation.threadId);
@@ -138,12 +187,24 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     permissions: { mode: selection.permissionMode, approve_for_me: selection.approveForMe } } as ComposerConfiguration;
   const offer = view.conversationActions.questions.find(row => row.thread_id === presentation.threadId && row.mode === "offer");
   const document = variant === "document" ? view.previewWorkspace.tabs.find(row => row.id === view.previewWorkspace.activeTabId) : undefined;
+  const submissionContext = JSON.stringify([offer?.request_id, document?.kind === "file" ? ["file", document.path]
+    : document?.kind === "artifact" ? ["artifact", document.artifact.id, document.threadID, document.artifact.sha256] : null]);
   const submit = async (mode: "queue" | "steer", text?: string, contentParts?: MessageContentPart[]) => {
-    const result = await controls.submit(mode, { text, contentParts, consumedOfferID: offer?.request_id,
-      ...(document?.kind === "file" ? { activeDocument: { path: document.path } } : {}),
-      ...(document?.kind === "artifact" ? { artifact: { id: document.artifact.id, threadId: document.threadID, sha: document.artifact.sha256 ?? "" } } : {}) });
-    return result.accepted;
+    const edit = pendingText.current;
+    try {
+      const result = await controls.submit(mode, { text, contentParts, consumedOfferID: offer?.request_id,
+        ...(document?.kind === "file" ? { activeDocument: { path: document.path } } : {}),
+        ...(document?.kind === "artifact" ? { artifact: { id: document.artifact.id, threadId: document.threadID, sha: document.artifact.sha256 ?? "" } } : {}) });
+      if (result.accepted && pendingText.current === edit) pendingText.current = undefined;
+      return result.accepted;
+    } catch (error) {
+      if (!(error instanceof PluginActionNotStartedError)) throw error;
+      setDeferredSubmission({ application, owner: textOwner, mode, text, contentParts,
+        expectedText: text ?? draft.text, attachments: JSON.stringify([draft.imageIds, draft.fileIds, draft.selections]), context: submissionContext });
+      return false;
+    }
   };
+  submitAfterRebind.current = { application, context: submissionContext, invoke: submit };
   const toggle = (next: typeof menu) => setMenu(menu === next ? null : next);
   const selectWorkspace = (workspaceId?: string) => {
     // Picking a destination closes presentation now; provider retirement may
@@ -164,7 +225,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
-      prompt={draft.text} promptRevision={draft.revision} setPrompt={text => run(controls.setText(text))}
+      prompt={draft.text} promptRevision={draft.revision} setPrompt={setText}
       files={files(draft.fileIds)} images={images(draft.imageIds)} selections={structuredClone(draft.selections) as ResponseSelection[]}
       onChangeSelection={selection => run(controls.setSelections(draft.selections.map(row => row.id === selection.id ? selection : row)))}
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
@@ -223,7 +284,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       queryHistory={[...presentation.queryHistory]} requestedHandoffIntent={presentation.requestedHandoffIntent} />
     <SubmissionFailureNotice ownerTabId={ownerTabId} operationID={failedSend?.operationID} sourceOwnerTabId={failedSend?.ownerTabId}
       visible={visible && !switching && view.tabs.activePane === pane && view.submission.failedDraftTabIds.length === 0}
-      onRetry={() => run(submit("queue"))} />
+      onRetry={() => run(submit(failedSend?.mode === "steer" ? "steer" : "queue"))} />
   </div></FileSelectionProvider></ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -977,23 +978,26 @@ const (
 )
 
 type PluginPackageMetadata struct {
-	ID                   string                  `json:"id"`
-	Name                 string                  `json:"name,omitempty"`
-	Version              string                  `json:"version,omitempty"`
-	Description          string                  `json:"description,omitempty"`
-	SourceKind           PluginPackageSourceKind `json:"source_kind"`
-	ArchiveRoot          string                  `json:"archive_root,omitempty"`
-	ManifestPath         string                  `json:"manifest_path"`
-	FileCount            int                     `json:"file_count"`
-	UnpackedSize         int64                   `json:"unpacked_size"`
-	Fingerprint          string                  `json:"fingerprint"`
-	RequestedPermissions []string                `json:"requested_permissions,omitempty"`
-	EffectivePermissions []string                `json:"effective_permissions,omitempty"`
-	UnsupportedFields    []string                `json:"unsupported_fields,omitempty"`
+	ID                   string                      `json:"id"`
+	Name                 string                      `json:"name,omitempty"`
+	Version              string                      `json:"version,omitempty"`
+	Description          string                      `json:"description,omitempty"`
+	SourceKind           PluginPackageSourceKind     `json:"source_kind"`
+	ArchiveRoot          string                      `json:"archive_root,omitempty"`
+	ManifestPath         string                      `json:"manifest_path"`
+	FileCount            int                         `json:"file_count"`
+	UnpackedSize         int64                       `json:"unpacked_size"`
+	Fingerprint          string                      `json:"fingerprint"`
+	RequestedPermissions []string                    `json:"requested_permissions,omitempty"`
+	EffectivePermissions []string                    `json:"effective_permissions,omitempty"`
+	UnsupportedFields    []string                    `json:"unsupported_fields,omitempty"`
+	Distribution         *pluginpkg.DistributionLock `json:"distribution,omitempty"`
 }
 
 type PluginPackageInspectParams struct {
-	Path string `json:"path"`
+	Path      string `json:"path"`
+	Registry  string `json:"registry,omitempty"`
+	Integrity string `json:"integrity,omitempty"`
 }
 
 type PluginPackageInspectResult struct {
@@ -1001,7 +1005,9 @@ type PluginPackageInspectResult struct {
 }
 
 type PluginPackageInstallParams struct {
-	Path string `json:"path"`
+	Path      string `json:"path"`
+	Registry  string `json:"registry,omitempty"`
+	Integrity string `json:"integrity,omitempty"`
 }
 
 type PluginPackageInstallResult struct {

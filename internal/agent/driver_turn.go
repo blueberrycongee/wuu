@@ -107,6 +107,7 @@ func (g *streamTurnGateway) prepare(ctx context.Context) error {
 		}
 		return nil
 	}
+	g.toolGate = NewToolExecutionGate(1)
 	if g.runner.SelectedPolicy != nil {
 		policy, err := g.runner.SelectedPolicy.Evaluate(ctx, pluginprotocol.AgentPolicyInput{Phase: "schedule", ExecutionID: loopdriver.ExecutionContextFromContext(ctx).ExecutionID})
 		if err != nil {
@@ -512,10 +513,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		if streamed.runtime != nil {
 			defer g.releaseToolRuntimes([]*TurnToolRuntime{streamed.runtime})
 		}
-		capacity := maxToolConcurrency
-		if g.toolGate != nil {
-			capacity = g.toolGate.capacity
-		}
+		capacity := g.toolGate.capacity
 		messages, segments, runErr := executeSelectedToolBatch(ctx, g.runner.SelectedToolBatch, toolbatch.Request{ID: batch.ID, Calls: batch.Calls, Serial: g.serialTools, MaxParallel: capacity}, ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx}, onResult, streamed.runtime)
 		g.postToolContext = append(g.postToolContext, segments...)
 		g.appendMessages(messages...)

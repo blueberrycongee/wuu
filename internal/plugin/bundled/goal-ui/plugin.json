@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "goal-ui",
+  "name": "Goal controls",
+  "description": "Independent presentation for the selected goal.control provider.",
+  "icon": "check-circle",
+  "version": "0.2.0",
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.10.19",
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [
+      {
+        "name": "goal.control",
+        "major_version": 1,
+        "required": false
+      }
+    ]
+  },
+  "interface": {
+    "displayName": "Goal controls",
+    "shortDescription": "Independent presentation for the selected goal.control provider.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ]
+  }
+}

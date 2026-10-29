@@ -10,6 +10,7 @@ import { SkillsCatalog as PublicSkillsCatalog } from "./SkillsCatalog";
 import type { ComponentProps } from "react";
 import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import type { ExtensionPackageUpdateParams, PluginPackageInstallResult, PluginPackageRemoveResult, RuntimeContext } from "../shared/protocol";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
 // Existing UI scenarios provide a public application fixture; production accepts
 // no business callbacks or window transport fallback.
@@ -761,6 +762,35 @@ describe("SkillsCatalog", () => {
       onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />));
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it.each([
+    { name: "owned retirement", error: new PluginLifecycleCancellationError() },
+    { name: "matching ordinary error", error: new Error(new PluginLifecycleCancellationError().message) },
+    { name: "unowned abort", error: new DOMException("Provider aborted the update", "AbortError") },
+  ])("preserves a settled catalog mutation's $name for the error sink without replaying it", async ({ error }) => {
+    installSkillList([]);
+    const plugin: ExtensionInventoryRecord = {
+      id: "plugin:bundled:widget", name: "widget", kind: "plugin",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "widget", official: true },
+      state: "active", approval_state: "official", runtime_state: "active", enabled: true, fingerprint: "widget",
+    };
+    let reject!: (error: unknown) => void;
+    const update = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={[plugin]} onUpdateExtensionPackage={update} />);
+    });
+    await act(async () => { pluginSwitch("widget")!.click(); });
+    // The committed inventory may reach the replacement shell before the old
+    // scoped action settles. Its typed retirement is not a provider failure.
+    await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...plugin, enabled: false, runtime_state: "stopped" }]} onUpdateExtensionPackage={update} />));
+    await act(async () => reject(error));
+    expect(pluginSwitch("widget")!.getAttribute("aria-checked")).toBe("false");
+    expect(pluginSwitch("widget")!.disabled).toBe(false);
+    expect(update).toHaveBeenCalledOnce();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(error, expect.any(String));
   });
 
   it("switches trusted plugins on and off in place and blocks duplicate changes", async () => {

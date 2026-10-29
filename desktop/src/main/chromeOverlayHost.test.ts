@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from "electron";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChromeOverlayRequest } from "../shared/chromeOverlay";
 import { ChromeOverlayHost } from "./chromeOverlayHost";
 
@@ -8,11 +8,13 @@ vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
   class Contents extends EventEmitter {
     focused = false;
+    destroyed = false;
     mainFrame = { url: "" };
     send = vi.fn();
     setWindowOpenHandler = vi.fn();
     setBackgroundThrottling = vi.fn();
-    isDestroyed = () => false;
+    isDestroyed = () => this.destroyed;
+    close = vi.fn(() => { this.destroyed = true; this.emit("destroyed"); });
     isFocused = () => this.focused;
     getZoomFactor = () => 1;
     focus = vi.fn(() => { this.focused = true; this.emit("focus"); });
@@ -39,7 +41,7 @@ vi.mock("electron", async () => {
 });
 
 type AccountView = {
-  webContents: EventEmitter & { focused: boolean; mainFrame: { url: string }; focus: ReturnType<typeof vi.fn> };
+  webContents: EventEmitter & { focused: boolean; mainFrame: { url: string }; focus: ReturnType<typeof vi.fn>; isDestroyed(): boolean };
   getVisible(): boolean;
 };
 
@@ -50,7 +52,11 @@ function accountMenu() {
     webContents: Object.assign(new EventEmitter(), {
       isDestroyed: () => false, isFocused: () => false, getZoomFactor: () => 1, focus: vi.fn(),
     }),
-    contentView: { children: [] as AccountView[], addChildView(view: AccountView) { this.children.push(view); } },
+    contentView: {
+      children: [] as AccountView[],
+      addChildView(view: AccountView) { this.children = this.children.filter(child => child !== view); this.children.push(view); },
+      removeChildView(view: AccountView) { this.children = this.children.filter(child => child !== view); },
+    },
   });
   const emit = vi.fn();
   const host = new ChromeOverlayHost(emit, "/renderer", "/preload");
@@ -67,6 +73,69 @@ function accountMenu() {
   const paint = () => host.painted(event, request.token, request.generation);
   return { host, owner, window, view, event, request, paint, emit };
 }
+
+afterEach(() => { vi.useRealTimers(); });
+
+describe("native overlay opening recovery", () => {
+  it.each(["did-fail-load", "render-process-gone"])("retires %s and ignores late failures from the retired renderer", failure => {
+    const { host, owner, window, view, request, emit } = accountMenu();
+    view.webContents.emit(failure, {}, -2, "failed", "wuu-chrome://ui/chrome-overlay.html?surface=account", true);
+    expect(view.webContents.isDestroyed()).toBe(true);
+    expect(emit).toHaveBeenCalledTimes(1);
+    const reopened = { ...request, token: "user-reopened" };
+    host.show(window, reopened);
+    const fresh = owner.contentView.children[0];
+    view.webContents.emit("render-process-gone", {});
+    view.webContents.emit("did-fail-load", {}, -2, "late failure", "", true);
+    const event = { sender: fresh.webContents, senderFrame: fresh.webContents.mainFrame } as unknown as IpcMainEvent & IpcMainInvokeEvent;
+    expect(host.ready(event)).toEqual(reopened);
+    host.painted(event, reopened.token, reopened.generation);
+    expect(fresh.getVisible()).toBe(true);
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["no ready", "no paint"])("retires an opening with %s, then accepts a fresh user opening", async phase => {
+    vi.useFakeTimers();
+    const { host, owner, window, view, event, request, emit } = accountMenu();
+    if (phase === "no paint") host.ready(event);
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(view.getVisible()).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
+    // Streaming state and geometry updates cannot keep a broken opening alive.
+    const updated = { ...request, generation: 2 };
+    host.show(window, updated);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(emit).toHaveBeenCalledWith(owner, { token: request.token, generation: 2, command: { type: "dismiss", reason: "failed" } });
+    expect(view.webContents.isDestroyed()).toBe(true);
+    expect(owner.contentView.children).not.toContain(view);
+
+    const reopened = { ...request, token: "user-reopened" };
+    host.show(window, reopened);
+    const fresh = owner.contentView.children[0];
+    expect(fresh).not.toBe(view);
+    const freshEvent = { sender: fresh.webContents, senderFrame: fresh.webContents.mainFrame } as unknown as IpcMainEvent & IpcMainInvokeEvent;
+    expect(host.ready(freshEvent)).toEqual(reopened);
+    host.painted(event, request.token, 2);
+    expect(fresh.getVisible()).toBe(false);
+    host.painted(freshEvent, reopened.token, reopened.generation);
+    expect(fresh.getVisible()).toBe(true);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(fresh.getVisible()).toBe(true);
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["hide", "owner blur"])("does not turn an intentional %s into a late presentation failure", async reason => {
+    vi.useFakeTimers();
+    const { host, owner, window, view, request, emit } = accountMenu();
+    if (reason === "hide") host.hide(window, request.token, request.generation);
+    else owner.emit("blur");
+    emit.mockClear();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(emit).not.toHaveBeenCalled();
+    expect(view.webContents.isDestroyed()).toBe(false);
+    expect(view.getVisible()).toBe(false);
+  });
+});
 
 describe("native account menu focus lifecycle", () => {
   it.each(["loading", "ready", "reopening"])("keeps a %s hidden opening through initialization blur until paint", async (phase) => {

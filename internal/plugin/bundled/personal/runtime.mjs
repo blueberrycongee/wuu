@@ -4,6 +4,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 // packages/plugin-sdk/src/persistence.ts
 var DOCUMENT_STORE_SERVICE = "state.documents";
 var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
@@ -638,6 +641,14 @@ function scopedRuntimeHost(host, execution) {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
       const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
@@ -669,6 +680,7 @@ var JSONLRuntimeHost = class {
     this.supported = new Set(methods ?? []);
   }
   supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
   call(method, params, options) {
@@ -677,6 +689,9 @@ var JSONLRuntimeHost = class {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id2 = `plugin-${++this.sequence}`;
     return new Promise((resolve, reject) => {
@@ -700,8 +715,8 @@ var JSONLRuntimeHost = class {
         reject: fail2
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id: id2, method: "host.service.call", params } : kernelServiceCall(id2, method, params);
-      if (options?.cleanup) {
+      const frame = method === "host.service.continue" ? { id: id2, method, params } : method === "host.service.call" ? { id: id2, method: "host.service.call", params } : kernelServiceCall(id2, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
         frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
       }
       void this.send(frame).catch(fail2);
@@ -1318,7 +1333,7 @@ var PersonalRecords = class {
     if (Date.parse(occurred_at) > Date.now()) throw new Error("source occurrence cannot be in the future");
     return { ...evidence, occurred_at };
   }
-  async invoke(method, input, sessionID, host, execution) {
+  async invoke(method, input, sessionID, host, execution, trustedUserEdit = false) {
     execution.signal.throwIfAborted();
     const actor = await this.actor(sessionID, host);
     if (method === "query") {
@@ -1408,7 +1423,13 @@ var PersonalRecords = class {
         }
         const fact = this.fact(factInput, current, key);
         if (method === "correct" && fact.evidence !== "explicit") throw new Error("an explicit user correction is required");
-        if (current && Date.parse(fact.source_at) <= Math.max(Date.parse(current.source_at), current.conflict ? Date.parse(current.conflict.source_at) : 0)) throw new Error("stale_source: new evidence must be newer than the currently accepted source");
+        if (current) {
+          const previousTime = Math.max(Date.parse(current.source_at), current.conflict ? Date.parse(current.conflict.source_at) : 0);
+          const sourceTime = Date.parse(fact.source_at);
+          const orderedUserEdit = trustedUserEdit && method === "correct" && fact.sources.length === 1 && fact.sources[0].kind === "user_edit" && fact.sources[0].ref.startsWith("personal-ui:") && !tokens(current).includes(sourceToken(fact.sources[0]));
+          if (sourceTime < previousTime || sourceTime === previousTime && !orderedUserEdit) throw new Error("stale_source: new evidence must be newer than the currently accepted source");
+          if (trustedUserEdit && !orderedUserEdit) throw new Error("superseded_source: this user edit was already recorded");
+        }
         for (const stored of await this.all(host)) {
           const blocked = stored.status === "forgotten" ? stored.blocked_sources : stored.superseded_sources;
           if (fact.sources.some((source) => blocked.includes(sourceToken(source)))) throw new Error(stored.status === "forgotten" ? "forgotten_source: old source may not be re-extracted" : "superseded_source: old source was explicitly corrected");
@@ -4687,7 +4708,7 @@ ${t.result?.summary ?? ""}`.toLocaleLowerCase().includes(query))).sort((a, b) =>
         delete params.request_id;
         if (!execution) throw new Error("Personal memory requires a host-bound execution context");
         const { session_id, ...memoryInput } = params;
-        return this.memory.invoke(method.slice(7), memoryInput, String(session_id), clientHost ?? this.host, execution);
+        return this.memory.invoke(method.slice(7), memoryInput, String(session_id), clientHost ?? this.host, execution, method === "memory.correct");
       }
       default:
         throw new Error(`unknown Personal client method ${method}`);

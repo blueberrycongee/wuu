@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   ThreadItem,
@@ -48,8 +49,9 @@ import {
   useConversationRevealSnap,
 } from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
+import { useConversationControls } from "./ConversationControlsContext";
 import {
-  collectTurnArtifacts,
+  collectTurnArtifactsWithRenderers,
   TurnInlineArtifactOutputs,
 } from "./ArtifactOutputs";
 
@@ -136,7 +138,9 @@ export function AssistantTurnShell({
   const answerEntries = display.entries.filter(
     (entry) => entry.position === "answer",
   );
-  const artifacts = useMemo(() => collectTurnArtifacts(turn), [turn]);
+  const { application } = useConversationControls();
+  const workbench = useSyncExternalStore(application.workbench.subscribe, application.workbench.getSnapshot);
+  const artifacts = useMemo(() => collectTurnArtifactsWithRenderers(turn, workbench.renderers), [turn, workbench.renderers]);
   const { processEntries, output, answerHandoffRequested } = layoutAssistantTurn(turn, display, artifacts);
   const activeGrayEntryKey = turn.status === "in_progress"
     ? latestActiveGrayProcessEntryKey([

@@ -47,6 +47,7 @@ vi.mock("./JumpToLatestPill", () => ({
 }));
 
 import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
 import * as artifactComposer from "./ArtifactComposerFile";
@@ -342,6 +343,94 @@ describe("workspace file tabs", () => {
     } finally {
       await act(async () => { desktopWorkbenchController.deactivateRegion("primary"); desktopPluginHost.unload("test:twin-panel-isolation"); });
     }
+  });
+
+  it.each([false, true])("closes the %s selected conversation entry without closing its session or losing the file", async (selectConversation) => {
+    const thread = { ...completedThread(), status: "in_progress" as const };
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
+    const application = new ApplicationController();
+    await application.initialize();
+    await application.invoke("thread.activate", { threadId: thread.id });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(await createDefaultApplicationTestView(application));
+    });
+    await flushAsync();
+    await typeMainPrompt("Keep the running session draft");
+    await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    const file = application.getSnapshot().previewWorkspace.tabs.find(tab => tab.kind === "file")!;
+    const resource = container.querySelector(".workspace-file-resource");
+    if (selectConversation) {
+      await act(async () => container.querySelector<HTMLButtonElement>('.workspace-conversation-tab [role="tab"]')!.click());
+      await flushAsync();
+    }
+    const close = container.querySelector<HTMLButtonElement>(".workspace-conversation-tab .workspace-tool-tab-close");
+    expect(close).not.toBeNull();
+    await act(async () => close!.click());
+    await flushAsync();
+    expect(container.querySelector(".workspace-conversation-tab")).toBeNull();
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    expect(application.getSnapshot().previewWorkspace.activeTabId).toBe(file.id);
+    expect(container.querySelector(".workspace-file-resource")).toBe(resource);
+    expect(application.getSnapshot().conversationWorkspace.primaryThreadId).toBeUndefined();
+    expect(application.getSnapshot().tabs.items.find(tab => tab.threadId === thread.id)?.draftText).toBe("Keep the running session draft");
+    expect(window.wuu.startThread).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="dock"] textarea')!.value).toBe("");
+    expect(application.getSnapshot().previewWorkspace.activeTabId).toBe(file.id);
+    await act(async () => { await application.invoke("thread.activate", { threadId: thread.id }); });
+    await flushAsync();
+    expect(application.getSnapshot().conversationWorkspace.primaryThreadId).toBe(thread.id);
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="dock"] textarea')!.value).toBe("Keep the running session draft");
+    expect(application.getSnapshot().conversationWorkspace.threads.find(item => item.id === thread.id)?.status).toBe("in_progress");
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-conversation-tab [role="tab"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-conversation-tab .workspace-tool-tab-close")!.click());
+    await flushAsync();
+    expect(container.querySelector(".workspace-conversation-tab")).toBeNull();
+    expect(container.querySelector(".workspace-file-resource")).toBe(resource);
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="dock"] textarea')!.value).toBe("");
+    expect(application.getSnapshot().tabs.items.find(tab => tab.threadId === thread.id)?.draftText).toBe("Keep the running session draft");
+  });
+
+  it("recovers a closed unsent draft without selecting it as the new conversation", async () => {
+    const application = new ApplicationController();
+    await application.initialize();
+    await application.invoke("thread.activate", { threadId: completedThread().id });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(await createDefaultApplicationTestView(application));
+    });
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+    await flushAsync();
+    await act(async () => { await application.invoke("draft.start", {}); });
+    await flushAsync();
+    await typeMainPrompt("Preserve this unsent draft");
+    const oldDraft = application.getSnapshot().tabs.activeTabId;
+    const fileId = application.getSnapshot().previewWorkspace.activeFileTabId;
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    const close = container.querySelector<HTMLButtonElement>(".workspace-conversation-tab .workspace-tool-tab-close");
+    expect(close).not.toBeNull();
+    await act(async () => close!.click());
+    await flushAsync();
+    const restored = new ApplicationController();
+    await restored.initialize();
+    expect(restored.getSnapshot().previewWorkspace.tabs.find(tab => tab.id === fileId)?.kind).toBe("file");
+    expect(restored.getSnapshot().previewWorkspace.activeFileTabId).toBe(fileId);
+    expect(restored.getSnapshot().tabs.activeTabId).not.toBe(oldDraft);
+    expect(restored.getSnapshot().drafts.primary.text).toBe("");
+    expect(restored.getSnapshot().tabs.items.find(tab => tab.id === oldDraft)?.draftText).toBe("Preserve this unsent draft");
+    expect(restored.getSnapshot().conversationWorkspace.primaryThreadId).toBeUndefined();
   });
 
   it("keeps the project overview on the selected coordinator or managed session", async () => {

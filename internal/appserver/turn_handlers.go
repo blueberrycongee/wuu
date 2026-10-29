@@ -217,7 +217,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	phaseStarted = req.timing.now()
-	binding, stateErr := s.rt.RetainState()
+	binding, th, stateErr := s.retainThreadAdmissionState(params.ThreadID)
 	req.timing.span("start_state", phaseStarted)
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -225,7 +225,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	defer binding.Close()
 
 	phaseStarted = req.timing.now()
-	th, err := s.ensureThreadLoaded(binding, params.ThreadID)
+	if th == nil {
+		th, err = s.ensureThreadLoaded(binding, params.ThreadID)
+	}
 	req.timing.span("start_thread_load", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -614,14 +616,6 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 }
 
 func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
-	phaseStarted := req.timing.now()
-	binding, stateErr := s.rt.RetainState()
-	req.timing.span("queue_state", phaseStarted)
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnQueueParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -632,6 +626,13 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	if params.ThreadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
+	phaseStarted := req.timing.now()
+	binding, _, stateErr := s.retainUserThreadExecutionState(params.ThreadID, false)
+	req.timing.span("queue_state", phaseStarted)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	phaseStarted = req.timing.now()
 	images, err := normalizeTurnStartImages(params.Images)
 	if err != nil {
@@ -682,7 +683,7 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	msg.ClientID = queueID
 	if !params.Hold {
 		phaseStarted = req.timing.now()
-		if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
+		if err := s.takeSessionControlForInput(binding, params.ThreadID, req.timing); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		req.timing.span("queue_session_control", phaseStarted)
@@ -748,12 +749,6 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleTurnUpdateQueued(ctx context.Context, req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnUpdateQueuedParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -767,6 +762,11 @@ func (s *Server) handleTurnUpdateQueued(ctx context.Context, req Request) error 
 	if params.QueueID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("queue_id is required"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(params.ThreadID, false)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	images, err := normalizeTurnStartImages(params.Images)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -824,12 +824,6 @@ func (s *Server) handleTurnUpdateQueued(ctx context.Context, req Request) error 
 }
 
 func (s *Server) handleTurnDequeue(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnDequeueParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -842,6 +836,11 @@ func (s *Server) handleTurnDequeue(req Request) error {
 	if queueID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("queue_id is required"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(threadID, false)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	persist := true
 	if th := s.threadForState(binding, threadID); th != nil {
 		th.mu.Lock()
@@ -873,12 +872,6 @@ func (s *Server) handleTurnDequeue(req Request) error {
 }
 
 func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnSteerParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -889,6 +882,11 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	if params.ThreadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(params.ThreadID, false)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	images, err := normalizeTurnStartImages(params.Images)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1128,12 +1126,6 @@ func (s *Server) steerAgentCompletion(binding *runtime.State, threadID, resultID
 }
 
 func (s *Server) handleTurnUnsteer(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnUnsteerParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1146,6 +1138,11 @@ func (s *Server) handleTurnUnsteer(req Request) error {
 	if steerID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("steer_id is required"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(threadID, false)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	th := s.threadForState(binding, threadID)
 	if th == nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q not found", threadID))
@@ -1191,12 +1188,6 @@ func (s *Server) handleTurnUnsteer(req Request) error {
 }
 
 func (s *Server) handleTurnRequeue(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnRequeueParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1209,6 +1200,11 @@ func (s *Server) handleTurnRequeue(req Request) error {
 	if steerID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("steer_id is required"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(threadID, false)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	th, err := s.ensureThreadLoaded(binding, threadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -2181,7 +2177,10 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
+	req.timing = req.timing.forThread(threadID)
+	started := req.timing.now()
 	binding, runID, err := s.retainUserThreadExecutionState(threadID, false)
+	req.timing.span("interrupt_state", started)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2189,12 +2188,12 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	if _, err := s.requireRequestAccess(req, MethodTurnInterrupt, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	err = s.interruptThreadForUserState(binding, threadID, runID, "", req.timing.forThread(threadID))
+	err = s.interruptThreadForUserState(binding, threadID, runID, "", req.timing)
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
-// User reads and interruption follow accepted execution ownership, including a
-// Run waiting between turns after a replacement provider has been published.
+// User reads, pending input and interruption follow accepted execution ownership,
+// including a Run waiting between turns after a replacement provider is published.
 // Idle reads and new admissions still use the explicitly selected authority.
 func (s *Server) retainUserThreadExecutionState(threadID string, includeFailedSettlement bool) (*runtime.State, string, error) {
 	runID := s.activeExecutionRunID(threadID)
@@ -2249,7 +2248,7 @@ func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, r
 		timing = timings[0]
 	}
 	started := timing.now()
-	controlErr := s.takeSessionControl(binding, threadID, session.ControlPaused)
+	controlErr := s.takeSessionControl(binding, threadID, session.ControlPaused, timing)
 	timing.span("interrupt_session_control", started)
 	if err := controlErr; err != nil {
 		return err

@@ -76,16 +76,32 @@ describe("provider-owned contributions in declared public slots", () => {
     expect(element.textContent).toBe("Native content");
   });
 
-  it("selects the conversation header tab with its public conversation action", async () => {
+  it("selects and closes the conversation header tab through public actions", async () => {
+    const { application, register, mount, invoke } = await fixture("header.workspace", { snapshot: {
+      contractVersion: 1, scope: "workspace", tabs: [{ id: "thread:one", title: "Conversation", kind: "conversation", closable: true }],
+    } });
+    const snapshot = application.getSnapshot();
+    application.getSnapshot = () => ({ ...snapshot, tabs: { ...snapshot.tabs, activeTabId: "thread:one" } });
+    let api!: PresentationHost;
+    await register(plugin => { plugin.registerPresenter({ id: "header", target: "header.workspace", render: props => { api = props.host; return props.fallback; } }); });
+    mount(); await api.invoke("header.select-tab", { tabId: "thread:one" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("preview.show-conversation", {}, { signal: expect.any(AbortSignal) });
+    await api.invoke("header.close-tab", { tabId: "thread:one" });
+    expect(invoke).toHaveBeenLastCalledWith("preview.close-conversation", { tabId: "thread:one" }, { signal: expect.any(AbortSignal) });
+    application.getSnapshot = () => ({ ...snapshot, tabs: { ...snapshot.tabs, activeTabId: "thread:two" } });
+    await expect(api.invoke("header.select-tab", { tabId: "thread:one" })).rejects.toThrow("no longer active");
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send an unsupported conversation close to a legacy application provider", async () => {
     const { register, mount, invoke } = await fixture("header.workspace", { snapshot: {
-      contractVersion: 1, scope: "workspace", tabs: [{ id: "conversation", title: "Conversation", kind: "conversation" }],
+      contractVersion: 1, scope: "workspace", tabs: [{ id: "thread:one", title: "Conversation", kind: "conversation", closable: false }],
     } });
     let api!: PresentationHost;
     await register(plugin => { plugin.registerPresenter({ id: "header", target: "header.workspace", render: props => { api = props.host; return props.fallback; } }); });
-    mount(); await api.invoke("header.select-tab", { tabId: "conversation" });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("preview.show-conversation", {}, { signal: expect.any(AbortSignal) });
-    await api.invoke("header.close-tab", { tabId: "conversation" });
-    expect(invoke).toHaveBeenCalledOnce();
+    mount();
+    await api.invoke("header.close-tab", { tabId: "thread:one" });
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("routes a legacy header back action only while its captured view remains active", async () => {

@@ -35,7 +35,14 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
     const bindings = React.useContext(SurfaceBindings);
     const pending = React.useContext(UICompositionPendingContext);
     if (!slot) return null;
-    let contributions = host.getUIContributions(name);
+    let contributions = registered.filter(item => {
+      if (typeof item.target === "string") return item.target === name;
+      const binding = bindings[item.target.service];
+      return !slot.service && item.target.slot === slot.id
+        && binding?.pluginId === slot.pluginId && binding.generation === slot.generation
+        && registered.some(surface => surface.pluginId === binding.pluginId
+          && surface.generation === binding.generation && surface.id === binding.id && surface.mode !== "wrap");
+    });
     if (slot.service) {
       const binding = bindings[slot.service];
       // The graph selects a surface independently of the layout that renders it.
@@ -44,6 +51,9 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
       if (contributions.length !== 1 || contributions[0].mode === "wrap") return pending ? null : <UnavailableSurface host={host} binding={binding} service={slot.service} />;
     }
     const contentContributions = contributions.filter(contribution => contribution.mode !== "wrap");
+    if (!slot.service && slot.cardinality === "one" && contentContributions.length > 1) {
+      return <SlotConflict host={host} name={name} contributions={contentContributions} />;
+    }
     const items = contentContributions.map(contribution => ({
       key: String(activationKey(contribution)), pluginId: contribution.pluginId, id: contribution.id, title: contribution.title ?? contribution.id,
       node: <ShellBoundary key={activationKey(contribution)}
@@ -63,6 +73,16 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
   }
   const composition: UICompositionV1 = Object.freeze({ Slot: React.memo(Slot) });
   return composition;
+}
+
+function SlotConflict({ host, name, contributions }: { host: PluginHost; name: string; contributions: readonly RegisteredUIContribution[] }): null {
+  const identities = contributions.map(activationKey).join(":");
+  React.useEffect(() => {
+    showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-slot-conflict:${name}:${identities}`);
+    const observers = contributions.map(item => host.observeGenerationRender(item.pluginId, item.generation, new Error(`UI slot conflict: ${name}`)));
+    return () => { for (const observer of observers) observer.dispose(); };
+  }, [host, name, identities]);
+  return null;
 }
 
 function UnavailableSurface({ host, binding, service }: { host: PluginHost; binding?: ApplicationShellBinding; service: string }): null {

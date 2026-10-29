@@ -316,6 +316,9 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 	params.SessionID = strings.TrimSpace(params.SessionID)
 	params.TurnID = strings.TrimSpace(params.TurnID)
 	params.RequestID = strings.TrimSpace(params.RequestID)
+	if params.IncludeProgress && params.RequestID == "" {
+		return pluginhost.SessionInspectResult{}, errors.New("include_progress requires an explicit request_id")
+	}
 	delegatedScope, delegated, err := executionRunScope(ctx, pluginID, params.SessionID)
 	if err != nil {
 		return pluginhost.SessionInspectResult{}, err
@@ -350,6 +353,13 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 		}
 		if delegated && params.TurnID != "" && (result.Turn == nil || result.Turn.RequestID != delegatedScope.RunID || result.Turn.TurnID != params.TurnID) {
 			return pluginhost.SessionInspectResult{}, false, errors.New("execution authorization does not cover this turn")
+		}
+		if params.IncludeProgress {
+			turnID := ""
+			if result.Turn != nil {
+				turnID = result.Turn.TurnID
+			}
+			result.Progress = readPluginSessionProgress(s.threadForState(binding, params.SessionID), strings.TrimSpace(pluginID), params.RequestID, turnID)
 		}
 		if err := s.authorizeUserSessionOperation(ctx, "inspect", params.SessionID); err != nil {
 			return pluginhost.SessionInspectResult{}, false, err

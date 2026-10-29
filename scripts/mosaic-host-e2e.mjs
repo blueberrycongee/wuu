@@ -164,7 +164,7 @@ class Host {
   constructor(label, domain, cwd = invocation, owner) { this.label = label; this.domain = domain; this.cwd = cwd; this.owner = owner; }
   async start() {
     const env = { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
-    const args = ["app-server", "--workdir", this.cwd, "--config", join(home, "config.json")];
+    const args = ["app-server", "--workdir", this.cwd, "--config", join(home, this.domain ? "config.json" : "coding-config.json")];
     if (this.domain) args.push("--user-space", "local", "--product-domain", this.domain);
     if (this.owner) {
       this.child = this.owner.child; this.connections = this.owner.connections;
@@ -205,7 +205,7 @@ class Host {
   }
   async client(method, input = {}, name = "personal", overrides = {}) {
     const item = this.package(name);
-    return (await this.rpc("plugin/client/request", { id: item.id, fingerprint: item.fingerprint, method, input,
+    return (await this.rpc("plugin/client/request", { id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation, method, input,
       request_id: `${this.label}-client-${this.sequence + 1}`,
       ...(method === "agents.send" ? { user_input: { request_id: input.request_id, prompt: input.prompt, ...(input.relation ? { relation: input.relation } : {}) } } : {}), ...overrides })).result;
   }
@@ -333,7 +333,7 @@ async function buildSDKHost() {
   const source = join(scratch, "synthetic-sdk-host.go");
   await writeFile(source, `// Acceptance transport fixture only. Uses production logical-memory policy without overrides.
 package main
-import("bufio";"context";"encoding/json";"flag";"fmt";"io";"os";"sync";"github.com/blueberrycongee/wuu/internal/sdk";"github.com/blueberrycongee/wuu/internal/runtime";"github.com/blueberrycongee/wuu/internal/session";"github.com/blueberrycongee/wuu/internal/pluginsettings")
+import("bufio";"context";"encoding/json";"flag";"fmt";"io";"os";"sync";"github.com/blueberrycongee/wuu/internal/sdk";"github.com/blueberrycongee/wuu/internal/runtime";"github.com/blueberrycongee/wuu/internal/session";"github.com/blueberrycongee/wuu/internal/pluginsettings";"github.com/blueberrycongee/wuu/internal/persistence";"path/filepath")
 type output struct{mu sync.Mutex}
 func(o *output) emit(v any)error{o.mu.Lock();defer o.mu.Unlock();return json.NewEncoder(os.Stdout).Encode(v)}
 type writer struct{o *output;client string}
@@ -355,7 +355,7 @@ func multiplex(r *sdk.Runtime)error{
 }
 func run()error{
  if len(os.Args)==4&&os.Args[1]=="probe-storage-transfer"{doc,err:=pluginsettings.ReadState(os.Args[2],"","plugin:bundled:memory",pluginsettings.ScopeUser);if err!=nil{return err};_,visible:=doc.Values[os.Args[3]];_,err=pluginsettings.UpdateState(os.Args[2],"","plugin:bundled:memory",pluginsettings.ScopeUser,func(values map[string]string)error{values[os.Args[3]]="forbidden-old-owner-write";return nil});if err==nil{return fmt.Errorf("old owner write unexpectedly succeeded")};return json.NewEncoder(os.Stdout).Encode(map[string]any{"source_visible":visible,"write_denied":true,"error":err.Error()})}
- if len(os.Args)==4&&os.Args[1]=="read-persisted-history"{head,err:=session.ReadHistoryQuery(context.Background(),os.Args[2],session.HistoryReadQuery{SessionID:os.Args[3],StartSeq:1,Limit:1});if err!=nil{return err};page,err:=session.ReadHistoryQuery(context.Background(),os.Args[2],session.HistoryReadQuery{SessionID:os.Args[3],StartSeq:max(1,head.HeadSeq-49),Limit:50});if err!=nil{return err};return json.NewEncoder(os.Stdout).Encode(page)}
+ if len(os.Args)==4&&os.Args[1]=="read-persisted-history"{docs,err:=persistence.Open(context.Background(),filepath.Join(os.Args[2],"documents"),"sqlite");if err!=nil{return err};defer docs.Close();store:=session.NewStore(context.Background(),docs);head,err:=store.ReadHistoryQuery(session.HistoryReadQuery{SessionID:os.Args[3],StartSeq:1,Limit:1});if err!=nil{return err};page,err:=store.ReadHistoryQuery(session.HistoryReadQuery{SessionID:os.Args[3],StartSeq:max(1,head.HeadSeq-49),Limit:50});if err!=nil{return err};return json.NewEncoder(os.Stdout).Encode(page)}
  if len(os.Args)==6&&os.Args[1]=="read-artifact"{data,_,err:=runtime.ReadManagedArtifact(os.Args[2],os.Args[3],os.Args[4],os.Args[5],1048576);if err!=nil{return err};_,err=os.Stdout.Write(data);return err}
  f:=flag.NewFlagSet("synthetic-sdk-host",flag.ContinueOnError)
  cwd:=f.String("workdir","","fixture workdir");cfg:=f.String("config","","fixture config")
@@ -397,10 +397,14 @@ try {
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
   // The integrated single-conversation suite keeps every earlier turn. Leave
   // enough synthetic context for the full chain; compaction is tested elsewhere.
-  await writeFile(join(home, "config.json"), JSON.stringify({
+  const config = {
     default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic-unused", model: "mosaic-fixture", models: { "mosaic-fixture": { context_window: 131072 } } } },
+    composition: { version: 5, profile: "personal" },
     agent: { permission_mode: "standard", tool_loading: "flat", max_steps: 8 }, skills: { enabled: false }, ptc: { enabled: false },
-  }));
+  };
+  await writeFile(join(home, "config.json"), JSON.stringify(config));
+  const { composition: _personalComposition, ...codingConfig } = config;
+  await writeFile(join(home, "coding-config.json"), JSON.stringify(codingConfig));
   // Seed persisted v1 bytes, not a live Memory provider. The first production
   // Personal activation must adopt records even while the source is disabled.
   const legacyTime = new Date(Date.now() - 60000).toISOString();
@@ -416,16 +420,31 @@ try {
     [`personal.records.v1.${legacyID}`]: JSON.stringify(legacyRecord), [`personal.records.v1.${legacyForgottenID}`]: JSON.stringify(forgotten),
   } }), { mode: 0o600 });
   await scenario("Production CLI activates logical-memory Personal without an isolation override", async () => {
-    const started = spawnSync(binary, ["app-server", "--workdir", invocation, "--config", join(home, "config.json"), "--user-space", "local", "--product-domain", "personal"],
-      { cwd: invocation, env: { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath }, encoding: "utf8", timeout: 30_000,
-        input: JSON.stringify({ id: "activation", method: "initialize", params: { protocol_version: "wuu-app-server/v0.1", client: { name: "logical-activation-e2e" } } }) + "\n" });
-    assert.equal(started.status, 0, started.stderr);
-    const initialized = started.stdout.trim().split("\n").map(line => JSON.parse(line)).find(frame => frame.id === "activation");
-    assert(initialized?.result, started.stdout + started.stderr);
+    const cli = spawn(binary, ["app-server", "--workdir", invocation, "--config", join(home, "config.json"), "--user-space", "local", "--product-domain", "personal"],
+      { cwd: invocation, env: { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath }, stdio: ["pipe", "pipe", "pipe"] });
+    let stderr = ""; cli.stderr.setEncoding("utf8").on("data", value => { stderr += value; });
+    const frames = [], events = new EventEmitter();
+    createInterface({ input: cli.stdout }).on("line", line => { const frame = JSON.parse(line); frames.push(frame); events.emit("frame", frame); });
+    const exited = once(cli, "exit");
+    cli.stdin.write(JSON.stringify({ id: "activation", method: "initialize", params: { protocol_version: "wuu-app-server/v0.1", client: { name: "logical-activation-e2e" } } }) + "\n");
+    let initialized;
+    try {
+      initialized = await new Promise((resolve, reject) => {
+        const cleanup = () => { clearTimeout(timer); events.off("frame", onFrame); cli.off("exit", onExit); };
+        const onFrame = frame => { if (frame.id === "activation") { cleanup(); resolve(frame); } };
+        const onExit = code => { cleanup(); reject(new Error(`CLI exited before initialize (${code}): ${stderr}`)); };
+        const timer = setTimeout(() => { cleanup(); cli.kill("SIGKILL"); reject(new Error(`Timed out: CLI initialize; stderr=${stderr}`)); }, 30_000);
+        events.on("frame", onFrame); cli.once("exit", onExit);
+        for (const frame of frames) onFrame(frame);
+      });
+    } finally { cli.stdin.end(); }
+    const [exitCode] = await exited;
+    assert.equal(exitCode, 0, stderr);
+    assert(initialized?.result, JSON.stringify(initialized) + stderr);
     assert.equal(initialized.result.extension_inventory.find(item => item.id.endsWith(":memory") || item.id === "memory").enabled, false, "legacy migration must not require enabling the source");
     assert.deepEqual(initialized.result.user_host_isolation, { memory: "logical", host: "unverified" });
     assert.equal(initialized.result.user_space_id, "local"); assert.equal(initialized.result.product_domain, "personal");
-    return { exit_code: started.status, capabilities: initialized.result.user_host_isolation };
+    return { exit_code: exitCode, capabilities: initialized.result.user_host_isolation };
   });
   await scenario("Coding keeps its notebook and has no Personal client or model tools", codingBaseline);
   await buildSDKHost();
@@ -635,7 +654,7 @@ try {
     assert(!personal.transcript.some(frame => frame.method === "user/attention" && frame.params?.turn_id === sent.turn_id));
     await personal.client("settings.update", { expected_revision: settings.revision, notifications: original.notifications, notification_batch_seconds: original.notification_batch_seconds ?? 0, quiet_hours: original.quiet_hours });
     return { allowed_turn: positive.turn_id, suppressed_turn: sent.turn_id, visible_reply_retained: true, immediate_policy_only: true, external_push_not_tested: true };
-  });
+  }, process.env.WUU_MOSAIC_DIAGNOSE_AFTER_ATTENTION === "1");
   await scenario("Working notes persist under Personal state without global storage", async () => {
     toolPlans.set("notes-write", { tool: "notes", arguments: { action: "write", path: "checkpoint.md", content: "MOSAIC_PERSONAL_SCOPED_NOTE", revision: "" } });
     await personal.send("notes-write");

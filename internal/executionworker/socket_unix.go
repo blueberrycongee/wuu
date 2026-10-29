@@ -125,7 +125,7 @@ func Connect(ctx context.Context, session string, idleSeconds int, in io.Reader,
 	return err
 }
 
-func ServeSocket(ctx context.Context, session string, idleSeconds int) error {
+func ServeSocket(ctx context.Context, session string, idleSeconds int) (err error) {
 	path, err := socketPath(session)
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func ServeSocket(ctx context.Context, session string, idleSeconds int) error {
 	}
 	server := New()
 	server.requireToken = true
-	defer server.Close()
+	defer func() { err = errors.Join(err, server.Close()) }()
 	if idleSeconds <= 0 {
 		idleSeconds = 600
 	}

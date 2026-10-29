@@ -14,7 +14,7 @@ plugin actually uses, not just `minimum_wuu_version`.
 | Capability negotiation | Versions 1, 2 and 3; an omitted/zero version means 1. Unsupported explicit versions are rejected, never downgraded. Version 1 cannot declare capabilities; version 3 is required for service declarations. |
 | Generation lifecycle | Version 2: initialize declarations, prepare dependencies/state, activate after commit, then shutdown. Product generation preflight rejects lifecycle 0/1 and unknown versions even when the capability version is supported. |
 | Services | A consumer declares a name and major; a selected provider must implement that major. There is no promise that every earlier major remains available. For example, settings gateways and `state.documents` use major 1; the current `driver.turn` uses major 4 and driver profile services use major 2. |
-| Composition | Versions 1–4. Version 1/2 execution and version 1–3 resource-authority projections are read-only; version 4 requires explicit dependencies. |
+| Composition | Versions 1–5. Execution, resource-authority and pre-v5 feature-presentation projections are read-only; version 5 requires explicit runtime/UI dependencies. |
 | Desktop | Each public snapshot/action contract has its own version. Runtime compatibility does not prove a desktop contribution still renders or behaves correctly. |
 
 The SDK package remains `0.1.0`; that number alone does not identify its source
@@ -64,9 +64,9 @@ a compatibility guarantee from sharing SDK version `0.1.0`.
 3. Keep admitted work on its captured generation. Same-ID updates may overlap
    while it drains; removal or disable revokes that plugin and required consumers.
    Restoring a selection does not undo completed external effects.
-4. For composition 1–3, inspect the `migration:vN-to-v3` execution and
-   `migration:vN-to-v4` resource-authority projections before explicitly writing
-   version 4. Startup does not rewrite the old source. Explicit exclusions, replacements and empty selections
+4. For composition 1–4, inspect the applicable `migration:vN-to-v3` execution,
+   `migration:vN-to-v4` resource-authority and `migration:vN-to-v5` feature-UI
+   projections before explicitly writing version 5. Startup does not rewrite the old source. Explicit exclusions, replacements and empty selections
    remain explicit.
 5. Change state providers only through their migration contract. Preserve source
    data and reject conflicting destination state or unknown nonempty legacy

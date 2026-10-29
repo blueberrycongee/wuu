@@ -176,7 +176,7 @@ export class PersonalRecords {
     return { ...evidence, occurred_at };
   }
 
-  async invoke(method: string, input: Record<string, unknown>, sessionID: string, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
+  async invoke(method: string, input: Record<string, unknown>, sessionID: string, host: RuntimeHost, execution: RuntimeExecutionContext, trustedUserEdit = false): Promise<unknown> {
     execution.signal.throwIfAborted();
     const actor = await this.actor(sessionID, host);
     if (method === "query") {
@@ -262,7 +262,19 @@ export class PersonalRecords {
         }
         const fact = this.fact(factInput, current, key);
         if (method === "correct" && fact.evidence !== "explicit") throw new Error("an explicit user correction is required");
-        if (current && Date.parse(fact.source_at) <= Math.max(Date.parse(current.source_at), current.conflict ? Date.parse(current.conflict.source_at) : 0)) throw new Error("stale_source: new evidence must be newer than the currently accepted source");
+        if (current) {
+          const previousTime = Math.max(Date.parse(current.source_at), current.conflict ? Date.parse(current.conflict.source_at) : 0);
+          const sourceTime = Date.parse(fact.source_at);
+          // A client edit is created by the trusted UI route, not by a model or
+          // service caller. Its exact expected revision is checked under the
+          // shared lock, so a distinct edit can follow that revision even when
+          // both wall-clock timestamps have the same millisecond precision.
+          const orderedUserEdit = trustedUserEdit && method === "correct" && fact.sources.length === 1
+            && fact.sources[0].kind === "user_edit" && fact.sources[0].ref.startsWith("personal-ui:")
+            && !tokens(current).includes(sourceToken(fact.sources[0]));
+          if (sourceTime < previousTime || (sourceTime === previousTime && !orderedUserEdit)) throw new Error("stale_source: new evidence must be newer than the currently accepted source");
+          if (trustedUserEdit && !orderedUserEdit) throw new Error("superseded_source: this user edit was already recorded");
+        }
         for (const stored of await this.all(host)) {
           const blocked = stored.status === "forgotten" ? stored.blocked_sources : stored.superseded_sources;
           if (fact.sources.some(source => blocked.includes(sourceToken(source)))) throw new Error(stored.status === "forgotten" ? "forgotten_source: old source may not be re-extracted" : "superseded_source: old source was explicitly corrected");

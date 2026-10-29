@@ -52,9 +52,8 @@ func (s *Server) reserveBackgroundWithState(binding *runtime.State, work func(*r
 	return launch, true
 }
 
-// A queued input is a new admission. Keep an admitted execution run pinned,
-// but wait for old workers to finish before replacing an idle projection.
-// The old thread's immutable State remains valid for its finishing callbacks.
+// An admission follows the existing graph while it owns a run or background
+// work. Once that work settles, an idle projection can adopt the new graph.
 func (s *Server) retainThreadAdmissionState(id string) (*runtime.State, *threadState, error) {
 	current, err := s.rt.RetainState()
 	if err != nil {
@@ -70,7 +69,7 @@ func (s *Server) retainThreadAdmissionState(id string) (*runtime.State, *threadS
 		th.mu.Unlock()
 		return current, th, nil
 	}
-	if s.activeExecutionRunID(id) != "" {
+	if s.activeExecutionRunID(id) != "" || (th.execRuntime != nil && threadRuntimeHasOutstandingWork(id, th.execRuntime)) {
 		held := th.state.Retain()
 		th.mu.Unlock()
 		_ = current.Close()

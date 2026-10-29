@@ -75,6 +75,30 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 上游调用者、转移调用者的工具权限，或让不同 provider 的资源句柄可以互换。
 这类方法仍须遵循各自契约明确的所有权和委托机制。
 
+对于已获准入的 `agent.tools.execute`，在覆盖方法中显式调用
+`continueService<ToolServiceExecution>(host, input)`，参见
+[工具服务装饰器](../../../examples/plugins/tool-service-decorator.ts)。在
+`required_host_features` 中声明 `SERVICE_CONTINUATION_HOST_FEATURE`
+（`service.continuation.v1`），提供 `TOOL_SERVICE_DESCRIPTOR`，在 runtime 需求中声明
+`agent.tools@1`；仅 renderer 的依赖不能建立后端委托边。
+与设置示例相同，将装饰器选为全局提供者，并将它自身的同服务依赖绑定到原生或外部实现。
+其他方法仍可通过普通 `delegateService` 转发。
+
+独立的 `host.service.continue` 入口只接受当前回调的执行 ID 和不透明的
+`continuation_id`。SDK 绑定实际回调 ID；宿主捕获原服务主版本、方法、参数、工具身份、
+generation 和已配置的委托目标。续调不能改写请求、改选目标，也不能把权限借给普通
+下游回调。每层装饰器只能续调一次，委托失败也会消耗它，不会重试或回退。
+回调返回、取消或显式移除/禁用后失效；正常 generation 替换保留已获准入的回调及其
+原依赖，旧续调不会跳转到新实现。原生工具提供者同样必须拥有当前回调自己的工具
+准入，检查发生在初始化后端之前；继承的后端 scope 或上游 `caller_scope` 都不够。
+过去仅在原生实现中碰巧可用的普通 `execute` 转发，现在必须改用 `continueService`。
+进程执行仍经过所选权限与沙箱服务；保留工作不会保留先前的权限决策。
+
+运行 `node scripts/service-continuation-e2e.mjs` 可验证仅依赖打包 SDK 的装饰器和独立
+进程后端，覆盖多层装饰、权限拒绝、原生与外部委托的普通调用拒绝、重复及失败续调、
+取消、所有者及委托者
+移除、暂停后的权限撤销，以及暂停在续调前发生的 generation 替换。报告与日志保存在 `.tmp/e2e/service-continuation/`。
+
 在启用 `project_agent` 的开发构建中，[项目装饰器](../../../examples/plugins/project-decorator.ts)
 只修改指令，并启用 `concurrentServices`，因为托管会话创建可能在返回前重入协调服务。
 将其选为 `project.coordination@1` 提供者，再把它的同服务依赖绑定到
@@ -238,6 +262,14 @@ Personal 策略是 `personal` 提供的普通 `agent.prompt@1` 服务。
 组合通过 `{ "service": "agent.prompt", "major": 1, "provider": "personal" }`
 显式选择它。该提供者从显式请求事实及贡献组装完整的非 Coding 基础提示，保留
 `main` / `worker` 执行角色。用户空间身份不会悄悄切换提示提供者或新增执行角色。
+
+### 替换单个提示词分段
+
+原生提示词提供者在主会话和 worker 结果的分段符合布局要求时，声明可选的 `wuu.prompt.sections.v1` 布局。装饰器可以调用 `promptService(host).assemble(request)`，再使用 `@wuu/plugin-sdk` 的 `await replacePromptSection(result, key, replacement)`。该方法返回新结果，保留其他分段及其元数据。[提示词分段装饰器](../../../examples/plugins/prompt-section-decorator.ts) 展示了如何替换 `environment`，同时保留委托提供者的其他提示词。
+
+将装饰器选为全局 `agent.prompt@1` 提供者，并将装饰器自身的 `agent.prompt@1` 依赖绑定到 `wuu.prompt.default`，绑定方式与前面的提供者部分扩展相同。也可以将多个装饰器依次绑定，每层都必须保留声明的布局。委托提供者缺失或替换失败时，请求会报错，不会回退到原生提供者。
+
+该布局以两个 LF 字节连接 UTF-8 分段内容；每个分段记录 UTF-8 字节数及 SHA-256 前 16 字节的小写十六进制值。替换前，方法会校验布局声明、非空且唯一的 key、元数据、分隔符、字节边界、哈希和完整内容；目标 key 必须存在，替换文本不能为空。结果会更新目标分段的长度和哈希。未声明布局或布局不兼容的结果会被拒绝；普通 `agent.prompt@1` 消费者仍可使用未声明该布局的提供者。提示词分段是行为指引，不能替代权限控制。
 
 `agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
 
@@ -678,3 +710,43 @@ SDK 替换，并用假 CLI 生命周期测试验证进程和持久化取消行�
 协议完整的条目，包括仅有推理内容的进展。续跑从保存的历史发起新采样，
 不会重放中断前的请求。所选策略必须明确授权；宿主仍拒绝缺少检查点、
 存在工具副作用或回执／工作流预算耗尽的续跑。不认识该阶段的策略会明确失败。
+
+## 独立的目标与自动化呈现
+
+| 包 | 拥有的行为 | 公开依赖或服务 |
+| --- | --- | --- |
+| `goal` | 持久状态、持续执行、目标模型工具与 `/goal` 提示 | 提供 `goal.control@1` |
+| `goal-ui` | 输入区目标控制与显示 | 消费 `goal.control@1` |
+| `automation` | 持久计划、运行记录与后台调度 | 提供 `automation.scheduler@1` |
+| `automation-client` | 模型的 `cron` 工具 | 消费 `automation.scheduler@1` |
+| `automation-ui` | 自动化目录与侧栏 | 消费 `automation.scheduler@1` |
+
+移除 UI 包不会移除运行时的数据、工具或正在进行的工作。替换 UI 只需安装一个
+声明相同服务依赖的独立桌面包，不需要导入旧 UI 或运行时源码。也可以选择兼容
+的运行时而不复制呈现代码。UI 依赖为可选：运行时禁用或不可用时显示明确的
+服务错误并禁用修改，而不是导致应用崩溃或暗中换用内置调度器；后续成功读取
+会恢复控件。cron 工具要求调度服务可用，绝不在本地偷偷调度。
+
+SDK 导出 `GOAL_CONTROL_SERVICE_DESCRIPTOR`、`GoalControlRequestV1`、
+`GoalControlResultV1` 和 `GoalSnapshotV1`。在 `desktop.required_services`
+声明 `goal.control@1` 后调用：
+
+```ts
+const result = await api.invokeService<GoalControlResultV1>({
+  service: 'goal.control', method: 'request',
+  params: { method: 'get_goal', input: { thread_id: threadId } },
+});
+```
+
+请求方法包括 `get_goal`、`create_goal`（还需要 `objective`）、`pause`、`resume`
+与 `clear`，都需要 `thread_id`。返回值包含 `goal`，不存在或已清除时为 `null`。
+创建或继续可启动普通会话回合。完成和受阻仍由模型工具提交，不是 UI 控制方法。
+调用使用经认证的消费者服务图和 execution，UI 不能指定实现提供者。目标存储
+仍归原来的 `goal` 身份所有，拆分呈现不会移动或复制状态。旧的
+`plugin.client.request` 端点仍适配到相同控制逻辑，供旧组合包客户端使用，直到
+该 v1 capability 退役。
+
+显式 composition 可以独立选择 `goal-ui`、`automation-ui`
+及对应运行时。第三方现有组合 manifest 仍受支持。composition 迁移保留拆分前
+的内置桌面选择；新的显式 composition 不会根据运行时选择推断并加入 UI。
+headless composition 不需要任何一个 UI 包。

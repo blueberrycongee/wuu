@@ -21,6 +21,8 @@
   "files": [
     "dist/index.js",
     "dist/index.d.ts",
+    "dist/goal.js",
+    "dist/goal.d.ts",
     "dist/theme-contract.generated.js",
     "dist/theme-contract.generated.d.ts",
     "dist/bundle-contract.js",
@@ -31,6 +33,9 @@
     "dist/process.d.ts",
     "dist/client.js",
     "dist/client.d.ts",
+
+    "dist/execution-backend.js",
+    "dist/execution-backend.d.ts",
     "dist/settings.js",
     "dist/settings.d.ts",
     "dist/driver.js",

@@ -23,29 +23,30 @@ import (
 )
 
 type pluginPackageOutput struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name,omitempty"`
-	Version              string   `json:"version,omitempty"`
-	Description          string   `json:"description,omitempty"`
-	SourcePath           string   `json:"source_path,omitempty"`
-	SourceKind           string   `json:"source_kind,omitempty"`
-	Destination          string   `json:"destination,omitempty"`
-	ManifestPath         string   `json:"manifest_path,omitempty"`
-	FileCount            int      `json:"file_count,omitempty"`
-	UnpackedSize         int64    `json:"unpacked_size,omitempty"`
-	Fingerprint          string   `json:"fingerprint,omitempty"`
-	RequestedPermissions []string `json:"requested_permissions,omitempty"`
-	EffectivePermissions []string `json:"effective_permissions,omitempty"`
-	UnsupportedFields    []string `json:"unsupported_fields,omitempty"`
-	Source               string   `json:"source,omitempty"`
-	Root                 string   `json:"root,omitempty"`
-	SubjectID            string   `json:"subject_id,omitempty"`
-	Replaced             bool     `json:"replaced,omitempty"`
-	ApprovalRequired     bool     `json:"approval_required,omitempty"`
-	Removed              bool     `json:"removed,omitempty"`
-	PolicyAction         string   `json:"policy_action,omitempty"`
-	Pending              bool     `json:"pending,omitempty"`
-	ActiveFingerprint    string   `json:"active_fingerprint,omitempty"`
+	ID                   string                      `json:"id"`
+	Name                 string                      `json:"name,omitempty"`
+	Version              string                      `json:"version,omitempty"`
+	Description          string                      `json:"description,omitempty"`
+	SourcePath           string                      `json:"source_path,omitempty"`
+	SourceKind           string                      `json:"source_kind,omitempty"`
+	Destination          string                      `json:"destination,omitempty"`
+	ManifestPath         string                      `json:"manifest_path,omitempty"`
+	FileCount            int                         `json:"file_count,omitempty"`
+	UnpackedSize         int64                       `json:"unpacked_size,omitempty"`
+	Fingerprint          string                      `json:"fingerprint,omitempty"`
+	RequestedPermissions []string                    `json:"requested_permissions,omitempty"`
+	EffectivePermissions []string                    `json:"effective_permissions,omitempty"`
+	UnsupportedFields    []string                    `json:"unsupported_fields,omitempty"`
+	Source               string                      `json:"source,omitempty"`
+	Root                 string                      `json:"root,omitempty"`
+	SubjectID            string                      `json:"subject_id,omitempty"`
+	Replaced             bool                        `json:"replaced,omitempty"`
+	ApprovalRequired     bool                        `json:"approval_required,omitempty"`
+	Removed              bool                        `json:"removed,omitempty"`
+	PolicyAction         string                      `json:"policy_action,omitempty"`
+	Pending              bool                        `json:"pending,omitempty"`
+	ActiveFingerprint    string                      `json:"active_fingerprint,omitempty"`
+	Distribution         *pluginpkg.DistributionLock `json:"distribution,omitempty"`
 }
 
 func runPlugin(args []string) error {
@@ -76,18 +77,23 @@ func runPlugin(args []string) error {
 
 func runPluginInspect(args []string) error {
 	fs, jsonOutput := pluginFlagSet("plugin inspect")
+	registry := fs.String("registry", "", "HTTPS npm registry for an exact npm source")
+	integrity := fs.String("integrity", "", "expected SHA-512 npm artifact integrity")
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
 	}
-	source, err := requiredPluginArgument(fs, "plugin inspect requires one local directory or .zip path")
+	source, err := requiredPluginArgument(fs, "plugin inspect requires a directory, .zip, npm:name@version or lock:path")
 	if err != nil {
 		return err
 	}
-	inspection, err := pluginpkg.InspectPackage(source)
+	ctx, cancel := signalContext()
+	defer cancel()
+	resolved, err := pluginpkg.ResolvePackageSource(ctx, source, pluginpkg.DistributionOptions{Registry: *registry, Integrity: *integrity})
 	if err != nil {
 		return pluginCLIError(err)
 	}
-	return printPluginPackageOutput(packageInspectionOutput(inspection), *jsonOutput, "Valid plugin package")
+	defer resolved.Close()
+	return printPluginPackageOutput(packageInspectionOutput(resolved.Inspection), *jsonOutput, "Valid plugin package")
 }
 
 func runPluginInstall(args []string) error { return runPluginPackageInstall("install", args) }
@@ -95,39 +101,40 @@ func runPluginUpdate(args []string) error  { return runPluginPackageInstall("upd
 
 func runPluginPackageInstall(action string, args []string) (retErr error) {
 	fs, jsonOutput := pluginFlagSet("plugin " + action)
+	registry := fs.String("registry", "", "HTTPS npm registry for an exact npm source")
+	integrity := fs.String("integrity", "", "expected SHA-512 npm artifact integrity")
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
 	}
 	source := ""
 	if action == "update" {
 		if fs.NArg() != 2 {
-			return pluginCLIError(errors.New("plugin update requires an installed plugin id and one local directory or .zip path"))
+			return pluginCLIError(errors.New("plugin update requires an installed plugin id and a directory, .zip, npm:name@version or lock:path"))
 		}
 		source = fs.Arg(1)
 	} else {
 		var err error
-		source, err = requiredPluginArgument(fs, "plugin install requires one local directory or .zip path")
+		source, err = requiredPluginArgument(fs, "plugin install requires a directory, .zip, npm:name@version or lock:path")
 		if err != nil {
 			return err
 		}
 	}
-	inspection, err := pluginpkg.InspectPackage(source)
+	ctx, cancel := signalContext()
+	defer cancel()
+	resolved, err := pluginpkg.ResolvePackageSource(ctx, source, pluginpkg.DistributionOptions{Registry: *registry, Integrity: *integrity})
 	if err != nil {
 		return pluginCLIError(err)
 	}
+	defer resolved.Close()
+	inspection := resolved.Inspection
 	if action == "update" && inspection.ID != fs.Arg(0) {
 		return pluginCLIError(fmt.Errorf("plugin update id %q does not match package id %q", fs.Arg(0), inspection.ID))
 	}
-	identity, err := pluginpkg.PackageSourceIdentity(source)
-	if err != nil {
-		return pluginCLIError(err)
-	}
+	identity := resolved.Identity
 	home, err := statepath.Home("")
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signalContext()
-	defer cancel()
 	binding, err := openCommandState(ctx, "")
 	if err != nil {
 		return err
@@ -151,7 +158,7 @@ func runPluginPackageInstall(action string, args []string) (retErr error) {
 		}
 	}()
 	if _, err := os.Lstat(filepath.Join(home, "plugins", inspection.ID)); err == nil {
-		update, err := pluginpkg.StagePackageUpdate(home, identity)
+		update, err := pluginpkg.StagePackageUpdateFromSource(home, resolved.Path, identity)
 		if err != nil {
 			return pluginCLIError(err)
 		}
@@ -179,7 +186,7 @@ func runPluginPackageInstall(action string, args []string) (retErr error) {
 		}
 		inspection = pending.Package
 	} else {
-		installed, err := pluginpkg.InstallPackage(home, identity)
+		installed, err := pluginpkg.InstallPackage(home, resolved.Path)
 		if err != nil {
 			return pluginCLIError(err)
 		}
@@ -216,6 +223,7 @@ func runPluginPackageInstall(action string, args []string) (retErr error) {
 	if policyErr != nil {
 		return policyErr
 	}
+	inspection.SourcePath = source
 	output := packageInspectionOutput(inspection)
 	output.Destination = filepath.Join(home, "plugins", inspection.ID)
 	output.Replaced = pending != nil
@@ -632,6 +640,7 @@ func packageInspectionOutput(value pluginpkg.PackageInspection) pluginPackageOut
 		RequestedPermissions: append([]string(nil), value.RequestedPermissions...),
 		EffectivePermissions: append([]string(nil), value.EffectivePermissions...),
 		UnsupportedFields:    append([]string(nil), value.UnsupportedFields...),
+		Distribution:         value.Distribution,
 	}
 }
 

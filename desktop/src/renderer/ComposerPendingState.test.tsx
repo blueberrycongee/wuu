@@ -450,6 +450,32 @@ describe("useComposerPendingState", () => {
     ).toEqual(["shared-1"]);
   });
 
+  it("keeps Stop, edit/removal, mode changes, and later new input ordered", async () => {
+    const hook = await renderComposerPendingState();
+    const entry = (id: string, origin = "queue", prompt = id) => ({ id, origin, prompt, thread_id: "thread-a" });
+    const notify = (method: string, params: Record<string, unknown>) => act(() => {
+      hook.get().syncPendingComposerMessagesFromServerEvent({ kind: "notification", message: {
+        method, params: { thread_id: "thread-a", ...params },
+      } } as ServerEvent);
+    });
+    notify("turn/held", { messages: [entry("edit"), entry("consume"), entry("keep")] });
+    notify("turn/dequeued", { queue_id: "edit" });
+    notify("turn/started", { queue_id: "consume" });
+    notify("turn/steered", { message: entry("keep", "steer", "updated") });
+    notify("turn/dequeued", { queue_id: "keep" });
+    notify("turn/queued", { message: entry("fresh") });
+    notify("item/completed", { item: { type: "user_message", source_id: "fresh", id: "item-fresh" } });
+    notify("turn/queued", { message: entry("new") });
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"]).toMatchObject({
+      queued: [{ id: "new", held: false }], guides: [{ id: "keep", held: false, text: "updated" }],
+    });
+    notify("turn/unsteered", { steer_id: "keep" });
+    notify("turn/held", { messages: [] });
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"]).toMatchObject({
+      queued: [{ id: "new", held: false }], guides: [],
+    });
+  });
+
   it("reconciles held messages in server order and releases only the selected idle item", async () => {
     const steerTurn = vi.fn().mockResolvedValue({ turn_id: "turn-released" });
     installWuuStub({ steerTurn });

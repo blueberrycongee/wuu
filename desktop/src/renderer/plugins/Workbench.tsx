@@ -258,6 +258,12 @@ export class WorkbenchController {
       .find((renderer) => rendererMatches(renderer, contentType));
   }
 
+  getToolInputRenderer(capability: string): RegisteredRenderer | undefined {
+    return [...this.host.getRenderers("tool-result")].reverse()
+      .find((renderer) => renderer.toolInput?.capability === capability
+        && typeof renderer.match === "string" && this.getRenderer("tool-result", renderer.match) === renderer);
+  }
+
   createViewHostAPI(view: WorkbenchViewState): ViewHostAPI {
     const activation = this.host.getGenerationActivation(view.pluginId, view.generation);
     const requireActive = (): void => {
@@ -846,6 +852,9 @@ export interface WorkbenchContentRendererProps {
   contentType: string;
   content: unknown;
   metadata?: Readonly<Record<string, unknown>>;
+  /** Only host callers may advertise actions for this exact source. */
+  actions?: readonly string[];
+  dispatchAction?: (action: string, input: unknown, isCurrent: () => boolean, signal: AbortSignal) => unknown | Promise<unknown>;
   fallback: React.ReactNode;
 }
 
@@ -859,22 +868,127 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
   const activation = renderer && props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation);
   React.useEffect(() => renderer ? props.controller.host.retainGeneration(renderer.pluginId, renderer.generation) : undefined, [props.controller, renderer, activation]);
   if (!renderer) return <>{props.fallback}</>;
+  return <MountedContentRenderer key={`${renderer.pluginId}:${renderer.generation}:${renderer.id}`}
+    {...props} renderer={renderer} />;
+}
+
+const consumedContentInteractions = new WeakSet<Event>();
+
+function MountedContentRenderer(props: WorkbenchContentRendererProps & { renderer: RegisteredRenderer }): JSX.Element {
+  const { renderer, controller } = props;
+  const mounted = React.useRef(false);
+  const sourceKey = JSON.stringify([props.category, props.contentType,
+    props.metadata?.threadId, props.metadata?.partId, props.metadata?.artifactId,
+    props.metadata?.sourceRevision]);
+  const latestSource = React.useRef(sourceKey);
+  latestSource.current = sourceKey;
+  const latest = React.useRef(props);
+  latest.current = props;
+  const activation = controller.host.getGenerationActivation(renderer.pluginId, renderer.generation);
+  const lifetime = React.useRef<AbortController | undefined>(undefined);
+  const interaction = React.useRef<{ event: Event; gesture: Event } | undefined>(undefined);
+  const pendingSubmit = React.useRef<{
+    gesture: Event; form: HTMLFormElement; submitter: HTMLButtonElement | HTMLInputElement;
+    sourceKey: string; activation: object | undefined;
+  } | undefined>(undefined);
+  const submitCleanup = React.useRef<number | undefined>(undefined);
+  function clearPendingSubmit(): void {
+    pendingSubmit.current = undefined;
+    if (submitCleanup.current !== undefined) window.clearTimeout(submitCleanup.current);
+    submitCleanup.current = undefined;
+  }
+  React.useLayoutEffect(() => {
+    const sourceLifetime = new AbortController();
+    lifetime.current = sourceLifetime;
+    mounted.current = true;
+    const unsubscribe = controller.host.subscribe(() => {
+      if (controller.host.getGenerationActivation(renderer.pluginId, renderer.generation) !== activation) sourceLifetime.abort();
+    });
+    return () => {
+      mounted.current = false;
+      sourceLifetime.abort();
+      if (lifetime.current === sourceLifetime) lifetime.current = undefined;
+      unsubscribe();
+      interaction.current = undefined;
+      clearPendingSubmit();
+    };
+  }, [sourceKey, activation]);
+  const isCurrent = (): boolean => mounted.current && latestSource.current === sourceKey
+    && activation !== undefined
+    && controller.host.getGenerationActivation(renderer.pluginId, renderer.generation) === activation;
+  const captureInteraction = (event: React.SyntheticEvent): void => {
+    if (!event.nativeEvent.isTrusted || navigator.userActivation?.isActive !== true) return;
+    clearPendingSubmit();
+    const gesture = event.nativeEvent;
+    interaction.current = { event: gesture, gesture };
+    const submitter = event.target instanceof Element ? event.target.closest("button,input") : null;
+    if (!(submitter instanceof HTMLButtonElement || submitter instanceof HTMLInputElement)
+      || !["submit", "image"].includes(submitter.type) || submitter.matches(":disabled")) return;
+    const form = submitter.form;
+    if (!form) return;
+    if (!event.currentTarget.contains(form) || !form.checkValidity()) {
+      interaction.current = undefined;
+      return;
+    }
+    pendingSubmit.current = { gesture, form, submitter, sourceKey, activation };
+    // Native form submission follows the click's default action. This task
+    // cleanup cannot grant a new gesture: only this exact form/submitter may
+    // consume the already captured click, before the next task begins.
+    submitCleanup.current = window.setTimeout(clearPendingSubmit, 0);
+  };
+  const captureSubmit = (event: React.SyntheticEvent): void => {
+    const pending = pendingSubmit.current;
+    clearPendingSubmit();
+    interaction.current = undefined;
+    const submitted = event.nativeEvent as SubmitEvent;
+    // requestSubmit() can emit a trusted SubmitEvent; trust alone is not an
+    // authorization. Keyboard implicit submission uses the native button click.
+    if (!pending || !submitted.isTrusted || navigator.userActivation?.isActive !== true
+      || pending.sourceKey !== sourceKey || pending.activation !== activation
+      || submitted.target !== pending.form || submitted.submitter !== pending.submitter
+      || pending.submitter.form !== pending.form || pending.submitter.matches(":disabled")
+      || !pending.form.isConnected || !pending.form.checkValidity()
+      || pending.gesture.defaultPrevented || consumedContentInteractions.has(pending.gesture)) return;
+    interaction.current = { event: submitted, gesture: pending.gesture };
+  };
+  const releaseInteraction = (): void => { interaction.current = undefined; };
+  const host = controller.createPresentationHostAPI(renderer.pluginId, renderer.generation, props.actions ?? [],
+    (action, input) => {
+      if (!isCurrent()) throw new Error("Content action source is no longer active");
+      const captured = interaction.current;
+      interaction.current = undefined;
+      clearPendingSubmit();
+      const event = captured?.event;
+      // Real input can checkpoint microtasks between React's native capture
+      // and bubble listeners. Bind to the dispatch itself rather than expiring
+      // in a capture microtask or granting a time-based activation window.
+      if (!event || !event.isTrusted || event.eventPhase !== Event.BUBBLING_PHASE
+        || consumedContentInteractions.has(captured!.gesture) || navigator.userActivation?.isActive !== true) {
+        throw new Error("Content actions require a new user interaction");
+      }
+      consumedContentInteractions.add(captured!.gesture);
+      const current = latest.current;
+      if (!current.actions?.includes(action)) throw new Error("Content action is no longer available");
+      if (!current.dispatchAction) throw new Error("Content action dispatcher is unavailable");
+      const signal = lifetime.current?.signal;
+      if (!signal || signal.aborted) throw new Error("Content action source is no longer active");
+      return current.dispatchAction(action, input, isCurrent, signal);
+    });
   const Renderer = renderer.render;
   return (
     <PluginErrorBoundary
-      key={`${renderer.pluginId}:${renderer.generation}:${renderer.id}`}
       pluginId={renderer.pluginId}
       generation={renderer.generation}
-      activation={props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation)}
-      services={props.controller.services}
+      activation={activation}
+      services={controller.services}
       onUseDefault={() => undefined}
       fallback={props.fallback}
     >
-      <Renderer
-        content={props.content}
-        metadata={props.metadata ?? {}}
-        host={props.controller.createRendererHostAPI(renderer.pluginId, renderer.generation)}
-      />
+      <div style={{ display: "contents" }} data-wuu-component="content-renderer"
+        onClickCapture={captureInteraction} onClick={releaseInteraction}
+        onSubmitCapture={captureSubmit} onSubmit={releaseInteraction}>
+        <Renderer content={props.content} metadata={props.metadata ?? {}} host={host} />
+      </div>
     </PluginErrorBoundary>
   );
 }
@@ -1072,11 +1186,19 @@ export function createDefaultWorkbench(
   registry: PluginHost,
   application: () => Pick<ApplicationServiceV1, "invoke" | "catalog" | "subscribe" | "getSnapshot">,
   checkpoint?: WorkbenchSnapshotV1,
+  resolveRetainedStorage?: (pluginId: string, generation: string, current: import("../../../../packages/plugin-sdk/src/ui-catalog").CatalogExtensionV1) => string,
 ): ApplicationWorkbenchV1 & { start(): void; dispose(): void } {
+  const storageFingerprint = (pluginId: string, generation: string): string => {
+    const current = application().catalog.getSnapshot().inventory.find(plugin => plugin.id === pluginId);
+    if (!current || !isAvailablePlugin(current) || !registry.getGenerationActivation(pluginId, generation)) throw new Error("Plugin storage context is no longer active");
+    if (current.fingerprint === generation) return generation;
+    if (!resolveRetainedStorage) throw new Error("Plugin storage source is no longer active");
+    return resolveRetainedStorage(pluginId, generation, current);
+  };
   const controller = new WorkbenchController(registry, {
     getSetting: async (pluginId, generation, key) => (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value,
-    getStorage: async (pluginId, generation, key, scope) => (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value,
-    setStorage: async (pluginId, generation, key, value, scope) => { await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope }); },
+    getStorage: async (pluginId, generation, key, scope) => (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: storageFingerprint(pluginId, generation), key, scope })).value,
+    setStorage: async (pluginId, generation, key, value, scope) => { await window.wuu.setPluginStorage({ id: pluginId, fingerprint: storageFingerprint(pluginId, generation), key, value, scope }); },
     openSettings: () => { void application().invoke("settings.open", { pageId: "providers" }); },
     disablePlugin: pluginId => application().catalog.update({ id: pluginId, action: "disable" }),
     requestRegionVisible: region => { void application().invoke("navigation.reveal-region", { region }); },

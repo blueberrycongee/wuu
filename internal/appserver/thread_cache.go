@@ -183,7 +183,5 @@ func cachedThreadExecutionActiveLocked(th *threadState) bool {
 	if th.running || th.executionLease != nil || th.admissionReserved || th.nativeHistoryMutation {
 		return true
 	}
-	return th.execRuntime != nil &&
-		th.execRuntime.AgentControl != nil &&
-		th.execRuntime.AgentControl.HasOwnedWorkerExecutions()
+	return threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)
 }

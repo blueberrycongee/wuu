@@ -57,7 +57,7 @@ func TestRetainedStateSurvivesGenerationPublication(t *testing.T) {
 	host := pluginhost.New()
 	host.Add(provider)
 	host.Add(owner)
-	domain := newNativeSessionDomain(registry, t.TempDir())
+	domain := newNativeSessionDomain(registry, t.TempDir(), host)
 	host.Add(domain)
 	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner, domain))
 	owner.host = host

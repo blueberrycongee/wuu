@@ -234,22 +234,53 @@ async function typeAndSend(win, text) {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, text);
-  // Mounting the composer does not mean its engine inventory is ready. A
-  // disabled DOM click is silently discarded, so wait for the actual action
-  // before sending one native click; never retry the submission itself.
-  const point = await until(win, text => {
-    const input = document.querySelector(".composer textarea");
-    const button = document.querySelector(".composer-send-button");
-    if (!input || input.value !== text || input.disabled || input.readOnly || input.closest("[inert]")) return false;
-    if (!button || button.disabled || button.closest("[inert]")) return false;
-    const bounds = button.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return false;
-    const point = { x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) };
-    return button.contains(document.elementFromPoint(point.x, point.y)) && point;
-  }, "the composer send action to be ready and reachable", 8000, text);
+  // Startup can enable Send before the preview surface moves its footer into
+  // the tool rail. A single hit test then records coordinates that the native
+  // click can miss. As in first-send-continuity, require a stable laid-out target;
+  // never retry the submission itself or bypass the real pointer dispatch.
+  const point = await until(win, async text => {
+    if (document.fonts.status !== "loaded") return false;
+    let previous, target;
+    for (let frame = 0; frame < 4; frame += 1) {
+      await new Promise(requestAnimationFrame);
+      const input = document.querySelector(".composer textarea");
+      const button = document.querySelector(".composer-send-button");
+      if (!input || input.value !== text || input.disabled || input.readOnly || input.closest("[inert]")) return false;
+      if (!button || button.disabled || button.closest("[inert]") ||
+        input.closest(".composer-wrap")?.querySelector("[data-layout-pending]")) return false;
+      const bounds = button.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) return false;
+      const point = { x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) };
+      const geometry = [bounds.x, bounds.y, bounds.width, bounds.height].join();
+      if (!button.contains(document.elementFromPoint(point.x, point.y)) ||
+        (previous && (previous !== geometry || target !== button))) return false;
+      previous = geometry;
+      target = button;
+      if (frame !== 3) continue;
+      const trace = { point, events: [] };
+      (window.scrollFixtureInputs ??= []).push(trace);
+      for (const type of ["pointerdown", "pointerup", "click"]) {
+        document.addEventListener(type, event => {
+          const button = document.querySelector(".composer-send-button");
+          trace.events.push({ type, trusted: event.isTrusted,
+            sendTarget: Boolean(event.target.closest?.(".composer-send-button")),
+            x: event.clientX, y: event.clientY,
+            target: { tag: event.target.tagName, className: event.target.getAttribute?.("class") ?? "" },
+            button: button?.getBoundingClientRect().toJSON(),
+          });
+        }, { capture: true, once: true });
+      }
+      return point;
+    }
+  }, "the composer send action to be ready, stable and reachable", 8000, text);
   for (const type of ["mousePressed", "mouseReleased"]) {
     await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type, button: "left", clickCount: 1, ...point });
   }
+  const inputs = await evaluate(win, () => window.scrollFixtureInputs);
+  fs.writeFileSync(path.join(output, "input-events.json"), JSON.stringify(inputs, null, 2));
+  assert.deepEqual(inputs.at(-1).events.map(({ type, trusted, sendTarget }) => ({ type, trusted, sendTarget })),
+    ["pointerdown", "pointerup", "click"].map(type => ({ type, trusted: true, sendTarget: true })),
+    "The single native click must reach Send before checking submission placement");
 }
 
 /**
@@ -752,6 +783,10 @@ app.whenReady().then(async () => {
         composer: document.querySelector(".composer textarea")?.value,
         sendDisabled: document.querySelector(".composer-send-button")?.disabled,
         composerInert: Boolean(document.querySelector(".composer")?.closest("[inert]")),
+        messages: [...document.querySelectorAll("[data-user-message-id]")].map(node => node.dataset.userMessageId),
+        placing: Boolean(document.querySelector(".scroll-region-content[data-submit-placing]")),
+        glide: document.documentElement.hasAttribute("data-submit-glide"),
+        inputs: window.scrollFixtureInputs,
         focus: document.activeElement && { tag: document.activeElement.tagName, role: document.activeElement.getAttribute("role"), className: document.activeElement.className },
         resultsBusy: document.querySelector(".conversation-search-results")?.getAttribute("aria-busy"),
         results: [...document.querySelectorAll(".conversation-search-result")].map(result => ({ selected: result.getAttribute("aria-selected"), text: result.textContent?.slice(0, 500) })),

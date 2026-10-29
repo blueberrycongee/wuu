@@ -64,6 +64,7 @@ while :; do sleep 1; done
 }
 
 func TestExecuteShellCommandTimeoutStopsProcessTree(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
 	root := t.TempDir()
 	readyMarker := root + "/ready"
 	descendantMarker := root + "/descendant"

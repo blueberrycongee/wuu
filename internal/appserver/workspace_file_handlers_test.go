@@ -64,6 +64,7 @@ func TestWorkspaceDownloadChunksAndRejectsChangedOrEscapingFiles(t *testing.T) {
 
 func workspaceViewRequest(t *testing.T, srv *Server, out *lockedBuffer, method string, params workspaceViewParams) map[string]any {
 	t.Helper()
+	t.Cleanup(srv.Close)
 	id := method + params.Root + params.Path + params.Reference
 	payload, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil {
@@ -72,7 +73,7 @@ func workspaceViewRequest(t *testing.T, srv *Server, out *lockedBuffer, method s
 	if err := srv.handleLine(context.Background(), payload); err != nil {
 		t.Fatal(err)
 	}
-	return responseByID(t, parseOutput(t, out.String()), id)
+	return waitForResponseByID(t, out, id)
 }
 
 func writeWorkspaceViewFile(t *testing.T, root, name, content string) {

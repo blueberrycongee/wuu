@@ -52,6 +52,10 @@ type pluginHostServices struct {
 	lockCancel             context.CancelFunc
 	processMu              sync.Mutex
 	processes              map[string]*pluginProcess
+	processStarts          map[string]*pluginProcessAdmission
+	processStartOrder      []string
+	processActive          int
+	processesClosed        bool
 	closeCompositions      func() error
 }
 

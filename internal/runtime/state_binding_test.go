@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -25,7 +26,7 @@ func TestRuntimeStateBindingLifecycle(t *testing.T) {
 			host := pluginhost.New()
 			host.Add(state)
 			host.Add(provider)
-			domain := newNativeSessionDomain(registry, t.TempDir())
+			domain := newNativeSessionDomain(registry, t.TempDir(), host)
 			host.Add(domain)
 			host.AttachServiceRegistry(registry, registry.RegisterClients(state, provider, domain))
 			t.Cleanup(func() { _ = host.Close(ctx) })
@@ -70,6 +71,54 @@ func TestRuntimeStateBindingLifecycle(t *testing.T) {
 	}
 }
 
+// A retired graph can still own an admitted inference. Its journal must stay
+// live until that graph actually drains, while unrelated autonomous calls stop.
+func TestRetainedInferenceJournalHeartbeatAfterPublication(t *testing.T) {
+	ctx := context.Background()
+	registry := pluginhost.NewServiceRegistry()
+	owner := newRuntimeState(registry, "heartbeat-test")
+	provider := persistence.NewService("example.state", t.TempDir(), "jsonl")
+	host := pluginhost.New(provider, owner)
+	domain := newNativeSessionDomain(registry, t.TempDir(), host)
+	host.Add(domain)
+	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner, domain))
+	owner.host = host
+	if err := host.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close(ctx) })
+	if err := owner.journal.Ensure(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := owner.journal.RuntimeID()
+	read := func() session.InferenceRuntimeRecord {
+		t.Helper()
+		var record session.InferenceRuntimeRecord
+		err := persistence.Update(ctx, owner.documents, func(tx *persistence.Tx) error {
+			var err error
+			record, err = session.ReadInferenceRuntime(tx, id)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	before := read()
+	host.StopBackground()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if after := read(); after.HeartbeatAt > before.HeartbeatAt && after.ClosedAt == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("retained inference journal stopped heartbeating after publication")
+}
+
 func TestRuntimeStateRequiresSelectedAuthority(t *testing.T) {
 	registry := pluginhost.NewServiceRegistry()
 	state := newRuntimeState(registry, "workspace:test")
@@ -90,8 +139,9 @@ func TestDocumentMethodsDoNotAdmitRetiredAutonomousWork(t *testing.T) {
 	registry := pluginhost.NewServiceRegistry()
 	owner := newRuntimeState(registry, "test")
 	provider := persistence.NewService("example.state", t.TempDir(), "jsonl")
-	domain := newNativeSessionDomain(registry, t.TempDir())
-	host := pluginhost.New(provider, owner, domain)
+	host := pluginhost.New(provider, owner)
+	domain := newNativeSessionDomain(registry, t.TempDir(), host)
+	host.Add(domain)
 	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner, domain))
 	if err := host.Prepare(ctx); err != nil {
 		t.Fatal(err)

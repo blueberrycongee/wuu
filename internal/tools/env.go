@@ -638,7 +638,22 @@ func (e *Env) NormalizeDisplayPath(absPath string) string {
 // the parent repo the user believes is isolated.
 func (e *Env) worktreeExecRoot(ctx context.Context) (string, bool, error) {
 	boundRoot, path, ok := toolctx.WorktreeBinding(ctx)
-	if !ok || filepath.Clean(boundRoot) != filepath.Clean(e.RootDir) {
+	if !ok {
+		return "", false, nil
+	}
+	// Toolkit roots are canonicalized on construction. A binding may have
+	// arrived through an equivalent symlink spelling (such as /var on macOS).
+	// Compare the same filesystem locations before treating it as unrelated.
+	canonicalRoot := func(root string) string {
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolved
+		}
+		return filepath.Clean(root)
+	}
+	if canonicalRoot(boundRoot) != canonicalRoot(e.RootDir) {
 		return "", false, nil
 	}
 	abs, err := filepath.Abs(path)

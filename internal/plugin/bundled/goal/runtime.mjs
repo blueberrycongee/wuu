@@ -3,9 +3,19 @@
 // plugins/goal/src/index.ts
 import { randomBytes } from "node:crypto";
 
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 // packages/plugin-sdk/src/persistence.ts
 var DOCUMENT_STORE_SERVICE = "state.documents";
 var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+
+// packages/plugin-sdk/src/goal.ts
+var GOAL_CONTROL_SERVICE_DESCRIPTOR = {
+  name: "goal.control",
+  version: "1.0.0",
+  methods: [{ name: "request", input_schema: "goal.control.request.v1", output_schema: "goal.control.response.v1" }]
+};
 
 // packages/plugin-sdk/src/theme-contract.generated.ts
 var PUBLIC_THEME_TOKEN_NAMES = [
@@ -571,6 +581,14 @@ function scopedRuntimeHost(host, execution) {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
       const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation2 = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation2.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
       const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
@@ -602,6 +620,7 @@ var JSONLRuntimeHost = class {
     this.supported = new Set(methods ?? []);
   }
   supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
     return this.supported.has("host.service.call") || this.supported.has(method);
   }
   call(method, params, options) {
@@ -610,6 +629,9 @@ var JSONLRuntimeHost = class {
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise((resolve, reject) => {
@@ -633,8 +655,8 @@ var JSONLRuntimeHost = class {
         reject: fail
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
-      if (options?.cleanup) {
+      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
         frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
       }
       void this.send(frame).catch(fail);
@@ -1019,12 +1041,20 @@ ${String(saveError)}`);
       await save(host2, goal.thread_id, goal);
     } else await continueGoal(host2, goal);
   }
+  async function clientRequest(host2, value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected one goal request object");
+    const envelope = value;
+    if (envelope.method === "update_goal") throw new Error("use model tool for completion; user controls support pause, resume and clear");
+    const args = decode(envelope.input, envelope.method === "create_goal" ? ["thread_id", "objective"] : ["thread_id"]);
+    return mutate(host2, envelope.method, args, "", true);
+  }
   return {
     initialize(_params, runtimeHost) {
       host = runtimeHost;
       goals = {};
       stopped = false;
       return {
+        provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
           { id: "create_goal", description: "Create a persistent goal only when the user explicitly asks for a goal. An unfinished goal cannot be replaced.", input_schema: schema({ objective: { type: "string", minLength: 1, maxLength: maxObjectiveBytes } }, ["objective"]) },
           { id: "get_goal", description: "Read this session's goal, status, settled token usage and active time.", input_schema: schema({}), activity: { read_only: true, concurrency_safe: true, risk: "low" } },
@@ -1138,6 +1168,11 @@ ${String(saveError)}`);
       const result = await locked(() => mutate(host2, call.tool_id, args, call.turn_id || "", false));
       return { result: { content: [{ type: "text", text: JSON.stringify(result) }], structured_content: result } };
     },
+    async invokeService(call, host2) {
+      if (call.service !== "goal.control") throw new Error("unknown goal service");
+      if (call.method !== "request") throw new Error("unknown goal service method");
+      return locked(() => clientRequest(host2, call.params));
+    },
     async invokeCapability(call, host2) {
       return locked(async () => {
         if (stopped) throw new Error("goal plugin is stopped");
@@ -1145,10 +1180,7 @@ ${String(saveError)}`);
           case "agent.system_prompt.section":
             return { output: { text: "Use create_goal only when the user explicitly requests a persistent goal. Ordinary tasks do not create goals. get_goal reads the goal; update_goal may only mark verified completion or a blocker persisting for three consecutive goal turns. Goal controls belong to the user. Active goals continue across turns until completed, blocked, or paused." } };
           case "plugin.client.request": {
-            const envelope = call.input;
-            const args = decode(envelope.input, ["thread_id", "objective", "status"]);
-            if (envelope.method === "update_goal") throw new Error("use model tool for completion; user controls support pause, resume and clear");
-            return { output: { result: await mutate(host2, envelope.method, args, "", true) } };
+            return { output: { result: await clientRequest(host2, call.input) } };
           }
           case "agent.pre_step": {
             const input = call.input, goal = goals[input.session_id || input.thread_id || ""];

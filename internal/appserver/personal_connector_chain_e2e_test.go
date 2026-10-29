@@ -319,6 +319,21 @@ func connectorChain(t *testing.T, scenario string) {
 			binding.Close()
 			t.Fatal("exact grant inspected a different run")
 		}
+		for _, requestID := range []string{"", "  "} {
+			if _, err := host.server.inspectPluginSession(admitted, "personal", pluginhost.SessionInspectParams{SessionID: execution.SessionID, RequestID: requestID, IncludeProgress: true, ExecutionAuthorization: &execution.Authorization.Reference}); err == nil || !strings.Contains(err.Error(), "explicit request_id") {
+				binding.Close()
+				t.Fatalf("exact grant allowed progress without an explicit request: %v", err)
+			}
+		}
+		view, inspectErr := host.server.inspectPluginSession(admitted, "personal", pluginhost.SessionInspectParams{SessionID: execution.SessionID, RequestID: execution.RequestID, IncludeProgress: true, ExecutionAuthorization: &execution.Authorization.Reference})
+		if inspectErr != nil || view.Progress == nil {
+			binding.Close()
+			t.Fatalf("exact grant could not inspect its progress: %+v, %v", view, inspectErr)
+		}
+		if _, err := host.server.inspectPluginSession(admitted, "personal", pluginhost.SessionInspectParams{SessionID: execution.SessionID, RequestID: execution.RequestID, TurnID: "foreign-turn", IncludeProgress: true, ExecutionAuthorization: &execution.Authorization.Reference}); err == nil {
+			binding.Close()
+			t.Fatal("exact grant inspected a different turn's progress")
+		}
 		// Keep the non-owner restoration path for this deliberate delegated cancel.
 		delegated, restoreErr := rt.RestoreExecutionAuthorization(admitted, "personal", execution.Authorization.Reference, execution.SessionID, "user/session/cancel", access.Resource{Kind: "user-space", ID: "local"}, access.Resource{Kind: "session", ID: execution.SessionID})
 		if restoreErr != nil {

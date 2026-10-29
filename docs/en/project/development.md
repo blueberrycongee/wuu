@@ -50,6 +50,16 @@ disabled release behavior. Packaged releases must omit this build tag.
 absent, disabled and enabled backend capabilities, saving screenshots and results
 under `desktop/out/e2e/project-agent-gate/`.
 
+After building the desktop, `npm --prefix desktop run test:e2e:settings-overlay`
+exercises the real native Settings menu, not its hidden DOM measurement copy.
+It checks visible bounds, painted pixels, hit targets, dismissal and focus,
+Settings navigation with a running conversation and draft, and recovery when a
+first-paint acknowledgement is lost. The synthetic backend needs no model or
+account. Results, transport traces and separate shell/menu captures go to
+`desktop/out/e2e/settings-overlay/`; `WUU_SETTINGS_OVERLAY_OUTPUT` overrides it.
+Linux and hosted macOS CI run this gate; separate captures do not replace a
+composed desktop screenshot or physical macOS acceptance.
+
 For CLI-only development:
 
 ```bash
@@ -57,7 +67,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-The ten bundled business plugins are TypeScript source under `plugins/<id>/src/`.
+Bundled business plugins use TypeScript source under `plugins/<id>/src/`.
 `make build-plugins` emits self-contained JavaScript into the embedded package assets;
 `make build-go`, `make install`, and desktop core builds regenerate those assets before
 compiling Go. The checked-in bundles keep plain Go builds reproducible without an npm
@@ -685,6 +695,11 @@ overhead and must remain separate from uninstrumented wall-clock baselines.
   request processing from work after the reply. `stdin_read` means the serial
   scanner consumed a complete frame, not when bytes first reached the pipe.
   Existing asynchronous handlers can return before their eventual response.
+  `resume_dispatch_wait` and `resume_dispatch_begin/end` identify an off-ingress
+  resume or its same-conversation successor; its `handler_end` is ingress return,
+  not background completion. Active Stop may bypass pure resume reads, but not
+  earlier submitted input. Pending-summary and response-snapshot mutex waits
+  are recorded separately from provider reads.
 - `resume_*` separates persisted-history loading, child/worktree inspection,
   metadata/held-input reads, process recovery, cache detach and detached cleanup.
 - `queue_*` separates input preparation, permission/control checks, actual mutex
@@ -694,6 +709,10 @@ overhead and must remain separate from uninstrumented wall-clock baselines.
   previous-turn settlement, plugin refresh, execution lease, history refresh,
   runtime preparation, hooks and the durable user append. Launch is **not** a
   provider request: keep the local provider/HTTP wrapper's dispatch timestamps.
+- `session_control_mutex_wait` measures the per-session control-lock acquisition;
+  `session_control_input_read` and `session_control_read` measure the selected
+  provider reads outside and inside that lock. Unrelated session control
+  transactions do not share the provider-waiting critical section.
 - `interrupt_*` separates session control, held-input persistence, cancellation,
   worker freeze, managed-process stop and lifecycle bookkeeping. The interrupt
   response and the later terminal notification/UI update are distinct events.

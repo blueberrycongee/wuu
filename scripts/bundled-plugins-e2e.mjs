@@ -279,11 +279,13 @@ try {
     const processes = new Map();
     const deliveries = [];
     let failDelivery = true;
+    let environment = { backend: 'command', root: '/selected/monitor-workspace', identity: 'monitor-environment' };
     host.intercept = call => {
       if (call.service !== 'host.process') return;
       const input = call.params;
+      if (call.method === 'environment') return environment;
       if (call.method === 'start') {
-        const process = { id: `process-${input.key}`, session_id: 'parent', state: 'running', exit_code: -1, output: '' };
+        const process = { id: `process-${input.key}`, session_id: 'parent', state: 'running', exit_code: -1, output: '', environment };
         processes.set(process.id, process);
         return process;
       }
@@ -303,9 +305,10 @@ try {
       return { session_id: process.session_id, state: 'running', steered: true };
     };
     let runtime = await launch('monitor', host);
-    const started = resultJSON(await runtime.tool('monitor', { command: 'printf fixture', description: 'Fixture watch', persistent: true }));
+    const started = resultJSON(await runtime.tool('monitor', { command: 'printf fixture', description: 'Fixture watch', persistent: true }, { cwd: '/host/worktree' }));
     const process = processes.get(started.task_id);
     const start = host.calls.find(call => call.service === 'host.process' && call.method === 'start');
+    assert.equal(start.params.cwd, undefined, 'The host callback path is not a remote working-directory override');
     assert.equal(start.params.follow_parent, true);
     assert.equal(start.params.timeout_ms, 0);
     assert(start.execution_id, 'Shell start retains the live tool execution');
@@ -321,6 +324,7 @@ try {
     assert(!deliveries[1].input.prompt.includes('partial'), 'Incomplete output waits until a line or exit');
     const listed = resultJSON(await runtime.tool('monitor_tasks', { action: 'list' }));
     assert.equal(listed.tasks.length, 1);
+    assert.equal(listed.tasks[0].cwd, environment.root, 'Monitor history records the selected execution root');
     assert.equal(resultJSON(await runtime.tool('monitor_tasks', { action: 'list' }, { session_id: 'peer', thread_id: 'peer' })).tasks.length, 0);
     await runtime.client('monitor.tasks', { action: 'stop', task_id: process.id, thread_id: 'parent' });
     await deadline(watch.done, 'monitor completes after manual stop');
@@ -332,7 +336,10 @@ try {
     assert.equal(stopped.status, 'stopped');
     assert.equal(stopped.lines, 2);
     assert.equal(stopped.delivery_pending, false);
-    const surviving = resultJSON(await runtime.tool('monitor', { command: 'printf recovery', description: 'Recover history', persistent: true }));
+    environment = { backend: 'local', root: '/host/worktree/subdirectory' };
+    const surviving = resultJSON(await runtime.tool('monitor', { command: 'printf recovery', description: 'Recover history', persistent: true }, { cwd: environment.root }));
+    const localTask = (await runtime.client('monitor.tasks', { action: 'list', thread_id: 'parent' })).tasks.find(task => task.id === surviving.task_id);
+    assert.equal(localTask.cwd, '/host/worktree/subdirectory', 'Local worktree/subdirectory bindings retain their selected root');
     await runtime.shutdown();
     const beforeRestart = host.calls.length;
     runtime = await launch('monitor', host);
@@ -616,6 +623,24 @@ try {
     const state = host.state('automation.state');
     assert.equal(state.tasks.find(task => task.id === 'race-fixture')?.prompt, 'Edited future work');
     assert.equal(state.runs.find(run => run.request_id === sent.params.request_id)?.status, 'completed');
+  });
+  // Failure cases: presentation is required for runtime work, an independent
+  // consumer cannot control the selected goal, or UI gains model-only completion.
+  await scenario('goal', 'headless tools and independent presentation share the public goal service', async () => {
+    const runtime = await launch('goal');
+    assert(runtime.definition.provided_services.some(service => service.name === 'goal.control' && service.version === '1.0.0'));
+    await runtime.tool('create_goal', { objective: 'Work without presentation' });
+    const request = (method, input = {}) => runtime.service('goal.control', 'request', { method, input: { thread_id: 'parent', ...input } });
+    assert.equal((await request('get_goal')).goal.objective, 'Work without presentation');
+    assert.equal((await request('pause')).goal.status, 'paused');
+    assert.equal(resultJSON(await runtime.tool('get_goal', {})).goal.status, 'paused');
+    assert.equal((await request('resume')).goal.status, 'active');
+    await assert.rejects(request('update_goal', { status: 'complete' }), /model tool/);
+    await assert.rejects(runtime.service('goal.control', 'unknown', {}), /unknown goal service method/);
+    await assert.rejects(request('get_goal', { unexpected: true }), /unknown field/);
+    assert.deepEqual(await request('clear'), { goal: null });
+    assert.deepEqual(resultJSON(await runtime.tool('get_goal', {})), { goal: null });
+    await runtime.shutdown();
   });
   await scenario('goal', 'usage idempotency, next turn ownership and shutdown pause', async () => {
     let runtime = await launch('goal');

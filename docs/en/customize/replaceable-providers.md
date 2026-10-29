@@ -83,6 +83,40 @@ caller, transfer a caller's tool authority, or make provider-owned resource
 handles interchangeable. Such methods still need their contract's explicit
 ownership/delegation mechanism.
 
+For an admitted `agent.tools.execute`, use the explicit
+`continueService<ToolServiceExecution>(host, input)` inside the override; see the
+[tool-service decorator](../../../examples/plugins/tool-service-decorator.ts).
+Declare `SERVICE_CONTINUATION_HOST_FEATURE` (`service.continuation.v1`) in
+`required_host_features`, provide `TOOL_SERVICE_DESCRIPTOR`, and require
+`agent.tools@1` in runtime requirements (a renderer-only dependency is not a
+backend delegation edge). Select the decorator globally and bind its own same-service
+dependency to the native or external implementation, as in the settings example.
+Other methods can still use ordinary `delegateService` forwarding.
+
+The separate `host.service.continue` gateway accepts only the callback execution
+ID and its opaque `continuation_id`. The SDK supplies the actual callback ID;
+the host captures the original service major, method, arguments, tool identity,
+generation and configured delegate. A continuation cannot rewrite a request,
+choose another target or lend authority to an ordinary descendant callback.
+Each decorator layer may continue once; delegate failure consumes it too.
+Returning from the callback, cancellation or explicit removal/disable revokes
+it. Normal generation replacement retains admitted callbacks and their original
+dependencies: an old continuation never switches to the replacement provider.
+The native tool provider also requires its own admitted tool callback, before
+initializing its backend. An inherited backend scope or upstream `caller_scope`
+is not enough. Ordinary forwarding that previously worked only with the native
+implementation must use `continueService` for `execute`.
+Process execution still passes the selected permission and sandbox services;
+retaining work never retains an earlier permission decision.
+
+Run `node scripts/service-continuation-e2e.mjs` for the packed-SDK decorator and
+independent process backend. It checks chained decoration, denied and ordinary
+calls to both native and external delegates, duplicate/failing continuations,
+cancellation, owner/delegate removal,
+post-pause permission denial, and replacement
+while paused before continuation. Reports and logs are written to
+`.tmp/e2e/service-continuation/`.
+
 In a `project_agent` development build, the [project decorator](../../../examples/plugins/project-decorator.ts)
 changes only instructions and enables `concurrentServices` because managed-session
 creation can reenter coordination before returning. Select it for `project.coordination@1` and bind its
@@ -294,6 +328,14 @@ A composition selects it explicitly with `{ "service": "agent.prompt", "major": 
 "provider": "personal" }`. It assembles a complete non-Coding base from explicit
 request facts and contributions, preserving the `main` / `worker` execution roles.
 User-space identity does not silently switch prompt providers or add another role.
+
+### Replace one prompt section
+
+The native prompt provider declares the optional `wuu.prompt.sections.v1` layout for main and worker results when their sections satisfy that layout. A decorator can call `promptService(host).assemble(request)` and then `await replacePromptSection(result, key, replacement)` from `@wuu/plugin-sdk`. The helper returns a new result, preserving the other sections and their metadata. The [prompt section decorator](../../../examples/plugins/prompt-section-decorator.ts) replaces `environment` while retaining the delegate's remaining prompt.
+
+Select the decorator as the global `agent.prompt@1` provider and bind its own `agent.prompt@1` dependency to `wuu.prompt.default`, using the two-route composition shown in [partially extending a provider](#partially-extending-a-provider). Multiple decorators can be chained by binding each decorator to its next provider; each must preserve the declared layout. A missing delegate or failed replacement fails the request without a native fallback.
+
+The layout joins UTF-8 section contents with two LF bytes. Each section records its UTF-8 byte length and the first 16 SHA-256 bytes as lowercase hexadecimal. The helper validates the declared layout, unique nonempty keys, metadata, separators, byte boundaries, hashes and complete content before replacing an existing key with nonempty text. It updates the replaced section's length and hash. An undeclared or incompatible layout is rejected; ordinary `agent.prompt@1` consumers can still use providers that do not declare it. A prompt section is guidance, not an authorization boundary.
 
 `agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.
 
@@ -839,3 +881,49 @@ new request from that saved history; it never replays the interrupted payload.
 The selected policy must authorize it, and the host still rejects missing
 checkpoints, tool effects, and exhausted receipt/workflow budgets. A policy that
 does not recognize the phase fails closed.
+
+## Independent goal and automation presentation
+
+| Package | Owns | Public dependency or service |
+| --- | --- | --- |
+| `goal` | Persistent state, continuation, goal model tools and `/goal` prompt | Provides `goal.control@1` |
+| `goal-ui` | Composer goal controls and display | Consumes `goal.control@1` |
+| `automation` | Durable schedules, runs and background dispatch | Provides `automation.scheduler@1` |
+| `automation-client` | The model's `cron` tool | Consumes `automation.scheduler@1` |
+| `automation-ui` | Automation catalog and sidebar | Consumes `automation.scheduler@1` |
+
+Remove either UI package without removing the provider's data, tools or ongoing
+work. Replace a UI by installing an independent desktop package declaring the
+same service requirement; it imports neither the old UI nor runtime source.
+Likewise select a compatible runtime provider without copying presentation.
+The UI dependencies are optional so disabled/unavailable providers leave a
+visible service error and disabled mutations, not a crashing application or
+silently substituted scheduler. Successful later reads recover the controls.
+The cron tool requires its scheduler and never schedules work locally.
+
+`GOAL_CONTROL_SERVICE_DESCRIPTOR`, `GoalControlRequestV1`, `GoalControlResultV1`
+and `GoalSnapshotV1` are exported by the SDK. Declare `goal.control@1` in
+`desktop.required_services` and call:
+
+```ts
+const result = await api.invokeService<GoalControlResultV1>({
+  service: 'goal.control', method: 'request',
+  params: { method: 'get_goal', input: { thread_id: threadId } },
+});
+```
+
+The request methods are `get_goal`, `create_goal` (also requires `objective`),
+`pause`, `resume` and `clear`. All require `thread_id`; results contain `goal`,
+or `null` when absent/cleared. Creation/resume can start an ordinary session turn.
+Completion and blocked status remain model tools, not UI control methods.
+Calls carry the authenticated consumer's graph and execution; the UI cannot name
+an implementation provider. Goal storage remains owned by the original `goal`
+identity; splitting presentation does not move or duplicate it. The old
+`plugin.client.request` goal endpoint remains an adapter to the same controls
+for older combined-package clients until that v1 capability is retired.
+
+For explicit compositions, select `goal-ui` and/or
+`automation-ui` independently from their runtime packages. Existing
+combined third-party manifests remain supported. Composition migration preserves
+pre-split bundled desktop selections; new explicit compositions do not infer a
+UI from a runtime selection. A headless composition needs neither UI package.

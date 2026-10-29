@@ -21,6 +21,9 @@ const (
 	// validated and routed through the service registry, not the fixed host
 	// service table.
 	ServiceCallMethod HostServiceMethod = "host.service.call"
+	// ServiceContinueMethod forwards only a host-minted selected invocation.
+	// Unlike ServiceCallMethod, it accepts no target, method, or request payload.
+	ServiceContinueMethod HostServiceMethod = "host.service.continue"
 
 	// ServiceInvokeMethod is the host -> plugin request delivering one
 	// validated call to the service provider.
@@ -230,6 +233,13 @@ type ServiceCallParams struct {
 	Params      json.RawMessage `json:"params,omitempty"`
 }
 
+// ServiceContinueParams consumes one exact callback's selected-service dispatch.
+// Neither a caller identity nor tool authority can be supplied in request JSON.
+type ServiceContinueParams struct {
+	ExecutionID    string `json:"execution_id"`
+	ContinuationID string `json:"continuation_id"`
+}
+
 // ServiceInvokeParams is the payload of the host -> provider service.invoke
 // request. Caller carries the validated consumer plugin ID.
 type ServiceInvokeParams struct {
@@ -243,10 +253,37 @@ type ServiceInvokeParams struct {
 	// ExecutionID, when set, binds the invoke to one execution scope so
 	// cross-process cancellation propagates through the execution plane.
 	ExecutionID string `json:"execution_id,omitempty"`
+	// ContinuationID is present only on a host-admitted tool service callback.
+	// It can forward this unchanged invocation once to its configured delegate.
+	ContinuationID string `json:"continuation_id,omitempty"`
 	// CallerScope identifies the authenticated caller invocation, when present.
 	// It may outlive this callback. It grants attribution and resource lifetime,
 	// not authority to issue calls using the caller's execution ID.
 	CallerScope *ExecutionScope `json:"caller_scope,omitempty"`
+}
+
+// Execution validates this native provider callback's own host-admitted scope.
+// Unlike CallerExecution, inherited caller metadata cannot satisfy this check.
+// Process providers use their callback-bound host gateways for the same check.
+func (p ServiceInvokeParams) Execution(ctx context.Context, provider string, requireTool bool) (ExecutionScope, *HostServiceError) {
+	marker, ok := ctx.Value(nativeInvocationKey{}).(*nativeInvocation)
+	if !ok || marker == nil || marker.registry == nil || marker.root || marker.owner != provider || marker.executionID != p.ExecutionID {
+		return ExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service requires its own authenticated callback scope"}
+	}
+	marker.registry.mu.RLock()
+	live, tracker := marker.live, marker.registry.scopeTracker
+	marker.registry.mu.RUnlock()
+	if !live || tracker == nil {
+		return ExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service callback scope is no longer live"}
+	}
+	scope, err := tracker.resolve(provider, p.ExecutionID, requireTool)
+	if err != nil {
+		return ExecutionScope{}, err
+	}
+	if ctx.Err() != nil || scope.Context.Err() != nil {
+		return ExecutionScope{}, &HostServiceError{Code: "request_cancelled", Message: "service callback execution has ended"}
+	}
+	return scope, nil
 }
 
 // CallerExecution validates the native view of the authenticated caller scope.
@@ -276,6 +313,11 @@ type ServiceChangedParams struct {
 // package depends only on this narrow surface.
 type ServiceRouter interface {
 	RouteServiceCall(ctx context.Context, pluginID string, params ServiceCallParams) (json.RawMessage, *HostServiceError)
+}
+
+// ServiceContinuationRouter is separately negotiated from ordinary service calls.
+type ServiceContinuationRouter interface {
+	RouteServiceContinue(context.Context, string, ServiceContinueParams) (json.RawMessage, *HostServiceError)
 }
 
 // ServiceVersionMajor parses the declared semver and returns its major. The

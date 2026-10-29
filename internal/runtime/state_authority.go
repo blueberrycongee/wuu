@@ -48,6 +48,8 @@ type StateAuthority struct {
 	watcher                             *fsnotify.Watcher
 	cancel                              context.CancelFunc
 	done                                chan struct{}
+	probeCleanups                       map[string]struct{}
+	closeErr                            error
 }
 
 type authorityPending struct {
@@ -193,8 +195,9 @@ func (a *StateAuthority) Activate(ctx context.Context, documents persistence.Doc
 func (a *StateAuthority) Close(ctx context.Context) error {
 	a.mu.Lock()
 	if a.closed {
+		err := a.closeErr
 		a.mu.Unlock()
-		return nil
+		return err
 	}
 	a.closing = true
 	cancel, done := a.cancel, a.done
@@ -208,10 +211,63 @@ func (a *StateAuthority) Close(ctx context.Context) error {
 	cancel()
 	select {
 	case <-done:
-		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	// The worker no longer owns a live callback after retirement. Finish only
+	// its recorded probe cleanups using this lifecycle's authorized context,
+	// while the original provider graph and authority membership remain alive.
+	err := errors.Join(a.finishProbeCleanups(ctx), a.member.Release())
+	a.mu.Lock()
+	a.closeErr = err
+	a.closed = true
+	a.admitted = false
+	a.mu.Unlock()
+	return err
+}
+
+func (a *StateAuthority) finishProbeCleanups(ctx context.Context) error {
+	a.mu.Lock()
+	pending := make([]string, 0, len(a.probeCleanups))
+	for id := range a.probeCleanups {
+		pending = append(pending, id)
+	}
+	a.mu.Unlock()
+	if len(pending) == 0 {
+		return nil
+	}
+	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	record, err := a.readRecord()
+	if err != nil || record == nil {
+		if err == nil {
+			err = persistence.ErrCorrupt
+		}
+		return err
+	}
+	cleanupCtx := context.WithValue(ctx, authorityLockKey{}, &authorityLocked{dir: a.dir, record: record})
+	for _, id := range pending {
+		// Read resolves an uncertain original cleanup through the durable head
+		// before deciding whether a new retirement cleanup is needed. Never
+		// change an earlier transaction's revision or replay a guessed outcome.
+		view, err := a.documents.Read(cleanupCtx, persistence.Query{Namespace: "wuu.state.authority.v1", Keys: []string{id}})
+		if err != nil {
+			return err
+		}
+		if len(view.Documents) != 0 {
+			_, err := a.documents.Commit(cleanupCtx, persistence.Transaction{ID: "state-admission-cleanup:" + id + ":retirement", ExpectedRevision: view.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: id, Delete: true}}})
+			if err != nil {
+				return err
+			}
+		}
+		a.mu.Lock()
+		delete(a.probeCleanups, id)
+		a.mu.Unlock()
+	}
+	return nil
 }
 
 func (a *StateAuthority) rawClient(params pluginhost.ServiceInvokeParams) *persistence.Client {
@@ -1065,11 +1121,16 @@ func (a *StateAuthority) requestProbe(ctx context.Context, client *persistence.C
 func (a *StateAuthority) watchRequests(ctx context.Context) {
 	defer func() {
 		a.watcher.Close()
-		a.member.Release()
 		a.mu.Lock()
-		a.closed = true
-		a.admitted = false
+		closing := a.closing
+		if !closing {
+			a.closed = true
+			a.admitted = false
+		}
 		a.mu.Unlock()
+		if !closing {
+			a.member.Release()
+		}
 		close(a.done)
 	}()
 	for {
@@ -1141,6 +1202,14 @@ func (a *StateAuthority) serveProbe(ctx context.Context, request authorityReques
 	}
 	value, _ := json.Marshal(hex.EncodeToString(random[:]))
 	tx := persistence.Transaction{ID: "state-admission-probe:" + request.ID, ExpectedRevision: view.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: request.ID, Value: value}}}
+	// Retain cleanup ownership before dispatch: a lost reply can hide a
+	// committed probe, and the durable head must resolve that outcome on Close.
+	a.mu.Lock()
+	if a.probeCleanups == nil {
+		a.probeCleanups = make(map[string]struct{})
+	}
+	a.probeCleanups[request.ID] = struct{}{}
+	a.mu.Unlock()
 	if _, err := a.documents.Commit(callCtx, tx); err != nil {
 		_ = authorityJSON(a.requestPath("response", request.ID), authorityResponse{Done: true, Error: err.Error()})
 		return
@@ -1153,6 +1222,11 @@ func (a *StateAuthority) serveProbe(ctx context.Context, request authorityReques
 	// was already committed. Runtime teardown keeps this provider alive until done.
 	cleanupCtx := context.WithValue(context.WithoutCancel(ctx), authorityLockKey{}, locked)
 	_, cleanupErr := a.documents.Commit(cleanupCtx, persistence.Transaction{ID: "state-admission-cleanup:" + request.ID, ExpectedRevision: record.Checkpoint.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: request.ID, Delete: true}}})
+	if cleanupErr == nil {
+		a.mu.Lock()
+		delete(a.probeCleanups, request.ID)
+		a.mu.Unlock()
+	}
 	response := authorityResponse{Epoch: record.Epoch, Checkpoint: record.Checkpoint, Done: true}
 	if err := errors.Join(probeErr, cleanupErr); err != nil {
 		response.Error = err.Error()

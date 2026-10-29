@@ -19,6 +19,24 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
 - Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
+
+- Let prompt-service decorators replace a named section of a verified native main or worker prompt while preserving the other sections and their metadata. Providers may opt in to the same section layout.
+
+- Route plugin-owned processes through the conversation's selected execution environment, retaining their location and ownership across configuration changes. Remote start admission does not block unrelated process reads or stops, and uncertain starts retain reconciliation identities without automatic replay.
+- Publish an execution-backend TypeScript SDK for the existing versioned worker transport, including authenticated binding, tool callbacks, cancellation, process receipts and transport cleanup, so independent backends do not import Wuu's Go internals.
+- Install exact-version, integrity-pinned, self-contained npm plugins and replay saved distribution locks through the existing trust and generation lifecycle, without install scripts or automatic dependency downloads.
+- Separate goal and automation presentation into independently selectable UI plugins using public services and selected-provider slots. Composition version 5 preserves older explicit desktop selections while respecting exclusions and headless configurations.
+- Assemble native default providers through one lazy factory catalog and separate the default agent policy from its consumer contract, allowing external replacements without constructing disabled defaults.
+- Add a default-disabled experimental Generative UI plugin with composable layouts,
+  reactive local calculations, charts and forms, bounded data programs, per-result
+  state restoration, and readable fallback. Preview validated nodes while tool
+  arguments arrive and let explicit user actions continue the source conversation
+  without consuming composer drafts or attachments.
+
+- Expose opt-in, bounded progress snapshots for exact plugin-owned session requests, so independent bot and fleet views can observe live output without reading reasoning, tool payloads, or another request's activity.
+
+- Let selected tool-service decorators explicitly continue the original invocation once, preserving its process authority and captured generation without granting ordinary service calls tool authority.
+
 - Add opt-in, metadata-only `model.request.metrics` observations with exact request/turn correlation, host-observed first-output timing, explicit adapter-reported usage, and bounded nonblocking delivery across cancellation and plugin replacement.
 
 - Expose selected-provider storage authority, authenticated resource policy, session transport, and desktop connection contracts. Keep cloud deployment and sharing business implementations opt-in; provider-owned storage does not imply distributed execution ownership.
@@ -261,11 +279,29 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Complete confirmed conversation archives after owned execution cleanup without a two-second retry loop, keeping other conversations responsive and rechecking consent before the durable write. Preserve ordered cleanup and report uncertain or already-committed outcomes when cancellation or transport loss interrupts acknowledgement.
+- Finish admitted state-provider probes through their original graph’s authorized shutdown cleanup, and reject selected state authorities that fail preparation with their original diagnostic.
+
+- Keep normal plugin-generation retirement silent after catalog changes while preserving genuine update failures and plugin diagnostics.
+- Preserve generated UI disclosure state when leaving a view immediately after opening or closing it.
+- Keep newly started, completed or interrupted turns and stopped composer input from reverting when an older conversation-resume response arrives late. Reconcile accepted input changes in order, including edits, removals, mode switches and already-sent messages, without delaying Stop behind response output.
+- Scope app-server control locks to each conversation, avoiding cross-conversation waits behind a slow plugin control read during send acknowledgement or Stop. Preserve same-conversation revision fences and measure control-lock waits separately from provider reads.
+- Keep slow conversation resumes off serial stdio ingress while preserving same-conversation request order and captured authority. Active Stop bypasses pure reads, and resume snapshots capture live state after slow metadata reads.
+- Bound native floating-panel openings that never become ready or acknowledge their first presentation. Retire the unresponsive view so the next user opening can start cleanly, without interrupting conversations or hiding browser content.
+- Center the conversation reading column and input on the same axis by reserving symmetric space around the floating tool rail; keep the input at least as wide as the messages.
+- Keep effective configuration tied to the captured base source when applying project settings, avoiding a redundant file read and mismatched source/config snapshots during external edits.
+
+- Keep authorized workspace file and directory reads off the serial request dispatcher so slow reads do not queue unrelated conversation controls, while retaining their original authority through completion and shutdown drain.
+- Reject reused in-flight RPC IDs before early validation errors can consume the original request's authorization scope.
+- Require the default native tool provider to use its own admitted tool callback before executing; inherited scopes and ordinary service forwarding can no longer bypass the authority boundary enforced for external providers.
+
 - Keep independently contributed message-action controls alongside placed command buttons, preserving peer state and keyboard focus when either plugin is enabled or disabled.
 
 - Preserve selected tool providers' finalization context and discovered schemas alongside each settled call, including parallel completion, normalized errors, and nested-call context, without leaking metadata into later turns.
 
 - Generate standalone plugin projects with the CLI's matching public SDK source and bundled runtime/desktop artifacts, without depending on an unpublished npm SDK package or a Wuu checkout.
+
+- Avoid redundant workspace snapshots around read-only tools and tool orchestrators. Keep leaf result revisions and mutation evidence; optional read-only telemetry no longer samples whole-workspace freshness.
 
 - Settle canceled native-turn inference workflows only after their physical model receipts finish, preserving terminal accounting across generation replacement.
 
@@ -277,6 +313,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Deliver accepted native Codex output and token usage before turn completion, including when the final notifications arrive concurrently with the consumer.
 
 - Report failed durable turn settlement to completion observers so persistent goals pause instead of scheduling more work after a terminal write fails.
+
+- Keep directory browsing from blocking the desktop main event loop on slow filesystems, including workspace availability and symlink checks; pending reads remain bound to their original workspace.
 
 - Distinguish plugin publication from same-server activation readiness in agent-managed development receipts and process acceptance, without blocking unrelated turns during additive preparation.
 

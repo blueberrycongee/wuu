@@ -1,3 +1,11 @@
+import { removePendingComposerMessage, materializedComposerMessageIDs as sharedMaterializedComposerMessageIDs, type PendingComposerMessageRemovalScope } from "../shared/pendingComposerMessages";
+export {
+  appendPendingComposerMessage,
+  applyAuthoritativeComposerSnapshot,
+  applyHeldComposerSnapshot,
+  type PendingComposerMessageRemovalScope,
+  type PendingComposerMessageKind,
+} from "../shared/pendingComposerMessages";
 import type { Thread } from "../shared/protocol";
 import { OPTIMISTIC_TURN_ID_PREFIX, type QueuedComposerMessage } from "./ComposerMessages";
 
@@ -16,9 +24,6 @@ export type LocatedPendingComposerMessage = {
   index: number;
   message: QueuedComposerMessage;
 };
-
-export type PendingComposerMessageRemovalScope = "queue" | "guide" | "all";
-export type PendingComposerMessageKind = "queue" | "guide";
 
 export function emptyThreadPendingComposerMessages(): ThreadPendingComposerMessages {
   return { queued: [], guides: [] };
@@ -40,76 +45,6 @@ export function threadPendingComposerMessagesIsEmpty(
   return pending.queued.length === 0 && pending.guides.length === 0;
 }
 
-/**
- * Append an optimistic pending message without duplicating a server-confirmed
- * entry. Queue ids identify a message across both queue and guide states, so a
- * late IPC response must not recreate an item already supplied by a snapshot.
- */
-export function appendPendingComposerMessage(
-  previous: ThreadPendingComposerMessages,
-  kind: PendingComposerMessageKind,
-  message: QueuedComposerMessage,
-): ThreadPendingComposerMessages {
-  if (
-    previous.queued.some((candidate) => candidate.id === message.id) ||
-    previous.guides.some((candidate) => candidate.id === message.id)
-  ) {
-    return previous;
-  }
-  return kind === "queue"
-    ? { ...previous, queued: [...previous.queued, message] }
-    : { ...previous, guides: [...previous.guides, message] };
-}
-
-/**
- * Reconcile the authoritative held snapshot with optimistic pending state.
- * The snapshot replaces all prior held entries and wins over a non-held entry
- * with the same id, while unrelated in-flight optimistic messages survive.
- */
-export function applyHeldComposerSnapshot(
-  previous: ThreadPendingComposerMessages,
-  snapshot: QueuedComposerMessage[],
-): ThreadPendingComposerMessages {
-  const snapshotIDs = new Set(snapshot.map((message) => message.id));
-  return {
-    queued: [
-      ...previous.queued.filter(
-        (message) => !message.held && !snapshotIDs.has(message.id),
-      ),
-      ...snapshot.filter((message) => message.origin === "queue"),
-    ],
-    guides: [
-      ...previous.guides.filter(
-        (message) => !message.held && !snapshotIDs.has(message.id),
-      ),
-      ...snapshot.filter((message) => message.origin === "steer"),
-    ],
-  };
-}
-
-export function applyAuthoritativeComposerSnapshot(
-  previous: ThreadPendingComposerMessages,
-  snapshot: QueuedComposerMessage[],
-): ThreadPendingComposerMessages {
-  const snapshotIDs = new Set(snapshot.map((message) => message.id));
-  const localQueued = previous.queued.filter(
-    (message) => Boolean(message.operationState) && !snapshotIDs.has(message.id),
-  );
-  const localGuides = previous.guides.filter(
-    (message) => Boolean(message.operationState) && !snapshotIDs.has(message.id),
-  );
-  return {
-    queued: [
-      ...snapshot.filter((message) => message.origin === "queue"),
-      ...localQueued,
-    ],
-    guides: [
-      ...snapshot.filter((message) => message.origin === "steer"),
-      ...localGuides,
-    ],
-  };
-}
-
 export function removePendingComposerMessagesByID(
   messagesByThread: PendingComposerMessagesByThread,
   threadID: string | undefined,
@@ -123,22 +58,8 @@ export function removePendingComposerMessagesByID(
   if (!previous) {
     return messagesByThread;
   }
-  const next: ThreadPendingComposerMessages = {
-    queued:
-      scope === "guide"
-        ? previous.queued
-        : previous.queued.filter((message) => message.id !== id),
-    guides:
-      scope === "queue"
-        ? previous.guides
-        : previous.guides.filter((message) => message.id !== id),
-  };
-  if (
-    next.queued.length === previous.queued.length &&
-    next.guides.length === previous.guides.length
-  ) {
-    return messagesByThread;
-  }
+  const next = removePendingComposerMessage(previous, id, scope);
+  if (next === previous) return messagesByThread;
   const nextByThread = { ...messagesByThread };
   if (threadPendingComposerMessagesIsEmpty(next)) {
     delete nextByThread[threadID];
@@ -188,20 +109,11 @@ export function pendingComposerMessageCount(
 export function materializedComposerMessageIDs(
   thread: Thread | undefined | null,
 ): Set<string> {
-  const ids = new Set<string>();
-  for (const turn of thread?.turns ?? []) {
-    if (turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) continue;
-    for (const item of turn.items ?? []) {
-      if (
-        item.type === "user_message" &&
-        typeof item.source_id === "string" &&
-        item.source_id
-      ) {
-        ids.add(item.source_id);
-      }
-    }
-  }
-  return ids;
+  if (!thread) return new Set<string>();
+  return sharedMaterializedComposerMessageIDs({
+    ...thread,
+    turns: (thread.turns ?? []).filter(turn => !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)),
+  });
 }
 
 /**

@@ -31,6 +31,9 @@ const (
 
 // ToolExecutionRecord captures benchmark-oriented facts about one tool
 // execution. It deliberately excludes arguments and output content.
+// Workspace snapshots are optional mutation evidence. Read-only tools and
+// orchestrators retain their leaf-owned result revisions without acquiring
+// extra snapshots for telemetry or whole-workspace freshness hints.
 type ToolExecutionRecord struct {
 	Name                       string                 `json:"name"`
 	StepIndex                  *int                   `json:"step_index,omitempty"`
@@ -110,14 +113,8 @@ func (t *Toolkit) ToolTelemetry() []ToolExecutionRecord {
 func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
 	startedAt := time.Now()
-	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
+	remoteWorkspace := t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name)
 	revisionBefore := ""
-	if !remoteWorkspace {
-		revisionBefore = t.env.workspaceRevision(ctx, t.env.RootDir)
-	}
-	// Hand the freshly computed revision to the tool so read-only tools can
-	// reuse it instead of re-running git for the same root.
-	ctx = toolctx.WithWorkspaceRevision(ctx, t.env.RootDir, revisionBefore)
 	decision := ToolPolicyDecision{Action: ToolPolicyAllow, Reason: "workspace boundary"}
 
 	if err := validateToolArgumentsJSON(call.Arguments); err != nil {
@@ -137,6 +134,23 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
 		return toolresult.Result{}, err
 	}
+
+	// Only local mutating leaves own workspace mutation evidence. Read-only
+	// tools compute any result-specific revisions they need; orchestrators'
+	// children own their effects and evidence, including failed mutations.
+	trackWorkspaceRevision := !info.ReadOnly && !remoteWorkspace
+	if marker, ok := tool.(OrchestratorTool); ok && marker.IsOrchestrator(call.Arguments) {
+		trackWorkspaceRevision = false
+	}
+	revisionRoot := ""
+	if trackWorkspaceRevision {
+		revisionRoot = t.env.RootDir
+		revisionBefore = t.env.workspaceRevision(ctx, revisionRoot)
+	}
+	// Do not pass an inherited snapshot to another invocation. An empty root
+	// means no cached revision; an empty revision for the same root instead
+	// means a failed computation and would suppress leaf freshness checks.
+	ctx = toolctx.WithWorkspaceRevision(ctx, revisionRoot, revisionBefore)
 
 	var result toolresult.Result
 	var err error
@@ -187,11 +201,8 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	}
 
 	revisionAfter := revisionBefore
-	if !info.ReadOnly && !remoteWorkspace {
-		// A mutating tool may have changed the workspace; recompute so the
-		// telemetry record shows the post-execution state. Read-only tools
-		// cannot mutate, so their before/after revisions are identical and
-		// the second git round-trip is pure overhead.
+	if trackWorkspaceRevision {
+		// Failed executions can still have changed the workspace.
 		revisionAfter = t.env.workspaceRevision(ctx, t.env.RootDir)
 	}
 	t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionAfter, rawProjection, returnedProjection, resultRef, resultBudgeted, err, projectionDiag)

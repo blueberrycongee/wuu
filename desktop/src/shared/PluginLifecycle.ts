@@ -6,6 +6,8 @@ export class PluginLifecycleCancellationError extends Error {
     this.name = "AbortError";
   }
 }
+/** The old scope retired before the action reached its provider. */
+export class PluginActionNotStartedError extends PluginLifecycleCancellationError {}
 export function isPluginLifecycleCancellation(error: unknown): error is PluginLifecycleCancellationError {
   return error instanceof PluginLifecycleCancellationError;
 }

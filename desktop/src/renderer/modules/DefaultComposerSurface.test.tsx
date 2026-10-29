@@ -1,5 +1,5 @@
 import * as Notices from "../Toast";
-import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { PluginActionNotStartedError, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -67,10 +67,113 @@ function setup() {
   } as ApplicationServiceV1;
 
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  const render = async (layout: DefaultComposerLayout = {}) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={application} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
+  const render = async (layout: DefaultComposerLayout = {}, selected = application) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={selected} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it.each(["steer", "queue"] as const)("retries a %s only when retirement prevented it from starting", async mode => {
+    const fixture = setup();
+    const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), running: true, turnRunning: true, canSteer: true };
+    vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockReturnValue(presentation);
+    await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "Follow up" } } }));
+    const retired = { ...fixture.application, invoke: async (action: string, input: unknown) => {
+      if (action === "composer.submit") throw new PluginActionNotStartedError();
+      return (fixture.application.invoke as (action: string, input: unknown) => Promise<unknown>)(action, input);
+    } } as ApplicationServiceV1;
+    await fixture.render({}, retired);
+    const editor = container.querySelector("textarea")!;
+    await act(async () => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: mode === "queue", bubbles: true })));
+    const invoke = vi.fn(fixture.application.invoke);
+    await fixture.render({}, { ...fixture.application, invoke });
+    const submits = invoke.mock.calls.filter(([action]) => action === "composer.submit");
+    expect(submits).toHaveLength(1);
+    expect(submits[0][1]).toMatchObject({ ownerTabId: "draft-one", mode, text: "Follow up" });
+  });
+
+  it.each(["owner", "text", "attachments", "already started"] as const)("does not replay a retired submission after %s changes", async changed => {
+    const fixture = setup();
+    const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), running: true, turnRunning: true, canSteer: true };
+    vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockReturnValue(presentation);
+    await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "Original input" } } }));
+    const retired = { ...fixture.application, invoke: async (action: string, input: unknown) => {
+      if (action === "composer.submit") throw changed === "already started" ? new PluginLifecycleCancellationError() : new PluginActionNotStartedError();
+      return (fixture.application.invoke as (action: string, input: unknown) => Promise<unknown>)(action, input);
+    } } as ApplicationServiceV1;
+    await fixture.render({}, retired);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!.click());
+    if (changed === "text") {
+      const editor = container.querySelector("textarea")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "Newer input");
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    if (changed === "attachments") await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, fileIds: ["new-file"] } } }));
+    if (changed === "owner") await fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, activeTabId: "other", items: [{ ...view.tabs.items[0], id: "other" }] },
+      drafts: { ...view.drafts, activeTabId: "other", primary: { ...view.drafts.primary, ownerTabId: "other" } },
+      composerRuntime: { owners: [{ ...view.composerRuntime.owners[0], ownerTabId: "other" }] },
+    }));
+    const invoke = vi.fn(fixture.application.invoke);
+    await fixture.render({}, { ...fixture.application, invoke });
+    expect(invoke.mock.calls.filter(([action]) => action === "composer.submit")).toHaveLength(0);
+  });
+
+  it.each(["queue", "steer"] as const)("announces a rejected %s and keeps its draft", async mode => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "Retained" } }, submission: { ...view.submission,
+      operations: [{ operationID: "failed", messageID: "failed", ownerTabId: "draft-one", mode, phase: "sending" }],
+    } }));
+    await fixture.render();
+    await fixture.update(view => ({ ...view, submission: { ...view.submission,
+      operations: [{ ...view.submission.operations[0], phase: "failed", error: "Delivery failed" }],
+    } }));
+    expect(container.querySelector('[data-wuu-component="notice"]')?.getAttribute("role")).toBe("alert");
+    expect(container.querySelector("textarea")?.value).toBe("Retained");
+  });
+
+  it("saves the latest text entered while its application provider is retiring", async () => {
+    const fixture = setup();
+    const retired = { ...fixture.application, invoke: async (action: string, input: unknown) => {
+      if (action === "composer.set-draft") throw new PluginLifecycleCancellationError();
+      return (fixture.application.invoke as (action: string, input: unknown) => Promise<unknown>)(action, input);
+    } } as ApplicationServiceV1;
+    const invoke = vi.fn(fixture.application.invoke);
+    const successor = { ...fixture.application, invoke } as ApplicationServiceV1;
+    await fixture.render({}, retired);
+    const editor = container.querySelector("textarea")!;
+    for (const text of ["first edit", "latest edit"]) await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, text);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await fixture.render({}, successor);
+    expect(invoke).toHaveBeenCalledWith("composer.set-draft", { ownerTabId: "draft-one", text: "latest edit" });
+    expect(container.querySelector("textarea")!.value).toBe("latest edit");
+  });
+
+  it.each(["owner", "workspace"])("does not carry an unsaved edit into a different %s", async changed => {
+    const fixture = setup();
+    const retired = { ...fixture.application, invoke: async (action: string, input: unknown) => {
+      if (action === "composer.set-draft") throw new PluginLifecycleCancellationError();
+      return (fixture.application.invoke as (action: string, input: unknown) => Promise<unknown>)(action, input);
+    } } as ApplicationServiceV1;
+    await fixture.render({}, retired);
+    const editor = container.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "private draft");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const nextOwner = changed === "owner" ? "draft-two" : "draft-one";
+    await fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, activeTabId: nextOwner, items: [{ ...view.tabs.items[0], id: nextOwner, workspaceRoot: changed === "workspace" ? "/other" : "/synthetic" }] },
+      drafts: { ...view.drafts, activeTabId: nextOwner, primary: { ...view.drafts.primary, ownerTabId: nextOwner, text: "", revision: 1 } },
+      composerRuntime: { owners: [{ ...view.composerRuntime.owners[0], ownerTabId: nextOwner }] },
+    }));
+    const invoke = vi.fn(fixture.application.invoke);
+    await fixture.render({}, { ...fixture.application, invoke });
+    expect(invoke.mock.calls.some(([action, input]) => action === "composer.set-draft" && (input as { text?: string }).text === "private draft")).toBe(false);
+  });
+
   it("announces a failed send once, retains input, and clears its notice when retry starts", async () => {
     const toast = vi.spyOn(Notices, "showErrorToast");
     const fixture = setup();

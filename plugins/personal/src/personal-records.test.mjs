@@ -33,6 +33,9 @@ function createRecordsHarness() {
       const { session_id, ...input } = call.params;
       return records.invoke(call.method, input, session_id, host, execution);
     },
+    async userCorrection(input, host, execution) {
+      return records.invoke("correct", input, "a-main", host, execution, true);
+    },
     async executeTool(call, host, execution) {
       if (!call.tool_id.startsWith("personal_memory_")) throw new Error("unavailable in Personal");
       return { result: { content: [{ type: "text", text: JSON.stringify(await records.invoke(call.tool_id.slice(16), call.arguments, call.session_id, host, execution)) }] } };
@@ -163,6 +166,25 @@ test("simultaneous cross-agent corrections have one winner and expose current re
   assert.equal(current.revision, 2);
   assert.equal(current.contributions.length, 2);
   assert.equal(f.host.releases.size, 0);
+});
+
+test("ordered UI edits with equal timestamps survive replacement without admitting stale or replayed evidence", async t => {
+  const f = await fixture(t);
+  const original = (await f.service("create", createArgs("same-millisecond"))).record;
+  const time = day(10);
+  const edit = (revision, ref, occurred_at = time) => ({ id: original.id, expected_revision: revision, content: ref, evidence: "explicit", sources: [{ kind: "user_edit", ref: `personal-ui:${ref}`, occurred_at }] });
+  const first = await f.plugin.userCorrection(edit(1, "first"), f.host, execution);
+  assert.equal(first.record.source_at, time);
+  const restarted = await fixture(t, f.host);
+  await assert.rejects(restarted.service("correct", edit(2, "untrusted")), /stale_source/);
+  const concurrent = await Promise.allSettled([restarted.plugin.userCorrection(edit(2, "second"), f.host, execution), f.plugin.userCorrection(edit(2, "competing"), f.host, execution)]);
+  assert.equal(concurrent.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(concurrent.find(result => result.status === "rejected").reason.message, /revision_conflict/);
+  const winner = concurrent.find(result => result.status === "fulfilled").value.record;
+  assert.equal(winner.revision, 3);
+  await assert.rejects(restarted.plugin.userCorrection(edit(3, winner.content), f.host, execution), /stale_source|superseded_source/);
+  await assert.rejects(restarted.plugin.userCorrection(edit(3, "older", day(9)), f.host, execution), /stale_source/);
+  assert.equal((await restarted.service("read", { id: original.id })).record.revision, 3);
 });
 
 test("correction wins over old extraction and refreshes another agent's next model step", async t => {

@@ -3243,7 +3243,7 @@
   color: var(--wuu-ink-soft);
 }
 
-.process-surface-tool-list .tool-activity-marker {
+.process-surface-tool-list :is(.tool-activity-marker, .workspace-tool-chevron, .program-tool-chevron) {
   align-self: flex-start;
   /* Center on the first text line, including at larger user font sizes. */
   margin-top: calc((1lh - 14px) / 2);
@@ -5991,7 +5991,7 @@ button.turn-edit-summary-overview:focus-visible {
 /* Only text owns the frame; attachments stay above it on the reading axis. */
 :root[data-message-style="im"] .user-message {
   align-self: start;
-  padding: var(--conversation-framed-text-inset-block) var(--session-im-inline-outset);
+  padding: var(--conversation-framed-text-inset-block) var(--session-im-text-padding);
   border: 0;
   background: var(--user-message-bg-color);
   border-radius: var(--user-message-radius);
@@ -6001,7 +6001,7 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 :root[data-message-style="im"] .user-message-edit {
-  padding-inline: calc(var(--session-im-inline-outset) - 1px);
+  padding-inline: calc(var(--session-im-text-padding) - 1px);
   border-radius: var(--user-message-radius);
 }
 

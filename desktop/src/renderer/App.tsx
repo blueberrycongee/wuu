@@ -5,6 +5,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { SideConversationAvailableContext } from "./ResponseSelection";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { ArtifactInteractionProvider } from "./ArtifactInteractionContext";
 /// <reference path="../shared/jsx-compat.d.ts" />
 
 import {
@@ -454,6 +455,7 @@ export function App({ application, slots, shellPluginId }: {
 
   const {
     workspaceViewTabs,
+    workspaceConversationOpen,
     workspaceConversationActive,
     focusWorkspaceConversation,
     workspaceActiveViewTabID,
@@ -714,7 +716,11 @@ export function App({ application, slots, shellPluginId }: {
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
   useEffect(() => {
     const syncVisibleCUAThread = () => {
-      application.desktop.setActiveCUAThread?.(activeThreadID);
+      try { application.desktop.setActiveCUAThread?.(activeThreadID); }
+      catch (error) {
+        // The retained shell can receive focus before its replacement binds.
+        if (!isPluginLifecycleCancellation(error)) throw error;
+      }
     };
     syncVisibleCUAThread();
     window.addEventListener("focus", syncVisibleCUAThread);
@@ -1031,7 +1037,7 @@ export function App({ application, slots, shellPluginId }: {
   // A docked preview sits beside the conversation, whose own input is in
   // reach; the document input appears once the preview takes the window.
   const documentComposerVisible = Boolean(
-    initialized && workspaceToolsCoverConversation &&
+    initialized && workspaceToolsCoverConversation && workspaceConversationOpen &&
     !splitConversation &&
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),
@@ -1684,6 +1690,7 @@ export function App({ application, slots, shellPluginId }: {
       <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
+      <ArtifactInteractionProvider application={application}>
         <div
           ref={appShellRef}
           tabIndex={-1}
@@ -2025,6 +2032,7 @@ export function App({ application, slots, shellPluginId }: {
         </button>
       ) : null}
       </div>
+    </ArtifactInteractionProvider>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
     </ProjectActionsProvider>

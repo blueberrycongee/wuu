@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
@@ -160,5 +162,60 @@ func TestUserHostSkillRefreshCannotReintroduceGlobalSkills(t *testing.T) {
 	}
 	if len(skills) != 0 {
 		t.Fatalf("user host discovered Coding/global skills: %v", skills)
+	}
+}
+
+// The selected native session and document providers must use the product's
+// data root. Matching IDs are valid in different domains and survive restart.
+func TestUserHostSessionStorageIsolatedFromCodingAcrossRestart(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	cfg := config.Default()
+	cfg.DefaultProvider = "fixture"
+	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "fixture"}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless"}
+	plugins := []pluginpkg.Plugin{}
+	open := func(personal bool) *Session {
+		t.Helper()
+		opts := Options{RootDir: root, WuuHome: home, HomeDir: home, Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true}
+		if personal {
+			opts.UserSpaceID, opts.ProductDomain = "alice", "personal"
+		}
+		rt, err := NewSession(opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rt
+	}
+	closeSession := func(rt *Session) {
+		t.Helper()
+		if _, err := rt.Cleanup(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coding := open(false)
+	if _, err := coding.Sessions.CreateWithMetadata("shared-id", "/coding-only"); err != nil {
+		t.Fatal(err)
+	}
+	closeSession(coding)
+
+	personal := open(true)
+	if _, found, err := personal.Sessions.Find("shared-id"); err != nil || found {
+		t.Fatalf("Personal observed Coding session: found=%v err=%v", found, err)
+	}
+	if _, err := personal.Sessions.CreateWithMetadata("shared-id", "/personal-only"); err != nil {
+		t.Fatal(err)
+	}
+	closeSession(personal)
+
+	for _, tc := range []struct {
+		personal bool
+		want     string
+	}{{false, "/coding-only"}, {true, "/personal-only"}} {
+		rt := open(tc.personal)
+		got, found, err := rt.Sessions.Find("shared-id")
+		if err != nil || !found || got.CWD != tc.want {
+			t.Fatalf("personal=%v session=%+v found=%v err=%v", tc.personal, got, found, err)
+		}
+		closeSession(rt)
 	}
 }

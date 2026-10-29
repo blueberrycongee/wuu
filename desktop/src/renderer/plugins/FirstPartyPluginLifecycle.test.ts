@@ -38,7 +38,7 @@ const repositoryRoot = basename(process.cwd()) === "desktop"
   ? resolve(process.cwd(), "..")
   : process.cwd();
 const bundledRoot = resolve(repositoryRoot, "internal/plugin/bundled");
-const firstPartyPluginIds = ["subagent", "automation-client", "memory", "dream", "todo"] as const;
+const firstPartyPluginIds = ["subagent", "automation-ui", "memory", "dream", "todo", "generative-ui"] as const;
 
 afterEach(() => {
   for (const style of document.head.querySelectorAll("style[data-wuu-plugin-id]")) {
@@ -114,13 +114,13 @@ describe("first-party desktop plugin lifecycle", () => {
     ]);
     expect(host.getUIContributions("wuu.default-composer/composer.toolbar")).toEqual([]);
     expect(host.getViewTypes().map((item) => `${item.pluginId}:${item.id}`)).toEqual([
-      "automation-client:automation.catalog",
+      "automation-ui:automation.catalog",
       "dream:dream.settings",
       "memory:memory.settings",
       "subagent:subagent.settings",
     ]);
     expect(host.getNavigationEntries().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
-      "automation-client:automation.catalog",
+      "automation-ui:automation.catalog",
     ]);
     expect(host.getSettingsPages().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
       "memory:memory.settings",
@@ -132,7 +132,7 @@ describe("first-party desktop plugin lifecycle", () => {
     ]);
     expect(host.getUIContributions("wuu.default-conversation/conversation.tool-activity").at(-1)?.pluginId).toBe("todo");
     expect(host.getUIContributions("wuu.default-preview/conversation.tool-activity").at(-1)?.pluginId).toBe("todo");
-    expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(5);
+    expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(6);
 
     for (const pluginId of firstPartyPluginIds) {
       host.disable(pluginId);
@@ -278,7 +278,7 @@ describe("first-party desktop plugin lifecycle", () => {
   });
 
   it.each([
-    ["automation-client", "automation.catalog", "还没有自动化任务"],
+    ["automation-ui", "automation.catalog", "还没有自动化任务"],
     ["memory", "memory.settings", "笔记本原文"],
     ["dream", "dream.settings", "后台整合"],
   ] as const)("renders the real %s view with localized host UI", async (pluginId, viewTypeId, expectedText) => {
@@ -321,7 +321,7 @@ describe("first-party desktop plugin lifecycle", () => {
       expect(container.querySelector('[data-wuu-component="plugin-ui-page"]')).not.toBeNull();
       expect(container.textContent).toContain(expectedText);
       expect([...container.querySelectorAll("input, textarea")].every((control) => control.closest("label"))).toBe(true);
-      if (pluginId === "automation-client") {
+      if (pluginId === "automation-ui") {
         expect(invokeRuntime).toHaveBeenCalledWith(expect.objectContaining({
           pluginId,
           generation: "render-test",
@@ -369,14 +369,11 @@ async function loadFirstPartyPlugin(
   const pluginRoot = resolve(bundledRoot, pluginId);
   const manifest = JSON.parse(readFileSync(resolve(pluginRoot, "plugin.json"), "utf8")) as FirstPartyManifest;
   const source = readFileSync(resolve(pluginRoot, manifest.desktop.entry), "utf8");
-  const executableSource = source.replace(
-    "export async function activate(api)",
-    "return async function activate(api)",
-  );
-  if (executableSource === source) {
+  if (!source.includes("export async function activate(api)")) {
     throw new Error(`First-party plugin ${pluginId} does not export activate(api)`);
   }
-  const activate: unknown = Function(executableSource)();
+  const executableSource = source.replace(/export (?=(?:async )?function )/g, "");
+  const activate: unknown = Function(`${executableSource}\nreturn activate;`)();
   if (typeof activate !== "function") {
     throw new Error(`First-party plugin ${pluginId} has an invalid activate export`);
   }

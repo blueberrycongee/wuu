@@ -1724,7 +1724,7 @@ export class PersonalPlugin implements RuntimePlugin {
         delete params.request_id;
         if (!execution) throw new Error("Personal memory requires a host-bound execution context");
         const { session_id, ...memoryInput } = params;
-        return this.memory.invoke(method.slice(7), memoryInput, String(session_id), clientHost ?? this.host, execution);
+        return this.memory.invoke(method.slice(7), memoryInput, String(session_id), clientHost ?? this.host, execution, method === "memory.correct");
       }
       default: throw new Error(`unknown Personal client method ${method}`);
     }

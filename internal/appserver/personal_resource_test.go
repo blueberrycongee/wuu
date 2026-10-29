@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
@@ -167,5 +169,124 @@ func TestPersonalLiveOwnerCanInspectOrStopAfterTaskGrantRevoked(t *testing.T) {
 	}
 	if _, err := f.host.server.sendPluginSession(owner, "personal", pluginhost.SessionSendParams{SessionID: f.id, RequestID: "stale-send", ExecutionAuthorization: stale, Input: pluginhost.SessionInput{Prompt: "must not send"}}); err == nil {
 		t.Fatal("live cleanup reauthorization widened to automatic send")
+	}
+}
+
+// A sampled progress snapshot must be discarded if session authority changes,
+// including while a terminal inspection is waiting for the active turn.
+func TestPersonalProgressInspectRechecksResourceAuthority(t *testing.T) {
+	f := newPersonalBoundaryFixture(t, nil)
+	srv := f.host.server
+	state, err := f.rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := runtime.WithInvocationState(f.owner, state)
+	th, err := srv.ensureThreadLoaded(state, f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.mu.Lock()
+	th.Turns = append(th.Turns, Turn{ID: "progress-turn", Status: TurnStatusInProgress, Items: []ThreadItem{
+		{ID: "input", Type: ThreadItemUserMessage, SourceID: pluginSessionRequestClientID("personal", "progress-run")},
+		{ID: "output", Type: ThreadItemAgentMessage, Status: ThreadItemStatusInProgress, Text: "sampled output"},
+	}})
+	th.mu.Unlock()
+	params := pluginhost.SessionInspectParams{SessionID: f.id, RequestID: "progress-run", IncludeProgress: true}
+	var checks atomic.Int32
+	srv.access.policy = access.PolicyFunc(func(_ context.Context, req access.Request) (access.Decision, error) {
+		return access.Decision{Allow: req.Action != "user/session/inspect" || checks.Add(1) < 3}, nil
+	})
+	view, err := srv.inspectPluginSession(ctx, "personal", params)
+	if err == nil || checks.Load() != 3 || view.Session.SessionID != "" || view.Progress != nil || view.Receipt != nil || view.AcceptedInput != nil || len(view.PendingInputs) != 0 {
+		t.Fatalf("revoked snapshot escaped: view=%+v, checks=%d, err=%v", view, checks.Load(), err)
+	}
+	var allowed atomic.Bool
+	allowed.Store(true)
+	checks.Store(0)
+	ready := make(chan struct{})
+	srv.access.policy = access.PolicyFunc(func(_ context.Context, req access.Request) (access.Decision, error) {
+		if req.Action == "user/session/inspect" && checks.Add(1) == 5 {
+			close(ready)
+		}
+		return access.Decision{Allow: allowed.Load()}, nil
+	})
+	params.Wait, params.TimeoutMS = pluginhost.SessionInspectWaitTerminal, 5000
+	type response struct {
+		view pluginhost.SessionInspectResult
+		err  error
+	}
+	finished := make(chan response, 1)
+	go func() {
+		result, err := srv.inspectPluginSession(ctx, "personal", params)
+		finished <- response{result, err}
+	}()
+	select {
+	case <-ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("terminal wait did not recheck its subscribed snapshot")
+	}
+	waitForPluginTurnWaiters(t, srv, "personal", "progress-run", 1)
+	allowed.Store(false)
+	srv.pluginTurnWaiters.notify("personal", "progress-run")
+	select {
+	case got := <-finished:
+		if got.err == nil || got.view.Session.SessionID != "" || got.view.Progress != nil || got.view.Receipt != nil {
+			t.Fatalf("revoked waiter returned a snapshot: %+v, %v", got.view, got.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("revoked waiter did not finish")
+	}
+}
+
+// A control request waiting behind a same-session operation must not use an
+// authorization decision that was revoked while the lock was held.
+func TestPersonalControlRechecksResourceAfterLockWait(t *testing.T) {
+	f := newPersonalBoundaryFixture(t, nil)
+	srv := f.host.server
+	state, err := f.rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	var allowed atomic.Bool
+	allowed.Store(true)
+	authorized := make(chan struct{}, 1)
+	srv.access.policy = access.PolicyFunc(func(_ context.Context, req access.Request) (access.Decision, error) {
+		if req.Action == "user/session/control" {
+			select {
+			case authorized <- struct{}{}:
+			default:
+			}
+		}
+		return access.Decision{Allow: allowed.Load()}, nil
+	})
+	unlock := srv.lockSessionControls(f.id)
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := srv.controlPluginSession(state, runtime.WithInvocationState(f.owner, state), "personal", pluginhost.SessionControlParams{SessionID: f.id})
+		finished <- err
+	}()
+	select {
+	case <-authorized:
+	case <-time.After(3 * time.Second):
+		t.Fatal("control request was not authorized")
+	}
+	allowed.Store(false)
+	unlock()
+	unlock = nil
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Fatal("control request used authority revoked during lock wait")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("control request did not finish")
 	}
 }

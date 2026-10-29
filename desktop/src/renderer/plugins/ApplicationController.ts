@@ -754,6 +754,11 @@ export class ApplicationController implements HostApplicationService {
         });
         const next = withLoadedRuntimeSessionTab({ ...state, sessionTabs }, loaded);
         const active = sessionTabs.find(tab => tab.id === activeTabId && context && sameRecoveryContext(tab.context, context));
+        if (!next.thread && !active && context && activeTabId.startsWith("draft:")
+          && !sessionTabs.some(tab => tab.id === activeTabId)) {
+          const draft = createDraftSessionTab(activeTabId, context);
+          return { ...next, sessionTabs: ensureSessionTab(next.sessionTabs, draft), activeSessionTabID: draft.id };
+        }
         return !next.thread && active?.kind === "draft" ? { ...next, activeSessionTabID: active.id } : next;
       });
       if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
@@ -1168,6 +1173,33 @@ export class ApplicationController implements HostApplicationService {
       if (["navigation.select-browser-tab", "navigation.create-browser-tab", "navigation.reopen-browser-tab", "navigation.reveal-browser"].includes(action)) this.setSettings(false);
       return result;
     }
+    if (action === "preview.close-conversation") {
+      const { tabId } = input as ApplicationActionMapV1["preview.close-conversation"]["input"];
+      const context = this.state.activeContext;
+      if (!context || this.state.activeSessionTabID !== tabId || !this.applicationPreview.getSnapshot().conversationOpen) {
+        throw new Error("Conversation entry is no longer active");
+      }
+      const current = activeSessionTab(this.state);
+      const reusable = current?.kind === "draft" && !composerDraftHasContent(this.getComposerDraft(current.id))
+        && !this.submissionOwner?.getPendingDraftTabIds().includes(current.id) ? current : undefined;
+      const draft = reusable ?? this.state.sessionTabs.find(tab => tab.kind === "draft" && tab.id !== tabId
+        && sameRecoveryContext(tab.context, context) && !composerDraftHasContent(tab)
+        && !this.submissionOwner?.getPendingDraftTabIds().includes(tab.id))
+        ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
+      const wasSelected = this.applicationPreview.getSnapshot().conversationSelected;
+      const closing = this.applicationPreview.invoke(action, { tabId }, signal);
+      try {
+        await this.selectTab(draft, signal);
+        await closing;
+      } catch (error) {
+        await closing;
+        if (this.state.activeSessionTabID === tabId && !this.applicationPreview.getSnapshot().conversationOpen) {
+          await this.applicationPreview.invoke(wasSelected ? "preview.show-conversation" : "preview.open-conversation", {});
+        }
+        throw error;
+      }
+      return;
+    }
     if (isApplicationPreviewAction(action)) {
       const result = await this.applicationPreview.invoke(action,
         input as ApplicationPreviewActionMapV1[typeof action]["input"], signal);
@@ -1576,6 +1608,10 @@ export class ApplicationController implements HostApplicationService {
         return;
       }
       case "composer.submit": return this.applicationSubmission.submit(input as ApplicationActionMapV1["composer.submit"]["input"], signal);
+      case "conversation.submit-content": {
+        const content = input as ApplicationActionMapV1["conversation.submit-content"]["input"];
+        return this.applicationSubmission.submitContent(content.source, { text: content.text, context: content.context }, signal);
+      }
       case "composer.cancel-submission": return { cancelled: this.applicationSubmission.cancel((input as ApplicationActionMapV1["composer.cancel-submission"]["input"]).operationID) };
       case "composer.stop": return this.applicationSubmission.stop(this.state.activeSessionTabID);
       case "composer.configure": {

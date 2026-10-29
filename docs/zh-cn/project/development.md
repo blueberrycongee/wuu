@@ -38,6 +38,14 @@ Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有
 `npm --prefix desktop run test:e2e:project-agent` 验证后端能力字段缺省、关闭和开启时
 的界面，将截图与结果保存到 `desktop/out/e2e/project-agent-gate/`。
 
+构建桌面后，运行 `npm --prefix desktop run test:e2e:settings-overlay`，验证真实的
+原生设置菜单，而不是主 renderer 中隐藏的尺寸测量副本。测试检查可见边界、实际绘制
+像素、点击命中、关闭与焦点、运行中对话和草稿在设置往返后的保留，以及首次呈现确认
+丢失后的恢复。合成后端不需要模型或账户。结果、传输日志和分别采集的主界面/菜单
+截图保存在 `desktop/out/e2e/settings-overlay/`；可用 `WUU_SETTINGS_OVERLAY_OUTPUT`
+更改目录。Linux 与托管 macOS CI 运行此门禁；分层截图不替代完整桌面截图或实体
+macOS 验收。
+
 只开发 CLI 时可以运行：
 
 ```bash
@@ -45,7 +53,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-十个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
+内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
 `make build-plugins` 把独立 JavaScript 运行包生成到内嵌资源目录；`make build-go`、
 `make install` 和桌面核心构建会先重新生成这些资源，再编译 Go。已提交的运行包
 让普通 Go 构建不依赖 npm 安装；`make check-plugins` 会拒绝过期的生成产物。
@@ -495,6 +503,10 @@ stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 
 - `stdin_read`、`handler_start`、`response_written`、`handler_end` 区分请求处理
   和回复后的工作。`stdin_read` 表示串行扫描器已读到完整帧，不是字节最早到达管道
   的时刻。已有异步 handler 可能先返回、后回复。
+  `resume_dispatch_wait` 和 `resume_dispatch_begin/end` 标记移出入口的恢复读取
+  及其同会话后继；此时 `handler_end` 仅表示入口已返回，不是后台完成。活动 Stop
+  可越过纯恢复读取，但不越过先前提交的输入；待处理输入汇总和回复快照的锁等待
+  与 provider 读取分别计时。
 - `resume_*` 区分持久历史载入、子代理/工作树检查、元数据/暂存输入读取、进程恢复、
   缓存分离及已分离资源清理。
 - `queue_*` 区分输入准备、权限/控制检查、真正的互斥锁获取等待及持久接受。
@@ -502,6 +514,9 @@ stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 
 - `admission_*`、`answer_ready_handoff` 和 `turn_launch_committed` 区分上轮结算、
   插件刷新、执行租约、历史刷新、运行环境准备、hook 和用户输入持久追加。
   launch **不等于** provider 请求，仍需保留本地 provider/HTTP 包装器的派发时间。
+- `session_control_mutex_wait` 直接测量按会话控制锁的获取等待；
+  `session_control_input_read` 和 `session_control_read` 分别测量锁外和锁内所选 provider
+  的控制读取。不同会话的控制事务不再共享包含 provider 等待的临界区。
 - `interrupt_*` 区分会话控制、暂存输入持久化、取消、worker 冻结、受管理进程停止
   及生命周期记录。中断回复与后续终态通知/UI 更新是不同事件。
 

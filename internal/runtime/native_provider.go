@@ -22,7 +22,9 @@ type NativeProviderContext struct {
 	UserBinding                   userspace.Binding
 	RetainState                   func() (*State, error)
 	Registry                      *pluginhost.ServiceRegistry
+	Host                          *pluginhost.Host
 	Documents                     persistence.Documents
 	Sessions                      *session.Store
 	WuuHome, RootDir, WorkspaceID string
+	WorkspaceStateDir             string
 }

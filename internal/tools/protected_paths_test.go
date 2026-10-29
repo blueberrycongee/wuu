@@ -93,9 +93,15 @@ func TestProtectedPathsCheckWorktreeDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	kit.SetProtectedPaths([]string{protected})
-	ctx := toolctx.WithWorktreeBinding(context.Background(), root, protected)
-	if out, err := kit.Execute(ctx, providers.ToolCall{Name: "read_file", Arguments: `{"path":"memory.txt"}`}); err == nil || strings.Contains(out, "DOMAIN_SECRET") {
-		t.Fatalf("worktree rebasing bypass: %s %v", out, err)
+	alias := filepath.Join(t.TempDir(), "workspace-alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, boundRoot := range []string{root, alias} {
+		ctx := toolctx.WithWorktreeBinding(context.Background(), boundRoot, protected)
+		if out, err := kit.Execute(ctx, providers.ToolCall{Name: "read_file", Arguments: `{"path":"memory.txt"}`}); err == nil || strings.Contains(out, "DOMAIN_SECRET") {
+			t.Fatalf("worktree binding %q ignored or bypassed: %s %v", boundRoot, out, err)
+		}
 	}
 }
 

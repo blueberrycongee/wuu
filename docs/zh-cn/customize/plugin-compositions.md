@@ -12,7 +12,7 @@ wuu plugin dev examples/plugins/composition-lab.ts
 
 ## 配置升级
 
-组合版本 1–3 仍可读取。版本 4 将资源授权设为显式 provider 边界，并引入最小会话宿主。
+组合版本 1–4 仍可读取。新配置使用版本 5。版本 4 将资源授权设为显式 provider 边界，并引入最小会话宿主。
 旧选择包含 `kernel`、`wuu.session-state` 或 `wuu.session-execution` 时，解析会补入
 `wuu.resource-access`；未绑定其他 `resource.authorization@1` provider 时，还会补入
 `wuu.resource-policy.default`。检查结果用 `migration:vN-to-v4` 标注这些新增项，
@@ -21,6 +21,18 @@ wuu plugin dev examples/plugins/composition-lab.ts
 版本 3 保留原有产品目录：不会悄悄加入新的可选共享 provider，也不会重新应用版本 1/2
 的执行 provider 迁移。版本 4 不会补足缺失的授权组件。将旧配置改成版本 4 前，应显式
 保留投影后的模块或选择替代实现。缺失或禁用的策略仍会拒绝访问；迁移不是运行时回退。
+
+版本 5 将功能界面与运行时业务 provider 分开。版本 1–4 的选择同时包含桌面 renderer
+及 `goal` 或 `automation-client` 时，解析分别加入
+`goal-ui` 或 `automation-ui`，来源标记为 `migration:vN-to-v5`。
+显式排除 UI 优先；headless 与空选择不会加入界面。版本 5 的显式组合独立选择运行时
+和 UI；新产品默认配置通过普通扩展接纳流程发现两个包。现有 goal 和 automation
+运行时 ID、持久化状态不变。
+
+原生产品采用构造器目录，而非回退注册表：先解析选择，再构造 provider；嵌入方可为
+目录项提供显式构造器。原生与外部进程实现使用相同的服务绑定、准备、激活和依赖清理。
+随产品提供的 `agent.policy` 实现与契约客户端、验证逻辑分离；替换它不需要替换循环
+或消费者。移除所选策略会停止接纳，不会恢复原生重试或并发策略。
 
 ## 最小会话宿主
 
