@@ -1626,8 +1626,6 @@ export const zhCN = {
   "triggers.cancelled": "已取消",
   "triggers.stopped": "已停止",
   "triggers.onExit": "结束后继续",
-  "triggers.interval": "每 {minutes} 分钟检查",
-  "triggers.next": "下次：{time}",
   "triggers.source": "查看输出",
   "triggers.outputFailed": "无法读取输出，收起后重新展开以重试。",
   "triggers.noOutput": "暂无输出。",

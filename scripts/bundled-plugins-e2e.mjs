@@ -292,8 +292,8 @@ try {
       const process = processes.get(input.process_id);
       assert(process, 'Only captured process handles are used');
       if (call.method === 'read') {
-        const bytes = Buffer.from(process.output);
-        return { process, output: bytes.subarray(input.offset_bytes).toString(), next_offset: bytes.length, total_bytes: bytes.length, truncated: false };
+        const bytes = Buffer.from(input.stream === "stderr" ? process.diagnostics ?? "" : process.output);
+        return { process, stream: input.stream, output: bytes.subarray(input.offset_bytes).toString(), next_offset: bytes.length, total_bytes: bytes.length, truncated: false };
       }
       if (call.method === 'stop') {
         Object.assign(process, { state: 'stopped', reason: 'requested_stop', exit_code: -1 });
@@ -326,27 +326,27 @@ try {
     assert.equal(listed.tasks.length, 1);
     assert.equal(listed.tasks[0].cwd, environment.root, 'Monitor history records the selected execution root');
     assert.equal(resultJSON(await runtime.tool('monitor_tasks', { action: 'list' }, { session_id: 'peer', thread_id: 'peer' })).tasks.length, 0);
-    await runtime.client('monitor.tasks', { action: 'stop', task_id: process.id, thread_id: 'parent' });
+    await runtime.tool('monitor_tasks', { action: 'stop', task_id: process.id });
     await deadline(watch.done, 'monitor completes after manual stop');
     assert.equal(watch.state, 'completed');
     const ended = deliveries.at(-1);
     assert.match(ended.input.prompt, /partial/);
-    assert.match(ended.input.prompt, /user stopped/);
-    const stopped = (await runtime.client('monitor.tasks', { action: 'list', thread_id: 'parent' })).tasks[0];
+    assert.match(ended.input.prompt, /explicitly stopped/);
+    const stopped = resultJSON(await runtime.tool('monitor_tasks', { action: 'list' })).tasks[0];
     assert.equal(stopped.status, 'stopped');
     assert.equal(stopped.lines, 2);
     assert.equal(stopped.delivery_pending, false);
     environment = { backend: 'local', root: '/host/worktree/subdirectory' };
     const surviving = resultJSON(await runtime.tool('monitor', { command: 'printf recovery', description: 'Recover history', persistent: true }, { cwd: environment.root }));
-    const localTask = (await runtime.client('monitor.tasks', { action: 'list', thread_id: 'parent' })).tasks.find(task => task.id === surviving.task_id);
+    const localTask = resultJSON(await runtime.tool('monitor_tasks', { action: 'list' })).tasks.find(task => task.id === surviving.task_id);
     assert.equal(localTask.cwd, '/host/worktree/subdirectory', 'Local worktree/subdirectory bindings retain their selected root');
     await runtime.shutdown();
     const beforeRestart = host.calls.length;
     runtime = await launch('monitor', host);
-    const recovered = (await runtime.client('monitor.tasks', { action: 'list', thread_id: 'parent' })).tasks;
+    const recovered = resultJSON(await runtime.tool('monitor_tasks', { action: 'list' })).tasks;
     assert.equal(recovered.find(task => task.id === surviving.task_id).status, 'interrupted');
     assert.equal(host.calls.slice(beforeRestart).filter(call => call.service === 'host.process' || call.service === 'host.background').length, 0, 'Restart must not rerun scripts or events');
-    const retained = await runtime.client('monitor.tasks', { action: 'read', task_id: stopped.id, thread_id: 'parent', offset_bytes: 0 });
+    const retained = resultJSON(await runtime.tool('monitor_tasks', { action: 'read', task_id: stopped.id, offset_bytes: 0 }));
     assert.equal(retained.output, process.output);
     await runtime.shutdown();
   });

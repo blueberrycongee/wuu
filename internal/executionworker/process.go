@@ -42,7 +42,6 @@ func (s *Server) process(ctx context.Context, method string, data json.RawMessag
 		Input    string                    `json:"input"`
 		Cols     int                       `json:"cols"`
 		Rows     int                       `json:"rows"`
-		Minutes  int                       `json:"minutes"`
 		Consumer string                    `json:"consumer"`
 		Mode     process.CompletionMode    `json:"mode"`
 		Options  process.OutputReadOptions `json:"options"`
@@ -82,14 +81,10 @@ func (s *Server) process(ctx context.Context, method string, data json.RawMessag
 		result, err = manager.CompletionPending(request.ID)
 	case "completion_delivered":
 		result, err = manager.MarkCompletionDelivered(request.ID, request.Consumer)
-	case "recheck":
-		result, err = manager.SetRecheck(request.ID, request.Minutes)
 	case "cancel_notifications":
 		result, err = manager.CancelNotifications(request.ID)
 	case "completion_mode":
 		result, err = manager.SetCompletionMode(request.ID, request.Mode)
-	case "recheck_delivered":
-		result, err = manager.MarkRecheckDelivered(request.ID)
 	case "cleanup":
 		result, err = manager.CleanupSessionWithResult()
 	default:

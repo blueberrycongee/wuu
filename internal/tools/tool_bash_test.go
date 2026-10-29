@@ -378,7 +378,7 @@ func TestBashBackgroundModeUsesManagedProcessBackend(t *testing.T) {
 	waitProcessOutputForTest(t, kit, started.ID, "ready")
 
 	listResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
+		Name:      "bash",
 		Arguments: `{"action":"list"}`,
 	})
 	if err != nil {
@@ -389,7 +389,7 @@ func TestBashBackgroundModeUsesManagedProcessBackend(t *testing.T) {
 	}
 
 	readResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
+		Name:      "bash",
 		Arguments: `{"action":"read","process_id":"` + started.ID + `","offset_bytes":0,"max_bytes":4096}`,
 	})
 	if err != nil {
@@ -400,7 +400,7 @@ func TestBashBackgroundModeUsesManagedProcessBackend(t *testing.T) {
 	}
 
 	stopResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
+		Name:      "bash",
 		Arguments: `{"action":"stop","process_id":"` + started.ID + `"}`,
 	})
 	if err != nil {
@@ -437,7 +437,7 @@ func TestBashReadBackgroundConsumesCompletionWhenTerminalResultIsReturned(t *tes
 		time.Sleep(10 * time.Millisecond)
 	}
 	readResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
+		Name:      "bash",
 		Arguments: `{"action":"read","process_id":"` + started.ID + `","offset_bytes":0,"max_bytes":4096}`,
 	})
 	if err != nil {
@@ -520,7 +520,7 @@ func TestBashReadBackgroundPagesForwardFromExplicitOffset(t *testing.T) {
 	readPage := func(offset int64) pageResponse {
 		t.Helper()
 		resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-			Name:      "process",
+			Name:      "bash",
 			Arguments: fmt.Sprintf(`{"action":"read","process_id":%q,"offset_bytes":%d,"max_bytes":5}`, started.ID, offset),
 		})
 		if err != nil {
@@ -564,7 +564,7 @@ func TestBashBackgroundUsesCWD(t *testing.T) {
 
 	started := startBackgroundForTest(t, kit, map[string]any{"command": "pwd -P; sleep 5", "cwd": "server"})
 	defer func() {
-		_, _ = executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "process", Arguments: `{"action":"stop","process_id":"` + started.ID + `"}`})
+		_, _ = executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"action":"stop","process_id":"` + started.ID + `"}`})
 	}()
 	want := canonicalTestPath(t, subdir)
 	got := canonicalTestPath(t, started.CWD)

@@ -128,7 +128,11 @@ func TestSharedProcessManagerKeepsEachSessionWorkspaceAfterRebind(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = manager.CleanupSession() })
+	t.Cleanup(func() {
+		if err := manager.CleanupOwned(); err != nil {
+			t.Error(err)
+		}
+	})
 	first := &Env{RootDir: oldRoot, ProcessMgr: manager, SessionID: "first", Unconfined: true, AllowMutations: true, OnSessionWorkspaceChanged: func(string) error { return nil }}
 	second := &Env{RootDir: oldRoot, ProcessMgr: manager, SessionID: "second", Unconfined: true, AllowMutations: true}
 	if _, err := NewSetSessionWorkspaceTool(first).Execute(context.Background(), `{"root":`+quoteJSONForTest(newRoot)+`}`); err != nil {

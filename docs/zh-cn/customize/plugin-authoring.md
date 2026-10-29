@@ -551,7 +551,9 @@ TypeScript 运行时适配器中的 `model.adapter` 和 `model.middleware` 处�
 generation 所有，可以活过工具回调。取消读取或中止原始调用的信号不会停止已接纳的进程；
 显式取消应调用 `stopProcess`。
 
-`readProcess` 返回合并输出、字节游标、截断信息和进程状态。单次读取范围为 4 字节到
+`readProcess` 返回输出、字节游标、截断信息和进程状态。不指定 `stream` 时仍返回合并输出。
+host.process 1.2 支持 `stream: "stdout"` 或 `stream: "stderr"`，分别使用独立游标，结果回传 `stream`。
+旧记录、PTY 或不支持分流的后端会明确报错；SDK 会拒绝缺少流确认的结果。原始输出本身不唤醒会话。单次读取范围为 4 字节到
 1 MiB，默认 64 KiB，最多等待 30 秒。应使用返回的 `next_offset`，因为 UTF-8 分块及日志
 保留策略可能影响实际长度。`stopProcess` 停止整个进程树。超时为零表示无截止时间，
 但会话归档或删除、generation 关闭、宿主退出仍会停止进程。`follow_parent: true` 让已完成

@@ -263,14 +263,10 @@ func managedProcessSummaryForManager(manager *process.Manager, p process.Process
 
 func managedProcessSummary(p process.Process) ManagedProcessSummary {
 	var trigger *ProcessTrigger
-	if p.CompletionMode != process.CompletionModeDetached || p.RecheckMinutes > 0 || !p.NotificationsCancelledAt.IsZero() {
+	if p.CompletionMode != process.CompletionModeDetached || !p.NotificationsCancelledAt.IsZero() {
 		trigger = &ProcessTrigger{
-			Status:         "waiting",
-			OnExit:         p.CompletionMode != process.CompletionModeDetached,
-			RecheckMinutes: p.RecheckMinutes,
-		}
-		if !p.NextRecheckAt.IsZero() {
-			trigger.NextRecheckAt = &p.NextRecheckAt
+			Status: "waiting",
+			OnExit: p.CompletionMode != process.CompletionModeDetached,
 		}
 		switch {
 		case !p.NotificationsCancelledAt.IsZero():
@@ -286,8 +282,6 @@ func managedProcessSummary(p process.Process) ManagedProcessSummary {
 			} else {
 				trigger.Status = "stopped"
 			}
-		case !p.PendingRecheckAt.IsZero():
-			trigger.Status = "received"
 		}
 	}
 	return ManagedProcessSummary{

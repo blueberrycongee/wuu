@@ -2076,7 +2076,7 @@ func (s *Session) processManagerForThread(threadRoot, stateDir string) (*process
 type threadProcessManagerKey struct{ root, state string }
 
 // A process registry needs one in-process authority for handles, writes and
-// recheck timers. Model runtimes remain per-session; process ownership is
+// lifecycle. Model runtimes remain per-session; process ownership is
 // recorded independently on every launch through RootThreadID.
 type threadProcessManagers struct {
 	mu       sync.Mutex

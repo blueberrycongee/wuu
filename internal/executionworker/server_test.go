@@ -459,7 +459,11 @@ func TestWorkerPluginProcessPermissionAndIdentity(t *testing.T) {
 	if err = json.Unmarshal(raw, &started); err != nil {
 		t.Fatal(err)
 	}
-	if started.OperationID != "operation-reconcile" || started.CWD != root || started.RootThreadID != "process-thread" || started.OwnerID != "child-actor" || started.CompletionMode != process.CompletionModeDetached {
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.OperationID != "operation-reconcile" || started.CWD != canonicalRoot || started.RootThreadID != "process-thread" || started.OwnerID != "child-actor" || started.CompletionMode != process.CompletionModeDetached {
 		t.Fatalf("wrong process binding: %+v", started)
 	}
 	offset := int64(0)

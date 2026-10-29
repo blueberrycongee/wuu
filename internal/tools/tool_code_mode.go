@@ -275,7 +275,7 @@ func (t *Toolkit) CodeModeDirectCallAllowed(name string) bool {
 	// Ordinary file and command operations do not require a program wrapper.
 	// The same tools remain composable when their arguments depend on results.
 	switch name {
-	case "read_file", "write_file", "edit_file", "bash", "process":
+	case "read_file", "write_file", "edit_file", "bash":
 		return true
 	}
 	return t.codeModeDirectOnly(name)
@@ -305,7 +305,8 @@ Execution:
 - Call the directly advertised file and command tools for individual operations. Use this tool for dependent sequences, parallel independent work, or processing results before displaying them. Literal file content can go directly to write_file or edit_file without JavaScript evaluation.
 - Use the core binding declarations below directly. Find other tools with await searchTools(query, {limit:8, offset:0}); inspect exact arguments with await describeTool(name). Tool names are exact; bracket access handles punctuation.
 - Await dependent calls and writes in order within the same program when the next action is already known; return to the model when an observation requires a new decision. Use bounded Promise.all for independent reads. Await every call before returning: programs have no continuation and tool effects are not transactional.
-- For long work use bash run_in_background and process handles. Directly advertised interaction and lifecycle tools stay outside programs.
+- For concurrent commands use tools.bash({command, run_in_background:true}); inspect or control the returned handle with tools.bash({action:"read"|"write"|"stop"|"list"|"update", ...}). Exit notifications resume the conversation automatically unless completion_mode is detached. A program must return after starting background work; keep the handle with store when another program needs it.
+- Discover extension tools through searchTools and describeTool; await each start call before returning so the extension can take ownership. Directly advertised interaction and lifecycle tools stay outside programs.
 
 Text and output:
 - Treat nested source as literal data. Ordinary JS strings process backslashes; template literals interpolate ${...}, including String.raw templates. A quoted shell heredoc protects against shell expansion only, after JavaScript has parsed the command. Preserve the intended bytes at each language boundary.

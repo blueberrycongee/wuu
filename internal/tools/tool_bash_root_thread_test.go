@@ -18,7 +18,7 @@ func startBackgroundForRootThreadTest(t *testing.T, arguments string, bind func(
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	t.Cleanup(func() { _ = manager.CleanupSession() })
+	t.Cleanup(func() { _ = manager.CleanupOwned() })
 	kit.SetProcessManager(manager)
 	bind(kit)
 
@@ -34,12 +34,12 @@ func startBackgroundForRootThreadTest(t *testing.T, arguments string, bind func(
 	if len(list) != 1 {
 		t.Fatalf("expected exactly one command session, got %d", len(list))
 	}
-	listResponse, err := executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "process", Arguments: `{"action":"list"}`})
+	listResponse, err := executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"action":"list"}`})
 	if err != nil {
 		t.Fatalf("list background: %v", err)
 	}
 	readResponse, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
+		Name:      "bash",
 		Arguments: `{"action":"read","process_id":"` + list[0].ID + `"}`,
 	})
 	if err != nil {
@@ -62,13 +62,12 @@ func TestStartBackgroundStampsBoundThreadOnRecord(t *testing.T) {
 
 // root_thread_id is host state, not a model argument. A model that invents one
 // must not be able to point durable ownership at another conversation.
-func TestStartBackgroundIgnoresModelSuppliedRootThread(t *testing.T) {
-	_, got := startBackgroundForRootThreadTest(t,
-		`{"command":"sleep 60","run_in_background":true,"root_thread_id":"someone-elses-thread"}`,
-		func(kit *Toolkit) { kit.SetSessionID("thread-abc") },
-	)
-	if got.RootThreadID != "thread-abc" {
-		t.Fatalf("RootThreadID = %q, want the bound thread-abc, not the model-supplied value", got.RootThreadID)
+func TestStartBackgroundRejectsModelSuppliedRootThread(t *testing.T) {
+	kit := newShellTestToolkit(t, t.TempDir())
+	kit.SetSessionID("thread-abc")
+	_, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"command":"sleep 60","run_in_background":true,"root_thread_id":"someone-elses-thread"}`})
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("model-owned root thread was accepted: %v", err)
 	}
 }
 
@@ -88,7 +87,7 @@ func TestStartBackgroundRejectsUnboundOrPendingSession(t *testing.T) {
 		kit.SetSessionID(sessionID)
 		_, err = kit.Execute(context.Background(), providers.ToolCall{
 			Name:      "bash",
-			Arguments: `{"command":"sleep 60","run_in_background":true,"root_thread_id":"model-invented"}`,
+			Arguments: `{"command":"sleep 60","run_in_background":true}`,
 		})
 		if err == nil || !strings.Contains(err.Error(), "bound session ID") {
 			t.Fatalf("session %q background start error = %v, want bound session requirement", sessionID, err)

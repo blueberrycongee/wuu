@@ -33,13 +33,19 @@ func renderBashModelView(rawText string, budgetTokens int) (string, projectionOm
 		return "", projectionOmission{}, false
 	}
 	switch head.Action {
+	case processActionRead, processActionWrite, processActionStop, processActionList, processActionUpdate:
+		return renderProcessModelView(rawText, budgetTokens)
 	case "run":
 	case bashResultActionStart:
 		var started proc.Process
 		if err := json.Unmarshal([]byte(rawText), &started); err != nil || started.ID == "" {
 			return "", projectionOmission{}, false
 		}
-		return fitView(fmt.Sprintf("Running in background as process %s. You will be notified when it exits; use process to read its output or stop it.", started.ID), budgetTokens)
+		notification := "You will be notified when it exits."
+		if started.CompletionMode == proc.CompletionModeDetached {
+			notification = "Its exit does not resume this task."
+		}
+		return fitView(fmt.Sprintf("Running in background as process %s. %s Use bash action=read or action=stop with its process_id.", started.ID, notification), budgetTokens)
 	default:
 		return "", projectionOmission{}, false
 	}
@@ -175,7 +181,6 @@ func renderProcessModelView(rawText string, budgetTokens int) (string, projectio
 		var r struct {
 			ProcessID      string              `json:"process_id"`
 			CompletionMode proc.CompletionMode `json:"completion_mode"`
-			RecheckMinutes int                 `json:"recheck_minutes"`
 		}
 		if err := json.Unmarshal([]byte(rawText), &r); err != nil {
 			return "", projectionOmission{}, false
@@ -184,11 +189,7 @@ func renderProcessModelView(rawText string, budgetTokens int) (string, projectio
 		if r.CompletionMode == proc.CompletionModeDetached {
 			exit = "its exit does not resume this task"
 		}
-		recheck := "no progress checks"
-		if r.RecheckMinutes > 0 {
-			recheck = fmt.Sprintf("progress check every %d min", r.RecheckMinutes)
-		}
-		return fitView(fmt.Sprintf("Process %s: %s; %s.", r.ProcessID, exit, recheck), budgetTokens)
+		return fitView(fmt.Sprintf("Process %s: %s.", r.ProcessID, exit), budgetTokens)
 	default:
 		return "", projectionOmission{}, false
 	}

@@ -399,7 +399,6 @@ func (t *Toolkit) rebuildRegistry() {
 		// process owns the background-process lifecycle. Both are emitted by
 		// the model profile compiler.
 		NewBashTool(e),
-		NewProcessTool(e),
 		// Git
 		NewGitTool(e),
 		// Web
