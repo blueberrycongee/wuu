@@ -482,6 +482,8 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 		doneCh:          make(chan struct{}),
 	}
 
+	sa.waitState = &terminalWaitState{done: sa.doneCh}
+	sa.initialWaitState = sa.waitState
 	m.mu.Lock()
 	if _, exists := m.agents[id]; exists {
 		m.mu.Unlock()
@@ -516,6 +518,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		if r := recover(); r != nil {
 			sa.mu.Lock()
 			sa.Status = StatusFailed
+			sa.terminalPending = true
 			sa.Error = errors.Join(receiptErr, fmt.Errorf("worker panic: %v", r))
 			sa.CompletedAt = time.Now()
 			sa.mu.Unlock()
@@ -733,6 +736,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		return
 	}
 	sa.history = nextHistory
+	sa.terminalPending = true
 	sa.CompletedAt = time.Now()
 	if err != nil {
 		switch {
@@ -824,7 +828,7 @@ func (m *Manager) prepareTerminal(sa *SubAgent, status Status) (Notification, bo
 		return Notification{}, false
 	}
 	generation := rand.Text()
-	n := Notification{AgentID: sa.ID, Status: status, Snapshot: sa.Snapshot(), TerminalGeneration: generation}
+	n := Notification{AgentID: sa.ID, Status: status, Snapshot: sa.CoordinatorSnapshot(), TerminalGeneration: generation}
 	var lastErr error
 	for attempt := 1; attempt <= terminalPrepareRetryAttempts; attempt++ {
 		m.mu.Lock()
@@ -939,7 +943,61 @@ func (m *Manager) notify(sa *SubAgent, status Status) error {
 }
 
 func (m *Manager) notifyTerminal(sa *SubAgent, n Notification, prepared bool) error {
-	return m.notifyWithGeneration(sa, n.Status, n.Snapshot, n.TerminalGeneration, prepared)
+	err := m.notifyWithGeneration(sa, n.Status, n.Snapshot, n.TerminalGeneration, prepared)
+	if err != nil {
+		sa.mu.Lock()
+		alreadyMarked := sa.Status == StatusInterrupted && sa.waitState != nil && sa.waitState.err != nil
+		sa.mu.Unlock()
+		if !alreadyMarked {
+			_ = m.MarkTerminalUnconfirmed(n, err)
+		}
+	} else {
+		sa.mu.Lock()
+		if sa.Status == n.Status && sa.CompletedAt.Equal(n.Snapshot.CompletedAt) {
+			sa.terminalPending = false
+		}
+		sa.mu.Unlock()
+	}
+	return err
+}
+
+// MarkTerminalUnconfirmed is called before releasing the execution lease when
+// the prepared result cannot be confirmed. Preserve this turn's wait outcome
+// even if a new explicit follow-up starts before its waiters are scheduled.
+func (m *Manager) MarkTerminalUnconfirmed(n Notification, cause error) error {
+	if m == nil || cause == nil {
+		return nil
+	}
+	sa := m.Get(n.AgentID)
+	if sa == nil {
+		return nil
+	}
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	if !sa.CompletedAt.Equal(n.Snapshot.CompletedAt) {
+		return nil
+	}
+	if sa.Status == n.Status {
+		failure := fmt.Errorf("worker terminal outcome was not confirmed; tool effects may already have occurred: %w", cause)
+		sa.Status = StatusInterrupted
+		sa.terminalPending = false
+		sa.Error = errors.Join(sa.Error, failure)
+		if sa.waitState != nil {
+			sa.waitState.err = failure
+			sa.waitState.snapshot = snapshotLocked(sa)
+		}
+	} else if sa.Status != StatusInterrupted || sa.waitState == nil || sa.waitState.err == nil {
+		return nil
+	}
+	// History may already contain a completed candidate. Rewrite it while the
+	// execution lease still fences readers and future workers.
+	if sa.historyDocuments != nil {
+		return writeDocumentWorkerRecord(sa.historyDocuments, sa.historyScope, sa.ID, sa.historyPath, "terminal", historyRecordLocked(sa))
+	}
+	if sa.historyPath != "" {
+		return writeWorkerRecord(sa.historyPath, historyRecordLocked(sa))
+	}
+	return nil
 }
 
 func (m *Manager) notifySnapshot(sa *SubAgent, status Status, snap SubAgentSnapshot) error {
@@ -1032,6 +1090,18 @@ func (m *Manager) List() []SubAgentSnapshot {
 	return out
 }
 
+// CoordinatorList exposes candidates to capacity and shutdown bookkeeping;
+// callers reporting worker state use List instead.
+func (m *Manager) CoordinatorList() []SubAgentSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]SubAgentSnapshot, 0, len(m.agents))
+	for _, sa := range m.agents {
+		out = append(out, sa.CoordinatorSnapshot())
+	}
+	return out
+}
+
 // History returns a copy of the given sub-agent's current conversation.
 func (m *Manager) History(id string) ([]providers.ChatMessage, bool) {
 	sa := m.Get(id)
@@ -1080,9 +1150,11 @@ func (m *Manager) QueueMessage(id, message string) bool {
 	if sa == nil {
 		return false
 	}
-	snap, queued := sa.pushPendingMessageSnapshot(message)
+	_, queued := sa.pushPendingMessageSnapshot(message)
 	if queued {
-		m.notifySnapshot(sa, snap.Status, snap)
+		// A message queued during a terminal transition must not re-enter the
+		// terminal observer with an unprepared snapshot.
+		m.BroadcastSnapshot(sa)
 	}
 	return true
 }
@@ -1160,6 +1232,7 @@ func (m *Manager) followup(ctx context.Context, id, message, forceTool string) (
 	}
 	doneCh := make(chan struct{})
 	sa.Status = StatusRunning
+	sa.terminalPending = false
 	sa.CompletedAt = time.Time{}
 	sa.Error = nil
 	sa.Result = ""
@@ -1167,6 +1240,7 @@ func (m *Manager) followup(ctx context.Context, id, message, forceTool string) (
 	sa.ActivityAt = time.Time{}
 	sa.cancelFunc = cancel
 	sa.doneCh = doneCh
+	sa.waitState = &terminalWaitState{done: doneCh}
 	sa.forceToolNextTurn = strings.TrimSpace(forceTool)
 	snap := snapshotLocked(sa)
 	maxSteps := sa.maxSteps
@@ -1415,6 +1489,17 @@ func (m *Manager) PendingMessageCount(id string) int {
 // Wait blocks until the sub-agent finishes or the context is cancelled.
 // Returns the final snapshot.
 func (m *Manager) Wait(ctx context.Context, id string) (SubAgentSnapshot, error) {
+	return m.wait(ctx, id, false)
+}
+
+// WaitInitial waits for the original spawned turn, even if a follow-up starts
+// before its caller has reached the wait. Subsequent parked turns still follow
+// the ordinary wait behavior.
+func (m *Manager) WaitInitial(ctx context.Context, id string) (SubAgentSnapshot, error) {
+	return m.wait(ctx, id, true)
+}
+
+func (m *Manager) wait(ctx context.Context, id string, initial bool) (SubAgentSnapshot, error) {
 	sa := m.Get(id)
 	if sa == nil {
 		return SubAgentSnapshot{}, fmt.Errorf("subagent %q not found", id)
@@ -1427,14 +1512,29 @@ func (m *Manager) Wait(ctx context.Context, id string) (SubAgentSnapshot, error)
 	defer waitPoll.Stop()
 	for {
 		sa.mu.Lock()
+		state := sa.waitState
+		if initial {
+			state = sa.initialWaitState
+			initial = false
+		}
 		doneCh := sa.doneCh
+		if state != nil {
+			doneCh = state.done
+		}
 		sa.mu.Unlock()
 		select {
 		case <-doneCh:
 		case <-ctx.Done():
 			return sa.Snapshot(), ctx.Err()
 		}
-		snap := sa.Snapshot()
+		sa.mu.Lock()
+		if state != nil && state.err != nil {
+			snap, err := state.snapshot, state.err
+			sa.mu.Unlock()
+			return snap, err
+		}
+		snap := snapshotLocked(sa)
+		sa.mu.Unlock()
 		if snap.Status != StatusWaitingChildren {
 			return snap, nil
 		}
@@ -1507,11 +1607,13 @@ func (m *Manager) stopAgent(sa *SubAgent) {
 		return
 	}
 	sa.Status = StatusCancelled
+	sa.terminalPending = true
 	sa.CompletedAt = time.Now()
 	sa.Activity = ""
 	sa.ActivityAt = time.Time{}
 	done := make(chan struct{})
 	sa.doneCh = done
+	sa.waitState = &terminalWaitState{done: done}
 	history := providers.CloneChatMessages(sa.history)
 	sa.mu.Unlock()
 	go func() {

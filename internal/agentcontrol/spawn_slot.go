@@ -32,7 +32,7 @@ func (c *AgentControl) tryReserveSpawnSlot(workerID string) (*spawnSlotReservati
 	// and its not-yet-released reservation are never counted twice.
 	registered := make(map[string]subagent.Status)
 	running := 0
-	for _, snap := range c.manager.List() {
+	for _, snap := range c.manager.CoordinatorList() {
 		registered[snap.ID] = snap.Status
 		if snap.Status == subagent.StatusRunning {
 			running++

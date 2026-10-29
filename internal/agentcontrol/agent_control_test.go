@@ -3246,7 +3246,7 @@ func TestRequiresReportWorkerGetsOneClosingNudge(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			worker := c.Manager().Get(workerID)
-			if client.calls.count() >= 2 && worker != nil && isFinalSubAgentStatus(worker.Snapshot().Status) {
+			if client.calls.count() >= 2 && worker != nil && isFinalSubAgentStatus(worker.CoordinatorSnapshot().Status) {
 				closingObservedOnce.Do(func() { close(closingTerminalObserved) })
 				return
 			}

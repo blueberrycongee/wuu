@@ -221,6 +221,14 @@ type SpawnOptions struct {
 	InitialHistory []providers.ChatMessage
 }
 
+// terminalWaitState retains an unconfirmed outcome for waiters of one turn.
+// It remains valid when an explicit follow-up starts another turn.
+type terminalWaitState struct {
+	done     chan struct{}
+	err      error
+	snapshot SubAgentSnapshot
+}
+
 // SubAgent is an isolated agent instance managed by Manager.
 type SubAgent struct {
 	ID                  string
@@ -293,8 +301,11 @@ type SubAgent struct {
 	toolLedger   *toolledger.Ledger
 
 	// Lifecycle plumbing.
-	cancelFunc context.CancelFunc
-	doneCh     chan struct{}
+	cancelFunc       context.CancelFunc
+	doneCh           chan struct{}
+	waitState        *terminalWaitState
+	initialWaitState *terminalWaitState
+	terminalPending  bool
 
 	// Synchronizes Status / Result / Error access between the runner
 	// goroutine and observers.
@@ -304,6 +315,21 @@ type SubAgent struct {
 // Snapshot returns a read-only copy of the sub-agent's public fields.
 // Safe to call from any goroutine.
 func (s *SubAgent) Snapshot() SubAgentSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap := snapshotLocked(s)
+	if s.terminalPending && IsTerminal(snap.Status) {
+		snap.Status = StatusRunning
+		snap.CompletedAt = time.Time{}
+		snap.Result = ""
+		snap.Error = nil
+	}
+	return snap
+}
+
+// CoordinatorSnapshot exposes the terminal candidate only to the owner that
+// serializes worker execution and confirmation. User-facing paths use Snapshot.
+func (s *SubAgent) CoordinatorSnapshot() SubAgentSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return snapshotLocked(s)

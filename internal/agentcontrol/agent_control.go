@@ -1395,7 +1395,7 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 	}
 	var snap subagent.SubAgentSnapshot
 	if req.WaitInterrupt == nil {
-		snap, err = c.manager.Wait(waitCtx, spawned.ID)
+		snap, err = c.manager.WaitInitial(waitCtx, spawned.ID)
 	} else {
 		type waitResult struct {
 			snapshot subagent.SubAgentSnapshot
@@ -1405,7 +1405,7 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 		interruptibleWaitCtx, stopWait := context.WithCancel(waitCtx)
 		defer stopWait()
 		go func() {
-			waited, waitErr := c.manager.Wait(interruptibleWaitCtx, spawned.ID)
+			waited, waitErr := c.manager.WaitInitial(interruptibleWaitCtx, spawned.ID)
 			waitDone <- waitResult{snapshot: waited, err: waitErr}
 		}()
 		select {
@@ -1416,6 +1416,17 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 			waited := <-waitDone
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("wait: %w", ctx.Err())
+			}
+			if waited.err == context.Canceled {
+				// The wait was stopped before it observed a settled outcome.
+				// A terminal-looking snapshot may still be awaiting confirmation.
+				result.Status = string(waited.snapshot.Status)
+				result.Backgrounded = true
+				result.NextSteps = spawnResultNextSteps(result.Status, false, result.Isolation, result.AgentPath)
+				return result, nil
+			}
+			if waited.err != nil {
+				return nil, fmt.Errorf("wait: %w", waited.err)
 			}
 			snap = waited.snapshot
 			if !subagent.IsTerminal(snap.Status) {
@@ -1853,7 +1864,7 @@ func (c *AgentControl) Fork(ctx context.Context, req ForkRequest, parentHistory 
 		waitCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
-	snap, err := c.manager.Wait(waitCtx, spawned.ID)
+	snap, err := c.manager.WaitInitial(waitCtx, spawned.ID)
 	if err != nil {
 		return nil, fmt.Errorf("wait: %w", err)
 	}
@@ -1902,7 +1913,7 @@ func (c *AgentControl) StopAll() {
 	// leave their durable intent for recovery rather than starting another
 	// terminal transition here. Explicit StopAll still closes every edge.
 	if !c.isStopping() {
-		workers := c.manager.List()
+		workers := c.manager.CoordinatorList()
 		sort.Slice(workers, func(i, j int) bool { return workers[i].AgentPath < workers[j].AgentPath })
 		for _, worker := range workers {
 			c.stopWorker(worker.ID)
@@ -2894,7 +2905,7 @@ func (c *AgentControl) queuedLaunchCanYieldToTerminalRecovery(workerID string) b
 		return false
 	}
 	worker := c.manager.Get(strings.TrimSpace(workerID))
-	if worker == nil || !subagent.IsTerminal(worker.Snapshot().Status) {
+	if worker == nil || !subagent.IsTerminal(worker.CoordinatorSnapshot().Status) {
 		return false
 	}
 	pending, err := c.workerTerminalFinalizationPending(workerID)
@@ -3922,6 +3933,30 @@ func (c *AgentControl) consumeWorkerTerminal(n subagent.Notification) error {
 		}
 		time.Sleep(workerTerminalRetryDelay)
 	}
+	if !confirmed {
+		confirmationErr = fmt.Errorf("confirm worker terminal outcome: %w", confirmationErr)
+		for attempt := 1; ; attempt++ {
+			persistErr := c.manager.MarkTerminalUnconfirmed(n, confirmationErr)
+			if persistErr == nil {
+				break
+			}
+			// A durable terminal record fences recovery even if the history
+			// rewrite cannot complete. Otherwise keep the live lease while
+			// retrying; shutdown may still have to hand off an unknown state.
+			pending, pendingErr := c.workerTerminalFinalizationPending(n.AgentID)
+			if pendingErr == nil && pending {
+				break
+			}
+			if c.workerTerminalYieldRequested() {
+				confirmationErr = errors.Join(confirmationErr, fmt.Errorf("persist interrupted worker history: %w", persistErr))
+				break
+			}
+			if attempt == 1 || attempt%10 == 0 {
+				providers.DebugLogf("agentcontrol: persist unconfirmed worker %s attempt %d: %v", n.AgentID, attempt, persistErr)
+			}
+			time.Sleep(workerTerminalRetryDelay)
+		}
+	}
 	if confirmed && c.finalizeWorkerTerminalWithAck(n) == workerTerminalContinued {
 		return nil
 	}
@@ -3934,7 +3969,7 @@ func (c *AgentControl) consumeWorkerTerminal(n subagent.Notification) error {
 	c.releaseWorkerExecution(n.AgentID)
 	c.cleanupRetiringWorkerTerminalFinalizers()
 	if !confirmed {
-		return fmt.Errorf("confirm worker terminal outcome: %w", confirmationErr)
+		return confirmationErr
 	}
 	return nil
 }

@@ -339,7 +339,12 @@ before confirming its final outcome, recovery reports `interrupted` with an
 unconfirmed-outcome error and retains the candidate evidence. The host does not
 automatically rerun the worker or wake its parent from that candidate. Tool
 effects may already have occurred; inspect the available evidence before an
-explicit follow-up. A follow-up requires a usable saved worker snapshot.
+explicit follow-up. A follow-up requires a usable saved worker snapshot. While
+a live worker's terminal outcome is being confirmed, status reads remain in
+progress; a failed confirmation causes synchronous waits to return an error.
+When no terminal intent is available, the host keeps the worker lease while
+retrying the interrupted history write. If storage remains unavailable and the
+process exits, that interrupted history cannot be guaranteed durable.
 Older hosts do not understand the unconfirmed marker: finish recovery with the
 new host before starting an older host against the same worker state. This
 recovery describes process exits; it does not establish power-loss durability
