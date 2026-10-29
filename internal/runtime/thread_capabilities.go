@@ -64,9 +64,13 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	}
 	s.pluginGenerationMu.Unlock()
 	retained := false
+	var resultRelease func() error
 	defer func() {
 		if !retained {
 			s.releasePluginGeneration(generation)
+			if resultRelease != nil {
+				_ = resultRelease()
+			}
 		}
 	}()
 	result := &ThreadRuntime{SessionID: id,
@@ -115,7 +119,11 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	kit.SetStateDir(stateDir)
 	kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
 	kit.SetSessionID(id)
-	kit.SetSessionDir(artifactDir)
+	resultRelease, err = kit.BindSessionArtifacts(artifactDir, s.sessionArtifactManager())
+	if err != nil {
+		return nil, err
+	}
+	result.closeArtifacts = resultRelease
 	kit.SetSessionStore(sessions)
 	kit.SetWorkingNotesHome(wuuHome)
 	browserTabs, err := selectedBrowserTabStore(documents, wuuHome, s.SessionDir, stateDir, id)

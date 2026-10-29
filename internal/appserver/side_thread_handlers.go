@@ -41,16 +41,17 @@ const (
 )
 
 type sideThreadTurn struct {
-	store       *sidethread.Store
-	state       *runtime.State
-	execution   *runtime.State
-	generation  *runtime.PluginGeneration
-	pluginID    string
-	commandID   string
-	fingerprint string
-	cancel      context.CancelFunc
-	lease       *session.DocumentThreadExecutionLease
-	interrupted atomic.Bool
+	store            *sidethread.Store
+	state            *runtime.State
+	execution        *runtime.State
+	generation       *runtime.PluginGeneration
+	pluginID         string
+	commandID        string
+	fingerprint      string
+	cancel           context.CancelFunc
+	lease            *session.DocumentThreadExecutionLease
+	releaseArtifacts func() error
+	interrupted      atomic.Bool
 }
 
 type sideThreadMainSnapshot struct {
@@ -529,10 +530,16 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 			_ = execution.Close()
 		}
 	}()
-	runner, err := s.rt.NewSideThreadRunnerForState(execution, sideThreadID, s.mainThreadRoot(binding, mainID), s.mainThreadModelSelection(binding, mainID), command.ResolvedPrompt.Text, mainID)
+	runner, releaseArtifacts, err := s.rt.NewSideThreadRunnerForState(execution, sideThreadID, s.mainThreadRoot(binding, mainID), s.mainThreadModelSelection(binding, mainID), command.ResolvedPrompt.Text, mainID)
 	if err != nil {
 		return nil, err
 	}
+	artifactsOwned := true
+	defer func() {
+		if artifactsOwned && releaseArtifacts != nil {
+			_ = releaseArtifacts()
+		}
+	}()
 	previewMessages = append(previewMessages,
 		sidethread.Message{ID: userMessageID, SideThreadID: sideThreadID, Role: sidethread.RoleUser, Text: prompt, Selection: selection},
 		sidethread.Message{ID: assistantMessageID, SideThreadID: sideThreadID, Role: sidethread.RoleAssistant, Status: sidethread.AssistantStreaming},
@@ -554,7 +561,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	lifecycleLeaseOwned = false
 
 	ctx, cancel := context.WithCancel(context.Background())
-	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState, execution: execution}
+	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState, execution: execution, releaseArtifacts: releaseArtifacts}
 	s.sideTurnMu.Lock()
 	if s.closed.Load() {
 		s.sideTurnMu.Unlock()
@@ -581,6 +588,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	leaseOwned = false
 	generationOwned = false
 	executionOwned = false
+	artifactsOwned = false
 
 	return &SideThreadSendResult{
 		UserMessageID: userMessageID,
@@ -682,6 +690,9 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 		s.sideTurnMu.Unlock()
 		releaseSideThreadExecutionLease(mainID, turn.lease)
 		_ = turn.execution.Close()
+		if turn.releaseArtifacts != nil {
+			_ = turn.releaseArtifacts()
+		}
 		_ = turn.state.Close()
 	}()
 	if start != nil {

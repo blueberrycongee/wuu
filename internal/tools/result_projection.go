@@ -270,7 +270,7 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 			input.Content = toolresult.FromText(text).Content
 		}
 	}
-	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, input, budget)
+	settled, ref, paged := finalizeGenericToolResultWithArchive(t.env.SessionDir, call.ID, input, budget, t.env.persistSessionResult)
 	return settleModelText(result, settled.TextProjection()), ref, paged, nil
 }
 

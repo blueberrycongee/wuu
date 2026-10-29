@@ -150,8 +150,9 @@ type Env struct {
 
 	// Optional dependencies — nil means the feature is unavailable.
 	// Tools check for nil and return a clear error rather than panic.
-	SessionID  string
-	SessionDir string // absolute session artifact path for result budgeting
+	SessionID           string
+	SessionDir          string // absolute session artifact path for result budgeting
+	sessionArtifactRoot *sessionArtifactRoot
 	// CodeModeStateOwner can bind attached side-chat state to its parent lifetime.
 	CodeModeStateOwner string
 	// WorkingNotesHome binds working memory to the runtime's resolved Wuu home.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -54,10 +53,6 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 	if err != nil || !managed || filepath.Clean(filepath.Dir(resolved)) != filepath.Clean(resultDir) || !archivedResultName.MatchString(filepath.Base(resolved)) || !pathWithinRoot(resultDir, resolved) {
 		return toolresult.Result{}, errors.New("continuation is not a current-session result archive")
 	}
-	info, err := os.Lstat(resolved)
-	if err != nil || !info.Mode().IsRegular() {
-		return toolresult.Result{}, errors.New("result archive is unavailable")
-	}
 	if kit.IsToolDisabled("read_file") || !kit.SupportsTool("read_file") {
 		return toolresult.Result{}, errors.New("result recovery requires read_file permission")
 	}
@@ -66,5 +61,22 @@ func (t *RecoverToolResultTool) ExecuteResult(ctx context.Context, args string) 
 	if err := kit.checkPermission(ctx, buildToolInfoForArgs(native, kit.toolExposure("read_file"), args), call); err != nil {
 		return toolresult.Result{}, fmt.Errorf("result recovery: %w", err)
 	}
-	return native.ExecuteResult(context.WithValue(ctx, resultRecoveryContextKey{}, true), args)
+	if kit.env.sessionArtifactRoot == nil {
+		return toolresult.Result{}, errors.New("result archive is unavailable")
+	}
+	file, err := kit.env.sessionArtifactRoot.open(filepath.Join("tool-results", filepath.Base(resolved)))
+	if err != nil {
+		return toolresult.Result{}, errors.New("result archive is unavailable")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return toolresult.Result{}, errors.New("result archive is unavailable")
+	}
+	display := kit.env.normalizeSessionDisplayPath(resolved)
+	page, err := readFileByteWindowFromOpen(context.WithValue(ctx, resultRecoveryContextKey{}, true), kit.env, file, display, *cursor.ByteOffset, cursor.Limit, *cursor.ByteEndOffset, strings.TrimSpace(cursor.ExpectedSHA256), info.Size())
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	return toolresult.FromText(page), nil
 }

@@ -327,6 +327,8 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
+	shutdownBackgroundDrained    chan struct{}
+	shutdownDrainTimeoutForTest  time.Duration
 	engineScopeMu                sync.Mutex
 	engineScopes                 map[agentengine.EngineID]engineScope
 	engineAuthMu                 sync.Mutex
@@ -786,7 +788,11 @@ func (s *Server) Close() {
 	}
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
+		s.backgroundMu.Lock()
+		s.shutdownBackgroundDrained = make(chan struct{})
+		shutdownDone := s.shutdownBackgroundDrained
 		s.closed.Store(true)
+		s.backgroundMu.Unlock()
 		if s.packageDownloadCancel != nil {
 			s.packageDownloadCancel()
 		}
@@ -823,6 +829,7 @@ func (s *Server) Close() {
 		// added after the shutdown waiter begins.
 		s.backgroundMu.Lock()
 		s.backgroundMu.Unlock()
+		go func() { s.backgroundWG.Wait(); close(shutdownDone) }()
 
 		s.mu.Lock()
 		closingThreads := s.threads
@@ -930,7 +937,11 @@ func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agen
 	if s == nil {
 		return
 	}
-	deadline := time.Now().Add(ownedShutdownDrainTimeout)
+	drainTimeout := ownedShutdownDrainTimeout
+	if s.shutdownDrainTimeoutForTest > 0 {
+		drainTimeout = s.shutdownDrainTimeoutForTest
+	}
+	deadline := time.Now().Add(drainTimeout)
 	// Drain/title/side workers can still have admitted a turn immediately before
 	// Close marked the server closed. Wait for those launchers first, then for
 	// every turn/worker lease this Server owns to be released by its normal
@@ -943,8 +954,8 @@ func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agen
 	}()
 	select {
 	case <-background:
-	case <-time.After(ownedShutdownDrainTimeout):
-		log.Printf("wuu: shutdown drain timed out after %s: owned background goroutines still running", ownedShutdownDrainTimeout)
+	case <-time.After(drainTimeout):
+		log.Printf("wuu: shutdown drain timed out after %s: owned background goroutines still running", drainTimeout)
 	}
 	// A launcher already inside startBackground may have attached a thread
 	// runtime after the first shutdown snapshot. Once all launchers and turns
@@ -961,7 +972,7 @@ func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agen
 	}
 	for shutdownExecutionActive(threads, controls) {
 		if !time.Now().Before(deadline) {
-			log.Printf("wuu: shutdown drain timed out after %s: releasing with owned executions still active", ownedShutdownDrainTimeout)
+			log.Printf("wuu: shutdown drain timed out after %s: releasing with owned executions still active", drainTimeout)
 			forceReleaseAbandonedThreadExecutions(threads)
 			return
 		}

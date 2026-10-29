@@ -21,6 +21,12 @@ const maxRecoveryPageBytes = 128 * 1024
 // The full omitted text must be persisted before the result is changed; if an
 // artifact cannot be written, the result fails open unchanged.
 func finalizeGenericToolResult(sessionDir, callID string, raw toolresult.Result, budgetTokens int) (toolresult.Result, string, bool) {
+	return finalizeGenericToolResultWithArchive(sessionDir, callID, raw, budgetTokens, func(name, content string) (string, error) {
+		return persistResult(sessionDir, name, content)
+	})
+}
+
+func finalizeGenericToolResultWithArchive(sessionDir, callID string, raw toolresult.Result, budgetTokens int, persist func(string, string) (string, error)) (toolresult.Result, string, bool) {
 	if raw.ModelText != nil {
 		return raw, "", false
 	}
@@ -34,7 +40,7 @@ func finalizeGenericToolResult(sessionDir, callID string, raw toolresult.Result,
 	if strings.TrimSpace(sessionDir) == "" {
 		return raw, "", false
 	}
-	path, err := persistResult(sessionDir, callID, contextual)
+	path, err := persist(callID, contextual)
 	if err != nil {
 		return raw, "", false
 	}

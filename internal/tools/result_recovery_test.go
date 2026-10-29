@@ -178,3 +178,97 @@ func TestRecoveryIsUnavailableWhenReadFileDisabled(t *testing.T) {
 		t.Fatal("prompt surface advertises disabled recovery")
 	}
 }
+
+func TestRecoveryRejectsReplacedSessionDirectory(t *testing.T) {
+	parent, outside := t.TempDir(), t.TempDir()
+	session := filepath.Join(parent, "session")
+	if err := os.Mkdir(session, 0700); err != nil {
+		t.Fatal(err)
+	}
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetSessionDir(session)
+	name := strings.Repeat("a", 64) + ".txt"
+	if err := os.Mkdir(filepath.Join(outside, "tool-results"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "tool-results", name), []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(session, filepath.Join(parent, "old-session")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, session); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	token := encodeReadFileByteContinuation(filepath.Join(session, "tool-results", name), 1, 5, 6, sha256Hex([]byte("secret")))
+	args, _ := json.Marshal(map[string]any{"continuation": token})
+	if _, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: "recover_tool_result", Arguments: string(args)}); err == nil {
+		t.Fatal("result recovery followed a replacement session directory outside its original root")
+	}
+}
+
+func TestResultArchivalRejectsReplacedSessionDirectory(t *testing.T) {
+	parent, outside := t.TempDir(), t.TempDir()
+	session := filepath.Join(parent, "session")
+	if err := os.Mkdir(session, 0700); err != nil {
+		t.Fatal(err)
+	}
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetSessionDir(session)
+	if err := os.Rename(session, filepath.Join(parent, "old-session")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, session); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	kit.FinalizeToolResult(providers.ToolCall{ID: "oversized", Name: "fixture"}, toolresult.FromText(strings.Repeat("a", 100000)))
+	if _, err := os.Stat(filepath.Join(outside, "tool-results")); err == nil {
+		t.Fatal("result archival wrote outside the original session root")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoveryPagesUseTheOpenedFileAfterPathReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "archive")
+	const original = "original archived result"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := os.Rename(path, filepath.Join(dir, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("different external data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	page, err := readFileByteWindowFromOpen(context.Background(), &Env{}, f, path, 0, 16, len(original), sha256Hex([]byte(original)), int64(len(original)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(page), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["content"] != original[:16] {
+		t.Fatalf("unexpected content from replaced path: %v", data["content"])
+	}
+	lines, err := readFileLineRangeFromOpen(f, 1, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines.Text != original {
+		t.Fatalf("line reader followed replaced path: %q", lines.Text)
+	}
+}

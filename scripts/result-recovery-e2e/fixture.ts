@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import {INVOKE_TOOL_SERVICE, invokeTool, runJSONLRuntime, type RuntimePlugin} from '@wuu/plugin-sdk';
 const plugin: RuntimePlugin = {
  initialize() {return {protocol_version:3,lifecycle_version:2, required_services:[{name:INVOKE_TOOL_SERVICE,major_version:1,required:true}],tools:[
@@ -8,6 +9,7 @@ const plugin: RuntimePlugin = {
   if(input.tool_id==='produce') return {result:{content:[{type:'text',text:'证据🙂\n'.repeat(5000)}]}};
   const args=input.arguments as {continuation?:unknown};
   if(input.tool_id!=='recover'||typeof args.continuation!=='string'||!input.execution_id) throw new Error('invalid input');
+  if(process.argv[2]==='pause') await fetch(readFileSync(new URL('./control.txt',import.meta.url),'utf8'));
   return {result:await invokeTool(host,{execution_id:input.execution_id,call_id:'page',name:'recover_tool_result',arguments:{continuation:args.continuation}})};
  },
 };

@@ -135,7 +135,9 @@ func TestPTCSelectsFileDataWithoutDisplayingIt(t *testing.T) {
 
 func TestPTCSelectsShellDataOutsideDisplayExcerpt(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	output := strings.Repeat("discarded data\n", 3000) + "SELECTED_EVIDENCE\n" + strings.Repeat("discarded data\n", 3000)
 	if err := os.WriteFile(filepath.Join(kit.RootDir(), "output.txt"), []byte(output), 0600); err != nil {
 		t.Fatal(err)
@@ -153,7 +155,9 @@ text({selected: d.stdout.split("\n").find(x => x === "SELECTED_EVIDENCE"), stder
 // observation budget, including evidence hidden by the shell's compact view.
 func TestPTCResultViewUsesProgramBudget(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	output := strings.Repeat("before evidence\n", 400) + "MIDDLE_EVIDENCE\n" + strings.Repeat("after evidence\n", 700)
 	if err := os.WriteFile(filepath.Join(kit.RootDir(), "output.txt"), []byte(output), 0600); err != nil {
 		t.Fatal(err)
@@ -218,7 +222,9 @@ func TestPTCInvalidResultViewRejectsBeforeEffects(t *testing.T) {
 
 func TestPTCOutputBudgetSettlesOnceAndRejectsInvalidBeforeEffects(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	code := `text("evidence line\n".repeat(1200));`
 	small := runPTCProgram(t, kit, code, 1024)
 	if small.IsError || estimateResultTokens(small.TextProjection()) > 1024 || !strings.Contains(small.TextProjection(), "continuation") {

@@ -129,7 +129,9 @@ func TestReadFileByteContinuationReturnsDisjointWindowsAndRejectsMutation(t *tes
 	if err != nil {
 		t.Fatalf("new toolkit: %v", err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	artifact := filepath.Join(kit.env.SessionDir, "tool-results", "blob.txt")
 	mustWriteFile(t, artifact, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	tool := NewReadFileTool(kit.env)
@@ -251,7 +253,9 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit.env.SessionDir = t.TempDir()
+	if err := kit.SetSessionDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	var file, expected strings.Builder
 	for i := 1; i <= 600; i++ {
 		indent := []string{"", "\t\t", "    ", " \t "}[i%4]
@@ -364,7 +368,9 @@ func TestReadFileByteRecoverySurvivesResultSettlement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			kit.env.SessionDir = t.TempDir()
+			if err := kit.SetSessionDir(t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
 			artifact := filepath.Join(kit.env.SessionDir, "tool-results", "output.txt")
 			prefix := "previously displayed head\n"
 			original := prefix + tc.body + "previously displayed tail\n"

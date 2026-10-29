@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,6 +135,32 @@ func TestResultRecoveryProcess(t *testing.T) {
 	require.Error(t, err)
 	artifact := initial["artifact_ref"].(string)
 	require.Equal(t, "tool-results", filepath.Base(filepath.Dir(artifact)))
+	// The outside file has identical bytes and hash, so rejecting the link is
+	// about session confinement rather than a coincidental stale-content error.
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	require.NoError(t, os.Rename(artifact, outside))
+	linkErr := os.Symlink(outside, artifact)
+	if linkErr == nil {
+		_, err = thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "link", Name: "recover_tool_result", Arguments: string(raw)})
+		require.Error(t, err)
+		require.NoError(t, os.Remove(artifact))
+	} else {
+		t.Logf("symlink unavailable on this host: %v", linkErr)
+	}
+	require.NoError(t, os.Rename(outside, artifact))
+	// The intermediate tool-results directory itself cannot redirect to an
+	// unrelated directory even when that directory is inside this session root.
+	resultDir := filepath.Dir(artifact)
+	movedDir := filepath.Join(filepath.Dir(resultDir), "other-session-data")
+	require.NoError(t, os.Rename(resultDir, movedDir))
+	if err := os.Symlink(movedDir, resultDir); err == nil {
+		_, err = thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "intermediate-link", Name: "recover_tool_result", Arguments: string(raw)})
+		require.Error(t, err)
+		require.NoError(t, os.Remove(resultDir))
+	} else {
+		t.Logf("symlink unavailable on this host: %v", err)
+	}
+	require.NoError(t, os.Rename(movedDir, resultDir))
 	require.NoError(t, os.WriteFile(artifact, []byte("changed"), 0600))
 	_, err = thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "stale", Name: "recover_tool_result", Arguments: string(raw)})
 	require.Error(t, err)
@@ -183,4 +212,103 @@ func TestResultRecoveryPTCProcess(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	require.Contains(t, messages[0].Content, "PTC_RECOVERY_OK")
+}
+
+// The side runner owns its own artifact lease after the parent runtime closes.
+func TestSideRecoveryRetainsSessionLeaseProcess(t *testing.T) {
+	fixture := os.Getenv("WUU_RESULT_RECOVERY_FIXTURE")
+	if fixture == "" {
+		t.Skip("run node scripts/result-recovery-e2e.mjs")
+	}
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	root, home := t.TempDir(), t.TempDir()
+	plugin := testRuntimePlugin("side-recovery-fixture")
+	plugin.Root = fixture
+	plugin.Runtime.Command = node
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		select {
+		case <-resume:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer once.Do(func() { close(resume) })
+	require.NoError(t, os.WriteFile(filepath.Join(fixture, "control.txt"), []byte(server.URL), 0600))
+	plugin.Runtime.Args = []string{"fixture.js", "pause"}
+	plugins := []pluginpkg.Plugin{plugin}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "gpt-5"}}}
+	owner, err := NewSession(Options{RootDir: root, HomeDir: home, WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	parent, err := owner.NewThreadRuntime("lease-parent")
+	require.NoError(t, err)
+	defer owner.ReleasePluginGeneration(parent.PluginGeneration)
+	var producer, orchestrator string
+	for _, d := range parent.PluginHost.ToolDefinitions() {
+		p, ok := parent.PluginHost.Tool(d.Name)
+		if ok && p.PluginID == plugin.ID {
+			switch p.Registration.ID {
+			case "produce":
+				producer = d.Name
+			case "recover":
+				orchestrator = d.Name
+			}
+		}
+	}
+	require.NotEmpty(t, producer)
+	require.NotEmpty(t, orchestrator)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "lease-parent", ExecutionID: "parent-turn"})
+	turn := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: parent.StreamRunner.Tools, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	messages, err := turn.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "produce", Name: producer, Arguments: `{}`}}, nil)
+	require.NoError(t, err)
+	turn.Cancel()
+	var first map[string]any
+	require.NoError(t, json.Unmarshal([]byte(messages[0].Content), &first))
+	next := first["continuation"].(map[string]any)["next"].(map[string]any)
+	args, err := json.Marshal(next)
+	require.NoError(t, err)
+	binding, err := owner.RetainState()
+	require.NoError(t, err)
+	defer binding.Close()
+	side, release, err := owner.NewSideThreadRunnerForState(binding, "lease-side", root, ThreadModelSelection{}, "side prompt", "lease-parent")
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	sideCtx := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "lease-side", ExecutionID: "side-turn"})
+	sideTurn := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: side.Tools, RunContext: sideCtx, Gate: agent.NewToolExecutionGate(1)})
+	defer sideTurn.Cancel()
+	type outcome struct {
+		messages []providers.ChatMessage
+		err      error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		messages, err := sideTurn.ExecuteFinalCalls(sideCtx, []providers.ToolCall{{ID: "side-page", Name: orchestrator, Arguments: string(args)}}, nil)
+		done <- outcome{messages, err}
+	}()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("plugin did not reach in-flight barrier")
+	}
+	require.NoError(t, parent.CloseArtifacts())
+	once.Do(func() { close(resume) })
+	var result outcome
+	select {
+	case result = <-done:
+	case <-ctx.Done():
+		t.Fatal("side recovery did not finish")
+	}
+	require.NoError(t, result.err)
+	require.Len(t, result.messages, 1)
+	require.Contains(t, result.messages[0].Content, "证据")
+	require.NoError(t, release())
+	require.NoError(t, release())
+	_, err = side.Tools.Execute(sideCtx, providers.ToolCall{ID: "released", Name: "recover_tool_result", Arguments: string(args)})
+	require.Error(t, err)
 }
