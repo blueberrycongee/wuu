@@ -295,6 +295,40 @@ try {
     assert(assembled.sections.some(section => section.key === 'test.contribution' && section.bytes === Buffer.byteLength('你好 '+marker) && section.hash.length > 0 && section.static === false));
     await assert.rejects(runtime.call('service.invoke', {service:'agent.prompt',method:'assemble',caller:'session-execution',execution_id:'prompt-bad-role',params:{...request,role:'assistant'}}), /role/);
   });
+  await scenario('owner revision admits its new root while retired work drains but cannot derive or dispatch early', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    const { agent } = await r.client('agents.ensure_default');
+    const lineage = input => r.call('service.invoke', {service:'personal.agents', method:'resolve-lineage', caller:'selected-execution-host', params:input, execution_id:'revision-lineage'});
+    let holdCancellation = false, old;
+    h.intercept = async (service, p) => {
+      // Real issuance consults the selected task authority before granting. The
+      // generic host stub historically skipped this and hid the production bug.
+      if (service === 'host.execution.authorization' && p.operation === 'issue' && p.kind === 'task-lineage') {
+        await lineage({kind:p.kind, task_id:p.task_id, session_id:p.session_id, request_id:p.request_id, ...(p.parent ? {parent:h.grants.get(p.parent.id)} : {})});
+      }
+      if (service === 'host.session.cancel' && holdCancellation && p.session_id === old?.execution.session_id) return {cancelled:true};
+    };
+    old = (await r.client('tasks.create', {agent_id:agent.agent_id, request_id:'revision-live-owner', title:'Scoped revision', goal:'Original requirement'})).task;
+    holdCancellation = true;
+    const revised = (await r.client('tasks.update', {task_id:old.task_id, expected_revision:old.revision, goal:'Explicit new requirement'})).task;
+    assert.equal(revised.requirements_revision, 2); assert.notDeepEqual(revised.authorization.reference, old.authorization.reference);
+    assert(revised.previous_executions.some(execution => execution.cancel_pending));
+    assert.equal(revised.execution.session_id, undefined); assert(!h.turns.has(revised.execution.request_id));
+    await assert.rejects(lineage({kind:'task-lineage', task_id:revised.task_id, reference:revised.authorization.reference, action:'execution/grant/derive'}), /lineage is no longer active/);
+    await assert.rejects(lineage({kind:'exact-run', task_id:revised.task_id, request_id:revised.execution.create_request_id}), /lineage is no longer active/);
+    const cleanup = {kind:'exact-run', task_id:old.task_id, session_id:old.execution.session_id, request_id:old.execution.request_id, reference:old.execution.authorization.reference};
+    assert.equal((await lineage({...cleanup, action:'user/session/cancel'})).revision, 1);
+    await assert.rejects(lineage({...cleanup, action:'user/session/send'}), /lineage is no longer active/);
+    const issued = h.calls.filter(call => call.service === 'host.execution.authorization' && call.params.operation === 'issue').length;
+    await r.client('tasks.reconcile', {task_id:old.task_id});
+    assert.equal(h.calls.filter(call => call.service === 'host.execution.authorization' && call.params.operation === 'issue').length, issued, 'background reconciliation must not silently issue a new root');
+    holdCancellation = false;
+    const settled = (await r.client('tasks.reconcile', {task_id:old.task_id})).task;
+    assert.equal(settled.requirements_revision, 2); assert(settled.execution.session_id); assert(h.turns.has(settled.execution.request_id));
+    assert.equal((await lineage({kind:'task-lineage', task_id:settled.task_id, reference:settled.authorization.reference, action:'execution/grant/derive'})).revision, 2);
+    await assert.rejects(lineage({...cleanup, action:'user/session/send'}), /unknown task run/);
+    await r.close();
+  });
   await scenario('Personal state calls preserve the admitted callback execution identity', async () => {
     const before = evidence.frames.length;
     await runtime.call('capability.invoke', {capability:'plugin.client.request',execution_id:'scoped-settings',input:{method:'settings.get',input:{}}});

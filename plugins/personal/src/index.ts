@@ -1395,7 +1395,13 @@ export class PersonalPlugin implements RuntimePlugin {
     }
     const routine=await this.routines.observeLineage({...input,session_id:sessionID},main); if(routine)return routine;
     const task=await this.task(input.task_id), agent=await this.agent(task.agent_id,true);
-    if(!cleanup && (agent.status!=="active" || task.cancel_requested || pendingCancellation(task))) throw new Error("task lineage is no longer active");
+    // A live admission may reserve the new bounded task root while retired
+    // execution cancellation drains. Observing this revision is not permission
+    // to use that grant: every stored-reference restore, exact-run derivation
+    // and dispatch remains blocked until cleanup settles. The host separately
+    // requires a live owner for root issuance or a verified bounded parent.
+    const rootAdmission = input.kind === "task-lineage" && !input.reference;
+    if(!cleanup && (agent.status!=="active" || task.cancel_requested || pendingCancellation(task) && !rootAdmission)) throw new Error("task lineage is no longer active");
     const explicitDelivery = input.kind === "exact-run" && task.delivery?.admission === "explicit-retry" && task.delivery.request_id === input.request_id && task.delivery.session_id === sessionID;
     if(!cleanup && task.routine_id && !explicitDelivery && !await this.routines.canExecute(task)) throw new Error("owning routine no longer authorizes task lineage");
     if(input.parent) {

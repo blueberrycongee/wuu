@@ -58,7 +58,14 @@ export async function activate(api) {
       publish(id, { goal, error: "", loaded: true });
     } catch (error) {
       if (!disposed && revisions.get(id) === revision) {
-        publish(id, { ...(cache.get(id) || empty), loaded: true, error: String(error.message || error) });
+        const message = String(error.message || error);
+        // Electron wraps the host's exact missing-provider message. Keep
+        // version mismatches and provider failures visible to the user.
+        if (message.endsWith("no provider for service goal.control")) {
+          publish(id, { goal: null, error: "", loaded: true, unavailable: true });
+        } else {
+          publish(id, { ...(cache.get(id) || empty), loaded: true, unavailable: false, error: message });
+        }
       }
     }
   }
@@ -74,11 +81,11 @@ export async function activate(api) {
     };
   }
   // Observer writes can settle after the host's terminal notification.
-  const timer = setInterval(() => { for (const id of listeners.keys()) void refresh(id); }, 1500);
+  const timer = setInterval(() => { for (const id of listeners.keys()) if (!cache.get(id)?.unavailable) void refresh(id); }, 1500);
   api.registerCleanup(() => { disposed = true; clearInterval(timer); listeners.clear(); cache.clear(); });
   api.onHostEvent((event) => {
     const method = event?.message?.method;
-    if (["thread/started", "thread/resumed", "turn/started", "turn/completed", "turn/error"].includes(method)) {
+    if (["plugin/inventory/changed", "thread/started", "thread/resumed", "turn/started", "turn/completed", "turn/error"].includes(method)) {
       for (const id of listeners.keys()) void refresh(id);
     }
   });
@@ -121,7 +128,7 @@ export async function activate(api) {
     }
     // Runtime failures retain their cause in host diagnostics, not composer prose.
     const visibleError = error ? tr("goal.actionFailed") : state.error ? tr("goal.unavailable") : goal?.error ? tr("goal.needsAttention") : "";
-    if (!goal && !open && !visibleError) return null;
+    if (state.unavailable || (!goal && !open && !visibleError)) return null;
     return h(ComposerDrawer, {
       className: "plugin-goal",
       "aria-label": tr("goal.label"),

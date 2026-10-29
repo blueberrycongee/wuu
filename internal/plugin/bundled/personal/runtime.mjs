@@ -4363,7 +4363,8 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
     const routine = await this.routines.observeLineage({ ...input, session_id: sessionID }, main);
     if (routine) return routine;
     const task = await this.task(input.task_id), agent = await this.agent(task.agent_id, true);
-    if (!cleanup && (agent.status !== "active" || task.cancel_requested || pendingCancellation(task))) throw new Error("task lineage is no longer active");
+    const rootAdmission = input.kind === "task-lineage" && !input.reference;
+    if (!cleanup && (agent.status !== "active" || task.cancel_requested || pendingCancellation(task) && !rootAdmission)) throw new Error("task lineage is no longer active");
     const explicitDelivery = input.kind === "exact-run" && task.delivery?.admission === "explicit-retry" && task.delivery.request_id === input.request_id && task.delivery.session_id === sessionID;
     if (!cleanup && task.routine_id && !explicitDelivery && !await this.routines.canExecute(task)) throw new Error("owning routine no longer authorizes task lineage");
     if (input.parent) {
