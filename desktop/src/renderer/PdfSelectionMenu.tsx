@@ -134,7 +134,8 @@ export function PdfSelectionMenu({ hostRef, source, active }: {
       document.removeEventListener("scroll", place, true); window.removeEventListener("resize", place);
       document.removeEventListener("file-selection-layout", place); };
   }, [current, commenting, Boolean(position), hostRef]);
-  useLayoutEffect(() => { if (commenting) textarea.current?.focus({ preventScroll: true }); }, [commenting]);
+  const menuVisible = Boolean(current && position && actions);
+  useLayoutEffect(() => { if (commenting && menuVisible) textarea.current?.focus({ preventScroll: true }); }, [commenting, menuVisible]);
 
   if (!current || !position || !actions) return null;
   return <UILayerPortal layer="popover"><PdfSelectionActionMenu ref={popup} className="pdf-selection-action-menu"

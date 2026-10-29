@@ -225,10 +225,10 @@ function installWuuApi(options: {
       projects: [],
       active_context: { kind: "no_project", cwd: workspace },
     }),
-    selectNoProject: vi.fn().mockResolvedValue({
+    selectNoProject: vi.fn().mockImplementation((_fresh?: boolean, cwd?: string) => Promise.resolve({
       projects: [],
-      active_context: { kind: "no_project", cwd: workspace },
-    }),
+      active_context: { kind: "no_project", cwd: cwd ?? workspace },
+    })),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads: [initialThread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),

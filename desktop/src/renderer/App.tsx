@@ -451,6 +451,7 @@ export function App({ application, slots, shellPluginId }: {
 
   const {
     workspaceViewTabs,
+    workspaceConversationOpen,
     workspaceConversationActive,
     focusWorkspaceConversation,
     workspaceActiveViewTabID,
@@ -1032,7 +1033,7 @@ export function App({ application, slots, shellPluginId }: {
   // A docked preview sits beside the conversation, whose own input is in
   // reach; the document input appears once the preview takes the window.
   const documentComposerVisible = Boolean(
-    initialized && workspaceToolsCoverConversation &&
+    initialized && workspaceToolsCoverConversation && workspaceConversationOpen &&
     !splitConversation &&
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),

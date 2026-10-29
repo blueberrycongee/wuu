@@ -1366,6 +1366,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard closing workspace conversation entries
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_CLOSE_OUTPUT: ${{ runner.temp }}/wuu-workspace-conversation-close
+        run: |
+          mkdir -p "$WUU_CLOSE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-conversation-close-e2e.cjs 2>&1 | tee "$WUU_CLOSE_OUTPUT/run.log"
+
+      - name: Upload workspace conversation close evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-conversation-close-evidence
+          path: ${{ runner.temp }}/wuu-workspace-conversation-close/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard responsive composer footer
         if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 14

@@ -166,13 +166,11 @@ app.whenReady().then(async () => {
         `${scenario}: tab labels and their hit regions follow the chip axis`);
       if (selected) assert.ok(hit, `${scenario}: the selected tab remains directly clickable`);
       assert.ok(label.width >= 16, "Overflow keeps tab labels readable rather than hiding them");
-      if (!conversation) {
-        assert.ok(close, "Every tool tab retains its close action");
-        assert.ok(Math.abs(close.top + close.height / 2 - axis) < 0.6,
-          `${scenario}: the close action stays centered inside its chip`);
-        assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
-        assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
-      }
+      assert.ok(close, `${conversation ? 'Conversation' : 'Tool'} tab retains its close action`);
+      assert.ok(Math.abs(close.top + close.height / 2 - axis) < 0.6,
+        `${scenario}: the close action stays centered inside its chip`);
+      assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
+      assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
     }
     results.push({ scenario, geometry });
   };
@@ -694,11 +692,16 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(output, "preview-light.png"), (await win.webContents.capturePage(panelBounds)).toPNG());
   results.push({ scenario: "new page with reduced motion", passed: true });
   await win.loadFile(rendererHtml);
-  await waitFor(() => Boolean(document.querySelector('.workspace-right-panel[data-wuu-view="new"] .workspace-tool-menu')));
-  assert.equal((await tabs()).length, 1, "Restoring an open panel creates one new-page tab");
+  await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-panel-empty button, .workspace-file-resource.active .workspace-markdown-reading')));
+  assert.equal((await tabs()).length, 1, "Restoring an open panel retains its file tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
-  await capture("restored-empty-light");
-  results.push({ scenario: "restored open panel has one selected new page", passed: true });
+  // The synthetic preload can inject its first-read failure again after reload.
+  if (await evaluate(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-panel-empty button')))) {
+    await click('.workspace-file-resource.active .workspace-panel-empty button');
+  }
+  await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .workspace-markdown-reading')));
+  await capture("restored-file-light");
+  results.push({ scenario: "restored open panel has its selected file", passed: true });
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(results, null, 2));
   console.log("Workspace new page E2E passed. Evidence: " + output);
   clearTimeout(timeout);
