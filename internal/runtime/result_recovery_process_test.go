@@ -135,6 +135,25 @@ func TestResultRecoveryProcess(t *testing.T) {
 	require.Error(t, err)
 	artifact := initial["artifact_ref"].(string)
 	require.Equal(t, "tool-results", filepath.Base(filepath.Dir(artifact)))
+	// A legacy read_file cursor must keep the already admitted session root
+	// even if the session's pathname is replaced with another directory.
+	sessionDir := filepath.Dir(filepath.Dir(artifact))
+	pinnedDir := sessionDir + "-pinned"
+	otherRoot := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(otherRoot, "tool-results"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(otherRoot, "tool-results", filepath.Base(artifact)), []byte("different session data"), 0600))
+	require.NoError(t, os.Rename(sessionDir, pinnedDir))
+	if err := os.Symlink(otherRoot, sessionDir); err == nil {
+		legacy, err := thread.StreamRunner.Tools.Execute(ctx, providers.ToolCall{ID: "replaced-session", Name: "read_file", Arguments: string(raw)})
+		require.NoError(t, err)
+		var legacyPage map[string]any
+		require.NoError(t, json.Unmarshal([]byte(legacy), &legacyPage))
+		require.True(t, strings.HasPrefix(full[len(firstPage):], legacyPage["content"].(string)))
+		require.NoError(t, os.Remove(sessionDir))
+	} else {
+		t.Logf("symlink unavailable on this host: %v", err)
+	}
+	require.NoError(t, os.Rename(pinnedDir, sessionDir))
 	// The outside file has identical bytes and hash, so rejecting the link is
 	// about session confinement rather than a coincidental stale-content error.
 	outside := filepath.Join(t.TempDir(), "outside.txt")

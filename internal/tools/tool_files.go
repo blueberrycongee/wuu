@@ -152,7 +152,20 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		}
 	}
 
-	info, err := os.Stat(resolved)
+	var file *os.File
+	var info os.FileInfo
+	if managedArtifact {
+		if t.env.sessionArtifactRoot == nil {
+			return toolresult.Result{}, errors.New("session artifact root is unavailable")
+		}
+		rel, relErr := filepath.Rel(t.env.SessionDir, resolved)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return toolresult.Result{}, errors.New("invalid session artifact path")
+		}
+		file, err = t.env.sessionArtifactRoot.openManaged(rel)
+	} else {
+		info, err = os.Stat(resolved)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			hint := suggestSimilarFile(resolved)
@@ -164,15 +177,17 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		}
 		return toolresult.Result{}, fmt.Errorf("stat file: %w", err)
 	}
-	if info.IsDir() {
+	if info != nil && info.IsDir() {
 		return toolresult.Result{}, fmt.Errorf("path is a directory: %s. Use list_files to inspect directories or read_file on a file inside it", args.Path)
 	}
-	if !info.Mode().IsRegular() {
+	if info != nil && !info.Mode().IsRegular() {
 		return toolresult.Result{}, fmt.Errorf("read_file requires a regular file: %s", args.Path)
 	}
-	file, err := os.Open(resolved)
-	if err != nil {
-		return toolresult.Result{}, fmt.Errorf("open file: %w", err)
+	if !managedArtifact {
+		file, err = os.Open(resolved)
+		if err != nil {
+			return toolresult.Result{}, fmt.Errorf("open file: %w", err)
+		}
 	}
 	defer file.Close()
 	info, err = file.Stat()
@@ -188,8 +203,10 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	}
 	mediaType := http.DetectContentType(sample)
 	if strings.HasPrefix(mediaType, "image/") {
-		if _, err := resolveReadTarget(ctx, t.env, t.Name(), resolved, managedArtifact); err != nil {
-			return toolresult.Result{}, err
+		if !managedArtifact {
+			if _, err := resolveReadTarget(ctx, t.env, t.Name(), resolved, false); err != nil {
+				return toolresult.Result{}, err
+			}
 		}
 		if args.Offset > 1 || args.Limit != nil || args.ByteRange != nil || args.Continuation != "" || args.ExpectedSHA256 != "" {
 			return toolresult.Result{}, errors.New("image reads do not support text ranges or continuations; call read_file with only path")
@@ -261,12 +278,13 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	// Track freshness without suppressing explicit reads: Code Mode may not have
 	// printed the earlier result, or its final output may have been cropped.
 	t.env.RecordRead(resolved, ReadFileEntry{
-		MtimeUnix:     info.ModTime().Unix(),
-		MtimeUnixNano: info.ModTime().UnixNano(),
-		Size:          info.Size(),
-		ContentSHA256: contentHash,
-		Offset:        args.Offset,
-		Limit:         limit,
+		ManagedArtifact: managedArtifact,
+		MtimeUnix:       info.ModTime().Unix(),
+		MtimeUnixNano:   info.ModTime().UnixNano(),
+		Size:            info.Size(),
+		ContentSHA256:   contentHash,
+		Offset:          args.Offset,
+		Limit:           limit,
 	})
 
 	result := map[string]any{

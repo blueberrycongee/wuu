@@ -284,6 +284,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep managed session file reads and active-file freshness checks inside the session directory admitted for the conversation, even if its path is replaced while work is running. Relative links within that directory remain usable; absolute links are rejected.
 - Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
 
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
