@@ -33,7 +33,7 @@ When a primary plugin page is active, its contextual sidebar also renders that p
 | `wuu.default-conversation/conversation.tool-activity.after`, `wuu.default-preview/conversation.tool-activity.after` | After an individual tool activity inside its disclosed process details |
 | `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
 | `wuu.default-composer/composer.above`, `wuu.default-composer/composer.toolbar` | Above the composer or in its toolbar |
-| `wuu.default-composer/composer.runtime` | Beside runtime controls in the workspace tool rail or composer footer |
+| `wuu.default-preview/workspace.rail` | Compact controls and meters in the expanded right tool rail; fixed to one toolbar control's width |
 
 Use an explicitly qualified slot target to compose a region. The default conversation provider declares `wuu.default-conversation/conversation.turn` and `wuu.default-conversation/conversation.message`; the preview provider declares its own message slots under `wuu.default-preview`. The turn boundary includes that turn’s messages and process group, not the entire scroll container.
 
@@ -64,7 +64,11 @@ Slot owners may pass a React component through `<Slot layout={Layout} ... />`. I
 
 The default composer uses this layout to place its first two contributions inline and the remainder in a titled overflow menu. Use compact controls inline and allow menu content to wrap. Composer context includes `threadId`, `variant`, `mainConversation`, `running`, `readOnly`, `hasDraft`, and `attachmentCount`. Goal and Monitor now use `registerUIContribution`; remove their old `contributes.slots` entries. `application.composerPresentation.getContributions` and its presentation-adapter types have been removed; custom composers render their declared slots instead.
 
-The `composer.runtime` slot accepts compact contributions beside the runtime controls. Its `ComposerRuntimeSlotContextV1` contains the optional protocol `threadId` and `turnId`, `running`, `mainConversation`, and `inToolRail`. It follows the runtime controls when they move between the tool rail and composer footer, and is hidden when those controls are hidden. Keep a rail contribution within a two-em-high row. It can be abbreviated in a narrow window, so expose its full meaning in an accessible label. [Token Speed](../../../examples/plugins/token-speed/README.md) demonstrates a live, estimated readout without relying on host DOM structure.
+The `workspace.rail` slot belongs to the default preview provider and appears while the right tool rail is expanded. Contributions share one toolbar control's width and stack vertically. Use compact readouts or controls, and expose their full meaning through accessible labels. A contribution can observe the active tab through `application` and read its thread, turn, and running state through `application.composerPresentation`.
+
+[Token Speed](../../../examples/plugins/token-speed/README.md) is an independently installable example using this slot. It estimates observable output over a two-second window from streamed text, reasoning, and tool-call arguments; hidden output and model-specific tokenization are not measured. The fixed-width readout uses compact units on a separate line and eases number changes over 320 ms, respecting reduced motion. It shows a dash before output arrives or after the turn ends, and returns to zero when an active stream pauses. Its accessible label and hover description explain the estimate.
+
+From a checkout containing this slot, run `wuu plugin install ./examples/plugins/token-speed`, or `wuu plugin dev ./examples/plugins/token-speed` for hot updates. Disabling the plugin removes its readout.
 
 ## Presenters and actions
 

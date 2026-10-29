@@ -1,15 +1,16 @@
 {
   "schemaVersion": 1,
   "id": "token-speed",
-  "name": "Token Speed Example",
-  "description": "Estimate the current conversation's observable output speed.",
+  "name": "Token Speed",
+  "description": "Show an estimate of the current conversation's model output speed.",
   "icon": "pulse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "Wuu" },
+  "minimumWuuVersion": "2026.10.19",
   "desktop": { "entry": "desktop.js" },
   "interface": {
-    "displayName": "Token Speed Example",
-    "shortDescription": "See the current model output speed in the runtime controls.",
+    "displayName": "Token Speed",
+    "shortDescription": "See smoothly animated output speed in the workspace tool rail.",
     "developerName": "Wuu",
     "category": "Productivity",
     "capabilities": ["Read"]

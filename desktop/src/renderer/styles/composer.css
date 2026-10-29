@@ -1163,49 +1163,6 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   content: none;
 }
 
-.composer-runtime-rail-item {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-size-toolbar);
-  min-width: 0;
-  min-height: calc(var(--wuu-font-size-ui, 15px) * 2);
-}
-
-.composer-runtime-rail-content {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.composer-runtime-rail-item:has(> .composer-runtime-rail-content:empty) {
-  display: none;
-}
-
-@supports (position-anchor: --composer-runtime-item) and (anchor-scope: --composer-runtime-item) and (position-visibility: anchors-visible) {
-  .composer-runtime-rail-item {
-    width: 1px;
-    anchor-name: --composer-runtime-item;
-    anchor-scope: --composer-runtime-item;
-  }
-
-  .composer-runtime-rail-content {
-    position: fixed;
-    position-anchor: --composer-runtime-item;
-    top: anchor(top);
-    left: clamp(calc(3ch + 4px), anchor(center), calc(100vw - 3ch - 4px));
-    transform: translateX(-50%);
-    position-visibility: anchors-visible;
-    width: max-content;
-    max-width: 6ch;
-    min-height: calc(var(--wuu-font-size-ui, 15px) * 2);
-    background: var(--workspace-canvas-bg);
-  }
-}
-
 .workspace-composer-controls .codex-runtime-trigger.is-compact,
 .composer-footer-runtime .codex-runtime-trigger.is-compact {
   width: var(--control-size-toolbar);

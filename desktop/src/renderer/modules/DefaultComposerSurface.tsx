@@ -315,7 +315,6 @@ function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, vi
 export function activatePresentation(api: ApplicationPresentationAPI): void {
   api.registerUISlot({ id: "composer.above", cardinality: "many" });
   api.registerUISlot({ id: "composer.toolbar", cardinality: "many" });
-  api.registerUISlot({ id: "composer.runtime", cardinality: "many" });
   api.registerUIContribution({ id: "ui.composer", target: "wuu.default-shell/application.composer", render: ({ application, slots, context }: UISlotRenderProps) =>
     <DefaultComposerSurface application={application} slots={slots} {...context as DefaultComposerLayout} /> });
 }

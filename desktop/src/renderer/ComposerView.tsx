@@ -91,7 +91,6 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
 import { createUIComposition, UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
-import type { UISlotLayoutProps } from "../../../packages/plugin-sdk/src/ui";
 import {
   AccessMenu,
   ComposerPlusButton,
@@ -122,15 +121,6 @@ import type { TurnContextUsage } from "./AppState";
 import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
-
-function ComposerRuntimeContributions({ items, context }: UISlotLayoutProps): ReactNode {
-  if (!context.inToolRail) return items.map(item => item.node);
-  return items.map(item => (
-    <div className="composer-runtime-rail-item" key={item.key}>
-      <div className="composer-runtime-rail-content">{item.node}</div>
-    </div>
-  ));
-}
 
 type ExpandedComposerDrawer = "pending" | null;
 
@@ -1328,9 +1318,6 @@ export function Composer({
     {permissionControl}
     {hideRuntimeControls ? null : (
       <>
-        <slots.Slot name="wuu.default-composer/composer.runtime" layout={ComposerRuntimeContributions} context={{
-          threadId, turnId: telemetryTurnID, running, mainConversation, inToolRail: controlsInRail,
-        }} />
         <ComposerRuntimeMeters
           inToolRail={controlsInRail}
           compact={compactControls}
