@@ -630,7 +630,8 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	initialGeneration := &PluginGeneration{
-		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
+		managedSkillDiscovery: true,
+		id:                    newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
 		ownedRoots: initialSnapshotRoots, settings: cfg, requiredPlugins: pluginKernel.requiredPlugins,
 		plugins: append([]pluginpkg.Plugin(nil), discoveredPlugins...),
 		active:  append([]pluginpkg.Plugin(nil), activePlugins...),
@@ -1594,7 +1595,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 			kit.SetProcessManager(threadProcessManager)
 			kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
-			s.bindLocalSkillRefresh(kit, threadRoot, generation)
+			if s.Toolkit != nil || generation.managedSkillDiscovery {
+				s.bindLocalSkillRefresh(kit, threadRoot, generation)
+			}
 			ConfigureToolkitPermissions(kit, s.Permissions)
 			kit.SetApproveForMe(false)
 			kit.SetSessionID(id)
@@ -3178,6 +3181,11 @@ func (s *Session) skillSnapshotForRoot(root string, generation *PluginGeneration
 	s.pluginGenerationMu.Unlock()
 	if sameRuntimeRoot(root, s.RootDir) {
 		return s.InstructionFiles, generation.filterSkills(discovered), generation
+	}
+	// Embedded sessions without a toolkit provide an explicit catalog snapshot,
+	// not the discovery configuration used to build a managed generation.
+	if s.Toolkit == nil && generation != nil && !generation.managedSkillDiscovery {
+		return discoverInstructions(root, s.HomeDir, s.instructionConfig), generation.filterSkills(discovered), generation
 	}
 	snapshot.project = generation.filterSkills(snapshot.project)
 	snapshot.user = generation.filterSkills(snapshot.user)
