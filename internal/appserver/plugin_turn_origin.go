@@ -15,8 +15,9 @@ import (
 const pluginTurnOriginNamespace = "wuu.plugin_turn_origins.v1"
 
 type pluginTurnOrigin struct {
-	Composition string `json:"composition"`
-	Session     string `json:"session"`
+	HandoffDigest string `json:"handoff_digest,omitempty"`
+	Composition   string `json:"composition"`
+	Session       string `json:"session"`
 }
 
 func readPluginTurnOrigin(ctx context.Context, binding *runtime.State, pluginID, requestID string) (pluginTurnOrigin, persistence.Revision, bool, error) {
@@ -47,7 +48,7 @@ func recordPluginTurnOrigin(ctx context.Context, binding *runtime.State, pluginI
 		}
 		if found {
 			if previous != origin {
-				return fmt.Errorf("plugin request %q belongs to another composition or session", requestID)
+				return fmt.Errorf("plugin request %q conflicts with its original composition, session or handoff", requestID)
 			}
 			return nil
 		}

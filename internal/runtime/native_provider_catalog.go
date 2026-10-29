@@ -77,7 +77,7 @@ func defaultNativeProviderCatalog() []NativeProviderFactory {
 		{ID: DataQueryModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			return NewDataQueryService(DataQueryModule, input.WorkspaceStateDir), nil
 		}},
-		nativeModelProviderFactory(), nativeEngineProviderFactory(), resourceAccessConsumerFactory(), resourcePolicyProviderFactory(), sessionSharingProviderFactory(), sessionSharingConsumerFactory(), executionAuthorizationConsumerFactory(), executionAuthorizationProviderFactory(),
+		desktopSessionProviderFactory(), nativeModelProviderFactory(), nativeEngineProviderFactory(), resourceAccessConsumerFactory(), resourcePolicyProviderFactory(), sessionSharingProviderFactory(), sessionSharingConsumerFactory(), executionAuthorizationConsumerFactory(), executionAuthorizationProviderFactory(),
 	}
 	for _, backend := range []struct{ id, name string }{{persistence.SQLiteModule, "sqlite"}, {persistence.JSONLModule, "jsonl"}} {
 		catalog = append(catalog, NativeProviderFactory{ID: backend.id, DefaultEnabled: backend.name == "sqlite", Build: func(input NativeProviderContext) (pluginhost.Client, error) {

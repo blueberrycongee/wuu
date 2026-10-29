@@ -186,6 +186,8 @@ export type ResourceAccessCapabilities = {
 };
 
 export type InitializeResult = {
+  /** Ephemeral host identity, not a renderer or remote grant. */
+  desktop_session_transport?: { version: 1; host_id: string; public_key: string };
   user_space_id?: string;
   product_domain?: "personal" | "coding";
   /** Memory APIs and injected context are domain-scoped; OS confidentiality is separate. */

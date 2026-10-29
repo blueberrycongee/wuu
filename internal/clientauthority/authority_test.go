@@ -54,3 +54,26 @@ func TestDesktopOwnerProofHasNoProductPrivilege(t *testing.T) {
 		t.Fatal("proof crossed product binding")
 	}
 }
+
+func TestCapturedConnectionProofDoesNotOutliveAdmission(t *testing.T) {
+	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
+	life, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	admitted, err := AdmitDesktop(life, binding, strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, _, _ := Connection(admitted, binding)
+	resumed := RestoreConnection(context.Background(), CaptureConnection(admitted))
+	restored, _, err := Connection(resumed, binding)
+	if err != nil || restored != original {
+		t.Fatal("lost exact connection", err)
+	}
+	cancel()
+	if RequireOwner(resumed, binding) == nil {
+		t.Fatal("captured proof outlived disconnected desktop")
+	}
+	if RequireOwner(RestoreConnection(context.Background(), nil), binding) == nil {
+		t.Fatal("nil proof admitted")
+	}
+}

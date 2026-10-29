@@ -1,4 +1,5 @@
-import { personalMemory } from "@wuu/plugin-sdk";
+import { personalSessionTools, executeSessionTool, originalSourceMessages } from "./sessions.js";
+import { SESSION_HANDOFF_HOST_FEATURE, personalMemory } from "@wuu/plugin-sdk";
 import { isDeepStrictEqual } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TASK_EXECUTION_ACTIONS, FEEDBACK_ACTIONS, SESSION_DELIVERY_ACTIONS, issueAuthorization, authorizationExpiry, authorizationRequired, authorizationError, authorizationCurrent, sameAuthorization, type PersonalAuthorization, type PersonalAuthorizationIntent } from "./grants.js";
@@ -20,6 +21,7 @@ import {
   type ToolExecuteResult, type TurnLifecycleInput, type SessionInputAttachment, type MessageRef, type MessageRelation,
 } from "@wuu/plugin-sdk";
 
+const sourceRunID=(request:string,session:string)=>`${request}:source:${createHash("sha256").update(session).digest("hex").slice(0,16)}`;
 const reactionGuidance = "Choose an emoji-only reaction when a simple acknowledgment, thanks, or shared progress genuinely needs no substantive response; you need not react to every message. When the user asks a question, seeks help, needs an explanation, or needs a meaningful action/status response, answer substantively: an emoji must not replace the answer or the authorized work. After an emoji-only acknowledgment, do not add a redundant 'Got it' or equivalent. A reaction does not prove work is complete: never use ✅ or another emoji to imply an unperformed or unverified action succeeded. Reactions are not approval or authorization.";
 const service = "personal.agents";
 const clientCapability = "plugin.client.request";
@@ -57,6 +59,7 @@ export interface NamedAgent extends Versioned {
 }
 interface Execution {
   authorization?: PersonalAuthorization;
+  source_authorizations?: Record<string,PersonalAuthorization>;
   creation?: Omit<HostServiceContracts["host.session.create"]["params"], "execution_authorization">;
   request_id: string; create_request_id: string; requirements_revision: number;
   status: "pending" | "submitted" | "unknown"; finished_state?: string; cancel_pending?: boolean; cancel_error?: string; session_id?: string; turn_id?: string; queue_id?: string;
@@ -75,7 +78,7 @@ export interface PersonalTask extends Versioned {
   task_id: string; agent_id: string; user_space_id: string; request_id: string;
   title: string; goal: string; routine_id?: string; routine_revision?: number; requirements_revision: number;
   source: { session_id: string; message_seq?: number; message_binding?: "host_turn"; calendar?: CalendarChange }; authorization_refs: string[];
-  requirements: Array<{ revision: number; goal: string; authorization_refs: string[]; changed_at: string }>;
+  requirements: Array<{ revision: number; original_messages?: MessageRef[]; goal: string; authorization_refs: string[]; changed_at: string }>;
   state: "queued" | "running" | "waiting_user" | "waiting_external" | "completed" | "failed" | "stopped";
   execution: Execution; previous_executions: Execution[]; previous_deliveries?: Execution[];
   input_mutations?: Array<{ key: string; fingerprint: string; requirements_revision: number }>;
@@ -155,10 +158,11 @@ export class PersonalPlugin implements RuntimePlugin {
       needsAuthorization: async routineID => (await this.list<PersonalTask>("task")).some(task => task.routine_id === routineID && task.authorization_state === "needs_authorization" && !terminalTask(task)),
       preferences: () => this.preferences(),
     });
-    const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
+    const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.route", "host.session.list", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3 as const,
-      required_services: [requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
+      required_host_features: [SESSION_HANDOFF_HOST_FEATURE],
+      required_services: [{name:"session.transport",major_version:1,required:false},requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
       provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [{name:"resolve-lineage",input_schema:"execution.lineage.resolve.input.v1",output_schema:"execution.lineage.resolve.output.v1"}, ...methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
         { id: "agent.system_prompt.section", kind: "transform" as const, version: 1 },
@@ -168,15 +172,15 @@ export class PersonalPlugin implements RuntimePlugin {
         { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const },
       ],
       tools: [
-        ...personalMemoryTools(),
+        ...personalMemoryTools(), ...personalSessionTools,
         personalGenUITool, calendarAgendaTool, ...personalConnectorTools,
         { id: "react_to_message", description: "Set, replace, or remove your own emoji reaction on an exact persisted original user message in this main Personal conversation. This is expression, not a textual reply or task action. Use null to remove; expected_revision comes from the reaction state (0 if absent). Never impersonate owner feedback or treat reactions as authorization. " + reactionGuidance, input_schema: schema({ message_seq: { type: "integer", minimum: 1 }, emoji: { type: ["string", "null"], maxLength: 32 }, expected_revision: integer, request_id: { type: "string", maxLength: 128 } }, "message_seq", "emoji", "expected_revision", "request_id"), activity: { concurrency_safe: true } },
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence. A Calendar change source requires kind task, cron, and a verified matching Calendar source account/generation with a fixed window at most 31 days; first baseline is silent and no account connection is initiated.", input_schema: schema({ request_id: string, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: schema({ kind: { type: "string", enum: ["calendar"] }, account_id: string, generation: string, calendar_id: string, time_min: string, time_max: string, timezone: string }, "kind", "account_id", "generation", "calendar_id", "time_min", "time_max", "timezone") }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string, expected_revision: integer, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
-        { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string, title: string, goal: string, authorization_refs: { type: "array", items: string } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
+        { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. The host forwards the turn-start original user message and all attachments; include relevant additional source_message_seqs (including later corrections) so requirements and corrections are not lost. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string, title: string, goal: string, source_message_seqs: {type:"array",maxItems:63,uniqueItems:true,items:{type:"integer",minimum:1}}, authorization_refs: { type: "array", items: string } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
         { id: "list_tasks", description: "Find Personal matters by state or text, including tasks that need an answer. Independent goals use independent tasks; additions or corrections update the existing task.", input_schema: schema({ query: string, state: string }), activity: { read_only: true, concurrency_safe: true } },
-        { id: "update_task", description: "Revise an existing delegated matter. Old requirement versions cannot complete it. Use the current revision from list_tasks.", input_schema: schema({ task_id: string, expected_revision: integer, goal: string, title: string, authorization_refs: { type: "array", items: string } }, "task_id", "expected_revision", "goal"), activity: { concurrency_safe: true } },
-        { id: "resume_task", description: "Resume the same task after the user answers its question or explicitly asks to retry it. Supply answer for a pending question; do not create a replacement task. Use the latest revision from list_tasks.", input_schema: schema({ task_id: string, expected_revision: integer, answer: string, goal: string, authorization_refs: { type: "array", items: string } }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
+        { id: "update_task", description: "Revise an existing delegated matter. Old requirement versions cannot complete it. Use the current revision from list_tasks.", input_schema: schema({ task_id: string, expected_revision: integer, goal: string, title: string, source_message_seqs: {type:"array",maxItems:63,uniqueItems:true,items:{type:"integer",minimum:1}}, authorization_refs: { type: "array", items: string } }, "task_id", "expected_revision", "goal"), activity: { concurrency_safe: true } },
+        { id: "resume_task", description: "Resume the same task after the user answers its question or explicitly asks to retry it. Supply answer for a pending question; do not create a replacement task. Use the latest revision from list_tasks.", input_schema: schema({ task_id: string, expected_revision: integer, answer: string, goal: string, source_message_seqs: {type:"array",maxItems:63,uniqueItems:true,items:{type:"integer",minimum:1}}, authorization_refs: { type: "array", items: string } }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "stop_task", description: "Stop only the identified delegated matter. If the user's target is ambiguous, ask which matter in the main conversation before calling this tool. A cancellation request is distinct from confirmed termination.", input_schema: schema({ task_id: string, expected_revision: integer }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "retry_task_delivery", description: "Retry only a failed or authorization-blocked delivery to this main conversation when the user asks. Expired authorization needs a fresh authenticated owner request. Does not rerun task execution or repeat external actions. Requires the latest task revision.", input_schema: schema({ task_id: string, expected_revision: integer }, "task_id", "expected_revision"), activity: { concurrency_safe: true } },
         { id: "report_task", description: "From the bound task executor, report progress or that user input/external conditions are needed. For waiting_user, progress must be the specific question for the user; it is durably delivered to the main conversation. Then end your turn and wait; only the main conversation can resume this task. Does not mark completion.", input_schema: schema({ task_id: string, requirements_revision: integer, state: { type: "string", enum: ["running", "waiting_user", "waiting_external"] }, progress: string }, "task_id", "requirements_revision", "state", "progress"), activity: { concurrency_safe: true } },
@@ -659,14 +663,14 @@ export class PersonalPlugin implements RuntimePlugin {
     }
     return links;
   }
-  private async createTask(input: Record<string, unknown>, agent: NamedAgent, sourceSession?: string, routineID?: string, routineRevision?: number, calendarChange?: CalendarChange, sourceMessage?: MessageRef) {
+  private async createTask(input: Record<string, unknown>, agent: NamedAgent, sourceSession?: string, routineID?: string, routineRevision?: number, calendarChange?: CalendarChange, sourceMessage?: MessageRef, originalMessages?: MessageRef[]) {
     const requestID = text(input, "request_id", true), taskID = `task-${id(this.space, agent.agent_id, requestID)}`;
     const title = text(input, "title", true), goal = text(input, "goal", true), authorization = this.authorizations(input);
     let task = await this.change<PersonalTask>("task", taskID, current => {
-      if (current) { if (current.request_id !== requestID || (current.requirements_revision === 1 && (current.goal !== goal || current.title !== title))) throw new Error("request_id_conflict"); return current; }
+      if (current) { if (current.request_id !== requestID || (current.requirements_revision === 1 && (current.goal !== goal || current.title !== title)) || JSON.stringify(current.requirements[0]?.original_messages ?? []) !== JSON.stringify(originalMessages ?? (sourceMessage ? [sourceMessage] : []))) throw new Error("request_id_conflict"); return current; }
       return { task_id: taskID, agent_id: agent.agent_id, user_space_id: this.space, request_id: requestID, title, goal, routine_id: routineID, routine_revision: routineRevision,
         requirements_revision: 1, source: { session_id: sourceSession || agent.main_session_id, ...(calendarChange ? { calendar: calendarChange } : {}), ...(sourceMessage ? { message_seq: sourceMessage.seq, message_binding: "host_turn" as const } : {}) },
-        authorization_refs: authorization, requirements: [{ revision: 1, goal, authorization_refs: authorization, changed_at: now() }], state: "queued", execution: this.execution(taskID, 1), previous_executions: [], cancel_requested: false, reconciliation_required: false, revision: 0, created_at: now(), updated_at: now() };
+        authorization_refs: authorization, requirements: [{ revision: 1, ...(sourceMessage ? {original_messages:originalMessages ?? [sourceMessage]} : {}), goal, authorization_refs: authorization, changed_at: now() }], state: "queued", execution: this.execution(taskID, 1), previous_executions: [], cancel_requested: false, reconciliation_required: false, revision: 0, created_at: now(), updated_at: now() };
     });
     if (!authorizationCurrent(task.authorization)) task = await this.authorizeTask(task, await this.routines.authorizationFor(task));
     return { task: task.execution.status === "pending" && !terminalTask(task) ? await this.dispatch(task) : task };
@@ -726,9 +730,15 @@ export class PersonalPlugin implements RuntimePlugin {
       if (task.cancel_requested || terminalTask(task)) return this.cancelExecution(task);
       this.assertActive();
       task = await this.executionAuthorization(task);
+      const originalMessages = task.requirements.find(value => value.revision === task.requirements_revision)?.original_messages ?? (task.source.message_binding === "host_turn" && task.source.message_seq ? [{session_id:task.source.session_id,seq:task.source.message_seq}] : []);
+      for(const sessionID of new Set(originalMessages.map(ref=>ref.session_id))) {
+        if(authorizationCurrent(task.execution.source_authorizations?.[sessionID]))continue;
+        const authorization = await issueAuthorization(this.host,{request_id:sourceRunID(task.execution.request_id,sessionID),expires_at:task.authorization!.expires_at,kind:"exact-run",task_id:task.task_id,session_id:sessionID,parent:task.authorization!.reference,requested_actions:["user/session/history.read","user/session/attachment.read"]});
+        task = await this.change<PersonalTask>("task",task.task_id,current => current?.execution.request_id === task.execution.request_id ? {...current,execution:{...current.execution,source_authorizations:{...current.execution.source_authorizations,[sessionID]:authorization}}} : current!);
+      }
       const sent = await this.sendForAgent(agent.agent_id, {
         execution_authorization:task.execution.authorization!.reference, request_id: task.execution.request_id, session_id: task.execution.session_id!, cause: "personal.task", if_running: "queue",
-        input: { prompt: `Work on Personal task ${task.task_id}, requirements revision ${task.requirements_revision}.\nGoal: ${task.goal}\n${task.source.message_binding === "host_turn" && task.source.message_seq ? `Original user source reference for memory provenance: personal-message:${encodeURIComponent(task.source.session_id)}:${task.source.message_seq} (relevant only to facts supported by that original message).\n` : ""}Authorization references: ${JSON.stringify(task.authorization_refs)}\nThese references do not grant broader permission. Ask before external actions lacking specific approval. Keep progress with report_task. Before finishing, call complete_task with a summary and evidence tool_call_id values copied from successful tool calls you executed. Current-turn results are persisted after the turn ends; the completion intent is verified then. Already persisted evidence may instead use seq. A final message alone cannot complete this matter.` },
+        input: { ...(originalMessages.length ? {handoff:{source_messages:originalMessages,source_authorizations:Object.fromEntries(Object.entries(task.execution.source_authorizations ?? {}).map(([sessionID,authorization])=>[sessionID,authorization.reference]))}} : {}), prompt: `Work on Personal task ${task.task_id}, requirements revision ${task.requirements_revision}.\nGoal: ${task.goal}\n${task.source.message_binding === "host_turn" && task.source.message_seq ? `Original user source reference for memory provenance: personal-message:${encodeURIComponent(task.source.session_id)}:${task.source.message_seq} (relevant only to facts supported by that original message).\n` : ""}Authorization references: ${JSON.stringify(task.authorization_refs)}\nThese references do not grant broader permission. Ask before external actions lacking specific approval. Keep progress with report_task. Before finishing, call complete_task with a summary and evidence tool_call_id values copied from successful tool calls you executed. Current-turn results are persisted after the turn ends; the completion intent is verified then. Already persisted evidence may instead use seq. A final message alone cannot complete this matter.` },
         presentation: { kind: "query_bubble", text: task.title, name: agent.name },
       }, task);
       this.assertActive();
@@ -781,11 +791,11 @@ export class PersonalPlugin implements RuntimePlugin {
   private async deliverySession(task: PersonalTask, main: NamedAgent): Promise<string> {
     return task.delivery?.session_id || (task.delivery?.kind === undefined && task.agent_id !== main.agent_id ? (await this.agent(task.agent_id, true)).main_session_id : main.main_session_id);
   }
-  private async reviseTask(input: Record<string, unknown>, resume = false) {
+  private async reviseTask(input: Record<string, unknown>, resume = false, sourceMessages?: MessageRef[]) {
     const taskID = text(input, "task_id", true);
     const old = await this.task(taskID); await this.agent(old.agent_id); const main = await this.main();
     const mutationKey = text(input, "source_mutation_key");
-    const fingerprint = JSON.stringify({ resume, goal: text(input, "goal"), answer: text(input, "answer"), title: text(input, "title"), authorization_refs: input.authorization_refs });
+    const fingerprint = JSON.stringify({ resume, sourceMessages, goal: text(input, "goal"), answer: text(input, "answer"), title: text(input, "title"), authorization_refs: input.authorization_refs });
     const previousMutation = old.input_mutations?.find(item => item.key === mutationKey);
     if (mutationKey && previousMutation) {
       if (previousMutation.fingerprint !== fingerprint) throw new Error("request_id_conflict: task input already applied differently");
@@ -802,7 +812,7 @@ export class PersonalPlugin implements RuntimePlugin {
       return { ...current, goal, title: text(input, "title") || current.title,
         authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), requirements_revision: revision,
         input_mutations: [...current.input_mutations ?? [], ...(mutationKey ? [{ key: mutationKey, fingerprint, requirements_revision: revision }] : [])],
-        requirements: [...current.requirements, { revision, goal, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
+        requirements: [...current.requirements, { revision, original_messages: [...current.requirements.at(-1)?.original_messages ?? (current.source.message_binding === "host_turn" && current.source.message_seq ? [{session_id:current.source.session_id,seq:current.source.message_seq}] : []), ...sourceMessages ?? []].filter((ref,index,refs)=>refs.findIndex(item=>item.session_id===ref.session_id && item.seq===ref.seq)===index), goal, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
         previous_executions: [...current.previous_executions, { ...current.execution, cancel_pending: Boolean(current.execution.session_id && !current.execution.finished_state) }], execution: this.execution(taskID, revision), state: "queued", cancel_requested: false,
         previous_deliveries: [...current.previous_deliveries ?? [], ...(current.delivery && ["pending", "submitted"].includes(current.delivery.status) ? [{ authorization:current.delivery.authorization, request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])],
         connector_wait:undefined,connector_resume_pending:undefined,connector_resumed:undefined,reconciliation_required: false, waiting_reason: undefined, question: undefined, result: undefined, completion_intent: undefined, delivery: undefined, error: undefined, progress: undefined };
@@ -1246,6 +1256,10 @@ export class PersonalPlugin implements RuntimePlugin {
       });
       return executeConnectorTool(executionHost, this.space, call, execution.signal);
     }
+    if (personalSessionTools.some(tool => tool.id === call.tool_id)) {
+      if (task || sessionID !== agent.main_session_id) throw new Error("only the main Personal conversation can manage sessions");
+      return result(await executeSessionTool(executionHost, this.space, agent.main_session_id, call, execution.signal));
+    }
     switch (call.tool_id) {
       case "calendar_agenda": return executeCalendarAgenda(executionHost, this.space, call, execution.signal);
       case "present_interactive_answer": {
@@ -1269,20 +1283,22 @@ export class PersonalPlugin implements RuntimePlugin {
         if (task) throw new Error("task executors cannot expand delegation");
         if (call.source_message && (call.source_message.session_id !== sessionID || call.source_message.seq < 1)) throw new Error("invalid trusted source message");
         // Only the host-bound turn source can establish provenance; model arguments cannot.
-        return result(await this.createTask(input, agent, sessionID, undefined, undefined, undefined, call.source_message));
+        return result(await this.createTask(input, agent, sessionID, undefined, undefined, undefined, call.source_message, originalSourceMessages(call, agent.main_session_id)));
       }
       case "list_tasks": return result(await this.request("tasks.list", input));
       case "update_task": case "stop_task": case "resume_task": case "retry_task_delivery": {
         if (task) throw new Error("task executors cannot revise or stop other matters");
         const target = await this.task(text(input, "task_id", true));
         if (target.agent_id !== agent.agent_id && agent.kind !== "main") throw new Error("matter belongs to another agent");
-        const mutationKey = call.source_message && ["update_task", "resume_task"].includes(call.tool_id) ? `${call.source_message.session_id}:${call.source_message.seq}:${call.tool_id}` : "";
+        const revisionSources=["update_task","resume_task"].includes(call.tool_id)?originalSourceMessages(call,sessionID):undefined;
+        const mutationSource=revisionSources?.at(-1);
+        const mutationKey = mutationSource ? `${mutationSource.session_id}:${mutationSource.seq}:${call.tool_id}` : "";
         // A successful retry is checked before stale-question validation. It must not apply twice.
         const alreadyApplied = Boolean(mutationKey && target.input_mutations?.some(item => item.key === mutationKey));
         const links = await this.relationTargets(call.message_relation, agent, !alreadyApplied);
         if (links.length && !links.some(link => link.task_id === target.task_id)) throw new Error("task target conflicts with the user's explicit relation");
         if (!alreadyApplied && call.tool_id === "resume_task" && target.waiting_reason === "user" && links.length && !links.some(link => link.task_id === target.task_id && link.requirements_revision === target.requirements_revision)) throw new Error("stale task question revision");
-        return result(await this.request(call.tool_id === "update_task" ? "tasks.update" : call.tool_id === "resume_task" ? "tasks.resume" : call.tool_id === "retry_task_delivery" ? "tasks.reconcile" : "tasks.stop", { ...input, ...(mutationKey ? { source_mutation_key: mutationKey } : {}), ...(call.tool_id === "retry_task_delivery" ? { retry_delivery: true } : {}) }, call.tool_id === "retry_task_delivery" ? executionHost : undefined, execution, false, call.tool_id === "retry_task_delivery" && Boolean(call.source_message && call.source_message.session_id === sessionID && call.source_message.seq > 0)));
+        return result(await this.request(call.tool_id === "update_task" ? "tasks.update" : call.tool_id === "resume_task" ? "tasks.resume" : call.tool_id === "retry_task_delivery" ? "tasks.reconcile" : "tasks.stop", { ...input, ...(mutationKey ? { source_mutation_key: mutationKey } : {}), ...(call.tool_id === "retry_task_delivery" ? { retry_delivery: true } : {}) }, call.tool_id === "retry_task_delivery" ? executionHost : undefined, execution, false, call.tool_id === "retry_task_delivery" && Boolean(call.source_message && call.source_message.session_id === sessionID && call.source_message.seq > 0), revisionSources));
       }
       case "report_task": return result(await this.report(input, sessionID, false, call));
       case "complete_task": return result(await this.report(input, sessionID, true, call));
@@ -1420,6 +1436,7 @@ export class PersonalPlugin implements RuntimePlugin {
         if(!task.execution.creation || !input.creation || !isDeepStrictEqual(task.execution.creation,input.creation)) throw new Error("pending task creation intent changed");
         runID=task.execution.request_id;
       }
+      else if(input.request_id===sourceRunID(task.execution.request_id,sessionID) && !terminalTask(task) && (task.requirements.find(value=>value.revision===task.requirements_revision)?.original_messages ?? (task.source.message_binding==="host_turn"?[{session_id:task.source.session_id}]:[])).some(ref=>ref.session_id===sessionID)) {if(input.action&&!['user/session/history.read','user/session/attachment.read'].includes(input.action))throw new Error("source grant is read-only");runID=input.request_id;authorization=task.execution.source_authorizations?.[sessionID];}
       else if(task.execution.session_id===sessionID && input.request_id===task.execution.request_id && (cleanup || !terminalTask(task))) {runID=task.execution.request_id;authorization=task.execution.authorization;}
       else if(task.delivery?.session_id===sessionID && input.request_id===task.delivery.request_id && (cleanup || ["pending","submitted"].includes(task.delivery.status))) {runID=task.delivery.request_id;authorization=task.delivery.authorization;}
       else if(cleanup) {const retired=[...task.previous_executions,...task.previous_deliveries ?? []].find(value=>value.session_id===sessionID && value.request_id===input.request_id);if(!retired)throw new Error("unknown retired execution lineage");runID=retired.request_id;revision=retired.requirements_revision;authorization=retired.authorization;}
@@ -1427,7 +1444,7 @@ export class PersonalPlugin implements RuntimePlugin {
     } else if(sessionID!==main.main_session_id) throw new Error("task root authority requires bound main session");
     if(input.reference && !sameAuthorization(authorization?.reference,input.reference)) throw new Error("stored execution authorization changed");
     const requirements=task.requirements.find(value=>value.revision===revision);if(!requirements)throw new Error("unknown requirements revision");
-    const context_digest=createHash("sha256").update(JSON.stringify({task_id:task.task_id,revision,goal:requirements.goal,source:task.source,authorization_refs:requirements.authorization_refs,routine_id:task.routine_id,routine_revision:task.routine_revision})).digest("hex");
+    const context_digest=createHash("sha256").update(JSON.stringify({task_id:task.task_id,revision,goal:requirements.goal,source:task.source,original_messages:requirements.original_messages,authorization_refs:requirements.authorization_refs,routine_id:task.routine_id,routine_revision:task.routine_revision})).digest("hex");
     if(input.parent?.scope.task_id===task.task_id && input.parent.scope.context_digest!==context_digest) throw new Error("parent task context changed");
     return {...(!sessionID ? {creation:task.execution.creation} : {}),parent_task_id:input.parent?.scope.task_id ?? "",parent_revision:input.parent?.scope.revision ?? 0,task_id:task.task_id,run_id:runID,session_id:sessionID,revision,context_digest};
   }
@@ -1445,7 +1462,7 @@ export class PersonalPlugin implements RuntimePlugin {
     const page = await this.host.call("host.session.history.read", { session_id: sessionID, start_seq: start, cursor, limit, snapshot_seq: snapshot, end_seq: input.end_seq === undefined ? undefined : number(input, "end_seq") });
     return { ...page, first_seq: start ?? page.records?.[0]?.seq ?? 1, has_earlier: (start ?? page.records?.[0]?.seq ?? 1) > 1 };
   }
-  private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost, execution?: RuntimeExecutionContext, ownerClient = false, ownerDeliveryIntent = false): Promise<unknown> {
+  private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost, execution?: RuntimeExecutionContext, ownerClient = false, ownerDeliveryIntent = false, sourceMessages?: MessageRef[]): Promise<unknown> {
     this.assertActive();
     if (method.startsWith("connections.") || method.startsWith("review.") || method.startsWith("connectors.")) {
       if (!ownerClient || !clientHost) throw new Error("Owner UI control requires a live desktop admission");
@@ -1626,7 +1643,7 @@ export class PersonalPlugin implements RuntimePlugin {
       case "tasks.get": return { task: await this.task(text(input, "task_id", true)) };
       case "tasks.create": return this.createTask(input, await this.conversation(input));
       case "tasks.update": case "tasks.resume": {
-        const { task, replay } = await this.transition(text(input, "task_id", true), () => this.reviseTask(input, method === "tasks.resume"));
+        const { task, replay } = await this.transition(text(input, "task_id", true), () => this.reviseTask(input, method === "tasks.resume", sourceMessages));
         // Reconciliation may acquire the same task transition for delivery or
         // lifecycle recovery. Release mutation serialization before replaying it.
         return { task: replay ? await this.reconcile(task) : task };

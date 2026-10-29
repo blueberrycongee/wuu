@@ -24,6 +24,9 @@ type PluginWorkspaceDiscardHandler func(context.Context, string, pluginhost.Work
 // PluginSessionRouter lets plugin processes outlive individual app-server
 // bindings without coupling runtime construction to an app-server package.
 type PluginSessionRouter struct {
+	desktopBinding                uint64
+	desktopPrepare                DesktopSessionPrepareHandler
+	desktopDispatch               DesktopSessionDispatchHandler
 	sessionResourceBinding        uint64
 	sessionResourceAccess         SessionResourceAccessHandler
 	executionAuthorizationBinding uint64

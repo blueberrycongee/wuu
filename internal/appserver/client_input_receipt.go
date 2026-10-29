@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
@@ -149,6 +150,7 @@ func (s *Server) enqueueAcceptedClientInput(ctx context.Context, th *threadState
 	entry.snapshot.AdmissionPrincipal, _ = principal.FromContext(ctx)
 	entry.snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 	entry.snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
+	entry.snapshot.AdmissionConnection = clientauthority.CaptureConnection(ctx)
 	if !s.enqueueQueuedUserTurn(th.ID, entry) {
 		_ = origin.Close()
 		// Acceptance remains durable even when shutdown closes the local queue.

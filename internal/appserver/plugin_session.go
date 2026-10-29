@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -886,6 +887,11 @@ func (s *Server) removePluginQueuedTurn(binding *runtime.State, threadID, plugin
 }
 
 func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionSendParams) (pluginhost.SessionSendResult, error) {
+	release, admissionErr := s.lockPluginSendAdmission(ctx, strings.TrimSpace(pluginID)+"\x00"+strings.TrimSpace(params.RequestID))
+	if admissionErr != nil {
+		return pluginhost.SessionSendResult{}, admissionErr
+	}
+	defer release()
 	var restoreErr error
 	ctx, restoreErr = s.restoreUserSessionAuthorization(ctx, pluginID, params.ExecutionAuthorization, "send", params.SessionID)
 	if restoreErr != nil {
@@ -905,9 +911,10 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	pluginID = strings.TrimSpace(pluginID)
 	params.RequestID = strings.TrimSpace(params.RequestID)
 	params.SessionID = strings.TrimSpace(params.SessionID)
-	if params.UserInputRequestID == "" {
+	if params.UserInputRequestID == "" && params.Input.Handoff == nil {
 		params.Input.Prompt = strings.TrimSpace(params.Input.Prompt)
 	}
+	_, importedHandoff := ctx.Value(desktopImportedMessageKey{}).(*desktopSessionMessage)
 	params.IfRunning = strings.TrimSpace(params.IfRunning)
 	if scope, delegated, scopeErr := executionRunScope(ctx, pluginID, params.SessionID); scopeErr != nil {
 		return pluginhost.SessionSendResult{}, scopeErr
@@ -920,6 +927,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		}
 	}
 	params.Cause = strings.TrimSpace(params.Cause)
+	if params.Input.Handoff != nil && (params.UserInputRequestID != "" || params.ResumeAccepted || params.IfRunning == pluginhost.SessionIfRunningSteer || len(params.Input.Attachments) > 0) {
+		return pluginhost.SessionSendResult{}, errors.New("handoff is a queued plugin delivery, not a new user submission, resume or steer")
+	}
 	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.ResumeReceiptID == "") {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
 	}
@@ -1000,7 +1010,12 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	defer invocation.Close()
 	if err := recordPluginTurnOrigin(ctx, binding, pluginID, params.RequestID, pluginTurnOrigin{
-		Composition: invocation.ExecutionCompositionID(), Session: params.SessionID,
+		Composition: invocation.ExecutionCompositionID(), Session: params.SessionID, HandoffDigest: func() string {
+			if imported, ok := ctx.Value(desktopImportedMessageKey{}).(*desktopSessionMessage); ok {
+				return imported.Digest
+			}
+			return sessionHandoffDigest(params)
+		}(),
 	}); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
@@ -1072,7 +1087,14 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if control != nil && control.State != session.ControlActive {
 		return pluginhost.SessionSendResult{}, session.ErrControlChanged
 	}
+	handoffPrompt, handoffImages, handoffFiles, err := s.resolveSessionHandoff(ctx, binding, pluginID, params)
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
 	var received []TurnStartImage
+	for _, image := range handoffImages {
+		received = append(received, TurnStartImage{MediaType: image.MediaType, Data: image.Data, Original: true})
+	}
 	var selectedFiles []TurnStartFile
 	for _, file := range clientAttachments {
 		switch file.MediaType {
@@ -1090,11 +1112,14 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	msg, err := literalUserMessageFromPrompt(params.Input.Prompt, images, files)
+	if params.Input.Handoff != nil || importedHandoff {
+		images, files = handoffImages, handoffFiles
+	}
+	msg, err := literalUserMessageFromPrompt(handoffPrompt, images, files)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	if len(clientAttachments) > 0 && !durableClient {
+	if (len(clientAttachments) > 0 || params.Input.Handoff != nil || importedHandoff) && !durableClient {
 		msg, err = s.persistInputWorkingCopies(ctx, params.SessionID, msg, received, false)
 		if err != nil {
 			return pluginhost.SessionSendResult{}, err
@@ -1159,6 +1184,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	snapshot.AdmissionPrincipal, _ = principal.FromContext(ctx)
 	snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 	snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
+	snapshot.AdmissionConnection = clientauthority.CaptureConnection(ctx)
 	snapshot.DisableTools = params.DisableTools
 	snapshot.RequestContext = requestContext
 	snapshot.Control = control
@@ -1404,4 +1430,41 @@ func (s *Server) restoreUserSessionAuthorization(ctx context.Context, pluginID s
 		resources = append(resources, access.Resource{Kind: "session", ID: strings.TrimSpace(sessionID)})
 	}
 	return s.rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, strings.TrimSpace(sessionID), "user/session/"+operation, resources...)
+}
+
+// Serialize one immutable send intent through receipt lookup and queue admission.
+// Distinct requests remain concurrent; cancelled waiters do not acquire authority.
+type pluginSendAdmission struct {
+	gate       chan struct{}
+	references int
+}
+
+func (s *Server) lockPluginSendAdmission(ctx context.Context, key string) (func(), error) {
+	s.pluginSendAdmissionMu.Lock()
+	if s.pluginSendAdmissions == nil {
+		s.pluginSendAdmissions = make(map[string]*pluginSendAdmission)
+	}
+	entry := s.pluginSendAdmissions[key]
+	if entry == nil {
+		entry = &pluginSendAdmission{gate: make(chan struct{}, 1)}
+		entry.gate <- struct{}{}
+		s.pluginSendAdmissions[key] = entry
+	}
+	entry.references++
+	s.pluginSendAdmissionMu.Unlock()
+	drop := func() {
+		s.pluginSendAdmissionMu.Lock()
+		entry.references--
+		if entry.references == 0 {
+			delete(s.pluginSendAdmissions, key)
+		}
+		s.pluginSendAdmissionMu.Unlock()
+	}
+	select {
+	case <-ctx.Done():
+		drop()
+		return nil, ctx.Err()
+	case <-entry.gate:
+		return func() { entry.gate <- struct{}{}; drop() }, nil
+	}
 }

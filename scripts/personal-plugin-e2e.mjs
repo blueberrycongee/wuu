@@ -265,10 +265,10 @@ class Runtime {
     if (method === 'agents.send') this.host.userInputs.set(input.request_id, { prompt: input.prompt, attachments: input.attachments, relation: input.relation, execution_id: `x-${this.seq}` });
     return this.call('capability.invoke', { capability: 'plugin.client.request', input: { method, input }, execution_id: `x-${this.seq}` }).then(r => r.output.result).finally(() => { if (method === 'agents.send') this.host.userInputs.delete(input.request_id); });
   }
-  tool(tool_id, args, session_id, context = {}) { return this.call('tool.execute', { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `c-${this.seq}`, execution_id: `e-${this.seq}`, ...context }).then(r => JSON.parse(r.result.content[0].text)); }
+  tool(tool_id, args, session_id, context = {}) { return this.call('tool.execute', { source_message:{session_id,seq:1}, tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `c-${this.seq}`, execution_id: `e-${this.seq}`, ...context }).then(r => JSON.parse(r.result.content[0].text)); }
   lifecycle(task, state, final_output = 'unverified final output') { return this.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: task.execution.session_id, request_id: task.execution.request_id, state, final_output }, execution_id: `l-${this.seq}` }); }
   async start(domain = 'personal') {
-    this.definition = await this.call('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: this.pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, product_domain: domain, user_space_id: 'local', supported_host_services: ['host.service.call', 'host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send', 'host.session.inspect', 'host.session.context', 'host.session.cancel', 'host.session.history.read', 'host.session.history.search', 'host.session.attachment.read'] });
+    this.definition = await this.call('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2, plugin_id: this.pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, product_domain: domain, user_space_id: 'local', supported_host_features: ["session.handoff.v1"], supported_host_services: ['host.service.call', 'host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send', 'host.session.inspect', 'host.session.context', 'host.session.cancel', 'host.session.history.read', 'host.session.history.search', 'host.session.attachment.read'] });
     for (const descriptor of this.definition.provided_services ?? []) {
       assert.match(descriptor.name, /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/);
       for (const method of descriptor.methods) { assert.match(method.name, /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/); assert.match(method.input_schema, /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/); assert.match(method.output_schema, /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/); }
@@ -531,10 +531,13 @@ try {
     await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'quote-a', prompt: 'Different text', relation }), /request_id_conflict/);
     await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'cross-session', prompt: 'Reply', relation: { reply_to: { session_id: bTask.execution.session_id, seq: 1 } } }), /reply|conversation/);
     await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'forged-task', prompt: 'Reply', relation: { metadata: { task_links: [{ task_id: 'task-not-owned', requirements_revision: 1 }] } } }), /task/);
-    const edit = { task_id: aTask.task_id, expected_revision: aTask.revision, goal: 'Revised A' };
+    h.histories.get(sid).push({seq:5,role:'user',origin:'user',content:'Later correction in the same turn'});
+    const edit = { task_id: aTask.task_id, expected_revision: aTask.revision, goal: 'Revised A', source_message_seqs:[5] };
     aTask = (await r.tool('update_task', edit, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: relation })).task;
     const repeated = (await r.tool('update_task', edit, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: relation })).task;
     assert.equal(repeated.task_id, aTask.task_id); assert.equal(repeated.requirements_revision, 2);
+    assert.deepEqual(aTask.requirements.at(-1).original_messages,[{session_id:sid,seq:1},{session_id:sid,seq:2},{session_id:sid,seq:5}]);
+    assert(h.calls.filter(call=>call.service==='host.session.send' && call.params.request_id===aTask.execution.request_id).every(call=>call.params.input.handoff.source_messages.some(ref=>ref.seq===5)),'later exact correction reaches the common handoff primitive');
     assert.equal((await r.client('tasks.get', { task_id: bTask.task_id })).task.requirements_revision, 1);
     const context = { source_message: { session_id: sid, seq: 2 }, message_relation: relation };
     await assert.rejects(r.tool('update_task', { task_id: bTask.task_id, expected_revision: bTask.revision, goal: 'Wrong sibling' }, sid, context), /target|relation/);

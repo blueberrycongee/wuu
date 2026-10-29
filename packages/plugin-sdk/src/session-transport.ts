@@ -16,9 +16,12 @@ export interface SessionLocatorV1 {
   display_host?: string;
 }
 export type SessionRouteOperation = "create" | "send" | "inspect" | "cancel" | "list";
+/** Host-injected only: never pass a ticket to host.session.route. Selected transport providers receive it. */
+export interface SessionTransportTicketV1 {id:string;source_host:string}
 export type SessionRouteRequest = {
   [Operation in SessionRouteOperation]: {
     version: 1;
+    transport_ticket?: SessionTransportTicketV1;
     operation: Operation;
     /** Persist with the originating intent. Retry the same ID, never a fresh ID. */
     operation_id: string;
@@ -91,12 +94,15 @@ export class SessionTransportError extends Error {
   }
 }
 
-function unknownReceipt(request: SessionRouteRequest, code: string): SessionRouteResult {
+/** Preserve the original intent when dispatch may have been accepted. This is
+ * not a cancellation or permission to recreate the operation with a new ID. */
+export function unknownSessionRouteResult(request: SessionRouteRequest, code: string): SessionRouteResult {
   return { version: 1, operation_id: request.operation_id, locator: { ...request.locator }, status: "unknown",
     error: { code, message: "Delivery may have been accepted. Reconcile or retry the same operation ID; do not recreate the operation." } };
 }
 
-function validReceipt(value: unknown, request: SessionRouteRequest): value is SessionRouteResult {
+/** Check a receipt against its original operation and exact routed session. */
+export function isSessionRouteResult(value: unknown, request: SessionRouteRequest): value is SessionRouteResult {
   if (!record(value) || value.version !== 1 || value.operation_id !== request.operation_id
     || !["completed", "pending", "unknown"].includes(String(value.status)) || !record(value.locator)
     || value.locator.version !== 1 || value.locator.execution_host !== request.locator.execution_host) return false;
@@ -124,14 +130,14 @@ export function remoteSessionTransport(
       try {
         const response = client.call("session/federation", request, options.timeoutMs, options.workdir?.(request.locator.execution_host));
         const aborted = new Promise<SessionRouteResult>(resolve => {
-          onAbort = () => resolve(unknownReceipt(request, "session_wait_cancelled"));
+          onAbort = () => resolve(unknownSessionRouteResult(request, "session_wait_cancelled"));
           signal?.addEventListener("abort", onAbort, { once: true });
           if (signal?.aborted) onAbort();
         });
         const value = await (signal ? Promise.race([response, aborted]) : response);
-        return validReceipt(value, request) ? value : unknownReceipt(request, "session_invalid_receipt");
+        return isSessionRouteResult(value, request) ? value : unknownSessionRouteResult(request, "session_invalid_receipt");
       } catch {
-        return unknownReceipt(request, "session_delivery_unknown");
+        return unknownSessionRouteResult(request, "session_delivery_unknown");
       } finally {
         if (onAbort) signal?.removeEventListener("abort", onAbort);
       }

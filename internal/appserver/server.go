@@ -226,18 +226,21 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	personalActions   *personalActions
-	clientInputMu     sync.Mutex
-	clientInputOwner  string
-	clientInputLease  *session.DocumentThreadExecutionLease
-	trustedTransport  trustedTransportState
-	sessionFederation *SessionFederation
-	access            connectionAccess
-	artifactReads     sync.Map
-	rpcTiming         *rpcTimingRecorder
-	rt                *runtime.Session
-	out               io.Writer
-	writeMu           sync.Mutex
+	pluginSendAdmissionMu sync.Mutex
+	pluginSendAdmissions  map[string]*pluginSendAdmission
+	desktopSessions       desktopSessionState
+	personalActions       *personalActions
+	clientInputMu         sync.Mutex
+	clientInputOwner      string
+	clientInputLease      *session.DocumentThreadExecutionLease
+	trustedTransport      trustedTransportState
+	sessionFederation     *SessionFederation
+	access                connectionAccess
+	artifactReads         sync.Map
+	rpcTiming             *rpcTimingRecorder
+	rt                    *runtime.Session
+	out                   io.Writer
+	writeMu               sync.Mutex
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
@@ -509,6 +512,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 				return s.controlPluginSession(binding, ctx, pluginID, p)
 			},
 		)
+		unbindDesktop := rt.PluginSessionRouter.BindDesktopSessionTransport(s.prepareDesktopSessionRoute, s.dispatchDesktopTicket)
 		unbindAuthorization := rt.PluginSessionRouter.BindExecutionAuthorization(rt.HandleExecutionAuthorization)
 		unbindSessionAccess := rt.PluginSessionRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, sessionID string, reference *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
 			if strings.HasPrefix(operation, "personal/") {
@@ -538,7 +542,14 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		})
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
 		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient(); unbindAuthorization(); unbindSessionAccess() }
+		s.pluginTurnUnbind = func() {
+			unbindDesktop()
+			unbindTurns()
+			unbindProcesses()
+			unbindClient()
+			unbindAuthorization()
+			unbindSessionAccess()
+		}
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
@@ -1197,6 +1208,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time
 
 func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) error {
 	switch req.Method {
+	case desktopSessionDispatchMethod, desktopSessionExportMethod, desktopSessionListMethod:
+		return s.handleDesktopSession(ctx, req)
 	case "session/federation":
 		return s.handleSessionFederation(ctx, req)
 	case MethodStateInspectionsList, MethodStateInspectionsReconcile:

@@ -364,7 +364,15 @@ type SessionInputAttachment struct {
 	MediaType string `json:"media_type"`
 }
 
+// SessionHandoffInput selects persisted original user messages, never caller-authored
+// replacement text. The destination host resolves and verifies all material.
+type SessionHandoffInput struct {
+	SourceMessages       []providers.MessageRef                      `json:"source_messages"`
+	SourceAuthorizations map[string]*ExecutionAuthorizationReference `json:"source_authorizations,omitempty"`
+}
+
 type SessionInput struct {
+	Handoff       *SessionHandoffInput     `json:"handoff,omitempty"`
 	Attachments   []SessionInputAttachment `json:"attachments,omitempty"`
 	Prompt        string                   `json:"prompt"`
 	ContextBlocks []SessionContextBlock    `json:"context_blocks,omitempty"`
@@ -1117,12 +1125,14 @@ const HostFeatureDocumentAuthority = "state.documents.authority.v1"
 
 const HostFeatureSessionProgress = "session.progress.v1"
 
+const HostFeatureSessionHandoff = "session.handoff.v1"
+
 // HostFeatureServiceContinuation recognizes single-use selected invocation forwarding.
 const HostFeatureServiceContinuation = "service.continuation.v1"
 
 // SupportedHostFeatures returns only semantics actually implemented by this host.
 func SupportedHostFeatures() []string {
-	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation}
+	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation, HostFeatureSessionHandoff}
 }
 
 func hostFeaturesForServices(supported []HostServiceMethod) []string {

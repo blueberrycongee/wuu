@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -11,6 +12,9 @@ import (
 // Route preserves the local session implementation and routes explicit remote
 // locators only through the caller's selected, declared transport provider.
 func (r *PluginSessionRouter) Route(ctx context.Context, pluginID string, request pluginhost.SessionRouteRequest) (pluginhost.SessionRouteResult, error) {
+	if request.TransportTicket != nil {
+		return pluginhost.SessionRouteResult{}, fmt.Errorf("caller-supplied transport tickets are forbidden")
+	}
 	if err := request.Validate(); err != nil {
 		return pluginhost.SessionRouteResult{}, err
 	}
@@ -22,6 +26,18 @@ func (r *PluginSessionRouter) Route(ctx context.Context, pluginID string, reques
 		defer binding.Close()
 		if binding.Host == nil || binding.Host.ServiceRegistry() == nil {
 			return pluginhost.SessionRouteResult{}, fmt.Errorf("session transport unavailable")
+		}
+		if request.Locator.ExecutionHost == "desktop" || strings.HasPrefix(request.Locator.ExecutionHost, "desktop:") || strings.HasPrefix(request.Locator.ExecutionHost, "desktop-project:") || strings.HasPrefix(request.Locator.ExecutionHost, "desktop-context:") {
+			provider, ok := binding.Host.ServiceRegistry().ProviderPluginIDFor(pluginID, pluginhost.SessionTransportService, 1)
+			if !ok {
+				return pluginhost.SessionRouteResult{}, fmt.Errorf("selected desktop session transport unavailable")
+			}
+			var release func()
+			request, release, err = r.prepareDesktopRoute(ctx, pluginID, provider, request)
+			if err != nil {
+				return pluginhost.SessionRouteResult{}, err
+			}
+			defer release()
 		}
 		raw, err := json.Marshal(request)
 		if err != nil {

@@ -813,6 +813,7 @@ export const FILE_LOCK_SERVICE = "host.file-lock" as const;
 export const MODEL_REQUEST_SERVICE = "host.model.request" as const;
 /** Opt-in, bounded live session progress; not event replay or an input receipt. */
 export const SESSION_PROGRESS_HOST_FEATURE = "session.progress.v1" as const;
+export const SESSION_HANDOFF_HOST_FEATURE = "session.handoff.v1" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -1587,6 +1588,14 @@ export interface HostServiceContracts {
       input: {
         prompt: string;
         attachments?: SessionInputAttachment[];
+        /** Requires session.handoff.v1. Host resolves exact persisted owner input,
+         * its direct reply context and every attachment; never substitutes a summary.
+         * Delivery remains plugin-authored, not a new owner submission. Source reads
+         * and target send each require their existing resource authorization. */
+        handoff?: {
+          source_messages: MessageRef[];
+          source_authorizations?: Record<string, import("./execution-authorization.js").ExecutionAuthorizationReference>;
+        };
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
       presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
@@ -3147,3 +3156,5 @@ export * from "./resource-policy.js";
 export * from "./execution-authorization.js";
 
 export * from "./personal-memory.js";
+
+export * from "./desktop-session-bridge.js";

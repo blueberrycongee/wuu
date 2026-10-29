@@ -128,6 +128,8 @@
     "dist/engine.d.ts",
     "dist/model-capacity.js",
     "dist/model-capacity.d.ts",
+    "dist/desktop-session-bridge.js",
+    "dist/desktop-session-bridge.d.ts",
     "dist/session-transport.js",
     "dist/session-transport.d.ts",
     "dist/desktop-session-transport.js",

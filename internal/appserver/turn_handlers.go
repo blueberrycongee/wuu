@@ -24,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -130,6 +131,7 @@ type turnAdmissionHooks struct {
 type turnRuntimeSnapshot struct {
 	// Transport provenance is live-only. Durable work must be explicitly
 	// reauthorized; serialized owner claims cannot recreate authentication.
+	AdmissionConnection    *clientauthority.ConnectionProof       `json:"-"`
 	AdmissionPrincipal     principal.Verified                     `json:"-"`
 	AdmissionDelegation    *access.Delegation                     `json:"-"`
 	AdmissionAuthorization *runtime.ExecutionAuthorizationBinding `json:"-"`
@@ -698,6 +700,7 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	entry.snapshot.AdmissionPrincipal, _ = principal.FromContext(ctx)
 	entry.snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 	entry.snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
+	entry.snapshot.AdmissionConnection = clientauthority.CaptureConnection(ctx)
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	entry.snapshot.ActiveDocument = cloneActiveDocument(params.ActiveDocument)
@@ -4569,12 +4572,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		snapshot.AdmissionPrincipal = caller
 		snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 		snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
+		snapshot.AdmissionConnection = clientauthority.CaptureConnection(ctx)
 	} else if snapshot.AdmissionPrincipal.Valid() {
 		ctx = principal.WithContext(ctx, snapshot.AdmissionPrincipal)
 		if snapshot.AdmissionDelegation != nil {
 			ctx = access.WithDelegation(ctx, *snapshot.AdmissionDelegation)
 		}
 		ctx = runtime.WithExecutionAuthorization(ctx, snapshot.AdmissionAuthorization)
+		ctx = clientauthority.RestoreConnection(ctx, snapshot.AdmissionConnection)
 	}
 	timing := hooks.timing.buffered()
 	defer timing.flush()
@@ -4933,6 +4938,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	if isHumanUserMessage(userMsg) && userMsg.Seq > 0 {
 		turnRuntime.SourceMessage = &providers.MessageRef{SessionID: th.ID, Seq: userMsg.Seq}
 	}
+	turnRuntime.AdmissionConnection = snapshot.AdmissionConnection
 	turnRuntime.AdmissionPrincipal = snapshot.AdmissionPrincipal
 	turnRuntime.AdmissionDelegation = snapshot.AdmissionDelegation
 	turnRuntime.AdmissionAuthorization = snapshot.AdmissionAuthorization

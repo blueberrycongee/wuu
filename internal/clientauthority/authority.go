@@ -86,3 +86,21 @@ func newConnectionID() string {
 	}
 	return hex.EncodeToString(id[:])
 }
+
+// ConnectionProof retains only an admitted transport's opaque identity and live
+// revocation lifetime. It is never serialized into a turn or message envelope.
+type ConnectionProof struct{ proof *owner }
+
+func CaptureConnection(ctx context.Context) *ConnectionProof {
+	proof, _ := ctx.Value(ownerKey{}).(*owner)
+	if proof == nil || RequireOwner(ctx, proof.binding) != nil {
+		return nil
+	}
+	return &ConnectionProof{proof: proof}
+}
+func RestoreConnection(ctx context.Context, captured *ConnectionProof) context.Context {
+	if captured == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ownerKey{}, captured.proof)
+}

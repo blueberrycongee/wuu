@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/userspace"
@@ -430,71 +431,81 @@ func TestSessionServiceStreamingKeepsDurableWritesAtBoundaries(t *testing.T) {
 // Personal receipt admission crosses the selected serialized domain just like
 // ordinary history. A stale envelope cannot append, and lost replies never replay.
 func TestSessionServicePersonalReceiptAdmission(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
-		client := NewStore(context.Background(), native.documents)
-		sess := Session{ID: "personal", UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin"}
-		if _, err := client.CreateInitialized(sess, nil); err != nil {
-			t.Fatal(err)
-		}
-		baseline := Control{SessionID: sess.ID}
-		runtime, _ := json.Marshal(struct{ ExecutionControlBaseline *Control }{&baseline})
-		input := AcceptedClientInput{Receipt: providers.ClientInputReceipt{SessionID: sess.ID, UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin", PluginID: "plugin", HostRequestID: "host", RequestID: "request", ClientID: "client", ReceiptID: "receipt", QueueID: "queue"}, Fingerprint: "fingerprint", MessageJSON: []byte(`{"text":"hello"}`), RuntimeJSON: runtime, SelectionJSON: []byte(`{"files":["original"]}`), LiveOwner: "owner"}
-		accepted, fresh, err := client.AcceptClientInput(input, nil, &baseline)
-		if err != nil || !fresh || accepted.Receipt.Revision != 1 {
-			t.Fatalf("accept: %+v %v %v", accepted, fresh, err)
-		}
-		repeated, fresh, err := client.AcceptClientInput(input, nil, &baseline)
-		if err != nil || fresh || repeated.Receipt.ReceiptID != accepted.Receipt.ReceiptID {
-			t.Fatalf("repeated accept: %+v %v %v", repeated, fresh, err)
-		}
-		input.Fingerprint = "different"
-		if _, _, err := client.AcceptClientInput(input, nil, &baseline); !errors.Is(err, ErrClientInputConflict) {
-			t.Fatalf("changed request: %v", err)
-		}
-		held, err := client.ChangeClientInput(accepted, "held", "", nil, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		record := HistoryRecord{Role: "user", Origin: "user", Content: "hello", ClientID: "client"}
-		if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, accepted, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
-			t.Fatalf("stale append: %v", err)
-		}
-		queued, err := client.ChangeClientInput(held, "queued", "new-owner", runtime, nil, &baseline)
-		if err != nil {
-			t.Fatal(err)
-		}
-		seq, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, queued, "turn", nil, &baseline)
-		if err != nil || seq != 1 {
-			t.Fatalf("append: %d %v", seq, err)
-		}
-		if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, queued, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
-			t.Fatalf("replayed append: %v", err)
-		}
-		scope := ClientInputScope{Binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, SessionID: sess.ID, PluginID: "plugin"}
-		stored, found, err := client.ReadClientInput(scope, "host")
-		if err != nil || !found || stored.Receipt.MessageSeq != seq || stored.Receipt.HostTurnID != "turn" || len(stored.MessageJSON) != 0 || string(stored.SelectionJSON) != string(queued.SelectionJSON) {
-			t.Fatalf("settled receipt: %+v %v %v", stored, found, err)
-		}
-		if err := client.SettleClientInputExecution(scope, "host", "other-turn", "completed", ""); err != nil {
-			t.Fatal(err)
-		}
-		if err := client.RecoverClientInputs(t.TempDir(), scope); err != nil {
-			t.Fatal(err)
-		}
-		stored, _, err = client.ReadClientInput(scope, "host")
-		if err != nil || stored.Receipt.ExecutionState != "unconfirmed" {
-			t.Fatalf("unknown execution replayed: %+v %v", stored, err)
-		}
-		summaries, err := client.ClientInputHistoryReceipts(scope)
-		if err != nil || summaries["client"].MessageSeq != 1 {
-			t.Fatalf("history receipt: %+v %v", summaries, err)
-		}
-		foreign := scope
-		foreign.Binding.UserSpaceID = "other"
-		if _, found, err := client.ReadClientInput(foreign, "host"); err != nil || found {
-			t.Fatalf("foreign binding read: %v %v", found, err)
-		}
-	})
+	for _, original := range []string{"hello", ""} {
+		t.Run(fmt.Sprintf("original-%q", original), func(t *testing.T) {
+			forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+				client := NewStore(context.Background(), native.documents)
+				sess := Session{ID: "personal", UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin"}
+				if _, err := client.CreateInitialized(sess, nil); err != nil {
+					t.Fatal(err)
+				}
+				baseline := Control{SessionID: sess.ID}
+				runtime, _ := json.Marshal(struct{ ExecutionControlBaseline *Control }{&baseline})
+				input := AcceptedClientInput{Receipt: providers.ClientInputReceipt{SessionID: sess.ID, UserSpaceID: "local", ProductDomain: "personal", AgentID: "agent", Owner: "plugin", PluginID: "plugin", HostRequestID: "host", RequestID: "request", ClientID: "client", ReceiptID: "receipt", QueueID: "queue"}, Fingerprint: "fingerprint", MessageJSON: func() []byte {
+					raw, _ := json.Marshal(providers.ChatMessage{Role: "user", Origin: "user", ClientID: "client", Content: original, DisplayContent: original})
+					return raw
+				}(), RuntimeJSON: runtime, SelectionJSON: []byte(`{"files":["original"]}`), LiveOwner: "owner"}
+				forgedOriginal := "caller replacement"
+				input.OriginalText = &forgedOriginal
+				accepted, fresh, err := client.AcceptClientInput(input, nil, &baseline)
+				if err != nil || !fresh || accepted.Receipt.Revision != 1 || accepted.OriginalText != nil {
+					t.Fatalf("accept: %+v %v %v", accepted, fresh, err)
+				}
+				repeated, fresh, err := client.AcceptClientInput(input, nil, &baseline)
+				if err != nil || fresh || repeated.Receipt.ReceiptID != accepted.Receipt.ReceiptID {
+					t.Fatalf("repeated accept: %+v %v %v", repeated, fresh, err)
+				}
+				input.Fingerprint = "different"
+				if _, _, err := client.AcceptClientInput(input, nil, &baseline); !errors.Is(err, ErrClientInputConflict) {
+					t.Fatalf("changed request: %v", err)
+				}
+				held, err := client.ChangeClientInput(accepted, "held", "", nil, nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				record := HistoryRecord{Role: "user", Origin: "user", Content: original + " generated attachment path", DisplayContent: original, ClientID: "client"}
+				if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, accepted, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
+					t.Fatalf("stale append: %v", err)
+				}
+				queued, err := client.ChangeClientInput(held, "queued", "new-owner", runtime, nil, &baseline)
+				if err != nil {
+					t.Fatal(err)
+				}
+				seq, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, queued, "turn", nil, &baseline)
+				if err != nil || seq != 1 {
+					t.Fatalf("append: %d %v", seq, err)
+				}
+				if _, err := client.AppendAcceptedClientHistoryRecord(sess.ID, record, queued, "turn", nil, &baseline); !errors.Is(err, ErrClientInputSettled) {
+					t.Fatalf("replayed append: %v", err)
+				}
+				scope := ClientInputScope{Binding: userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, SessionID: sess.ID, PluginID: "plugin"}
+				restartSessionStore(t, native)
+				stored, found, err := client.ReadClientInput(scope, "host")
+				if err != nil || !found || stored.Receipt.MessageSeq != seq || stored.Receipt.HostTurnID != "turn" || len(stored.MessageJSON) != 0 || len(stored.RuntimeJSON) != 0 || stored.OriginalText == nil || *stored.OriginalText != original || string(stored.SelectionJSON) != string(queued.SelectionJSON) {
+					t.Fatalf("settled receipt: %+v %v %v", stored, found, err)
+				}
+				if err := client.SettleClientInputExecution(scope, "host", "other-turn", "completed", ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := client.RecoverClientInputs(t.TempDir(), scope); err != nil {
+					t.Fatal(err)
+				}
+				stored, _, err = client.ReadClientInput(scope, "host")
+				if err != nil || stored.Receipt.ExecutionState != "unconfirmed" {
+					t.Fatalf("unknown execution replayed: %+v %v", stored, err)
+				}
+				summaries, err := client.ClientInputHistoryReceipts(scope)
+				if err != nil || summaries["client"].MessageSeq != 1 {
+					t.Fatalf("history receipt: %+v %v", summaries, err)
+				}
+				foreign := scope
+				foreign.Binding.UserSpaceID = "other"
+				if _, found, err := client.ReadClientInput(foreign, "host"); err != nil || found {
+					t.Fatalf("foreign binding read: %v %v", found, err)
+				}
+			})
+		})
+	}
 }
 
 // The serialized admission envelope cannot replace canonical receipt identity

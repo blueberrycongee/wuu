@@ -65,13 +65,15 @@ type userHostOutput struct {
 	guard   func() error
 }
 type userHostConnection struct {
-	id          string
-	ctx         context.Context
-	cancel      context.CancelFunc
-	output      chan userHostOutput
-	mu          sync.Mutex
-	queuedBytes int
-	failure     error
+	desktopSessionReady bool
+	desktopSessionCalls map[string]chan clientResponse
+	id                  string
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	output              chan userHostOutput
+	mu                  sync.Mutex
+	queuedBytes         int
+	failure             error
 }
 
 func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serverOptions ...ServerOption) (*UserHost, error) {
@@ -88,6 +90,7 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 	h.attentionEvents = make(chan userAttentionEvent, 128)
 	h.attentionLastTurn = make(map[string]string)
 	h.server = New(rt, h, serverOptions...)
+	h.server.desktopSessions.call = h.callDesktopSession
 	if h.server.startupErr != nil {
 		err := h.server.startupErr
 		h.attentionCancel()
@@ -506,11 +509,18 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 		if err := json.Unmarshal([]byte(raw), &req); err != nil {
 			return fmt.Errorf("invalid user host request: %w", err)
 		}
+		if req.Method == "" && len(req.ID) > 0 {
+			if c.deliverDesktopSessionResponse([]byte(raw)) {
+				continue
+			}
+			// Late replies and replies from the wrong connection have no authority.
+			continue
+		}
 		if len(req.ID) == 0 || string(req.ID) == "null" || req.Method == "" {
 			return errors.New("user host requires an identified client request; reverse RPC is unavailable")
 		}
 		switch req.Method {
-		case MethodInitialize, MethodPluginClientRequest, MethodPluginClientCancel,
+		case desktopSessionExportMethod, MethodInitialize, MethodPluginClientRequest, MethodPluginClientCancel,
 			MethodStateInspectionsList, MethodStateInspectionsReconcile,
 			MethodDevicePushRegister, MethodDevicePushUnregister, MethodShutdown,
 			MethodUserQuestionList, MethodUserQuestionRespond, MethodUserQuestionCancel, MethodUserQuestionHold:
@@ -580,6 +590,16 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 			if err := decodeParams(req.Params, &params); err != nil {
 				return err
 			}
+			c.mu.Lock()
+			c.desktopSessionReady = false
+			if caller.IsOwner() && caller.DurableAuthority() == "local-installation" && clientauthority.RequireOwner(ctx, h.runtime.UserBinding()) == nil {
+				for _, method := range params.Capabilities.ReverseRPC.Methods {
+					if method == desktopSessionDispatchMethod {
+						c.desktopSessionReady = true
+					}
+				}
+			}
+			c.mu.Unlock()
 			params.Capabilities.ReverseRPC.Methods = nil
 			// All user-host consumers use bounded content references. No connection
 			// may change another connection's delivery or browser authority.

@@ -12,6 +12,10 @@ export interface SessionDomainJournalHandle { readonly handle: string; readonly 
  * SelectionJSON preserves original attachment bytes independently of tool copies.
  */
 export interface SessionDomainAcceptedClientInput {
+  /** Derived atomically from authenticated MessageJSON at history settlement;
+   * ignored on caller admission. Absent means legacy/unavailable, "" proves a
+   * captionless original. Retain this while dropping settled runtime snapshots. */
+  readonly OriginalText?: string;
   readonly Receipt: ClientInputReceipt;
   readonly Fingerprint: string;
   readonly MessageJSON: string | null;

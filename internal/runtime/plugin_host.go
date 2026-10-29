@@ -116,6 +116,7 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 		}
 		return epoch
 	}, host)
+	kernel.sessionRouter = turnRouter
 	nativeConsumers := runtimeServiceConsumers(driverProfile)
 	if resolved.Includes(StateServicesConsumer) {
 		kernel.selectedServices, err = newRuntimeServices(host, wuuHome)
