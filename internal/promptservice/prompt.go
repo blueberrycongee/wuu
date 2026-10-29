@@ -3,9 +3,11 @@ package promptservice
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/instructions"
@@ -47,6 +49,7 @@ type Section struct {
 	Hash   string `json:"hash"`
 }
 type Result struct {
+	Layout   string    `json:"layout,omitempty"`
 	Content  string    `json:"content"`
 	Sections []Section `json:"sections"`
 }
@@ -115,9 +118,49 @@ func Assemble(in Request) (Result, error) {
 			}
 		}
 		worker.Sections = sections
+		worker.Layout = sectionLayout(worker)
 		return worker, nil
 	}
+	out.Layout = sectionLayout(out)
 	return out, nil
+}
+
+// sectionLayout advertises the optional layout only when the entire result
+// satisfies it, including contributions and the flattened worker base.
+func sectionLayout(result Result) string {
+	if !utf8.ValidString(result.Content) {
+		return ""
+	}
+	seen := make(map[string]bool, len(result.Sections))
+	offset := 0
+	for i, section := range result.Sections {
+		if section.Key == "" || seen[section.Key] || section.Bytes < 0 {
+			return ""
+		}
+		seen[section.Key] = true
+		if i > 0 {
+			if !strings.HasPrefix(result.Content[offset:], "\n\n") {
+				return ""
+			}
+			offset += 2
+		}
+		if section.Bytes > len(result.Content)-offset {
+			return ""
+		}
+		content := result.Content[offset : offset+section.Bytes]
+		if !utf8.ValidString(content) {
+			return ""
+		}
+		digest := sha256.Sum256([]byte(content))
+		if section.Hash != fmt.Sprintf("%x", digest[:16]) {
+			return ""
+		}
+		offset += section.Bytes
+	}
+	if offset != len(result.Content) {
+		return ""
+	}
+	return "wuu.prompt.sections.v1"
 }
 
 // Client's callback must retain the admitted generation and authenticated caller.
@@ -141,6 +184,7 @@ func (c *Client) Assemble(ctx context.Context, in Request) (Result, error) {
 		return Result{}, err
 	}
 	var result struct {
+		Layout   string     `json:"layout"`
 		Content  *string    `json:"content"`
 		Sections *[]Section `json:"sections"`
 	}
@@ -150,5 +194,5 @@ func (c *Client) Assemble(ctx context.Context, in Request) (Result, error) {
 	if result.Content == nil || result.Sections == nil {
 		return Result{}, fmt.Errorf("invalid agent.prompt result: content and sections required")
 	}
-	return Result{Content: *result.Content, Sections: *result.Sections}, nil
+	return Result{Layout: result.Layout, Content: *result.Content, Sections: *result.Sections}, nil
 }

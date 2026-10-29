@@ -61,3 +61,29 @@ func TestPromptRejectsMissingResultAndInactiveProvider(t *testing.T) {
 		t.Fatal("closed provider admitted call")
 	}
 }
+
+func TestNativePromptDeclaresSectionLayout(t *testing.T) {
+	for _, role := range []string{"main", "worker"} {
+		in := Request{Role: role, CWD: "/tmp/工作", Date: "2026-10-29", Worker: &WorkerContext{Isolation: "inplace"}}
+		out, err := Assemble(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Layout != "wuu.prompt.sections.v1" {
+			t.Fatalf("%s: layout = %q", role, out.Layout)
+		}
+	}
+}
+
+func TestNativePromptOmitsLayoutForDuplicateSectionKeys(t *testing.T) {
+	for _, role := range []string{"main", "worker"} {
+		in := Request{Role: role, CWD: "/tmp", Worker: &WorkerContext{Isolation: "inplace"}, Contributions: []Contribution{{Key: "environment", Content: "duplicate"}}}
+		out, err := Assemble(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Layout != "" {
+			t.Fatalf("%s: duplicate keys cannot declare layout: %q", role, out.Layout)
+		}
+	}
+}
