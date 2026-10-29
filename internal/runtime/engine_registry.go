@@ -316,9 +316,10 @@ func closeEngineRuntime(owner *Session, rt *ThreadRuntime) error {
 		_ = control.WaitOwnedWorkerExecutions(context.Background())
 		err = shutdownAndCleanupAgentControl(control)
 	}
+	err = errors.Join(err, rt.CloseNativeToolScope(context.Background()))
 	owner.ReleasePluginGeneration(rt.PluginGeneration)
 	rt.PluginGeneration = nil
-	return errors.Join(err, rt.CloseComposition(), rt.CloseArtifacts())
+	return errors.Join(err, rt.CloseArtifacts(), rt.CloseComposition())
 }
 
 // EngineDescriptors lists the selected engine services in this captured generation.

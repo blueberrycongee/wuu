@@ -333,6 +333,8 @@ type Server struct {
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
 	shutdownBackgroundDrained    chan struct{}
+	retirementMu                 sync.Mutex
+	retirements                  map[<-chan struct{}]struct{}
 	shutdownDrainTimeoutForTest  time.Duration
 	engineScopeMu                sync.Mutex
 	engineScopes                 map[agentengine.EngineID]engineScope
@@ -951,6 +953,11 @@ func (s *Server) Close() {
 		clear(s.pendingAgentCompletionTurns)
 		clear(s.drainingAgentCompletionTurns)
 		s.agentCompletionMu.Unlock()
+		drainTimeout := ownedShutdownDrainTimeout
+		if s.shutdownDrainTimeoutForTest > 0 {
+			drainTimeout = s.shutdownDrainTimeoutForTest
+		}
+		retirementDeadline := time.Now().Add(drainTimeout)
 		s.waitForOwnedShutdown(threads, controls)
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
@@ -959,6 +966,7 @@ func (s *Server) Close() {
 				_ = th.state.Close()
 			}
 		}
+		s.waitForRetirements(retirementDeadline)
 		s.releaseEngineScopes()
 		s.clientInputMu.Lock()
 		if s.clientInputLease != nil {

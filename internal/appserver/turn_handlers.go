@@ -1822,36 +1822,34 @@ func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 		}
 		s.backgroundMu.Unlock()
 	}
-	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, shutdownDone)
-	if detached.runtime != nil && detached.runtime.CompositionID != "" {
-		if err := detached.runtime.CloseComposition(); err != nil {
-			providers.DebugLogf("close product composition: %v", err)
-		}
-		return
-	}
-	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
+	var releaseGeneration func()
+	if detached.runtime != nil && detached.runtime.CompositionID == "" && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
 		detached.runtime.PluginGeneration = nil
-		if s != nil && s.rt != nil {
-			s.rt.ReleasePluginGeneration(generation)
+		releaseGeneration = func() {
+			if s != nil && s.rt != nil {
+				s.rt.ReleasePluginGeneration(generation)
+			} else {
+				generation.Release()
+			}
 		}
 	}
+	var track func(<-chan struct{})
+	if s != nil {
+		track = s.trackRetirement
+	}
+	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, shutdownDone, releaseGeneration, track)
 }
 
 func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
-	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, nil)
-	if detached.runtime != nil && detached.runtime.CompositionID != "" {
-		if err := detached.runtime.CloseComposition(); err != nil {
-			providers.DebugLogf("close product composition: %v", err)
-		}
-		return
-	}
-	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
+	var releaseGeneration func()
+	if detached.runtime != nil && detached.runtime.CompositionID == "" && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
 		detached.runtime.PluginGeneration = nil
-		generation.Release()
+		releaseGeneration = func() { generation.Release() }
 	}
+	releaseThreadArtifactsAfterWorkers(detached.runtime, detached.mainDone, nil, releaseGeneration, nil)
 }
 
 func threadRuntimeHasOutstandingAgentWork(threadRuntime *runtime.ThreadRuntime) bool {
@@ -1925,15 +1923,15 @@ func releaseThreadRuntimeSubscription(threadRuntime *runtime.ThreadRuntime, sub 
 	}
 }
 
-func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, mainDone, shutdownDone <-chan struct{}) {
+func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, mainDone, shutdownDone <-chan struct{}, releaseGeneration func(), track func(<-chan struct{})) <-chan struct{} {
 	if threadRuntime == nil {
-		return
+		return nil
 	}
 	control := threadRuntime.AgentControl
 	if control != nil {
 		control.BeginShutdown()
 	}
-	finishArtifactsAfterWorkers(func() error {
+	return finishTrackedArtifactsAfterWorkers(func() error {
 		if shutdownDone != nil {
 			<-shutdownDone
 		}
@@ -1944,14 +1942,82 @@ func releaseThreadArtifactsAfterWorkers(threadRuntime *runtime.ThreadRuntime, ma
 			return control.WaitOwnedWorkerExecutions(context.Background())
 		}
 		return nil
-	}, threadRuntime.CloseArtifacts)
+	}, func() error {
+		if threadRuntime.CompositionID != "" {
+			return threadRuntime.CloseComposition()
+		}
+		err := errors.Join(threadRuntime.CloseNativeToolScope(context.Background()), threadRuntime.CloseArtifacts())
+		if releaseGeneration != nil {
+			releaseGeneration()
+		}
+		return err
+	}, track)
 }
 
-func finishArtifactsAfterWorkers(wait, release func() error) {
+func finishArtifactsAfterWorkers(wait, release func() error) <-chan struct{} {
+	return finishTrackedArtifactsAfterWorkers(wait, release, nil)
+}
+
+func finishTrackedArtifactsAfterWorkers(wait, release func() error, track func(<-chan struct{})) <-chan struct{} {
+	done := make(chan struct{})
+	if track != nil {
+		track(done)
+	}
 	go func() {
+		defer close(done)
 		_ = wait()
 		_ = release()
 	}()
+	return done
+}
+
+// Retirements use a separate tracker: they may depend on backgroundWG draining,
+// so counting them in that group would create a shutdown cycle.
+func (s *Server) trackRetirement(done <-chan struct{}) {
+	if s == nil || done == nil {
+		return
+	}
+	s.retirementMu.Lock()
+	if s.retirements == nil {
+		s.retirements = make(map[<-chan struct{}]struct{})
+	}
+	s.retirements[done] = struct{}{}
+	s.retirementMu.Unlock()
+	go func() {
+		<-done
+		s.retirementMu.Lock()
+		delete(s.retirements, done)
+		s.retirementMu.Unlock()
+	}()
+}
+
+func (s *Server) waitForRetirements(deadline time.Time) {
+	for {
+		s.retirementMu.Lock()
+		var pending <-chan struct{}
+		for done := range s.retirements {
+			pending = done
+			break
+		}
+		s.retirementMu.Unlock()
+		if pending == nil {
+			return
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return
+		}
+		timer := time.NewTimer(remaining)
+		select {
+		case <-pending:
+			timer.Stop()
+			s.retirementMu.Lock()
+			delete(s.retirements, pending)
+			s.retirementMu.Unlock()
+		case <-timer.C:
+			return
+		}
+	}
 }
 
 func normalizeTurnStartImages(images []TurnStartImage) ([]providers.InputImage, error) {

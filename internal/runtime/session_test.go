@@ -2936,10 +2936,25 @@ func TestThreadWorkerWakeAppliesCurrentPermissionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewThreadRuntime: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
+		threadRT.AgentControl.BeginShutdown()
 		threadRT.AgentControl.StopAll()
-		time.Sleep(100 * time.Millisecond)
-	}()
+		threadRT.AgentControl.YieldWorkerTerminalFinalizations()
+		if err := threadRT.AgentControl.WaitOwnedWorkerExecutions(context.Background()); err != nil {
+			t.Error(err)
+		}
+		threadRT.AgentControl.Close()
+		if err := threadRT.CloseNativeToolScope(context.Background()); err != nil {
+			t.Error(err)
+		}
+		if err := threadRT.CloseArtifacts(); err != nil {
+			t.Error(err)
+		}
+		rt.ReleasePluginGeneration(threadRT.PluginGeneration)
+		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
 
 	// Spawn under the standard boundary and let the worker complete.
 	spawned, err := threadRT.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{

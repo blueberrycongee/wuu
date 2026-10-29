@@ -284,6 +284,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Release each conversation's native tool scopes after its admitted main, worker, and side work drains, while rejecting calls after retirement and retaining in-flight cleanup.
 - Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
 
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.

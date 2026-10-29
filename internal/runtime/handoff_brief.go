@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 // HandoffBriefForState admits one inference against the captured generation.
@@ -41,5 +43,16 @@ func (s *Session) HandoffBriefForState(binding *State) (agent.HandoffBriefProvid
 	if shadow.Toolkit != nil {
 		runner.Tools = newPluginAwareToolExecutor(shadow.Toolkit, shadow.PluginHost, shadow.HookDispatcher, "", "", shadow.RootDir)
 	}
-	return provider, selection.Model, runner.CompactionNoteFork(), nil
+	fork := runner.CompactionNoteFork()
+	if scope := selectedNativeToolScope(runner.Tools); shadow.Toolkit != nil && scope != nil {
+		var invoked atomic.Bool
+		return provider, selection.Model, func(ctx context.Context, messages []providers.ChatMessage, plan agent.CompactionNotePlan) (agent.CompactionNoteForkResult, error) {
+			if !invoked.CompareAndSwap(false, true) {
+				return agent.CompactionNoteForkResult{}, errors.New("handoff brief fork has already been used")
+			}
+			defer s.retireTemporaryToolScope(scope, shadow.pluginGeneration)
+			return fork(ctx, messages, plan)
+		}, nil
+	}
+	return provider, selection.Model, fork, nil
 }

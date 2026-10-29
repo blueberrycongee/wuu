@@ -468,6 +468,7 @@ func (w *wuuEngineSession) Close(ctx context.Context) error {
 					_ = control.WaitOwnedWorkerExecutions(context.Background())
 					w.closeErr = shutdownAndCleanupAgentControl(control)
 				}
+				w.closeErr = errors.Join(w.closeErr, rt.CloseNativeToolScope(context.Background()))
 				w.owner.ReleasePluginGeneration(rt.PluginGeneration)
 				rt.PluginGeneration = nil
 				w.closeErr = errors.Join(w.closeErr, rt.CloseArtifacts())
