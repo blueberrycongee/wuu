@@ -234,7 +234,7 @@ func (t *Toolkit) ActiveFilesContextBlock() (wuucontext.Block, bool) {
 	b.WriteString("read_files:\n")
 	for _, absPath := range listed {
 		entry := entries[absPath]
-		status := activeFileContextStatus(absPath, entry)
+		status := t.activeFileContextStatus(absPath, entry)
 		fmt.Fprintf(&b, "- path=%s status=%s file_sha=%s size_bytes=%d read_range=%s\n",
 			compactContextLine(redactToolOutput(t.env.NormalizeDisplayPath(absPath))),
 			status,
@@ -262,7 +262,7 @@ func (t *Toolkit) compactActiveFilesContext(paths []string, entries map[string]R
 	var flagged strings.Builder
 	for _, absPath := range paths {
 		entry := entries[absPath]
-		status := activeFileContextStatus(absPath, entry)
+		status := t.activeFileContextStatus(absPath, entry)
 		switch status {
 		case "current":
 			current++
@@ -287,6 +287,32 @@ func (t *Toolkit) compactActiveFilesContext(paths []string, entries map[string]R
 
 func activeFileContextStatus(absPath string, entry ReadFileEntry) string {
 	if info, err := os.Stat(absPath); err != nil || info.IsDir() || !readEntryMatchesInfo(entry, info) {
+		return "possibly_stale"
+	}
+	if entry.WrittenByTool {
+		return "current_after_write"
+	}
+	return "current"
+}
+
+func (t *Toolkit) activeFileContextStatus(absPath string, entry ReadFileEntry) string {
+	if !entry.ManagedArtifact {
+		return activeFileContextStatus(absPath, entry)
+	}
+	if t.env.sessionArtifactRoot == nil {
+		return "possibly_stale"
+	}
+	rel, err := filepath.Rel(t.env.SessionDir, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "possibly_stale"
+	}
+	f, err := t.env.sessionArtifactRoot.openManaged(rel)
+	if err != nil {
+		return "possibly_stale"
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !readEntryMatchesInfo(entry, info) {
 		return "possibly_stale"
 	}
 	if entry.WrittenByTool {

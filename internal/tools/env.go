@@ -33,13 +33,14 @@ func currentExecutionPath(env *Env) string {
 // ReadFileEntry tracks file operations for active-file context freshness.
 // A recorded read does not imply its content reached the model.
 type ReadFileEntry struct {
-	MtimeUnix     int64
-	MtimeUnixNano int64
-	Size          int64
-	ContentSHA256 string
-	Offset        int
-	Limit         int
-	WrittenByTool bool
+	MtimeUnix       int64
+	MtimeUnixNano   int64
+	Size            int64
+	ContentSHA256   string
+	Offset          int
+	Limit           int
+	WrittenByTool   bool
+	ManagedArtifact bool
 }
 
 // readFileState is a thread-safe record of read_file calls.

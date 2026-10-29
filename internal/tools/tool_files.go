@@ -278,12 +278,13 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	// Track freshness without suppressing explicit reads: Code Mode may not have
 	// printed the earlier result, or its final output may have been cropped.
 	t.env.RecordRead(resolved, ReadFileEntry{
-		MtimeUnix:     info.ModTime().Unix(),
-		MtimeUnixNano: info.ModTime().UnixNano(),
-		Size:          info.Size(),
-		ContentSHA256: contentHash,
-		Offset:        args.Offset,
-		Limit:         limit,
+		ManagedArtifact: managedArtifact,
+		MtimeUnix:       info.ModTime().Unix(),
+		MtimeUnixNano:   info.ModTime().UnixNano(),
+		Size:            info.Size(),
+		ContentSHA256:   contentHash,
+		Offset:          args.Offset,
+		Limit:           limit,
 	})
 
 	result := map[string]any{
