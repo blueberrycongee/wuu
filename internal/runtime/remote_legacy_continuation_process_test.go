@@ -28,10 +28,14 @@ import (
 type legacyNativePolicy struct {
 	actor, root string
 	seen        atomic.Bool
+	revoked     atomic.Bool
 }
 
 func (p *legacyNativePolicy) Authorize(_ context.Context, req tools.AuthorizationRequest) (tools.AuthorizationDecision, error) {
 	if strings.Contains(req.Arguments, `"path":"large.txt"`) {
+		if p.revoked.Load() {
+			return tools.AuthorizationDecision{Outcome: "deny", Reason: "concurrently revoked"}, nil
+		}
 		if req.ActorID != p.actor || req.CWD != p.root || req.Tool.Name != "read_file" || req.Tool.Kind != tools.ToolKindFile {
 			return tools.AuthorizationDecision{Outcome: "deny", Reason: "incorrect native authority"}, nil
 		}
@@ -214,6 +218,39 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 	changed, err := ticket.Commit(ctx)
 	require.NoError(t, err)
 	require.True(t, changed)
+
+	// A real worker may have returned while a dynamic authorization provider is
+	// concurrently revoked. The host must recheck and suppress that result.
+	policy = &legacyNativePolicy{actor: actor, root: remote}
+	thread.Toolkit.SetAuthorizer(policy)
+	pausedPolicy := &legacyPauseExecutor{Executor: original, entered: make(chan struct{}), release: make(chan struct{})}
+	thread.Toolkit.SetExecutionEnvironment(pausedPolicy)
+	type outcome struct {
+		result toolresult.Result
+		err    error
+	}
+	policyDone := make(chan outcome, 1)
+	go func() {
+		result, err := rich.ExecuteResult(ctx, providers.ToolCall{ID: "concurrent-revoke", Name: "read_file", Arguments: string(next)})
+		policyDone <- outcome{result, err}
+	}()
+	select {
+	case <-pausedPolicy.entered:
+	case <-time.After(10 * time.Second):
+		close(pausedPolicy.release)
+		t.Fatal("worker did not return")
+	}
+	policy.revoked.Store(true)
+	close(pausedPolicy.release)
+	select {
+	case got := <-policyDone:
+		require.ErrorContains(t, got.err, "concurrently revoked")
+		require.Empty(t, got.result.TextProjection())
+	case <-time.After(10 * time.Second):
+		t.Fatal("revoked read did not finish")
+	}
+	thread.Toolkit.SetExecutionEnvironment(original)
+	thread.Toolkit.SetAuthorizer(nil)
 
 	// Cancellation after the worker responds must not publish a late result.
 	paused := &legacyPauseExecutor{Executor: original, entered: make(chan struct{}), release: make(chan struct{})}
