@@ -137,7 +137,7 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 	} else if s.PluginHost != nil && s.StreamRunner.Tools != nil {
 		generation := s.pluginGeneration
 		var admissionMu sync.Mutex
-		var inFlight, admissionClosed, lateOpen bool
+		var inFlight, attempted, succeeded, admissionClosed, lateOpen bool
 		sideArtifacts := &artifactLeaseOwner{}
 		if release != nil {
 			acquired = sideArtifacts.close
@@ -147,16 +147,22 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 			lateOpen = release != nil
 			admissionMu.Unlock()
 		}
-		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+		scope := toolservice.NewScope(func(ctx context.Context) (toolservice.Backend, error) {
+			completed := false
 			admissionMu.Lock()
 			if admissionClosed && !lateOpen {
 				admissionMu.Unlock()
 				return toolservice.Backend{}, errors.New("native tool backend was not initialized during side thread admission")
 			}
-			inFlight = true
+			attempted, inFlight = true, true
 			admissionMu.Unlock()
-			defer func() { admissionMu.Lock(); inFlight = false; admissionMu.Unlock() }()
-			kit, closeResources, err := s.newThreadNativeToolkit(generation, root)
+			defer func() {
+				admissionMu.Lock()
+				inFlight = false
+				succeeded = completed
+				admissionMu.Unlock()
+			}()
+			kit, closeResources, err := s.newThreadNativeToolkit(ctx, generation, root)
 			if err != nil {
 				return toolservice.Backend{}, err
 			}
@@ -208,6 +214,7 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 				return toolservice.Backend{}, err
 			}
 			ok = true
+			completed = true
 			return toolservice.Backend{Executor: executor, Toolkit: kit, Close: closeResources}, nil
 		})
 		runner.Tools = newSelectedToolExecutor(s.PluginHost, scope, selectedToolIdentity{threadID: id, cwd: root, actorID: id})
@@ -217,7 +224,7 @@ func (s *Session) newSideThreadRunnerWithArtifacts(sideThreadID, rootDir string,
 		surface, err := selectedToolSurface(context.Background(), runner.Tools)
 		admissionMu.Lock()
 		admissionClosed = true
-		initializing := inFlight
+		initializing := inFlight || (attempted && !succeeded)
 		admissionMu.Unlock()
 		if err != nil {
 			return nil, err

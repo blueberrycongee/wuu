@@ -1397,8 +1397,8 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	}
 	if shadow.Toolkit == nil && shadow.PluginHost != nil && shadow.StreamRunner.Tools != nil {
 		generation := shadow.pluginGeneration
-		scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
-			kit, closeResources, err := shadow.newThreadNativeToolkit(generation, threadRoot)
+		scope := toolservice.NewScope(func(ctx context.Context) (toolservice.Backend, error) {
+			kit, closeResources, err := shadow.newThreadNativeToolkit(ctx, generation, threadRoot)
 			if err != nil {
 				return toolservice.Backend{}, err
 			}
@@ -1525,13 +1525,15 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	var (
-		kit                     *tools.Toolkit
-		agentControl            *agentcontrol.AgentControl
-		toolExecutor            = s.StreamRunner.Tools
-		nativeAdmissionClosed   bool
-		nativeAdmissionInFlight bool
-		nativeAdmissionMu       sync.Mutex
-		nativeBackendClose      func(context.Context) error
+		kit                      *tools.Toolkit
+		agentControl             *agentcontrol.AgentControl
+		toolExecutor             = s.StreamRunner.Tools
+		nativeAdmissionClosed    bool
+		nativeAdmissionInFlight  bool
+		nativeAdmissionAttempted bool
+		nativeAdmissionSucceeded bool
+		nativeAdmissionMu        sync.Mutex
+		nativeBackendClose       func(context.Context) error
 	)
 	artifactOwner := &artifactLeaseOwner{}
 	nativeToolScopes := newNativeToolScopeOwner()
@@ -1556,7 +1558,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// installs its model resolver and reliable terminal finalizer, then calls
 	// StartQueuedWork.
 	if s.Toolkit != nil || (s.PluginHost != nil && generation != nil) {
-		initialize := func() error {
+		initialize := func(ctx context.Context) error {
 			artifactOwner.mu.Lock()
 			defer artifactOwner.mu.Unlock()
 			if artifactOwner.closed || artifactOwner.release != nil {
@@ -1581,7 +1583,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if s.Toolkit != nil {
 				kit, err = s.Toolkit.CloneForRoot(threadRoot)
 			} else {
-				kit, nativeBackendClose, err = s.newThreadNativeToolkit(generation, threadRoot)
+				kit, nativeBackendClose, err = s.newThreadNativeToolkit(ctx, generation, threadRoot)
 			}
 			if err != nil {
 				return err
@@ -1626,20 +1628,27 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			return nil
 		}
 		if s.PluginHost == nil {
-			if err := initialize(); err != nil {
+			if err := initialize(context.Background()); err != nil {
 				return nil, err
 			}
 		} else {
-			scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+			scope := toolservice.NewScope(func(ctx context.Context) (toolservice.Backend, error) {
+				succeeded := false
 				nativeAdmissionMu.Lock()
 				if nativeAdmissionClosed {
 					nativeAdmissionMu.Unlock()
 					return toolservice.Backend{}, errors.New("native tool backend was not initialized during thread admission")
 				}
+				nativeAdmissionAttempted = true
 				nativeAdmissionInFlight = true
 				nativeAdmissionMu.Unlock()
-				defer func() { nativeAdmissionMu.Lock(); nativeAdmissionInFlight = false; nativeAdmissionMu.Unlock() }()
-				if err := initialize(); err != nil {
+				defer func() {
+					nativeAdmissionMu.Lock()
+					nativeAdmissionInFlight = false
+					nativeAdmissionSucceeded = succeeded
+					nativeAdmissionMu.Unlock()
+				}()
+				if err := initialize(ctx); err != nil {
 					return toolservice.Backend{}, err
 				}
 				executor := newPluginToolExecutor(kit, s.PluginHost, id, threadRoot)
@@ -1648,6 +1657,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						return toolservice.Backend{Close: nativeBackendClose}, err
 					}
 				}
+				succeeded = true
 				return toolservice.Backend{Executor: executor, Toolkit: kit, Close: nativeBackendClose}, nil
 			})
 			if err := nativeToolScopes.add(scope); err != nil {
@@ -1660,7 +1670,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			_, surfaceErr := selectedToolSurface(context.Background(), toolExecutor)
 			nativeAdmissionMu.Lock()
 			nativeAdmissionClosed = true
-			inFlight := nativeAdmissionInFlight
+			inFlight := nativeAdmissionInFlight || (nativeAdmissionAttempted && !nativeAdmissionSucceeded)
 			nativeAdmissionMu.Unlock()
 			if surfaceErr != nil {
 				return nil, surfaceErr
@@ -2892,11 +2902,21 @@ func connectMCPServers(cfg config.Config, plugins []pluginpkg.Plugin, toolkit *t
 }
 
 func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlugins map[string]bool, oauth *mcp.OAuthManager) (*mcp.Manager, error) {
+	return startMCPManagerWithContext(context.Background(), cfg, plugins, requiredPlugins, oauth)
+}
+
+func startMCPManagerWithContext(ctx context.Context, cfg config.Config, plugins []pluginpkg.Plugin, requiredPlugins map[string]bool, oauth *mcp.OAuthManager) (*mcp.Manager, error) {
 	servers := mcpServersFromConfigAndPlugins(cfg, plugins)
 	if len(servers) == 0 {
 		return nil, nil
 	}
 	mcpMgr := mcp.NewManager()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			_ = mcpMgr.Close()
+			panic(recovered)
+		}
+	}()
 	mcpMgr.SetOAuthManager(oauth)
 	serverConfigs := make(map[string]mcp.ServerConfig, len(servers))
 	requiredServers := make(map[string]bool)
@@ -2928,7 +2948,7 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 		if !requiredServers[name] || !serverCfg.IsEnabled() {
 			continue
 		}
-		if err := mcpMgr.Add(context.Background(), serverCfg); err != nil {
+		if err := mcpMgr.Add(ctx, serverCfg); err != nil {
 			_ = mcpMgr.Close()
 			return nil, fmt.Errorf("start required MCP server %q: %w", name, err)
 		}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -345,4 +346,154 @@ func TestSideThreadLateNativeInitializationFailsClosed(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, "sample.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "unchanged", string(data))
+}
+
+func TestSideThreadLateNativeInitializationHonorsCancellation(t *testing.T) {
+	fixture := os.Getenv("WUU_CONTINUATION_FIXTURE")
+	if fixture == "" {
+		t.Skip("run node scripts/lazy-native-admission-e2e.mjs")
+	}
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "sample.txt"), []byte("during close"), 0600))
+	marker := filepath.Join(t.TempDir(), "admit")
+	barrier := t.TempDir()
+	log := filepath.Join(root, "mcp.log")
+	require.NoError(t, os.WriteFile(filepath.Join(barrier, "block"), []byte("wait"), 0600))
+	plugin := testRuntimePlugin("late-side-tools")
+	plugin.Root = fixture
+	plugin.Runtime.Command = node
+	plugin.Runtime.Args = []string{"lazy-native.js", "thread-admission", marker}
+	plugin.MCPServers = map[string]config.MCPServerConfig{"svc": {Command: node, Args: []string{filepath.Join(fixture, "mcp-singleton.js"), log, barrier}}}
+	plugins := []pluginpkg.Plugin{plugin}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "fixture"}}, Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{plugin.ID: true}, Services: []composition.Binding{{Service: toolservice.ServiceName, Major: 1, Provider: plugin.ID}, {Consumer: plugin.ID, Service: toolservice.ServiceName, Major: 1, Provider: toolservice.DefaultModule}}}}}}
+	owner, err := NewSession(Options{RootDir: root, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	owner.pluginGeneration.requiredPlugins[plugin.ID] = true
+	state, err := owner.RetainState()
+	require.NoError(t, err)
+	defer state.Close()
+	runner, release, err := owner.NewSideThreadRunnerForState(state, "late-side", root, ThreadModelSelection{}, "side prompt", "parent")
+	require.NoError(t, err)
+	defer func() {
+		_ = CloseSideThreadTools(context.Background(), runner)
+		if release != nil {
+			_ = release()
+		}
+	}()
+	require.NoError(t, os.WriteFile(marker, []byte("ready"), 0600))
+	defer os.WriteFile(filepath.Join(barrier, "resume"), []byte("go"), 0600)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "late-side", ExecutionID: "side-turn"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := runner.Tools.Execute(ctx, providers.ToolCall{ID: "read", Name: "read_file", Arguments: `{"path":"sample.txt"}`})
+		done <- err
+	}()
+	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(barrier, "entered")); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled side call did not finish while native initialization was blocked")
+	}
+	closeCtx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stop()
+	require.NoError(t, CloseSideThreadTools(closeCtx, runner), "cancellation must drain the native scope before the MCP server resumes")
+
+	require.NoError(t, CloseSideThreadTools(context.Background(), runner))
+	require.NoError(t, release())
+	require.NoError(t, state.Close())
+	cleaned := make(chan error, 1)
+	go func() { _, err := owner.Cleanup(); cleaned <- err }()
+	select {
+	case err := <-cleaned:
+		require.NoError(t, err)
+	case <-time.After(8 * time.Second):
+		buf := make([]byte, 1<<20)
+		n := goruntime.Stack(buf, true)
+		t.Fatalf("generation close did not cancel shared initialization:\n%s", buf[:n])
+	}
+}
+
+func TestSideThreadLateNativeCancellationDoesNotCancelOtherOwner(t *testing.T) {
+	fixture := os.Getenv("WUU_CONTINUATION_FIXTURE")
+	if fixture == "" {
+		t.Skip("run node scripts/lazy-native-admission-e2e.mjs")
+	}
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "sample.txt"), []byte("other owner"), 0600))
+	marker := filepath.Join(t.TempDir(), "admit")
+	barrier := t.TempDir()
+	log := filepath.Join(root, "mcp.log")
+	require.NoError(t, os.WriteFile(filepath.Join(barrier, "block"), []byte("wait"), 0600))
+	plugin := testRuntimePlugin("late-side-tools")
+	plugin.Root = fixture
+	plugin.Runtime.Command = node
+	plugin.Runtime.Args = []string{"lazy-native.js", "thread-admission", marker}
+	plugin.MCPServers = map[string]config.MCPServerConfig{"svc": {Command: node, Args: []string{filepath.Join(fixture, "mcp-singleton.js"), log, barrier}}}
+	plugins := []pluginpkg.Plugin{plugin}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "fixture", Model: "fixture"}}, Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{plugin.ID: true}, Services: []composition.Binding{{Service: toolservice.ServiceName, Major: 1, Provider: plugin.ID}, {Consumer: plugin.ID, Service: toolservice.ServiceName, Major: 1, Provider: toolservice.DefaultModule}}}}}}
+	owner, err := NewSession(Options{RootDir: root, HomeDir: t.TempDir(), WuuHome: t.TempDir(), Config: cfg, DiscoveredPlugins: &plugins, NonInteractive: true})
+	require.NoError(t, err)
+	defer owner.Cleanup()
+	owner.pluginGeneration.requiredPlugins[plugin.ID] = true
+	state, err := owner.RetainState()
+	require.NoError(t, err)
+	defer state.Close()
+	one, releaseOne, err := owner.NewSideThreadRunnerForState(state, "side-one", root, ThreadModelSelection{}, "side prompt", "parent")
+	require.NoError(t, err)
+	defer func() { _ = CloseSideThreadTools(context.Background(), one); _ = releaseOne() }()
+	two, releaseTwo, err := owner.NewSideThreadRunnerForState(state, "side-two", root, ThreadModelSelection{}, "side prompt", "parent")
+	require.NoError(t, err)
+	defer func() { _ = CloseSideThreadTools(context.Background(), two); _ = releaseTwo() }()
+	require.NoError(t, os.WriteFile(marker, []byte("ready"), 0600))
+	defer os.WriteFile(filepath.Join(barrier, "resume"), []byte("go"), 0600)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctx1, cancel1 := context.WithCancel(ctx)
+	ctx1 = loopdriver.WithExecutionContext(ctx1, loopdriver.ExecutionContext{SessionID: "side-one", ExecutionID: "turn-one"})
+	ctx2 := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "side-two", ExecutionID: "turn-two"})
+	first := make(chan error, 1)
+	go func() {
+		_, err := one.Tools.Execute(ctx1, providers.ToolCall{ID: "one", Name: "read_file", Arguments: `{"path":"sample.txt"}`})
+		first <- err
+	}()
+	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(barrier, "entered")); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	type outcome struct {
+		output string
+		err    error
+	}
+	second := make(chan outcome, 1)
+	go func() {
+		output, err := two.Tools.Execute(ctx2, providers.ToolCall{ID: "two", Name: "read_file", Arguments: `{"path":"sample.txt"}`})
+		second <- outcome{output, err}
+	}()
+	cancel1()
+	select {
+	case err := <-first:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first caller did not cancel")
+	}
+	closeCtx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	require.NoError(t, CloseSideThreadTools(closeCtx, one))
+	stop()
+	require.NoError(t, os.WriteFile(filepath.Join(barrier, "resume"), []byte("go"), 0600))
+	select {
+	case result := <-second:
+		require.NoError(t, result.err)
+		require.Contains(t, result.output, "other owner")
+	case <-ctx.Done():
+		t.Fatal("other owner did not finish")
+	}
+	data, err := os.ReadFile(log)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(data), "start "), "shared initialization must start the server once")
 }
