@@ -96,3 +96,42 @@ func TestPinnedReadRejectsLegacyWorkerWithoutInstance(t *testing.T) {
 	_, err = os.Stat(receipt)
 	require.NoError(t, err, "ordinary unobserved reads remain compatible")
 }
+
+func TestWorkerWithoutNativeObservationHelper(t *testing.T) {
+	if os.Getenv("WUU_OLD_NATIVE_WORKER_HELPER") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req Request
+		if json.Unmarshal(scanner.Bytes(), &req) != nil {
+			os.Exit(2)
+		}
+		var data json.RawMessage
+		if req.Method == "initialize" {
+			data, _ = json.Marshal(map[string]any{"version": ProtocolVersion, "capabilities": []string{ReadObservationCommitCapability}, "worker_instance": "old-instance"})
+		} else {
+			_ = os.WriteFile(os.Getenv("WUU_OLD_NATIVE_WORKER_RECEIPT"), []byte(req.Method), 0600)
+			data, _ = json.Marshal(map[string]any{})
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Data: data})
+	}
+	os.Exit(0)
+}
+func TestNativeObservationRejectsOlderWorkerBeforeDispatch(t *testing.T) {
+	t.Setenv("WUU_OLD_NATIVE_WORKER_HELPER", "1")
+	receipt := filepath.Join(t.TempDir(), "sent")
+	t.Setenv("WUU_OLD_NATIVE_WORKER_RECEIPT", receipt)
+	env := NewEnvironment(Profile{Backend: "command", Command: []string{os.Args[0], "-test.run=^TestWorkerWithoutNativeObservationHelper$"}, Workspace: t.TempDir()}, "old-native", "thread", t.TempDir())
+	defer env.Close()
+	request := ToolRequest{Actor: "actor", Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"file"}`}}
+	_, err := env.PrepareNativeRead(context.Background(), request)
+	require.ErrorContains(t, err, "does not support native read observation preparation")
+	_, err = os.Stat(receipt)
+	require.True(t, os.IsNotExist(err), "native prepare must not be dispatched")
+	_, err = env.Execute(context.Background(), request)
+	require.NoError(t, err)
+	sent, err := os.ReadFile(receipt)
+	require.NoError(t, err)
+	require.Equal(t, "execute", string(sent), "ordinary native reads retain old-worker compatibility")
+}

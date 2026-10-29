@@ -154,14 +154,73 @@ func (r *replacementTool) ExecuteResultCall(ctx context.Context, call providers.
 		}
 		path = input.Path
 		if input.Continuation != "" && !strings.HasPrefix(input.Continuation, readcursor.Prefix) {
-			restored, managed, err := r.toolkit.RestoreRemoteNativeRead(call)
+			restored, managed, line, err := r.toolkit.RestoreRemoteNativeRead(call)
 			if err != nil {
 				return toolresult.Result{}, err
 			}
-			if managed {
-				return r.toolkit.ExecuteNativeSessionRead(ctx, actor, actorPath, r.original, call, restored)
+			if !line {
+				if managed {
+					return r.toolkit.ExecuteNativeSessionRead(ctx, actor, actorPath, r.original, call, restored)
+				}
+				return r.toolkit.ExecuteRemoteNativeReadOn(ctx, remoteEnv, actor, actorPath, r.original, restored)
 			}
-			return r.toolkit.ExecuteRemoteNativeReadOn(ctx, remoteEnv, actor, actorPath, r.original, restored)
+			if managed {
+				return toolresult.Result{}, fmt.Errorf("native session line continuations are unsupported")
+			}
+			if !toolctx.HasSettlement(ctx) {
+				return toolresult.Result{}, fmt.Errorf("durable tool ledger required for native line continuation")
+			}
+			toolctx.MarkRemoteReadExposure(ctx)
+			sessionID := r.toolkit.SessionID()
+			prepared, err := r.toolkit.PrepareRemoteNativeReadOn(ctx, remoteEnv, actor, actorPath, r.original, restored)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			transferred := false
+			committed := &atomic.Bool{}
+			cleanup := func() {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				if committed.Load() {
+					if prepared.Release != nil {
+						_ = prepared.Release(cleanupCtx)
+					}
+				} else if prepared.Abort != nil {
+					_ = prepared.Abort(cleanupCtx)
+				}
+			}
+			defer func() {
+				if !transferred {
+					cleanup()
+				}
+			}()
+			if _, _, err := remoteReadSnapshot(prepared.Result, restored); err != nil {
+				return toolresult.Result{}, err
+			}
+			authorize := func(settleCtx context.Context) error {
+				if !r.toolkit.MatchesRemoteNativeReadAuthority(remoteEnv, actor, actorPath, sessionID, prepared.PermissionMode) {
+					return fmt.Errorf("remote read authority changed")
+				}
+				mode, err := r.toolkit.RecheckRemoteReadOnlyOn(settleCtx, remoteEnv, actor, actorPath, r.original, restored)
+				if err != nil {
+					return err
+				}
+				if mode != prepared.PermissionMode || !r.toolkit.MatchesRemoteNativeReadAuthority(remoteEnv, actor, actorPath, sessionID, prepared.PermissionMode) {
+					return fmt.Errorf("remote read authority changed")
+				}
+				return nil
+			}
+			// Recheck after the worker returns and before a nested program can
+			// consume the provisional native content or cause other effects.
+			if err := authorize(ctx); err != nil {
+				return toolresult.Result{}, err
+			}
+			participant := &remoteReadSettlement{prepared: prepared, authorize: authorize, committed: committed}
+			if err := toolctx.RegisterGroupedSettlement(ctx, prepared.GroupKey(), participant, prepareRemoteReadSettlements, cleanup); err != nil {
+				return toolresult.Result{}, err
+			}
+			transferred = true
+			return prepared.Result, nil
 		}
 		prepareArguments := call.Arguments
 		if strings.HasPrefix(input.Continuation, readcursor.Prefix) {

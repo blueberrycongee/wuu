@@ -66,3 +66,82 @@ func TestRemoteObservationCaptureBoundsAndCancellation(t *testing.T) {
 	_, err = overloaded.capturePathObservation(context.Background(), original, info)
 	require.ErrorContains(t, err, "scan limit")
 }
+
+func TestPreparedNativeReadObservationStagesUntilCommit(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "file.txt")
+	require.NoError(t, os.WriteFile(path, []byte("one\ntwo\n"), 0600))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	var state readFileState
+	ticket, err := state.capturePathObservation(context.Background(), path, info)
+	require.NoError(t, err)
+	entry := ReadFileEntry{ContentSHA256: "snapshot", Offset: 2, Limit: 1}
+	require.NoError(t, ticket.stageNativeRead(path, entry, info))
+	require.False(t, state.hasBeenRead(path), "preparation must not publish observation")
+	changed, err := ticket.Commit(context.Background())
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, entry, state.snapshot()[path])
+	newer, err := state.capturePathObservation(context.Background(), path, info)
+	require.NoError(t, err)
+	require.NoError(t, newer.stageNativeRead(path, entry, info))
+	fresh := ReadFileEntry{ContentSHA256: "newer"}
+	state.record(path, fresh)
+	changed, err = newer.Commit(context.Background())
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, fresh, state.snapshot()[path], "later observations must survive")
+}
+
+func TestNativeAndExtensionObservationBatchesFailClosedOnSameFile(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	require.NoError(t, os.WriteFile(a, []byte("a"), 0600))
+	require.NoError(t, os.WriteFile(b, []byte("b"), 0600))
+	ai, err := os.Stat(a)
+	require.NoError(t, err)
+	bi, err := os.Stat(b)
+	require.NoError(t, err)
+	var state readFileState
+	old := ReadFileEntry{ContentSHA256: "old"}
+	state.record(a, old)
+	state.record(b, old)
+	native, err := state.capturePathObservation(context.Background(), a, ai)
+	require.NoError(t, err)
+	require.NoError(t, native.stageNativeRead(a, ReadFileEntry{ContentSHA256: "native"}, ai))
+	conflict, err := state.capturePathObservation(context.Background(), a, ai)
+	require.NoError(t, err)
+	_, err = CommitReadObservationBatch(context.Background(), []*ReadObservationTicket{native, conflict})
+	require.ErrorContains(t, err, "conflicting")
+	require.Equal(t, old, state.snapshot()[a])
+	other, err := state.capturePathObservation(context.Background(), b, bi)
+	require.NoError(t, err)
+	changed, err := CommitReadObservationBatch(context.Background(), []*ReadObservationTicket{native, other})
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, true}, changed)
+	require.Equal(t, "native", state.snapshot()[a].ContentSHA256)
+	require.False(t, state.hasBeenRead(b))
+}
+
+func TestPreparedNativeObservationPreservesLaterAlias(t *testing.T) {
+	root := t.TempDir()
+	path, alias := filepath.Join(root, "file"), filepath.Join(root, "alias")
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0600))
+	require.NoError(t, os.Link(path, alias))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	var state readFileState
+	old := ReadFileEntry{ContentSHA256: "old"}
+	state.record(path, old)
+	ticket, err := state.capturePathObservation(context.Background(), path, info)
+	require.NoError(t, err)
+	require.NoError(t, ticket.stageNativeRead(path, ReadFileEntry{ContentSHA256: "staged"}, info))
+	later := ReadFileEntry{ContentSHA256: "later"}
+	state.record(alias, later)
+	changed, err := ticket.Commit(context.Background())
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, old, state.snapshot()[path])
+	require.Equal(t, later, state.snapshot()[alias])
+}

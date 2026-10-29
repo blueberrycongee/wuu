@@ -114,6 +114,7 @@ Linux 命令写入限制需要 Landlock ABI 3 或更新版本。若不可用，�
   `EndOffset`、`TotalBytes`、`Truncated`、`TimedOut`、`Duration`。这些进程字段中的时长
   单位为**纳秒**，不同于 `timeout_ms`。`emitProcess` 在同一连接发布
   `{ Type, Cause, Process }` 事件。
+- **原生行观察：**内置 worker 在现有读取观察结算能力之外声明 `read.native-observation.v1`，将原生行观察暂存至持久父调用结算。旧 worker 会安全拒绝。独立后端必须完整实现观察及恢复协议后才能声明此能力；面向进程的 SDK 本身不提供该协议。
 - **无状态 Code Mode：**只有当 `run_code` 在整个程序中落实 `disable_state`，拒绝所有会话状态访问时，才可声明 `code.stateless.v1`。选择远程读取替换时宿主要求此能力，不会根据处理函数推断；普通 Code Mode 请求保持原有行为。
 
 - **接纳与恢复：**只有启动回复及 `process/list` 返回的持久记录均保留宿主

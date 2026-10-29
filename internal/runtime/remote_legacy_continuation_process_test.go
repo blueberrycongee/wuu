@@ -375,8 +375,8 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "no-local-fallback", Name: "read_file", Arguments: makeCursor(archiveCursor)})
 	require.Error(t, err, "missing remote paths cannot fall back to local files")
 
-	// Native line continuations remain unavailable: unlike byte windows, native
-	// line reads publish freshness observations before post-read authorization.
+	// Native line continuations require a durable invocation and publish their
+	// observation only after host authorization and worker settlement.
 	lineContent := []byte("one\ntwo\nthree\n")
 	require.NoError(t, os.WriteFile(filepath.Join(remote, "lines.txt"), lineContent, 0600))
 	lineSHA := sha256.Sum256(lineContent)
@@ -384,15 +384,22 @@ func TestRemoteLegacyNativeContinuationProcess(t *testing.T) {
 	require.NoError(t, err)
 	lineArgs, err := json.Marshal(map[string]string{"continuation": base64.RawURLEncoding.EncodeToString(lineCursor)})
 	require.NoError(t, err)
-	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "legacy-line", Name: "read_file", Arguments: string(lineArgs)})
-	require.ErrorContains(t, err, "native line continuations are unsupported")
+	_, err = rich.ExecuteResult(ctx, providers.ToolCall{ID: "legacy-line-untracked", Name: "read_file", Arguments: string(lineArgs)})
+	require.ErrorContains(t, err, "durable tool ledger required")
+	lineRun := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: thread.StreamRunner.Tools, Ledger: thread.StreamRunner.ToolLedger, OperationID: "legacy-line", RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	lines, err := lineRun.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "legacy-line", Name: "read_file", Arguments: string(lineArgs)}}, nil)
+	lineRun.Close()
+	require.NoError(t, err)
+	require.Len(t, lines, 1)
+	require.False(t, lines[0].ToolResult.IsError, lines[0].Content)
+	require.Contains(t, lines[0].Content, "two")
 	lineReq := prior
 	lineReq.Call.Arguments = `{"path":"lines.txt"}`
 	lineTicket, err := original.(executionenv.PreparedReadExecutor).PrepareUnobservedRead(ctx, lineReq)
 	require.NoError(t, err)
 	lineChanged, err := lineTicket.Commit(ctx)
 	require.NoError(t, err)
-	require.False(t, lineChanged, "rejected line continuation must not publish an observation")
+	require.True(t, lineChanged, "successful line continuation commits a native observation")
 
 	// The host-owned native continuation remains available when its replacement
 	// retires, but still cannot bypass native tool disablement or authorization.

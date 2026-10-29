@@ -70,12 +70,15 @@ func (s *Server) prepareObservation(ctx context.Context, data json.RawMessage) (
 	}
 	var ticket *tools.ReadObservationTicket
 	ctx = toolctx.WithUnobservedRead(ctx)
+	if req.PrepareNativeObservation {
+		ctx = toolctx.WithPreparedNativeRead(ctx)
+	}
 	ctx = toolctx.WithPreparedReadCapture(ctx, func(v any) { ticket, _ = v.(*tools.ReadObservationTicket) })
 	result, err := a.kit.ExecuteEnvironmentResult(ctx, req.Call)
 	if err != nil {
 		return nil, err
 	}
-	if result.IsError || ticket == nil {
+	if result.IsError || ticket == nil || (req.PrepareNativeObservation && !ticket.HasNativeRead()) {
 		return nil, errors.New("prepared read did not return a text observation")
 	}
 	if err := ctx.Err(); err != nil {

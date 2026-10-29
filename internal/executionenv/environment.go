@@ -66,6 +66,12 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 // replayed against a newly started worker.
 var ErrReadObservationCommitUnknown = errors.New("remote read observation commit outcome unknown")
 
+// PrepareNativeRead requires an explicit worker guarantee before dispatch.
+func (e *Environment) PrepareNativeRead(ctx context.Context, request ToolRequest) (PreparedRead, error) {
+	request.PrepareNativeObservation = true
+	return e.prepareUnobservedRead(ctx, request, "")
+}
+
 func (e *Environment) PrepareUnobservedRead(ctx context.Context, request ToolRequest) (PreparedRead, error) {
 	return e.prepareUnobservedRead(ctx, request, "")
 }
@@ -84,6 +90,9 @@ func (e *Environment) prepareUnobservedRead(ctx context.Context, request ToolReq
 	}
 	if !client.observationCommit {
 		return PreparedRead{}, errors.New("execution worker does not support read observation commit")
+	}
+	if request.PrepareNativeObservation && !client.nativeObservation {
+		return PreparedRead{}, errors.New("execution worker does not support native read observation preparation")
 	}
 	if expected != "" && client.workerInstance != expected {
 		return PreparedRead{}, errors.New("remote read continuation belongs to a different worker")
@@ -242,6 +251,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
 	client.unobservedRead = slices.Contains(hello.Capabilities, UnobservedReadCapability)
 	client.observationCommit = slices.Contains(hello.Capabilities, ReadObservationCommitCapability)
+	client.nativeObservation = slices.Contains(hello.Capabilities, NativeReadObservationCapability)
 	if client.observationCommit && hello.WorkerInstance == "" {
 		_ = client.Close()
 		return nil, errors.New("execution worker did not provide an instance identity")
