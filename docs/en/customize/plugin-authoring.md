@@ -34,7 +34,7 @@ This example needs both declared files. Omit `runtime` for a desktop-only or dec
 | `dependencies` | Package relationships as `{ id, version?, optional? }`; required dependencies must be available and match the version constraint |
 | `breaks` | Hard incompatibilities; an active incompatible pair rejects the activation plan |
 | `conflicts` | Soft conflicts reported without automatically disabling either package |
-| `skills`, `hooks`, `mcpServers` | Contributions using the corresponding [skill](skill-authoring.md), [hook](hooks.md), and [MCP](mcp.md) contracts |
+| `skills`, `hooks`, `mcpServers` / `mcp_servers` | Contributions using the corresponding [skill](skill-authoring.md), [hook](hooks.md), and [MCP](mcp.md) contracts |
 | `contributes` | Commands, themes, settings, UI declarations, and view entry points |
 
 `dependencies` adds version checks without changing the package schema. For example:
@@ -81,6 +81,48 @@ is not an implicit request to replace an existing provider; conflicting provider
 still need an explicit composition choice.
 
 ## Declarative contributions
+
+### MCP connector cards
+
+A plugin-owned MCP server's optional `connector` metadata presents it as an account connector. It uses the existing server definition, connection lifecycle, OAuth store, and plugin ownership; it does not register a second service. Metadata on a standalone service is informational and does not change its ordinary MCP controls. A declarative-only plugin needs no `runtime` or `desktop` entry:
+
+```json
+{
+  "schema_version": 1,
+  "id": "workspace-connector",
+  "name": "Workspace Connector",
+  "version": "0.1.0",
+  "mcp_servers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Notion",
+        "description": "Work with the workspace you authorize.",
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client"
+      }
+    }
+  }
+}
+```
+
+`connector` has these fields:
+
+| Field | Contract |
+| --- | --- |
+| `title` | Required, nonblank display name. |
+| `description` | Optional short explanation of the service. |
+| `documentation_url` | Optional absolute HTTPS link to setup or provider documentation, without embedded credentials. |
+| `setup_required` | Optional explanation of missing application setup. A nonblank value makes the card show the requirement and documentation instead of offering connection or authorization. |
+
+Declare `enabled: false` explicitly for lazy account onboarding: a new installation must not initiate account connection. The example's canonical server name is `plugin.workspace-connector.notion`; user preferences and OAuth credentials use that same identity. Connect checks the selected configuration provider's revision before saving the enabled preference, then uses the ordinary MCP connection and OAuth flow. Connector Disconnect removes local OAuth credentials and persists `enabled: false`, without claiming provider-side revocation. Disabling the plugin stops its owned servers; no fallback connector is substituted.
+
+The current picker supports the Coding/current-project host only. User-bound Personal/twin hosts exclude shared MCP configuration from their runtime; the backend reports setup unavailable and rejects connector mutations instead of mixing domain preferences or credentials. Existing dedicated Personal connectors are unaffected. Extending this flow requires domain-scoped connection identity, preferences, and credential storage, not a permanent product-ID check. A resource URL binds credentials to a remote endpoint; it grants neither display-location nor domain authority. The card's expandable connection details show the endpoint and reported scopes without asserting a verified account identity.
+
+Use a real provider endpoint and truthful setup requirements. A URL is not proof that the provider supports dynamic client registration. Do not ship a Connect action when a fixed OAuth client, preview enrollment, or administrator setup is still missing. See the [bundled account connector guide](mcp.md#connect-an-account) for the current provider limitations.
+
+### Themes and settings
 
 Themes, shell skins, and settings need no desktop module. For example, merge this fragment into a manifest:
 

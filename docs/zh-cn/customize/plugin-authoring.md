@@ -34,7 +34,7 @@
 | `dependencies` | `{ id, version?, optional? }` 形式的包关系；必需依赖必须可用且满足版本约束 |
 | `breaks` | 硬不兼容关系；不兼容的包同时启用会拒绝激活计划 |
 | `conflicts` | 软冲突，只报告，不自动禁用任何一方 |
-| `skills`、`hooks`、`mcpServers` | 分别使用[技能](skill-authoring.md)、[hook](hooks.md)、[MCP](mcp.md) 契约的贡献 |
+| `skills`、`hooks`、`mcpServers` / `mcp_servers` | 分别使用[技能](skill-authoring.md)、[hook](hooks.md)、[MCP](mcp.md) 契约的贡献 |
 | `contributes` | 命令、主题、设置、UI 声明和视图入口 |
 
 `dependencies` 在不改变包 schema 的前提下增加版本检查。例如：
@@ -74,6 +74,48 @@
 安装附加插件并不隐含替换现有 provider；存在 provider 冲突时，仍需明确选择组合。
 
 ## 声明式贡献
+
+### MCP 连接器卡片
+
+插件所属 MCP 服务的可选 `connector` 元数据将其展示为账号连接器。它复用已有服务定义、连接生命周期、OAuth 凭据存储和插件归属，不会注册第二个服务。独立服务的元数据仅用于说明，不改变普通 MCP 管理操作。纯声明式插件无需 `runtime` 或 `desktop` 入口：
+
+```json
+{
+  "schema_version": 1,
+  "id": "workspace-connector",
+  "name": "Workspace Connector",
+  "version": "0.1.0",
+  "mcp_servers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Notion",
+        "description": "Work with the workspace you authorize.",
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client"
+      }
+    }
+  }
+}
+```
+
+`connector` 支持以下字段：
+
+| 字段 | 契约 |
+| --- | --- |
+| `title` | 必填且非空白的显示名称。 |
+| `description` | 可选的简短服务说明。 |
+| `documentation_url` | 可选的配置或服务商文档链接，必须是绝对 HTTPS 地址，且不内嵌凭据。 |
+| `setup_required` | 可选的应用配置缺失说明。非空白时，卡片只展示要求与文档，不提供连接或授权操作。 |
+
+按需连接账号时，必须显式声明 `enabled: false`，避免首次安装就开始账号连接。示例的规范服务名是 `plugin.workspace-connector.notion`，用户偏好和 OAuth 凭据使用同一身份。连接操作先检查当前配置提供方的版本并保存启用偏好，再使用普通 MCP 连接与 OAuth 流程。连接器的断开操作会删除本机 OAuth 凭据，并持久化 `enabled: false`，不表示已撤销服务商侧的授权。禁用插件会停止所属服务，不会替换为其他连接器。
+
+当前选择入口仅支持 Coding/当前项目宿主。绑定用户的 Personal/twin 宿主会从运行配置中排除共享 MCP 定义，后端报告配置不可用并拒绝连接器修改，避免混用不同域的偏好或凭据。现有 Personal 专用连接器不受影响。扩展此流程需要按域隔离连接身份、偏好和凭据存储，而不是永久按产品 ID 判断。资源 URL 将凭据绑定到远程端点，不授予显示位置或域归属权限。卡片的可展开连接详情展示端点和已报告的权限范围，不宣称已核实账号身份。
+
+使用真实的服务商端点，并如实声明配置要求。有 URL 不等于支持动态客户端注册。如果还缺少固定 OAuth 客户端、预览资格或管理员配置，不应提供连接按钮。当前服务商限制见[内置账号连接器指南](mcp.md#连接账号)。
+
+### 主题与设置
 
 主题、外壳皮肤和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
 

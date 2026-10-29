@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "account-connectors",
+  "name": "Account Connectors",
+  "description": "Connect accounts through official MCP services, with explicit authorization and setup requirements.",
+  "icon": "plug",
+  "version": "0.1.0",
+  "defaultEnabled": true,
+  "author": { "name": "Wuu" },
+  "mcp_servers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Notion",
+        "description": "Search and work with the Notion workspace you authorize.",
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client"
+      }
+    },
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "GitHub",
+        "description": "Work with repositories through GitHub's official MCP server.",
+        "documentation_url": "https://github.com/github/github-mcp-server",
+        "setup_required": "Wuu must register and configure its own GitHub App or OAuth client before account connection is available. The server URL alone does not enable OAuth."
+      }
+    },
+    "google-drive": {
+      "url": "https://drivemcp.googleapis.com/mcp/v1",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Google Drive",
+        "description": "Google Drive's official MCP server is in Developer Preview.",
+        "documentation_url": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+        "setup_required": "Requires Workspace Developer Preview membership, a Cloud project with the Drive and MCP APIs enabled, and a registered Desktop OAuth client for an AI-powered agent with consent and scopes configured."
+      }
+    }
+  },
+  "interface": {
+    "displayName": "Account Connectors",
+    "shortDescription": "Connect accounts only when you choose to authorize them.",
+    "developerName": "Wuu",
+    "category": "Productivity"
+  }
+}

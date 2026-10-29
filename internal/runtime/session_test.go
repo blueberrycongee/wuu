@@ -1522,27 +1522,33 @@ func TestNewSessionWiresPluginHooks(t *testing.T) {
 
 func TestMCPServersFromConfigAndPluginsPrefixesPluginServers(t *testing.T) {
 	disabled := false
+	enabled := true
 	plugins := []pluginpkg.Plugin{{
 		Manifest: pluginpkg.Manifest{
 			ID: "docs",
 			MCPServers: map[string]config.MCPServerConfig{
 				"search": {Command: "plugin-docs", ToolTimeoutMS: 45000},
+				"setup":  {URL: "https://setup.example.test/mcp", Connector: &config.MCPConnectorDescriptor{Title: "Setup", SetupRequired: "Ask the administrator."}},
 			},
 		},
 	}}
 	cfg := config.Config{
 		MCPServers: map[string]config.MCPServerConfig{
-			"search":                  {Command: "user-docs"},
+			"search":                  {Command: "user-docs", Connector: &config.MCPConnectorDescriptor{Title: "Native metadata", SetupRequired: "Informational only"}},
 			"plugin.docs.search":      {Enabled: &disabled, ToolTimeoutMS: 90000},
+			"plugin.docs.setup":       {Enabled: &enabled},
 			"plugin.cua-mac.computer": {},
 		},
 	}
 	servers := mcpServersFromConfigAndPlugins(cfg, plugins)
-	if servers["search"].Command != "user-docs" {
+	if servers["search"].Command != "user-docs" || servers["search"].Enabled != nil {
 		t.Fatalf("user MCP server changed: %+v", servers)
 	}
 	if got := servers["plugin.docs.search"]; got.Command != "plugin-docs" || got.Enabled == nil || *got.Enabled || got.ToolTimeoutMS != 90000 {
 		t.Fatalf("plugin MCP server missing or unprefixed: %+v", servers)
+	}
+	if got := servers["plugin.docs.setup"]; got.Enabled == nil || *got.Enabled || got.Connector == nil {
+		t.Fatalf("setup-required connector enabled by raw override: %+v", got)
 	}
 	if _, ok := servers["plugin.cua-mac.computer"]; ok {
 		t.Fatalf("inactive plugin MCP override must be ignored: %+v", servers)

@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -321,5 +323,46 @@ func TestDesktopServicesAdmitPublicApplicationAndSurfaceProviders(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestLoadManifestPreservesAndValidatesConnectorMetadata(t *testing.T) {
+	for _, referenced := range []bool{false, true} {
+		for _, valid := range []bool{false, true} {
+			t.Run(fmt.Sprintf("referenced=%v/valid=%v", referenced, valid), func(t *testing.T) {
+				root := t.TempDir()
+				descriptor := `{"title":"Documents","description":"Find documents","documentation_url":"https://docs.example.test/setup","setup_required":"Enable the integration."}`
+				if !valid {
+					descriptor = `{"title":"Documents","documentation_url":"javascript:alert(1)"}`
+				}
+				servers := `{"docs":{"url":"https://example.test/mcp","enabled":false,"connector":` + descriptor + `}}`
+				declaration := servers
+				if referenced {
+					writeFile(t, filepath.Join(root, "mcp.json"), `{"mcp_servers":`+servers+`}`)
+					declaration = `"mcp.json"`
+				}
+				path := filepath.Join(root, ManifestFilename)
+				writeFile(t, path, `{"id":"connector-fixture","mcp_servers":`+declaration+`}`)
+				item, err := LoadManifest(path, "user")
+				if (err == nil) != valid {
+					t.Fatalf("LoadManifest() = %v, valid = %v", err, valid)
+				}
+				if !valid {
+					return
+				}
+				data, err := json.Marshal(item)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var restored Plugin
+				if err := json.Unmarshal(data, &restored); err != nil {
+					t.Fatal(err)
+				}
+				connector := restored.MCPServers["docs"].Connector
+				if connector == nil || connector.Title != "Documents" || connector.DocumentationURL != "https://docs.example.test/setup" || connector.SetupRequired != "Enable the integration." {
+					t.Fatalf("metadata lost: %+v", connector)
+				}
+			})
+		}
 	}
 }

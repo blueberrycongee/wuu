@@ -173,6 +173,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       getPluginSetting: unavailable,
       setPluginSetting: unavailable,
       getPluginDiagnostics: unavailable,
+      getMCPAuthStatus: unavailable,
       readMCPDefinition: unavailable,
       configureMCPServers: unavailable,
       startMCPLogin: unavailable,

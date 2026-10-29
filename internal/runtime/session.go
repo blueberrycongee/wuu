@@ -2860,6 +2860,13 @@ func mcpServersFromConfigAndPlugins(cfg config.Config, plugins []pluginpkg.Plugi
 		}
 		out[name] = server
 	}
+	for name, server := range out {
+		if IsPluginMCPServerName(name) && !server.ConnectorEnabled() {
+			enabled := false
+			server.Enabled = &enabled
+			out[name] = server
+		}
+	}
 	return out
 }
 

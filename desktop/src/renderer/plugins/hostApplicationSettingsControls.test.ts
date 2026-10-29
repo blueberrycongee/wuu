@@ -24,6 +24,18 @@ describe("public settings control boundary", () => {
     await expect(controls.setPluginSetting(input)).rejects.toBe(failure);
     expect(window.wuu.setPluginSetting).toHaveBeenCalledWith(input);
   });
+  it("reads connector authorization from the active host without fabricating identity", async () => {
+    const status = { name: "plugin.external.docs", authenticated: true, scopes: ["read"] };
+    window.wuu = { getMCPAuthStatus: vi.fn().mockResolvedValue(status) } as unknown as typeof window.wuu;
+    const controls = createApplicationSettingsControls();
+    await expect(controls.getMCPAuthStatus(status.name)).resolves.toBe(status);
+    expect(window.wuu.getMCPAuthStatus).toHaveBeenCalledWith(status.name);
+    const failure = new Error("credential provider unavailable");
+    vi.mocked(window.wuu.getMCPAuthStatus).mockRejectedValue(failure);
+    await expect(controls.getMCPAuthStatus(status.name)).rejects.toBe(failure);
+    window.wuu = {} as typeof window.wuu;
+    await expect(controls.getMCPAuthStatus(status.name)).rejects.toThrow("unavailable");
+  });
   it("only applies a conflict preference after persistence succeeds", async () => {
     const host = new PluginHost({
       react: React

@@ -1614,7 +1614,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.desktop == 'true' && contains(fromJSON(needs.changes.outputs.desktop_suites), 'shell')
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       VITE_ENABLE_ACCOUNT: 'false'
       VITE_ENABLE_REMOTE_CONTROL: 'false'
@@ -1623,6 +1623,9 @@ jobs:
       WUU_TITLEBAR_FOCUSED_CONTROLS: '1'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -1750,6 +1753,35 @@ jobs:
         with:
           name: settings-overlay-hosted-macos-evidence
           path: ${{ runner.temp }}/wuu-macos-settings-overlay/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build native core for connector authorization acceptance
+        id: build-connector-core
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 6
+        run: |
+          mkdir -p desktop/build/bin desktop/out/e2e/plugin-management
+          git rev-parse HEAD > desktop/out/e2e/plugin-management/source-commit.txt
+          fixture_version="v$(tr -d '\n' < VERSION)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o desktop/build/bin/wuu-core ./cmd/wuu
+      - name: Exercise sandboxed connector picker and loopback OAuth
+        if: ${{ !cancelled() && steps.build-connector-core.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/plugin-management-e2e.cjs --mcp-only 2>&1 | tee desktop/out/e2e/plugin-management/run.log
+      - name: Upload hosted macOS connector authorization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-desktop-hosted-macos-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          # Disposable profiles and the fixture credential store are never artifacts.
+          path: |
+            desktop/out/e2e/plugin-management/*.png
+            desktop/out/e2e/plugin-management/*.json
+            desktop/out/e2e/plugin-management/*.txt
+            desktop/out/e2e/plugin-management/*.log
           if-no-files-found: warn
           retention-days: 14
       - name: Upload hosted macOS control evidence

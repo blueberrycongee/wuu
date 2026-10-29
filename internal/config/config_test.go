@@ -1688,3 +1688,32 @@ func TestChatGPTConnectionReferencePersistsWithoutChangingDefault(t *testing.T) 
 		t.Fatal("model edit lost account registration")
 	}
 }
+
+// Connector descriptors cross the configuration and public plugin boundaries.
+func TestConfigValidatesMCPConnectorDescriptor(t *testing.T) {
+	for _, test := range []struct {
+		name, descriptor string
+		valid            bool
+	}{
+		{"minimal", `{"title":"Documents"}`, true},
+		{"full", `{"title":"Documents","description":"Search documents","documentation_url":"https://docs.example.test/setup","setup_required":"Ask your administrator to allow access."}`, true},
+		{"empty title", `{"title":" "}`, false},
+		{"relative docs", `{"title":"Documents","documentation_url":"/setup"}`, false},
+		{"http docs", `{"title":"Documents","documentation_url":"http://docs.example.test"}`, false},
+		{"credential docs", `{"title":"Documents","documentation_url":"https://secret@docs.example.test"}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			if err := json.Unmarshal([]byte(`{"mcp_servers":{"docs":{"url":"https://example.test/mcp","connector":`+test.descriptor+`}}}`), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			err := cfg.Validate()
+			if (err == nil) != test.valid {
+				t.Fatalf("Validate() = %v, valid = %v", err, test.valid)
+			}
+			if err != nil && !strings.Contains(err.Error(), "mcp_servers.docs.connector") {
+				t.Fatalf("missing field context: %v", err)
+			}
+		})
+	}
+}

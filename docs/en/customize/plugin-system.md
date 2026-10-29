@@ -10,6 +10,8 @@ The desktop host owns windows, application state/actions, input submission, and 
 
 Bundled and external packages use the same runtime and desktop registration contracts. Bundled provenance affects discovery and trust, not the meaning of a tool, capability, or UI registration. A copied package does not become official merely by using a bundled plugin's ID.
 
+The bundled `account-connectors` package is declarative only: it supplies `mcp_servers` with the public [connector metadata](plugin-authoring.md#mcp-connector-cards), not a runtime or a private registry. The package is enabled by default, but all of its servers are disabled until explicitly connected. Disabling it stops its contributions through the ordinary plugin lifecycle.
+
 ## Authoring SDK and process contract
 
 Wuu maintains one official plugin authoring SDK: TypeScript `@wuu/plugin-sdk` in

@@ -285,6 +285,10 @@ export function createApplicationSettingsControls(options: {
       if (typeof window.wuu?.startMCPAuth !== "function") throw new Error("Settings operation unavailable: startMCPAuth");
       return window.wuu.startMCPAuth(...args);
     },
+    getMCPAuthStatus: async (...args) => {
+      if (typeof window.wuu?.getMCPAuthStatus !== "function") throw new Error("Settings operation unavailable: getMCPAuthStatus");
+      return window.wuu.getMCPAuthStatus(...args);
+    },
     finishMCPAuth: async (...args) => {
       if (typeof window.wuu?.finishMCPAuth !== "function") throw new Error("Settings operation unavailable: finishMCPAuth");
       return window.wuu.finishMCPAuth(...args);

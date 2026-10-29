@@ -592,16 +592,22 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
-	PluginID         string `json:"plugin_id,omitempty"`
-	DisplayName      string `json:"display_name,omitempty"`
-	Editable         bool   `json:"editable,omitempty"`
-	OAuthRedirectURI string `json:"oauth_redirect_uri,omitempty"`
-	Name             string `json:"name"`
-	State            string `json:"state"`
-	AuthStatus       string `json:"auth_status,omitempty"`
-	Connected        bool   `json:"connected"`
-	ToolCount        int    `json:"tool_count"`
-	Error            string `json:"error,omitempty"`
+	ConfigurationUnavailableReason string                         `json:"configuration_unavailable_reason,omitempty"`
+	Connector                      *config.MCPConnectorDescriptor `json:"connector,omitempty"`
+	ConfigurationEnabled           *bool                          `json:"configuration_enabled,omitempty"`
+	Configurable                   bool                           `json:"configurable,omitempty"`
+	ResourceURL                    string                         `json:"resource_url,omitempty"`
+	PluginActive                   *bool                          `json:"plugin_active,omitempty"`
+	PluginID                       string                         `json:"plugin_id,omitempty"`
+	DisplayName                    string                         `json:"display_name,omitempty"`
+	Editable                       bool                           `json:"editable,omitempty"`
+	OAuthRedirectURI               string                         `json:"oauth_redirect_uri,omitempty"`
+	Name                           string                         `json:"name"`
+	State                          string                         `json:"state"`
+	AuthStatus                     string                         `json:"auth_status,omitempty"`
+	Connected                      bool                           `json:"connected"`
+	ToolCount                      int                            `json:"tool_count"`
+	Error                          string                         `json:"error,omitempty"`
 }
 
 type MCPListResult struct {

@@ -14,6 +14,7 @@ import (
 )
 
 type serverLifecycle struct {
+	oauthCommitMu sync.Mutex
 	ctx           context.Context
 	cancel        context.CancelFunc
 	revoked       bool
@@ -442,20 +443,101 @@ func (m *Manager) clientConnectionFailed(name string, generation uint64, client 
 	_ = client.Close()
 }
 
+// oauthOwner binds an attempt to one admitted server lifetime. Its per-server
+// guard serializes credential transactions with revocation. Revocation cancels
+// before waiting for that guard, never holding the manager lock across I/O.
+// A completed Revoke is the fence: no earlier transaction can commit afterward.
+type oauthOwner struct {
+	manager *Manager
+	server  *serverLifecycle
+	name    string
+}
+
+func (o *oauthOwner) same(other *oauthOwner) bool {
+	if o == nil || other == nil {
+		return o == other
+	}
+	return o.manager == other.manager && o.server == other.server
+}
+
+func (o *oauthOwner) authorize(ctx context.Context, action func() error) error {
+	if o == nil {
+		return action()
+	}
+	o.server.oauthCommitMu.Lock()
+	defer o.server.oauthCommitMu.Unlock()
+	o.manager.mu.RLock()
+	var err error
+	if o.manager.closed {
+		err = ErrManagerClosed
+	} else if o.server.revoked || o.manager.servers[o.name] != o.server {
+		err = ErrServerRevoked
+	}
+	o.manager.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return action()
+}
+
+type managerOAuthOperation struct {
+	ctx    context.Context
+	config ServerConfig
+	oauth  *OAuthManager
+	owner  *oauthOwner
+	finish func()
+}
+
+func (m *Manager) beginOAuthOperation(parent context.Context, name string) (*managerOAuthOperation, error) {
+	name = strings.TrimSpace(name)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, ErrManagerClosed
+	}
+	if m.serverRevoked(name) {
+		return nil, ErrServerRevoked
+	}
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	cfg, oauth, err := m.oauthConfigLocked(name)
+	if err != nil {
+		return nil, err
+	}
+	server := m.servers[name]
+	if server == nil {
+		ctx, cancel := context.WithCancel(m.ctx)
+		server = &serverLifecycle{ctx: ctx, cancel: cancel}
+		m.servers[name] = server
+	}
+	bounded, cancelBounded := withDefaultConnectionTimeout(parent)
+	ctx, cancel := context.WithCancel(bounded)
+	stop := context.AfterFunc(server.ctx, cancel)
+	m.operations.Add(1)
+	return &managerOAuthOperation{ctx: ctx, config: cfg, oauth: oauth, owner: &oauthOwner{manager: m, server: server, name: name}, finish: func() { stop(); cancel(); cancelBounded(); m.operations.Done() }}, nil
+}
+
 func (m *Manager) StartOAuth(ctx context.Context, name string) (OAuthStartResult, error) {
 	return m.StartOAuthWithRedirect(ctx, name, "")
 }
 
 // StartOAuthWithRedirect lets a local client supply its callback listener.
 func (m *Manager) StartOAuthWithRedirect(ctx context.Context, name, redirectURI string) (OAuthStartResult, error) {
-	cfg, oauth, err := m.oauthConfig(name)
+	operation, err := m.beginOAuthOperation(ctx, name)
 	if err != nil {
 		return OAuthStartResult{}, err
 	}
+	defer operation.finish()
+	cfg, oauth, ctx := operation.config, operation.oauth, operation.ctx
 	if redirectURI != "" {
 		cfg.OAuth.RedirectURI = redirectURI
 	}
 	result, err := oauth.Start(ctx, OAuthStartOptions{
+		owner:        operation.owner,
 		ServerID:     cfg.Name,
 		ResourceURL:  cfg.URL,
 		RedirectURI:  cfg.OAuth.RedirectURI,
@@ -480,11 +562,13 @@ func (m *Manager) OAuthStatus(ctx context.Context, name string) (OAuthStatus, er
 }
 
 func (m *Manager) FinishOAuth(ctx context.Context, name, state, code string) (ServerStatus, error) {
-	cfg, oauth, err := m.oauthConfig(name)
+	operation, err := m.beginOAuthOperation(ctx, name)
 	if err != nil {
 		return ServerStatus{}, err
 	}
-	if _, err := oauth.Finish(ctx, OAuthFinishOptions{ServerID: cfg.Name, ResourceURL: cfg.URL, State: state, Code: code}); err != nil {
+	defer operation.finish()
+	cfg, oauth, ctx := operation.config, operation.oauth, operation.ctx
+	if _, err := oauth.Finish(ctx, OAuthFinishOptions{ServerID: cfg.Name, ResourceURL: cfg.URL, State: state, Code: code, owner: operation.owner}); err != nil {
 		return ServerStatus{}, err
 	}
 	status := ServerStatus{Name: cfg.Name, State: MCPServerStateStopped, AuthStatus: MCPAuthStatusOAuth}
@@ -515,11 +599,19 @@ func (m *Manager) RemoveOAuth(ctx context.Context, name string) error {
 	return nil
 }
 
+// Reads, cancel and credential removal stay available after server revocation.
 func (m *Manager) oauthConfig(name string) (ServerConfig, *OAuthManager, error) {
-	cfg, ok := m.Config(name)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.oauthConfigLocked(strings.TrimSpace(name))
+}
+
+func (m *Manager) oauthConfigLocked(name string) (ServerConfig, *OAuthManager, error) {
+	configured, ok := m.configs[name]
 	if !ok {
-		return ServerConfig{}, nil, fmt.Errorf("mcp server %q not configured", strings.TrimSpace(name))
+		return ServerConfig{}, nil, fmt.Errorf("mcp server %q not configured", name)
 	}
+	cfg := cloneServerConfig(configured)
 	if strings.TrimSpace(cfg.URL) == "" {
 		return ServerConfig{}, nil, fmt.Errorf("mcp server %q does not support OAuth", cfg.Name)
 	}
@@ -528,11 +620,10 @@ func (m *Manager) oauthConfig(name string) (ServerConfig, *OAuthManager, error) 
 	} else if strings.TrimSpace(cfg.OAuth.RedirectURI) == "" {
 		cfg.OAuth.RedirectURI = defaultMCPRedirectURI
 	}
-	oauth := m.oauthManager()
-	if oauth == nil {
+	if m.oauth == nil {
 		return ServerConfig{}, nil, errors.New("mcp OAuth credential store is unavailable")
 	}
-	return cfg, oauth, nil
+	return cfg, m.oauth, nil
 }
 
 func (m *Manager) oauthManager() *OAuthManager {
@@ -583,7 +674,13 @@ func (m *Manager) Revoke(name string) error {
 	}
 	server := m.servers[name]
 	if server != nil && server.revoked {
+		cancel := server.cancel
 		m.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		server.oauthCommitMu.Lock()
+		server.oauthCommitMu.Unlock()
 		return nil
 	}
 	if server == nil {
@@ -609,10 +706,14 @@ func (m *Manager) Revoke(name string) error {
 		m.operations.Add(1)
 	}
 	m.mu.Unlock()
-	m.notifyConnectionRetired(client)
 	if cancel != nil {
 		cancel()
 	}
+	// Cancellation can interrupt a selected credential provider. Wait only on
+	// this server, after releasing the global admission lock.
+	server.oauthCommitMu.Lock()
+	server.oauthCommitMu.Unlock()
+	m.notifyConnectionRetired(client)
 	if client != nil {
 		defer m.operations.Done()
 		return client.Close()

@@ -16,6 +16,9 @@ func (s *Server) handleMCPAuthStart(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	mgr, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -36,6 +39,9 @@ func (s *Server) handleMCPAuthStatus(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	mgr, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -50,6 +56,9 @@ func (s *Server) handleMCPAuthStatus(ctx context.Context, req Request) error {
 func (s *Server) handleMCPAuthFinish(ctx context.Context, req Request) error {
 	params, err := parseMCPAuthFinishParams(req)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	mgr, err := s.mcpManager()
@@ -74,6 +83,9 @@ func (s *Server) handleMCPAuthRemove(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	mgr, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -93,6 +105,9 @@ func (s *Server) handleMCPAuthRemove(ctx context.Context, req Request) error {
 func (s *Server) handleMCPAuthCancel(ctx context.Context, req Request) error {
 	var params MCPAuthCancelParams
 	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	mgr, err := s.mcpManager()

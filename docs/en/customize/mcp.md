@@ -2,6 +2,24 @@
 
 MCP connects the Wuu engine to tools provided by a local process or remote service. After connecting, ask the agent to use the server by name and describe the task. Wuu discovers and calls tools; it does not currently provide a resource or prompt browser, and MCP requests for an additional user-input exchange are unsupported.
 
+## Connect an account
+
+This plugin connector flow currently supports the **Coding / current-project host only**. User-bound Personal/twin hosts keep shared MCP configuration out of their domain and show setup as unavailable rather than changing shared preferences or credentials. Existing dedicated Personal connectors are unchanged; using this picker there requires domain-scoped connection identity, preferences, and credential storage.
+
+Open **Plugins → Account Connectors**. The bundled plugin is enabled by default so its connector cards are discoverable, but every service is initially disabled: no account connection starts until you choose to connect it. Disabling the plugin stops its services and removes its connector behavior.
+
+- **Notion:** choose **Connect** to enable the service and begin browser authorization. Review the workspace and access requested by Notion before approving. The official endpoint is `https://mcp.notion.com/mcp`; it supports public-client dynamic registration and PKCE, so no internal integration token or client secret is needed. See [Notion's MCP client guide](https://developers.notion.com/guides/mcp/build-mcp-client).
+- **GitHub:** setup is required; the card provides instructions, not a Connect action. Wuu needs its own registered GitHub App or OAuth client before offering account authorization. The official `https://api.githubcopilot.com/mcp/` URL alone is insufficient. See [GitHub's MCP server documentation](https://github.com/github/github-mcp-server).
+- **Google Drive:** setup is required; no Connect action is offered. The official preview endpoint is `https://drivemcp.googleapis.com/mcp/v1`, not a generic Google connector. It requires Workspace Developer Preview membership, a Cloud project with the Drive and MCP APIs enabled, and a registered AI-agent Desktop OAuth client with consent and scopes configured. See Google's [MCP setup](https://developers.google.com/workspace/guides/configure-mcp-servers) and [client registration](https://developers.google.com/workspace/guides/create-credentials).
+
+Connect saves the enabled preference through the selected configuration provider and checks its revision. If another window changed the configuration, reload it before trying again. Authorization uses the [remote OAuth flow](#remote-oauth), including cancellation and expiry; a canceled or failed login does not grant access. Provider account and workspace policies can still prevent authorization.
+
+A connector's **Disconnect** removes its locally saved OAuth credentials and saves the service as disabled, retaining the definition. It does not revoke the grant at the provider; use the provider's connected-app settings when you also want to revoke access there.
+
+Expand the connection details to inspect the endpoint, local authorization state, and reported scopes. These describe the MCP authorization, not a verified person's identity. The resource URL identifies the remote service; it does not determine where the card appears or which personal/work domain owns the connection.
+
+The optional [Notion workspace plugin](notion-workspace.md) is different: it uses a separately configured REST integration token and can open the Notion website. Website login does not grant either MCP or REST API access. Custom plugins can provide the same cards through the [connector metadata contract](plugin-authoring.md#mcp-connector-cards), without a separate connector registry.
+
 ## Add a server
 
 Open **Plugins → MCP services → Add MCP**. Enter a server URL or a local executable with its arguments, or choose **Import JSON** to paste an `mcpServers` or `mcp_servers` object. Advanced options accept headers, environment variables, transport, OAuth registration values, and tool timeouts as JSON.
@@ -97,7 +115,7 @@ not reread configuration files.
 
 Open **Plugins** to manage standalone MCP services. A plugin's MCP services appear on that plugin's detail page; a plugin requiring MCP authorization also shows a notice in the catalog. Disabling the plugin disables its services. Plugin and project definitions retain their original source and are not editable as standalone definitions.
 
-Connection controls show state, tool count, and errors. Disconnect ends the current connection without deleting its definition; Refresh reconnects with the already-loaded configuration and discovers tools again. Edit changes the saved definition, including its startup preference. Remove deletes the standalone definition; a same-named project definition may become visible again. Removing a definition keeps its saved OAuth credentials; use **Remove OAuth login** first when you also want to sign out.
+Connection controls show state, tool count, and errors. For entries in MCP services, Disconnect ends only the current connection without deleting its definition or credentials. Connector Disconnect instead signs out locally and persists the disabled preference, as described above. Refresh reconnects with the already-loaded configuration and discovers tools again. Edit changes the saved definition, including its startup preference. Remove deletes the standalone definition; a same-named project definition may become visible again. Removing a definition keeps its saved OAuth credentials; use **Remove OAuth login** first when you also want to sign out.
 
 Restart Wuu after editing definitions on disk. Refresh is not a configuration-file reload. The older Settings MCP deep link remains available for compatibility; the main management entry is Plugins.
 
