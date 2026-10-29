@@ -299,8 +299,15 @@ type ProviderModelModalitiesConfig struct {
 	Output []string `json:"output,omitempty"`
 }
 
+// ToolReplacement binds one built-in tool name to one trusted plugin tool.
+type ToolReplacement struct {
+	PluginID string `json:"plugin_id"`
+	ToolID   string `json:"tool_id"`
+}
+
 // AgentConfig controls behavior of the local tool loop.
 type AgentConfig struct {
+	ToolReplacements map[string]ToolReplacement `json:"tool_replacements,omitempty"`
 	// Name identifies the configured agent profile. Memory is global per user
 	// and is not scoped by this value.
 	Name             string `json:"name,omitempty"`
@@ -870,6 +877,16 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(string(c.Agent.ToolLoading)) != "" && NormalizeToolLoadingMode(c.Agent.ToolLoading) == "" {
 		return errors.New("agent.tool_loading must be one of auto, client, flat, or native")
+	}
+	owners := make(map[ToolReplacement]string, len(c.Agent.ToolReplacements))
+	for name, replacement := range c.Agent.ToolReplacements {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name || strings.TrimSpace(replacement.PluginID) == "" || strings.TrimSpace(replacement.PluginID) != replacement.PluginID || strings.TrimSpace(replacement.ToolID) == "" || strings.TrimSpace(replacement.ToolID) != replacement.ToolID {
+			return fmt.Errorf("agent.tool_replacements: names, plugin_id, and tool_id must be non-empty and trimmed")
+		}
+		if previous, exists := owners[replacement]; exists {
+			return fmt.Errorf("agent.tool_replacements: %q and %q select the same plugin tool", previous, name)
+		}
+		owners[replacement] = name
 	}
 	if err := validatePermissionConfig(c.Agent); err != nil {
 		return err

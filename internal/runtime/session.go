@@ -127,6 +127,8 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	nativeCleanupMu          sync.Mutex
+	nativeCleanups           *nativeCleanupTracker
 	artifactRootsMu          sync.Mutex
 	artifactRoots            *tools.SessionArtifactManager
 	rootArtifactRelease      func() error
@@ -259,8 +261,9 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		}
 	}
 	clone := &Session{
-		artifactRoots: s.sessionArtifactManager(),
-		Documents:     s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
+		nativeCleanups: s.nativeCleanupOwner(),
+		artifactRoots:  s.sessionArtifactManager(),
+		Documents:      s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
@@ -586,6 +589,12 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
 
+	if err := validateToolReplacements(rootDir, pluginHost, cfg.Agent.ToolReplacements); err != nil {
+		snapshotsOwned = false
+		closeErr := (&PluginGeneration{host: pluginHost, ownedRoots: initialSnapshotRoots}).close()
+		return nil, errors.Join(err, closeErr)
+	}
+
 	initialGeneration := &PluginGeneration{
 		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
 		ownedRoots: initialSnapshotRoots, settings: cfg, requiredPlugins: pluginKernel.requiredPlugins,
@@ -758,7 +767,15 @@ func NewSession(opts Options) (*Session, error) {
 			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
 			codeModeService = codeMode
 			kit.ConfigurePTC(codeMode, cfg.PTC)
-			return toolservice.Backend{Executor: newPluginToolExecutor(kit, pluginHost, "", rootDir), Toolkit: kit, Close: func(context.Context) error {
+			executor := newPluginToolExecutor(kit, pluginHost, "", rootDir)
+			if err := configureToolReplacements(executor, kit, cfg.Agent.ToolReplacements); err != nil {
+				if manager := kit.MCPManager(); manager != nil {
+					_ = manager.Close()
+				}
+				_ = codeMode.Close()
+				return toolservice.Backend{}, err
+			}
+			return toolservice.Backend{Executor: executor, Toolkit: kit, Close: func(context.Context) error {
 				var closeErr error
 				if manager := kit.MCPManager(); manager != nil {
 					closeErr = manager.Close()
@@ -1393,10 +1410,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if releaseFailedResources == nil {
 				s.releasePluginGeneration(generation)
 			} else {
-				go func() {
+				s.runNativeCleanup(func() {
 					releaseFailedResources()
 					s.releasePluginGeneration(generation)
-				}()
+				})
 			}
 		}
 	}()
@@ -1546,7 +1563,13 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				if err := initialize(); err != nil {
 					return toolservice.Backend{}, err
 				}
-				return toolservice.Backend{Executor: newPluginToolExecutor(kit, s.PluginHost, id, threadRoot), Toolkit: kit}, nil
+				executor := newPluginToolExecutor(kit, s.PluginHost, id, threadRoot)
+				if generation != nil {
+					if err := configureToolReplacements(executor, kit, generation.settings.Agent.ToolReplacements); err != nil {
+						return toolservice.Backend{}, err
+					}
+				}
+				return toolservice.Backend{Executor: executor, Toolkit: kit}, nil
 			})
 			if err := nativeToolScopes.add(scope); err != nil {
 				return nil, err
@@ -1590,7 +1613,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			workerToolProviderName := s.ModelRoles.Worker.RuleProvider
 			workerToolModeModel := workerModel
 			_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingModeForProvider(s.ToolLoadingPreference, s.ModelRoles.Worker.RuleProviderConfig, workerToolModeModel, s.ModelRoles.Worker.ProviderOptions)
-			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, s.PluginHost, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled, agentcontrol.WorkerType{}, agentthread.Metadata{Path: agentthread.RootPath + "/worker"})
 			if catErr != nil {
 				return nil, catErr
 			}
@@ -1638,7 +1661,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 						workerRoot = environment.Root()
 					}
-					workerToolSurface, err := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+					workerToolSurface, err := workerToolSurfaceForToolkit(kit, s.PluginHost, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled, wt, meta)
 					if err != nil {
 						return "", err
 					}
@@ -2343,6 +2366,11 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())
 		}
 	}
+	cleanupCtx, cancelCleanups := context.WithTimeout(context.Background(), ownedWorkerExecutionDrainTimeout)
+	if err := s.waitNativeCleanups(cleanupCtx); err != nil {
+		providers.DebugLogf("session cleanup: native tool cleanup remains active after %s", ownedWorkerExecutionDrainTimeout)
+	}
+	cancelCleanups()
 	s.InferenceJournalRuntime = nil
 	s.Sessions, s.Documents = nil, nil
 	if s.UserQuestions != nil {
@@ -3185,7 +3213,7 @@ func deferredToolCatalogPromptForToolkit(kit *tools.Toolkit) (string, error) {
 
 // workerToolSurfaceForToolkit resolves the same model and PTC projection used
 // by the actual worker executor before constructing its prompt.
-func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (capability.Surface, error) {
+func workerToolSurfaceForToolkit(kit *tools.Toolkit, host *pluginhost.Host, providerName, model string, toolSearchEnabled bool, wt agentcontrol.WorkerType, meta agentthread.Metadata) (capability.Surface, error) {
 	if kit == nil {
 		return capability.Surface{}, nil
 	}
@@ -3195,6 +3223,14 @@ func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string,
 	}
 	wkit.ConfigureSurfaceForProviderModel(providerName, model, false)
 	wkit.SetToolSearchEnabled(toolSearchEnabled)
+	wkit.SetAgentIdentity(meta.ID, meta.Path)
+	applyWorkerToolFilter(wkit, wt)
+	// Clones deliberately have no execution bindings. Resolve replacements and
+	// contributed tools against the child's identity before filtering skills.
+	executor := newPluginToolExecutor(wkit, host, wkit.SessionID(), wkit.RootDir())
+	if err := configureToolReplacements(executor, wkit, wkit.ReplacementBindings()); err != nil {
+		return capability.Surface{}, err
+	}
 	surface := wkit.ActiveSurface()
 	surface.DeferredToolCatalog, err = wkit.DeferredToolCatalogSystemSection()
 	return surface, err

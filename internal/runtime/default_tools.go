@@ -52,8 +52,16 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		kit.SetMCPManager(manager)
 		codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
 		kit.ConfigurePTC(codeMode, cfg.PTC)
+		executor := newPluginToolExecutor(kit, generation.host, "", s.RootDir)
+		if err := configureToolReplacements(executor, kit, cfg.Agent.ToolReplacements); err != nil {
+			if manager != nil {
+				_ = manager.Close()
+			}
+			_ = codeMode.Close()
+			return toolservice.Backend{}, err
+		}
 		generation.toolkit, generation.codeMode, generation.mcp = kit, codeMode, manager
-		return toolservice.Backend{Executor: newPluginToolExecutor(kit, generation.host, "", s.RootDir), Toolkit: kit, Close: func(context.Context) error {
+		return toolservice.Backend{Executor: executor, Toolkit: kit, Close: func(context.Context) error {
 			var err error
 			if manager != nil {
 				err = manager.Close()

@@ -140,6 +140,30 @@ turn completion, rejection and cleanup paths, recording
 `report.json` and `verification.log` under `.tmp/e2e/provider-delegation/`.
 
 
+## Replace web search
+
+When the native `agent.tools@1` registry is selected, a trusted plugin tool can replace `web_search` without replacing the other tools. Install and enable the plugin first, then select its actual manifest ID and declared tool ID in trusted user agent configuration. Project settings cannot select replacements:
+
+```json
+{
+  "agent": {
+    "tool_replacements": {
+      "web_search": {"plugin_id": "example-search", "tool_id": "search"}
+    }
+  }
+}
+```
+
+The [synthetic search example](../../../examples/plugins/synthetic-web-search.ts) is a runnable authoring example; it returns a fixed demonstration result, not real search data. Install it with `wuu plugin dev` and replace `example-search` above with the plugin ID returned by Wuu. Only `web_search` is supported. The replacement must declare exactly the native input schema, freeform and direct-only settings; orchestration tools cannot be selected. The plugin's description is exposed under `web_search`, while its namespaced tool name is hidden. Missing, disabled or incompatible targets fail without falling back. Removing the binding is an explicit choice to use the native implementation in the next prepared generation.
+
+A successful result must be a single JSON object in the text or structured result: `action` is `web_search`, `query` matches the request, `evidence` has an `id`, `kind: "search"`, `source`, `source_tier`, RFC 3339 `retrieved_at`, and `version_matched_to_repo`, and it contains either `results` (at most 10 items with URLs) or a nonempty `error`. If both text and structured content are present, they must agree. Evidence IDs and source tiers contain only letters, digits, underscores or hyphens. For `version_matched_to_repo`, use the trimmed, whitespace-normalized `version_hint` when present; otherwise use `package_context` as `ecosystem name@version` using the available fields. Truncate to 160 Unicode characters and append `...` if longer; use `unknown` if neither supplies a value. The host rejects incompatible results and records valid evidence for the existing evidence context.
+
+A session with an explicit tool allowlist must allow both `web_search` and the plugin tool’s namespaced public name. Run `wuu plugin describe --workdir <workspace>` and inspect `tools` to find the namespaced name registered for the plugin tool; the plugin ID and declared tool ID contribute to that name, which also contains a collision-dependent suffix. The command inspects a new CLI generation, so verify it matches the session’s selected generation before relying on it.
+
+Scheduling uses the more restrictive native and plugin activity declarations. Both the original and plugin tool authorization apply; disabling either name prevents execution. A plugin runs as a trusted extension using its own callback identity. Native file and process safeguards do not automatically constrain arbitrary plugin-process code: use authenticated host gateways for managed effects and implement appropriate checks. Admitted work retains its generation; explicit removal or disable revokes the target. A frozen tool surface retains its definitions until the turn releases it, but execution checks target availability each time.
+
+Run `node scripts/tool-replacement-e2e.mjs` for a packed-SDK synthetic plugin, a controlled model, direct and code-mode execution, worker and side-conversation paths, authorization and generation replacement. This does not test an external search service, real model quality or rendered UI.
+
 ## Session, tool and agent policy providers
 
 `session.domain@1` replaces session-domain operations, including metadata, history, control and recovery transitions, membership admission and inference-journal resources. `state.documents@1` only replaces document storage; selecting it alone leaves the session algorithms in place. The native session provider owns those algorithms and uses the selected document store. An external session provider implements the public operations itself; the host does not run the native algorithms after a missing method or failed call.
@@ -533,10 +557,14 @@ There is no second host-side policy registry.
 | `retry` | A failed loop round can `fail`, `recover` through bounded context-overflow recovery, or explicitly `retry` a proven unsubmitted request. `max_attempts` is required for retry and its first value pins the total attempt ceiling; later decisions cannot renew it. |
 | `transport_retry` | Receives the completed physical attempt's failure, submission count, attempt budget and backoff settings. `fail` terminates; `recover` supplies `recovery_action` (`replay_same_payload`, `wait_then_replay`, `refresh_credential`, or `switch_transport`) and optional `delay_ms`. Adapter support and existing durable workflow budgets remain mandatory. |
 
-A policy cannot replay visible partial output, accepted tool effects, an unknown
-submission, or exhausted inference budgets. Transport recovery retains physical submission receipts, including unknown but
-potentially billable outcomes; the selected policy may permit a bounded model
-reattempt, but cannot replay accepted or uncertain tool effects.
+A loop retry cannot replay partial output, accepted tool effects, an unknown
+submission, or exhausted inference budgets. For `transport_retry`, the host may
+set `partial_output_resettable` when the consumer can discard the failed attempt
+and a replay guard is installed. A recovery decision still passes that guard,
+which protects completed checkpoints and accepted or uncertain tool effects.
+Without this capability, partial output blocks transport recovery. Transport
+recovery retains physical submission receipts, including unknown but potentially
+billable outcomes; the selected policy may permit a bounded model reattempt.
 Delay is cancelable and bounded to 60 seconds per decision. Usage and durable
 receipts survive failed attempts. Credential refresh, transport changes and
 retries still require their existing write-ahead receipts and adapter support.

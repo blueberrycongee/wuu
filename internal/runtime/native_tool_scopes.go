@@ -100,10 +100,10 @@ func (s *Session) retireTemporaryToolScope(scope *toolservice.Scope, generation 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	_ = scope.Close(canceled)
-	go func() {
+	s.runNativeCleanup(func() {
 		_ = scope.Close(context.Background())
 		if generation != nil {
 			_ = s.releasePluginGeneration(generation)
 		}
-	}()
+	})
 }
