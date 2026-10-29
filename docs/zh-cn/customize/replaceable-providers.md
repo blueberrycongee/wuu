@@ -116,11 +116,200 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 `report.json`、`verification.log` 写入 `.tmp/e2e/provider-delegation/`。
 
 
+## 无人值守执行授权
+
+`execution.authorization@1` 是有限期、可撤销无人值守授权的所选权威。
+`executionAuthorization(host).describe()` 返回所选策略的默认/最长有效期及
+支持的权威和 scope 类型，客户端不能硬编码原生策略。`issue`、`validate`、
+`revoke` 传输类型化请求，不自动重试或回退。仅持久化不透明的 `{ provider, id }`
+引用，不能保存 owner 主体或序列化权限证明来恢复授权。
+
+Scope 绑定消费者、用户空间/产品域、任务、版本、上下文摘要，以及所选任务权威的
+服务、提供者、主体和 fingerprint。`exact-run` 绑定精确运行/会话；
+`task-lineage` 必须使用空运行/会话字段，它们只允许宿主证明的子授权派生，绝非
+通配操作权限。提供者、模型、权限模式列表为空从不表示无限制；子授权不得扩大
+父授权的边界、深度或有效期。
+
+签发/撤销使用可信宿主入口提供的 `ServiceInvokeParams.admission`，不能从
+调用者 `service.call` JSON 接受。提供者核对版本和操作，将 UTF-8 `input_json`
+的哈希与 `input_digest` 比较，再结构化比较解析结果与 `params`。重新序列化
+JSON 不保证字节相同。可选 `admission.lineage` 是宿主对所选任务权威观察结果的
+证明，不是业务记录自称的权限。执行操作时，宿主仍须重新验证所选证明与当前资源
+策略；持久引用和缓存验证结果不是权限。过期必须重新获得实时授权，不借用后台
+owner 权限，也不自动重放授权过期期间错过的工作。
+
+产品提供者通过 `executionGrants(host)` 和 `host.execution.authorization`
+提交 `describe`、`issue`、`inspect`、`revoke` 意图。宿主解析身份、所选权威、
+会话/模型边界和准确资源，调用者 JSON 不能提供这些证明。首次签发前，先将
+所选策略的 `expires_at` 与业务请求一起保存；响应丢失后使用同一个值重试。
+相同 `request_id` 重试不能获得新的有效期或更换权威目标。
+可选 `run_id` 独立指定准确执行，`request_id` 只标识签发意图；省略时沿用原先
+以请求 ID 作为运行 ID 的约定。新的明确实时 owner 准入可用持久化的新签发 nonce
+续期仅限交付的授权，同时保留原始运行/回执身份，不重新打开已完成任务或授权工具。
+必须先检查原始结果：已有授权却缺失或无法确认交付回执时，不能自动重放。
+`execution_authorization_required` 是需要实时续期的权威拒绝；传输错误和
+格式无效响应仍是独立的不确定结果，不能据此重新签发或借用 owner 权限。
+
+`validate` 是瞬时判定，不是发布事务。需要与撤销串行化的持久发布必须使用
+`acquire-commit` 和 `release-commit`。获取前先保存
+`{ id, operation_digest, authorization }`；`authorization` 是准确的 validate
+请求。获取需要宿主证明的 `execution/commit/acquire` 准入；恢复的非 owner
+授权使用 `execution-grant` 权威，主体必须与所选授权一致。提供者原子保护叶授权
+及全部祖先，并返回绑定准确请求的 guard。获取结果未知或格式无效时，不准入操作。
+
+内置提供者将新签发的授权存入支持保护的新命名空间，使用版本不同的不透明引用。
+旧授权仍可读取、撤销并支持原有普通操作，不会迁移、删除或静默续期。发布保护会
+拒绝旧格式叶授权及任意旧格式祖先，必须由实时 owner 使用新签发 nonce 明确续期。
+共享签发索引保留旧 nonce 的幂等语义；旧写入者无法查找或撤销新格式授权。
+从旧父授权派生不会升级其撤销语义。
+
+Guard 的过期时间是准入截止时间，不是自动释放保护的计时器。已经准入的唯一操作
+可以在过期或进程重启后完成终态回执。遇到保护的撤销返回
+`execution_commit_active`，不能报告成功；终态释放后才能重试撤销。成功撤销后
+不能新获取保护。重用活跃 ID 必须保持调用者、操作及授权完全一致；释放后的 ID
+永远不能再次获取。
+
+释放通过捕获的提供者 generation 的 cleanup 路由执行，包括调用者取消之后。
+`committed` 要求权威持久回执的 SHA-256 摘要；`not-committed` 要求确认没有写入
+仍可能提交。发布结果未知时必须保留保护。获取之前的 `not-committed` 释放会持久化
+墓碑，阻止迟到的获取。这些方法不会重试发布或扩大授权，也不能代替独立的来源、
+任务或资源策略保护。
+
+恢复先核对原始持久意图及回执。同一稳定服务调用者可以在过期后使用
+`inspect-commit` 并释放，无需恢复旧 owner 主体。若工作进程或本地意图已丢失，
+owner 证明的 `list-commits`、`inspect-commit`、`reconcile-commit` 分别使用
+`execution/commits/list`、`execution/commits/inspect`、
+`execution/commits/reconcile` 操作。协调恢复绑定完整原始请求、预期调用者、
+终态回执及原因；宿主必须先停止原写入者并确认结果。列出未解决意图不代表可以
+再次执行，未知回执不能被协调恢复成已释放。
+
+`executionGrants(host).callService({ reference, service, method, params })`
+针对 `service/<service>/<method>` 重新验证 exact-run 授权，再通过该消费者声明的
+所选服务路由调用。下游回调继承重新验证的非 owner 主体，不把不透明引用当作
+另一个消费者的权限。lineage 授权不能直接调用。计划来源读取先保存准确观察运行，
+再派生有界只读授权。业务授权不能绕过工具策略、准确操作审阅或连接器范围。
+
+## 保留工具策略授权
+
+`authorizationServiceDescriptor({ effect_fence: true })` 声明可选的
+`security.authorize@1` `acquire-authorization` 和 `release-authorization` 方法。
+`acquireAuthorization(host, { id, request })` 返回 `{ id, decision }`，在已准入
+操作期间保留绑定准确调用者的策略决定。通过使用 cleanup 准入的
+`releaseAuthorization(host, { id })` 释放，描述符必须声明 `cleanup: true`。
+不支持的提供者明确拒绝，不能以普通 `authorize` 快照替代。保护没有自动过期，
+也不是跨提供者事务；执行和释放期间保留捕获的 generation，不能因为获取或
+清理可以重试而重放操作。最终执行授权验证是独立的单操作准入，不是在整个
+执行期间锁定授权权威。
+
+## 持久检查保护
+
+`documentStore(host).acquireInspection({ id, namespaces })` 使用可选的
+`state.documents@1` 检查能力，返回 `{ id, namespaces, revision }`，文档 revision
+仍为十进制字符串。只有实现获取、释放及维护方法时，才通过
+`documentStoreDescriptor({ inspection: true })` 声明它们。
+`pluginSettingsStore(host).acquireInspection({ id, subject, scope })` 同样返回
+受保护的状态文档及 revision。`session.domain` 的 `AcquireInspection` /
+`ReleaseInspection` 使用位置参数 `[id]`。
+
+这是覆盖检查到操作期间的持久保护，不是会超时的租约或进程内锁。持有期间，相关
+写入以 `inspection_active` 失败。即使获取结果不确定，也要清理释放同一个 ID；
+SDK 释放方法使用 cleanup 路由。释放幂等，并封存该 ID，延迟获取不能恢复它。
+获取结果不确定时不得执行外部操作，不能因为获取或清理可以重试就重放外部操作。
+不支持的提供者明确失败，不得用原生存储或进程内锁替代。
+
+按固定顺序获取协作保护：任务状态、会话权威、审阅策略。获得全部保护后，才读取
+并验证权威、准入外部操作。回调可以写独立的操作日志，不能写受保护命名空间。
+保留捕获的服务作用域，按相反顺序清理；`release-inspection`、
+`reconcile-inspection`、`ReleaseInspection` 和 `ReconcileInspection` 在提供者
+退出期间使用 cleanup 准入。
+
+持有者崩溃后，通过 `list-inspections` 查询 ID、调用者和保护范围，不返回业务值。
+经过 owner 授权的维护操作调用 `reconcile-inspection`，提供准确 ID、
+`expected_owner`、范围、终态 `outcome`（`completed` 或 `not-dispatched`）及证据
+`reason`。设置请求使用 `subject` 和 `scope`，文档请求使用 `namespaces`。
+`session.domain` 的 `ListInspections` 参数是 `[]`，`ReconcileInspection` 参数是
+`[resolution]`；必须使用列表返回的提供者身份，不推测本地路径。
+持久回执记录核对者、终态和理由；丢失响应后重复相同核对可取回回执。不确定结果
+不是完成证据，不能据此解锁，应先确认或停止外部操作。不得把核对暴露为模型/工具
+调用，也不得在启动时自动清除保护。
+
+维护调用必须携带宿主认证后的 `admission`，action 为 `state/inspections/list`
+或 `state/inspections/reconcile`，并绑定准确的输入字节。声明服务依赖不代表获得
+操作员权限。设置 `inspection-authority` 和会话 `InspectionAuthority` 声明所选
+存储及执行拓扑。单主机维护须等待本地操作段结束并确认写入者已停止；多主机还须
+提供者支持的排他写入证明，否则只能显式离线恢复。
+
+保护将验证至持久操作准入与协作存储写入排序，不会把远程 API 或文件操作变成
+数据库事务。本地文件回调等待实际操作结束后才清理。远程请求在本地结束时，下游
+结果仍可能不确定：持久记录不可重放的不确定回执后，释放通用权威保护。取消不会
+追溯撤销已经准入的操作。多个执行主机需要兼容的分布式执行协调器，
+必要时还需下游 fencing；这些保护本身不提供执行协调器，也不授权重放。
+
+
+### 消费者拥有的权威命名空间
+
+`documentStore(host).claimNamespaces(namespaces)` 调用可选的 `claim-namespaces`，
+通过 `documentStoreDescriptor({ owned_namespaces: true })` 声明能力。所有者来自
+registry 的实际调用者，绝不接受请求 JSON 指定。重复同一声明幂等，其他消费者的
+声明以 `namespace_ownership` 失败。已有未归属数据须显式迁移，不能自动接管。
+读取、写入、检查保护和导出均执行所有权检查，包括准备阶段；原有未归属命名空间
+保持兼容。
+
+所有权是改变 revision 的提供者元数据，保存在保留命名空间
+`wuu.state.namespace_owners.v1`，key 为受保护命名空间，value 为
+`{ "version": 1, "namespace": "…", "owner": "authenticated-consumer" }`。
+普通 commit 不能写该注册表。快照和 checkpoint 保留它；导入拒绝损坏或外来所有权，
+除非经过明确迁移准入。权威存储不能回退到不受保护的文档。host-journal 模式使用
+`PrepareNamespaceClaim` 生成的确定性事务，在发送前记录前后 checkpoint 与实际
+调用者；恢复重复原声明，不通过普通注册表写入绕过契约。
+
+仅调用元数据中的 `storage_stewardship` 标识配置的存储协调权威，而非用户身份。
+提供者验证 version、准确 provider、operation、`input_json` 及 SHA-256 摘要。
+`verify` 仅允许内部读取、导出和 checkpoint；`migration` 允许显式迁移；`recover`
+只按日志中保留的消费者重放 commit 或 claim。它们都不允许普通插件绕过所有权或
+自行制造 owner。
+
+
+## 替换网页搜索
+
+选择原生 `agent.tools@1` 注册表时，可以用受信任的插件工具替换 `web_search`，其他工具保留原实现。先安装并启用插件，再在可信用户的 agent 配置中填写实际的插件清单 ID 和声明的工具 ID；项目设置不能选择替代实现：
+
+```json
+{
+  "agent": {
+    "tool_replacements": {
+      "web_search": {"plugin_id": "example-search", "tool_id": "search"}
+    }
+  }
+}
+```
+
+[合成搜索示例](../../../examples/plugins/synthetic-web-search.ts)可直接运行，用于说明插件编写；它返回固定的演示结果，并不进行真实搜索。使用 `wuu plugin dev` 安装后，将上方的 `example-search` 替换成 Wuu 返回的插件 ID。目前只支持 `web_search`。替代实现必须声明与原工具完全相同的输入 schema、freeform 和 direct-only 设置，不能是编排工具。插件描述以 `web_search` 名称暴露，插件自身的命名空间名称则隐藏。目标缺失、禁用或不兼容时会失败，不会回退；删除绑定是显式选择，后续准备的 generation 使用原生实现。
+
+成功结果必须在文本或结构化结果中提供单个 JSON 对象：`action` 为 `web_search`、`query` 与请求一致；`evidence` 包含 `id`、`kind: "search"`、`source`、`source_tier`、RFC 3339 格式的 `retrieved_at` 和 `version_matched_to_repo`；此外提供 `results`（最多 10 项且每项有 URL）或非空 `error`。同时提供文本与结构化内容时，两者必须一致。evidence ID 与 source tier 只允许字母、数字、下划线和连字符。`version_matched_to_repo` 优先使用去除首尾空白并规范化空格后的 `version_hint`；没有时，按可用字段将 `package_context` 组合为 `ecosystem name@version`。超过 160 个 Unicode 字符时截断并加 `...`；没有版本信息时用 `unknown`。宿主拒绝不兼容结果，并将有效 evidence 记录到现有 evidence context。
+
+如果会话设置了工具允许列表，必须同时允许 `web_search` 和该插件工具的命名空间公开名称。运行 `wuu plugin describe --workdir <workspace>`，在 `tools` 中查看插件工具注册的名称；名称由插件 ID、声明的工具 ID 和根据冲突情况确定的后缀组成。该命令检查新建的 CLI generation，使用结果前应确认它与会话所选的 generation 一致。
+
+工具调度采用原工具和替代实现中更严格的活动声明，调用经过原工具策略与插件工具授权；禁用任一名称都会阻止执行。插件以已安装扩展的信任和自身回调身份运行。原生文件和进程保护不会自动约束插件进程内的任意代码：托管副作用应使用带认证的宿主网关，替代实现也必须执行适当检查。已准入工作保留其 generation；显式移除或禁用会撤销目标。冻结的工具表保留定义直到当前轮次释放，但每次执行仍检查目标是否可用。
+
+运行 `node scripts/tool-replacement-e2e.mjs`，可验证打包 SDK 合成插件、受控模型、直接和 code mode 调用、worker 与侧会话、授权及 generation 更新。该测试不验证外部搜索服务、真实模型质量或界面呈现。
+
 ## 会话、工具与 agent 策略提供者
 
 `session.domain@1` 替换会话领域操作，包括元数据、历史、控制与恢复转换、成员准入和推理日志资源。`state.documents@1` 只替换文档存储；单独选择它不会替换会话算法。原生会话提供者拥有这些算法并使用所选文档存储。外部会话提供者自行实现公共操作；缺少方法或调用失败后，宿主不会代为运行原生算法。
 
+`ReadActiveHistoryQuery` 是 `session.domain@1` 的新增操作，使用现有的 `HistoryReadQuery` 和 `HistoryPage` 类型。它读取限定的序列范围并排除当前已撤回的记录；即使调用者传入旧快照或游标，也不会恢复已撤回的内容。桌面端注意力通知通过该操作在投递前重新核验对应的已准入输入和结果定位目标。提供者不支持该方法时安全拒绝；宿主不改用物理历史或缓存投影。原生提供者读取索引范围和当前撤回区间，无需加载完整对话。
+
 使用 `sessionDomainProvider(handlers)` 声明已实现的方法，并分发类型化参数数组和结果数组；`sessionDomain(host).call(method, args)` 是绑定消费者。保留导出记录的字段名，包括明确规定的 Go 大小写。日志句柄属于认证调用者及提供者 generation。遇到 `session_outcome_unknown`，应先检查持久结果再决定是否重试，不能把它当作写入失败的证明。OS 锁和执行身份仍由宿主负责，原子成员变更与领域决策由提供者负责。
+
+新增回执方法（`AcceptClientInput`、`ReadClientInput`、`ChangeClientInput`、
+`AppendAcceptedClientHistoryRecord`、`SettleClientInputExecution` 及作用域内的
+列表/恢复方法）使用同一个所选 `session.domain` 权威。
+`SessionDomainAcceptedClientInput` 保留 Go 字段大小写及 base64 字节片段，区分
+`null` 与空字节。回执接收、执行状态与持久历史准入是不同事实，都不表示模型已看到
+或读过消息。宿主从不可变绑定生成 `SessionDomainClientInputScope`；恢复只核对
+回执状态，不重放工具或外部操作。不支持的方法明确失败，消费者不能重新打开
+原生回执存储。
 
 `agent.tools@1` 替换工具注册表和执行流程。`list` 提供定义、发现目录和工具面事实，`resolve` 提供可用性与元数据，`execute` 执行所选实现；`freeze`、`unfreeze`、`prepare` 和 `finalize` 保持回合内的工具面与结果行为。贡献工具是另一种操作：贡献内容进入所选注册表的策略。原生提供者仅在被选中时初始化 Toolkit；外部选择不能隐式初始化原生 Toolkit 或合并其目录。通过 `toolService(host)`、`TOOL_SERVICE_DESCRIPTOR` 及认证宿主网关实现工具与 OS 操作。
 
@@ -129,6 +318,11 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 `finalize` 对归一化后的结果只执行一次，包括执行失败和通过所选批次资源结算的拒绝。其 `additional_context` 追加在同一次调用的 execute 上下文之后；`discovered_tools` 按名称合并，同名时采用 finalize 定义。即使并行调用乱序完成，这些补充信息仍绑定到对应的已结算调用。发现的工具定义仅附在该调用对模型可见的工具结果中。上下文也适用于嵌套调用，并保存在下一次模型输入回执中，不进入普通会话历史，也不泄漏到之后的新回合。hook 装饰器、原生服务适配器和所选批次不会从旧式共享的“最后一次结果”上下文槽推断调用归属；这些集成必须提供按调用归属的上下文。共享槽 API 仅保留给没有流式推测或嵌套执行的直接串行叶子工具消费方使用。
 
 `agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。会话标题使用下述独立选择的 `session.title` 服务。插件命令的侧边对话提示词仍独立于主会话/worker 契约；只替换 `agent.prompt` 不会替换这两种行为。
+
+Personal 策略是 `personal` 提供的普通 `agent.prompt@1` 服务。
+组合通过 `{ "service": "agent.prompt", "major": 1, "provider": "personal" }`
+显式选择它。该提供者从显式请求事实及贡献组装完整的非 Coding 基础提示，保留
+`main` / `worker` 执行角色。用户空间身份不会悄悄切换提示提供者或新增执行角色。
 
 ### 替换单个提示词分段
 
@@ -141,6 +335,15 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 `agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
 
 这些契约保留 Go 宿主和公共 SDK。作者通过普通服务声明及回调绑定的 `RuntimeHost` 实现进程插件，无须替换内核、导入私有源码或使用特权原生 API。
+
+### 进程读写排除路径
+
+`sandbox.process@1` 接收可选的 `ProcessSandboxPolicy.protected_paths`：
+绝对文件系统路径，同时禁止读取和写入，独立于 `writable_roots` 的写入授权。
+列表非空时，提供者必须返回 `ProcessSandboxResult.protected_paths_enforced: true`；
+仅有 `enforcement: "full"` 不够。缺少支持时在启动进程前拒绝，不回退到原生或
+未受约束的执行。空列表保留现有契约。它保护文件内容访问，不承诺网络、进程
+可见性或仅元数据查询的隔离。
 
 ## 完整工具批次
 
@@ -305,6 +508,15 @@ const page = await documentStore(host).exportPage({
 
 原生配置文件缺失时读出 `source: null`，存在但零字节时读出 `source: ""`。解码前先判断 `null`，客户端不得将这两个值互相归一化。配置 CAS 的 `source: null` 表示提供零个替换字节：原生文件模式会写入空文件，而不是删除；可信项目模式拒绝空 JSON。CAS 响应即使在空文件已存在时也可能保留 `null`，因此该字段描述返回的源字节，不是文件是否存在。
 
+`pluginSettingsStore(host).transferState(transfer)` 调用所选提供者可选的
+`transfer-state` 方法，使用 `StateTransfer`：`{ id, source_subject_id,
+target_subject_id, key_prefix, scope: "user" }`。准入宿主必须授权两个精确的主体。
+所有权仅转移一次：永久封禁来源前缀的读写；目标已有键即使值相同也会冲突；
+精确意图回执防止重试覆盖目标后续更新或删除。不确定结果需先核对，或显式重试
+完全相同的转移；SDK 不自动重试，也不通过读写序列模拟迁移。不支持的提供者
+必须返回明确的方法错误，不能回退到原生存储。完整的
+`PLUGIN_SETTINGS_STORE_DESCRIPTOR` 包含该方法；无法实现的提供者不得声明它。
+
 配置和设置 revision 都是不透明字符串，与文档存储的数字 revision 不同。这两个服务不提供文档事务回执协议。只有确定的 CAS 冲突可以在重读后重试；不可用或已取消的写入需要先核对结果。不要记录凭据字节、原始配置或包含秘密的有效配置。
 
 原生配置模式保留来源边界：显式文件模式使用指定文件，嵌入模式从传入配置开始，显式项目模式使用项目基础配置和设置层，仅在 `.wuu.json` 不存在时回退到 `wuu.json`。叠加在用户配置上的受限项目覆盖不会获得替换凭据或授权的权限。
@@ -442,9 +654,11 @@ provider 会停止这些调用；错误或空决策不会切换到另一实现�
 | `retry` | 失败的循环步骤可选择 `fail`、使用有界上下文溢出恢复的 `recover`，或对证明尚未提交的请求显式 `retry`。重试必须提供 `max_attempts`，首次值固定总尝试上限，后续决策不能续领预算。 |
 | `transport_retry` | 接收已结束物理尝试的失败、提交次数、尝试预算及退避配置。`fail` 终止；`recover` 给出 `recovery_action`（`replay_same_payload`、`wait_then_replay`、`refresh_credential` 或 `switch_transport`）及可选 `delay_ms`。仍须满足适配器能力及持久化工作流预算。 |
 
-策略不能重放已显示的部分输出、已接纳工具副作用、提交结果不明的操作，或重置
-耗尽的推理预算。传输恢复保留物理提交回执，包括结果不明但可能计费的提交；选中策略可以在
-预算内重新尝试模型调用，但不能重放已接纳或结果不明的工具副作用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
+循环重试不能重放部分输出、已接纳的工具副作用、提交结果不明的操作，也不能重置
+耗尽的推理预算。对于 `transport_retry`，当消费者能够丢弃失败尝试且已安装重放安全检查时，
+宿主可设置 `partial_output_resettable`。恢复决策仍须通过安全检查，以保护已完成的检查点及
+已接纳或结果不明的工具副作用；没有此能力时，部分输出会阻止传输恢复。传输恢复保留物理
+提交回执，包括结果不明但可能计费的提交；选中策略可以在预算内重新尝试模型调用。等待可取消，每次决策最多等待 60 秒。失败尝试的用量和持久回执
 会保留；刷新凭证、切换传输和重试仍需既有的预写回执及适配器支持。
 
 完整循环替换通过 `driverTurn(host, execution).evaluatePolicy()` 使用策略，
@@ -492,6 +706,12 @@ SDK，验证两个并行策略实现、子 Agent 继承及移除，证据保存�
 Wuu 循环及外部 CLI 适配器；`wuu.engine-execution` 消费所选服务。生产引擎注册表只是
 组合图的清单投影，不是第二套选择机制。替换插件可以提供 `engine.wuu`，无需继承原生
 实现或身份特权。所选提供方缺失或禁用时，不会生成替代实现。
+
+引擎可以在 `EngineDescriptor.capabilities` 中声明字符串能力 `explicit-context`。
+它承诺仅使用宿主显式上下文、传入历史及工具，不发现或注入环境中主目录、工作区的
+指令、技能或记忆。需要隔离上下文的消费者按能力而非引擎 ID 判断；缺少能力或调用
+失败时必须拒绝，不能自动换用其他引擎。这是逻辑上下文契约，不是操作系统沙箱，
+也不代表工具无法在明确授权后读取文件。
 
 版本 1 的 `descriptor` 响应可声明 `requires_host_model: boolean`。原生 Wuu 循环
 声明 `true`；自行管理模型访问和凭据的引擎声明 `false`，包括不需要模型的

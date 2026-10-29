@@ -62,6 +62,8 @@ child.stdin.write(JSON.stringify(authenticationHandshake('Bearer', token)) + '\n
 
 `initialize.resource_access` 发布版本 1 和 `delegated_actions`：它们表示协议能力，不是授权。未经接入执行准入检查的旧修改操作，即使策略返回允许，也会对非所有者关闭。支持的修改范围为普通 `thread/start`、`thread/delete`、`turn/start`、`turn/interrupt`、产物读取取消及单独验证的联邦操作。通用 project／handoff／worktree 创建、compact、排队 turn、模型／设置修改和插件管理尚不属于委派能力。下游新增处理器时需一起注册能力、资源提取和执行前检查，不能绕过策略。
 
+`plugin/client/request` 与 `plugin/client/cancel` 也支持非所有者准入，但不会一次性授权全部插件方法。每次请求必须命名完整路由：`plugin-subject`、`plugin-fingerprint`、`plugin-generation`、`plugin-method`，以及声明依赖的 `plugin-service` 或 ID 为 `plugin.client.request` 的 `plugin-capability`。可取消请求还包含 `plugin-client-request`；用户宿主调用另需宿主绑定的不可变 `user-space`。宿主会独立验证保留图中的真实插件包及已声明能力／服务，并在分发前再次检查所选策略。取消沿用原在途请求的身份和捕获的操作，不重新选择当前图。响应交付与重放重新检查同一路由及嵌套资源范围。插件安装、配置、存储管理及其他尚未支持的管理方法仍不向非所有者开放。
+
 未知 app-server 操作不会对非所有者使用通配授权。每个新方法都必须声明资源。列表与搜索会逐条过滤对话元数据；读取以及附件／产物请求各自验证。通知和反向请求也需要各自的操作权限。允许读取对话不代表允许开始 turn、批准工具或控制本地 UI。
 
 ## 撤销与重放

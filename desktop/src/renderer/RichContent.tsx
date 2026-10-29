@@ -12,6 +12,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import remarkMathDelimiters from "./remarkMathDelimiters";
+import remarkCurrencyMath from "./remarkCurrencyMath";
 import { unified } from "unified";
 import { toMarkdown } from "mdast-util-to-markdown";
 import type { Definition, Root as MarkdownRoot } from "mdast";
@@ -43,9 +44,10 @@ import {
   shouldHighlightCode,
 } from "./WorkspaceCodeHighlight";
 
-const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
+const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkCurrencyMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
 
 type RichContentProps = {
+  linkPolicy?: "external-only";
   text?: string;
   cwd?: string;
   /** Workspace-relative path of the source document, used to resolve file links. */
@@ -160,6 +162,7 @@ export const RichContent = memo(function RichContent(props: RichContentProps): J
 });
 
 function LegacyRichContent({
+  linkPolicy,
   text = "",
   cwd,
   documentPath,
@@ -172,6 +175,7 @@ function LegacyRichContent({
   const fallback = (
     <div className="rich-content">
       <MarkdownContent
+        linkPolicy={linkPolicy}
         text={text}
         cwd={cwd}
         documentPath={documentPath}
@@ -182,7 +186,7 @@ function LegacyRichContent({
       />
     </div>
   );
-  return <>{workbench ? workbench.renderContent({ category: "message", contentType: "text/markdown", content: text,
+  return <>{workbench && linkPolicy !== "external-only" ? workbench.renderContent({ category: "message", contentType: "text/markdown", content: text,
     metadata: { cwd, allowRawHtml }, fallback }) : fallback}</>;
 }
 
@@ -197,6 +201,7 @@ function MarkdownContentView({
   sourceMapping = false,
   documentContext,
   codeCursor,
+  linkPolicy,
 }: {
   text: string;
   cwd?: string;
@@ -213,11 +218,13 @@ function MarkdownContentView({
   documentContext?: MarkdownFragmentContext;
   /** Rendered after the last code line when a code block ends the source. */
   codeCursor?: ReactNode;
+  /** External-only plugin messages cannot address Coding workspace files or embed unverified resources. */
+  linkPolicy?: "external-only";
 }): JSX.Element {
   const publicFiles = Boolean(useOptionalPreviewContent());
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath),
-    [cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath]
+    () => markdownComponents(cwd, renderText, linkPolicy === "external-only" ? false : renderMermaid, sourceMapping, publicFiles, documentPath, linkPolicy),
+    [cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath, linkPolicy]
   );
   const source = documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text;
   const sourceEnd = source.trimEnd().length;
@@ -263,6 +270,7 @@ function markdownComponents(
   sourceMapping: boolean,
   publicFiles: boolean,
   documentPath?: string,
+  linkPolicy?: "external-only",
 ): Components {
   const richTextOptions: RichTextRenderOptions = {
     renderText,
@@ -322,6 +330,7 @@ function markdownComponents(
     a({ href, title, children }) {
       const inner = renderMarkdownText(children, richTextOptions, "a");
       if (href === PENDING_STREAM_LINK) return <span>{inner}</span>;
+      if (linkPolicy === "external-only" && !/^(https?:\/\/|mailto:)/i.test(href || "")) return <span>{inner}</span>;
       const target = parseLinkTarget(href);
       if (target.kind === "workspace-file") {
         if (!publicFiles) {
@@ -337,7 +346,7 @@ function markdownComponents(
         );
       }
       if (target.kind === "external") {
-        return <RichWebLink href={target.url} title={title}>{inner}</RichWebLink>;
+        return <RichWebLink href={target.url} title={title} externalOnly={linkPolicy === "external-only"}>{inner}</RichWebLink>;
       }
       if (target.kind === "anchor") {
         return <RichAnchorLink id={target.id} title={title}>{inner}</RichAnchorLink>;
@@ -345,6 +354,7 @@ function markdownComponents(
       return <span>{inner}</span>;
     },
     img({ src, alt }) {
+      if (linkPolicy === "external-only") return <span>{alt}</span>;
       if (src === PENDING_STREAM_LINK) return <span>{alt}</span>;
       if (!src) {
         return null;
@@ -717,11 +727,13 @@ function RichAnchorLink({
 }
 
 function RichWebLink({
+  externalOnly = false,
   href,
   title,
   children,
 }: {
   href: string;
+  externalOnly?: boolean;
   title?: string;
   children: ReactNode;
 }): JSX.Element {
@@ -738,7 +750,7 @@ function RichWebLink({
   const openLink = (event: ReactMouseEvent<HTMLAnchorElement>): void => {
     if (event.button > 1) return;
     event.preventDefault();
-    open(false, workspaceBrowserClickModifiers(event));
+    open(externalOnly, workspaceBrowserClickModifiers(event));
   };
   const closeContextMenu = (): void => setContextMenu(null);
   return (
@@ -757,7 +769,7 @@ function RichWebLink({
           }}
         >
           <span className="rich-link-content">
-            <RichWebLinkIcon href={href} />
+            {externalOnly ? <Globe2 className="icon-xs" /> : <RichWebLinkIcon href={href} />}
             <span className="rich-link-label">{children}</span>
           </span>
         </a>
@@ -769,7 +781,7 @@ function RichWebLink({
           y={contextMenu.y}
           onClose={closeContextMenu}
           items={[
-            { label: t("rich.openLinkInWorkspace"), onSelect: () => open(false) },
+            ...(!externalOnly ? [{ label: t("rich.openLinkInWorkspace"), onSelect: () => open(false) }] : []),
             { label: t("rich.openLinkExternal"), onSelect: () => open(true) },
           ]}
         />

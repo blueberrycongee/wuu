@@ -9,7 +9,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
-function contextFrom(value: unknown): RuntimeContext | undefined {
+function contextFrom(value: unknown): Extract<RuntimeContext, { kind: "project" | "no_project" }> | undefined {
   const context = record(value);
   if (!context || typeof context.cwd !== "string" || !context.cwd || context.cwd.length > 4096) return;
   if (context.kind === "no_project") return { kind: "no_project", cwd: context.cwd };

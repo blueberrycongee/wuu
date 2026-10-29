@@ -1,5 +1,6 @@
 import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
+import type { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { useComposerHeight } from "./useComposerHeight";
@@ -46,6 +47,7 @@ import { handoffPromptFromIntent } from "./HandoffDraft";
 import { useI18n } from "./i18n";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
+import { ComposerPlusButton } from "./ComposerRuntimeMenus";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
 import { showErrorToast } from "./Toast";
@@ -130,6 +132,10 @@ export function ComposerContinueButton({ continuation, disabled }: {
 }
 
 export function SplitPaneComposer({
+  pluginHost,
+  placeholder,
+  framed = false,
+  allowWorkspaceReferences = true,
   prompt,
   setPrompt,
   files,
@@ -160,6 +166,10 @@ export function SplitPaneComposer({
   onSend,
   onInterrupt,
 }: {
+  pluginHost?: PluginHost;
+  placeholder?: string;
+  framed?: boolean;
+  allowWorkspaceReferences?: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
   files: ComposerFile[];
@@ -300,7 +310,7 @@ export function SplitPaneComposer({
   }
   const services = useComposerServices();
   const inline = useComposerInlineCompletion({
-    host: services?.presentation ?? desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
+    host: pluginHost ?? services?.presentation ?? desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
     contextKey: JSON.stringify([workspaceId, workspaceRoot, queryHistorySessionID]), revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
@@ -347,7 +357,7 @@ export function SplitPaneComposer({
       return;
     }
     const workspacePath = event.dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME);
-    if (workspacePath) {
+    if (workspacePath && allowWorkspaceReferences) {
       event.preventDefault();
       resetQueryHistoryNavigation();
       setPrompt(appendWorkspacePathToPrompt(prompt, workspacePath));
@@ -498,9 +508,14 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                <div className="composer-bar split-composer-bar">
+                <div className={`${framed ? "composer-editor" : "composer-bar"} split-composer-bar`}>
                   <div className="composer-bar-left">
-                    {mobileWeb ? (
+                    {framed ? (
+                      <ComposerPlusButton variant="dock" disabled={readOnly} commands={[]} menuAnchorRef={shellRef}
+                        onAddAttachment={() => attachmentInputRef.current?.click()}
+                        mobileAttachments={mobileWeb ? { onTakePhoto: openCamera, onPickPhotos: () => photosInputRef.current?.click(), onPickFiles: () => attachmentInputRef.current?.click() } : undefined}
+                        onSelectCommand={() => {}} />
+                    ) : mobileWeb ? (
                       <ComposerAttachMenuButton
                         variant="dock"
                         disabled={readOnly}
@@ -525,7 +540,7 @@ export function SplitPaneComposer({
                     ref={textareaRef}
                     data-wuu-component="composer-input"
                     value={visiblePromptValue}
-                    placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
+                    placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : (placeholder ?? t("composer.continueBranch"))}
                     disabled={readOnly}
                     aria-readonly={readOnly}
                     aria-describedby={inline.text ? inline.descriptionId : undefined}

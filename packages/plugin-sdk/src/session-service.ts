@@ -1,10 +1,34 @@
+import type { StateInspectionTopology, StateInspection, StateInspectionList, StateInspectionResolution, StateInspectionStatus } from "./persistence.js";
 import type { ModelStepUsageV1 } from "./engine.js";
-import type { RuntimeHost, ServiceDescriptor, ServiceInvokeParams, ServiceRequirement } from "./index.js";
+import type { ClientInputReceipt, MessageRelation, RuntimeHost, ServiceDescriptor, ServiceInvokeParams, ServiceRequirement } from "./index.js";
 
 /** Complete session-domain operations. Storage and atomic domain transitions belong to the selected provider. */
 export const SESSION_DOMAIN_SERVICE = "session.domain";
 export const SESSION_DOMAIN_DEFAULT_MODULE = "wuu.session.default";
 export interface SessionDomainJournalHandle { readonly handle: string; readonly runtime_id: string; }
+
+/** Host-authenticated admission data, not caller-supplied authority. Go field
+ * casing is retained. JSON byte slices are base64; null and empty are distinct.
+ * SelectionJSON preserves original attachment bytes independently of tool copies.
+ */
+export interface SessionDomainAcceptedClientInput {
+  readonly Receipt: ClientInputReceipt;
+  readonly Fingerprint: string;
+  readonly MessageJSON: string | null;
+  readonly RuntimeJSON: string | null;
+  readonly SelectionJSON: string | null;
+  readonly LiveOwner: string;
+}
+/** Immutable host binding. Payload queries require SessionID; recovery may span
+ * this binding or be narrowed to its LiveOwner. Domain IDs do not grant access.
+ */
+export interface SessionDomainClientInputScope {
+  readonly Binding: { readonly user_space_id?: string; readonly product_domain?: string };
+  readonly SessionID: string;
+  readonly PluginID: string;
+  readonly LiveOwner: string;
+}
+
 
 export interface SessionDomainBudgetLimit {
   readonly "Set": boolean;
@@ -128,6 +152,10 @@ export interface SessionDomainHistoryReadQuery {
 }
 
 export interface SessionDomainHistoryRecord {
+  readonly relation?: MessageRelation;
+  /** Admission-only wire fences; never persist either field into history. */
+  readonly accepted_client_input?: SessionDomainAcceptedClientInput;
+  readonly accepted_client_turn_id?: string;
   readonly "model_steps"?: readonly ModelStepUsageV1[];
   readonly "answer_ready_at"?: (string | null);
   readonly "at"?: string;
@@ -186,6 +214,10 @@ export interface SessionDomainHistoryRef {
 }
 
 export interface SessionDomainHistorySearchQuery {
+  /** Conversation projection and persisted-time bounds; omission preserves legacy search. */
+  readonly View?: string;
+  readonly TimeMin?: string;
+  readonly TimeMax?: string;
   readonly "BeforeSeq": number;
   readonly "Cursor": (SessionDomainHistoryCursor | null);
   readonly "EndSeq": number;
@@ -507,6 +539,9 @@ export interface SessionDomainNextStepModelSelection {
 }
 
 export interface SessionDomainSession {
+  readonly user_space_id?: string;
+  readonly product_domain?: string;
+  readonly agent_id?: string;
   readonly "model_selection_revision"?: number;
   readonly "model_selection_apply_at"?: "" | "next_step";
   readonly "approve_for_me"?: boolean;
@@ -681,6 +716,21 @@ export interface SessionDomainWorktreeInfo {
  * An uncertain mutation response is not permission to blindly retry a domain mutation.
  */
 export interface SessionDomainMethods {
+  "InspectionAuthority": { args: readonly []; values: readonly [StateInspectionTopology]; };
+  "ListInspections": { args: readonly []; values: readonly [StateInspectionList]; };
+  "ReconcileInspection": { args: readonly [request:StateInspectionResolution]; values: readonly [StateInspectionStatus]; };
+  "AcquireInspection": { args: readonly [id: string]; values: readonly [StateInspection]; };
+  "ReleaseInspection": { args: readonly [id: string]; values: readonly []; };
+  "AppendAcceptedUserHistoryRecordWithControl": { args: readonly [id: string, record: SessionDomainHistoryRecord, accepted: SessionDomainHeldUserWork, control: SessionDomainControl | null, baseline: SessionDomainControl | null]; values: readonly [number]; };
+  "ReadClientInput": { args: readonly [scope: SessionDomainClientInputScope, hostRequestID: string]; values: readonly [SessionDomainAcceptedClientInput, boolean]; };
+  "ListUnsettledClientInputs": { args: readonly [scope: SessionDomainClientInputScope]; values: readonly [ReadonlyArray<SessionDomainAcceptedClientInput> | null]; };
+  "AcceptClientInput": { args: readonly [input: SessionDomainAcceptedClientInput, control: SessionDomainControl | null, baseline: SessionDomainControl | null]; values: readonly [SessionDomainAcceptedClientInput, boolean]; };
+  "ChangeClientInput": { args: readonly [expected: SessionDomainAcceptedClientInput, state: string, owner: string, runtimeJSON: string | null, control: SessionDomainControl | null, baseline: SessionDomainControl | null]; values: readonly [SessionDomainAcceptedClientInput]; };
+  "AppendAcceptedClientHistoryRecord": { args: readonly [id: string, record: SessionDomainHistoryRecord, accepted: SessionDomainAcceptedClientInput, turnID: string, control: SessionDomainControl | null, baseline: SessionDomainControl | null]; values: readonly [number]; };
+  "SettleClientInputExecution": { args: readonly [scope: SessionDomainClientInputScope, hostRequestID: string, turnID: string, state: string, reason: string]; values: readonly []; };
+  "ListClientInputRecoveryCandidates": { args: readonly [scope: SessionDomainClientInputScope]; values: readonly [ReadonlyArray<SessionDomainAcceptedClientInput> | null]; };
+  "RecoverClientInput": { args: readonly [scope: SessionDomainClientInputScope, expected: SessionDomainAcceptedClientInput]; values: readonly []; };
+  "ClientInputHistoryReceipts": { args: readonly [scope: SessionDomainClientInputScope]; values: readonly [Readonly<Record<string, ClientInputReceipt>> | null]; };
   "AcceptHeldUserWork": { args: readonly [sessionID: string, entry: SessionDomainHeldUserWork]; values: readonly [boolean]; };
   "AdmitThreadExecution": { args: readonly [threadId: string, limit: number, activeSessionIds: ReadonlyArray<string> | null, probedSessionIds: ReadonlyArray<string> | null]; values: readonly [number]; };
   "AppendAcceptedUserHistoryRecord": { args: readonly [id: string, record: SessionDomainHistoryRecord, accepted: SessionDomainHeldUserWork]; values: readonly [number]; };
@@ -772,6 +822,9 @@ export interface SessionDomainMethods {
   "PutSessionLaunch": { args: readonly [record: SessionDomainSessionLaunchRecord]; values: readonly [SessionDomainSessionLaunchRecord]; };
   "ReadControl": { args: readonly [id: string]; values: readonly [SessionDomainControl, boolean]; };
   "ReadHistoryPage": { args: readonly [id: string, startSeq: number, limit: number]; values: readonly [SessionDomainHistoryPage]; };
+  /** Bounded active transcript read: current retractions apply even to an older snapshot/cursor.
+   * Unsupported providers must reject this distinct operation, never substitute physical history. */
+  "ReadActiveHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadPluginGenerationSnapshot": { args: readonly [sessionID: string]; values: readonly [SessionDomainPluginGenerationSnapshot, boolean]; };
   "ReadProjectWork": { args: readonly [id: string]; values: readonly [SessionDomainProjectWork]; };
@@ -825,6 +878,21 @@ export interface SessionDomainMethods {
 }
 
 const sessionDomainArity = {
+  "InspectionAuthority": [0, 1],
+  "ListInspections": [0, 1],
+  "ReconcileInspection": [1, 1],
+  "AcquireInspection": [1, 1],
+  "ReleaseInspection": [1, 0],
+  "AppendAcceptedUserHistoryRecordWithControl": [5, 1],
+  "ReadClientInput": [2, 2],
+  "ListUnsettledClientInputs": [1, 1],
+  "AcceptClientInput": [3, 2],
+  "ChangeClientInput": [6, 1],
+  "AppendAcceptedClientHistoryRecord": [6, 1],
+  "SettleClientInputExecution": [5, 0],
+  "ListClientInputRecoveryCandidates": [1, 1],
+  "RecoverClientInput": [2, 0],
+  "ClientInputHistoryReceipts": [1, 1],
   "AcceptHeldUserWork": [2, 1],
   "AdmitThreadExecution": [4, 1],
   "AppendAcceptedUserHistoryRecord": [3, 1],
@@ -916,6 +984,7 @@ const sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
   "ReadProjectWork": [1, 1],
@@ -982,7 +1051,7 @@ export function sessionDomainDescriptor(methods: readonly SessionDomainMethod[] 
     methods: methods.map(name => ({ name,
       input_schema: `${SESSION_DOMAIN_SERVICE}.${name}.input.v1`,
       output_schema: `${SESSION_DOMAIN_SERVICE}.${name}.output.v1`,
-      ...(name === "Journal.Close" ? { cleanup: true } : {}),
+      ...(name === "Journal.Close" || name === "ReleaseInspection" || name === "ReconcileInspection" ? { cleanup: true } : {}),
     })),
   };
 }
@@ -1033,7 +1102,7 @@ export function sessionDomainProvider(handlers: SessionDomainHandlers) {
 export function sessionDomain(host: RuntimeHost) {
   return {
     async call<K extends SessionDomainMethod>(method: K, args: SessionDomainMethods[K]["args"]): Promise<SessionDomainMethods[K]["values"]> {
-      const result = await host.call("host.service.call", { service: SESSION_DOMAIN_SERVICE, method, params: { args } }) as { values?: unknown };
+      const result = await host.call("host.service.call", { service: SESSION_DOMAIN_SERVICE, method, params: { args } }, method === "ReleaseInspection" || method === "ReconcileInspection" ? {cleanup:true} : undefined) as { values?: unknown };
       if (!Array.isArray(result?.values) || result.values.length !== sessionDomainArity[method][1]) {
         throw new Error(`Invalid ${SESSION_DOMAIN_SERVICE}.${method} result`);
       }
@@ -1066,6 +1135,8 @@ export const SESSION_DOMAIN_ERRORS = [
   "project_work_not_found",
   "project_work_changed",
   "project_worker_capacity",
+  "inspection_active",
+  "inspection_unsupported",
   "state_conflict",
   "state_operation_conflict",
   "state_binding_changed",

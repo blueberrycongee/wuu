@@ -77,3 +77,9 @@ describe("process notification classification", () => {
     expect(isInternalUserNotificationItem({ text: "真实用户消息" })).toBe(false);
   });
 });
+
+it("honors explicit user provenance before legacy notification text heuristics", () => {
+  for (const text of ["<process_notification>quoted</process_notification>", "<subagent_notification>quoted</subagent_notification>", '{"author":"/root/a","recipient":"/root/b"}']) {
+    expect(isInternalUserNotificationItem({ origin: "user", text })).toBe(false);
+  }
+});

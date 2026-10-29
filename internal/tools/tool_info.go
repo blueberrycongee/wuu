@@ -100,8 +100,21 @@ func buildToolInfoForArgs(tool Tool, exposure ToolExposure, argsJSON string) Too
 }
 
 func (t *Toolkit) toolExposure(name string) ToolExposure {
+	if _, bound := t.replacementBindings[name]; bound && t.nativeReplacements[name] == nil {
+		return ToolExposureHidden
+	}
 	if t.IsToolDisabled(name) {
 		return ToolExposureHidden
+	}
+	if tool := t.LookupTool(name); tool != nil {
+		if availability, ok := tool.(ToolAvailability); ok {
+			t.mcpCatalogMu.RLock()
+			frozen, pinned := t.frozenReplacementAvailability[name]
+			t.mcpCatalogMu.RUnlock()
+			if (pinned && !frozen) || (!pinned && !availability.ToolAvailable()) {
+				return ToolExposureHidden
+			}
+		}
 	}
 	if t.env != nil && t.env.externalCapabilitiesOnly {
 		return ToolExposureDirect

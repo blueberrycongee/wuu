@@ -80,6 +80,11 @@ func insertHistoryDocument(tx *persistence.Tx, id string, seq int, record Histor
 }
 
 func appendHistoryDocument(tx *persistence.Tx, id string, record HistoryRecord, now time.Time) (int, error) {
+	if record.Role == "user" || record.AcceptedClientInput != nil {
+		if err := validateAcceptedClientInputDocument(tx, id, record); err != nil {
+			return 0, err
+		}
+	}
 	if record.Role == "user" && record.ClientID != "" {
 		if err := consumeHeldWorkDocument(tx, id, record); err != nil {
 			return 0, err
@@ -91,6 +96,9 @@ func appendHistoryDocument(tx *persistence.Tx, id string, record HistoryRecord, 
 	}
 	head++
 	if err := insertHistoryDocument(tx, id, head, record, now); err != nil {
+		return 0, err
+	}
+	if err := settleClientInputDocument(tx, record, head); err != nil {
 		return 0, err
 	}
 	return head, tx.Put(documentNamespace("session_history_heads"), id, head)
@@ -118,6 +126,21 @@ func (s *documentStore) AppendAcceptedUserHistoryRecord(id string, record Histor
 	return s.appendFencedHistoryRecord(id, record, nil, nil, &accepted)
 }
 
+// AppendAcceptedUserHistoryRecordWithControl retains the caller's control and
+// continuation baseline when a held message is admitted into history.
+func (s *documentStore) AppendAcceptedUserHistoryRecordWithControl(id string, record HistoryRecord, accepted HeldUserWork, control, baseline *Control) (int, error) {
+	record.ExpectedHeldMessage = accepted.MessageJSON
+	return s.appendFencedHistoryRecord(id, record, control, baseline, &accepted)
+}
+
+// AppendAcceptedClientHistoryRecord consumes the receipt and writes history in
+// the same selected-provider transaction, retaining ordinary control fences.
+func (s *documentStore) AppendAcceptedClientHistoryRecord(id string, record HistoryRecord, accepted AcceptedClientInput, turnID string, control, baseline *Control) (int, error) {
+	record.AcceptedClientInput = &accepted
+	record.AcceptedClientTurnID = turnID
+	return s.appendFencedHistoryRecord(id, record, control, baseline, nil)
+}
+
 func (s *documentStore) appendFencedHistoryRecord(id string, record HistoryRecord, control, baseline *Control, accepted *HeldUserWork) (int, error) {
 	now := time.Now().UTC()
 	var seq int
@@ -125,21 +148,8 @@ func (s *documentStore) appendFencedHistoryRecord(id string, record HistoryRecor
 		if _, err := requireSessionDocument(tx, id); err != nil {
 			return err
 		}
-		if control != nil {
-			if control.SessionID != id {
-				return ErrControlChanged
-			}
-			if err := validateControlDocument(tx, *control); err != nil {
-				return err
-			}
-		}
-		if baseline != nil {
-			if baseline.SessionID != id {
-				return ErrControlChanged
-			}
-			if err := validateContinuationDocument(tx, *baseline); err != nil {
-				return err
-			}
+		if err := validateHistoryControlDocument(tx, id, control, baseline); err != nil {
+			return err
 		}
 		if record.Role == "user" && record.ClientID != "" {
 			if err := validateInboxDocument(tx, record.ClientID); err != nil {
@@ -227,6 +237,15 @@ func (s *documentStore) RewriteHistoryRecords(id string, records []HistoryRecord
 
 type historyRetraction struct{ FromSeq, ThroughSeq int }
 
+func historySequenceRetracted(seq int, retractions []historyRetraction) bool {
+	for _, span := range retractions {
+		if seq >= span.FromSeq && seq <= span.ThroughSeq {
+			return true
+		}
+	}
+	return false
+}
+
 func loadHistoryDocuments(tx *persistence.Tx, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	rows, err := readDocumentRows[HistoryRecord](tx, "session_messages", documentPrefix(id))
 	if err != nil {
@@ -243,14 +262,7 @@ func loadHistoryDocuments(tx *persistence.Tx, id string, includeMeta, activeOnly
 		if !includeMeta && strings.EqualFold(row.Role, "meta") {
 			continue
 		}
-		retracted := false
-		for _, span := range retractions {
-			if row.Seq >= span.FromSeq && row.Seq <= span.ThroughSeq {
-				retracted = true
-				break
-			}
-		}
-		if retracted {
+		if historySequenceRetracted(row.Seq, retractions) {
 			continue
 		}
 		hydrateHistoryRecordFromStorage(&row)

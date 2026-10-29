@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // A candidate allocates only a scope. The selected provider decides whether the
@@ -27,7 +27,8 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		cfg := generation.settings
 		kit.SetStateDir(s.StateDir)
 		kit.SetRuntimeHome(s.WuuHome)
-		kit.SetWorkingNotesHome(s.WuuHome)
+		kit.SetWorkingNotesHome(s.ProductDataRoot())
+		kit.SetProtectedPaths(memoryProtectedPaths(s.WuuHome, s.UserBinding()))
 		kit.SetWorkspaceID(s.WorkspaceID)
 		kit.SetProcessManager(s.ProcessManager)
 		kit.SetActivityRegistry(s.ActivityRegistry)
@@ -44,16 +45,27 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		kit.SetNativeDeferredToolDiscovery(s.NativeDeferredToolDiscovery)
 		kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		bindToolkitHooks(kit, generation.hooks)
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
-		manager, err := startMCPManager(cfg, generation.active, required, generation.mcpOAuth)
+		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
+		var manager *mcp.Manager
+		if !s.UserBinding().IsUser() {
+			manager, err = startMCPManager(cfg, generation.active, required, generation.mcpOAuth)
+		}
 		if err != nil {
 			return toolservice.Backend{}, err
 		}
 		kit.SetMCPManager(manager)
 		codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
 		kit.ConfigurePTC(codeMode, cfg.PTC)
+		executor := newPluginToolExecutor(kit, generation.host, "", s.RootDir)
+		if err := configureToolReplacements(executor, kit, cfg.Agent.ToolReplacements); err != nil {
+			if manager != nil {
+				_ = manager.Close()
+			}
+			_ = codeMode.Close()
+			return toolservice.Backend{}, err
+		}
 		generation.toolkit, generation.codeMode, generation.mcp = kit, codeMode, manager
-		return toolservice.Backend{Executor: newPluginToolExecutor(kit, generation.host, "", s.RootDir), Toolkit: kit, Close: func(context.Context) error {
+		return toolservice.Backend{Executor: executor, Toolkit: kit, Close: func(context.Context) error {
 			var err error
 			if manager != nil {
 				err = manager.Close()

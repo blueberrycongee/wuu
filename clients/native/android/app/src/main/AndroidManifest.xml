@@ -8,6 +8,14 @@
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="tasks" />
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize">
             <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
@@ -16,6 +24,12 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="wuu" android:host="account" android:path="/github" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="wuu" android:host="personal" />
             </intent-filter>
         </activity>
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.exports"

@@ -10,6 +10,9 @@ export async function activate(api) {
     "goal.pause": "Pause", "goal.resume": "Resume", "goal.clear": "Clear goal", "goal.end": "End goal",
     "goal.objective": "Goal", "goal.next": "Next goal", "goal.start": "Start goal",
     "goal.usage": "{tokens} tokens · {duration}",
+    "goal.unavailable": "Goal is temporarily unavailable. Retrying automatically.",
+    "goal.actionFailed": "Could not update the goal. Please try again.",
+    "goal.needsAttention": "This goal needs attention. Review it before continuing.",
     "goal.duration.second": "{count}s", "goal.duration.minute": "{count}m", "goal.duration.hour": "{count}h",
   } });
   api.registerLocale({ id: "goal-zh", locale: "zh-CN", entries: {
@@ -18,6 +21,9 @@ export async function activate(api) {
     "goal.pause": "暂停", "goal.resume": "继续", "goal.clear": "清除目标", "goal.end": "结束目标",
     "goal.objective": "目标", "goal.next": "新目标", "goal.start": "开始目标",
     "goal.usage": "{tokens} tokens · 用时 {duration}",
+    "goal.unavailable": "目标暂时不可用，正在自动重试。",
+    "goal.actionFailed": "目标未能更新，请重试。",
+    "goal.needsAttention": "此目标需要处理，请检查后再继续。",
     "goal.duration.second": "{count} 秒", "goal.duration.minute": "{count} 分", "goal.duration.hour": "{count} 小时",
   } });
   // The two largest units, as the host words turn durations: 9 秒, 1 分 30 秒, 2 小时 5 分.
@@ -52,7 +58,14 @@ export async function activate(api) {
       publish(id, { goal, error: "", loaded: true });
     } catch (error) {
       if (!disposed && revisions.get(id) === revision) {
-        publish(id, { ...(cache.get(id) || empty), loaded: true, error: String(error.message || error) });
+        const message = String(error.message || error);
+        // Electron wraps the host's exact missing-provider message. Keep
+        // version mismatches and provider failures visible to the user.
+        if (message.endsWith("no provider for service goal.control")) {
+          publish(id, { goal: null, error: "", loaded: true, unavailable: true });
+        } else {
+          publish(id, { ...(cache.get(id) || empty), loaded: true, unavailable: false, error: message });
+        }
       }
     }
   }
@@ -68,11 +81,11 @@ export async function activate(api) {
     };
   }
   // Observer writes can settle after the host's terminal notification.
-  const timer = setInterval(() => { for (const id of listeners.keys()) void refresh(id); }, 1500);
+  const timer = setInterval(() => { for (const id of listeners.keys()) if (!cache.get(id)?.unavailable) void refresh(id); }, 1500);
   api.registerCleanup(() => { disposed = true; clearInterval(timer); listeners.clear(); cache.clear(); });
   api.onHostEvent((event) => {
     const method = event?.message?.method;
-    if (["thread/started", "thread/resumed", "turn/started", "turn/completed", "turn/error"].includes(method)) {
+    if (["plugin/inventory/changed", "thread/started", "thread/resumed", "turn/started", "turn/completed", "turn/error"].includes(method)) {
       for (const id of listeners.keys()) void refresh(id);
     }
   });
@@ -113,8 +126,9 @@ export async function activate(api) {
       } catch (cause) { setError(String(cause.message || cause)); }
       finally { setBusy(false); }
     }
-    const visibleError = error || state.error || goal?.error;
-    if (!goal && !open && !visibleError) return null;
+    // Runtime failures retain their cause in host diagnostics, not composer prose.
+    const visibleError = error ? tr("goal.actionFailed") : state.error ? tr("goal.unavailable") : goal?.error ? tr("goal.needsAttention") : "";
+    if (state.unavailable || (!goal && !open && !visibleError)) return null;
     return h(ComposerDrawer, {
       className: "plugin-goal",
       "aria-label": tr("goal.label"),

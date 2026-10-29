@@ -93,7 +93,7 @@ public func readMessageAttachment(_ attachment: JSONValue, scopeID: String, mess
     return try decodeInlineAttachment(descriptor, encoded: encoded)
 }
 
-private func readAttachmentChunks(_ method: String, params: JSONValue, mediaType: String, limit: Int = 16 * 1024 * 1024,
+func readAttachmentChunks(_ method: String, params: JSONValue, mediaType: String, limit: Int = 16 * 1024 * 1024,
     verifyDigest: Bool = false, call: @escaping @Sendable (String, JSONValue) async throws -> JSONValue) async throws -> String {
     let read: @Sendable (Int, Int?, String?) async throws -> (data: String, total: Int, digest: String?) = { offset, total, digest in
         try Task.checkCancellation()

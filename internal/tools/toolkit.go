@@ -57,9 +57,14 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // (all registered tools). The old switch-case dispatch is replaced by
 // registry lookup.
 type Toolkit struct {
+	fileActionGate          FileActionGate
+	permissionHookLocalOnly func() bool
+	fileChangedLocalOnly    func() bool
 	env                     *Env
 	sessionStore            *session.Store
 	registry                *Registry
+	nativeReplacements      map[string]func(Tool) Tool
+	replacementBindings     map[string]config.ToolReplacement
 	disabledTools           map[string]struct{}
 	toolPolicy              func(string) bool
 	exposureMu              sync.RWMutex
@@ -87,9 +92,10 @@ type Toolkit struct {
 	// in flight (see FreezeToolSurface) so asynchronous server events cannot
 	// reshape the provider tool list between rounds of one run. Guarded by
 	// mcpCatalogMu.
-	surfaceFreezeDepth  int
-	activityRegistry    *activity.Registry
-	mcpActivityBindings map[string]MCPActivityBinding
+	surfaceFreezeDepth            int
+	frozenReplacementAvailability map[string]bool
+	activityRegistry              *activity.Registry
+	mcpActivityBindings           map[string]MCPActivityBinding
 
 	// activeProfileMu guards activeProfile and activeSurface. Reads
 	// from Definitions() and Execute() take the RLock; SetActiveProfile
@@ -107,8 +113,12 @@ type Toolkit struct {
 
 // SetPermissionRequestHook installs the hook invoked immediately before the
 // workspace boundary makes its allow/deny decision.
-func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error) {
+func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error, localOnly ...func() bool) {
 	t.permissionRequestHook = hook
+	t.permissionHookLocalOnly = nil
+	if len(localOnly) == 1 {
+		t.permissionHookLocalOnly = localOnly[0]
+	}
 }
 
 type permissionCheckedContextKey struct{}
@@ -124,11 +134,8 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	}
 	// The selected provider makes the policy decision before local enforcement
 	// or contextual review. Neither can turn its denial into an allowed action.
-	if t.authorizer != nil {
-		decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
-			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
-			PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
-		})
+	if t.authorizer != nil && !t.hasFileAuthorization(ctx, info, call) {
+		decision, err := t.authorizer.Authorize(ctx, t.authorizationRequest(info, call))
 		if err != nil {
 			return authorizationDenied(info.Name, "authorization provider unavailable")
 		}
@@ -170,6 +177,7 @@ func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
 	}
 	t.approveForMe = parent.approveForMe
 	t.reviewer = parent.reviewer
+	t.fileActionGate = parent.fileActionGate
 }
 
 func (t *Toolkit) ExecutionEnvironment() executionenv.Executor { return t.env.ExecutionEnvironment }
@@ -310,6 +318,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		PluginManager:             t.env.PluginManager,
 		WorkingNotesHome:          t.env.WorkingNotesHome,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
+		ProtectedPaths:            append([]string(nil), t.env.ProtectedPaths...),
 		Skills:                    t.env.Skills,
 		OnFileChanged:             t.env.OnFileChanged,
 		OnSessionWorkspaceChanged: t.env.OnSessionWorkspaceChanged,
@@ -326,16 +335,20 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	env.skillCatalog.Store(catalog)
 
 	clone := &Toolkit{
-		sessionStore:          t.sessionStore,
-		env:                   &env,
-		boundary:              t.boundary,
-		permissionRequestHook: t.permissionRequestHook,
-		authorizer:            t.authorizer,
-		reviewer:              t.reviewer,
-		approveForMe:          t.approveForMe,
-		mcpManager:            t.mcpManager,
-		activityRegistry:      t.activityRegistry,
-		mcpActivityBindings:   cloneMCPActivityBindings(t.mcpActivityBindings),
+		replacementBindings:     t.ReplacementBindings(),
+		sessionStore:            t.sessionStore,
+		fileActionGate:          t.fileActionGate,
+		permissionHookLocalOnly: t.permissionHookLocalOnly,
+		fileChangedLocalOnly:    t.fileChangedLocalOnly,
+		env:                     &env,
+		boundary:                t.boundary,
+		permissionRequestHook:   t.permissionRequestHook,
+		authorizer:              t.authorizer,
+		reviewer:                t.reviewer,
+		approveForMe:            t.approveForMe,
+		mcpManager:              t.mcpManager,
+		activityRegistry:        t.activityRegistry,
+		mcpActivityBindings:     cloneMCPActivityBindings(t.mcpActivityBindings),
 	}
 	t.exposureMu.RLock()
 	clone.toolSearchEnabled = t.toolSearchEnabled
@@ -429,7 +442,57 @@ func (t *Toolkit) rebuildRegistry() {
 	if hasCodeMode {
 		registered = append(registered, NewCodeModeExecTool(t))
 	}
+	for i, tool := range registered {
+		if wrap := t.nativeReplacements[tool.Name()]; wrap != nil {
+			registered[i] = wrap(tool)
+		}
+	}
 	t.registry = NewRegistry(registered...)
+}
+
+// ReplacementBindings returns an owned snapshot for rebinding cloned toolkits.
+func (t *Toolkit) ReplacementBindings() map[string]config.ToolReplacement {
+	out := make(map[string]config.ToolReplacement, len(t.replacementBindings))
+	for name, binding := range t.replacementBindings {
+		out[name] = binding
+	}
+	return out
+}
+func (t *Toolkit) SetReplacementBindings(bindings map[string]config.ToolReplacement) {
+	t.replacementBindings = make(map[string]config.ToolReplacement, len(bindings))
+	for name, binding := range bindings {
+		t.replacementBindings[name] = binding
+	}
+}
+
+// SetNativeToolReplacements installs generation-bound replacements before the
+// toolkit is used. Every key must name a native registry entry.
+func (t *Toolkit) SetNativeToolReplacements(replacements map[string]func(Tool) Tool) error {
+	for name := range replacements {
+		if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(name) {
+			return fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", name)
+		}
+		if t.registry.Lookup(name) == nil {
+			return fmt.Errorf("unknown native tool %q", name)
+		}
+		if replacements[name] == nil {
+			return fmt.Errorf("missing replacement for %q", name)
+		}
+		original := t.registry.Lookup(name)
+		replacement := replacements[name](original)
+		if replacement == nil || replacement.Name() != name {
+			return fmt.Errorf("replacement for %q must preserve the native name", name)
+		}
+		nativeDefinition, replacementDefinition := original.Definition(), replacement.Definition()
+		nativeSchema, nativeErr := json.Marshal(nativeDefinition.InputSchema)
+		replacementSchema, replacementErr := json.Marshal(replacementDefinition.InputSchema)
+		if nativeErr != nil || replacementErr != nil || string(nativeSchema) != string(replacementSchema) || nativeDefinition.Freeform != replacementDefinition.Freeform || nativeDefinition.DirectOnly != replacementDefinition.DirectOnly {
+			return fmt.Errorf("replacement for %q must preserve the native input contract", name)
+		}
+	}
+	t.nativeReplacements = replacements
+	t.rebuildRegistry()
+	return nil
 }
 
 // SetCodeModeService attaches the session runtime. Setting nil removes its entry.
@@ -646,8 +709,12 @@ func (t *Toolkit) SetAgentIdentity(id, path string) {
 
 // SetOnFileChanged sets the callback fired after write_file/edit_file
 // successfully modifies a file. Used to dispatch FileChanged hooks.
-func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string)) {
+func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string), localOnly ...func() bool) {
 	t.env.OnFileChanged = fn
+	t.fileChangedLocalOnly = nil
+	if len(localOnly) == 1 {
+		t.fileChangedLocalOnly = localOnly[0]
+	}
 }
 
 // SetOnSessionWorkspaceChanged attaches the app-server persistence and
@@ -930,7 +997,18 @@ func (t *Toolkit) FreezeToolSurface() {
 	}
 	// Refresh between runs before pinning; repeated nested freezes keep the pin.
 	t.refreshMCPToolSnapshot(false)
+	availability := make(map[string]bool, len(t.nativeReplacements))
+	for name := range t.nativeReplacements {
+		if tool := t.registry.Lookup(name); tool != nil {
+			if available, ok := tool.(ToolAvailability); ok {
+				availability[name] = available.ToolAvailable()
+			}
+		}
+	}
 	t.mcpCatalogMu.Lock()
+	if t.surfaceFreezeDepth == 0 {
+		t.frozenReplacementAvailability = availability
+	}
 	t.surfaceFreezeDepth++
 	t.mcpCatalogMu.Unlock()
 }
@@ -943,6 +1021,9 @@ func (t *Toolkit) UnfreezeToolSurface() {
 	t.mcpCatalogMu.Lock()
 	if t.surfaceFreezeDepth > 0 {
 		t.surfaceFreezeDepth--
+	}
+	if t.surfaceFreezeDepth == 0 {
+		t.frozenReplacementAvailability = nil
 	}
 	t.mcpCatalogMu.Unlock()
 }
@@ -1136,6 +1217,43 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 	t.activeProfileMu.RLock()
 	surface := t.exposedSurfaceLocked()
 	t.activeProfileMu.RUnlock()
+	// Replacement owners may retire or be attenuated after profile compilation.
+	// Reflect the same admission used by discovery in prompt-facing facts.
+	removed := make(map[capability.Capability]bool)
+	replacementNames := make(map[string]bool, len(t.replacementBindings)+len(t.nativeReplacements))
+	for name := range t.replacementBindings {
+		replacementNames[name] = true
+	}
+	for name := range t.nativeReplacements {
+		replacementNames[name] = true
+	}
+	for name := range replacementNames {
+		if t.toolExposure(name) != ToolExposureHidden {
+			continue
+		}
+		for _, names := range []map[string]capability.Capability{surface.Tools, surface.DeferredTools, surface.NestedTools} {
+			if capName, ok := names[name]; ok {
+				removed[capName] = true
+				delete(names, name)
+			}
+		}
+	}
+	for _, names := range []map[string]capability.Capability{surface.Tools, surface.DeferredTools, surface.NestedTools} {
+		for _, capName := range names {
+			delete(removed, capName)
+		}
+	}
+	filterCaps := func(caps []capability.Capability) []capability.Capability {
+		out := caps[:0]
+		for _, c := range caps {
+			if !removed[c] {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	surface.Capabilities = filterCaps(surface.Capabilities)
+	surface.DeferredCapabilities = filterCaps(surface.DeferredCapabilities)
 	// Resolve outside activeProfileMu: normal tool exposure acquires it too.
 	// MCP retains its in-flight catalog pin; plugin admission observes live
 	// revocation through the enclosing executor's generation-owned provider.
@@ -1334,6 +1452,12 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // content, metadata, or Activity references. Legacy tools are wrapped as one
 // text content part until they migrate to RichTool.
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if _, bound := t.replacementBindings[call.Name]; bound && t.nativeReplacements[call.Name] == nil {
+		return toolresult.Result{}, fmt.Errorf("replacement for %q is not bound to this execution scope", call.Name)
+	}
+	if t.nativeReplacements[call.Name] != nil && t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		return toolresult.Result{}, fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", call.Name)
+	}
 	if toolctx.IsNestedCall(ctx) && t.codeModeDirectOnly(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q must be called directly", call.Name)
 	}
@@ -1889,6 +2013,9 @@ func resetRGForTests() {
 }
 
 func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
+	if protectedPathEnv(ctx) != nil {
+		return nil
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -1898,6 +2025,9 @@ func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
 }
 
 func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string, opts grepOptions) *exec.Cmd {
+	if protectedPathEnv(ctx) != nil {
+		return nil
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -1943,6 +2073,9 @@ func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.T
 	if err := t.checkPermission(ctx, buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments), call); err != nil {
 		return toolresult.Result{}, err
 	}
+	if t.fileActionGate != nil && fileMutation(call.Name) {
+		return t.fileActionGate(ctx, t, call)
+	}
 	return executeToolResult(ctx, tool, call)
 }
 
@@ -1964,5 +2097,5 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy, SandboxProvider: t.env.ProcessSandboxProvider})
 }

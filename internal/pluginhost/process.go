@@ -34,6 +34,9 @@ const (
 )
 
 type ProcessConfig struct {
+	UserSpaceID       string
+	ProductDomain     string
+	DataRoot          string
 	ID                string
 	Command           string
 	Args              []string
@@ -177,6 +180,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	var initialized CapabilityInitializeResult
 	if err := client.call(initCtx, "initialize", CapabilityInitializeParams{
 		InitializeParams: InitializeParams{
+			UserSpaceID: config.UserSpaceID, ProductDomain: config.ProductDomain, DataRoot: config.DataRoot,
 			ProtocolVersion:   ProtocolVersion,
 			PluginID:          config.ID,
 			PluginRoot:        config.PluginRoot,
