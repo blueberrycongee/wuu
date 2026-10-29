@@ -167,6 +167,13 @@ export interface ApplicationSettingsControlsV1 {
   refreshMCPIdentity: (name: string) => Promise<MCPAuthStatusResult>;
   readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
+  /** Optional process-local presentation handoff across this request's configuration publication. */
+  requestMCPConnectorLogin?: (name: string) => Promise<void>;
+  /** Process-local pending presentation only; contains no OAuth material. */
+  getPendingMCPConnectorLogin?: () => string | undefined;
+  /** Consume an explicit Connect intent once, after fresh owner/resource validation; never starts OAuth. */
+  takeMCPConnectorLogin?: () => Promise<MCPServerStatus | undefined>;
+  cancelMCPConnectorLogin?: () => void;
   startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
   pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
   cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;

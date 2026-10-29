@@ -213,6 +213,9 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
   const [errors, setErrors] = useState<Record<string, MCPActionFailure>>({});
   const [busy, setBusy] = useState("");
   const [login, setLogin] = useState<{ server: MCPServerStatus; controls: ApplicationSettingsControlsV1 } | null>(null);
+  const [preparing, setPreparing] = useState<string>();
+  const claimedScope = useRef<object | undefined>(undefined);
+  const loginIntentRevision = useRef(0);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const currentControls = useRef(controls);
@@ -222,9 +225,28 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
-    setErrors({}); setAuth({}); setExpanded({}); setBusy(""); setLogin(null); inFlight.current = false;
+    setErrors({}); setAuth({}); setExpanded({}); setBusy(""); setLogin(null); setPreparing(undefined); inFlight.current = false;
     return () => { confirmation.current?.abort(); };
   }, [controls]);
+  useEffect(() => {
+    if (claimedScope.current === scope || !enabled || !controls.takeMCPConnectorLogin) return;
+    const name = controls.getPendingMCPConnectorLogin?.();
+    if (!name || !visible.some(server => server.name === name)) return;
+    claimedScope.current = scope;
+    const revision = loginIntentRevision.current;
+    setPreparing(name);
+    void controls.takeMCPConnectorLogin().then(server => {
+      if (!current() || revision !== loginIntentRevision.current) return;
+      setPreparing(undefined);
+      if (server) setLogin({ server, controls });
+    }).catch(failure => {
+      if (!current() || revision !== loginIntentRevision.current) return;
+      setPreparing(undefined);
+      setErrors(previous => ({ ...previous, [name]: { action: "login", diagnostic: toastErrorMessage(failure) } }));
+    });
+    // Server refreshes must not retire an already claimed receipt. The current
+    // scope and explicit-cancel revision fence its eventual result instead.
+  }, [controls, servers, enabled, scope]);
   useEffect(() => {
     let cancelled = false;
     void Promise.all(servers.filter(server => server.plugin_id && server.connector && server.plugin_active !== false && !server.configuration_unavailable_reason).map(async server => {
@@ -249,7 +271,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     setErrors(previous => { const next = { ...previous }; delete next[name]; return next; });
   }
   async function act(name: string, action: MCPAction, operation: () => Promise<void>): Promise<void> {
-    if (inFlight.current || login) return;
+    if (inFlight.current || login || preparing) return;
     inFlight.current = true;
     setBusy(name);
     clearError(name);
@@ -265,6 +287,20 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
   async function connect(server: MCPServerStatus, reconnect: boolean): Promise<void> {
     if (reconnect && !await confirm({ title: t("connector.reconnectTitle", { name: server.connector!.title }), message: t("connector.reconnectHint"), confirmLabel: t("connector.reconnect") })) return;
     if (!current()) return;
+    if (controls.requestMCPConnectorLogin && controls.takeMCPConnectorLogin && controls.getPendingMCPConnectorLogin && controls.cancelMCPConnectorLogin) {
+      setPreparing(server.name);
+      const revision = loginIntentRevision.current;
+      try {
+        await controls.requestMCPConnectorLogin(server.name);
+        if (!current() || revision !== loginIntentRevision.current) return;
+        // An already-enabled connector needs no graph publication. The owner
+        // still validates the current provider/resource and consumes once.
+        const ready = await controls.takeMCPConnectorLogin();
+        if (ready && current() && revision === loginIntentRevision.current) { setPreparing(undefined); setLogin({ server: ready, controls }); }
+      }
+      catch (error) { if (current()) setPreparing(undefined); throw error; }
+      return; // Only committed successor controls may open OAuth.
+    }
     const definition = await controls.readMCPDefinition(server.name);
     if (!current()) return;
     await controls.configureMCPServers({ servers: { [server.name]: { enabled: true } }, revision: definition.revision });
@@ -337,11 +373,11 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
           {diagnostic ? <MCPDiagnostic message={diagnostic} /> : null}
         </div>
         <div className="mcp-service-actions">
-          {available ? <button type="button" className="settings-button" data-connector-action={reconnect ? "reconnect" : "connect"} disabled={!!busy || !!login}
+          {available ? <button type="button" className="settings-button" data-connector-action={reconnect ? "reconnect" : "connect"} disabled={!!busy || !!login || !!preparing}
             onClick={() => void act(server.name, "connect", () => connect(server, !!reconnect))}>{t(reconnect ? "connector.reconnect" : "mcp.connect")}</button> : null}
-          {active && server.configurable && saved ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="disconnect" disabled={!!busy || !!login}
+          {active && server.configurable && saved ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="disconnect" disabled={!!busy || !!login || !!preparing}
             onClick={() => void act(server.name, "disconnect", () => disconnect(server))}>{t("mcp.disconnect")}</button> : null}
-          {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={!!busy || !!login}
+          {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={!!busy || !!login || !!preparing}
             onClick={() => void act(server.name, "edit", () => controls.openExternal(documentationURL!))}>{t("connector.documentation")}</button> : null}
           <button type="button" className="settings-button settings-button-ghost" data-connector-details-toggle aria-expanded={detailsOpen} aria-controls={detailsTarget}
             onClick={() => setExpanded(previous => ({ ...previous, [server.name]: !detailsOpen }))}>
@@ -380,6 +416,9 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
         </div> : null}
       </div>;
     })}</SettingsGroup>
+    {preparing ? <Modal ariaLabel={t("mcp.loginNamed", { name: visible.find(server => server.name === preparing)?.connector?.title || preparing })}
+      title={t("mcp.working")} onClose={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}
+      footer={<button type="button" className="settings-button" onClick={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}>{t("mcp.cancelLogin")}</button>} /> : null}
     {loginAvailable ? <MCPLogin server={login.server} onClose={failure => {
       if (!current()) return;
       if (failure) setErrors(previous => ({ ...previous, [login.server.name]: failure }));

@@ -21,6 +21,7 @@ import { ENABLE_REMOTE_CONTROL } from "../FeatureFlags";
 export function createApplicationSettingsControls(options: {
   host?: PluginHost;
   controller?: WorkbenchController;
+  connectorLogin?: { request(name: string): Promise<void>; getPending(): string | undefined; take(): Promise<import("../../shared/protocol").MCPServerStatus | undefined>; cancel(): void };
 } = {}): ApplicationSettingsControlsV1 {
   let skinSource: ReturnType<typeof getShellSkins> | undefined;
   let skinView: ReturnType<ApplicationSettingsControlsV1["getShellSkins"]>;
@@ -28,6 +29,12 @@ export function createApplicationSettingsControls(options: {
   const controller = () => { if (!options.controller) throw new Error("Application workbench provider is unavailable"); return options.controller; };
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
+    ...(options.connectorLogin ? {
+      requestMCPConnectorLogin: (name: string) => options.connectorLogin!.request(name),
+      getPendingMCPConnectorLogin: () => options.connectorLogin!.getPending(),
+      takeMCPConnectorLogin: () => options.connectorLogin!.take(),
+      cancelMCPConnectorLogin: () => options.connectorLogin!.cancel(),
+    } : {}),
     capabilities: Object.freeze({
       systemPermissions: window.wuu?.platform === "darwin" && typeof window.wuu?.getSystemPermissions === "function",
       permissionGuide: typeof window.wuu?.onSystemPermissionGuideChanged === "function",

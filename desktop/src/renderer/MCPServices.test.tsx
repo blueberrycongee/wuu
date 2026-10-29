@@ -485,6 +485,51 @@ it("saves only the revisioned enable preference before browser authorization and
   expect(container.querySelector('[role="dialog"]')).not.toBeNull();
 });
 
+it("starts a fresh login on stable current controls when the connector is already enabled", async () => {
+  let pending: string | undefined;
+  const source = connectorControls({
+    requestMCPConnectorLogin: vi.fn(async () => { pending = connector.name; }),
+    getPendingMCPConnectorLogin: () => pending,
+    takeMCPConnectorLogin: vi.fn(async () => { pending = undefined; return { ...connector, configuration_enabled: true }; }),
+    cancelMCPConnectorLogin: vi.fn(),
+  });
+  await render(source);
+  await click(button(connectorRow(), "mcp.connect"));
+  expect(source.startMCPLogin).toHaveBeenCalledExactlyOnceWith(connector.name);
+  expect(source.configureMCPServers).not.toHaveBeenCalled();
+});
+
+it.each(["commit", "cancel", "replace"])("adopts a prepared connector login only on current controls (%s)", async outcome => {
+  const saving = deferred<void>();
+  const claim = deferred<MCPServerStatus | undefined>();
+  let pending: string | undefined;
+  const source = connectorControls({
+    requestMCPConnectorLogin: vi.fn(() => { pending = connector.name; return saving.promise; }),
+    getPendingMCPConnectorLogin: () => pending,
+    takeMCPConnectorLogin: vi.fn().mockResolvedValue(undefined),
+    cancelMCPConnectorLogin: vi.fn(() => { pending = undefined; }),
+  });
+  await render(source);
+  await click(button(connectorRow(), "mcp.connect"));
+  expect(source.requestMCPConnectorLogin).toHaveBeenCalledExactlyOnceWith(connector.name);
+  expect(source.configureMCPServers).not.toHaveBeenCalled();
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+  expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+  const next = connectorControls({
+    requestMCPConnectorLogin: vi.fn(), getPendingMCPConnectorLogin: () => pending,
+    takeMCPConnectorLogin: vi.fn(() => claim.promise),
+    cancelMCPConnectorLogin: vi.fn(() => { pending = undefined; }),
+  });
+  await render(next);
+  expect(next.startMCPLogin).not.toHaveBeenCalled();
+  if (outcome === "cancel") await click(button(container.querySelector('[role="dialog"]')!, "mcp.cancelLogin"));
+  if (outcome === "replace") await render(connectorControls());
+  await act(async () => { saving.resolve(); claim.resolve({ ...connector, configuration_enabled: true }); });
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
+  expect(next.startMCPLogin).toHaveBeenCalledTimes(outcome === "commit" ? 1 : 0);
+  if (outcome === "cancel") expect(next.cancelMCPConnectorLogin).toHaveBeenCalledOnce();
+});
+
 it.each(["configuration changed", "cannot activate while a turn is running", "cannot activate while a turn is pending"])("does not open OAuth or claim connection after enable fails: %s", async diagnostic => {
   const source = connectorControls({ configureMCPServers: vi.fn().mockRejectedValue(new Error(diagnostic)) });
   await render(source);
