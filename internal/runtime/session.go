@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -349,6 +350,7 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
+	processScopeTarget   atomic.Pointer[selectedToolExecutor]
 	prepareStepModel     func(context.Context, session.RuntimeSelection) (*agent.ModelStepBinding, error)
 	CompositionID        string
 	compositionBinding   productCompositionBinding

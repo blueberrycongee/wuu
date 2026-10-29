@@ -96,6 +96,10 @@ func newSessionToolPolicyExecutor(base agent.ToolExecutor, policy pluginhost.Ses
 	return executor
 }
 
+// UnwrapToolExecutor identifies the selected host executor for authority
+// updates. The policy still guards every model-visible execution.
+func (e *sessionToolPolicyExecutor) UnwrapToolExecutor() agent.ToolExecutor { return e.base }
+
 func (e *sessionToolPolicyExecutor) allowed(name string) bool {
 	name = strings.TrimSpace(name)
 	if e == nil || e.base == nil || e.denyAll {

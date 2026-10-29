@@ -23,10 +23,12 @@ try{
  report.checks.push('external decorator and independent process backend compile against only packed SDK');
  const result=await command('go',['test','-race','-count=1','-timeout=2m','-v','./internal/runtime','-run','^TestServiceContinuationSDK'],{env:{...process.env,WUU_CONTINUATION_FIXTURE:project}});
  if(result.includes('--- SKIP:'))throw new Error('continuation fixture was skipped');
- for(const name of ['TestServiceContinuationSDKProcess','TestServiceContinuationSDKReplacementAndRemoval','TestServiceContinuationSDKNativeDelegate']){
+ for(const name of ['TestServiceContinuationSDKProcess','TestServiceContinuationSDKReplacementAndRemoval','TestServiceContinuationSDKNativeDelegate','TestServiceContinuationSDKWrappedProcessAuthority']){
   if(!result.includes(`--- PASS: ${name} (`))throw new Error(`${name} did not execute`);
  }
- report.checks.push('single/chained decorators preserve exact process thread/actor authority and base context','ordinary delegation cannot acquire process authority; security denial and provider failure do not fall back','default native delegate follows the same gate: continuation succeeds; ordinary execute and rewritten list/resolve calls reject','duplicate continuation starts only one physical process','pause-before-next then actual generation publication: old work executes old provider; new work executes new provider','cancellation, owner/delegate removal and post-pause permission revocation start no process; removal rejects new work');
+ report.checks.push('single/chained decorators preserve exact process thread/actor authority and base context','ordinary delegation cannot acquire process authority; security denial and provider failure do not fall back','default native delegate follows the same gate: continuation succeeds; ordinary execute and rewritten list/resolve calls reject','wrapped selected providers rebind current host process permissions before each call','duplicate continuation starts only one physical process','pause-before-next then actual generation publication: old work executes old provider; new work executes new provider','cancellation, owner/delegate removal and post-pause permission revocation start no process; removal rejects new work');
+ const policy=await command('go',['test','-race','-count=1','-v','./internal/appserver','-run','^TestSessionToolPolicyUpdatesSDKProcessAuthority$'],{env:{...process.env,WUU_CONTINUATION_FIXTURE:project}});
+ if(policy.includes('--- SKIP:')||!policy.includes('--- PASS: TestSessionToolPolicyUpdatesSDKProcessAuthority'))throw new Error('session policy fixture did not execute');
  await command('go',['test','-race','-count=1','./internal/pluginhost','-run','TestSelectedServiceContinuation|TestServiceContinuationWire']);
  report.checks.push('exact owner/callback/generation, late calls, concurrent duplicate, failure and revoked-delegate boundaries');
  report.passed=true;
