@@ -383,6 +383,9 @@ func New(cfg Config) (*AgentControl, error) {
 	if err := c.restoreQueuedSpawns(); err != nil {
 		return nil, fmt.Errorf("restore queued spawns: %w", err)
 	}
+	if err := c.reconcileOrphanedHarnessTasks(); err != nil {
+		return nil, fmt.Errorf("reconcile orphaned tasks: %w", err)
+	}
 	statusCh := make(chan subagent.Notification, 64)
 	mgr.Subscribe(statusCh)
 	c.statusCh = statusCh
@@ -392,7 +395,6 @@ func New(cfg Config) (*AgentControl, error) {
 		defer close(c.statusDone)
 		c.consumeWorkerStatus(statusCh)
 	}()
-	c.reconcileOrphanedHarnessTasks()
 	return c, nil
 }
 
@@ -679,8 +681,7 @@ func (c *AgentControl) SetSessionInfo(sessionID, historyDir string, threadDir ..
 	// The harness dir may only become known here; reconcile the durable
 	// task graph against the (possibly empty) set of live executors so
 	// crash-orphaned tasks stop reporting running forever.
-	c.reconcileOrphanedHarnessTasks()
-	return nil
+	return c.reconcileOrphanedHarnessTasks()
 }
 
 func (c *AgentControl) setHarnessDir(dir string) {
@@ -4872,13 +4873,13 @@ func (c *AgentControl) reconcileRehydratedHarnessStatus(snap subagent.SubAgentSn
 //     maybeStartQueued still owns it;
 //   - everything else is marked interrupted, preserving the original
 //     timestamps and any recorded error.
-func (c *AgentControl) reconcileOrphanedHarnessTasks() {
+func (c *AgentControl) reconcileOrphanedHarnessTasks() error {
 	if c == nil || c.harnessStore == nil || c.harnessStore.Dir() == "" {
-		return
+		return nil
 	}
 	tasks, err := c.harnessStore.ListTasks()
 	if err != nil {
-		return
+		return err
 	}
 	now := time.Now().UTC()
 	for _, task := range tasks {
@@ -4905,6 +4906,11 @@ func (c *AgentControl) reconcileOrphanedHarnessTasks() {
 					providers.DebugLogf("agentcontrol: reconcile terminal result-ready for %s: %v", snap.ID, readyErr)
 				}
 			}
+			if task.Status == harness.TaskStatusInterrupted && (!found || snap.Status == subagent.StatusInterrupted) {
+				if err := c.repairInterruptedHarnessTask(task, now); err != nil && !errors.Is(err, errWorkerExecutionBusy) {
+					return fmt.Errorf("repair interrupted task %s: %w", task.ID, err)
+				}
+			}
 			continue
 		}
 		if c.manager != nil {
@@ -4929,9 +4935,87 @@ func (c *AgentControl) reconcileOrphanedHarnessTasks() {
 			continue
 		}
 		if err := c.reconcileUnownedHarnessTask(task, now); err != nil && !errors.Is(err, errWorkerExecutionBusy) {
-			providers.DebugLogf("agentcontrol: reconcile orphan %s: %v", task.ID, err)
+			return fmt.Errorf("reconcile orphan %s: %w", task.ID, err)
 		}
 	}
+	return nil
+}
+
+// A task status can reach durable storage before its run, event and child
+// projections. Finish those projections on a later recovery under the same
+// worker execution lease used for ordinary orphan reconciliation.
+func (c *AgentControl) repairInterruptedHarnessTask(task harness.Task, now time.Time) error {
+	return c.repairInterruptedHarnessTaskWithAcquire(task, now, c.acquireWorkerExecution)
+}
+
+func (c *AgentControl) repairInterruptedHarnessTaskWithAcquire(task harness.Task, now time.Time, acquire func(string) (bool, error)) error {
+	if c.workerExecutionOwned(task.ID) {
+		return nil
+	}
+	if c.manager != nil {
+		if sa := c.manager.Get(task.ID); sa != nil && !isFinalSubAgentStatus(sa.Snapshot().Status) {
+			return nil
+		}
+	}
+	acquired, err := acquire(task.ID)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return nil
+	}
+	defer c.releaseWorkerExecution(task.ID)
+	if c.documents != nil || strings.TrimSpace(c.historyDir) != "" {
+		snapshot, loadErr := c.loadWorkerSnapshot(filepath.Join(c.historyDir, task.ID+".json"))
+		if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+			return loadErr
+		}
+		if loadErr == nil && isFinalSubAgentStatus(snapshot.Status) && snapshot.Status != subagent.StatusInterrupted {
+			return nil
+		}
+	}
+	runID := strings.TrimSpace(task.LastRunID)
+	if runID == "" {
+		runID = harnessRunID(task.ID)
+	}
+	completed := task.CompletedAt
+	if completed.IsZero() {
+		completed = now
+	}
+	runs, err := c.harnessStore.ListRuns()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.ID == runID && !isTerminalHarnessStatus(run.Status) {
+			if _, err := c.harnessStore.UpdateRunStatus(runID, harness.TaskStatusInterrupted, completed, task.InputTokens, task.OutputTokens, task.Error); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	events, err := c.harnessStore.ReadEvents()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, event := range events {
+		if event.Type == harness.EventTaskStatusChanged && event.TaskID == task.ID && event.RunID == runID && event.Status == string(harness.TaskStatusInterrupted) && (task.CompletedAt.IsZero() || !event.CreatedAt.Before(task.CompletedAt)) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		if err := c.harnessStore.AppendEvent(harness.Event{Type: harness.EventTaskStatusChanged, TaskID: task.ID, RunID: runID, AgentID: task.ID, Path: task.Path, Status: string(harness.TaskStatusInterrupted), Message: task.Error, CreatedAt: completed}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.historyDir) != "" {
+		if _, err := c.markWorkerSnapshotInterrupted(task.ID, task.Error, completed); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return c.markAgentThreadInterrupted(task.ID, completed)
 }
 
 func (c *AgentControl) reconcileUnownedHarnessTask(task harness.Task, now time.Time) error {
@@ -4962,8 +5046,7 @@ func (c *AgentControl) reconcileUnownedHarnessTask(task harness.Task, now time.T
 			return nil
 		}
 	}
-	c.markHarnessTaskInterrupted(task, now)
-	return nil
+	return c.markHarnessTaskInterrupted(task, now)
 }
 
 // snapshotFromPersistedRun projects a persisted run record onto the snapshot
@@ -5026,7 +5109,7 @@ func resolvedAPIModelFromPersistedRun(run subagent.PersistedRun) string {
 // record is kept as the reason, otherwise the reconciliation reason is
 // written. The matching worker snapshot (when one was persisted) is rewritten
 // to interrupted too so a follow-up can resume the run from its history.
-func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Time) {
+func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Time) error {
 	reason := strings.TrimSpace(task.Error)
 	if reason == "" {
 		reason = fmt.Sprintf("interrupted: no live executor for this task; the previous session exited while it was %s", task.Status)
@@ -5039,9 +5122,22 @@ func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Ti
 	if runID == "" {
 		runID = harnessRunID(task.ID)
 	}
-	_, _ = c.harnessStore.UpdateTaskStatus(task.ID, harness.TaskStatusInterrupted, completedAt, task.InputTokens, task.OutputTokens, reason)
-	_, _ = c.harnessStore.UpdateRunStatus(runID, harness.TaskStatusInterrupted, completedAt, task.InputTokens, task.OutputTokens, reason)
-	_ = c.harnessStore.AppendEvent(harness.Event{
+	if _, err := c.harnessStore.UpdateTaskStatus(task.ID, harness.TaskStatusInterrupted, completedAt, task.InputTokens, task.OutputTokens, reason); err != nil {
+		return err
+	}
+	runs, err := c.harnessStore.ListRuns()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.ID == runID {
+			if _, err := c.harnessStore.UpdateRunStatus(runID, harness.TaskStatusInterrupted, completedAt, task.InputTokens, task.OutputTokens, reason); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	if err := c.harnessStore.AppendEvent(harness.Event{
 		Type:      harness.EventTaskStatusChanged,
 		TaskID:    task.ID,
 		RunID:     runID,
@@ -5050,11 +5146,15 @@ func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Ti
 		Status:    string(harness.TaskStatusInterrupted),
 		Message:   reason,
 		CreatedAt: now,
-	})
-	if strings.TrimSpace(c.historyDir) != "" {
-		_, _ = c.markWorkerSnapshotInterrupted(task.ID, reason, now)
+	}); err != nil {
+		return err
 	}
-	c.markAgentThreadInterrupted(task.ID, now)
+	if strings.TrimSpace(c.historyDir) != "" {
+		if _, err := c.markWorkerSnapshotInterrupted(task.ID, reason, now); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return c.markAgentThreadInterrupted(task.ID, now)
 }
 
 // markAgentThreadInterrupted settles the child-thread projection consumed by
@@ -5063,42 +5163,52 @@ func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Ti
 // to the durable thread store instead of leaving the UI-facing row running.
 // agentthread has no interrupted status; failed is its terminal crash-recovery
 // projection, matching threadStatusFromSubAgent(StatusInterrupted).
-func (c *AgentControl) markAgentThreadInterrupted(workerID string, now time.Time) {
+func (c *AgentControl) markAgentThreadInterrupted(workerID string, now time.Time) error {
 	if c == nil || strings.TrimSpace(workerID) == "" {
-		return
+		return nil
 	}
 	if c.threads != nil {
-		if meta, ok := c.threads.UpdateStatus(workerID, agentthread.StatusFailed, now); ok {
-			if c.threadStore != nil {
-				if err := c.threadStore.RecordStatus(meta); err != nil {
-					providers.DebugLogf("agentcontrol: persist interrupted child thread %s: %v", workerID, err)
+		if meta, found, changed := c.threads.UpdateStatusIfNonterminal(workerID, agentthread.StatusFailed, now); found {
+			if changed && c.threadStore != nil {
+				return c.threadStore.RecordStatus(meta)
+			}
+			if !changed && meta.Status == agentthread.StatusFailed && c.threadStore != nil {
+				// A previous write can fail after the in-memory status changed.
+				// Reconcile the durable row on retry; a terminal row already
+				// records a settled outcome and must never be overwritten.
+				rows, err := c.threadStore.ListThreads()
+				if err != nil {
+					return err
+				}
+				for _, row := range rows {
+					if row.ID == workerID && !isFinalAgentThreadStatus(row.Status) {
+						row.Status, row.UpdatedAt = agentthread.StatusFailed, meta.UpdatedAt
+						return c.threadStore.RecordStatus(row)
+					}
 				}
 			}
-			return
+			return nil
 		}
 	}
 	if c.threadStore == nil {
-		return
+		return nil
 	}
 	threads, err := c.threadStore.ListThreads()
 	if err != nil {
-		providers.DebugLogf("agentcontrol: list child threads while reconciling %s: %v", workerID, err)
-		return
+		return err
 	}
 	for _, meta := range threads {
 		if meta.ID != workerID {
 			continue
 		}
 		if isFinalAgentThreadStatus(meta.Status) {
-			return
+			return nil
 		}
 		meta.Status = agentthread.StatusFailed
 		meta.UpdatedAt = now
-		if err := c.threadStore.RecordStatus(meta); err != nil {
-			providers.DebugLogf("agentcontrol: persist recovered child thread %s: %v", workerID, err)
-		}
-		return
+		return c.threadStore.RecordStatus(meta)
 	}
+	return nil
 }
 
 // hasQueuedSpawn reports whether the in-memory spawn queue still holds a
