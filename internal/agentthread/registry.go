@@ -208,6 +208,26 @@ func (r *Registry) UpdateStatus(id string, status Status, now time.Time) (Metada
 	return meta, true
 }
 
+// UpdateStatusIfNonterminal atomically preserves a terminal child while
+// recovery settles a stale running projection.
+func (r *Registry) UpdateStatusIfNonterminal(id string, status Status, now time.Time) (Metadata, bool, bool) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	meta, found := r.byID[strings.TrimSpace(id)]
+	if !found {
+		return Metadata{}, false, false
+	}
+	if meta.Status == StatusCompleted || meta.Status == StatusFailed || meta.Status == StatusCancelled {
+		return meta, true, false
+	}
+	meta.Status, meta.UpdatedAt = status, now
+	r.byID[meta.ID] = meta
+	return meta, true, true
+}
+
 func (r *Registry) UpdateLastTaskMessage(id, message string, now time.Time) (Metadata, bool) {
 	if now.IsZero() {
 		now = time.Now().UTC()
