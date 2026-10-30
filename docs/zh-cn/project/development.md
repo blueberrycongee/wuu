@@ -325,6 +325,10 @@ Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭
 
 ### MCP 重载期间的身份验证
 
+必需的 Public provider conformance CI 作业运行带当前版本标记的夹具程序，
+核对源码提交、可执行文件哈希和通过的边界报告。只上传报告及诊断日志，
+不会上传夹具凭据存储。
+
 运行 `go run ./scripts/mcp-auth-reload-e2e`，使用回环 OAuth/MCP 服务验证共享
 运行时与 app-server 协议。夹具将合成凭据保存到临时文件存储，覆盖带凭据启动、
 管理器代际替换、跨替换完成登录、旧代前台工具调用、禁用后重新启用，以及无 MCP

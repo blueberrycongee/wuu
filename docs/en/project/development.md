@@ -459,6 +459,10 @@ issue together, plus permanent revocation and retired-client callbacks.
 
 ### MCP authentication across reloads
 
+The required Public provider conformance CI job runs this gate on a version-stamped
+fixture executable and checks its source, binary hash and passing boundary report.
+Only reports and diagnostic logs are uploaded, never fixture credential stores.
+
 Run `go run ./scripts/mcp-auth-reload-e2e` to exercise the shared runtime and
 app-server protocol against a loopback OAuth/MCP service. It saves synthetic
 credentials in a disposable file store, then covers authenticated startup,
