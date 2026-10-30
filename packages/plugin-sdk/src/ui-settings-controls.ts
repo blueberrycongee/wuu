@@ -163,8 +163,22 @@ export interface ApplicationSettingsControlsV1 {
   getPluginSetting: (params: PluginSettingGetParams) => Promise<PluginSettingResult>;
   setPluginSetting: (params: PluginSettingSetParams) => Promise<PluginSettingResult>;
   getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;
+  getMCPAuthStatus: (name: string) => Promise<MCPAuthStatusResult>;
   readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
+  /** Optional process-local presentation handoff across this request's configuration publication. */
+  requestMCPConnectorLogin?: (name: string) => Promise<void>;
+  /** Pending or attached process-local presentation; contains no OAuth material. */
+  getPendingMCPConnectorLogin?: () => string | undefined;
+  /** Validate and attach an explicit intent. Automatic login starts once and survives compatible presentation replacement. */
+  takeMCPConnectorLogin?: () => Promise<MCPServerStatus | undefined>;
+  cancelMCPConnectorLogin?: () => void;
+  /** Attach to the current automatic attempt, never create an independent login. */
+  startMCPConnectorLogin?: () => Promise<MCPLoginStartResult>;
+  /** Shared in-flight and terminal receipts survive presentation retirement. */
+  pollMCPConnectorLogin?: () => Promise<MCPLoginPollResult>;
+  /** Explicit retry only, after a failed attempt and fresh owner validation. */
+  retryMCPConnectorLogin?: () => Promise<void>;
   startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
   pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
   cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;
@@ -274,7 +288,16 @@ interface PluginContributionDiagnostic {
 type MCPListResult = {
   servers: MCPServerStatus[];
 };
+/** Non-secret onboarding information; standalone MCP metadata is informational only. */
+export type MCPConnectorDescriptor = {
+  title: string;
+  description?: string;
+  documentation_url?: string;
+  /** Package setup required before a plugin-owned connector can be enabled. */
+  setup_required?: string;
+};
 export type MCPServerConfig = {
+  connector?: MCPConnectorDescriptor;
   command?: string;
   args?: string[];
   url?: string;
@@ -289,9 +312,19 @@ export type MCPServerConfig = {
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
 export type MCPLoginStartResult = { login_id: string };
-export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
 
-type MCPServerStatus = {
+export type MCPServerStatus = {
+  connector?: MCPConnectorDescriptor;
+  /** Effective per-server startup preference, independent of connection state. */
+  configuration_enabled?: boolean;
+  /** Why this host cannot persist a connector startup preference. */
+  configuration_unavailable_reason?: string;
+  /** Only active package-declared connectors accept enabled-only preferences. */
+  configurable?: boolean;
+  /** Resource URL without credentials, query parameters, or fragment. */
+  resource_url?: string;
+  plugin_active?: boolean;
   name: string;
   plugin_id?: string;
   display_name?: string;
@@ -315,7 +348,7 @@ type MCPAuthFinishResult = {
   auth: MCPAuthStatusResult;
   server: MCPServerStatus;
 };
-type MCPAuthStatusResult = {
+export type MCPAuthStatusResult = {
   name: string;
   authenticated: boolean;
   expires_at?: string;

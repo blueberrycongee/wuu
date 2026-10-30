@@ -586,6 +586,11 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 	if err != nil {
 		return Manifest{}, err
 	}
+	for name, server := range mcpServers {
+		if err := server.Connector.Validate(); err != nil {
+			return Manifest{}, fmt.Errorf("mcp_servers.%s.connector: %w", name, err)
+		}
+	}
 	commands, commandPaths, err := normalizeCommands(root, id, raw.Contributes.Commands)
 	if err != nil {
 		return Manifest{}, err

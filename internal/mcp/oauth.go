@@ -27,15 +27,33 @@ var ErrOAuthSuperseded = fmt.Errorf("%w: OAuth operation was superseded; sign in
 var ErrOAuthResourceMismatch = fmt.Errorf("%w: stored credentials do not match the configured resource; sign in again", ErrOAuthRequired)
 
 type OAuthManager struct {
-	store        credentialstore.Store
-	client       *http.Client
-	mu           sync.Mutex
-	pending      map[string]pendingOAuth
-	refreshMu    sync.Mutex
-	refreshLocks map[string]chan struct{}
+	store   credentialstore.Store
+	client  *http.Client
+	mu      sync.Mutex
+	logins  map[string]*oauthLoginState
+	refresh *oauthRefreshCoordinator
+}
+
+// Login ordering is serialized per server. Credential-provider I/O must not
+// hold the global map lock or stall unrelated servers' authentication.
+type oauthLoginState struct {
+	mu      sync.Mutex
+	pending *pendingOAuth
+}
+
+func (m *OAuthManager) loginState(serverID string) *oauthLoginState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if login := m.logins[serverID]; login != nil {
+		return login
+	}
+	login := &oauthLoginState{}
+	m.logins[serverID] = login
+	return login
 }
 
 type OAuthStartOptions struct {
+	owner        *oauthOwner
 	ServerID     string
 	ResourceURL  string
 	RedirectURI  string
@@ -52,6 +70,7 @@ type OAuthStartResult struct {
 }
 
 type OAuthFinishOptions struct {
+	owner       *oauthOwner
 	ServerID    string
 	ResourceURL string
 	State       string
@@ -82,6 +101,7 @@ type authorizationServerMetadata struct {
 }
 
 type pendingOAuth struct {
+	owner           *oauthOwner
 	Exchanging      bool
 	LoginGeneration string
 	State           string
@@ -122,7 +142,7 @@ func NewOAuthManager(store credentialstore.Store, client *http.Client) *OAuthMan
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &OAuthManager{store: store, client: client, pending: map[string]pendingOAuth{}, refreshLocks: map[string]chan struct{}{}}
+	return &OAuthManager{store: store, client: client, logins: map[string]*oauthLoginState{}, refresh: &oauthRefreshCoordinator{locks: map[oauthRefreshKey]*oauthRefreshGate{}}}
 }
 
 func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OAuthStartResult, error) {
@@ -144,21 +164,24 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 	if err != nil {
 		return OAuthStartResult{}, err
 	}
-	m.mu.Lock()
-	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
-		var token storedOAuthToken
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, &token); err != nil {
-				return nil, err
+	login := m.loginState(serverID)
+	login.mu.Lock()
+	err = options.owner.authorize(ctx, func() error {
+		return m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+			var token storedOAuthToken
+			if len(data) > 0 {
+				if err := json.Unmarshal(data, &token); err != nil {
+					return nil, err
+				}
 			}
-		}
-		token.LoginGeneration = generation
-		return json.Marshal(token)
+			token.LoginGeneration = generation
+			return json.Marshal(token)
+		})
 	})
 	if err == nil {
-		delete(m.pending, serverID)
+		login.pending = nil
 	}
-	m.mu.Unlock()
+	login.mu.Unlock()
 	if err != nil {
 		return OAuthStartResult{}, err
 	}
@@ -219,39 +242,51 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 		return OAuthStartResult{}, fmt.Errorf("parse authorization endpoint: %w", err)
 	}
 	authorizationURL.RawQuery = query.Encode()
-	pending := pendingOAuth{LoginGeneration: generation, State: state, Verifier: verifier, RedirectURI: redirectURI, ResourceURL: resourceURL, Scopes: append([]string(nil), scopes...), ClientID: clientID, ClientSecret: clientSecret, TokenAuthMode: tokenAuthMode, TokenEndpoint: authMeta.TokenEndpoint}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	current, err := m.loadRecord(ctx, serverID)
+	pending := pendingOAuth{owner: options.owner, LoginGeneration: generation, State: state, Verifier: verifier, RedirectURI: redirectURI, ResourceURL: resourceURL, Scopes: append([]string(nil), scopes...), ClientID: clientID, ClientSecret: clientSecret, TokenAuthMode: tokenAuthMode, TokenEndpoint: authMeta.TokenEndpoint}
+	login.mu.Lock()
+	defer login.mu.Unlock()
+	err = options.owner.authorize(ctx, func() error {
+		current, err := m.loadRecord(ctx, serverID)
+		if err != nil {
+			return err
+		}
+		if current.LoginGeneration != generation {
+			return ErrOAuthSuperseded
+		}
+		login.pending = &pending
+		return nil
+	})
 	if err != nil {
 		return OAuthStartResult{}, err
 	}
-	if current.LoginGeneration != generation {
-		return OAuthStartResult{}, ErrOAuthSuperseded
-	}
-	m.pending[serverID] = pending
 	return OAuthStartResult{AuthorizationURL: authorizationURL.String(), State: state, Scopes: append([]string(nil), scopes...)}, nil
 }
 
 func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (OAuthStatus, error) {
 	key := strings.TrimSpace(options.ServerID)
-	m.mu.Lock()
-	pending, ok := m.pending[key]
+	login := m.loginState(key)
+	login.mu.Lock()
+	pending := login.pending
+	ok := pending != nil
+	if ok && pending.State == options.State && !pending.owner.same(options.owner) {
+		login.mu.Unlock()
+		return OAuthStatus{}, ErrOAuthSuperseded
+	}
 	accepted := ok && pending.State == options.State && !pending.Exchanging
 	if accepted {
 		pending.Exchanging = true
-		m.pending[key] = pending
+		login.pending = pending
 	}
-	m.mu.Unlock()
+	login.mu.Unlock()
 	if !accepted {
 		return OAuthStatus{}, errors.New("invalid or expired OAuth state")
 	}
 	defer func() {
-		m.mu.Lock()
-		if m.pending[key].State == options.State {
-			delete(m.pending, key)
+		login.mu.Lock()
+		if login.pending != nil && login.pending.State == options.State {
+			login.pending = nil
 		}
-		m.mu.Unlock()
+		login.mu.Unlock()
 	}()
 	if !sameOAuthResource(pending.ResourceURL, options.ResourceURL) {
 		return OAuthStatus{}, ErrOAuthResourceMismatch
@@ -281,17 +316,19 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 	if err != nil {
 		return OAuthStatus{}, err
 	}
-	err = m.store.Update(ctx, oauthNamespace(options.ServerID), "oauth", func(data []byte) ([]byte, error) {
-		var current storedOAuthToken
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, &current); err != nil {
-				return nil, err
+	err = pending.owner.authorize(ctx, func() error {
+		return m.store.Update(ctx, oauthNamespace(options.ServerID), "oauth", func(data []byte) ([]byte, error) {
+			var current storedOAuthToken
+			if len(data) > 0 {
+				if err := json.Unmarshal(data, &current); err != nil {
+					return nil, err
+				}
 			}
-		}
-		if current.LoginGeneration != pending.LoginGeneration {
-			return nil, ErrOAuthSuperseded
-		}
-		return json.Marshal(token)
+			if current.LoginGeneration != pending.LoginGeneration {
+				return nil, ErrOAuthSuperseded
+			}
+			return json.Marshal(token)
+		})
 	})
 	if err != nil {
 		return OAuthStatus{}, err
@@ -313,10 +350,11 @@ func (m *OAuthManager) Status(ctx context.Context, serverID, resourceURL string)
 // Cancel invalidates this attempt without signing out an existing account.
 // The generation fence also rejects a token exchange already in flight.
 func (m *OAuthManager) Cancel(ctx context.Context, serverID, state string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	pending, exists := m.pending[serverID]
-	if !exists || state == "" || pending.State != state {
+	login := m.loginState(strings.TrimSpace(serverID))
+	login.mu.Lock()
+	defer login.mu.Unlock()
+	pending := login.pending
+	if pending == nil || state == "" || pending.State != state {
 		return nil
 	}
 	generation, err := randomURLToken(32)
@@ -337,7 +375,7 @@ func (m *OAuthManager) Cancel(ctx context.Context, serverID, state string) error
 		return json.Marshal(token)
 	})
 	if err == nil {
-		delete(m.pending, serverID)
+		login.pending = nil
 	}
 	return err
 }
@@ -354,8 +392,10 @@ func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID, resourc
 }
 
 func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL string, forceRefresh bool) (string, error) {
-	refreshLock := m.refreshLock(serverID)
-	// Retained generations share this service, but not their call budgets.
+	refreshLock, release := m.refreshLock(serverID, resourceURL)
+	defer release()
+	// Compatible retained generations share only this gate, not service clients
+	// or call budgets.
 	// A short caller must stop waiting without canceling the active refresh.
 	select {
 	case refreshLock <- struct{}{}:
@@ -432,20 +472,55 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 	return accessToken, nil
 }
 
-func (m *OAuthManager) refreshLock(serverID string) chan struct{} {
-	key := strings.TrimSpace(serverID)
-	// This lock protects only gate lookup, never credential-store I/O.
-	m.refreshMu.Lock()
-	defer m.refreshMu.Unlock()
-	if m.refreshLocks == nil {
-		m.refreshLocks = make(map[string]chan struct{})
+// Refresh coordination is process-local and does not confer credential authority.
+// Token CAS fences credential publication, but this does not serialize remote
+// token rotation across processes or provide distributed refresh safety.
+type oauthRefreshKey struct{ server, resource string }
+type oauthRefreshGate struct {
+	lock  chan struct{}
+	users int
+}
+type oauthRefreshCoordinator struct {
+	mu    sync.Mutex
+	locks map[oauthRefreshKey]*oauthRefreshGate
+}
+
+// ShareRefreshCoordinator joins an already verified equivalent credential
+// authority before this manager is used. It never shares credentials, pending
+// logins, service clients or cancellation contexts. Callers must not use this
+// for different selected providers or provider namespaces.
+func (m *OAuthManager) ShareRefreshCoordinator(owner *OAuthManager) {
+	owner.mu.Lock()
+	coordinator := owner.refresh
+	owner.mu.Unlock()
+	m.mu.Lock()
+	m.refresh = coordinator
+	m.mu.Unlock()
+}
+
+func (m *OAuthManager) refreshLock(serverID, resourceURL string) (chan struct{}, func()) {
+	key := oauthRefreshKey{strings.TrimSpace(serverID), canonicalOAuthResource(resourceURL)}
+	m.mu.Lock()
+	coordinator := m.refresh
+	m.mu.Unlock()
+	// Only gate lookup is serialized, never selected credential-provider I/O.
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	gate := coordinator.locks[key]
+	if gate == nil {
+		gate = &oauthRefreshGate{lock: make(chan struct{}, 1)}
+		coordinator.locks[key] = gate
 	}
-	if lock := m.refreshLocks[key]; lock != nil {
-		return lock
+	gate.users++
+	return gate.lock, func() {
+		coordinator.mu.Lock()
+		defer coordinator.mu.Unlock()
+		gate.users--
+		if gate.users == 0 {
+			delete(coordinator.locks, key)
+		}
 	}
-	lock := make(chan struct{}, 1)
-	m.refreshLocks[key] = lock
-	return lock
+
 }
 
 func (m *OAuthManager) Remove(ctx context.Context, serverID string) error {
@@ -453,15 +528,16 @@ func (m *OAuthManager) Remove(ctx context.Context, serverID string) error {
 	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	login := m.loginState(strings.TrimSpace(serverID))
+	login.mu.Lock()
+	defer login.mu.Unlock()
 	// A token-free tombstone preserves logout authority across processes and
 	// restarts. Deleting the slot would lose the generation of pending logins.
 	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func([]byte) ([]byte, error) {
 		return json.Marshal(storedOAuthToken{LoginGeneration: generation})
 	})
 	if err == nil {
-		delete(m.pending, strings.TrimSpace(serverID))
+		login.pending = nil
 	}
 	return err
 }

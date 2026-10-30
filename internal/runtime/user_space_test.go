@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"os"
@@ -125,16 +126,39 @@ func (v *testUserHostIsolationVerifier) VerifyUserHostIsolation(context.Context,
 }
 
 func TestUserHostConfigDoesNotInheritExecutableCodingExtensions(t *testing.T) {
-	cfg := config.Config{Hooks: map[string][]config.HookEntry{"x": {}}, MCPServers: map[string]config.MCPServerConfig{"coding": {}}, MCPJson: &config.MCPJsonTrust{}}
+	enabled := true
+	cfg := config.Config{Hooks: map[string][]config.HookEntry{"x": {}}, MCPServers: map[string]config.MCPServerConfig{"coding": {URL: "https://coding.example.test/mcp"}, "plugin.connector-fixture.docs": {Enabled: &enabled}}, MCPJson: &config.MCPJsonTrust{}}
+	// Reconstruct from the persisted source, as a host restart does.
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reopened config.Config
+	if err := json.Unmarshal(raw, &reopened); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	catalog := []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "connector-fixture", MCPServers: map[string]config.MCPServerConfig{"docs": {URL: "https://docs.example.test/mcp", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Documents"}}}}}}
+	codingServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{}), catalog)
+	if !codingServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
+		t.Fatal("Coding lost saved connector preference after restart")
+	}
+	personalServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}), catalog)
+	if personalServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
+		t.Fatal("Personal imported Coding connector preference after restart")
+	}
+	if _, exists := personalServers["coding"]; exists {
+		t.Fatal("Personal imported standalone Coding endpoint")
+	}
 	legacy := userHostConfig(cfg, userspace.Binding{})
-	if len(legacy.Hooks) != 1 || len(legacy.MCPServers) != 1 {
+	if len(legacy.Hooks) != 1 || len(legacy.MCPServers) != 2 {
 		t.Fatal("Coding config changed")
 	}
 	personal := userHostConfig(cfg, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"})
 	if personal.Hooks != nil || personal.MCPServers != nil || personal.MCPJson != nil {
 		t.Fatal("Personal inherited Coding executable extensions")
 	}
-	if len(cfg.Hooks) != 1 || len(cfg.MCPServers) != 1 {
+	if len(cfg.Hooks) != 1 || len(cfg.MCPServers) != 2 {
 		t.Fatal("shared config was mutated")
 	}
 }

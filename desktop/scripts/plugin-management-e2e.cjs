@@ -23,7 +23,7 @@ process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = "1";
 delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({
   default_provider: "fixture",
-  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
+  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true, "account-connectors": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
   providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:9/v1", api_key: "fixture-only", model: "fixture" } },
   engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
 }));
@@ -37,13 +37,22 @@ let win, mcpFixture;
 const windowCreated = new Promise(resolve => app.once("browser-window-created", (_event, window) => { win = window; resolve(window); }));
 const timeout = setTimeout(() => { console.error("Plugin management journey timed out"); app.exit(1); }, 300000);
 const evaluate = (fn, arg) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`);
-const until = (fn, arg) => win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+const until = (fn, arg, snapshot = false) => win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
   const test = (${fn});
   const argument = ${JSON.stringify(arg)};
   const observer = new MutationObserver(check);
-  const timer = setTimeout(() => { observer.disconnect(); reject(new Error("UI condition timed out")); }, 30000);
-  function check() { if (test(argument)) { observer.disconnect(); clearTimeout(timer); resolve(); } }
+  const timer = setTimeout(() => { cleanup(); reject(new Error("UI condition timed out: " + test.toString())); }, 30000);
+  function cleanup() {
+    observer.disconnect(); clearTimeout(timer);
+    document.removeEventListener("focusin", check, true);
+    document.removeEventListener("focusout", check, true);
+  }
+  function check() { const value = test(argument); if (value) { cleanup(); resolve(${snapshot ? "value" : "undefined"}); } }
   observer.observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
+  // Keyboard focus can change without a DOM mutation; observing mutations alone
+  // times out even after Tab reaches the expected control.
+  document.addEventListener("focusin", check, true);
+  document.addEventListener("focusout", check, true);
   check();
 })`);
 const capture = async name => {
@@ -98,7 +107,7 @@ async function run() {
   if (win.webContents.isLoadingMainFrame()) await new Promise(resolve => win.webContents.once("did-finish-load", resolve));
   win.setSize(1280, 900);
   await until(() => document.querySelector('[data-ribbon-id="catalog"]:not(:disabled)'));
-  await mcpFixture.run({ evaluate, until, capture, win });
+  await mcpFixture.run({ evaluate, until, snapshot: (fn, arg) => until(fn, arg, true), capture, win });
   if (process.argv.includes("--mcp-only")) {
     clearTimeout(timeout);
     mcpFixture.close();
@@ -184,6 +193,7 @@ async function run() {
 run().catch(async error => {
   console.error(error);
   if (win) {
+    await mcpFixture?.diagnostics({ evaluate }).then(result => fs.writeFileSync(path.join(output, "mcp-handoff-diagnostics.json"), JSON.stringify(result, null, 2))).catch(() => {});
     await capture("failure").catch(() => {});
     await evaluate(() => window.wuu.initialize()).then(result => fs.writeFileSync(path.join(output, "failure-inventory.json"), JSON.stringify(result.extension_inventory, null, 2))).catch(() => {});
   }

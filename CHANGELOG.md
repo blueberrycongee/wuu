@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add declarative account connector cards through the public plugin MCP contract. The bundled catalog keeps every service disabled until explicitly connected: Notion uses browser OAuth, while GitHub and Google Drive show their required application setup without a nonfunctional Connect action. Connector disconnect removes local OAuth credentials and persists the disabled preference; provider-side revocation remains separate.
+
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
 - Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.
@@ -177,6 +179,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
 
 ### Fixed
+
+- Keep consecutive plugin configuration actions available after a successful catalog-only refresh, without dropping concurrent model or general-settings changes or masking partial activation failures.
+
+- Preserve pending MCP authorization through compatible runtime reloads using its original credential authority, with explicit revocation and cleanup on owner changes. Coordinate refreshes across equivalent in-process credential providers without sharing pending logins or replacing token commit fences.
+- Revalidate connector login ownership against fresh host metadata instead of canceling an active sign-in from an older catalog snapshot.
+
+- Keep automatic connector sign-in attached to its native attempt across compatible application presentation replacement, including pending startup and terminal callback receipts. Explicit cancellation can stop discovery before a browser opens; manual-redirect login still requires retry after interruption.
+
+- Present connector authorization-required states without false connection errors, and keep only inert same-context card labels through graph refresh while fresh ownership and authorization are loading.
+
+- Keep an explicit connector sign-in through its own configuration publication without starting OAuth from retired controls. The one-shot, process-local handoff validates the current owner and resource, supports cancellation and navigation invalidation, and avoids redundant preference writes when retrying an already-enabled connector.
+
+- Keep selected remote MCP services registered when they require authorization, so refreshing plugins or signing out does not remove the local login manager or sibling connectors. Hard connection failures still fail required startup.
 
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 

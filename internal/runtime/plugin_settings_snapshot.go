@@ -173,3 +173,33 @@ func (s *pluginHostServices) closeSettings() {
 	s.settingsOperations = nil
 	s.settingsBaseline = nil
 }
+
+// credentialSettingsIdentity records only prepared configuration metadata.
+// Restart settings are immutable within a generation. Secrets and mutable
+// settings have no pinned value witness here, so their credential authority
+// cannot be reused by another generation, even when its package is unchanged.
+func (k *kernelHostServices) credentialSettingsIdentity(generationID string) map[string]string {
+	k.mu.RLock()
+	services := make([]*pluginHostServices, 0, len(k.services))
+	for _, service := range k.services {
+		services = append(services, service)
+	}
+	k.mu.RUnlock()
+	identities := make(map[string]string, len(services))
+	for _, service := range services {
+		service.settingsMu.Lock()
+		reusable := service.settingsBaseline != nil
+		for _, definition := range service.settings {
+			if definition.Type == pluginpkg.SettingTypeSecret || definition.Apply != pluginpkg.SettingApplyRestart {
+				reusable = false
+			}
+		}
+		if reusable {
+			identities[service.pluginID] = settingsRevision(service.settingsBaseline)
+		} else {
+			identities[service.pluginID] = "generation:" + generationID
+		}
+		service.settingsMu.Unlock()
+	}
+	return identities
+}

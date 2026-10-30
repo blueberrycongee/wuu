@@ -5,6 +5,7 @@ const path = require("node:path");
 const { createServer } = require("node:http");
 const { createHash } = require("node:crypto");
 const { shell, dialog, Menu } = require("electron");
+const clickReady = require("./mcp-click.cjs");
 
 module.exports = async function prepareMCPFixture({ fixture, output }) {
   let endpoint, authorizationURL;
@@ -12,16 +13,18 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
   let pauseToolList = null;
   const manualRedirect = "https://callback.example.test/mcp";
   const codes = new Map();
-  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, checks: [] };
+  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, checks: [] };
   const peer = createServer(async (request, response) => {
     const url = new URL(request.url, endpoint);
+    if (url.pathname === "/connector-mcp") evidence.connectorRequests++;
+    assert.notEqual(url.pathname, "/setup-required", "A setup-only connector must never contact its endpoint");
     console.log(`MCP fixture: ${request.method} ${url.pathname}`);
     response.setHeader("Content-Type", "application/json");
     const json = value => response.end(JSON.stringify(value));
     let body = "";
     for await (const chunk of request) body += chunk;
     if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
-      json({ resource: `${endpoint}/mcp`, authorization_servers: [endpoint] }); return;
+      json({ resource: `${endpoint}/${url.pathname.includes("connector") ? "connector-mcp" : "mcp"}`, authorization_servers: [endpoint], scopes_supported: ["tools:read"] }); return;
     }
     if (url.pathname === "/.well-known/oauth-authorization-server") {
       json({ issuer: endpoint, authorization_endpoint: `${endpoint}/authorize`, token_endpoint: `${endpoint}/token`, registration_endpoint: `${endpoint}/register`, code_challenge_methods_supported: ["S256"] }); return;
@@ -34,7 +37,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
     }
     if (url.pathname === "/authorize") {
       assert.equal(url.searchParams.get("code_challenge_method"), "S256");
-      assert.equal(url.searchParams.get("resource"), `${endpoint}/mcp`);
+      assert.ok([`${endpoint}/mcp`, `${endpoint}/connector-mcp`].includes(url.searchParams.get("resource")));
       const code = `code-${codes.size}`;
       codes.set(code, url.searchParams);
       const callback = new URL(url.searchParams.get("redirect_uri"));
@@ -48,12 +51,12 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.ok(auth, "Only issued authorization codes can be exchanged");
       assert.equal(createHash("sha256").update(form.get("code_verifier")).digest("base64url"), auth.get("code_challenge"));
       assert.equal(form.get("redirect_uri"), auth.get("redirect_uri"));
-      assert.equal(form.get("resource"), `${endpoint}/mcp`);
+      assert.equal(form.get("resource"), auth.get("resource"));
       evidence.exchanges++;
-      json({ access_token: "synthetic-mcp-token", token_type: "Bearer", expires_in: 3600 }); return;
+      json({ access_token: "synthetic-mcp-token", token_type: "Bearer", expires_in: 3600, scope: "tools:read" }); return;
     }
     if (request.headers.authorization !== "Bearer synthetic-mcp-token") {
-      response.writeHead(401, { "WWW-Authenticate": `Bearer resource_metadata="${endpoint}/.well-known/oauth-protected-resource"` }).end(); return;
+      response.writeHead(401, { "WWW-Authenticate": `Bearer resource_metadata="${endpoint}/.well-known/oauth-protected-resource${url.pathname === "/connector-mcp" ? "/connector" : ""}"` }).end(); return;
     }
     if (request.method !== "POST") { response.writeHead(request.method === "DELETE" ? 204 : 405).end(); return; }
     const rpc = JSON.parse(body);
@@ -74,10 +77,21 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
   shell.openExternal = async url => { authorizationURL = url; };
   const pluginDir = path.join(fixture, "mcp-plugin");
   fs.mkdirSync(pluginDir);
-  fs.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify({ schema_version: 1, id: "mcp-journey", name: "MCP Journey", mcp_servers: { docs: { url: `${endpoint}/mcp` } } }));
+  fs.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify({ schema_version: 1, id: "mcp-journey", name: "MCP Journey", mcp_servers: {
+    docs: { url: `${endpoint}/mcp` },
+    account: { url: `${endpoint}/connector-mcp`, enabled: false, connector: { title: "Fixture workspace", description: "A user-installed connector, not a bundled product ID.", documentation_url: "https://example.test/connector" } },
+    gated: { url: `${endpoint}/setup-required`, enabled: false, connector: { title: "Registration required", setup_required: "Register your client before this service can be connected.", documentation_url: "https://example.test/setup" } },
+  } }));
 
   return {
-    async run({ evaluate, until, capture, win }) {
+    async run({ evaluate, until, snapshot, capture, win }) {
+      await evaluate(() => {
+        window.__mcpFixtureHandoff = [];
+        window.addEventListener("wuu:mcp-connector-handoff", event => {
+          if (window.__mcpFixtureHandoff.length < 64) window.__mcpFixtureHandoff.push(event.detail);
+        });
+      });
+      const clickElement = selector => until(clickReady, { selector });
       const click = async ([selector, label], keyboard = false) => {
         const menuAction = selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label);
         if (menuAction) {
@@ -100,7 +114,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
               win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
               win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
             } else {
-              await evaluate(selector => document.querySelector(`${selector} [aria-haspopup="menu"]`).click(), selector);
+              await clickElement(`${selector} [aria-haspopup="menu"]`);
             }
             await selected;
             await until(() => !document.querySelector('[data-mcp] [aria-expanded="true"]'));
@@ -108,12 +122,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
           return;
         }
         console.log(`MCP journey: ${label}`);
-        await until(([selector, label]) => [...document.querySelectorAll(`${selector} button`)].some(button => button.textContent.trim() === label && !button.disabled), [selector, label]);
-        await evaluate(([selector, label]) => {
-          const button = [...document.querySelectorAll(`${selector} button`)].find(button => button.textContent.trim() === label && !button.disabled);
-          if (!button) throw new Error(`Missing button ${label} in ${selector}`);
-          button.click();
-        }, [selector, label]);
+        await until(clickReady, { selector: `${selector} button`, label });
       };
       const input = async (selector, value) => evaluate(([selector, value]) => {
         const element = document.querySelector(selector);
@@ -122,10 +131,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
         element.dispatchEvent(new Event("input", { bubbles: true }));
       }, [selector, value]);
       const row = '[data-mcp="journey-docs"]';
-      await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
-      await until(() => document.querySelector('[data-tab="plugins"]'));
-      await evaluate(() => document.querySelector('[data-tab="plugins"]').click());
+      await clickElement('[data-ribbon-id="catalog"]');
+      await clickElement('[data-tab="plugins"]');
       await until(() => document.querySelector('[data-testid="mcp-services"]'));
+      await until(() => document.querySelector('[data-connector="plugin.account-connectors.notion"] [data-connector-action="connect"]'));
+      assert.equal((await evaluate(() => window.wuu.getMCPAuthStatus("plugin.account-connectors.notion"))).authenticated, false, "The explicitly selected bundled connector stays lazy and locally unauthenticated");
       await capture("mcp-empty-light");
       await click(['[data-testid="mcp-services"]', "添加 MCP"]);
       await until(() => document.querySelector(".mcp-editor"));
@@ -133,8 +143,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await input('.mcp-editor input[type="url"]', `${endpoint}/mcp`);
       await capture("mcp-add-url");
       await click([".mcp-editor", "保存"]);
-      await until(() => !document.querySelector(".mcp-editor") && document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("需要认证"));
-      assert.equal(await evaluate(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("HTTP 401")), false, "Authentication diagnostics stay out of the collapsed service row");
+      const authRow = await snapshot(() => {
+        const row = document.querySelector('[data-mcp="journey-docs"]');
+        return !document.querySelector(".mcp-editor") && row?.textContent.includes("需要认证") ? { text: row.textContent } : false;
+      });
+      assert.equal(authRow.text.includes("HTTP 401"), false, "Authentication diagnostics stay out of the collapsed service row");
       await capture("mcp-auth-required");
       evidence.checks.push("URL definition added and activated through the catalog");
 
@@ -217,7 +230,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await until(() => document.querySelector('[role="dialog"] [role="alert"]'));
       assert.equal(evidence.exchanges, 2);
       assert.equal(await evaluate(() => document.querySelector('[role="dialog"] [role="alert"]')?.textContent.includes("HTTP 503")), false, "Login recovery presents a concise failure instead of raw transport text");
-      await evaluate(() => document.querySelector('[role="dialog"] button[aria-expanded="false"]').click());
+      await clickElement('[role="dialog"] button[aria-expanded="false"]');
       assert.equal(await evaluate(() => document.querySelector('[role="dialog"] pre')?.textContent.includes("503")), true, "The original connection failure remains available on request");
       assert.equal(await evaluate(() => document.querySelector('[data-mcp="journey-docs"] pre') === null), true, "The active login dialog owns the diagnostic without a duplicate in its service row");
       await capture("mcp-manual-reconnect");
@@ -229,9 +242,8 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
 
       await click(['[data-testid="mcp-services"]', "添加 MCP"]);
       await until(() => document.querySelector(".mcp-editor"));
-      await evaluate(() => document.querySelector('.mcp-editor [aria-label="连接方式"]').click());
-      await until(() => [...document.querySelectorAll('[role="menuitemradio"]')].some(option => option.textContent.includes("导入 JSON")));
-      await evaluate(() => [...document.querySelectorAll('[role="menuitemradio"]')].find(option => option.textContent.includes("导入 JSON")).click());
+      await clickElement('.mcp-editor [aria-label="连接方式"]');
+      await until(clickReady, { selector: '[role="menuitemradio"]', label: "导入 JSON", contains: true });
       await input('.mcp-editor textarea', JSON.stringify({ mcpServers: { "journey-local": { type: "stdio", command: process.execPath, args: ["--version"], enabled: false, env: { FIXTURE: "one" } } } }));
       await click([".mcp-editor", "导入"]);
       await until(() => !document.querySelector(".mcp-editor") && document.querySelector('[data-mcp="journey-local"]'));
@@ -258,18 +270,80 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       let installed;
       try { installed = await evaluate(() => window.wuu.installPluginPackage()); }
       finally { dialog.showOpenDialog = originalPicker; }
+      // Installation grants trust, not membership in this fixture's explicit
+      // composition. Select the installed package through disposable native
+      // configuration, then use the public catalog refresh to apply it.
+      const configPath = path.join(fixture, "wuu-home", "config.json");
+      const selectedConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      selectedConfig.composition.patches.push({ modules: { "mcp-journey": true } });
+      fs.writeFileSync(configPath, JSON.stringify(selectedConfig));
+      installed = await evaluate(() => window.wuu.refreshExtensionCatalog());
       const record = installed.extension_inventory.find(item => item.provenance.plugin_id === "mcp-journey" && item.kind === "plugin");
       assert.ok(record);
-      await until(() => document.querySelector('[data-plugin="mcp-journey"]'));
-      await evaluate(() => document.querySelector('[data-plugin="mcp-journey"] .catalog-row-open').click());
+      const connectorName = "plugin.mcp-journey.account";
+      const connectorRow = '[data-connector="plugin.mcp-journey.account"]';
+      const gatedRow = '[data-connector="plugin.mcp-journey.gated"]';
+      await until(selector => document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
+      assert.equal(evidence.connectorRequests, 0, "A declared lazy connector must not contact the provider before Connect");
+      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-action="connect"]`) === null, gatedRow), true);
+      await capture("connector-picker-light");
+      const connectorAction = async action => {
+        const selector = `${connectorRow} [data-connector-action="${action}"]`;
+        // A graph publication can replace this row between separate IPC calls.
+        // Check and dispatch once in the same renderer turn, without a sleep.
+        await clickElement(selector);
+      };
+      const registrationsBefore = evidence.registration;
+      authorizationURL = undefined;
+      await connectorAction("connect");
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      assert.ok(authorizationURL);
+      assert.equal(evidence.registration, registrationsBefore + 1);
+      const cancelledConnectorURL = authorizationURL;
+      await click(['[role="dialog"]', "取消登录"]);
+      await until(() => !document.querySelector('[role="dialog"]'));
+      await assert.rejects(fetch(cancelledConnectorURL));
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);
+      await connectorAction("connect");
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      await fetch(authorizationURL);
+      await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
+      await capture("connector-connected-compact-light");
+      await clickElement(`${connectorRow} [data-connector-details-toggle]`);
+      await until(selector => document.querySelector(`${selector} [data-connector-detail="scopes"]`)?.textContent.includes("tools:read"), connectorRow);
+      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-detail="account"]`)?.getAttribute("data-verified"), connectorRow), "false", "Endpoint authorization must not fabricate a verified account identity");
+      await capture("connector-connected-light");
+      await evaluate(() => window.wuu.setThemePreference("dark"));
+      win.setSize(800, 900);
+      await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
+      await capture("connector-connected-dark-narrow-large");
+      await evaluate(() => window.wuu.setThemePreference("light"));
+      win.setSize(1280, 900);
+      await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
+      await connectorAction("disconnect");
+      await clickElement('[data-confirm-action="confirm"]');
+      await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "false" && document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);
+      const connectorPreference = await evaluate(name => window.wuu.readMCPDefinition(name), connectorName);
+      assert.deepEqual(connectorPreference.config, { enabled: false });
+      evidence.checks.push("External plugin connector stays lazy, cancels OAuth safely, verifies tools/scopes without invented identity, and disconnect removes local authorization plus startup preference");
+      await clickElement('[data-plugin="mcp-journey"] .catalog-row-open');
       await until(() => document.querySelector('[data-mcp="plugin.mcp-journey.docs"]'));
       await capture("mcp-plugin-owned");
       assert.equal(await evaluate(() => [...document.querySelectorAll('[data-mcp="plugin.mcp-journey.docs"] button')].some(button => button.textContent === "编辑")), false);
+      // An explicitly selected module is required by composition. Remove this
+      // fixture's selection before disabling its package; never weaken that rule.
+      const disableConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      disableConfig.composition.patches.push({ modules: { "mcp-journey": false } });
+      fs.writeFileSync(configPath, JSON.stringify(disableConfig));
+      await evaluate(() => window.wuu.refreshExtensionCatalog());
       await evaluate(record => window.wuu.updateExtensionPackage({ id: record.id, action: "disable" }), record);
       await until(() => document.querySelector('[data-mcp="plugin.mcp-journey.docs"]') && document.querySelector('[data-mcp="plugin.mcp-journey.docs"] button') === null);
+      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-action="connect"]`) === null, connectorRow), true, "Disabling a plugin disables its connector contribution");
       await capture("mcp-plugin-disabled");
       evidence.checks.push("Plugin MCP definitions appear on their owner page and disable with the parent");
-      await evaluate(() => document.querySelector('[data-testid="plugin-page-back"]').click());
+      await clickElement('[data-testid="plugin-page-back"]');
       await until(() => document.querySelector('[data-mcp="journey-docs"]'));
       await click([row, "移除"]);
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("移除“journey-docs”"));
@@ -278,7 +352,16 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       const remaining = await evaluate(() => window.wuu.listMCPServers());
       assert.ok(remaining.servers.some(server => server.name === "journey-local"));
       evidence.checks.push("Deleting a definition preserves unrelated MCP services");
-      fs.writeFileSync(path.join(output, "mcp-result.json"), JSON.stringify({ passed: true, ...evidence, browser: "Authorization provider and browser redirect simulated over real HTTP; production main/preload/core used with the selected file credential provider in disposable state." }, null, 2));
+      const handoff = await evaluate(() => window.__mcpFixtureHandoff || []);
+      fs.writeFileSync(path.join(output, "mcp-result.json"), JSON.stringify({ passed: true, ...evidence, handoff, browser: "Authorization provider and browser redirect simulated over real HTTP; production main/preload/core used with the selected file credential provider in disposable state." }, null, 2));
+    },
+    async diagnostics({ evaluate }) {
+      await evaluate(() => {
+        for (const button of document.querySelectorAll('[data-connector] .settings-mcp-details-toggle[aria-expanded="false"]')) button.click();
+      });
+      return evaluate(() => ({ phases: window.__mcpFixtureHandoff || [], rows: [...document.querySelectorAll('[data-connector]')].slice(0, 10).map(row => ({
+        name: row.getAttribute("data-connector"), diagnostic: [...row.querySelectorAll("pre")].map(element => element.textContent.replace(/https?:\/\/\S+/g, "[URL]").slice(0, 512)),
+      })) }));
     },
     close() { shell.openExternal = originalOpen; peer.closeAllConnections(); peer.close(); },
   };

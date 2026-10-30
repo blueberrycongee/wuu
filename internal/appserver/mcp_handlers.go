@@ -21,6 +21,9 @@ func (s *Server) handleMCPConnect(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	mgr, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -38,6 +41,9 @@ func (s *Server) handleMCPDisconnect(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	mgr, err := s.mcpManager()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -53,6 +59,9 @@ func (s *Server) handleMCPDisconnect(req Request) error {
 func (s *Server) handleMCPRefresh(ctx context.Context, req Request) error {
 	params, err := parseMCPServerActionParams(req)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	mgr, err := s.mcpManager()

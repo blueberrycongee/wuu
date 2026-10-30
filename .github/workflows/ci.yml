@@ -57,7 +57,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Verify CI selection contracts
-        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs .github/scripts/go-check-contract.test.mjs
+        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs .github/scripts/go-check-contract.test.mjs .github/scripts/mcp-auth-evidence.test.mjs
 
       - name: Check repository metadata
         run: make repository-check
@@ -419,10 +419,28 @@ jobs:
           set -o pipefail
           node scripts/plugin-failure-isolation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/plugin-failure-isolation.log
 
+      - name: Verify MCP authentication across compatible reloads
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_MCP_AUTH_E2E_OUTPUT: ${{ github.workspace }}/.tmp/e2e/mcp-auth-reload
+        run: |
+          set -euo pipefail
+          mkdir -p "$WUU_MCP_AUTH_E2E_OUTPUT"
+          git rev-parse HEAD > "$WUU_MCP_AUTH_E2E_OUTPUT/source-commit.txt"
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/mcp-auth-reload-e2e ./scripts/mcp-auth-reload-e2e
+          sha256sum .tmp/bin/mcp-auth-reload-e2e > .tmp/e2e/architecture-conformance/mcp-auth-reload.binary.sha256
+          go version -m .tmp/bin/mcp-auth-reload-e2e > .tmp/e2e/architecture-conformance/mcp-auth-reload-build-info.txt
+          .tmp/bin/mcp-auth-reload-e2e 2>&1 | tee .tmp/e2e/architecture-conformance/mcp-auth-reload.log
+
       - name: Require executed boundary cases and passing reports
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
         run: |
           sha256sum --check .tmp/e2e/architecture-conformance/binary.sha256
+          sha256sum --check .tmp/e2e/architecture-conformance/mcp-auth-reload.binary.sha256
+          node .github/scripts/check-mcp-auth-evidence.mjs .tmp/e2e/mcp-auth-reload .tmp/bin/mcp-auth-reload-e2e "$(git rev-parse HEAD)"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import { readFileSync, readdirSync } from 'node:fs';
@@ -493,6 +511,8 @@ jobs:
             .tmp/e2e/architecture-conformance/*.txt
             .tmp/e2e/architecture-conformance/*.sha256
             .tmp/e2e/architecture-conformance/*.log
+            .tmp/e2e/mcp-auth-reload/results.json
+            .tmp/e2e/mcp-auth-reload/source-commit.txt
             .tmp/e2e/plugin-failure-isolation/run-*/result.json
             .tmp/e2e/provider-authority/run-*/environment.json
             .tmp/e2e/provider-authority/run-*/verification.log
@@ -1614,7 +1634,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.desktop == 'true' && contains(fromJSON(needs.changes.outputs.desktop_suites), 'shell')
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       VITE_ENABLE_ACCOUNT: 'false'
       VITE_ENABLE_REMOTE_CONTROL: 'false'
@@ -1623,6 +1643,9 @@ jobs:
       WUU_TITLEBAR_FOCUSED_CONTROLS: '1'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -1750,6 +1773,35 @@ jobs:
         with:
           name: settings-overlay-hosted-macos-evidence
           path: ${{ runner.temp }}/wuu-macos-settings-overlay/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build native core for connector authorization acceptance
+        id: build-connector-core
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 6
+        run: |
+          mkdir -p desktop/build/bin desktop/out/e2e/plugin-management
+          git rev-parse HEAD > desktop/out/e2e/plugin-management/source-commit.txt
+          fixture_version="v$(tr -d '\n' < VERSION)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o desktop/build/bin/wuu-core ./cmd/wuu
+      - name: Exercise sandboxed connector picker and loopback OAuth
+        if: ${{ !cancelled() && steps.build-connector-core.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/plugin-management-e2e.cjs --mcp-only 2>&1 | tee desktop/out/e2e/plugin-management/run.log
+      - name: Upload hosted macOS connector authorization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-desktop-hosted-macos-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          # Disposable profiles and the fixture credential store are never artifacts.
+          path: |
+            desktop/out/e2e/plugin-management/*.png
+            desktop/out/e2e/plugin-management/*.json
+            desktop/out/e2e/plugin-management/*.txt
+            desktop/out/e2e/plugin-management/*.log
           if-no-files-found: warn
           retention-days: 14
       - name: Upload hosted macOS control evidence

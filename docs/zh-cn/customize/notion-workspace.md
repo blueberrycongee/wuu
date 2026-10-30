@@ -1,5 +1,7 @@
 # Notion 工作区
 
+如需通过浏览器授权 Notion 官方 MCP 服务，请使用 [Account Connectors](mcp.md#连接账号)。本页介绍另一款使用 REST token 的插件；它的网站登录和已保存 token 不会授权 MCP 连接器。
+
 可选的 **Notion** 插件提供 Notion 网站 Ribbon 入口，以及直连 Notion 官方 API 的文档工具。它作为独立源码包提供，不再随 Wuu 分发。在仓库根目录按需安装：
 
 ```sh

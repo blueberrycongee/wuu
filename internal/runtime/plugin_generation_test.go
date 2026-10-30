@@ -1044,6 +1044,51 @@ func TestRequiredCandidateMCPServerMustBeReady(t *testing.T) {
 	}
 }
 
+func TestRequiredRemoteMCPKeepsAuthenticationAdmission(t *testing.T) {
+	for _, transport := range []string{"", "http", "sse"} {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable} {
+			t.Run(fmt.Sprintf("%s-%d", transport, status), func(t *testing.T) {
+				endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Text that looks like authentication must not make a hard
+					// HTTP failure eligible for the normal login admission path.
+					http.Error(w, "unauthorized 401", status)
+				}))
+				t.Cleanup(endpoint.Close)
+				disabled := false
+				manager, err := startMCPManager(config.Config{}, []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{
+					ID: "candidate", MCPServers: map[string]config.MCPServerConfig{
+						"docs":    {URL: endpoint.URL, Transport: transport},
+						"account": {URL: endpoint.URL, Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Account"}},
+					},
+				}}}, map[string]bool{"candidate": true}, nil)
+				if status != http.StatusUnauthorized {
+					if manager != nil {
+						_ = manager.Close()
+						t.Fatal("required hard transport failure retained a manager")
+					}
+					if err == nil {
+						t.Fatal("required hard transport failure was swallowed")
+					}
+					return
+				}
+				if err != nil || manager == nil {
+					t.Fatalf("authentication must remain actionable: %v", err)
+				}
+				t.Cleanup(func() { _ = manager.Close() })
+				if got := manager.Status()["plugin.candidate.docs"]; got.State != mcp.MCPServerStateAuthRequired || got.Connected {
+					t.Fatalf("unauthorized endpoint became usable: %+v", got)
+				}
+				if got, exists := manager.Config("plugin.candidate.account"); !exists || got.IsEnabled() {
+					t.Fatalf("sibling lazy connector admission lost: %+v", got)
+				}
+				if len(manager.NativeTools()) != 0 {
+					t.Fatal("authentication-required generation exposed tools")
+				}
+			})
+		}
+	}
+}
+
 func TestNewSessionDoesNotDiscoverPluginsDuringMutation(t *testing.T) {
 	homeDir := t.TempDir()
 	wuuHome := filepath.Join(homeDir, ".wuu")
