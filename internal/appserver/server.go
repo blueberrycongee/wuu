@@ -351,6 +351,7 @@ type Server struct {
 	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configNonCatalogFingerprint  string
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
@@ -832,6 +833,9 @@ func (s *Server) Close() {
 		s.closeChatGPTLogins()
 		if s.sessionOperationCancel != nil {
 			s.sessionOperationCancel()
+		}
+		if s.rt != nil {
+			s.rt.DrainCanceledMCPAuth()
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()

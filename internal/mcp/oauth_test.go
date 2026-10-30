@@ -816,3 +816,111 @@ func TestManagerOAuthRevocationCancelsBlockedCredentialProviderWithoutBlockingOt
 		})
 	}
 }
+
+func TestOAuthRefreshCoordinatorPreservesWaiterDeadlineAndSingleExchange(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var exchanges atomic.Int32
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if exchanges.Add(1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"access_token": "rotated", "expires_in": 3600})
+	}))
+	defer endpoint.Close()
+	defer close(release)
+	store := credentialstore.NewFileStore(filepath.Join(t.TempDir(), "oauth.json"))
+	token := storedOAuthToken{AccessToken: "expired", RefreshToken: "refresh", ExpiresAt: time.Now().Add(-time.Hour), TokenEndpoint: endpoint.URL, ResourceURL: endpoint.URL + "/resource", CredentialVersion: "original"}
+	data, _ := json.Marshal(token)
+	if err := store.Set(context.Background(), oauthNamespace("docs"), "oauth", data); err != nil {
+		t.Fatal(err)
+	}
+	old, current := NewOAuthManager(store, endpoint.Client()), NewOAuthManager(store, endpoint.Client())
+	current.ShareRefreshCoordinator(old)
+	done := make(chan error, 1)
+	go func() { _, err := old.AccessToken(context.Background(), "docs", token.ResourceURL); done <- err }()
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if _, err := current.AccessToken(ctx, "docs", token.ResourceURL); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting caller ignored its deadline: %v", err)
+	}
+	if got := exchanges.Load(); got != 1 {
+		t.Fatalf("waiting caller started %d exchanges", got)
+	}
+	release <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatalf("short waiter canceled retained refresh: %v", err)
+	}
+	if token, err := current.AccessToken(context.Background(), "docs", token.ResourceURL); err != nil || token != "rotated" {
+		t.Fatalf("successor did not read rotated credential: %q %v", token, err)
+	}
+	if got := exchanges.Load(); got != 1 {
+		t.Fatalf("rotated credential caused %d exchanges", got)
+	}
+}
+
+func TestOAuthRefreshCoordinatorSeparatesCredentialAuthoritiesAndResources(t *testing.T) {
+	for _, separation := range []string{"authority", "resource"} {
+		t.Run(separation, func(t *testing.T) {
+			started, release := make(chan struct{}), make(chan struct{})
+			var exchanges atomic.Int32
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if exchanges.Add(1) == 1 {
+					close(started)
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
+				}
+				json.NewEncoder(w).Encode(map[string]any{"access_token": "rotated", "expires_in": 3600})
+			}))
+			defer endpoint.Close()
+			defer close(release)
+			store := credentialstore.NewFileStore(filepath.Join(t.TempDir(), "oauth.json"))
+			resource := endpoint.URL + "/resource"
+			seed := func(target credentialstore.Store, resource string) {
+				t.Helper()
+				data, _ := json.Marshal(storedOAuthToken{AccessToken: "expired", RefreshToken: "refresh", ExpiresAt: time.Now().Add(-time.Hour), TokenEndpoint: endpoint.URL, ResourceURL: resource, CredentialVersion: resource})
+				if err := target.Set(context.Background(), oauthNamespace("docs"), "oauth", data); err != nil {
+					t.Fatal(err)
+				}
+			}
+			seed(store, resource)
+			old := NewOAuthManager(store, endpoint.Client())
+			done := make(chan error, 1)
+			go func() { _, err := old.AccessToken(context.Background(), "docs", resource); done <- err }()
+			<-started
+			nextStore := credentialstore.Store(store)
+			nextResource := resource
+			if separation == "authority" {
+				nextStore = credentialstore.NewFileStore(filepath.Join(t.TempDir(), "other.json"))
+			} else {
+				nextResource += "?account=other"
+			}
+			seed(nextStore, nextResource)
+			current := NewOAuthManager(nextStore, endpoint.Client())
+			if separation == "resource" {
+				current.ShareRefreshCoordinator(old)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if _, err := current.AccessToken(ctx, "docs", nextResource); err != nil {
+				t.Fatalf("independent %s blocked on old refresh: %v", separation, err)
+			}
+			release <- struct{}{}
+			err := <-done
+			if separation == "authority" && err != nil {
+				t.Fatal(err)
+			}
+			if separation == "resource" && !errors.Is(err, ErrOAuthResourceMismatch) {
+				t.Fatalf("old resource overwrote replacement: %v", err)
+			}
+		})
+	}
+}

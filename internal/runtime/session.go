@@ -226,6 +226,9 @@ type Session struct {
 	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
+	mcpAuthAttempts    map[*mcpAuthAttempt]struct{}
+	mcpAuthTransition  *PluginGeneration
+	mcpAuthClosed      bool
 	// Thread-model shadows release a reference without stopping the root host.
 	borrowedPluginGeneration bool
 	// mcpOAuth outlives individual connection managers, including retained turns.
@@ -976,6 +979,9 @@ func NewSession(opts Options) (*Session, error) {
 	initialGeneration.skills = append([]skills.Skill(nil), discoveredSkills...)
 	initialGeneration.pluginSkills = pluginSkills
 	initialGeneration.mcpOAuth = mcpOAuth
+	initialGeneration.mcpOAuthOverride = opts.MCPOAuth
+	initialGeneration.credentialScope = runtimeSession.mcpCredentialScope()
+	initialGeneration.credentialSettings = pluginKernel.credentialSettingsIdentity(initialGeneration.id)
 	initialGeneration.mcpBinding = mcpActivityBindingsFromPlugins(activePlugins, initialGeneration.id)
 	initialGeneration.systemPrompts, initialGeneration.compactions = systemPrompts, compactions
 	runtimeSession.pluginGeneration = initialGeneration
@@ -1034,8 +1040,25 @@ func (s *Session) InferenceJournalForOwner(ownerID string) providers.InferenceJo
 // explicit files remain pinned to one file, and explicitly trusted project
 // configs continue to include their settings layers.
 func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
+	snapshot, err := s.LoadEffectiveConfigSnapshot()
+	return snapshot.Config, snapshot.Path, err
+}
+
+// EffectiveConfigSnapshot pairs the configuration to publish with the exact
+// selected-source observation that produced it. Source is receipt metadata only;
+// runtime overrides and host restrictions in Config remain authoritative.
+type EffectiveConfigSnapshot struct {
+	Config config.Config
+	Source config.Config
+	Path   string
+}
+
+// LoadEffectiveConfigSnapshot reads once, before applying process-scoped
+// overrides. Callers can record that observation without a later source read
+// accidentally acknowledging configuration that was not prepared or published.
+func (s *Session) LoadEffectiveConfigSnapshot() (EffectiveConfigSnapshot, error) {
 	if s == nil {
-		return config.Config{}, "", errors.New("runtime session is nil")
+		return EffectiveConfigSnapshot{}, errors.New("runtime session is nil")
 	}
 	s.pluginGenerationMu.Lock()
 	hasGraph := s.PluginHost != nil || s.pluginGeneration != nil
@@ -1043,15 +1066,15 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	if !s.SafeMode && hasGraph {
 		services, release, err := s.RetainStateServices()
 		if err != nil {
-			return config.Config{}, s.ConfigPath, err
+			return EffectiveConfigSnapshot{Path: s.ConfigPath}, err
 		}
 		defer release()
 		view, err := services.Config.Read(context.Background())
 		if err != nil {
-			return config.Config{}, s.ConfigPath, err
+			return EffectiveConfigSnapshot{Path: s.ConfigPath}, err
 		}
 		cfg, err := s.applyRuntimeConfig(view.Config)
-		return cfg, s.ConfigPath, err
+		return EffectiveConfigSnapshot{Config: cfg, Source: view.Config, Path: s.ConfigPath}, err
 	}
 	var cfg config.Config
 	var path string
@@ -1064,13 +1087,13 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	case ConfigLoadProject:
 		cfg, path, err = config.LoadProjectConfig(s.RootDir)
 	default:
-		return config.Config{}, "", fmt.Errorf("unknown config load mode %d", s.ConfigLoadMode)
+		return EffectiveConfigSnapshot{}, fmt.Errorf("unknown config load mode %d", s.ConfigLoadMode)
 	}
 	if err != nil {
-		return config.Config{}, path, err
+		return EffectiveConfigSnapshot{Path: path}, err
 	}
-	cfg, err = s.applyRuntimeConfig(cfg)
-	return cfg, path, err
+	effective, err := s.applyRuntimeConfig(cfg)
+	return EffectiveConfigSnapshot{Config: effective, Source: cfg, Path: path}, err
 }
 
 func (s *Session) applyRuntimeConfig(cfg config.Config) (config.Config, error) {
@@ -2273,6 +2296,7 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		defer s.capacityRootRelease()
 	}
 	var cleanupErr error
+	s.closeMCPAuthAttempts()
 	sessionID := ""
 	if s.Toolkit != nil {
 		sessionID = s.Toolkit.SessionID()
@@ -2556,9 +2580,21 @@ func permissionSetContains(granted, required []string) bool {
 	return true
 }
 
-// RefreshExtensions rediscovers package manifests before rebuilding the active
-// extension surfaces. It is used by the catalog's explicit Refresh action.
+// RefreshExtensions rediscovers packages for background observation. A committed
+// activation failure remains diagnostic state instead of replaying publication.
 func (s *Session) RefreshExtensions(cfg config.Config) error {
+	err := s.PublishExtensionRefresh(cfg)
+	if PluginGenerationWasCommitted(err) {
+		providers.DebugLogf("refresh plugin generation: %v", err)
+		return nil
+	}
+	return err
+}
+
+// PublishExtensionRefresh returns the complete publication outcome, including
+// committed activation failures. Interactive callers must publish that outcome
+// instead of presenting a partially activated generation as successful.
+func (s *Session) PublishExtensionRefresh(cfg config.Config) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
 	}
@@ -2567,14 +2603,7 @@ func (s *Session) RefreshExtensions(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	err = s.ActivatePluginGeneration(candidate, nil)
-	if PluginGenerationWasCommitted(err) {
-		// The observed desired state is already published. Its failed runtime
-		// is diagnostic state, not a reason to restart every watcher interval.
-		providers.DebugLogf("refresh plugin generation: %v", err)
-		return nil
-	}
-	return err
+	return s.ActivatePluginGeneration(candidate, nil)
 }
 
 type pluginSkillSnapshot struct{ project, user []skills.Skill }

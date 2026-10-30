@@ -27,12 +27,11 @@ var ErrOAuthSuperseded = fmt.Errorf("%w: OAuth operation was superseded; sign in
 var ErrOAuthResourceMismatch = fmt.Errorf("%w: stored credentials do not match the configured resource; sign in again", ErrOAuthRequired)
 
 type OAuthManager struct {
-	store        credentialstore.Store
-	client       *http.Client
-	mu           sync.Mutex
-	logins       map[string]*oauthLoginState
-	refreshMu    sync.Mutex
-	refreshLocks map[string]chan struct{}
+	store   credentialstore.Store
+	client  *http.Client
+	mu      sync.Mutex
+	logins  map[string]*oauthLoginState
+	refresh *oauthRefreshCoordinator
 }
 
 // Login ordering is serialized per server. Credential-provider I/O must not
@@ -146,7 +145,7 @@ func NewOAuthManager(store credentialstore.Store, client *http.Client) *OAuthMan
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &OAuthManager{store: store, client: client, logins: map[string]*oauthLoginState{}, refreshLocks: map[string]chan struct{}{}}
+	return &OAuthManager{store: store, client: client, logins: map[string]*oauthLoginState{}, refresh: &oauthRefreshCoordinator{locks: map[oauthRefreshKey]*oauthRefreshGate{}}}
 }
 
 func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OAuthStartResult, error) {
@@ -401,8 +400,10 @@ func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID, resourc
 }
 
 func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL string, forceRefresh bool) (string, error) {
-	refreshLock := m.refreshLock(serverID)
-	// Retained generations share this service, but not their call budgets.
+	refreshLock, release := m.refreshLock(serverID, resourceURL)
+	defer release()
+	// Compatible retained generations share only this gate, not service clients
+	// or call budgets.
 	// A short caller must stop waiting without canceling the active refresh.
 	select {
 	case refreshLock <- struct{}{}:
@@ -484,20 +485,55 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 	return accessToken, nil
 }
 
-func (m *OAuthManager) refreshLock(serverID string) chan struct{} {
-	key := strings.TrimSpace(serverID)
-	// This lock protects only gate lookup, never credential-store I/O.
-	m.refreshMu.Lock()
-	defer m.refreshMu.Unlock()
-	if m.refreshLocks == nil {
-		m.refreshLocks = make(map[string]chan struct{})
+// Refresh coordination is process-local and does not confer credential authority.
+// Token CAS fences credential publication, but this does not serialize remote
+// token rotation across processes or provide distributed refresh safety.
+type oauthRefreshKey struct{ server, resource string }
+type oauthRefreshGate struct {
+	lock  chan struct{}
+	users int
+}
+type oauthRefreshCoordinator struct {
+	mu    sync.Mutex
+	locks map[oauthRefreshKey]*oauthRefreshGate
+}
+
+// ShareRefreshCoordinator joins an already verified equivalent credential
+// authority before this manager is used. It never shares credentials, pending
+// logins, service clients or cancellation contexts. Callers must not use this
+// for different selected providers or provider namespaces.
+func (m *OAuthManager) ShareRefreshCoordinator(owner *OAuthManager) {
+	owner.mu.Lock()
+	coordinator := owner.refresh
+	owner.mu.Unlock()
+	m.mu.Lock()
+	m.refresh = coordinator
+	m.mu.Unlock()
+}
+
+func (m *OAuthManager) refreshLock(serverID, resourceURL string) (chan struct{}, func()) {
+	key := oauthRefreshKey{strings.TrimSpace(serverID), canonicalOAuthResource(resourceURL)}
+	m.mu.Lock()
+	coordinator := m.refresh
+	m.mu.Unlock()
+	// Only gate lookup is serialized, never selected credential-provider I/O.
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	gate := coordinator.locks[key]
+	if gate == nil {
+		gate = &oauthRefreshGate{lock: make(chan struct{}, 1)}
+		coordinator.locks[key] = gate
 	}
-	if lock := m.refreshLocks[key]; lock != nil {
-		return lock
+	gate.users++
+	return gate.lock, func() {
+		coordinator.mu.Lock()
+		defer coordinator.mu.Unlock()
+		gate.users--
+		if gate.users == 0 {
+			delete(coordinator.locks, key)
+		}
 	}
-	lock := make(chan struct{}, 1)
-	m.refreshLocks[key] = lock
-	return lock
+
 }
 
 func (m *OAuthManager) Remove(ctx context.Context, serverID string) error {

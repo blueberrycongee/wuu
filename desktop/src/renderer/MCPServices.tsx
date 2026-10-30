@@ -11,6 +11,7 @@ import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
 import { AlertCircle, AlertTriangle, ChevronRight, MoreHorizontal, Plug } from "./WuuIcons";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
+import { usesAutomaticMCPLogin } from "./MCPLoginTransport";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 
 type MCPAction = "connect" | "disconnect" | "refresh" | "identity" | "login" | "logout" | "edit" | "remove";
@@ -228,7 +229,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
   const [auth, setAuth] = useState<Record<string, ConnectorAuth>>({});
   const [errors, setErrors] = useState<Record<string, MCPActionFailure>>({});
   const [busy, setBusy] = useState("");
-  const [login, setLogin] = useState<{ server: MCPServerStatus; controls: ApplicationSettingsControlsV1 } | null>(null);
+  const [login, setLogin] = useState<{ server: MCPServerStatus; controls: ApplicationSettingsControlsV1; managed: boolean } | null>(null);
   const [preparing, setPreparing] = useState<string>();
   const claimedScope = useRef<object | undefined>(undefined);
   const loginIntentRevision = useRef(0);
@@ -257,7 +258,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     void take().then(server => {
       if (!current() || revision !== loginIntentRevision.current) return;
       setPreparing(undefined);
-      if (server) setLogin({ server, controls });
+      if (server) attachLogin(server, true);
     }).catch(failure => {
       if (!current() || revision !== loginIntentRevision.current || isPluginLifecycleCancellation(failure)) return;
       setPreparing(undefined);
@@ -275,10 +276,40 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     return () => { cancelled = true; };
   }, [controls, servers]);
 
-  const loginAvailable = login && login.controls === controls && enabled && servers.some(server => server.name === login.server.name
-    && server.configurable && server.plugin_active !== false && !server.connector?.setup_required?.trim());
-  useEffect(() => { if (login && !loginAvailable) setLogin(null); }, [login, loginAvailable]);
+  const listedLoginAvailable = login && servers.some(server => server.name === login.server.name
+    && server.configurable && server.plugin_active !== false && !server.connector?.setup_required?.trim()
+    && (!login.managed || server.configuration_enabled === true && server.resource_url === login.server.resource_url));
+  const loginAvailable = login && login.controls === controls && enabled && (login.managed || listedLoginAvailable);
+  useEffect(() => {
+    if (!login) return;
+    if (!loginAvailable) {
+      if (login.controls === controls && !retained) {
+        try { controls.cancelMCPConnectorLogin?.(); }
+        catch (error) { if (!isPluginLifecycleCancellation(error)) throw error; }
+      }
+      setLogin(null);
+      return;
+    }
+    if (!login.managed || listedLoginAvailable || retained) return;
+    let cancelled = false;
+    // A presentation refresh may have started before the owner's admission
+    // read. Only a fresh owner validation can revoke its active continuation.
+    void Promise.resolve().then(() => controls.takeMCPConnectorLogin!()).then(server => {
+      if (!cancelled && current() && !server) setLogin(previous => previous === login ? null : previous);
+    }).catch(failure => {
+      if (!cancelled && current() && !isPluginLifecycleCancellation(failure)) {
+        setErrors(previous => ({ ...previous, [login.server.name]: { action: "login", diagnostic: toastErrorMessage(failure) } }));
+      }
+    });
+    return () => { cancelled = true; };
+  }, [login, loginAvailable, listedLoginAvailable, controls, retained, servers]);
 
+  function attachLogin(server: MCPServerStatus, owned: boolean): void {
+    const managed = owned && !!controls.startMCPConnectorLogin && !!controls.pollMCPConnectorLogin && !!controls.retryMCPConnectorLogin
+      && usesAutomaticMCPLogin(server, !!controls.capabilities.mcpBrowserLogin);
+    claimedScope.current = scope;
+    setLogin({ server, controls, managed });
+  }
   function current(): boolean { return mounted.current && currentControls.current === controls && currentScope.current === scope; }
   async function confirm(request: Parameters<typeof confirmAction>[0]): Promise<boolean> {
     const owner = new AbortController();
@@ -315,7 +346,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
         // An already-enabled connector needs no graph publication. The owner
         // still validates the current provider/resource and consumes once.
         const ready = await controls.takeMCPConnectorLogin();
-        if (ready && current() && revision === loginIntentRevision.current) { setPreparing(undefined); setLogin({ server: ready, controls }); }
+        if (ready && current() && revision === loginIntentRevision.current) { setPreparing(undefined); attachLogin(ready, true); }
       }
       catch (error) { if (current()) setPreparing(undefined); throw error; }
       return; // Only committed successor controls may open OAuth.
@@ -323,7 +354,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     const definition = await controls.readMCPDefinition(server.name);
     if (!current()) return;
     await controls.configureMCPServers({ servers: { [server.name]: { enabled: true } }, revision: definition.revision });
-    if (current()) setLogin({ server, controls });
+    if (current()) attachLogin(server, false);
   }
   async function disconnect(server: MCPServerStatus): Promise<void> {
     if (!await confirm({ title: t("connector.disconnectTitle", { name: server.connector!.title }), message: t("connector.disconnectHint"), confirmLabel: t("mcp.disconnect"), tone: "danger" })) return;
@@ -346,7 +377,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     if (failures.length) throw new Error(failures.join("\n"));
   }
 
-  if (!visible.length) return null;
+  if (!visible.length && !loginAvailable && !preparing) return null;
   return <SettingsSection testID="mcp-connectors" title={t("connector.title")}>
     <SettingsGroup>{visible.map(server => {
       const connector = server.connector!;
@@ -441,16 +472,17 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     {preparing ? <Modal ariaLabel={t("mcp.loginNamed", { name: visible.find(server => server.name === preparing)?.connector?.title || preparing })}
       title={t("mcp.working")} onClose={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}
       footer={<button type="button" className="settings-button" onClick={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}>{t("mcp.cancelLogin")}</button>} /> : null}
-    {loginAvailable ? <MCPLogin server={login.server} onClose={failure => {
+    {loginAvailable ? <MCPLogin server={login.server} managed={login.managed} onClose={failure => {
       if (!current()) return;
       if (failure) setErrors(previous => ({ ...previous, [login.server.name]: failure }));
+      controls.cancelMCPConnectorLogin?.();
       setLogin(null);
       void refresh();
-    }} onConnected={() => { if (current()) { clearError(login.server.name); setLogin(null); void refresh(); } }} /> : null}
+    }} onConnected={() => { if (current()) { controls.cancelMCPConnectorLogin?.(); clearError(login.server.name); setLogin(null); void refresh(); } }} /> : null}
   </SettingsSection>;
 }
 
-function MCPLogin({ server, onClose, onConnected }: { server: MCPServerStatus; onClose(failure?: MCPActionFailure): void; onConnected(): void }): JSX.Element {
+function MCPLogin({ server, managed = false, onClose, onConnected }: { server: MCPServerStatus; managed?: boolean; onClose(failure?: MCPActionFailure): void; onConnected(): void }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
   const [error, setError] = useState("");
@@ -477,21 +509,21 @@ function MCPLogin({ server, onClose, onConnected }: { server: MCPServerStatus; o
     };
     const poll = async () => {
       try {
-        const result = await controls.pollMCPLogin(current.loginID!);
+        const result = managed ? await controls.pollMCPConnectorLogin!() : await controls.pollMCPLogin(current.loginID!);
         if (current.cancelled) return;
         if (result.status === "success") { complete.current(); return; }
         if (result.status === "error") { setError(result.error || t("mcp.loginFailed")); return; }
+        setReady(result.phase !== "starting");
         timer = setTimeout(() => { void poll(); }, 750);
-      } catch (failure) { if (!current.cancelled) setError(toastErrorMessage(failure)); }
+      } catch (failure) { if (!current.cancelled && !isPluginLifecycleCancellation(failure)) setError(toastErrorMessage(failure)); }
     };
     void (async () => {
       try {
-        const uri = server.oauth_redirect_uri ? new URL(server.oauth_redirect_uri) : null;
-        const automatic = controls.capabilities.mcpBrowserLogin && (!uri || (uri.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(uri.hostname) && !uri.search && !uri.hash));
+        if (server.oauth_redirect_uri) new URL(server.oauth_redirect_uri);
+        const automatic = usesAutomaticMCPLogin(server, !!controls.capabilities.mcpBrowserLogin);
         if (automatic) {
-          current.loginID = (await controls.startMCPLogin(server.name)).login_id;
-          if (current.cancelled) { await cancel(); return; }
-          setReady(true);
+          current.loginID = (await (managed ? controls.startMCPConnectorLogin!() : controls.startMCPLogin(server.name))).login_id;
+          if (current.cancelled) { if (!managed) await cancel(); return; }
           void poll();
         } else {
           const auth = await controls.startMCPAuth(server.name);
@@ -503,10 +535,10 @@ function MCPLogin({ server, onClose, onConnected }: { server: MCPServerStatus; o
           setReady(true);
           await controls.openExternal(auth.authorization_url);
         }
-      } catch (failure) { if (!current.cancelled) setError(toastErrorMessage(failure)); }
+      } catch (failure) { if (!current.cancelled && !isPluginLifecycleCancellation(failure)) setError(toastErrorMessage(failure)); }
     })();
-    return () => { current.cancelled = true; clearTimeout(timer); void cancel().catch(() => {}); };
-  }, [controls, server.name, server.oauth_redirect_uri, t, retry]);
+    return () => { current.cancelled = true; clearTimeout(timer); if (!managed) void cancel().catch(() => {}); };
+  }, [controls, server.name, server.oauth_redirect_uri, t, retry, managed]);
 
   async function finish(): Promise<void> {
     if (finishing) return;
@@ -530,7 +562,7 @@ function MCPLogin({ server, onClose, onConnected }: { server: MCPServerStatus; o
       }
       await controls.connectMCPServer(server.name);
       if (!current.cancelled) onConnected();
-    } catch (failure) { if (!current.cancelled) setError(toastErrorMessage(failure)); }
+    } catch (failure) { if (!current.cancelled && !isPluginLifecycleCancellation(failure)) setError(toastErrorMessage(failure)); }
     finally { if (!current.cancelled) setFinishing(false); }
   }
 
@@ -538,7 +570,12 @@ function MCPLogin({ server, onClose, onConnected }: { server: MCPServerStatus; o
   const dismiss = () => onClose(error ? { action: authorized ? "connect" : "login", diagnostic: error } : undefined);
   return <Modal ariaLabel={title} title={title} onClose={dismiss} asForm onSubmit={() => void finish()} footer={<>
     <button type="button" className="settings-button" onClick={dismiss}>{t("mcp.cancelLogin")}</button>
-    {error && !manual ? <button type="button" className="settings-button settings-button-primary" data-testid="mcp-login-retry" onClick={() => setRetry(value => value + 1)}>{t("mcp.retry")}</button> : null}
+    {error && !manual ? <button type="button" className="settings-button settings-button-primary" data-testid="mcp-login-retry" onClick={() => {
+      if (managed) void controls.retryMCPConnectorLogin!().then(() => setRetry(value => value + 1)).catch(failure => {
+        if (!attempt.current.cancelled) setError(toastErrorMessage(failure));
+      });
+      else setRetry(value => value + 1);
+    }}>{t("mcp.retry")}</button> : null}
     {manual ? <button type="submit" className="settings-button settings-button-primary" disabled={(!authorized && !code.trim()) || finishing}>{t(authorized ? "mcp.connect" : "mcp.finishLogin")}</button> : null}
   </>}>
     <div className="mcp-form">

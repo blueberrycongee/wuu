@@ -1134,18 +1134,22 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	snapshot, err := s.rt.LoadEffectiveConfigSnapshot()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.rt.RefreshExtensions(cfg); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	activationErr := s.rt.PublishExtensionRefresh(snapshot.Config)
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	if activationErr == nil {
+		activationErr = s.recordCatalogPublishedConfig(snapshot.Source)
 	}
 	inventory, skills := s.currentExtensionState()
 	return s.writePluginGenerationResponse(req, ExtensionCatalogRefreshResult{
 		ExtensionInventory: inventory,
 		Skills:             skills,
-	}, nil, releaseMutation)
+	}, activationErr, releaseMutation)
 }
 
 func (s *Server) handleConfigAdvancedUpdate(req Request) error {

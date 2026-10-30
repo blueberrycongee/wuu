@@ -169,11 +169,17 @@ export interface ApplicationSettingsControlsV1 {
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
   /** Optional process-local presentation handoff across this request's configuration publication. */
   requestMCPConnectorLogin?: (name: string) => Promise<void>;
-  /** Process-local pending presentation only; contains no OAuth material. */
+  /** Pending or attached process-local presentation; contains no OAuth material. */
   getPendingMCPConnectorLogin?: () => string | undefined;
-  /** Consume an explicit Connect intent once, after fresh owner/resource validation; never starts OAuth. */
+  /** Validate and attach an explicit intent. Automatic login starts once and survives compatible presentation replacement. */
   takeMCPConnectorLogin?: () => Promise<MCPServerStatus | undefined>;
   cancelMCPConnectorLogin?: () => void;
+  /** Attach to the current automatic attempt, never create an independent login. */
+  startMCPConnectorLogin?: () => Promise<MCPLoginStartResult>;
+  /** Shared in-flight and terminal receipts survive presentation retirement. */
+  pollMCPConnectorLogin?: () => Promise<MCPLoginPollResult>;
+  /** Explicit retry only, after a failed attempt and fresh owner validation. */
+  retryMCPConnectorLogin?: () => Promise<void>;
   startMCPLogin: (name: string) => Promise<MCPLoginStartResult>;
   pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
   cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;
@@ -326,7 +332,7 @@ export type MCPServerConfig = {
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
 export type MCPLoginStartResult = { login_id: string };
-export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
 
 export type MCPServerStatus = {
   connector?: MCPConnectorDescriptor;

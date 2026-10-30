@@ -182,6 +182,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep consecutive plugin configuration actions available after a successful catalog-only refresh, without dropping concurrent model or general-settings changes or masking partial activation failures.
+
+- Preserve pending MCP authorization through compatible runtime reloads using its original credential authority, with explicit revocation and cleanup on owner changes. Coordinate refreshes across equivalent in-process credential providers without sharing pending logins or replacing token commit fences.
+- Revalidate connector login ownership against fresh host metadata instead of canceling an active sign-in from an older catalog snapshot.
+
+- Keep automatic connector sign-in attached to its native attempt across compatible application presentation replacement, including pending startup and terminal callback receipts. Explicit cancellation can stop discovery before a browser opens; manual-redirect login still requires retry after interruption.
+
 - Present connector authorization-required states without false connection errors, and keep only inert same-context card labels through graph refresh while fresh ownership and authorization are loading.
 
 - Keep an explicit connector sign-in through its own configuration publication without starting OAuth from retired controls. The one-shot, process-local handoff validates the current owner and resource, supports cancellation and navigation invalidation, and avoids redundant preference writes when retrying an already-enabled connector.
