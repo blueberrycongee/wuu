@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep automatic connector sign-in attached to its native attempt across compatible application presentation replacement, including pending startup and terminal callback receipts. Explicit cancellation can stop discovery before a browser opens; manual-redirect login still requires retry after interruption.
+
 - Present connector authorization-required states without false connection errors, and keep only inert same-context card labels through graph refresh while fresh ownership and authorization are loading.
 
 - Keep an explicit connector sign-in through its own configuration publication without starting OAuth from retired controls. The one-shot, process-local handoff validates the current owner and resource, supports cancellation and navigation invalidation, and avoids redundant preference writes when retrying an already-enabled connector.

@@ -21,7 +21,7 @@ import { ENABLE_REMOTE_CONTROL } from "../FeatureFlags";
 export function createApplicationSettingsControls(options: {
   host?: PluginHost;
   controller?: WorkbenchController;
-  connectorLogin?: { request(name: string): Promise<void>; getPending(): string | undefined; take(): Promise<import("../../shared/protocol").MCPServerStatus | undefined>; cancel(): void };
+  connectorLogin?: { request(name: string): Promise<void>; getPending(): string | undefined; take(): Promise<import("../../shared/protocol").MCPServerStatus | undefined>; cancel(): void; start(): Promise<import("../../shared/protocol").MCPLoginStartResult>; poll(): Promise<import("../../shared/protocol").MCPLoginPollResult>; retry(): Promise<void> };
 } = {}): ApplicationSettingsControlsV1 {
   let skinSource: ReturnType<typeof getShellSkins> | undefined;
   let skinView: ReturnType<ApplicationSettingsControlsV1["getShellSkins"]>;
@@ -34,6 +34,9 @@ export function createApplicationSettingsControls(options: {
       getPendingMCPConnectorLogin: () => options.connectorLogin!.getPending(),
       takeMCPConnectorLogin: () => options.connectorLogin!.take(),
       cancelMCPConnectorLogin: () => options.connectorLogin!.cancel(),
+      startMCPConnectorLogin: () => options.connectorLogin!.start(),
+      pollMCPConnectorLogin: () => options.connectorLogin!.poll(),
+      retryMCPConnectorLogin: () => options.connectorLogin!.retry(),
     } : {}),
     capabilities: Object.freeze({
       systemPermissions: window.wuu?.platform === "darwin" && typeof window.wuu?.getSystemPermissions === "function",

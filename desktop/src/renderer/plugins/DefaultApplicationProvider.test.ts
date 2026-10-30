@@ -25,7 +25,8 @@ it.each(["commit", "failure", "cancel", "source-change", "context-change", "reso
   window.wuu = { listProjects: vi.fn(async () => ({ projects: [], active_context: context })), onServerEvent: () => () => {},
     listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), listMCPServers: vi.fn(async () => ({ servers: [server()] })),
     readMCPDefinition: vi.fn(async () => ({ config: { enabled }, revision: "original-revision" })),
-    configureMCPServers: vi.fn(() => saved), startMCPLogin: vi.fn(),
+    configureMCPServers: vi.fn(() => saved), startMCPLogin: vi.fn().mockResolvedValue({ login_id: "fixture-login" }),
+    cancelMCPLogin: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as WuuDesktopApi;
   vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async () => ({ activeContext: context, projects: [], threads: [],
     initialized: { provider: "fixture", model: "fixture", providers: [], extension_inventory: inventory() } as never, status: "ready" }));
@@ -48,8 +49,10 @@ it.each(["commit", "failure", "cancel", "source-change", "context-change", "reso
     expect(window.wuu.configureMCPServers).not.toHaveBeenCalled();
     await requesting;
     const claims = await Promise.all([original.takeMCPConnectorLogin!(), original.takeMCPConnectorLogin!()]);
-    expect(claims.filter(Boolean)).toHaveLength(1);
-    expect(window.wuu.startMCPLogin).not.toHaveBeenCalled();
+    expect(claims.filter(Boolean)).toHaveLength(2);
+    await Promise.all([original.startMCPConnectorLogin!(), original.startMCPConnectorLogin!()]);
+    expect(window.wuu.startMCPLogin).toHaveBeenCalledOnce();
+    original.cancelMCPConnectorLogin!();
     return;
   }
   await vi.waitFor(() => expect(window.wuu.configureMCPServers).toHaveBeenCalledOnce());
@@ -80,11 +83,12 @@ it.each(["commit", "failure", "cancel", "source-change", "context-change", "reso
   await requesting;
   expect(await obsoleteClaim).toBeUndefined();
   const results = await Promise.all(claims);
-  expect(results.filter(Boolean)).toHaveLength(outcome === "commit" ? 1 : 0);
+  expect(results.filter(Boolean)).toHaveLength(outcome === "commit" ? 2 : 0);
   if (outcome === "commit") expect(results.find(Boolean)?.name).toBe(server().name);
-  expect(await app.settingsControls.takeMCPConnectorLogin!()).toBeUndefined();
+  expect((await app.settingsControls.takeMCPConnectorLogin!())?.name).toBe(outcome === "commit" ? server().name : undefined);
+  expect(window.wuu.startMCPLogin).toHaveBeenCalledTimes(outcome === "commit" ? 1 : 0);
+  app.settingsControls.cancelMCPConnectorLogin!();
   expect(window.wuu.configureMCPServers).toHaveBeenCalledExactlyOnceWith({ servers: { [server().name]: { enabled: true } }, revision: "original-revision" });
-  expect(window.wuu.startMCPLogin).not.toHaveBeenCalled();
 });
 
 // Public boundary failure cases: no host controller, dormant unselected package,

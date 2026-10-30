@@ -462,6 +462,18 @@ it("does not throw a retired handoff read into the plugin view error boundary", 
   expect(source.startMCPLogin).not.toHaveBeenCalled();
 });
 
+it.each([true, false])("distinguishes retired cancellation from an active-owner dismissal failure (retired=%s)", async retired => {
+  const source = connectorControls({ cancelMCPConnectorLogin: () => {
+    if (retired) throw new PluginLifecycleCancellationError();
+    throw new Error("active cancellation failed");
+  } });
+  await render(source);
+  await click(button(connectorRow(), "mcp.connect"));
+  expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+  if (retired) await render(source, { enabled: false });
+  else await expect(render(source, { enabled: false })).rejects.toThrow("active cancellation failed");
+});
+
 it("preserves a real active-owner handoff read failure for the plugin view boundary", async () => {
   const source = connectorControls({
     getPendingMCPConnectorLogin: () => { throw new Error("active provider read failed"); },

@@ -1136,7 +1136,7 @@ export type MCPServerConfig = {
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
 export type MCPLoginStartResult = { login_id: string };
-export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
 
 export type MCPServerStatus = {
   connector?: MCPConnectorDescriptor;
