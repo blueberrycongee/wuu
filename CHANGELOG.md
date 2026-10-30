@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep consecutive plugin configuration actions available after a successful catalog-only refresh, without dropping concurrent model or general-settings changes or masking partial activation failures.
+
 - Preserve pending MCP authorization through compatible runtime reloads using its original credential authority, with explicit revocation and cleanup on owner changes. Coordinate refreshes across equivalent in-process credential providers without sharing pending logins or replacing token commit fences.
 - Revalidate connector login ownership against fresh host metadata instead of canceling an active sign-in from an older catalog snapshot.
 

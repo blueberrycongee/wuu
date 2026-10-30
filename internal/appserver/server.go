@@ -351,6 +351,7 @@ type Server struct {
 	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configNonCatalogFingerprint  string
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary

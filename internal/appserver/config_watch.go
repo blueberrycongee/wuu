@@ -293,8 +293,7 @@ func (s *Server) refreshConfigIfChanged() error {
 	// First observation only establishes the baseline. Later changes hot-apply
 	// the effective config and then publish a config/changed notification.
 	if s.configFingerprint == "" && !recovered {
-		s.configFingerprint = next
-		return nil
+		return s.recordPublishedConfig(cfg)
 	}
 	if err := admit(); err != nil {
 		return err
@@ -304,8 +303,9 @@ func (s *Server) refreshConfigIfChanged() error {
 		// fixes the file instead of permanently swallowing the broken edit.
 		return err
 	}
-	s.configFingerprint = next
-	s.configRejectedSources = ""
+	if err := s.recordPublishedConfig(cfg); err != nil {
+		return err
+	}
 	if s.out == nil {
 		return nil
 	}
@@ -408,8 +408,40 @@ func (s *Server) recordPublishedConfig(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	projection, err := nonCatalogConfigFingerprint(cfg)
+	if err != nil {
+		return err
+	}
 	sum := sha256.Sum256(data)
 	s.configFingerprint = hex.EncodeToString(sum[:])
+	s.configNonCatalogFingerprint = projection
 	s.configRejectedSources = ""
 	return nil
+}
+
+// A catalog refresh applies these two graph-owned fields, not an external model
+// selection or general-settings edit. Keep those changes pending for the config
+// watcher even when they were present in the refresh's captured configuration.
+func nonCatalogConfigFingerprint(cfg config.Config) (string, error) {
+	cfg.Composition, cfg.Extensions = nil, nil
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// Call only after successful publication, under configRefreshMu. Compare with
+// the existing observation rather than rereading a possibly newer source. An
+// unknown baseline or a different non-catalog projection cannot be adopted.
+func (s *Server) recordCatalogPublishedConfig(cfg config.Config) error {
+	projection, err := nonCatalogConfigFingerprint(cfg)
+	if err != nil {
+		return err
+	}
+	if s.configFingerprint == "" || s.configNonCatalogFingerprint != projection {
+		return nil
+	}
+	return s.recordPublishedConfig(cfg)
 }
