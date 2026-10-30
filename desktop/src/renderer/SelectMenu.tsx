@@ -67,6 +67,8 @@ export function SelectMenu({
   id,
   className,
   triggerClassName,
+  panelClassName,
+  minMenuWidthEm,
   dataTestid,
   dataField,
   placement = "below",
@@ -91,6 +93,9 @@ export function SelectMenu({
   id?: string;
   className?: string;
   triggerClassName?: string;
+  panelClassName?: string;
+  /** Minimum panel width in em, relative to the trigger's font size. */
+  minMenuWidthEm?: number;
   dataTestid?: string;
   dataField?: string;
   placement?: FloatingMenuPlacement;
@@ -162,14 +167,14 @@ export function SelectMenu({
     return from;
   }
 
-  // Measure the trigger so the panel matches the field width — this is a
-  // form control, not a floating chip, so a panel narrower/wider than its
-  // trigger would read as a different, misaligned element.
+  // Match the field width unless the caller needs more room for labels.
   useLayoutEffect(() => {
     if (open && anchorRef.current) {
-      setMenuWidth(Math.max(anchorRef.current.offsetWidth, 160));
+      const minimumWidth = minMenuWidthEm === undefined ? 0
+        : minMenuWidthEm * (Number.parseFloat(getComputedStyle(triggerRef.current ?? anchorRef.current).fontSize) || 16);
+      setMenuWidth(Math.max(anchorRef.current.offsetWidth, 160, minimumWidth));
     }
-  }, [open]);
+  }, [open, minMenuWidthEm]);
 
   // On open, seed the keyboard cursor on the current selection (or the
   // first selectable option) and move DOM focus onto it.
@@ -332,7 +337,7 @@ export function SelectMenu({
         >
           <div
             ref={menuRef}
-            className="select-menu-panel"
+            className={panelClassName ? `select-menu-panel ${panelClassName}` : "select-menu-panel"}
             role="menu"
             aria-label={ariaLabel}
             style={{ width: menuWidth }}
