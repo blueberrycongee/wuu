@@ -51,3 +51,18 @@ test('unselected checks must be skipped, not failed or run unexpectedly', () => 
     assert.equal(passes({ ...unselected, [name]: 'success' }), false, name);
   }
 });
+
+// This boundary previously existed only as a manual development command. Its
+// result must fail the required job, not become an optional diagnostic workflow.
+test('architecture conformance requires the MCP reload executable and its evidence', () => {
+  const architecture = workflow.split('\n  architecture-conformance:\n')[1]?.split('\n  project-agent-check:\n')[0];
+  const step = architecture?.split('      - name: Verify MCP authentication across compatible reloads\n')[1]?.split('      - name: ')[0];
+  assert.ok(step, 'selected-service MCP reload must run in the required architecture job');
+  assert.doesNotMatch(step, /continue-on-error:/);
+  assert.match(step, /set -euo pipefail/);
+  assert.match(step, /go build.*-ldflags.*internal\/version.Version/);
+  assert.match(step, /\.tmp\/bin\/mcp-auth-reload-e2e 2>&1 \| tee/);
+  assert.match(architecture, /node \.github\/scripts\/check-mcp-auth-evidence\.mjs/);
+  assert.match(architecture, /\.tmp\/e2e\/mcp-auth-reload\/results\.json/);
+  assert.match(architecture, /\.tmp\/e2e\/mcp-auth-reload\/source-commit\.txt/);
+});

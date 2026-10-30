@@ -107,3 +107,17 @@ test('architecture conformance follows shared changes and existing event policy,
   assert.equal(select(['docs/en/project/development.md'], 'workflow_dispatch').architecture, 'true');
   assert.equal(select(['desktop/src/main/trustedRemoteTransport.ts'], 'push').architecture, 'false');
 });
+
+test('MCP authentication lifecycle inputs select required architecture and desktop unit gates', () => {
+  for (const path of ['scripts/mcp-auth-reload-e2e/main.go', 'internal/mcp/oauth.go', 'internal/runtime/mcp_auth_lifetime.go', 'internal/appserver/mcp_auth_handlers.go']) {
+    const result = select([path]);
+    assert.equal(result.architecture, 'true', path);
+    assert.equal(result.go, 'true', path);
+    assert(JSON.parse(result.desktop_suites).includes('unit'), path);
+  }
+  for (const path of ['desktop/src/main/mcpLogin.ts', 'desktop/src/renderer/plugins/ApplicationMCPConnectorLogin.ts', 'desktop/src/renderer/plugins/MCPConnectorHandoff.test.tsx']) {
+    const result = select([path]);
+    assert.equal(result.architecture, 'true', path);
+    assert(JSON.parse(result.desktop_suites).includes('unit'), path);
+  }
+});
