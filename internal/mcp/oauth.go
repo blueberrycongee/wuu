@@ -78,10 +78,11 @@ type OAuthFinishOptions struct {
 }
 
 type OAuthStatus struct {
-	ServerID      string    `json:"server_id"`
-	Authenticated bool      `json:"authenticated"`
-	ExpiresAt     time.Time `json:"expires_at,omitempty"`
-	Scopes        []string  `json:"scopes,omitempty"`
+	Identity      *IdentityStatus `json:"identity,omitempty"`
+	ServerID      string          `json:"server_id"`
+	Authenticated bool            `json:"authenticated"`
+	ExpiresAt     time.Time       `json:"expires_at,omitempty"`
+	Scopes        []string        `json:"scopes,omitempty"`
 }
 
 type protectedResourceMetadata struct {
@@ -116,18 +117,20 @@ type pendingOAuth struct {
 }
 
 type storedOAuthToken struct {
-	LoginGeneration   string    `json:"login_generation,omitempty"`
-	CredentialVersion string    `json:"credential_version,omitempty"`
-	AccessToken       string    `json:"access_token,omitempty"`
-	RefreshToken      string    `json:"refresh_token,omitempty"`
-	TokenType         string    `json:"token_type,omitempty"`
-	ExpiresAt         time.Time `json:"expires_at,omitempty"`
-	Scopes            []string  `json:"scopes,omitempty"`
-	ClientID          string    `json:"client_id,omitempty"`
-	ClientSecret      string    `json:"client_secret,omitempty"`
-	TokenAuthMode     string    `json:"token_auth_mode,omitempty"`
-	TokenEndpoint     string    `json:"token_endpoint,omitempty"`
-	ResourceURL       string    `json:"resource_url,omitempty"`
+	GrantID           string          `json:"grant_id,omitempty"`
+	Identity          *storedIdentity `json:"identity,omitempty"`
+	LoginGeneration   string          `json:"login_generation,omitempty"`
+	CredentialVersion string          `json:"credential_version,omitempty"`
+	AccessToken       string          `json:"access_token,omitempty"`
+	RefreshToken      string          `json:"refresh_token,omitempty"`
+	TokenType         string          `json:"token_type,omitempty"`
+	ExpiresAt         time.Time       `json:"expires_at,omitempty"`
+	Scopes            []string        `json:"scopes,omitempty"`
+	ClientID          string          `json:"client_id,omitempty"`
+	ClientSecret      string          `json:"client_secret,omitempty"`
+	TokenAuthMode     string          `json:"token_auth_mode,omitempty"`
+	TokenEndpoint     string          `json:"token_endpoint,omitempty"`
+	ResourceURL       string          `json:"resource_url,omitempty"`
 }
 
 type tokenResponse struct {
@@ -175,6 +178,7 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 				}
 			}
 			token.LoginGeneration = generation
+			token.Identity = nil
 			return json.Marshal(token)
 		})
 	})
@@ -312,6 +316,10 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 	}
 	token := storedOAuthToken{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, TokenType: response.TokenType, ExpiresAt: tokenExpiry(response.ExpiresIn), Scopes: scopesFromResponse(response.Scope, pending.Scopes), ClientID: pending.ClientID, ClientSecret: pending.ClientSecret, TokenAuthMode: pending.TokenAuthMode, TokenEndpoint: pending.TokenEndpoint, ResourceURL: pending.ResourceURL}
 	token.LoginGeneration = pending.LoginGeneration
+	token.GrantID, err = randomURLToken(32)
+	if err != nil {
+		return OAuthStatus{}, err
+	}
 	token.CredentialVersion, err = randomURLToken(32)
 	if err != nil {
 		return OAuthStatus{}, err
@@ -443,6 +451,11 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 		// and the legacy payload, so it cannot overwrite a same-resource new account.
 		expected := token
 		expected.LoginGeneration = latest.LoginGeneration
+		expected.Identity = latest.Identity
+		// Legacy grant migration changes metadata, not the credential being refreshed.
+		if expected.GrantID == "" {
+			expected.GrantID = latest.GrantID
+		}
 		expectedData, _ := json.Marshal(expected)
 		latestData, _ := json.Marshal(latest)
 		if !bytes.Equal(expectedData, latestData) {

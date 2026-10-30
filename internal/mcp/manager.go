@@ -14,12 +14,14 @@ import (
 )
 
 type serverLifecycle struct {
-	oauthCommitMu sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	revoked       bool
-	generation    uint64
-	pendingCancel context.CancelFunc
+	oauthCommitMu   sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	revoked         bool
+	generation      uint64
+	pendingCancel   context.CancelFunc
+	identityCancel  context.CancelFunc
+	identityAttempt uint64
 }
 
 type connectionMode uint8
@@ -336,6 +338,10 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, mode
 		m.servers[cfg.Name] = server
 	}
 	previousCancel := server.pendingCancel
+	if server.identityCancel != nil {
+		server.identityCancel()
+		server.identityCancel = nil
+	}
 	server.generation++
 	generation := server.generation
 	bounded, cancelBounded := withDefaultConnectionTimeout(parent)
@@ -362,6 +368,8 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, mode
 	m.operations.Add(1)
 	m.mu.Unlock()
 
+	server.oauthCommitMu.Lock()
+	server.oauthCommitMu.Unlock()
 	if previousCancel != nil {
 		previousCancel()
 	}
@@ -448,9 +456,13 @@ func (m *Manager) clientConnectionFailed(name string, generation uint64, client 
 // before waiting for that guard, never holding the manager lock across I/O.
 // A completed Revoke is the fence: no earlier transaction can commit afterward.
 type oauthOwner struct {
-	manager *Manager
-	server  *serverLifecycle
-	name    string
+	manager            *Manager
+	server             *serverLifecycle
+	name               string
+	identityClient     *Client
+	identityGeneration uint64
+	identityDescriptor string
+	identityAttempt    uint64
 }
 
 func (o *oauthOwner) same(other *oauthOwner) bool {
@@ -472,6 +484,9 @@ func (o *oauthOwner) authorize(ctx context.Context, action func() error) error {
 		err = ErrManagerClosed
 	} else if o.server.revoked || o.manager.servers[o.name] != o.server {
 		err = ErrServerRevoked
+	}
+	if err == nil && o.identityClient != nil && (o.server.identityAttempt != o.identityAttempt || o.server.generation != o.identityGeneration || o.manager.clients[o.name] != o.identityClient || identityDescriptor(o.manager.configs[o.name]) != o.identityDescriptor) {
+		err = ErrOAuthSuperseded
 	}
 	o.manager.mu.RUnlock()
 	if err != nil {
@@ -558,7 +573,7 @@ func (m *Manager) OAuthStatus(ctx context.Context, name string) (OAuthStatus, er
 	if err != nil {
 		return OAuthStatus{}, err
 	}
-	return oauth.Status(ctx, cfg.Name, cfg.URL)
+	return oauth.identityStatus(ctx, cfg)
 }
 
 func (m *Manager) FinishOAuth(ctx context.Context, name, state, code string) (ServerStatus, error) {
@@ -752,6 +767,10 @@ func (m *Manager) Disconnect(name string) error {
 		m.servers[name] = server
 	}
 	server.generation++
+	if server.identityCancel != nil {
+		server.identityCancel()
+		server.identityCancel = nil
+	}
 	cancel := server.pendingCancel
 	server.pendingCancel = nil
 	authStatus := authStatusForConfig(cfg)
@@ -769,6 +788,8 @@ func (m *Manager) Disconnect(name string) error {
 		m.operations.Add(1)
 	}
 	m.mu.Unlock()
+	server.oauthCommitMu.Lock()
+	server.oauthCommitMu.Unlock()
 	m.notifyConnectionRetired(c)
 	if cancel != nil {
 		cancel()
@@ -988,6 +1009,15 @@ func (m *Manager) recordConnectionStatus(generation uint64, status ServerStatus,
 
 func cloneServerConfig(cfg ServerConfig) ServerConfig {
 	out := cfg
+	if cfg.IdentityProbe != nil {
+		probe := *cfg.IdentityProbe
+		probe.Arguments = append([]byte(nil), cfg.IdentityProbe.Arguments...)
+		if probe.Workspace != nil {
+			workspace := *probe.Workspace
+			probe.Workspace = &workspace
+		}
+		out.IdentityProbe = &probe
+	}
 	if cfg.Args != nil {
 		out.Args = append([]string(nil), cfg.Args...)
 	}

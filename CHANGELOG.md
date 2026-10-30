@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Verify connector account and workspace identity through a plugin-declared read-only MCP probe after explicit Connect or identity retry. Notion reports its actual connection identity, including bots; failed verification does not discard authorization, and status reads never contact the provider.
+
 - Add declarative account connector cards through the public plugin MCP contract. The bundled catalog keeps every service disabled until explicitly connected: Notion uses browser OAuth, while GitHub and Google Drive show their required application setup without a nonfunctional Connect action. Connector disconnect removes local OAuth credentials and persists the disabled preference; provider-side revocation remains separate.
 
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.

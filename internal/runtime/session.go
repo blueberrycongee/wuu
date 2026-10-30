@@ -2789,6 +2789,23 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 			ToolTimeoutMS: mcpCfg.ToolTimeoutMS,
 		}
 	}
+	// Identity probes are package-owned declarations, never editable server metadata.
+	for _, item := range plugins {
+		source, _ := json.Marshal([]string{item.ID, item.Source, item.Root, item.SubjectID, item.WorkspaceID})
+		for localName, declared := range item.MCPServers {
+			if declared.Connector == nil || declared.Connector.IdentityProbe == nil {
+				continue
+			}
+			name := PluginMCPServerName(item.ID, localName)
+			serverCfg, ok := serverConfigs[name]
+			if !ok {
+				continue
+			}
+			serverCfg.IdentityProbe = declared.Connector.IdentityProbe
+			serverCfg.IdentitySource = string(source)
+			serverConfigs[name] = serverCfg
+		}
+	}
 	mcpMgr.Configure(serverConfigs)
 	for name, serverCfg := range serverConfigs {
 		if !requiredServers[name] || !serverCfg.IsEnabled() {

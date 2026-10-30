@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/insight"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -125,6 +126,7 @@ const (
 	MethodMCPRefresh                      = "mcp/refresh"
 	MethodMCPAuthStart                    = "mcp/auth/start"
 	MethodMCPAuthStatus                   = "mcp/auth/status"
+	MethodMCPIdentityRefresh              = "mcp/identity/refresh"
 	MethodMCPAuthFinish                   = "mcp/auth/finish"
 	MethodMCPAuthRemove                   = "mcp/auth/remove"
 	MethodActivityList                    = "activity/list"
@@ -649,10 +651,11 @@ type MCPAuthStartResult struct {
 }
 
 type MCPAuthStatusResult struct {
-	Name          string   `json:"name"`
-	Authenticated bool     `json:"authenticated"`
-	ExpiresAt     string   `json:"expires_at,omitempty"`
-	Scopes        []string `json:"scopes,omitempty"`
+	Identity      *mcp.IdentityStatus `json:"identity,omitempty"`
+	Name          string              `json:"name"`
+	Authenticated bool                `json:"authenticated"`
+	ExpiresAt     string              `json:"expires_at,omitempty"`
+	Scopes        []string            `json:"scopes,omitempty"`
 }
 
 type MCPAuthFinishParams struct {

@@ -469,6 +469,7 @@ export function scopeApplicationSettingsControls(source: () => ApplicationSettin
     setPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["setPluginSetting"]>) => invoke(() => source().setPluginSetting(...args)),
     getPluginDiagnostics: (...args: Parameters<ApplicationSettingsControlsV1["getPluginDiagnostics"]>) => invoke(() => source().getPluginDiagnostics(...args)),
     getMCPAuthStatus: (...args: Parameters<ApplicationSettingsControlsV1["getMCPAuthStatus"]>) => invoke(() => source().getMCPAuthStatus(...args)),
+    refreshMCPIdentity: (...args: Parameters<ApplicationSettingsControlsV1["refreshMCPIdentity"]>) => invoke(() => source().refreshMCPIdentity(...args)),
     readMCPDefinition: (...args: Parameters<ApplicationSettingsControlsV1["readMCPDefinition"]>) => invoke(() => source().readMCPDefinition(...args)),
     configureMCPServers: (...args: Parameters<ApplicationSettingsControlsV1["configureMCPServers"]>) => invoke(() => source().configureMCPServers(...args)),
     get requestMCPConnectorLogin() { return read(() => source().requestMCPConnectorLogin) ? (name: string) => invoke(() => source().requestMCPConnectorLogin!(name)) : undefined; },

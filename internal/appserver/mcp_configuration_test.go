@@ -277,7 +277,7 @@ func TestMCPConnectorActionAdmissionPreventsSetupAndDisabledOAuth(t *testing.T) 
 		callPluginPackageRPC(t, srv, id, method, params)
 		return responseByID(t, parseOutput(t, out.String()), id)
 	}
-	actions := []string{MethodMCPConnect, MethodMCPRefresh, MethodMCPAuthStart, MethodMCPAuthFinish}
+	actions := []string{MethodMCPConnect, MethodMCPRefresh, MethodMCPAuthStart, MethodMCPAuthFinish, MethodMCPIdentityRefresh}
 	for i, method := range actions {
 		params := map[string]any{"name": name}
 		if method == MethodMCPAuthFinish {

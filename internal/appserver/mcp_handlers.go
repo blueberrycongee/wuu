@@ -31,6 +31,9 @@ func (s *Server) handleMCPConnect(ctx context.Context, req Request) error {
 	if err := mgr.Connect(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Only this owner-initiated connect probes; generic/background refresh does not.
+	// Identity failure never changes a successfully established transport.
+	_, _ = mgr.RefreshIdentity(ctx, params.Name)
 	status := mcpStatusByName(mgr.Status(), params.Name)
 	s.notifyMCPStatus(status)
 	return s.writeResponse(req.ID, MCPServerActionResult{Status: status}, nil)

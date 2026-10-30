@@ -2529,6 +2529,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:mcp-auth-status", (event, name: string) =>
     appServerRequest<MCPAuthStatusResult>(event, "mcp/auth/status", { name }),
   );
+  ipcMain.handle("wuu:mcp-identity-refresh", (event, name: string) =>
+    appServerRequest<MCPAuthStatusResult>(event, "mcp/identity/refresh", { name }),
+  );
   ipcMain.handle("wuu:mcp-auth-finish", (event, name: string, state: string, code: string) =>
     appServerRequest<MCPAuthFinishResult>(event, "mcp/auth/finish", { name, state, code }),
   );

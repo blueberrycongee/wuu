@@ -1055,6 +1055,7 @@ export class RemoteDesktopBridge {
       refreshMCPServer: (name) => this.call("mcp/refresh", { name }),
       startMCPAuth: (name) => this.call("mcp/auth/start", { name }),
       getMCPAuthStatus: (name) => this.call("mcp/auth/status", { name }),
+      refreshMCPIdentity: (name) => this.call("mcp/identity/refresh", { name }),
       removeMCPAuth: (name) => this.call("mcp/auth/remove", { name }),
       pollXAILogin: (login_id) => this.call("auth/xai/login/poll", { login_id }),
       cancelXAILogin: (login_id) => this.call("auth/xai/login/cancel", { login_id }),

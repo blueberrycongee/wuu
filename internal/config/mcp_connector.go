@@ -11,10 +11,11 @@ import (
 // SetupRequired is an explanation of configuration still required from the
 // package or its administrator; it is not a request to start authentication.
 type MCPConnectorDescriptor struct {
-	Title            string `json:"title"`
-	Description      string `json:"description,omitempty"`
-	DocumentationURL string `json:"documentation_url,omitempty"`
-	SetupRequired    string `json:"setup_required,omitempty"`
+	Title            string            `json:"title"`
+	Description      string            `json:"description,omitempty"`
+	DocumentationURL string            `json:"documentation_url,omitempty"`
+	SetupRequired    string            `json:"setup_required,omitempty"`
+	IdentityProbe    *MCPIdentityProbe `json:"identity_probe,omitempty"`
 }
 
 // Validate applies the same metadata contract to configuration and packages.
@@ -31,7 +32,7 @@ func (c *MCPConnectorDescriptor) Validate() error {
 			return errors.New("documentation_url must be an absolute HTTPS URL without credentials")
 		}
 	}
-	return nil
+	return c.IdentityProbe.Validate()
 }
 
 // ConnectorEnabled reports a plugin-owned connector's effective startup
