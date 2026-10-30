@@ -42,40 +42,43 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
-	productParent     *kernelHostServices
-	composition       productCompositionBinding
-	systemPrompt      string
-	promptSections    []prompt.SectionInfo
-	tools             agent.ToolExecutor
-	toolkit           *tools.Toolkit
-	codeMode          *codemode.Service
-	modelSelection    *generationModelSelection
-	models            *generationModelBindings
-	id                string
-	state             *runtimeState
-	credentials       credentialstore.Store
-	configClient      *config.Client
-	chatGPTManager    *siwc.Manager
-	artifactClient    *ArtifactClient
-	mcpOAuth          *mcp.OAuthManager
-	requiredPlugins   map[string]bool
-	selectedPluginIDs []string
-	settings          config.Config
-	plugins           []pluginpkg.Plugin
-	active            []pluginpkg.Plugin
-	host              *pluginhost.Host
-	hooks             *hooks.Dispatcher
-	skills            []skills.Skill
-	pluginSkills      pluginSkillSnapshot
-	mcp               *mcp.Manager
-	mcpBinding        map[string]tools.MCPActivityBinding
-	activityRegistry  *activity.Registry
-	requestTransforms *agent.RequestTransformChain
-	systemPrompts     *agent.SystemPromptAssembler
-	compactions       *agent.CompactionRegistry
-	ownedRoots        []string
-	revocation        *GenerationRevocationReport
-	closeErr          error
+	productParent      *kernelHostServices
+	composition        productCompositionBinding
+	systemPrompt       string
+	promptSections     []prompt.SectionInfo
+	tools              agent.ToolExecutor
+	toolkit            *tools.Toolkit
+	codeMode           *codemode.Service
+	modelSelection     *generationModelSelection
+	models             *generationModelBindings
+	id                 string
+	state              *runtimeState
+	credentials        credentialstore.Store
+	credentialScope    []string
+	credentialSettings map[string]string
+	configClient       *config.Client
+	chatGPTManager     *siwc.Manager
+	artifactClient     *ArtifactClient
+	mcpOAuth           *mcp.OAuthManager
+	mcpOAuthOverride   *mcp.OAuthManager
+	requiredPlugins    map[string]bool
+	selectedPluginIDs  []string
+	settings           config.Config
+	plugins            []pluginpkg.Plugin
+	active             []pluginpkg.Plugin
+	host               *pluginhost.Host
+	hooks              *hooks.Dispatcher
+	skills             []skills.Skill
+	pluginSkills       pluginSkillSnapshot
+	mcp                *mcp.Manager
+	mcpBinding         map[string]tools.MCPActivityBinding
+	activityRegistry   *activity.Registry
+	requestTransforms  *agent.RequestTransformChain
+	systemPrompts      *agent.SystemPromptAssembler
+	compactions        *agent.CompactionRegistry
+	ownedRoots         []string
+	revocation         *GenerationRevocationReport
+	closeErr           error
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
@@ -777,6 +780,9 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 	}
 	// Activation acquires the Session reference. A prepared candidate has no
 	// live owners and must not keep an extra reference after publication.
+	generation.credentialScope = s.mcpCredentialScope()
+	generation.credentialSettings = kernel.credentialSettingsIdentity(generation.id)
+	s.shareMCPRefreshCoordinator(generation)
 	generation.bindActivityOwnership(s.ActivityRegistry)
 	return generation, nil
 }
@@ -923,9 +929,11 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	activationErr = errors.Join(activationErr, s.hydratePluginGeneration(candidate))
+	s.prepareMCPAuthPublication(candidate)
 	s.pluginGenerationMu.Lock()
 	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
+	s.mcpAuthTransition = nil
 	// Conversations that already pinned the previous generation keep using it
 	// until they rebuild. The Session reference is released here; remaining
 	// thread runtimes keep the processes and tools alive.
@@ -1272,6 +1280,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		generation.systemPrompt = s.StreamRunner.SystemPrompt
 		generation.compactions = s.StreamRunner.CompactionRegistry
 	}
+	generation.credentialScope = s.mcpCredentialScope()
 	generation.bindActivityOwnership(s.ActivityRegistry)
 	if s.Toolkit != nil {
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)

@@ -226,6 +226,9 @@ type Session struct {
 	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
+	mcpAuthAttempts    map[*mcpAuthAttempt]struct{}
+	mcpAuthTransition  *PluginGeneration
+	mcpAuthClosed      bool
 	// Thread-model shadows release a reference without stopping the root host.
 	borrowedPluginGeneration bool
 	// mcpOAuth outlives individual connection managers, including retained turns.
@@ -976,6 +979,9 @@ func NewSession(opts Options) (*Session, error) {
 	initialGeneration.skills = append([]skills.Skill(nil), discoveredSkills...)
 	initialGeneration.pluginSkills = pluginSkills
 	initialGeneration.mcpOAuth = mcpOAuth
+	initialGeneration.mcpOAuthOverride = opts.MCPOAuth
+	initialGeneration.credentialScope = runtimeSession.mcpCredentialScope()
+	initialGeneration.credentialSettings = pluginKernel.credentialSettingsIdentity(initialGeneration.id)
 	initialGeneration.mcpBinding = mcpActivityBindingsFromPlugins(activePlugins, initialGeneration.id)
 	initialGeneration.systemPrompts, initialGeneration.compactions = systemPrompts, compactions
 	runtimeSession.pluginGeneration = initialGeneration
@@ -2273,6 +2279,7 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		defer s.capacityRootRelease()
 	}
 	var cleanupErr error
+	s.closeMCPAuthAttempts()
 	sessionID := ""
 	if s.Toolkit != nil {
 		sessionID = s.Toolkit.SessionID()

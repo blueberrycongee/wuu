@@ -467,8 +467,23 @@ tool call, disable/re-enable, and adding the first MCP server after empty startu
 It checks that managers and transport sessions remain generation-owned and that
 RPC responses do not expose credentials. No model or external engine is invoked.
 
-The fixture uses the runtime's explicit OAuth-service injection; it does not test
-macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
+Pending authentication retains its original manager and selected credential
+services, rather than transferring OAuth state to a replacement. Compatible
+reloads may continue; disable, resource/source changes and credential-authority
+changes revoke the attempt. Prepared restart-only provider configuration is
+compared internally; secret or mutable provider settings conservatively prevent
+cross-generation reuse. Cancellation, connection close and expiry release the
+retained generation after physical cleanup.
+
+Equivalent selected credential authorities share bounded, process-local refresh
+gates; token publication still uses credential compare-and-swap. This is not
+distributed or multi-host refresh coordination. The existing publication writer
+remains serialized, so another publication can wait for retirement; credential
+I/O does not hold the generation lookup or manager-wide locks.
+
+The fixture explicitly selects the headless composition and its file credential
+provider, without discovering business plugins. It does not test macOS Keychain
+or the desktop UI. Receipts, connection identities and RPC output
 are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
 another evidence directory.
 

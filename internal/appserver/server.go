@@ -833,6 +833,9 @@ func (s *Server) Close() {
 		if s.sessionOperationCancel != nil {
 			s.sessionOperationCancel()
 		}
+		if s.rt != nil {
+			s.rt.DrainCanceledMCPAuth()
+		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
 		s.closeProjectInboxDrains()

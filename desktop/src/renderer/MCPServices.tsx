@@ -276,22 +276,38 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     return () => { cancelled = true; };
   }, [controls, servers]);
 
-  const loginAvailable = login && login.controls === controls && enabled && servers.some(server => server.name === login.server.name
+  const listedLoginAvailable = login && servers.some(server => server.name === login.server.name
     && server.configurable && server.plugin_active !== false && !server.connector?.setup_required?.trim()
     && (!login.managed || server.configuration_enabled === true && server.resource_url === login.server.resource_url));
+  const loginAvailable = login && login.controls === controls && enabled && (login.managed || listedLoginAvailable);
   useEffect(() => {
-    if (login && !loginAvailable) {
+    if (!login) return;
+    if (!loginAvailable) {
       if (login.controls === controls && !retained) {
         try { controls.cancelMCPConnectorLogin?.(); }
         catch (error) { if (!isPluginLifecycleCancellation(error)) throw error; }
       }
       setLogin(null);
+      return;
     }
-  }, [login, loginAvailable, controls, retained]);
+    if (!login.managed || listedLoginAvailable || retained) return;
+    let cancelled = false;
+    // A presentation refresh may have started before the owner's admission
+    // read. Only a fresh owner validation can revoke its active continuation.
+    void Promise.resolve().then(() => controls.takeMCPConnectorLogin!()).then(server => {
+      if (!cancelled && current() && !server) setLogin(previous => previous === login ? null : previous);
+    }).catch(failure => {
+      if (!cancelled && current() && !isPluginLifecycleCancellation(failure)) {
+        setErrors(previous => ({ ...previous, [login.server.name]: { action: "login", diagnostic: toastErrorMessage(failure) } }));
+      }
+    });
+    return () => { cancelled = true; };
+  }, [login, loginAvailable, listedLoginAvailable, controls, retained, servers]);
 
   function attachLogin(server: MCPServerStatus, owned: boolean): void {
     const managed = owned && !!controls.startMCPConnectorLogin && !!controls.pollMCPConnectorLogin && !!controls.retryMCPConnectorLogin
       && usesAutomaticMCPLogin(server, !!controls.capabilities.mcpBrowserLogin);
+    claimedScope.current = scope;
     setLogin({ server, controls, managed });
   }
   function current(): boolean { return mounted.current && currentControls.current === controls && currentScope.current === scope; }
@@ -361,7 +377,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     if (failures.length) throw new Error(failures.join("\n"));
   }
 
-  if (!visible.length) return null;
+  if (!visible.length && !loginAvailable && !preparing) return null;
   return <SettingsSection testID="mcp-connectors" title={t("connector.title")}>
     <SettingsGroup>{visible.map(server => {
       const connector = server.connector!;
