@@ -652,7 +652,7 @@ try {
     assert.equal(goal.tokens_used, 10);
     assert.equal(runtime.host.calls.filter(call => call.service === 'host.session.send').length, 1);
     await runtime.shutdown();
-    assert.equal(runtime.host.state('goal.state').parent.status, 'paused');
+    assert.equal(runtime.host.state('goal.state').goals.parent.status, 'paused');
     await runtime.host.waitCall('host.session.cancel');
     runtime = await launch('goal', runtime.host);
     assert.equal(resultJSON(await runtime.tool('get_goal', {})).goal.status, 'paused');
@@ -671,9 +671,25 @@ try {
     assert.equal(sent.execution_id, 'goal-held-execution', 'Client execution identity reaches the host');
     runtime.send({ id: 'cancel-goal', method: 'execution.cancel', params: { execution_id: 'goal-held-execution' } });
     await rejected;
+    host.turns.set(sent.params.request_id, { request_id: sent.params.request_id, state: 'queued', session_id: 'parent', queue_id: 'late-goal' });
     release({ state: 'queued', session_id: 'parent', queue_id: 'late-goal' });
     host.intercept = undefined;
     await runtime.shutdown();
+  });
+  await scenario('goal', 'retained process cannot overwrite or cancel replacement work', async () => {
+    const host = new FixtureHost('goal-handoff');
+    const old = await launch('goal', host);
+    await old.tool('create_goal', { objective: 'Retained foreground work' });
+    const current = await launch('goal', host);
+    await current.service('goal.control', 'request', { method: 'create_goal', input: { thread_id: 'peer', objective: 'Replacement work' } });
+    const state = structuredClone(host.state('goal.state'));
+    const effects = host.calls.length;
+    await assert.rejects(old.tool('update_goal', { status: 'complete' }), /changed|retired/);
+    await old.shutdown();
+    assert.deepEqual(host.state('goal.state'), state);
+    assert.equal(host.calls.slice(effects).some(call => call.service.startsWith('host.session.')), false);
+    assert.equal((await current.service('goal.control', 'request', { method: 'get_goal', input: { thread_id: 'peer' } })).goal.objective, 'Replacement work');
+    await current.shutdown();
   });
   await scenario('goal', 'legacy budget-limited state restores paused with finite usage', async () => {
     const host = new FixtureHost('goal-legacy');

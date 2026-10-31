@@ -207,7 +207,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionSend:
 		if s.turnRouter == nil {
-			return nil, serviceError("service_unavailable", "session service is unavailable")
+			return nil, serviceError(sessionSendUnavailableCode, "session service is unavailable before dispatch")
 		}
 		var params pluginhost.SessionSendParams
 		if err := decodeServiceParams(raw, &params); err != nil {

@@ -330,6 +330,12 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 
+对于 `host.session.send`，`session_send_unavailable` 表示宿主没有发送处理器，
+本次调用未被分派。服务恢复后，显式重试可以释放这条未被接受的请求身份。
+该错误码仅保留给此边界：已调用的处理器返回同码（包括嵌套调用返回）时，
+外层发送会改报 `host_error`。通用的 `service_unavailable`、其他错误和超时
+均不能证明未被接纳；应保留请求身份并核对回执，再决定是否替换。
+
 `host.session.send` 支持可选的 `disable_tools: true`，仅对本轮禁用所有工具。宿主移除模型可见的工具并拒绝工具执行，包括 code-mode 分发；不会影响后续轮次，也不会授予权限。省略或设为 false 时保持普通行为。禁用工具的轮次不能使用 `if_running: "steer"` 或外部代理引擎，不支持的请求会在接纳前被拒绝。暂不支持按轮次配置通用工具允许／拒绝列表。
 
 `host.session.history.read` 只读返回物理审计记录，包括隐藏的模型上下文和工具记录。记录带有可选的 `hidden`、`read_only` 和 `origin` 元数据；省略的布尔标志视为 false，旧记录省略的来源视为空字符串。仅凭 `user` 角色不能认定内容由用户输入。构建对话视图时应保留并使用这些字段：排除隐藏记录，只有非只读且来源为 `user` 或空字符串的用户角色记录才作为真实用户输入。不要按文字特征判断来源，也不要删改真实输入中的相似文字。对话筛选不删除审计记录，也不改变提供方上下文。
