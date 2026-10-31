@@ -33,9 +33,30 @@
   font-size: var(--font-ui);
 }
 
-.settings-page .system-permission-row {
+/* Settings owns one group; onboarding and the floating guide keep their
+ * standalone row surfaces and source-rectangle behavior. */
+.settings-page .system-permission-list {
+  gap: 0;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
+}
+
+.settings-page .system-permission-slot + .system-permission-slot::before {
+  content: "";
+  display: block;
+  margin-inline: var(--card-padding);
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.settings-page .system-permission-row {
+  /* Keep the source row's padding and border footprint identical to the
+   * native guide so lifting a row does not reflow its contents. */
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .system-permission-symbol {
@@ -43,14 +64,7 @@
   place-items: center;
   width: 2.4em;
   height: 2.4em;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--info) 12%, var(--paper));
-  color: var(--info);
-}
-
-.system-permission-row[data-permission="screen"] .system-permission-symbol {
-  background: var(--danger-soft);
-  color: var(--danger);
+  color: var(--ink-soft);
 }
 
 .system-permission-icon {
@@ -69,12 +83,12 @@
 
 .system-permission-title {
   color: var(--ink-strong);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 
-.system-permission-description { color: var(--ink-soft); }
+.system-permission-description { color: var(--ink-soft); font-size: var(--font-sm); }
 
-/* Keep launch, Enable and granted states from shifting the text column. */
+/* Keep the status and settings action aligned at the trailing edge. */
 .system-permission-action {
   display: grid;
   min-width: 5.7em;
@@ -82,18 +96,19 @@
 
 .system-permission-enable.settings-button {
   min-width: 5.7em;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-pill);
-  background: var(--paper);
+  justify-content: flex-end;
+  font-weight: var(--weight-regular);
+  padding-inline: var(--space-2);
 }
 
 .system-permission-granted {
   display: inline-flex;
   min-height: var(--control-field-height);
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: var(--space-1);
-  color: var(--success);
+  padding-inline: var(--space-2);
+  color: var(--ink-soft);
   white-space: nowrap;
 }
 
