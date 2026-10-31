@@ -76,7 +76,10 @@ app.whenReady().then(async () => {
     samples.push({ theme, font, width, geometry });
   }
   await openSettingsPage(win, "/^(General|常规)$/", '[data-testid="settings-general"]');
-  await evaluate(win, () => [...document.querySelectorAll('[data-testid="settings-general"] button')].find(button => button.textContent.trim() === "English").click());
+  await evaluate(win, () => document.querySelector('[data-testid="settings-language-select"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[role="menuitemradio"][data-value="en-US"]')));
+  await evaluate(win, () => document.querySelector('[role="menuitemradio"][data-value="en-US"]').click());
+  await waitFor(win, () => document.querySelector('[data-testid="settings-language-select"]').getAttribute('aria-expanded') === 'false');
   await waitFor(win, () => document.documentElement.lang === "en-US");
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc"]');
   for (const font of [15, 20]) {
