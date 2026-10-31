@@ -1,3 +1,4 @@
+import { showActionErrorToast } from "./Toast";
 import { workspacePdfRevision } from "./PdfSelection";
 import { ThreadContextMenu, copyToClipboard } from "./ThreadContextMenu";
 import { usePreviewContent } from "./PreviewContentContext";
@@ -444,7 +445,10 @@ function MacWorkspaceTreeContextMenu({
   useEffect(() => {
     if (openedRef.current) return;
     openedRef.current = true;
-    void service.showItemMenu({ path, root: workspaceRoot }).then(onClose, onClose);
+    void service.showItemMenu({ path, root: workspaceRoot }).then(onClose, error => {
+      showActionErrorToast(error);
+      onClose();
+    });
   }, [service, path, workspaceRoot, onClose]);
   return null;
 }
@@ -465,13 +469,16 @@ function WorkspaceTreeContextMenu({
   const normalizedPath = absolutePath.replace(/\\/g, "/");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1) : absolutePath;
+  const copy = async (text: string): Promise<void> => {
+    if (!await copyToClipboard(text)) showActionErrorToast(t("common.copyFailed"));
+  };
   return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[
-    { label: t("workspace.files.copyPath"), onSelect: () => { void copyToClipboard(absolutePath); } },
-    { label: t("workspace.files.copyRelativePath"), onSelect: () => { void copyToClipboard(relativePath); } },
-    { label: t("workspace.files.copyFileName"), onSelect: () => { void copyToClipboard(entry.name); } },
+    { label: t("workspace.files.copyPath"), onSelect: () => { void copy(absolutePath); } },
+    { label: t("workspace.files.copyRelativePath"), onSelect: () => { void copy(relativePath); } },
+    { label: t("workspace.files.copyFileName"), onSelect: () => { void copy(entry.name); } },
     { separator: true },
     { label: t("workspace.files.revealInFileManager"), disabled: !service.capabilities.revealItem,
-      onSelect: () => service.revealItem({ root: workspaceRoot, path: relativePath }).catch(error => console.error("[desktop] reveal item failed", error)) },
+      onSelect: () => service.revealItem({ root: workspaceRoot, path: relativePath }).catch(error => { showActionErrorToast(error); }) },
   ]} />;
 }
 

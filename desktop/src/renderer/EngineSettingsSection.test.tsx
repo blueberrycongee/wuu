@@ -267,7 +267,9 @@ describe("EngineSettingsSection", () => {
     expect(onUpdate).not.toHaveBeenCalled();
     const save = document.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-path-save"]')!;
     await act(async () => save.click());
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Cannot save path");
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.settings-mcp-details-toggle')!.click());
+    expect(container.querySelector("pre")?.textContent).toBe("Cannot save path");
     expect(input.value).toBe("/custom/codex");
     expect(save.disabled).toBe(false);
     await act(async () => save.click());
@@ -310,4 +312,32 @@ it("keeps disabled models recoverable and preserves model selection while reorde
   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} selectedEngineID={undefined} />}</SettingsControlsProvider>));
   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-model-id="opus"] [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+});
+
+
+it("offers recovery beside a model catalog failure without entering advanced settings", async () => {
+  const failed: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, models_error: "catalog request timed out" }] };
+  const recovered: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "restored", display_name: "Restored model" }] }] };
+  const onRefresh = vi.fn().mockResolvedValue(recovered);
+  const onUpdate = vi.fn();
+  const props = { selectedEngineID: "codex", onSelectEngine: vi.fn(), onCloseEngine: vi.fn(), onRefresh, onUpdate };
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><EngineSettingsSection {...props} result={failed} /></SettingsControlsProvider>));
+  const retry = container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!;
+  expect(retry.closest("details")).toBeNull();
+  await act(async () => retry.click());
+  expect(onRefresh).toHaveBeenCalledOnce();
+  expect(onUpdate).not.toHaveBeenCalled();
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><EngineSettingsSection {...props} result={recovered} /></SettingsControlsProvider>));
+  expect(container.querySelector('[data-testid="settings-error-retry"]')).toBeNull();
+  expect(container.querySelector('[data-model-id="restored"]')).not.toBeNull();
+});
+
+it("does not present failed inventory loading as an ongoing detection", async () => {
+  const onRefresh = vi.fn().mockResolvedValue(inventory);
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><EngineSettingsSection
+    loadError="agent inventory unavailable" onSelectEngine={vi.fn()} onCloseEngine={vi.fn()} onRefresh={onRefresh} onUpdate={vi.fn()} /></SettingsControlsProvider>));
+  expect(container.querySelector('[role="status"][aria-busy="true"]')).toBeNull();
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!.click());
+  expect(onRefresh).toHaveBeenCalledOnce();
 });

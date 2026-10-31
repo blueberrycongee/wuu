@@ -20,6 +20,7 @@ import type { ApplicationPreviewContextV1 as RuntimeContext } from "../../../pac
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useBrowserControls } from "./BrowserControlsContext";
 import { useI18n } from "./i18n";
+import { showActionErrorToast, toastErrorMessage } from "./Toast";
 import { normalizeWebsiteURL } from "./NavigationRibbonPreferences";
 import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
 import { workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
@@ -151,7 +152,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
     setCanGoForward(snapshot.canGoForward);
     if (snapshot.error) {
       setStatus("error");
-      setErrorMessage(snapshot.error);
+      setErrorMessage(toastErrorMessage(snapshot.error, t("workspace.browser.cannotOpen")));
     } else {
       setStatus(snapshot.loading ? "loading" : "idle");
       setErrorMessage(undefined);
@@ -159,7 +160,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
     if (inputRef.current !== document.activeElement) {
       setDraftURL(hasPageURL(snapshot.url) ? snapshot.url : "");
     }
-  }, []);
+  }, [t]);
 
   useLayoutEffect(() => {
     // A failed or absent snapshot must not leave another tab's address,
@@ -187,7 +188,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
     }).catch((cause: unknown) => {
       if (cancelled) return;
       setStatus("error");
-      setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+      setErrorMessage(toastErrorMessage(cause, t("workspace.browser.cannotOpen")));
     });
     return () => {
       cancelled = true;
@@ -219,10 +220,10 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
       if (!activity || activity.state === "stopped" || payload.threadID !== activity.thread_id) return;
       void lease.takeOver(activity, payload.inputGeneration).catch(cause => {
         if (leaseRef.current !== lease) return;
-        setStatus("error"); setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+        setStatus("error"); setErrorMessage(toastErrorMessage(cause, t("workspace.browser.cannotOpen")));
       });
     });
-  }, [lease, activity, workdir]);
+  }, [lease, activity, t, workdir]);
 
   const runCommand = useCallback(async (command: "navigate" | "back" | "forward" | "reload" | "stop", url?: string) => {
     const current = leaseRef.current;
@@ -236,9 +237,9 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
       if (current === leaseRef.current && snapshot) applySurface(snapshot);
     } catch (cause) {
       if (current !== leaseRef.current) return;
-      setStatus("error"); setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+      setStatus("error"); setErrorMessage(toastErrorMessage(cause, t("workspace.browser.cannotOpen")));
     }
-  }, [activity, applySurface, threadID]);
+  }, [activity, applySurface, t, threadID]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);
@@ -383,7 +384,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
                 const current = leaseRef.current;
                 void service.openExternal(currentURL).catch(cause => {
                   if (leaseRef.current !== current) return;
-                  setStatus("error"); setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+                  showActionErrorToast(cause);
                 });
               }
             }}
@@ -406,7 +407,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
             <button
               className="workspace-browser-retry"
               type="button"
-              onClick={() => navigate(currentURL)}
+              onClick={() => navigate(pendingURL ?? currentURL)}
             >
               {t("workspace.browser.retry")}
             </button>

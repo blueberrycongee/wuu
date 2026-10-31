@@ -5,6 +5,8 @@ import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { scopeApplicationBrowser } from "../../../packages/plugin-sdk/src/ui";
 import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
+import { showActionErrorToast } from "./Toast";
+vi.mock("./Toast", () => ({ showActionErrorToast: vi.fn(), toastErrorMessage: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback }));
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import type { ActivitySession, BrowserDockTarget, BrowserCommandParams, BrowserSurfaceSnapshot } from "../shared/protocol";
 import {
@@ -34,6 +36,7 @@ const surfaceHandlers: Array<(snapshot: BrowserSurfaceSnapshot) => void> = [];
 
 beforeEach(() => {
   browserCommand.mockClear();
+  vi.mocked(showActionErrorToast).mockClear();
   reportBrowserBounds.mockClear();
   surfaceHandlers.length = 0;
   (window as unknown as { wuu: unknown }).wuu = {
@@ -214,6 +217,7 @@ describe("WorkspaceBrowserPanel", () => {
   it("navigates when the conversation requests a URL", async () => {
     render({ visible: true });
     browserCommand.mockClear();
+  vi.mocked(showActionErrorToast).mockClear();
     const request = requestWorkspaceBrowserNavigation({
       url: "https://docs.example.com/api",
       reuseKey: "https://docs.example.com/api",
@@ -240,6 +244,7 @@ describe("WorkspaceBrowserPanel", () => {
   it("keeps a navigation request until the panel is visible", async () => {
     render({ visible: true });
     browserCommand.mockClear();
+  vi.mocked(showActionErrorToast).mockClear();
     const request = requestWorkspaceBrowserNavigation({
       url: "https://docs.example.com/api",
       reuseKey: "https://docs.example.com/api",
@@ -386,8 +391,10 @@ it("does not report an old external-open failure in the next thread", async () =
   render({});
   act(() => surfaceHandlers.at(-1)!({ workdir: "/repo", tabID: "user:thread-1", url: "https://example.com", title: "Page", canGoBack: false, canGoForward: false, loading: false }));
   act(() => container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")!.click());
-  await act(async () => { rerender({ threadID: "thread-2" }); reject(new Error("OLD EXTERNAL ERROR")); });
+  await act(async () => { rerender({ threadID: "thread-2" }); });
+  await act(async () => { reject(new Error("OLD EXTERNAL ERROR")); });
   expect(container.textContent).not.toContain("OLD EXTERNAL ERROR");
+  expect(showActionErrorToast).not.toHaveBeenCalled();
 });
 
 
@@ -406,4 +413,33 @@ it("cleans up a retired browser lease without calling it during a presentation r
   expect(container.querySelector("input")).toBe(input);
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("https://example.com");
+});
+
+
+it("keeps the loaded page available when opening it externally fails", async () => {
+  const failure = new Error("External browser unavailable");
+  vi.mocked(window.wuu.openExternal).mockRejectedValueOnce(failure);
+  await act(async () => { render({}); });
+  act(() => surfaceHandlers.at(-1)!({ workdir: "/repo", tabID: "user:thread-1", url: "https://example.com", title: "Page", canGoBack: false, canGoForward: false, loading: false }));
+  await act(async () => container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")!.click());
+  expect(showActionErrorToast).toHaveBeenCalledWith(failure);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")!.disabled).toBe(false);
+  expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("https://example.com");
+});
+
+it("retries the requested address after an initial navigation rejects", async () => {
+  browserCommand.mockRejectedValueOnce(new Error("Connection refused"));
+  await act(async () => { render({}); });
+  const input = container.querySelector<HTMLInputElement>("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "http://localhost:4567");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>(".workspace-browser-retry")!.click());
+  expect(browserCommand).toHaveBeenCalledTimes(2);
+  expect(browserCommand.mock.calls[1][0]).toMatchObject({ command: "navigate", url: "http://localhost:4567" });
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { SettingsFailure } from "./SettingsFailure";
 import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { ArrowUp, ArrowDown, ChevronRight, ExternalLink, RefreshCw } from "./WuuIcons";
@@ -214,7 +215,8 @@ export function EngineSettingsSection({
           </button> : null}
         </SettingsRow> : null}
       </SettingsGroup>
-      {error || loadError ? <p className="settings-error" role="alert">{error || loadError}</p> : null}
+      {error || loadError ? <SettingsFailure message={t(error ? "settings.operationFailed" : "settings.enginesLoadFailed")} diagnostic={error || loadError}
+        onRetry={error ? undefined : () => void refresh()} retrying={busy || refreshing} /> : null}
       {selected.binary_ok && selected.error ? <p className="settings-engine-reason">{selected.error}</p> : null}
     </SettingsSection>
     <SettingsSection title={t("settings.engineModels")}>
@@ -239,7 +241,8 @@ export function EngineSettingsSection({
           </span>
         </div>)}
       </div> : <p className="settings-muted-line">{t("settings.subscriptionModelUnset")}</p>}
-      {observedEngine?.models_error ? <p className="settings-error" role="alert">{observedEngine.models_error}</p> : null}
+      {observedEngine?.models_error ? <SettingsFailure message={t("settings.modelsLoadFailed")} diagnostic={observedEngine.models_error}
+        onRetry={() => void refresh()} retrying={busy || refreshing} /> : null}
     </SettingsSection>
     <details className="connection-engine-advanced">
       <summary>{t("settings.engineAdvanced")}</summary>
@@ -263,11 +266,12 @@ export function EngineSettingsSection({
   return <>
     {!embedded ? <SettingsPageHeader title={t("settings.agents")} /> : null}
     <SettingsSection title={t("provider.connectionEngines")} actions={embedded ? undefined : refreshButton} testID="settings-engine-connections">
-      {error || loadError ? <p className="settings-error" role="alert">{error || loadError}</p> : null}
+      {error || loadError ? <SettingsFailure message={t(error ? "settings.operationFailed" : "settings.enginesLoadFailed")} diagnostic={error || loadError}
+        onRetry={error ? undefined : () => void refresh()} retrying={busy || refreshing} /> : null}
       <SettingsGroup>
-        {result === undefined ? <div className="settings-engine-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
+        {result === undefined ? (loadError ? null : <div className="settings-engine-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
           <div className="settings-engine-row" aria-hidden="true"><span className="settings-engine-skeleton-line settings-engine-skeleton-title" /></div>
-        </div> : visible.length ? <div className="connection-summary-list" role="list" aria-label={t("provider.connectionEngines")}>
+        </div>) : visible.length ? <div className="connection-summary-list" role="list" aria-label={t("provider.connectionEngines")}>
           {visible.map(engine => {
             const quota = quotaFor(engine);
             const state = status(engine);

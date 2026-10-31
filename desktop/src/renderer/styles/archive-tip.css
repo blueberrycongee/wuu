@@ -20,7 +20,7 @@
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  max-width: calc(100vw - 48px);
+  max-width: min(640px, calc(100vw - 48px));
   padding: 10px 12px 10px 14px;
   /* Transient layers share the menu material and shell corner. */
   background: var(--menu-bg);
@@ -57,20 +57,22 @@
 }
 
 .archive-tip-message {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+  display: block;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-height: min(40vh, 20rem);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
   color: var(--ink);
 }
 
 .archive-tip-message strong {
+  display: inline-block;
+  vertical-align: bottom;
+  white-space: nowrap;
   font-weight: var(--weight-medium);
   color: var(--ink-strong);
-  max-width: 16em;
+  max-width: min(16em, 100%);
   overflow: hidden;
   text-overflow: ellipsis;
 }

@@ -10,6 +10,7 @@ import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { PreviewContentProvider } from "./PreviewContentContext";
 import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
 import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { ToastViewport, clearToasts } from "./Toast";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 
 const { mermaidRender } = vi.hoisted(() => ({
@@ -31,6 +32,7 @@ let fileService: ApplicationPreviewContent;
 let openFileMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  clearToasts();
   document.documentElement.dataset.theme = "light";
   mermaidRender.mockReset();
   mermaidRender.mockImplementation(async (_code, options) => ({ svg: `<svg data-diagram-id="${options.idPrefix}"></svg>` }));
@@ -80,7 +82,7 @@ function render(element: JSX.Element, fileCapability = true): void {
     if (!root) {
       root = createRoot(container);
     }
-    root.render(<BrowserControlsProvider service={browser}>{fileCapability ? <PreviewContentProvider service={fileService}>{element}</PreviewContentProvider> : element}</BrowserControlsProvider>);
+    root.render(<><ToastViewport /><BrowserControlsProvider service={browser}>{fileCapability ? <PreviewContentProvider service={fileService}>{element}</PreviewContentProvider> : element}</BrowserControlsProvider></>);
   });
 }
 
@@ -683,8 +685,41 @@ it("uses public file navigation and host media URLs without legacy callbacks", (
 
 it("reports a missing browser capability without consulting preload", async () => {
   root = createRoot(container);
-  act(() => root!.render(<RichContent text="[link](https://example.com)" />));
+  act(() => root!.render(<><ToastViewport /><RichContent text="[link](https://example.com)" /></>));
   await act(async () => container.querySelector<HTMLAnchorElement>(".rich-web-link")!.click());
   expect(openExternalMock).not.toHaveBeenCalled();
-  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+});
+
+
+it("reports failed file navigation outside the message and permits a successful retry", async () => {
+  openFileMock.mockRejectedValueOnce(new Error("File navigation failed"));
+  render(<RichContent cwd="/repo" text="[source](src/main.ts)" />);
+  const link = container.querySelector<HTMLButtonElement>(".rich-file-link")!;
+  await act(async () => link.click());
+  expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+  expect(link.closest("p")?.textContent).toBe("source");
+  act(() => clearToasts());
+  await act(async () => link.click());
+  expect(openFileMock).toHaveBeenCalledTimes(2);
+  expect(document.body.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("does not publish a late link failure after its message has been removed", async () => {
+  let reject!: (error: Error) => void;
+  openFileMock.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+  render(<RichContent cwd="/repo" text="[source](src/main.ts)" />);
+  await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+  render(<RichContent cwd="/other" text="A different message" />);
+  await act(async () => reject(new Error("Old file navigation failed")));
+  expect(document.body.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("reports failed web navigation without inserting diagnostic text into prose", async () => {
+  openExternalMock.mockRejectedValueOnce(new Error("Browser navigation failed"));
+  render(<RichContent linkPolicy="external-only" text="[web](https://example.com)" />);
+  const link = container.querySelector<HTMLAnchorElement>(".rich-web-link")!;
+  await act(async () => link.click());
+  expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+  expect(link.closest("p")?.textContent).toBe("web");
 });

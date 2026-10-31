@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { showActionErrorToast } from "./Toast";
+vi.mock("./Toast", () => ({ showActionErrorToast: vi.fn() }));
 import { WorkspaceFileService } from "../main/workspaceFiles";
 import type {
   RuntimeContext,
@@ -105,6 +107,7 @@ const directoryResults: Record<string, WorkspaceDirectoryListResult> = {
 };
 
 beforeEach(() => {
+  vi.mocked(showActionErrorToast).mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -979,6 +982,39 @@ describe("WorkspaceFileTree", () => {
     await clickMenuItem("在文件管理器中显示");
 
     expect(revealWorkspaceItem).toHaveBeenCalledWith("/repo/README.md");
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("reports a failed reveal without retaining the menu", async () => {
+    const failure = new Error("File manager unavailable");
+    revealWorkspaceItem.mockRejectedValueOnce(failure);
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await clickMenuItem("在文件管理器中显示");
+    expect(showActionErrorToast).toHaveBeenCalledWith(failure);
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("reports a failed native menu instead of silently dismissing it", async () => {
+    const failure = new Error("Native menu unavailable");
+    Object.assign(window.wuu, { platform: "darwin", showWorkspaceItemMenu: vi.fn().mockRejectedValueOnce(failure) });
+    previewContent = new ApplicationPreviewContent(window.wuu);
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await flushMacrotask();
+    expect(showActionErrorToast).toHaveBeenCalledWith(failure);
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("reports a failed file-path copy instead of implying success", async () => {
+    writeClipboard.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await clickMenuItem("复制路径");
+    expect(showActionErrorToast).toHaveBeenCalledOnce();
     expect(contextMenu()).toBeNull();
   });
 

@@ -1,3 +1,4 @@
+import { showActionErrorToast } from "./Toast";
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { useOptionalPreviewContent } from "./PreviewContentContext";
 import { useBrowserControls } from "./BrowserControlsContext";
@@ -637,11 +638,18 @@ function RichFileLink({
 }): JSX.Element {
   const { t } = useI18n();
   const preview = useOptionalPreviewContent();
-  const [error, setError] = useState<string>();
   const reference = formatWorkspaceFileTarget(target);
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current++;
+    return () => { lifetime.current++; };
+  }, [preview, cwd, reference]);
   const openFile = (): void => {
-    if (!preview || !cwd) { setError("Workspace file navigation unavailable"); return; }
-    void preview.service.openFile({ root: cwd, path: reference }).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+    if (!preview || !cwd) { showActionErrorToast(t("workspace.files.openFailed")); return; }
+    const owner = lifetime.current;
+    void preview.service.openFile({ root: cwd, path: reference }).catch(cause => {
+      if (owner === lifetime.current) showActionErrorToast(cause, t("workspace.files.openFailed"));
+    });
   };
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const path = target.path;
@@ -669,7 +677,6 @@ function RichFileLink({
           <span className="rich-link-label">{display}</span>
         </button>
       </Tooltip>
-      {error ? <span role="alert">{error}</span> : null}
       {contextMenu ? (
         <ThreadContextMenu
           x={contextMenu.x}
@@ -740,12 +747,18 @@ function RichWebLink({
   const { t } = useI18n();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const browser = useBrowserControls();
-  const [error, setError] = useState<string>();
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current++;
+    return () => { lifetime.current++; };
+  }, [browser, href]);
   const open = (external: boolean, modifiers?: ReturnType<typeof workspaceBrowserClickModifiers>): void => {
-    if (!browser) { setError(t("workspace.browser.previewUnavailable")); return; }
-    setError(undefined);
+    if (!browser) { showActionErrorToast(t("workspace.browser.previewUnavailable")); return; }
+    const owner = lifetime.current;
     void (external ? browser.openExternal(href) : browser.openURL({ url: href, modifiers }))
-      .catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+      .catch(cause => {
+        if (owner === lifetime.current) showActionErrorToast(cause, t("environment.openFailed"));
+      });
   };
   const openLink = (event: ReactMouseEvent<HTMLAnchorElement>): void => {
     if (event.button > 1) return;
@@ -774,7 +787,6 @@ function RichWebLink({
           </span>
         </a>
       </Tooltip>
-      {error ? <span role="alert">{error}</span> : null}
       {contextMenu ? (
         <ThreadContextMenu
           x={contextMenu.x}
