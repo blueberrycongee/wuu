@@ -1,3 +1,4 @@
+import type { UIRegisterFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
 import { Tooltip } from "./Tooltip";
 import { X } from "./WuuIcons";
 import type {
@@ -23,6 +24,7 @@ import { useI18n } from "./i18n";
 export function ConversationSplitPane({
   pane,
   ownerTabId,
+  registerComposerFocusTarget,
   thread,
   active,
   activeContextCwd,
@@ -47,6 +49,7 @@ export function ConversationSplitPane({
 }: {
   pane: ConversationPaneID;
   ownerTabId?: string;
+  registerComposerFocusTarget?: UIRegisterFocusTargetV1;
   thread: Thread;
   active: boolean;
   activeContextCwd?: string;
@@ -197,7 +200,7 @@ export function ConversationSplitPane({
         </div>
       </div>
       {!paneReadOnly && ownerTabId && (
-        <slots.Slot name={`${slotOwner}/application.composer`} context={{ variant: "dock", pane, ownerTabId }} />
+        <slots.Slot name={`${slotOwner}/application.composer`} context={{ variant: "dock", pane, ownerTabId, registerFocusTarget: registerComposerFocusTarget }} />
       )}
     </section>
   );

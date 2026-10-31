@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep composer selection and model refresh behavior with the selected provider, and coordinate composer/preview focus through public surface capabilities rather than default-provider DOM structure.
+
 - Keep unavailable plugin surfaces visible with scoped render retries instead of blank panes or a full application restart; preserve optional wrapper content and diagnostic details.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.

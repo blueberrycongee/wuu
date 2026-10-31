@@ -228,6 +228,7 @@ export function ConversationSplitLayoutRenderer({
 }
 
 export type ConversationTitleContentProps = {
+  headingRef?: RefObject<HTMLHeadingElement | null>;
   application: ApplicationServiceV1;
   slots: UICompositionV1;
   slotOwner: string;
@@ -330,7 +331,7 @@ function ConversationTitleText({
   );
 }
 
-export function ConversationTitleContent({ application, slots, slotOwner }: ConversationTitleContentProps): JSX.Element {
+export function ConversationTitleContent({ application, slots, slotOwner, headingRef: externalHeadingRef }: ConversationTitleContentProps): JSX.Element {
   const { t } = useI18n();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
   const activePrimaryView = view.navigationWorkspace.activePluginView;
@@ -342,7 +343,8 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
   const nativeTitle = catalog ? t("skills.title") : conversationHeadingTitle(thread, tab?.kind === "draft" ? tab.title : undefined, t("tabs.newConversation"));
   const title = activePrimaryView?.title ?? nativeTitle;
   const editable = !activePrimaryView && !catalog && Boolean(thread ? !thread.read_only && !thread.ephemeral : tab?.kind === "draft");
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  const localHeadingRef = useRef<HTMLHeadingElement>(null);
+  const headingRef = externalHeadingRef ?? localHeadingRef;
   const restoreFocus = useRef(false);
   useLayoutEffect(() => {
     if (!restoreFocus.current) return;

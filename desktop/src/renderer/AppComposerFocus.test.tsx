@@ -954,6 +954,33 @@ describe("main composer focus continuity", () => {
     }), { kind: "no_project", cwd: scratchCwd });
   });
 
+  it("focuses a replacement composer through its public slot contract without default DOM", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+    await host.activateGeneration({ pluginId: "shell", generation: "fixture", register: activateDefaultShell });
+    await host.activateGeneration({ pluginId: "alternate", generation: "fixture", register: api => {
+      api.registerUIContribution({ id: "composer", target: "wuu.default-shell/application.composer", render: ({ context }) => {
+        const ref = React.useRef<HTMLInputElement>(null);
+        const register = context.registerFocusTarget as undefined | ((target: { focus(options?: FocusOptions): boolean; contains(element: Element): boolean }) => () => void);
+        React.useLayoutEffect(() => register?.({ focus: options => { ref.current?.focus(options); return !!ref.current; }, contains: element => ref.current === element }), [register]);
+        return <input ref={ref} aria-label="Alternate composer" />;
+      } });
+    } });
+    try {
+      await act(async () => { root = createRoot(container); root.render(<ApplicationShellOutlet host={host}
+        binding={{ pluginId: "shell", generation: "fixture", id: "ui.shell" }}
+        surfaceBindings={{ ...defaultSurfaceBindings, "ui.composer": { pluginId: "alternate", generation: "fixture", id: "composer" } }} />); });
+      await flushAsync();
+      const trigger = document.createElement("button"); container.append(trigger); trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", { tabId: controller.getSnapshot().tabs.activeTabId }));
+      await flushAsync();
+      expect(document.activeElement).toBe(container.querySelector('[aria-label="Alternate composer"]'));
+    } finally { await act(async () => root?.unmount()); root = null; for (const id of ["alternate", "shell", ...Object.values(defaultSurfaceBindings).map(binding => binding.pluginId)]) host.unload(id); }
+  });
+
   it("honors a public composer focus request for the current draft", async () => {
     await renderApp(false);
     const trigger = document.createElement("button");
