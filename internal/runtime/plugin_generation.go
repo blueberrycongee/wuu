@@ -224,6 +224,21 @@ func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []
 	return s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
 }
 
+// CheckDiscoveredExtensions prepares and drains a candidate without publishing
+// it. Local development publishers use each actual host's selected providers.
+func (s *Session) CheckDiscoveredExtensions(ctx context.Context, cfg config.Config, discovered []pluginpkg.Plugin, requiredIDs ...string) error {
+	prepared, err := s.preparePluginCatalog(cfg, discovered, s.requiredPluginMutationConsumers(requiredIDs...), nil, startPluginClient)
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
+	candidate, err := prepared.Build(ctx)
+	if err != nil {
+		return err
+	}
+	return candidate.close()
+}
+
 // Explicit installation/update must preserve the healthy consumers affected by
 // its targets. Capture the committed graph before candidate dependency pruning:
 // declarative packages and service-only consumers need the same atomicity as
@@ -1659,6 +1674,7 @@ func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Pl
 			return fail(fmt.Errorf("plugin %q changed while its execution package was being snapshotted", item.ID))
 		}
 		copied.AuthorizedDev = item.AuthorizedDev
+		copied.StorageSubjectID = item.StorageSubjectID
 		copied.EffectivePermissions = append([]string(nil), item.EffectivePermissions...)
 		result[i] = copied
 	}

@@ -104,7 +104,12 @@ export async function activate(api) {
     );
     const [objective, setObjective] = React.useState("");
     const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState("");
+    const activeView = React.useRef(true);
+    const notice = React.useRef(null);
+    React.useEffect(() => {
+      activeView.current = true;
+      return () => { activeView.current = false; notice.current?.dispose(); };
+    }, []);
     const [open, setOpen] = React.useState(false);
     const goal = state.goal;
     const canCreate = !goal || goal.status === "complete";
@@ -115,19 +120,24 @@ export async function activate(api) {
     }
     async function act(method) {
       if (disabled) return;
-      setBusy(true); setError("");
+      setBusy(true);
+      notice.current?.dispose();
+      const attempt = crypto.randomUUID();
       try {
         const input = { thread_id: threadId };
         if (method === "create_goal") input.objective = objective.trim();
         await requestGoal(method, input);
+        if (!activeView.current || api.signal.aborted) return;
         if (method === "create_goal" || method === "clear") setObjective("");
         await refresh(threadId);
+        if (!activeView.current || api.signal.aborted) return;
         if (method === "create_goal" || method === "clear") close();
-      } catch (cause) { setError(String(cause.message || cause)); }
-      finally { setBusy(false); }
+      } catch {
+        if (activeView.current && !api.signal.aborted) notice.current = api.showNotice({ message: tr("goal.actionFailed"), tone: "error", key: `goal-action:${attempt}` });
+      } finally { if (activeView.current && !api.signal.aborted) setBusy(false); }
     }
     // Runtime failures retain their cause in host diagnostics, not composer prose.
-    const visibleError = error ? tr("goal.actionFailed") : state.error ? tr("goal.unavailable") : goal?.error ? tr("goal.needsAttention") : "";
+    const visibleError = state.error ? tr("goal.unavailable") : goal?.error ? tr("goal.needsAttention") : "";
     if (state.unavailable || (!goal && !open && !visibleError)) return null;
     return h(ComposerDrawer, {
       className: "plugin-goal",
@@ -199,7 +209,7 @@ export async function activate(api) {
     .plugin-goal .plugin-goal-submit { display:inline-grid; place-items:center; width:28px; height:28px; min-height:28px; padding:0; border-radius:var(--radius-circle); }
     .plugin-goal-footer { display:flex; align-items:center; gap:var(--space-2); }
     .plugin-goal-spacer { flex:1; }
-    .plugin-goal-error { margin:0; padding:var(--space-2) var(--space-3) var(--space-3); color:var(--danger); overflow-wrap:anywhere; }
+    .plugin-goal-error { margin:0; padding:var(--space-2) var(--space-3) var(--space-3); color:var(--ink-muted); overflow-wrap:anywhere; }
     @media (max-width:480px) { .plugin-goal-status { display:none; } }
     @media (pointer:coarse) { .plugin-goal .plugin-goal-icon-button, .plugin-goal .plugin-goal-submit { width:44px; height:44px; } }
   ` });

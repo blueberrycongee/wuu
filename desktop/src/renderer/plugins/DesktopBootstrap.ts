@@ -1,10 +1,11 @@
-import type { InitializeResult, ServerEvent } from "../../shared/protocol";
+import type { InitializeResult, ProjectRuntimeIssue, ServerEvent } from "../../shared/protocol";
 import { subscribeServerEvents } from "../ServerEvents";
 
 export interface DesktopBootstrapSnapshot {
   readonly initialized?: InitializeResult;
   readonly connectionGeneration: number;
   readonly error?: string;
+  readonly startupWorkspaceIssue?: ProjectRuntimeIssue;
 }
 /** Transport bootstrap only. Business state, policy, subscriptions and writers belong to providers. */
 export class DesktopBootstrap {
@@ -51,8 +52,19 @@ export class DesktopBootstrap {
       const epoch = ++this.epoch, observed = observedInitialization, since = publicationSequence;
       this.cancelRestoration("Runtime restoration superseded");
       try {
-        const initialized = await window.wuu.initialize();
+        let initialized: InitializeResult;
+        let startupWorkspaceIssue: ProjectRuntimeIssue | undefined;
+        try {
+          initialized = await window.wuu.initialize();
+        } catch (error) {
+          if (restore || this.state.initialized || !active || epoch !== this.epoch || !window.wuu.recoverUnavailableProject) throw error;
+          startupWorkspaceIssue = await window.wuu.recoverUnavailableProject();
+          if (!active || epoch !== this.epoch) return;
+          if (!startupWorkspaceIssue) throw error;
+          initialized = await window.wuu.initialize();
+        }
         if (!active || epoch !== this.epoch) return;
+        if (startupWorkspaceIssue) this.publish({ ...this.state, startupWorkspaceIssue });
         // Older adapters do not expose transport observations; their own bootstrap
         // call still gets the same race-safe inventory publication merge.
         if (observedInitialization === observed) accept(initialized, since);

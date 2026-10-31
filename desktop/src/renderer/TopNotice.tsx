@@ -36,12 +36,21 @@ export function TopNotice({
   persistent = false,
 }: TopNoticeProps): JSX.Element {
   const [leaving, setLeaving] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [dismissRequested, setDismissRequested] = useState(false);
   const onDismissRef = useRef(onDismiss);
   useLayoutEffect(() => { onDismissRef.current = onDismiss; }, [onDismiss]);
 
-  // Parent updates must not restart the notice's lifetime.
+  // Reading or using an action pauses expiry. Unrelated parent renders do not
+  // restart it, and every exit timer belongs to this notice's mounted lifetime.
   useEffect(() => {
-    if (persistent) return;
+    if (dismissRequested) {
+      const timer = window.setTimeout(() => onDismissRef.current(), motionDurationMs("--motion-base", 180));
+      return () => window.clearTimeout(timer);
+    }
+    setLeaving(false);
+    if (persistent || hovered || focused) return;
     const timer = window.setTimeout(() => {
       setLeaving(true);
     }, TOP_NOTICE_AUTO_DISMISS_MS - 400);
@@ -50,7 +59,7 @@ export function TopNotice({
       window.clearTimeout(timer);
       window.clearTimeout(finalize);
     };
-  }, [persistent]);
+  }, [persistent, hovered, focused, dismissRequested]);
 
   return (
     <div
@@ -59,6 +68,12 @@ export function TopNotice({
       data-wuu-layer="notice"
       data-wuu-state={leaving ? "closing" : "open"}
       data-wuu-variant={isError ? "error" : "default"}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
       role={isError ? "alert" : "status"}
       aria-live={isError ? "assertive" : "polite"}
     >
@@ -80,9 +95,7 @@ export function TopNotice({
         aria-label={dismissAriaLabel}
         onClick={() => {
           setLeaving(true);
-          // The `.leaving` exit runs on --motion-base; unmounting sooner would cut it
-          // short when a theme lengthens that rung.
-          window.setTimeout(onDismiss, motionDurationMs("--motion-base", 180));
+          setDismissRequested(true);
         }}
       >
         <X className="icon-sm" />

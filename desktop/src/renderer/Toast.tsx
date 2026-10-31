@@ -1,6 +1,6 @@
 import { CircleAlert } from "./WuuIcons";
 import { useSyncExternalStore } from "react";
-import { useI18n } from "./i18n";
+import { translateCurrent, useI18n } from "./i18n";
 import { TopNotice, type TopNoticeAction } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
@@ -68,10 +68,18 @@ export function showToast({
   if (!trimmedMessage) return undefined;
 
   const key = dedupeKey?.trim() || `${tone}:${trimmedMessage}`;
+  const pending = activeToast?.dedupeKey === key
+    ? activeToast
+    : queuedToasts.find(toast => toast.dedupeKey === key);
+  if (pending) return pending.id;
+
   const now = Date.now();
+  for (const [recentKey, shownAt] of recentlyShownAt) {
+    if (now - shownAt >= TOAST_DEDUPE_WINDOW_MS) recentlyShownAt.delete(recentKey);
+  }
   const lastShownAt = recentlyShownAt.get(key);
   if (lastShownAt !== undefined && now - lastShownAt < TOAST_DEDUPE_WINDOW_MS) {
-    return activeToast?.dedupeKey === key ? activeToast.id : undefined;
+    return undefined;
   }
   recentlyShownAt.set(key, now);
 
@@ -115,7 +123,7 @@ export function toastErrorMessage(error: unknown, fallback = ""): string {
 export function showErrorToast(error: unknown, fallback = "", dedupeKey?: string): number | undefined {
   if (isPluginLifecycleCancellation(error)) return undefined;
   return showToast({
-    message: toastErrorMessage(error, fallback),
+    message: toastErrorMessage(error, fallback) || translateCurrent("error.requestFailedTitle"),
     tone: "error",
     dedupeKey,
   });

@@ -170,6 +170,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reduce repeated history cloning in the default agent loop and JSON processing during Responses WebSocket continuation, preserving context contents, replay checks and provider options.
+
 - Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.
 
 - Render Markdown conversation attachments with the shared document reading presentation while keeping HTML and other executable text inert.
@@ -179,6 +181,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Let app-server shutdown proceed when queued worker launch is stalled, while retaining its state until queued cancellation and worker ownership have settled.
+
+- Show complete font names in the appearance settings and widen their menus.
+
+- Keep desktop error notices readable during pointer and keyboard interaction, report failed link and command actions without inserting errors into message prose, and preserve working browser pages when opening externally fails.
+- Add in-place retry and expandable diagnostics for account, model and engine loading failures while preserving connection form input.
+- Preserve installed plugin data ownership across authorized development overrides. Validate storage transfers through each live host’s selected provider before publication, report independent host activation failures, and add explicit runtime reload recovery.
 
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 
@@ -285,7 +293,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Animate desktop message sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences.
+- Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a quick ease-out, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
 
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 

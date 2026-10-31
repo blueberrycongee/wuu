@@ -366,14 +366,18 @@ Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispa
 
 The additive receipt methods (`AcceptClientInput`, `ReadClientInput`,
 `ChangeClientInput`, `AppendAcceptedClientHistoryRecord`,
-`SettleClientInputExecution` and the scoped list/recovery methods) use the same
-selected `session.domain` authority. `SessionDomainAcceptedClientInput` retains
-Go field casing and base64 byte slices, including the distinction between `null`
-and empty bytes. Receipt acceptance, execution state and durable history admission
-are separate facts; none implies that a model saw or read the message. The host
-supplies `SessionDomainClientInputScope` from its immutable binding. Recovery
-reconciles receipt state without replaying tools or external effects. Unsupported
-methods fail explicitly; consumers never reopen a native receipt store.
+`SettleClientInputExecution`, `MarkClientInputsRead`, and the scoped list and
+recovery methods) use the selected `session.domain` authority.
+`SessionDomainAcceptedClientInput` retains Go field casing and base64 byte slices,
+including the distinction between `null` and empty bytes. Acceptance, execution,
+and history admission do not establish that an input was read. The host calls
+`MarkClientInputsRead` when an input's client ID and history sequence occur in an
+assembled agent model context. The provider records the first `read_at` and keeps
+it across retries and restarts. The timestamp does not prove that a model provider
+received the request or produced a response. The host supplies
+`SessionDomainClientInputScope` from its immutable binding. Recovery reconciles
+receipt state without replaying tools or external effects. An unsupported read
+marker leaves the input delivered and does not block the model request.
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 
@@ -631,8 +635,13 @@ prevents a retry from overwriting later target updates or deletions. After an
 uncertain result, reconcile or explicitly retry the identical transfer; the SDK
 never retries automatically or emulates a move with reads and writes. Unsupported
 providers return an explicit method error, with no native storage fallback. The
-full `PLUGIN_SETTINGS_STORE_DESCRIPTOR` includes this method; a provider that
-cannot implement it must omit it from its advertised methods.
+full `PLUGIN_SETTINGS_STORE_DESCRIPTOR` includes this method and the read-only
+`check-transfer-state` preparation method, exposed by `checkStateTransfer(transfer)`.
+The check applies the same ownership, conflict, and quota rules without writing
+data, receipts, or source fences. The effectful transfer rechecks these rules; a
+successful preflight does not reserve ownership. Providers unable to implement a
+method must omit it. Transfer-dependent candidates require both methods and fail
+explicitly when the selected provider cannot preflight them.
 
 Configuration revisions and settings revisions are opaque strings, distinct from document-store revision numbers. Neither service offers the document store's transaction receipt protocol. Retry only a definite compare-and-exchange conflict after rereading; reconcile an unavailable/canceled write before attempting another write. Do not log credential bytes, raw configuration or secret-bearing effective configuration.
 

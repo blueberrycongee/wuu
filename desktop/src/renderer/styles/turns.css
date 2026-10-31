@@ -270,8 +270,7 @@
 
 /* Placing a submission moves only what the user sent; the new turn's live
  * status enters as the bubble lands (ConversationScrollState). */
-.scroll-region-content[data-submit-placing] .session-flow > .turn:last-of-type > .assistant-turn-shell,
-.user-message-block:has(> [data-send-flight]) > .user-message-actions {
+.scroll-region-content[data-submit-placing] .session-flow > .turn:last-of-type > .assistant-turn-shell {
   opacity: 0;
 }
 
@@ -349,37 +348,6 @@
   gap: inherit;
   width: 100%;
   min-width: 0;
-}
-
-/* Cached panes and virtualized turns normally clip their children. A flight
- * paints outside its final row until it lands; the scrollport still clips it. */
-.cached-conversation-pane[data-active="true"]:has([data-send-flight]) {
-  overflow: visible;
-}
-
-.turn:has([data-send-flight]) {
-  content-visibility: visible;
-}
-
-/* The send surface narrows independently so glyphs retain their final wrapping. */
-.user-message[data-send-shaping] {
-  position: relative;
-  isolation: isolate;
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.user-message[data-send-shaping]::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: var(--send-inset);
-  border: var(--send-border);
-  border-radius: inherit;
-  background: var(--send-background);
-  box-shadow: var(--send-shadow);
-  pointer-events: none;
 }
 
 .session-message-source {

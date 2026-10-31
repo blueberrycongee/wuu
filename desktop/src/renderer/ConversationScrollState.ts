@@ -29,11 +29,11 @@ import {
 import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 import { isWindowResizing } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
-import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, subscribeReducedMotion, cubicBezier } from "./motion";
+import { motionCurve, motionDurationMs, motionEasing, prefersReducedMotion, subscribeReducedMotion, cubicBezier } from "./motion";
 import { createScrollGlide, GLIDE_FOLLOW_HANDOFF_VIEWPORTS } from "./ScrollGlide";
 import { useSessionTailSpace } from "./SessionTailSpace";
 import { conversationDisclosureHeight, eventTargetsConversationDisclosure } from "./ConversationDisclosure";
-import { SEND_SHAPE_CURVE, SEND_SHAPE_MS, SEND_TRAVEL_MS, useMessageArrivalMotion } from "./useMessageArrivalMotion";
+import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
 import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 import { scrollToUserMessage as scrollToScopedUserMessage, scrollToConversationMessage as scrollToScopedConversationMessage } from "./TurnViewHelpers";
@@ -76,6 +76,28 @@ const SUBMIT_PLACING_ATTR = "data-submit-placing";
  * spring has covered over 90% of the travel by then, so the entrance
  * overlaps the bubble settling instead of following a visible pause. */
 const SUBMIT_STATUS_REVEAL_AT = 0.6;
+/** How far a submission without a scroll path to travel (the first turn)
+ * rises into place. Crossing the empty conversation from the composer reads
+ * as the message being thrown; a short rise reads as it settling. */
+const SUBMIT_SETTLE_RISE_PX = 28;
+/** Extra placement time for a full viewport of travel, as a fraction of the
+ * base duration, so long moves keep a readable peak speed. */
+const SUBMIT_TRAVEL_STRETCH = 0.4;
+/**
+ * A critically damped spring released from rest, sampled into a CSS
+ * `linear()` curve. It accelerates out of the press instead of starting at
+ * full speed like a cubic ease-out, settles without overshoot (the message
+ * never moves back down), and is normalized to land exactly on 1.
+ */
+const SUBMIT_PLACEMENT_EASING = (() => {
+  const stiffness = 7;
+  const rest = 1 - Math.exp(-stiffness) * (1 + stiffness);
+  const points = Array.from({ length: 41 }, (_, index) => {
+    const phase = stiffness * index / 40;
+    return Number(((1 - Math.exp(-phase) * (1 + phase)) / rest).toFixed(4));
+  });
+  return `linear(${points.join(", ")})`;
+})();
 
 function clampFraction(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -275,7 +297,8 @@ export function useConversationScrollState({
     documentTop?: number;
     /** The thread's turns have contained this message ID since it was assigned. */
     inThread?: boolean;
-    placement?: { origin: DOMRect; offset: number; animation: Animation };
+    /** Placement found no scroll path, so the bubble rises in place. */
+    settle?: boolean;
   } | undefined>(undefined);
   // Exactly one owner can write scrollTop. Geometry alone cannot transfer
   // ownership: a submission's padded bottom is not the bottom of its output.
@@ -561,7 +584,6 @@ export function useConversationScrollState({
     messageJumpCancelRef.current?.();
     messageJumpCancelRef.current = undefined;
     stopSubmitMotion(Boolean(options?.keepVisible));
-    cancelArrivals();
     if (followMotionRef.current) suppressAutoFollowRearmRef.current = false;
     followMotionRef.current = false;
     if (motionFrameRef.current !== undefined) {
@@ -569,7 +591,7 @@ export function useConversationScrollState({
       motionFrameRef.current = undefined;
     }
     if (scrollModeRef.current === "placing") writeScrollMode("holding");
-  }, [stopSubmitMotion, cancelArrivals]);
+  }, [stopSubmitMotion]);
 
   const markUserScrollIntent = useCallback((direction: "away" | "latest", startTop?: number): void => {
     cancelScrollMotion({ keepVisible: true });
@@ -663,8 +685,9 @@ export function useConversationScrollState({
       ? [{
         id: submissionRef.current.messageID,
         element,
+        own: true,
         fresh: submissionRef.current.animate,
-        placement: submissionRef.current.placement,
+        settle: Boolean(submissionRef.current.settle),
       }]
       : []);
   }, [reconcileArrivals, splitConversation, submittedMessage]);
@@ -833,8 +856,10 @@ export function useConversationScrollState({
     if (submissionRef.current) submissionRef.current.documentTop = placement.documentTop;
     reserveTailSpace(placement.targetTop, placement.messageHeight);
     const startTop = clampScrollTop(viewport, viewport.scrollTop);
+    // The turn leaves from where it was laid out. Without a range to travel
+    // through (the first turn) it rises a short way into place instead.
     const canScroll = Math.abs(placement.targetTop - startTop) > 1;
-    const origin = dockComposerNode?.querySelector<HTMLElement>(".composer-frame")?.getBoundingClientRect();
+    if (submissionRef.current) submissionRef.current.settle = !canScroll;
     // The final layout applies at once: every later reflow and geometry read
     // sees the destination, and the motion is only painted over it.
     viewport.scrollTop = placement.targetTop;
@@ -849,30 +874,28 @@ export function useConversationScrollState({
     const travel = placement.screenTop - (placement.documentTop - placedTop);
     const offset = canScroll
       ? Math.max(-viewport.clientHeight, Math.min(viewport.clientHeight, travel))
-      : 0;
+      : SUBMIT_SETTLE_RISE_PX;
     const content = scrollContentRef.current;
-    const duration = SEND_TRAVEL_MS;
+    const duration = motionDurationMs("--motion-slower", 440) *
+      (1 + SUBMIT_TRAVEL_STRETCH * Math.min(1, Math.abs(offset) / Math.max(1, viewport.clientHeight)));
     if (
       !animate || !submissionRef.current?.animate || prefersReducedMotion() ||
-      document.hidden || !content?.animate
+      Math.abs(offset) <= 1 || duration <= 0 || !content?.animate
     ) {
       writeScrollMode("holding");
       rememberActiveThreadScrollSnapshot(viewport, false);
       return true;
     }
 
-    // History makes room quickly; the sent bubble owns a separate composer-to-row
-    // flight. Keep the placement clock alive until that flight has landed.
+    // One compositor transform moves the whole content wrapper, so the bubble
+    // and in-progress status cannot drift apart, and main-thread work during
+    // the send (the first stream chunks, React commits) cannot drop frames.
+    // The animation starts when its first frame is ready, not on a clock that
+    // started before that frame's layout.
     const animation = content.animate([
-      { transform: `translateY(${offset}px)`, offset: 0, easing: SEND_SHAPE_CURVE },
-      { transform: "none", offset: SEND_SHAPE_MS / duration },
-      { transform: "none", offset: 1 },
-    ], { duration, easing: "linear" });
-    const startTime = messageMotionTime();
-    if (startTime !== undefined) animation.startTime = startTime;
-    if (origin && origin.width > 0 && submissionRef.current) {
-      submissionRef.current.placement = { origin, offset, animation };
-    }
+      { transform: `translateY(${offset}px)` },
+      { transform: "none" },
+    ], { duration, easing: SUBMIT_PLACEMENT_EASING });
     const motion = {
       animation,
       viewport,
@@ -908,7 +931,7 @@ export function useConversationScrollState({
     });
     rememberActiveThreadScrollSnapshot(viewport, false, placedTop);
     return true;
-  }, [activePane, activeThreadID, dockComposerNode, reserveTailSpace, splitConversation, submittedMessage]);
+  }, [activePane, activeThreadID, reserveTailSpace, splitConversation, submittedMessage]);
 
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 

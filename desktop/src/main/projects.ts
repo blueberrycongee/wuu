@@ -115,6 +115,18 @@ export class ProjectManager {
     return context;
   }
 
+  recoverUnavailableProject(): ProjectRuntimeIssue | undefined {
+    this.load();
+    const active = this.store.active_context;
+    if (active?.kind !== "project") return undefined;
+    const project = this.store.projects.find(candidate => candidate.id === active.project_id);
+    if (!project || isDirectory(project.path)) return undefined;
+    const issue = activeProjectUnavailableIssue(project);
+    this.store.active_context = createNoProjectContext();
+    this.save();
+    return issue;
+  }
+
   resolveSubmissionContext(context: RuntimeContext): RuntimeContext {
     this.reload();
     if (context.kind === "project") {
