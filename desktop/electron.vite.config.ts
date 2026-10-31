@@ -82,7 +82,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "index.html"),
-          nativePreview: resolve(__dirname, "native-preview.html"),
           chromeOverlay: resolve(__dirname, "chrome-overlay.html"),
           linuxPreview: resolve(__dirname, "linux-cua-preview.html"),
 

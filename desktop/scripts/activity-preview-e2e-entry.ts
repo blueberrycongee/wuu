@@ -250,7 +250,8 @@ app.whenReady().then(async () => {
   await waitFor("native video page ready", () => nativeView.webContents.executeJavaScript("isSecureContext && typeof VideoDecoder === 'function' && !!document.querySelector('canvas')"));
   // Delay delivery of a real decoded VideoFrame, preserving decoder behavior
   // and the production ACK path while exercising a late output after reset.
-  await nativeView.webContents.executeJavaScript(`(() => {
+  const decoderScript = (code: string) => nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
+  await decoderScript(`(() => {
     const Decoder = VideoDecoder;
     window.VideoDecoder = class extends Decoder {
       constructor(init) { super({ ...init, output(video) {
@@ -277,13 +278,13 @@ app.whenReady().then(async () => {
   await emitNative("native-a", frame(20, 100, 210));
   await waitFor("native preview returns to its session", () => pip.isVisible());
   check("native session switching retains its window and source", pip.id !== pipID && surfaceCount === 2 && sources.has("native-a"));
-  await nativeView.webContents.executeJavaScript("window.fixtureHoldDecode = true");
+  await decoderScript("window.fixtureHoldDecode = true");
   await emitNative("native-a", frame(220, 30, 40));
-  await waitFor("native delta frame is decoded", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
+  await waitFor("native delta frame is decoded", () => decoderScript("window.fixtureDecodeEntered === true"));
   await emitNative("native-a", { event: "capture_status", status: "error", message: "Synthetic permission denied" });
   await waitFor("capture error clears live presentation", () => overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
-  check("capture failure keeps its status, retry and hide controls available without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-status').checkVisibility() && !document.getElementById('retry').hidden && !document.getElementById('close').hidden && document.getElementById('expand').hidden && !document.body.innerText.includes('Synthetic permission denied')"));
-  await nativeView.webContents.executeJavaScript("window.fixtureReleaseDecode()");
+  check("capture failure recovers without asking the user to retry or exposing diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-status').checkVisibility() && document.getElementById('retry').hidden && !document.getElementById('close').hidden && document.getElementById('expand').hidden && !document.body.innerText.includes('Synthetic permission denied')"));
+  await decoderScript("window.fixtureReleaseDecode()");
   await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 3));
   check("a late decoded frame cannot overwrite pixels after capture failure", JSON.stringify(await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)")) === JSON.stringify(firstNativePixel));
   check("discarding a late decode cannot restore live presentation", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
@@ -294,7 +295,7 @@ app.whenReady().then(async () => {
   await settledMotion(pip);
   writeFileSync(join(output, "native-permission-error-dark.png"), (await overlay.webContents.capturePage()).toPNG());
 
-  await nativeView.webContents.executeJavaScript("window.fixtureHoldDecode = false");
+  await decoderScript("window.fixtureHoldDecode = false");
   await emitNative("native-a", { event: "capture_status", status: "healthy" });
   await emitNative("native-a", { event: "auto_frame", frame: frame(20, 100, 210) });
   await waitFor("native stream recovered for stack checks", () => overlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
@@ -302,7 +303,8 @@ app.whenReady().then(async () => {
   await waitFor("second browser tab shown", () => card("browser-b").window.isVisible());
   check("one session retains browser and native targets", surfaceCount === 3 && visibleCards().length === 3);
   coordinator.update(activity("browser", "browser-a"));
-  check("revisiting a tab reuses its window", surfaceCount === 3 && card("browser-a").window === browserPip);
+  await Promise.all(visibleCards().map(settledMotion));
+  check("revisiting a tab reuses its window and leads the stack", surfaceCount === 3 && card("browser-a").window === browserPip && browserPip.getBounds().y > card("browser-b").window.getBounds().y);
 
   for (const [target, color] of [["browser-c", "#d5f0df"], ["browser-d", "#f0dbf4"], ["browser-e", "#f4eed6"]]) {
     await open(target, color);
@@ -310,7 +312,7 @@ app.whenReady().then(async () => {
     check("stack never exposes more than five windows after " + target, visibleCards().length <= 5);
   }
   await waitFor("five retained cards visible", () => visibleCards().length === 5);
-  check("six targets retain six independent surfaces", cards().length === 6 && surfaceCount === 6 && !browserPip.isVisible());
+  check("six targets retain six independent surfaces", cards().length === 6 && surfaceCount === 6 && !card("native-a").window.isVisible());
   check("overflow keeps the browser page alive", !browser.isDestroyed());
 
   async function screenshot(name: string) {
@@ -359,7 +361,7 @@ app.whenReady().then(async () => {
   await waitFor("stack restores after dialog", () => visibleCards().length === 5);
 
   await promoted.chrome.webContents.executeJavaScript("document.getElementById('close').click()");
-  await waitFor("closing one card reveals overflow", () => !promoted.window.isVisible() && browserPip.isVisible() && visibleCards().length === 5);
+  await waitFor("closing one card reveals overflow", () => !promoted.window.isVisible() && card("native-a").window.isVisible() && visibleCards().length === 5);
   coordinator.update(activity("browser", "browser-c"));
   check("activity updates preserve individual dismissal", !promoted.window.isVisible() && visibleCards().length === 5);
   coordinator.setActiveThread("different-thread");
@@ -398,7 +400,6 @@ app.whenReady().then(async () => {
   await waitFor("snapshot replay reaches native target", () => transport().filter(entry => entry.target === "native-b" && entry.command?.type === "activity").length > beforeReplay);
   check("snapshot and duplicate notifications never repeat restoration", transport().filter(entry => entry.restoration).length === 1);
   card("native-b").context.onFailure("Synthetic recovery while user controlled");
-  await card("native-b").chrome.webContents.executeJavaScript("document.getElementById('retry').click()");
   await waitFor("user-controlled helper restarts", () => transport().some(entry => entry.target === "native-b" && entry.session !== nativeBSession && entry.command?.type === "activity"));
   check("helper startup replays authority without restoring again", transport().filter(entry => entry.restoration).length === 1
     && transport().filter(entry => entry.target === "native-b" && entry.session !== nativeBSession && entry.command?.type === "activity").every(entry => entry.command.restore === false));
