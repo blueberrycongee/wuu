@@ -785,6 +785,11 @@
 }
 
 /* The restore control remains in the shell above native browser content. */
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon)[data-web-workspace-open] .ribbon-restore-toggle {
+  /* Match the browser row's content center, excluding its bottom hairline. */
+  top: calc(var(--workbench-top) + (var(--web-workspace-toolbar-height) - 1px - var(--control-size-toolbar)) / 2);
+}
+
 :root:has(.mac-window-controls) .navigation-ribbon-layout.ribbon-collapsed :is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) .workspace-browser-toolbar.web-workspace-toolbar {
   padding-left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
 }
