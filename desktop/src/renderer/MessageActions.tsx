@@ -98,12 +98,12 @@ export function MessageTime({ timestamp, className = "" }: { timestamp?: string 
   if (!timestamp) return null;
 
   return (
-    <Tooltip asChild content={formatDate(timestamp, { dateStyle: "full", timeStyle: "long" })}><time
+    <time
       className={`message-time ${className}`}
       dateTime={timestamp}
     >
       {formatDate(timestamp, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-    </time></Tooltip>
+    </time>
   );
 }
 
@@ -183,7 +183,7 @@ export function MessageCopyButton({
   }
 
   return (
-    <Tooltip asChild content={label}><button
+    <button
       className={`message-copy-button ${className} ${copyState}`}
       type="button"
       aria-label={label}
@@ -196,7 +196,7 @@ export function MessageCopyButton({
       ) : (
         <Copy size={iconSize} />
       )}
-    </button></Tooltip>
+    </button>
   );
 }
 
@@ -211,14 +211,14 @@ export function MessageEditButton({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <Tooltip asChild content={t("message.editAndRetry")}><button
+    <button
       className={`message-edit-button ${className}`}
       type="button"
       aria-label={t("message.editAndRetry")}
       onClick={onEdit}
     >
       <PencilLine size={iconSize} />
-    </button></Tooltip>
+    </button>
   );
 }
 
