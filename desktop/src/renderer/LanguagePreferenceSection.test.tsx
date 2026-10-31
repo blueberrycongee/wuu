@@ -35,14 +35,17 @@ describe("LanguagePreferenceControl", () => {
         </I18nProvider>,
       );
     });
-    expect(container.textContent).toContain("Use system language");
+    expect(container.textContent).toContain("English");
+    expect(container.textContent).not.toContain("Use system language");
+    await act(async () => container.querySelector<HTMLButtonElement>(".select-menu-trigger")?.click());
+    expect(document.querySelectorAll(".select-menu-item")).toHaveLength(3);
 
-    const chinese = container.querySelector<HTMLButtonElement>(
-      '[data-testid="settings-language-zh-CN"]',
-    );
+    const chinese = [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")]
+      .find((option) => option.textContent?.includes("简体中文"));
     await act(async () => chinese?.click());
 
-    expect(container.textContent).toContain("跟随系统");
+    expect(container.textContent).toContain("简体中文");
+    expect(document.querySelector(".select-menu-panel")).toBeNull();
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(setLanguagePreference).toHaveBeenCalledWith("zh-CN");
   });

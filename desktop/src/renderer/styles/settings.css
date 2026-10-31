@@ -353,6 +353,7 @@
   container-name: settings-page;
   container-type: inline-size;
   --settings-column-width: calc(var(--font-ui) * 50);
+  --settings-title-size: round(nearest, calc(var(--font-ui) * 1.6), 1px);
   /* Every picker and text field on a page shares one width, so trailing
    * controls start on one edge down a group instead of following their
    * current value's length. */
@@ -370,11 +371,11 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-/* --- Page title ----------------------------------------------------------
- * The page title sits in the window strip, set like the conversation
- * title, with page actions at its trailing edge. The page opens on its
- * scope line or first group instead of repeating its name in large type.
- * ------------------------------------------------------------------------- */
+.settings-page:has(> .settings-page-header) {
+  padding-top: var(--space-4);
+}
+
+/* Touch shells keep their compact title in the native navigation strip. */
 
 .settings-titlebar {
   gap: var(--space-2);
@@ -408,13 +409,10 @@
   -webkit-app-region: no-drag;
 }
 
-/* --- Page header ----------------------------------------------------------
- * Outside the settings window (a page rendered alone), the title, its scope
- * line and page actions form a header at the top of the page.
- * ------------------------------------------------------------------------- */
+/* Desktop page titles lead the content column; section labels stay quieter. */
 
 .settings-page-header {
-  --settings-title-line: calc(var(--font-heading) * 1.3);
+  --settings-title-line: calc(var(--settings-title-size, var(--font-heading)) * 1.3);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
@@ -430,7 +428,7 @@
 .settings-page-title {
   margin: 0;
   color: var(--ink-strong);
-  font-size: var(--font-heading);
+  font-size: var(--settings-title-size, var(--font-heading));
   font-weight: var(--weight-semibold);
   letter-spacing: -0.01em;
   line-height: 1.3;
@@ -481,13 +479,25 @@
   }
 }
 
-.settings-language-options {
-  flex-wrap: wrap;
+.settings-row-control > .settings-language-select {
+  width: auto;
 }
 
-.settings-language-options button {
-  flex: 1 0 auto;
-  white-space: nowrap;
+.settings-language-select .settings-language-trigger {
+  justify-content: flex-end;
+  gap: var(--space-2);
+  width: auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-weight: var(--weight-regular);
+}
+
+.settings-language-select .settings-language-trigger:hover,
+.settings-language-select .settings-language-trigger[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--field-hover-bg);
+  box-shadow: none;
 }
 
 /* --- Section --------------------------------------------------------------
