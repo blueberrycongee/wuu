@@ -32,7 +32,7 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	if err := sessions.AppendHistoryRecord("private", session.HistoryRecord{Role: "user", Content: "read", Files: files}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := readPluginSessionHistory(context.Background(), sessions, "personal", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "private", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "personal", userspace.Binding{}, false, pluginhost.SessionHistoryReadParams{SessionID: "private", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
