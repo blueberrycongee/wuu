@@ -303,6 +303,7 @@ export function createThreadActivationActions(
             activeContext: undefined,
             activeProjectId: undefined,
             gitStatus: undefined,
+            status: restoreError instanceof Error ? restoreError.message : String(restoreError),
           }));
           failure = restoreError;
         }

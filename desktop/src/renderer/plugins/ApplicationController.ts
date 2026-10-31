@@ -999,6 +999,7 @@ export class ApplicationController implements HostApplicationService {
     });
     const tabs = createSessionTabActions({ ...common, selectThread: threads.selectThread, selectContextThread: threads.selectContextThread });
     const workspaces = createWorkspaceRuntimeActions({ ...common,
+      isCurrentViewSwitchRequest: isCurrent,
       loadRuntime: (workspace, options) => {
         const pending = this.pendingNavigation;
         if (retargetDraft && workspace.active_context && pending?.intentId && viewSwitchRequest !== undefined

@@ -204,7 +204,9 @@ it("carries workspace presentation identity without replaying workspace or draft
   expect(app.getSnapshot().workspaces.activeRoot).toBe("/b");
 });
 
-it("returns to the source when a history's workspace is unavailable", async () => {
+it.each((["history", "new-draft", "retarget-draft"] as const).flatMap(action =>
+  (["available", "missing", "selection-fails"] as const).map(sourceState => [action, sourceState] as const),
+))("handles an unavailable destination (%s, source %s)", async (action, sourceState) => {
   const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
   const target = { kind: "project" as const, project_id: "b", cwd: "/missing" };
   const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
@@ -215,15 +217,19 @@ it("returns to the source when a history's workspace is unavailable", async () =
   const resume = vi.fn();
   const initialize = vi.fn();
   window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })), initialize, resumeThread: resume,
+    selectProject: vi.fn(async id => {
+      if (id === "a" && sourceState === "selection-fails") throw new Error("Source selection failed");
+      selected = id === "b" ? target : source;
+      return { projects, active_context: selected, ...(selected.cwd === target.cwd || sourceState === "missing" ? { runtime_issue: {
+        code: "active_project_unavailable", message: selected.cwd === target.cwd ? "Destination workspace unavailable" : "Source workspace unavailable",
+        project_id: selected.project_id, cwd: selected.cwd,
+      } } : {}) };
+    }),
     onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
   } as unknown as WuuDesktopApi;
-  vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: source, activeProjectId: "a", projects, threads: [], initialized: initialized as never });
-  vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => {
-    selected = context as typeof selected;
-    return { projects, active_context: selected, ...(selected.cwd === target.cwd ? { runtime_issue: {
-      code: "active_project_unavailable", message: "Destination workspace unavailable", project_id: "b", cwd: target.cwd,
-    } } : {}) };
-  });
+  const loadRuntime = RuntimeLoader.loadRuntime;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async workspace => workspace.runtime_issue
+    ? loadRuntime(workspace) : { activeContext: source, activeProjectId: "a", projects, threads: [], initialized: initialized as never });
   const host = new PluginHost({ react: React }); hosts.push(host);
   const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
   await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "source", register });
@@ -232,16 +238,63 @@ it("returns to the source when a history's workspace is unavailable", async () =
   await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
   await app.invoke("composer.set-draft", { text: "retain source draft" });
 
-  const result = await app.invoke("thread.activate", { threadId: "history", workspaceId: "b" }).catch(error => error);
+  const result = await (action === "history" ? app.invoke("thread.activate", { threadId: "history", workspaceId: "b" })
+    : action === "new-draft" ? app.invoke("workspace.start-draft", { workspaceId: "b" })
+      : app.invoke("workspace.retarget-draft", { workspaceId: "b" })).catch(error => error);
 
   expect(app.getSnapshot().tabs.pending).toBeUndefined();
   expect(result).toBeInstanceOf(Error);
-  expect(String(result)).toContain("Destination workspace unavailable");
-  expect(selected).toEqual(source);
-  expect(app.getSnapshot().workspaces.activeRoot).toBe(source.cwd);
+  expect(String(result)).toContain(sourceState === "missing" ? "Source workspace unavailable"
+    : sourceState === "selection-fails" ? "Source selection failed" : "Destination workspace unavailable");
+  expect(selected).toEqual(sourceState === "selection-fails" ? target : source);
+  expect(app.getSnapshot().workspaces.activeRoot).toBe(sourceState === "selection-fails" ? undefined : source.cwd);
+  expect(app.getSnapshot().phase).toBe(sourceState === "available" ? "ready" : "error");
   expect(app.getSnapshot().composer.draftText).toBe("retain source draft");
   expect(initialize).not.toHaveBeenCalled();
   expect(resume).not.toHaveBeenCalled();
+});
+
+it.each(["new-draft", "retarget-draft"] as const)("does not restore a missing workspace over a newer selection (%s)", async action => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const missing = { kind: "project" as const, project_id: "b", cwd: "/missing" };
+  const target = { kind: "project" as const, project_id: "c", cwd: "/c" };
+  const projects = [source, missing, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  const initialized = { provider: "fixture", model: "fixture", providers: [],
+    application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
+    extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: "source" }] };
+  let selected = source, enteredRestore!: () => void, releaseRestore!: () => void;
+  const restoring = new Promise<void>(resolve => { enteredRestore = resolve; });
+  const gate = new Promise<void>(resolve => { releaseRestore = resolve; });
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })),
+    selectProject: vi.fn(async id => {
+      if (id === "a") { selected = source; enteredRestore(); await gate; return { projects, active_context: source }; }
+      selected = id === "b" ? missing : target;
+      return { projects, active_context: selected, ...(id === "b" ? { runtime_issue: {
+        code: "active_project_unavailable", message: "Destination workspace unavailable", project_id: "b", cwd: missing.cwd,
+      } } : {}) };
+    }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async workspace => ({
+    activeContext: workspace.active_context,
+    activeProjectId: workspace.active_context?.kind === "project" ? workspace.active_context.project_id : undefined,
+    projects, threads: [], initialized: initialized as never, status: "ready",
+  }));
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "source", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  const first = action === "new-draft" ? app.invoke("workspace.start-draft", { workspaceId: "b" })
+    : app.invoke("workspace.retarget-draft", { workspaceId: "b" });
+  await restoring;
+  await app.invoke("workspace.start-draft", { workspaceId: "c" });
+  releaseRestore();
+  await first;
+  expect(selected).toEqual(target);
+  expect(app.getSnapshot().workspaces.activeRoot).toBe(target.cwd);
+  expect(app.getSnapshot().tabs.pending).toBeUndefined();
 });
 
 it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected", "resume-missing", "activation-rejected"] as const)("fences a cross-workspace history read at the selected application graph (%s)", async mode => {
@@ -616,7 +669,7 @@ it.each(["late-success", "late-failure", "superseded", "current-failure", "initi
   expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
 });
 
-it("does not attach an obsolete retarget response to a newer request intent", async () => {
+it("does not load an obsolete workspace or attach it to a newer request intent", async () => {
   window.localStorage.clear(); window.sessionStorage.clear();
   const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
   const staleTarget = { kind: "project" as const, project_id: "b", cwd: "/b" };
@@ -628,9 +681,8 @@ it("does not attach an obsolete retarget response to a newer request intent", as
       application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
       extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: graph }],
     } as never });
-  let releaseSelection!: () => void, enteredLatest!: () => void, enteredStale!: () => void;
+  let releaseSelection!: () => void, enteredLatest!: () => void;
   const latestLoading = new Promise<void>(resolve => { enteredLatest = resolve; });
-  const staleLoading = new Promise<void>(resolve => { enteredStale = resolve; });
   const oldSelection = new Promise<void>(resolve => { releaseSelection = resolve; });
   let releaseCatalog!: (value: ReturnType<typeof loaded>) => void;
   const slowCatalog = new Promise<ReturnType<typeof loaded>>(resolve => { releaseCatalog = resolve; });
@@ -644,9 +696,8 @@ it("does not attach an obsolete retarget response to a newer request intent", as
     }),
     onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), startThread: vi.fn(), startTurn: vi.fn(),
   } as unknown as WuuDesktopApi;
-  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementationOnce(async () => loaded())
+  const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementationOnce(async () => loaded())
     .mockImplementationOnce(() => { enteredLatest(); return slowCatalog; })
-    .mockImplementationOnce(() => { enteredStale(); return slowCatalog; })
     .mockImplementation(async () => loaded());
   const host = new PluginHost({ react: React }); hosts.push(host);
   const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
@@ -661,7 +712,8 @@ it("does not attach an obsolete retarget response to a newer request intent", as
   await latestLoading;
   const intent = app.getSnapshot().tabs.pending?.intentId;
   releaseSelection();
-  await staleLoading;
+  await oldMove;
+  expect(load).toHaveBeenCalledTimes(2);
   await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register });
   await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
   expect(app.getSnapshot().workspaces.activeRoot).toBe("/c");
