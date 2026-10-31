@@ -3319,7 +3319,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: (options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;

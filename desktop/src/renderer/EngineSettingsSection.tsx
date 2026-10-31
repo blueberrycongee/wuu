@@ -172,7 +172,7 @@ export function EngineSettingsSection({
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const refreshAccount = async () => {
-    const loaded = await controls.listEngines({ include_quota: true });
+    const loaded = await controls.listEngines({ include_quota: true, include_activity: false });
     const observed = loaded.engines.find(engine => engine.id === selected?.id);
     if (observed) setAccountSnapshots(current => ({ ...current, [accountKey]: observed }));
     setAccountRevision(value => value + 1);

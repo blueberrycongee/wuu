@@ -87,7 +87,7 @@ export function SubscriptionDashboard({
     if (!canRefresh) { setRefreshing(false); return; }
     setRefreshing(true);
     setError("");
-    void controls.listEngines({ include_quota: true }).then((result) => {
+    void controls.listEngines({ include_quota: true, include_activity: false }).then((result) => {
       if (active) { setLoadedInventory(result); snapshotCallback.current?.(result); setNow(Date.now()); }
     }, cause => {
       if (active && !isPluginLifecycleCancellation(cause)) setError("settings.subscriptionRefreshFailed");
