@@ -39,6 +39,14 @@ import {
   WorkspaceHoverCardContent,
 } from "./SidebarHoverCard";
 
+import {
+  moveThreadInOrder,
+  persistThreadOrder,
+  reconcileThreadOrder,
+  storedThreadOrder,
+  type ThreadDropPosition,
+} from "./SidebarThreadOrder";
+
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
 }
@@ -47,68 +55,7 @@ const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 5;
 const PROJECT_THREAD_BATCH_SIZE = 5;
 const RECENTLY_READ_THREAD_LIMIT = 3;
 const RECENTLY_READ_THREAD_RETENTION_MS = 2 * 60 * 1000;
-const SIDEBAR_THREAD_ORDER_KEY = "wuu.desktop.sidebarThreadOrderByWorkspace";
 const PINNED_THREAD_ORDER_ID = "__wuu_pinned_threads__";
-
-type SidebarThreadOrderByWorkspace = Record<string, string[]>;
-
-function storedThreadOrder(workspaceID: string): string[] {
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_THREAD_ORDER_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : {};
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return [];
-    }
-    const order = (parsed as SidebarThreadOrderByWorkspace)[workspaceID];
-    return Array.isArray(order)
-      ? order.filter((id): id is string => typeof id === "string" && id.length > 0)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistThreadOrder(workspaceID: string, order: string[]): void {
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_THREAD_ORDER_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : {};
-    const current = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as SidebarThreadOrderByWorkspace
-      : {};
-    window.localStorage.setItem(
-      SIDEBAR_THREAD_ORDER_KEY,
-      JSON.stringify({ ...current, [workspaceID]: order }),
-    );
-  } catch {
-    // A blocked or full localStorage should not prevent in-memory reordering.
-  }
-}
-
-type ThreadDropPosition = "before" | "after";
-
-function moveThreadInOrder(
-  order: string[],
-  activeThreadID: string,
-  targetThreadID: string,
-  position: ThreadDropPosition,
-): string[] {
-  if (activeThreadID === targetThreadID) return order;
-  const withoutActive = order.filter((id) => id !== activeThreadID);
-  const targetIndex = withoutActive.indexOf(targetThreadID);
-  if (targetIndex < 0 || withoutActive.length === order.length) return order;
-  withoutActive.splice(targetIndex + (position === "after" ? 1 : 0), 0, activeThreadID);
-  return withoutActive.every((id, index) => id === order[index]) ? order : withoutActive;
-}
-
-function reconcileThreadOrder(threads: ThreadSummary[], storedOrder: string[]): string[] {
-  const threadIDs = new Set(threads.map((thread) => thread.id));
-  const known = storedOrder.filter((id) => threadIDs.has(id));
-  const knownIDs = new Set(known);
-  const newIDs = threads
-    .map((thread) => thread.id)
-    .filter((id) => !knownIDs.has(id));
-  return [...newIDs, ...known];
-}
 
 export function WorkspaceList({
   projects,
@@ -1203,6 +1150,7 @@ export function OrganizationThreadList({
   onDelete,
   onRename,
   onDropSession,
+  onReorder,
 }: {
   threads: ThreadSummary[];
   projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
@@ -1215,6 +1163,7 @@ export function OrganizationThreadList({
   onDelete: (thread: ThreadSummary) => void;
   onRename?: (thread: ThreadSummary, title: string) => void;
   onDropSession?: (project: ThreadSummary, threadID: string) => void;
+  onReorder?: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
 }): JSX.Element {
   return (
     <div className="pinned-thread-list">
@@ -1230,6 +1179,7 @@ export function OrganizationThreadList({
         onDelete={onDelete}
         onRename={onRename}
         onDropSession={onDropSession}
+        onReorder={onReorder}
       />
     </div>
   );

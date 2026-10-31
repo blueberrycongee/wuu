@@ -1070,6 +1070,36 @@
   overscroll-behavior: contain;
 }
 
+/* Drag-only destinations must not move the source or neighboring rows. */
+.sidebar-drag-targets {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 0;
+  flex: 0 0 0;
+}
+
+.sidebar-drag-targets-content {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidebar-functional-row-gap);
+  border-radius: var(--sidebar-row-radius);
+  background: var(--surface-raised);
+  box-shadow: var(--menu-shadow);
+}
+
+.sidebar-drag-targets-content > .sidebar-functional-group {
+  margin-top: 0;
+}
+
+.sidebar-drag-target {
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 24%, transparent);
+  color: var(--ink);
+}
+
 .sidebar-unread-view {
   display: flex;
   min-width: 0;
