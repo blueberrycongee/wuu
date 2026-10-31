@@ -504,6 +504,47 @@ describe("main composer focus continuity", () => {
     vi.restoreAllMocks();
   });
 
+  it("retains editable split input focus across pane activation and public focus requests", async () => {
+    await renderApp(true);
+    const controller = applicationState.getDesktopApplication();
+    const related = newThread();
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread: related });
+    await act(async () => controller.invoke("conversation.open-split", { threadId: related.id }));
+    await flushAsync();
+    const inputFor = (id: string) => container.querySelector<HTMLTextAreaElement>(
+      `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`,
+    )!;
+    const primary = inputFor(persistedThread().id);
+    const secondary = inputFor(related.id);
+    expect(primary).not.toBeNull();
+    expect(secondary).not.toBeNull();
+    for (const [pane, input, id] of [
+      ["secondary", secondary, related.id], ["primary", primary, persistedThread().id],
+    ] as const) {
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      });
+      await flushAsync();
+      expect(controller.getSnapshot().conversationWorkspace.activePane).toBe(pane);
+      expect(inputFor(id)).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(input.disabled).toBe(false);
+      expect(input.readOnly).toBe(false);
+      expect(input.closest("[inert], [hidden]")).toBeNull();
+      expect(document.activeElement).toBe(input);
+      const trigger = document.createElement("button");
+      container.append(trigger);
+      trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", {
+        tabId: controller.getSnapshot().tabs.activeTabId,
+      }));
+      await flushAsync();
+      expect(document.activeElement).toBe(input);
+      trigger.remove();
+    }
+  });
+
   it("rebinds global focus, settings and resize listeners without replacing the shell", async () => {
     installWuuApi();
     const controller = new applicationState.ApplicationController();
@@ -957,6 +998,33 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
       engine: "wuu", provider: "fake", model: "fake-model",
     }), { kind: "no_project", cwd: scratchCwd });
+  });
+
+  it("focuses a replacement composer through its public slot contract without default DOM", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+    await host.activateGeneration({ pluginId: "shell", generation: "fixture", register: activateDefaultShell });
+    await host.activateGeneration({ pluginId: "alternate", generation: "fixture", register: api => {
+      api.registerUIContribution({ id: "composer", target: "wuu.default-shell/application.composer", render: ({ context }) => {
+        const ref = React.useRef<HTMLInputElement>(null);
+        const register = context.registerFocusTarget as undefined | ((target: { focus(options?: FocusOptions): boolean; contains(element: Element): boolean }) => () => void);
+        React.useLayoutEffect(() => register?.({ focus: options => { ref.current?.focus(options); return !!ref.current; }, contains: element => ref.current === element }), [register]);
+        return <input ref={ref} aria-label="Alternate composer" />;
+      } });
+    } });
+    try {
+      await act(async () => { root = createRoot(container); root.render(<ApplicationShellOutlet host={host}
+        binding={{ pluginId: "shell", generation: "fixture", id: "ui.shell" }}
+        surfaceBindings={{ ...defaultSurfaceBindings, "ui.composer": { pluginId: "alternate", generation: "fixture", id: "composer" } }} />); });
+      await flushAsync();
+      const trigger = document.createElement("button"); container.append(trigger); trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", { tabId: controller.getSnapshot().tabs.activeTabId }));
+      await flushAsync();
+      expect(document.activeElement).toBe(container.querySelector('[aria-label="Alternate composer"]'));
+    } finally { await act(async () => root?.unmount()); root = null; for (const id of ["alternate", "shell", ...Object.values(defaultSurfaceBindings).map(binding => binding.pluginId)]) host.unload(id); }
   });
 
   it("honors a public composer focus request for the current draft", async () => {

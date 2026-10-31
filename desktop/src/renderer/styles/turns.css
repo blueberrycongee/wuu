@@ -5384,6 +5384,7 @@ pre {
 }
 
 .turn-artifact-gallery-items {
+  container-type: inline-size;
   display: flex;
   gap: 10px;
   min-width: 0;
@@ -5399,12 +5400,45 @@ pre {
 
 .turn-artifact-gallery-items:not(.is-tiled) > * {
   flex: 0 0 auto;
-  width: min(240px, 85%);
+  width: auto;
   min-width: 0;
 }
 
 .turn-artifact-gallery-items > :only-child {
-  width: min(240px, 100%);
+  width: min(var(--conversation-image-width), 100%);
+}
+
+/* A single publication reads like an image in the answer. */
+.turn-artifact-gallery-items:has(> :only-child) {
+  padding: 4px 0;
+}
+
+/* Carousel height is known before decoding. Intrinsic image widths may settle
+ * horizontally without moving the following prose or remounting an image. */
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview {
+  width: auto;
+  min-width: min(120px, 85cqw);
+  max-width: 85cqw;
+  height: min(180px, 60cqw);
+  aspect-ratio: auto;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview > button {
+  position: relative;
+  width: auto;
+  min-width: inherit;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview img {
+  position: static;
+  width: auto;
+  height: auto;
+  max-width: 85cqw;
+  object-position: left top;
+}
+
+.turn-artifact-gallery-items.is-tiled .turn-artifact-image-preview {
+  aspect-ratio: 4 / 3;
 }
 
 .turn-artifact-gallery-items.is-tiled {
@@ -5436,7 +5470,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 .turn-artifact-inline-image {
   align-self: flex-start;
   margin: 0;
-  width: min(100%, 240px);
+  width: min(100%, var(--conversation-image-width));
   min-width: 0;
 }
 
@@ -5446,15 +5480,18 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 }
 
 .turn-artifact-inline-image img {
+  position: absolute;
+  inset: 0 auto auto 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   max-width: 100%;
+  max-height: 100%;
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
-  border: 0;
-  border-radius: var(--radius-media);
+  border: 1px solid var(--hairline);
+  border-radius: var(--conversation-image-radius);
   background: transparent;
   object-fit: scale-down;
 }

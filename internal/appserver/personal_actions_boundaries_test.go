@@ -46,6 +46,10 @@ type personalBoundaryFixture struct {
 }
 
 func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...func(*persistence.Service) pluginhost.Client) *personalBoundaryFixture {
+	return newPersonalBoundaryFixtureWithProvider(t, client, "personal", documents...)
+}
+
+func newPersonalBoundaryFixtureWithProvider(t *testing.T, client *fakeClient, providerID string, documents ...func(*persistence.Service) pluginhost.Client) *personalBoundaryFixture {
 	t.Helper()
 	if client == nil {
 		client = &fakeClient{response: providersResponse(`{"outcome":"allow","reason":"synthetic exact requested note"}`)}
@@ -62,7 +66,7 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...f
 		t.Fatal(err)
 	}
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
-	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "personal"}, SubjectID: "plugin:bundled:personal"}}
+	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: providerID}, SubjectID: "plugin:bundled:" + providerID}}
 	provider := attachPersonalBoundaryGeneration(t, rt, documents...)
 	var err error
 	rt.Toolkit, err = tools.New(rt.RootDir)
@@ -70,7 +74,7 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...f
 		t.Fatal(err)
 	}
 	f := &personalBoundaryFixture{t: t, rt: rt, client: client, provider: provider, id: "boundary-main"}
-	_, err = rt.Sessions.CreateInitialized(session.Session{ID: f.id, UserSpaceID: rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my requested note to note.txt with exactly the text saved once."}})
+	_, err = rt.Sessions.CreateInitialized(session.Session{ID: f.id, UserSpaceID: rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:" + providerID, Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my requested note to note.txt with exactly the text saved once."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +135,7 @@ func (f *personalBoundaryFixture) pending(ctx context.Context) personalreview.Re
 	if _, err := f.kit.Execute(ctx, f.call()); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
 		f.t.Fatalf("expected pending action, got %v", err)
 	}
-	records, err := f.host.actions.engine.Records(context.Background(), f.rt.UserSpaceID)
+	records, err := f.host.actionsForTest(f.t).engine.Records(context.Background(), f.rt.UserSpaceID)
 	if err != nil || len(records) != 1 {
 		f.t.Fatalf("records=%d err=%v", len(records), err)
 	}
@@ -171,14 +175,14 @@ func (f *personalBoundaryFixture) enableAuto() personalreview.OwnerView {
 	if after.Settings == nil || !after.Settings.AutoReviewEnabled {
 		f.t.Fatal("opt-in not persisted")
 	}
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 		f.t.Fatal(err)
 	}
 	return after
 }
 func (f *personalBoundaryFixture) current(key personalreview.Key) personalreview.Record {
 	f.t.Helper()
-	r, err := f.host.actions.engine.GetExecution(context.Background(), key)
+	r, err := f.host.actionsForTest(f.t).engine.GetExecution(context.Background(), key)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -213,7 +217,7 @@ func TestPersonalActionOwnerReconnectConcurrentClickAndReplay(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.current(r.Action.Key()); got.Status != personalreview.Succeeded {
@@ -221,7 +225,7 @@ func TestPersonalActionOwnerReconnectConcurrentClickAndReplay(t *testing.T) {
 	}
 	path := filepath.Join(f.rt.RootDir, "note.txt")
 	f.assertContents(path, "saved once")
-	events, err := f.host.actions.engine.Audit(f.owner, r.Action.Key())
+	events, err := f.host.actionsForTest(f.t).engine.Audit(f.owner, r.Action.Key())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +280,7 @@ func TestPersonalActionChangedContentAndSymlinkCannotUseOldApproval(t *testing.T
 				}
 			}
 			_, _ = f.host.personal.Call(f.owner, "review.resolve", f.command(r), "")
-			if err := f.host.actions.drain(context.Background()); err != nil {
+			if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			f.assertContents(target, "intervening user edit")
@@ -341,12 +345,12 @@ func TestPersonalAutoReviewSettingsAreExplicitScopedAndDoNotChangeCoding(t *test
 		t.Fatalf("Personal gate leaked into an unchanged default Coding toolkit: %v", err)
 	}
 	f.assertContents(filepath.Join(codingRoot, "coding.txt"), "ordinary Coding path")
-	other, err := f.host.actions.store.GetSettings(context.Background(), "other-space")
+	other, err := f.host.actionsForTest(f.t).store.GetSettings(context.Background(), "other-space")
 	if err != nil || other.AutoReviewEnabled {
 		t.Fatalf("Personal opt-in crossed spaces: %+v %v", other, err)
 	}
-	events, err := f.host.actions.store.SettingsEvents(context.Background(), f.rt.UserSpaceID)
-	if err != nil || len(events) != 1 || events[0].Actor != f.host.actions.ownerID() {
+	events, err := f.host.actionsForTest(f.t).store.SettingsEvents(context.Background(), f.rt.UserSpaceID)
+	if err != nil || len(events) != 1 || events[0].Actor != f.host.actionsForTest(f.t).ownerID() {
 		t.Fatalf("missing stable owner audit: %+v %v", events, err)
 	}
 }
@@ -412,7 +416,7 @@ func TestPersonalAutoReviewMissingSourceAndOutageFallBackToManual(t *testing.T) 
 			if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(r), ""); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.host.actions.drain(context.Background()); err != nil {
+			if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			f.assertContents(filepath.Join(f.rt.RootDir, "note.txt"), "saved once")
@@ -438,11 +442,11 @@ func TestPersonalPendingActionSurvivesHostRestartAndOriginalOwnerReconnect(t *te
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", command, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.current(r.Action.Key()); got.Status != personalreview.Succeeded {
-		kit, kitErr := f.host.actions.toolkit(f.owner, got.Action)
+		kit, kitErr := f.host.actionsForTest(f.t).toolkit(f.owner, got.Action)
 		var action tools.FileAction
 		_ = json.Unmarshal(got.Action.Arguments, &action)
 		if kitErr == nil {
@@ -466,7 +470,7 @@ func TestPersonalEditFileApprovalDispatchesFrozenEditOnce(t *testing.T) {
 	if _, err := f.kit.Execute(f.owner, call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
 		t.Fatalf("edit bypassed review: %v", err)
 	}
-	records, err := f.host.actions.engine.Records(context.Background(), f.rt.UserSpaceID)
+	records, err := f.host.actionsForTest(f.t).engine.Records(context.Background(), f.rt.UserSpaceID)
 	if err != nil || len(records) != 1 || records[0].Action.Operation != "edit_file" {
 		t.Fatalf("missing exact edit proposal: %+v %v", records, err)
 	}
@@ -474,7 +478,7 @@ func TestPersonalEditFileApprovalDispatchesFrozenEditOnce(t *testing.T) {
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(records[0]), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	f.assertContents(path, "approved section\nunchanged section\n")
@@ -491,14 +495,14 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 			r := f.pending(f.owner)
 			// Hold the coordinator's dispatch drain while the real owner endpoint
 			// persists approval; then model a catalog transition before dispatch.
-			f.host.actions.drainMu.Lock()
+			f.host.actionsForTest(f.t).drainMu.Lock()
 			_, err := f.host.personal.Call(f.owner, "review.resolve", f.command(r), "")
 			if err != nil {
-				f.host.actions.drainMu.Unlock()
+				f.host.actionsForTest(f.t).drainMu.Unlock()
 				t.Fatal(err)
 			}
 			if got := f.current(r.Action.Key()); got.Status != personalreview.Approved {
-				f.host.actions.drainMu.Unlock()
+				f.host.actionsForTest(f.t).drainMu.Unlock()
 				t.Fatalf("approval was not durably queued: %+v", got)
 			}
 			plugins := f.rt.ActivePlugins
@@ -507,8 +511,8 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 			} else {
 				f.rt.PluginHost.RetirePlugin(context.Background(), "personal", errors.New("synthetic user disable"))
 			}
-			f.host.actions.drainMu.Unlock()
-			if err := f.host.actions.drain(context.Background()); err != nil {
+			f.host.actionsForTest(f.t).drainMu.Unlock()
+			if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
@@ -518,12 +522,12 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 			if got.Status != personalreview.Denied && got.Status != personalreview.Stale {
 				t.Fatalf("disabled product did not invalidate action: %+v", got)
 			}
-			f.host.actions.drainMu.Lock()
+			f.host.actionsForTest(f.t).drainMu.Lock()
 			f.rt.SafeMode = false
 			f.rt.ActivePlugins = plugins
-			f.host.actions.drainMu.Unlock()
+			f.host.actionsForTest(f.t).drainMu.Unlock()
 			_, _ = f.host.personal.Call(f.owner, "review.resolve", f.command(r), "")
-			if err := f.host.actions.drain(context.Background()); err != nil {
+			if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
@@ -538,7 +542,7 @@ func TestPersonalApprovedActionCannotDispatchAfterProductDisabled(t *testing.T) 
 func TestPersonalBackgroundRecoveryDoesNotBorrowOwner(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
 	record := f.pending(f.owner)
-	_, err := f.host.actions.engine.Resolve(f.owner, record.Action.Key(), personalreview.Resolution{
+	_, err := f.host.actionsForTest(f.t).engine.Resolve(f.owner, record.Action.Key(), personalreview.Resolution{
 		Digest: record.Action.Digest, ExpectedRevision: record.Revision, Choice: personalreview.Reject,
 	})
 	if err != nil {
@@ -551,7 +555,7 @@ func TestPersonalBackgroundRecoveryDoesNotBorrowOwner(t *testing.T) {
 	f.provider.calls.Store(0)
 	f.openHost()
 	// A new owner's connection is not authorization for the older action.
-	_ = f.host.actions.drain(context.Background())
+	_ = f.host.actionsForTest(f.t).drain(context.Background())
 	if calls := f.provider.calls.Load(); calls != 0 {
 		t.Fatalf("recovery borrowed shared owner for %d provider calls", calls)
 	}
@@ -615,11 +619,11 @@ func TestPersonalActionReleasesExecutionAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.owner = principal.WithContext(f.owner, caller)
-			f.host.actions.drainMu.Lock()
+			f.host.actionsForTest(f.t).drainMu.Lock()
 			locked := true
 			defer func() {
 				if locked {
-					f.host.actions.drainMu.Unlock()
+					f.host.actionsForTest(f.t).drainMu.Unlock()
 				}
 			}()
 			r := f.pending(f.owner)
@@ -628,18 +632,18 @@ func TestPersonalActionReleasesExecutionAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			f.host.actions.admissionsMu.Lock()
-			admitted := f.host.actions.admissions[r.Action.Key()]
-			f.host.actions.admissionsMu.Unlock()
+			f.host.actionsForTest(f.t).admissionsMu.Lock()
+			admitted := f.host.actionsForTest(f.t).admissions[r.Action.Key()]
+			f.host.actionsForTest(f.t).admissionsMu.Unlock()
 			if admitted.state == nil {
 				t.Fatal("pending execution did not retain its admitted implementation")
 			}
 			if !terminal {
 				valid.Store(false)
 			}
-			f.host.actions.drainMu.Unlock()
+			f.host.actionsForTest(f.t).drainMu.Unlock()
 			locked = false
-			if err := f.host.actions.drain(context.Background()); err != nil {
+			if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if retained := admitted.state.Retain(); retained != nil {

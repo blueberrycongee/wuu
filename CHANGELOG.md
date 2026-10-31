@@ -1,10 +1,12 @@
 # Changelog
 
-This file starts the maintained release record. Earlier GitHub Releases may not
-have complete change notes.
+This file is a frozen historical record. Ordinary PRs describe changes in their
+PR descriptions; maintainers prepare per-version notes in `docs/releases/` only
+when releasing. See [the release guide](docs/en/project/release.md).
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versioning rules are documented in [the release guide](docs/en/project/release.md).
+The existing `[Unreleased]` entries below are retained as transition material for
+the next release, not as a list of verified shipped features. Do not append new
+entries. Earlier GitHub Releases may not have complete change notes.
 
 ## [Unreleased]
 
@@ -172,6 +174,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Give conversation images wider, left-aligned previews with rounded image edges and proportionate widths in horizontal galleries, while preserving reserved row heights across loading, failures, and session switches.
+
 - Reduce repeated history cloning in the default agent loop and JSON processing during Responses WebSocket continuation, preserving context contents, replay checks and provider options.
 
 - Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.
@@ -182,6 +186,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let Personal history scroll behind the floating avatar and name, with a soft halo limited to their footprint and scrollable clearance for the first message.
+
+- Keep composer selection and model refresh behavior with the selected provider, and coordinate composer/preview focus through public surface capabilities rather than default-provider DOM structure.
+
+- Keep unavailable plugin surfaces visible with scoped render retries instead of blank panes or a full application restart; preserve optional wrapper content and diagnostic details.
 - Reject invalid persisted Goal state before committing a plugin replacement, then reload current state at activation so updates made during preparation survive. Discarded candidates leave live goal work untouched, and reload still pauses autonomous goals.
 - Reuse shared inputs, rows and sections in Automation controls, and let Goal controls follow public theme tokens and larger UI text without shrinking action targets.
 - Deduplicate pending advanced-settings commits and keep late save feedback from changing a newer edit or a reopened settings page. Preserve drafts across navigation and whole-settings save refreshes, and allow failed saves to be retried.

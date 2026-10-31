@@ -2,6 +2,7 @@ package pluginhost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	cordis "github.com/tr1v3r/cordis-go"
@@ -34,6 +35,8 @@ func (h *Host) ownClients(clients []Client) error {
 		lifetime := &clientLifetime{}
 		owner := cordis.Define[struct{}](client.ID(), func(scope *cordis.Context, _ struct{}) error {
 			scope.OnDispose(func() {
+				h.serviceRegistry.stopProviderAdmission(client.ID())
+				retirementErr := h.serviceRegistry.waitRetirementCleanup(client.ID())
 				h.serviceRegistry.cancelCallerScopes(client.ID())
 				h.serviceRegistry.waitRetainedServiceScopes(client.ID())
 				finishCleanup := h.serviceRegistry.allowShutdownCleanup(client.ID())
@@ -43,7 +46,7 @@ func (h *Host) ownClients(clients []Client) error {
 						lifetime.closeErr = h.ownerDiagnosticError(client.ID(), fmt.Errorf("close plugin %q panicked: %v", client.ID(), value))
 					}
 				}()
-				lifetime.closeErr = h.ownerDiagnosticError(client.ID(), client.Close(lifetime.closeCtx))
+				lifetime.closeErr = h.ownerDiagnosticError(client.ID(), errors.Join(retirementErr, client.Close(lifetime.closeCtx)))
 			})
 			return nil
 		})

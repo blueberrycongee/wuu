@@ -21,9 +21,8 @@ import (
 func newPersonalMemoryReplayFixture(t *testing.T, documents ...func(*persistence.Service) pluginhost.Client) (*personalBoundaryFixture, memoryRecordSource) {
 	t.Helper()
 	f := newPersonalBoundaryFixture(t, nil, documents...)
-	prefix := "personal.v1." + personalHash([]byte(f.rt.UserSpaceID))[:28] + "."
 	_, err := pluginsettings.UpdateState(f.rt.DataRoot, f.rt.RootDir, "plugin:bundled:personal", pluginsettings.ScopeUser, func(v map[string]string) error {
-		v[prefix+"agent.main"] = fmt.Sprintf(`{"agent_id":"main","user_space_id":%q,"main_session_id":%q,"status":"active"}`, f.rt.UserSpaceID, f.id)
+		v["fixture.facts."+f.id] = fmt.Sprintf(`{"session_id":%q,"agent_id":"main","main_session_id":%q,"active":true}`, f.id, f.id)
 		return nil
 	})
 	if err != nil {
@@ -34,7 +33,7 @@ func newPersonalMemoryReplayFixture(t *testing.T, documents ...func(*persistence
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(map[string]string{"ref": memoryCanonicalRef(f.id, seq)})
-	got, err := f.host.actions.callMemory(f.owner, "memory.source", raw, f.id)
+	got, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.source", raw, f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +61,7 @@ func personalMemoryReplayValue(t *testing.T, f *personalBoundaryFixture, id stri
 func commitPersonalMemoryReplay(t *testing.T, f *personalBoundaryFixture, write memoryWrite) json.RawMessage {
 	t.Helper()
 	raw, _ := json.Marshal(write)
-	got, err := f.host.actions.callMemory(f.owner, "memory.commit", raw, f.id)
+	got, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.commit", raw, f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,13 +102,13 @@ func TestPersonalMemoryReplayRequiresCurrentAuthoritativeRecord(t *testing.T) {
 					if operation == "memory.operation" {
 						raw, _ = json.Marshal(map[string]string{"id": stale.ID})
 					}
-					got, err := f.host.actions.callMemory(f.owner, operation, raw, f.id)
+					got, err := f.host.actionsForTest(t).callMemory(f.owner, operation, raw, f.id)
 					if err == nil || !strings.Contains(err.Error(), wantError) || bytes.Contains(got, []byte("Original private memory fact")) {
 						t.Errorf("%s replay of %s exposed stale receipt: %s %v", operation, stale.ID, got, err)
 					}
 				}
 			}
-			read, err := f.host.actions.callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
+			read, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
 			var records struct {
 				Records map[string]string `json:"records"`
 			}
@@ -124,7 +123,7 @@ func TestPersonalMemoryReplayRequiresCurrentAuthoritativeRecord(t *testing.T) {
 			newID := "mem_" + personalHash([]byte("reintroduced-source"))
 			reintroduced := memoryWrite{ID: "reintroduced", Key: newID, Value: personalMemoryReplayValue(t, f, newID, 1, "candidate", "Original private memory fact", []memoryRecordSource{source}, nil, nil)}
 			raw, _ := json.Marshal(reintroduced)
-			if got, err := f.host.actions.callMemory(f.owner, "memory.commit", raw, f.id); err == nil || !strings.Contains(err.Error(), "source") || len(got) != 0 {
+			if got, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.commit", raw, f.id); err == nil || !strings.Contains(err.Error(), "source") || len(got) != 0 {
 				t.Fatalf("canonical source was reintroduced: %s %v", got, err)
 			}
 		})
@@ -138,16 +137,16 @@ func TestPersonalMemoryForgetRedactsPendingRecovery(t *testing.T) {
 	id := "mem_" + personalHash([]byte("pending-recovery"))
 	accepted := memoryWrite{ID: "accepted", Key: id, Value: personalMemoryReplayValue(t, f, id, 1, "active", "Original private memory fact", []memoryRecordSource{source}, nil, nil)}
 	commitPersonalMemoryReplay(t, f, accepted)
-	state, err := f.host.actions.retainState(f.owner)
+	state, err := f.host.actionsForTest(t).retainState(f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	selected, _, err := f.host.actions.selectedTaskProvider(state)
+	selected, _, err := f.host.actionsForTest(t).selectedTaskProvider(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	journal := personalmemory.NewJournal(f.host.actions.memoryDocuments(state), f.rt.UserSpaceID, selected.SubjectID)
+	journal := personalmemory.NewJournal(f.host.actionsForTest(t).memoryDocuments(state), f.rt.UserSpaceID, selected.SubjectID)
 	pending, err := journal.Operation(f.owner, accepted.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +166,7 @@ func TestPersonalMemoryForgetRedactsPendingRecovery(t *testing.T) {
 		if operation == "memory.reconcile" {
 			input = json.RawMessage(`{"id":"pending","writers_stopped":true,"reason":"Test writer stopped before publication"}`)
 		}
-		got, err := f.host.actions.callMemory(f.owner, operation, input, f.id)
+		got, err := f.host.actionsForTest(t).callMemory(f.owner, operation, input, f.id)
 		if err != nil {
 			t.Fatalf("%s: %v", operation, err)
 		}
@@ -182,7 +181,7 @@ func TestPersonalMemoryForgetRedactsPendingRecovery(t *testing.T) {
 	if _, err := journal.Publish(f.owner, pending.ID, pending.Digest, nil, nil); err != personalmemory.ErrAborted {
 		t.Fatalf("delayed publication crossed forget and recovery: %v", err)
 	}
-	read, err := f.host.actions.callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
+	read, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
 	if err != nil || bytes.Contains(read, []byte("Original private memory fact")) || bytes.Contains(read, []byte("Unpublished private correction")) {
 		t.Fatalf("recovery revived forgotten content: %s %v", read, err)
 	}
@@ -193,23 +192,23 @@ func TestPersonalMemoryForgetRedactsPendingRecovery(t *testing.T) {
 // remain possible using the durable intent and original selected providers.
 func TestPersonalMemoryCanceledLeaseHandsOffDurableGuards(t *testing.T) {
 	f, source := newPersonalMemoryReplayFixture(t)
-	state, err := f.host.actions.retainState(f.owner)
+	state, err := f.host.actionsForTest(t).retainState(f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	selected, _, err := f.host.actions.selectedTaskProvider(state)
+	selected, _, err := f.host.actionsForTest(t).selectedTaskProvider(state)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(f.owner)
 	defer cancel()
-	lease, err := f.host.actions.openMemoryLease(ctx, state, selected)
+	lease, err := f.host.actionsForTest(t).openMemoryLease(ctx, state, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lease.close()
-	bindings, err := f.host.actions.memoryBindings(state)
+	bindings, err := f.host.actionsForTest(t).memoryBindings(state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +225,7 @@ func TestPersonalMemoryCanceledLeaseHandsOffDurableGuards(t *testing.T) {
 	}
 	recovery := json.RawMessage(`{"id":"canceled-pending","writers_stopped":true,"reason":"Canceled publication returned and its process scopes drained"}`)
 	defer func() {
-		_, _ = f.host.actions.callMemory(f.owner, "memory.reconcile", recovery, f.id)
+		_, _ = f.host.actionsForTest(t).callMemory(f.owner, "memory.reconcile", recovery, f.id)
 	}()
 	taskGuard := pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: selected.SubjectID, Scope: pluginsettings.ScopeUser}, ID: intent.TaskGuardID}
 	if _, err := lease.settings.AcquireInspection(lease.ctx, taskGuard); err != nil {
@@ -237,15 +236,15 @@ func TestPersonalMemoryCanceledLeaseHandsOffDurableGuards(t *testing.T) {
 	}
 	// Cancellation cannot close scopes before the active publication stack has
 	// drained. The gate supplies that ordering without a scheduling delay.
-	f.host.actions.effectGate <- struct{}{}
-	f.host.actions.retainMemoryLease(lease)
+	f.host.actionsForTest(t).effectGate <- struct{}{}
+	f.host.actionsForTest(t).retainMemoryLease(lease)
 	cancel()
 	<-lease.ctx.Done()
 	stillHeld := lease.state.Retain()
 	if stillHeld != nil {
 		_ = stillHeld.Close()
 	}
-	<-f.host.actions.effectGate
+	<-f.host.actionsForTest(t).effectGate
 	if stillHeld == nil {
 		t.Fatal("cancellation closed the generation before the publication stack drained")
 	}
@@ -267,7 +266,7 @@ func TestPersonalMemoryCanceledLeaseHandsOffDurableGuards(t *testing.T) {
 			t.Fatal("canceled memory lease retained its process generation")
 		}
 	}
-	if _, ok := f.host.actions.memoryLeases.Load(intent.ID); ok {
+	if _, ok := f.host.actionsForTest(t).memoryLeases.Load(intent.ID); ok {
 		t.Fatal("canceled process lease remained in the host")
 	}
 	if _, err := lease.scopes[0].CallCleanup(context.Background(), "personal.agents", "unused", nil); err == nil || !strings.Contains(err.Error(), "not retained") {
@@ -289,12 +288,12 @@ func TestPersonalMemoryCanceledLeaseHandsOffDurableGuards(t *testing.T) {
 	if err := writeSession(); !errors.Is(err, persistence.ErrInspectionActive) {
 		t.Fatalf("handoff released the durable session guard: %v", err)
 	}
-	journal := personalmemory.NewJournal(f.host.actions.memoryDocuments(state), f.rt.UserSpaceID, selected.SubjectID)
+	journal := personalmemory.NewJournal(f.host.actionsForTest(t).memoryDocuments(state), f.rt.UserSpaceID, selected.SubjectID)
 	pending, err := journal.Operation(f.owner, intent.ID)
 	if err != nil || pending.State != "pending" {
 		t.Fatalf("handoff guessed an uncertain publication outcome: %+v %v", pending, err)
 	}
-	got, err := f.host.actions.callMemory(f.owner, "memory.reconcile", recovery, f.id)
+	got, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.reconcile", recovery, f.id)
 	var recovered personalmemory.Operation
 	if err != nil || json.Unmarshal(got, &recovered) != nil || recovered.State != "not-committed" {
 		t.Fatalf("owner could not reconcile canceled intent: %s %v", got, err)
@@ -375,7 +374,7 @@ func TestPersonalMemoryUnknownPublicationRequiresDurableOutcome(t *testing.T) {
 			id := "mem_" + personalHash([]byte("unknown-publication"))
 			write := memoryWrite{ID: "unknown-publication", Key: id, Value: personalMemoryReplayValue(t, f, id, 1, "candidate", "Uncertain private candidate", []memoryRecordSource{source}, nil, nil)}
 			raw, _ := json.Marshal(write)
-			got, commitErr := f.host.actions.callMemory(f.owner, "memory.commit", raw, f.id)
+			got, commitErr := f.host.actionsForTest(t).callMemory(f.owner, "memory.commit", raw, f.id)
 			documents.mu.Lock()
 			delayed, aborted := documents.delayed, documents.aborted
 			documents.mu.Unlock()
@@ -392,7 +391,7 @@ func TestPersonalMemoryUnknownPublicationRequiresDurableOutcome(t *testing.T) {
 					t.Fatalf("durable lost-reply commit was not recovered: %s %v", got, commitErr)
 				}
 			}
-			operations, err := f.host.actions.callMemory(f.owner, "memory.operations", json.RawMessage(`{}`), f.id)
+			operations, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.operations", json.RawMessage(`{}`), f.id)
 			var listed struct {
 				Operations []personalmemory.Operation `json:"operations"`
 			}
@@ -416,7 +415,7 @@ func TestPersonalMemoryUnknownPublicationRequiresDurableOutcome(t *testing.T) {
 			if mode == "committed-reply-lost" && lateErr != nil {
 				t.Fatalf("committed transaction lost durable idempotency: %v", lateErr)
 			}
-			read, err := f.host.actions.callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
+			read, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
 			var records struct {
 				Records map[string]string `json:"records"`
 			}

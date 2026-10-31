@@ -86,8 +86,13 @@ snapshot generated theme matrices, or quote prompt phrasing.
 
 ### Versions and release notes
 
-- Add user-visible changes to the `[Unreleased]` section of `CHANGELOG.md`.
-- Do not edit product package versions by hand; `VERSION` is synchronized with
+- Describe user-visible changes, compatibility impact, and migration requirements
+  in the PR. Ordinary PRs do not update `CHANGELOG.md` or add release-note files.
+- Maintainers collect changes between release refs and review a concise
+  `docs/releases/<version>.md` in the release PR. `CHANGELOG.md` is a frozen
+  historical record; its existing unreleased entries are transition material only.
+- Do not edit product package versions by hand. After writing the release notes,
+  synchronize `VERSION` and product metadata with
   `make release-prepare RELEASE_VERSION=<version>`.
 - Product releases use UTC CalVer `YYYY.M.D`, without leading zeros for month or day.
   Check API, protocol, configuration, and storage compatibility separately; product

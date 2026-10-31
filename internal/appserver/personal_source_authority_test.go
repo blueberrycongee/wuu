@@ -25,7 +25,7 @@ func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *test
 	defer state.Close()
 	ctx := runtime.WithInvocationState(f.sourceContext(), state)
 	scope := personalreview.Scope{SessionID: f.id, TaskID: "conversation:" + f.id + ":" + strconv.Itoa(f.sourceSeq)}
-	if err := f.host.actions.withAuthority(ctx, scope, func(a personalreview.Authority) error {
+	if err := f.host.actionsForTest(t).withAuthority(ctx, scope, func(a personalreview.Authority) error {
 		if !a.AllowIntentReview || len(a.UserMessages) != 1 {
 			t.Fatalf("active original source unavailable: %+v", a)
 		}
@@ -34,7 +34,7 @@ func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *test
 		t.Fatal(err)
 	}
 	actor := personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: f.rt.UserSpaceID, SessionID: f.id}
-	if _, err := f.host.actions.connectorAuthority(ctx, actor); err != nil {
+	if _, err := f.host.actionsForTest(t).connectorAuthority(ctx, actor); err != nil {
 		t.Fatal(err)
 	}
 	external := newAppserverTestStore(t, filepath.Join(f.rt.SessionDir, "documents"))
@@ -49,7 +49,7 @@ func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *test
 	if err != nil || len(physical.Records) != 1 || physical.Records[0].Seq != f.sourceSeq {
 		t.Fatalf("retraction must preserve the physical audit row: %+v %v", physical, err)
 	}
-	if err := f.host.actions.withAuthority(ctx, scope, func(a personalreview.Authority) error {
+	if err := f.host.actionsForTest(t).withAuthority(ctx, scope, func(a personalreview.Authority) error {
 		if a.AllowIntentReview || len(a.UserMessages) != 0 || a.BoundaryReason == "" {
 			t.Errorf("retracted source retained review authority: %+v", a)
 		}
@@ -57,13 +57,13 @@ func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.host.actions.connectorAuthority(ctx, actor); err == nil {
+	if _, err := f.host.actionsForTest(t).connectorAuthority(ctx, actor); err == nil {
 		t.Error("retracted latest human source retained connector authority")
 	}
 	if _, err := f.kit.Execute(ctx, f.call()); err == nil {
 		t.Error("retracted source authorized a file effect")
 	}
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
@@ -108,7 +108,7 @@ func TestPersonalReviewRetractionAfterModelDecisionPreventsDispatch(t *testing.T
 	if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
 		t.Fatal("source retraction did not fence the file effect")
 	}
-	records, err := f.host.actions.engine.Records(context.Background(), f.rt.UserSpaceID)
+	records, err := f.host.actionsForTest(t).engine.Records(context.Background(), f.rt.UserSpaceID)
 	if err != nil || len(records) != 1 || records[0].Status != personalreview.Stale && records[0].Status != personalreview.Denied {
 		t.Fatalf("stale source did not terminate the old action: %+v %v", records, err)
 	}

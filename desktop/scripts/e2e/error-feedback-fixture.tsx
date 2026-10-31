@@ -1,5 +1,6 @@
 // Production components with synthetic, in-memory failures. No account or network.
 import React from "react";
+import { SelectedSurfaceScene, selectedSurfaceEvidence } from "./selected-surface-fixture";
 import { createRoot } from "react-dom/client";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
@@ -51,6 +52,7 @@ const browser = { openURL: async () => { throw new Error("Synthetic link operati
 const root = createRoot(document.getElementById("root")!);
 const longError = "Could not open the file. Check its location and try again. " + "Additional diagnostic context. ".repeat(14) + "reference=" + "0123456789abcdef".repeat(24);
 fixture.feedback = {
+  selectedSurfaceEvidence,
   reads: () => reads,
   remoteReads: () => remoteReads,
   recoveryOpened: () => recoveryOpened,
@@ -79,7 +81,7 @@ fixture.feedback = {
         </div>
         <ScopedToast message="Composer feedback second" tone="error" dedupeKey="fixture-composer" />
         <ScopedToast message="Settings feedback third" dedupeKey="fixture-settings" />
-      </> : scene === "remote" ? <SettingsControlsProvider controls={controls}><SettingsRemotePageContainer /></SettingsControlsProvider> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
+      </> : scene === "selected-surface" ? <SelectedSurfaceScene /> : scene === "remote" ? <SettingsControlsProvider controls={controls}><SettingsRemotePageContainer /></SettingsControlsProvider> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
         <ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={async () => { throw new Error("The fixture never saves"); }} onClose={() => {}} onConnected={() => {}} />
       </SettingsControlsProvider> : scene === "rich" ? <BrowserControlsProvider service={browser}><ImagePreviewProvider>
         <div id="fixture-prose"><RichContent text="Read [the reference](https://example.invalid/reference) before continuing." /></div>

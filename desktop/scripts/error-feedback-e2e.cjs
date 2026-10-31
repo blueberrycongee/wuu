@@ -186,6 +186,44 @@ async function run() {
   assert.equal(await present('#fixture-prose [role="alert"]'), false);
   await capture('rich-link-failure');
   report.checks.push("actual RichContent failed link reports centrally without changing answer prose");
+  // Exercise the actual selected-provider boundary, not a hand-rendered fallback.
+  await evaluate(() => window.feedback.render('selected-surface'));
+  await until(() => present('[data-testid="break-selected-surface"]'), "selected provider ready");
+  await evaluate(() => { window.__surfaceShell = document.querySelector('[data-testid="surface-shell"]'); window.__surfaceDraft = document.querySelector('[data-testid="surface-shell-draft"]'); });
+  await click('[data-testid="break-selected-surface"]');
+  const unavailable = '[data-testid="selected-surface-region"] [role="status"]';
+  await until(() => present(unavailable), "persistent selected-surface recovery");
+  await delay(6500); // A selected surface must not disappear when a Toast would expire.
+  assert.ok(await present(unavailable), "unavailable surface remains visible after notification expiry");
+  assert.equal(await present('[data-testid="forbidden-surface-fallback"], [data-testid="forbidden-alternative-provider"]'), false);
+  assert.equal(await present('[data-testid="selected-surface-region"] [role="alert"]'), false, "surface uses neutral persistent status");
+  const surfaceBounds = await evaluate(() => {
+    const status = document.querySelector('[data-testid="selected-surface-region"] [role="status"]');
+    const r = status.getBoundingClientRect();
+    return { width: r.width, height: r.height, left: r.left, right: r.right, viewport: innerWidth, overflow: status.scrollWidth - status.clientWidth };
+  });
+  assert.ok(surfaceBounds.width > 0 && surfaceBounds.height > 0 && surfaceBounds.left >= 0 && surfaceBounds.right <= surfaceBounds.viewport && surfaceBounds.overflow <= 1, "fallback stays readable at dark 20px/narrow width");
+  const failedSurface = await evaluate(() => window.feedback.selectedSurfaceEvidence());
+  assert.ok(failedSurface.diagnostics.some(row => row.pluginId === "acceptance-selected" && row.kind === "render" && row.message.includes("WUU_ACCEPTANCE_SELECTED_RENDER_FAILURE")), "real render failure is retained in diagnostics");
+  await capture('selected-surface-unavailable-dark-20-640');
+  await click(unavailable + ' button');
+  await until(() => present('[data-testid="break-selected-surface"]'), "local surface retry recovers");
+  assert.equal(await present(unavailable), false);
+  assert.ok(await evaluate(() => window.__surfaceShell === document.querySelector('[data-testid="surface-shell"]') && window.__surfaceDraft === document.querySelector('[data-testid="surface-shell-draft"]') && window.__surfaceDraft.value === "Keep this draft"), "local retry retains unrelated shell and draft DOM");
+  await click('[data-testid="break-optional-wrapper"]');
+  await until(async () => !await present('[data-testid="break-optional-wrapper"]'), "optional wrapper failed");
+  await click('[data-testid="wrapper-child"]'); // Still visible and natively hit-testable.
+  const recoveredSurface = await evaluate(() => window.feedback.selectedSurfaceEvidence());
+  assert.equal(recoveredSurface.shellMounts, 1, "recovery never remounts unrelated shell");
+  assert.equal(recoveredSurface.alternativeRenders, 0, "recovery never selects another provider");
+  assert.ok(recoveredSurface.diagnostics.some(row => row.pluginId === "acceptance-wrapper" && row.kind === "render" && row.message.includes("WUU_ACCEPTANCE_WRAPPER_RENDER_FAILURE")), "optional wrapper failure remains diagnosed");
+  report.samples.push({ selectedSurface: { failedSurface, recoveredSurface, surfaceBounds } });
+  await capture('selected-surface-recovered-wrapper-contained');
+  report.checks.push("production selected provider fails → persistent neutral status → local Retry recovers without shell remount or provider substitution", "optional wrapper failure preserves usable children and render diagnostics");
+  // React reports caught render errors to the console; only these two injected
+  // errors are expected, and their corresponding diagnostics are asserted above.
+  report.expectedRenderErrors = report.errors.filter(message => /WUU_ACCEPTANCE_(SELECTED|WRAPPER)_RENDER_FAILURE/.test(message));
+  report.errors = report.errors.filter(message => !/WUU_ACCEPTANCE_(SELECTED|WRAPPER)_RENDER_FAILURE/.test(message));
   assert.deepEqual(report.errors, []);
   report.status = "passed";
 }

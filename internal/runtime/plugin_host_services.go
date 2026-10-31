@@ -953,6 +953,8 @@ func (s *pluginHostServices) storageCompareExchange(ctx context.Context, params 
 	}
 	result := pluginhost.StorageCompareExchangeResult{}
 	_, err = s.settingsClient.UpdateState(ctx, s.storageSubject(), scope, func(values map[string]string) error {
+		// A settings conflict discards this attempt and repeats the callback.
+		result = pluginhost.StorageCompareExchangeResult{}
 		current, exists := values[params.Key]
 		matches := params.Expected != nil && exists && current == *params.Expected
 		if params.Expected == nil {

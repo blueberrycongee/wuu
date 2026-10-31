@@ -1,4 +1,4 @@
-// Real rendered synthetic fixture: escaped identity overlap and hidden-chat portal.
+// Real rendered synthetic fixture: floating identity hit targets and hidden-chat portal.
 // Build with build-personal-fixture.cjs, then run with Electron.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -21,26 +21,31 @@ async function run({ evaluate, resize, navigate, capture }) {
   }
   async function clearance(name) {
     await check(name, async () => {
-      const geometry = await evaluate(() => ({
-        identityBottom: document.querySelector('.mosaic-identity-label').getBoundingClientRect().bottom,
-        scrollTop: document.querySelector('.mosaic-main .plugin-conversation-scroll').getBoundingClientRect().top,
-      }));
-      assert.ok(geometry.scrollTop >= geometry.identityBottom, JSON.stringify(geometry));
+      const geometry = await evaluate(() => {
+        const identity = document.querySelector('.mosaic-identity').getBoundingClientRect();
+        const viewport = document.querySelector('.mosaic-main .plugin-conversation-scroll').getBoundingClientRect();
+        const sideHits = [(viewport.left + identity.left) / 2, (identity.right + viewport.right) / 2].map(x => Boolean(document.elementFromPoint(x, (identity.top + identity.bottom) / 2)?.closest('.plugin-conversation-scroll')));
+        return { identity: identity.toJSON(), viewport: viewport.toJSON(), sideHits };
+      });
+      assert.ok(geometry.viewport.top <= geometry.identity.top && geometry.identity.bottom < geometry.viewport.bottom, JSON.stringify(geometry));
+      assert.ok(geometry.sideHits.every(Boolean), JSON.stringify(geometry));
     });
   }
   for (const [name, width, height] of [['desktop', 1181, 757], ['zoom-equivalent', 590, 378]]) {
     await resize(width, height);
     await navigate(path.resolve(__dirname, '../out/personal-fixture/index.html'));
+    await until(() => document.querySelector('.sidebar-ribbon [data-wuu-plugin="personal"]'));
+    await evaluate(() => document.querySelector('.sidebar-ribbon [data-wuu-plugin="personal"]').click());
     await until(() => document.querySelector('.mosaic-main [data-action="open-attachment"]'));
-    await clearance(`${name}: identity clears scrolling content`);
+    await clearance(`${name}: history remains reachable beside the floating identity`);
     await evaluate(() => [...document.querySelectorAll('.mosaic-main [data-action="open-attachment"]')].find(node => node.textContent.includes('合成说明.md')).click());
-    await until(() => document.querySelector('.workspace-right-panel .workspace-file-preview'));
+    await until(() => document.querySelector('.plugin-view-attachment-panel .workspace-file-preview'));
     await capture(path.join(output, `${name}-attachment.png`));
     if (width > 720) {
-      await clearance('split: identity clears scrolling content');
-      await evaluate(() => document.querySelector('.workspace-panel-globalize').click());
+      await clearance('split: history remains reachable beside the floating identity');
+      await evaluate(() => document.querySelector('.plugin-view-attachment-panel .workspace-panel-tabbar > button[aria-pressed]').click());
     }
-    await until(() => document.querySelector('.conversation-pane').hasAttribute('inert'));
+    await until(() => document.querySelector('.plugin-view-content-region').hasAttribute('inert'));
     await check(`${name}: hidden chat has no jump control`, async () => {
       await evaluate(() => {
         const scroll = document.querySelector('.mosaic-main .plugin-conversation-scroll');
@@ -51,8 +56,8 @@ async function run({ evaluate, resize, navigate, capture }) {
       assert.equal(await evaluate(() => !!document.querySelector('[data-wuu-component="jump-to-latest"]')), false);
     });
     await capture(path.join(output, `${name}-fullpanel.png`));
-    await evaluate(() => document.querySelector('.workspace-conversation-tab button').click());
-    await until(() => !document.querySelector('.conversation-pane').hasAttribute('inert'));
+    await evaluate(() => document.querySelector('.plugin-view-attachment-panel .workspace-panel-tabbar > button:last-child').click());
+    await until(() => !document.querySelector('.plugin-view-content-region').hasAttribute('inert'));
     await check(`${name}: visible scrolled chat regains jump`, async () => {
       await evaluate(() => {
         const scroll = document.querySelector('.mosaic-main .plugin-conversation-scroll');
@@ -71,7 +76,8 @@ async function run({ evaluate, resize, navigate, capture }) {
   return cases;
 }
 module.exports = { run };
-if (require.main === module) {
+// Electron keeps its bootstrap as require.main when loading a CommonJS entry.
+if (require.main === module || (process.versions.electron && path.resolve(process.argv[1] || '') === __filename)) {
   const { app, BrowserWindow } = require('electron');
   fs.mkdirSync(output, { recursive: true });
   app.setPath('userData', fs.mkdtempSync(path.join(output, 'profile-')));

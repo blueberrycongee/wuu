@@ -7,6 +7,7 @@ doc it implements.
 
 - Bullet list of the user-visible or behavior changes
 - Group related edits; omit pure refactors unless they matter
+- Describe compatibility impact and required migration steps, if any
 
 ## Test plan
 
