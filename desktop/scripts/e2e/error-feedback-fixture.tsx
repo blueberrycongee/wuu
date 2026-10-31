@@ -3,17 +3,19 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
-import { ToastViewport, showActionErrorToast, showToast, clearToasts } from "../../src/renderer/Toast";
+import { ToastViewport, ScopedToast, showActionErrorToast, showToast, clearToasts } from "../../src/renderer/Toast";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { ChatGPTConnectionDialog } from "../../src/renderer/ChatGPTConnectionDialog";
 import { SettingsControlsProvider } from "../../src/renderer/SettingsControlsContext";
 import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
 import { SettingsRemotePageContainer } from "../../src/renderer/SettingsRemotePageContainer";
+import { DraftRecoveryNotice } from "../../src/renderer/DraftRecoveryNotice";
 import { RichContent } from "../../src/renderer/RichContent";
 import { BrowserControlsProvider } from "../../src/renderer/BrowserControlsContext";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import "../../src/renderer/styles.css";
 
+let recoveryOpened = 0;
 const fixture = window as any;
 let reads = 0;
 let remoteReads = 0;
@@ -45,6 +47,7 @@ const longError = "Could not open the file. Check its location and try again. " 
 fixture.feedback = {
   reads: () => reads,
   remoteReads: () => remoteReads,
+  recoveryOpened: () => recoveryOpened,
   remoteFailure: (fail: boolean, notify = false) => { remoteFail = fail; if (notify) remoteChanged(); },
   applyAppearance: (theme: string, font: number) => {
     document.documentElement.dataset.theme = theme;
@@ -58,9 +61,18 @@ fixture.feedback = {
   actionFailure: () => showActionErrorToast("Synthetic repeated action failure"),
   render: (scene: string) => {
     clearToasts();
+    if (scene === "owned-notices") showToast({ message: "Global feedback first" });
     root.render(<I18nProvider><WuuUIRoot><div className="settings-scroll" style={{ height: "100%" }}><main style={{ padding: 32, width: "100%", maxWidth: 900, margin: "0 auto", flexShrink: 0 }}>
       <p>Synthetic error feedback acceptance · no live account</p>
-      {scene === "remote" ? <SettingsControlsProvider controls={controls}><SettingsRemotePageContainer /></SettingsControlsProvider> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
+      {scene === "owned-notices" ? <>
+        {/* The recovery row is production UI; this editable field only establishes the fixture's surrounding geometry. */}
+        <div className="composer-stack" style={{ marginTop: 80 }}>
+          <DraftRecoveryNotice interrupted={false} onOpen={() => { recoveryOpened++; }} />
+          <textarea data-testid="retained-draft" className="settings-input" defaultValue="My newer draft remains editable" aria-label="Synthetic retained draft" />
+        </div>
+        <ScopedToast message="Composer feedback second" tone="error" dedupeKey="fixture-composer" />
+        <ScopedToast message="Settings feedback third" dedupeKey="fixture-settings" />
+      </> : scene === "remote" ? <SettingsControlsProvider controls={controls}><SettingsRemotePageContainer /></SettingsControlsProvider> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
         <ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={async () => { throw new Error("The fixture never saves"); }} onClose={() => {}} onConnected={() => {}} />
       </SettingsControlsProvider> : scene === "rich" ? <BrowserControlsProvider service={browser}><ImagePreviewProvider>
         <div id="fixture-prose"><RichContent text="Read [the reference](https://example.invalid/reference) before continuing." /></div>

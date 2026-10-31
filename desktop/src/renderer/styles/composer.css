@@ -2442,3 +2442,18 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
      caret when it wraps. Accepted text uses the textarea's normal wrapping. */
   word-break: break-all;
 }
+
+/* Recovery is durable draft state, not a second floating notification. */
+.composer-recovery-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.composer-recovery-notice > span { flex: 1; min-width: 0; }
+.composer-recovery-notice > button { flex-shrink: 0; }

@@ -1,5 +1,5 @@
 import { CircleAlert } from "./WuuIcons";
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { translateCurrent, useI18n } from "./i18n";
 import { TopNotice, type TopNoticeAction } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
@@ -159,4 +159,19 @@ export function ToastViewport(): JSX.Element | null {
       />
     </UILayerPortal>
   );
+}
+
+
+/** A surface owns the lifetime of its feedback, while the shell owns its position. */
+export function ScopedToast({ message, tone, dedupeKey, action }: ToastInput): null {
+  const actionRef = useRef(action);
+  actionRef.current = action;
+  useEffect(() => {
+    // This mounted owner already controls repeat announcements. History dedupe
+    // must not suppress a live notice after an effect cleanup/restart.
+    const id = showToast({ message, tone, dedupeKey: `owned:${nextToastID}:${dedupeKey ?? ""}`,
+      action: actionRef.current ? { ...actionRef.current, onClick: () => actionRef.current?.onClick() } : undefined });
+    return () => { if (id !== undefined) dismissToast(id); };
+  }, [message, tone, dedupeKey]);
+  return null;
 }

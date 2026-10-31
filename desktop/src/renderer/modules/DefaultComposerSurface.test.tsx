@@ -12,6 +12,7 @@ import type { HostApplicationService } from "../plugins/HostApplicationService";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate as activateComposer } from "./DefaultComposerSurface";
 import { DefaultComposerSurface, type DefaultComposerLayout } from "./DefaultComposerSurface";
+import { clearToasts, ToastViewport } from "../Toast";
 import { WuuUIRoot } from "../ui/layers/UILayerHost";
 import { initialState, cloneSessionTabDraft, emptyComposerDraft, type AppState } from "../AppState";
 import { ApplicationComposerRuntime } from "../plugins/ApplicationComposerRuntime";
@@ -24,7 +25,7 @@ import type { EngineListResult, InitializeResult, ThreadStartParams, WuuDesktopA
 
 let root: Root;
 let container: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
+afterEach(() => { act(() => clearToasts()); act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
 function setup() {
   const base = createPreviewApplication();
   const source = "draft-one";
@@ -67,7 +68,7 @@ function setup() {
   } as ApplicationServiceV1;
 
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  const render = async (layout: DefaultComposerLayout = {}, selected = application) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={selected} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
+  const render = async (layout: DefaultComposerLayout = {}, selected = application) => { await act(async () => root.render(<WuuUIRoot><ToastViewport /><DefaultComposerSurface application={selected} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
@@ -263,6 +264,21 @@ describe("selected public composer continuity", () => {
       } }));
       expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
     } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps recovered drafts beside the composer without offering destructive notice dismissal", async () => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view, submission: { ...view.submission, failedDraftTabIds: ["draft-one"] } }));
+    await fixture.render();
+    const recovery = container.querySelector('[data-wuu-component="draft-recovery"]');
+    expect(recovery).not.toBeNull();
+    expect(container.querySelector<HTMLElement>(".composer")?.hidden).toBe(false);
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    const actions = recovery!.querySelectorAll<HTMLButtonElement>("button");
+    expect(actions).toHaveLength(1);
+    await act(async () => actions[0].click());
+    expect(fixture.calls).toContainEqual({action:"tab.select",input:{tabId:"draft-one"}});
+    expect(fixture.calls.some((call: any) => call.action === "tab.close")).toBe(false);
   });
 
   it("does not duplicate the separate recovered-draft notice", async () => {

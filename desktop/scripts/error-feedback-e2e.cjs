@@ -145,6 +145,29 @@ async function run() {
     await capture(`remote-recovered-${theme}-${font}-${width}`);
   }
   report.checks.push("remote first-read failure shows Retry rather than disabled access or empty devices; cached refresh failure preserves access and devices; retry recovers at light 15px/1280 and dark 20px/640");
+  for (const [theme, font, width] of [["light", 15, 1280], ["dark", 20, 640]]) {
+    win.setContentSize(width, 900);
+    await evaluate(({theme, font}) => { window.feedback.applyAppearance(theme, font); window.feedback.render("notice"); }, {theme, font});
+    await until(async () => !await present('[data-wuu-component="draft-recovery"]'), "recovery fixture unmounted");
+    await evaluate(() => window.feedback.render("owned-notices"));
+    await until(() => present('[data-wuu-component="draft-recovery"]'), "durable recovery in composer");
+    const before = await evaluate(() => document.querySelector('[data-testid="retained-draft"]').value);
+    assert.equal(before, "My newer draft remains editable");
+    assert.ok(await target('[data-testid="retained-draft"]'), "recovery does not cover the editor");
+    for (const expected of ["Global feedback first", "Composer feedback second", "Settings feedback third"]) {
+      await until(() => evaluate(expected => document.querySelector('[data-wuu-component="notice"]')?.textContent.includes(expected), expected), expected);
+      assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="notice"]').length), 1, "all transient surfaces share one notification position");
+      await capture(`owned-${expected.split(" ")[0].toLowerCase()}-${theme}-${font}-${width}`);
+      await click('.archive-tip-dismiss');
+    }
+    await until(async () => !await present(notice), "all transient notices dismissed");
+    assert.ok(await present('[data-wuu-component="draft-recovery"]'), "dismissal preserves durable recovery");
+    assert.equal(await evaluate(() => document.querySelector('[data-testid="retained-draft"]').value), before);
+    await click('[data-wuu-component="draft-recovery"] button');
+    assert.ok(await evaluate(() => window.feedback.recoveryOpened() > 0), "recovery remains actionable");
+    await capture(`draft-recovery-${theme}-${font}-${width}`);
+  }
+  report.checks.push("global and two surface notices render sequentially at one anchor; dismissals preserve editable draft and persistent recovery; recovery remains actionable at light 15px and dark 20px (surrounding editor is a fixture; public tab.select and no tab.close covered by integration tests)");
   await evaluate(() => window.feedback.render('rich'));
   await until(() => present('#fixture-prose a'), "rich link");
   const prose = await evaluate(() => document.querySelector('#fixture-prose').textContent);
