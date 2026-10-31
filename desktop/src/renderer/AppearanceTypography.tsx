@@ -101,6 +101,10 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       onClick={() => update({ uiFont: appearanceDefaults.uiFont, contentFont: appearanceDefaults.contentFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
   >
     <SettingsGroup>
+      <div className="appearance-font-columns" aria-hidden="true">
+        <span>{t("settings.fontColumn")}</span>
+        <span>{t("settings.sizeColumn")}</span>
+      </div>
       <SettingsRow title={t("settings.textInterface")}>
         {fontControls("uiFont", <MessageFlowFontSizeControl />)}
       </SettingsRow>
