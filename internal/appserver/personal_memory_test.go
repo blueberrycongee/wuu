@@ -34,7 +34,7 @@ func TestPersonalMemoryBoundSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(map[string]any{"ref": fmt.Sprintf("personal-message:%s:%d", f.id, f.sourceSeq)})
-	got, err := f.host.actions.callMemory(f.owner, "memory.source", raw, f.id)
+	got, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.source", raw, f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestPersonalMemoryBoundSource(t *testing.T) {
 	}
 	for _, ref := range []string{"personal-message:foreign:1", fmt.Sprintf("personal-message:%s:01", f.id), fmt.Sprintf("personal-message:%s:9999", f.id)} {
 		raw, _ = json.Marshal(map[string]any{"ref": ref})
-		if _, err = f.host.actions.callMemory(f.owner, "memory.source", raw, f.id); err == nil {
+		if _, err = f.host.actionsForTest(t).callMemory(f.owner, "memory.source", raw, f.id); err == nil {
 			t.Fatalf("unbound source accepted %s", ref)
 		}
 	}
@@ -64,18 +64,18 @@ func TestPersonalMemoryCommitAndReplay(t *testing.T) {
 	id := "mem_" + personalHash([]byte("public-boundary"))
 	value := fmt.Sprintf(`{"id":%q,"revision":1,"product_domain":"personal","user_space_id":%q,"status":"active","tier":"detail","content":"selected journal","contributor_agent_id":"main","updated_by_agent_id":"main","sources":[{"kind":"message","ref":"manual-main-evidence","occurred_at":"2026-01-01T00:00:00Z"}],"contributions":[{"agent_id":"main","executor_session_id":%q}]}`, id, f.rt.UserSpaceID, f.id)
 	input, _ := json.Marshal(memoryWrite{ID: "stable-operation", Key: id, Value: value})
-	first, err := f.host.actions.callMemory(f.owner, "memory.commit", input, f.id)
+	first, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.commit", input, f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := f.host.actions.callMemory(f.owner, "memory.commit", input, f.id)
+	second, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.commit", input, f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(first) != string(second) {
 		t.Fatalf("receipt changed: %s %s", first, second)
 	}
-	records, err := f.host.actions.callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
+	records, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.read", json.RawMessage(`{}`), f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,26 +94,26 @@ func (unavailableMemoryDocuments) ClaimNamespaces(context.Context, []string) err
 // unreachable service scope that prevents every future provider retirement.
 func TestPersonalMemoryShutdownOutageReleasesGeneration(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
-	state, err := f.host.actions.retainState(f.owner)
+	state, err := f.host.actionsForTest(t).retainState(f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	selected, _, err := f.host.actions.selectedTaskProvider(state)
+	selected, _, err := f.host.actionsForTest(t).selectedTaskProvider(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := f.host.actions.openMemoryLease(f.owner, state, selected)
+	lease, err := f.host.actionsForTest(t).openMemoryLease(f.owner, state, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lease.journal = personalmemory.NewJournal(unavailableMemoryDocuments{}, "space", "subject")
 	lease.operation = personalmemory.Operation{ID: "uncertain", Digest: "exact", State: "pending"}
-	f.host.actions.memoryLeases.Store("uncertain", lease)
-	if err = f.host.actions.closeMemoryLeases(); err == nil {
+	f.host.actionsForTest(t).memoryLeases.Store("uncertain", lease)
+	if err = f.host.actionsForTest(t).closeMemoryLeases(); err == nil {
 		t.Fatal("outage not reported")
 	}
-	if _, ok := f.host.actions.memoryLeases.Load("uncertain"); ok {
+	if _, ok := f.host.actionsForTest(t).memoryLeases.Load("uncertain"); ok {
 		t.Fatal("dead generation retained")
 	}
 	if _, err = lease.scopes[0].CallCleanup(context.Background(), "personal.agents", "unused", nil); err == nil || !strings.Contains(err.Error(), "not retained") {
@@ -123,15 +123,15 @@ func TestPersonalMemoryShutdownOutageReleasesGeneration(t *testing.T) {
 
 func TestPersonalMemoryLeaseOwnsInvocationState(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
-	borrowed, err := f.host.actions.retainState(f.owner)
+	borrowed, err := f.host.actionsForTest(t).retainState(f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, _, err := f.host.actions.selectedTaskProvider(borrowed)
+	selected, _, err := f.host.actionsForTest(t).selectedTaskProvider(borrowed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := f.host.actions.openMemoryLease(f.owner, borrowed, selected)
+	lease, err := f.host.actionsForTest(t).openMemoryLease(f.owner, borrowed, selected)
 	if err != nil {
 		t.Fatal(err)
 	}

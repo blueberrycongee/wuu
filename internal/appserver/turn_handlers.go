@@ -1689,7 +1689,7 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 		// value; only seed the workspace worker provider when the control never
 		// recorded one (a conversation that follows the workspace default).
 		// Session finalization uses imported durable state; model resolution
-		// belongs to the admitted execution graph, including its private config.
+		// belongs to the admitted execution graph, including its generation-bound configuration.
 		var captureErr error
 		modelState, captureErr = s.retainThreadExecutionState(binding, threadRuntime)
 		var models runtime.StateModels
@@ -2983,7 +2983,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	// The runner bookkeeping below (per-turn callback wiring, force-compact
 	// flags, restore) only applies to the built-in wuu engine's native
-	// runner. External-engine threads (Claude/Codex) run through their engine
+	// runner. External-engine threads run through their selected engine
 	// session instead and have no StreamRunner.
 	var baseTurnTools agent.ToolExecutor
 	var baseForceInitialCompact bool
@@ -3140,8 +3140,8 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	reviewIntent := &nativeReviewIntent{}
 	reviewIntent.append(history)
 	if threadRuntime != nil {
-		if threadRuntime.Toolkit != nil && s.personalActions != nil {
-			threadRuntime.Toolkit.SetFileActionGate(s.personalActions.gate)
+		if threadRuntime.Toolkit != nil && s.rt.UserBinding().Domain() == "personal" {
+			threadRuntime.Toolkit.SetFileActionGate(s.personalFileGate)
 		}
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)

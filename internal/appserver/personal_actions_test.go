@@ -74,7 +74,7 @@ func TestPersonalFileApprovalProductionEntry(t *testing.T) {
 	if _, err = host.personal.Call(context.Background(), "review.list", nil, ""); err == nil {
 		t.Fatal("forged owner")
 	}
-	records, err := host.actions.engine.Records(context.Background(), "local")
+	records, err := host.actionsForTest(t).engine.Records(context.Background(), "local")
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records=%v err=%v", records, err)
 	}
@@ -83,14 +83,14 @@ func TestPersonalFileApprovalProductionEntry(t *testing.T) {
 	if _, err = host.personal.Call(owner, "review.resolve", command, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err = host.actions.drain(context.Background()); err != nil {
+	if err = host.actionsForTest(t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(rt.RootDir, "note.txt"))
 	if err != nil || string(data) != "saved once" {
 		t.Fatalf("receipt did not continue original file action: %s %v", data, err)
 	}
-	r, err = host.actions.engine.GetExecution(context.Background(), r.Action.Key())
+	r, err = host.actionsForTest(t).engine.GetExecution(context.Background(), r.Action.Key())
 	if err != nil || r.Status != personalreview.Succeeded {
 		t.Fatalf("%+v %v", r, err)
 	}
@@ -146,7 +146,7 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 				case <-timer.C:
 					t.Fatal("pending action not published")
 				case <-tick.C:
-					records, err := f.host.actions.engine.Records(context.Background(), f.rt.UserSpaceID)
+					records, err := f.host.actionsForTest(t).engine.Records(context.Background(), f.rt.UserSpaceID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -179,7 +179,7 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 				if _, err = f.host.personal.Call(f.owner, "review.resolve", command, ""); err != nil {
 					t.Fatal(err)
 				}
-				if err = f.host.actions.drain(context.Background()); err != nil {
+				if err = f.host.actionsForTest(t).drain(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 			}

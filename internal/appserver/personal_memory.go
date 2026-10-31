@@ -279,12 +279,16 @@ type personalMemoryLease struct {
 	operation personalmemory.Operation
 }
 
-func (l *personalMemoryLease) close() error {
+func (l *personalMemoryLease) close(cleanup ...context.Context) error {
+	ctx := context.Background()
+	if len(cleanup) != 0 {
+		ctx = cleanup[0]
+	}
 	var err error
 	for i := len(l.scopes) - 1; i >= 0; i-- {
 		err = errors.Join(err, l.scopes[i].Close())
 	}
-	return errors.Join(err, l.state.Close())
+	return errors.Join(err, releasePersonalState(ctx, l.state))
 }
 func (p *personalActions) openMemoryLease(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin) (*personalMemoryLease, error) {
 	held := state.Retain()
@@ -600,14 +604,27 @@ func (p *personalActions) retainMemoryLease(l *personalMemoryLease) {
 }
 func (p *personalActions) handoffMemoryLease(l *personalMemoryLease) {
 	p.effectGate <- struct{}{}
-	defer func() { <-p.effectGate }()
+	release := false
 	if current, ok := p.memoryLeases.Load(l.operation.ID); ok && current == l {
 		p.memoryLeases.Delete(l.operation.ID)
-		_ = l.close()
+		for i := len(l.scopes) - 1; i >= 0; i-- {
+			_ = l.scopes[i].Close()
+		}
+		release = true
+	}
+	<-p.effectGate
+	// This asynchronous callback has no outer invocation guard. Releasing its
+	// final graph reference can reenter core shutdown and acquire effectGate.
+	if release {
+		_ = l.state.Close()
 	}
 }
 
-func (p *personalActions) closeMemoryLeases() error {
+func (p *personalActions) closeMemoryLeases(cleanup ...context.Context) error {
+	cleanupCtx := context.Background()
+	if len(cleanup) != 0 {
+		cleanupCtx = cleanup[0]
+	}
 	// close cancels admission first. Drain active publication/reconciliation
 	// before handing unresolved durable guards to restart recovery.
 	p.effectGate <- struct{}{}
@@ -626,7 +643,7 @@ func (p *personalActions) closeMemoryLeases() error {
 		// No writer remains in this host; durable guards are NOT released on
 		// uncertainty and the persisted intent remains discoverable on restart.
 		p.memoryLeases.Delete(key)
-		result = errors.Join(result, err, l.close())
+		result = errors.Join(result, err, l.close(cleanupCtx))
 		return true
 	})
 	return result

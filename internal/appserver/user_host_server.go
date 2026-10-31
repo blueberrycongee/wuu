@@ -15,7 +15,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
@@ -34,7 +33,6 @@ var ErrUserHostClientOverflow = errors.New("user host client fell behind; reconn
 // Closing a connection never closes this host or replaces its session router.
 // Headless hosts do not negotiate client computer/browser reverse-RPC tools.
 type UserHost struct {
-	actions             *personalActions
 	personal            *personalhost.Host
 	unbindPersonal      func()
 	runtime             *runtime.Session
@@ -108,25 +106,36 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		}
 	}
 
+	if h.server.personalEffects == nil {
+		h.server.personalEffects = NewPersonalEffectBridge()
+	}
+	if h.server.personalCoordination == nil {
+		h.server.personalCoordination = newPersonalCoordinatorBridge()
+	}
 	if rt.UserBinding().Domain() == "personal" {
-		var err error
-		h.actions, err = newPersonalActions(h.server)
+		state, err := rt.RetainState()
 		if err != nil {
 			h.attentionCancel()
 			h.server.Close()
 			return nil, err
 		}
-		h.server.personalActions = h.actions
-		if broker, ok := personalOptions.Connectors.(*personalconnectors.Broker); ok {
-			broker.SetAuthorization(h.actions.connectorAuthority)
-			broker.SetAuthorizationBoundary(h.actions.withConnectorAuthorization)
+		selected := h.server.personalCoordinationAvailable(state)
+		state.Close()
+		if selected {
+			if _, err = h.server.invokePersonalCoordination(context.Background(), "initialize", personalCoordinationRequest{}, nil); err != nil {
+				h.attentionCancel()
+				_ = h.server.personalCoordination.Close()
+				h.server.Close()
+				return nil, err
+			}
 		}
-		personalOptions.Review = h.actions.Call
-		personalOptions.Memory = h.actions.callMemory
+		personalOptions.Review = h.server.callPersonalCoordination
+		personalOptions.Memory = h.server.callPersonalCoordination
 		if rt.Toolkit != nil {
-			rt.Toolkit.SetFileActionGate(h.actions.gate)
+			rt.Toolkit.SetFileActionGate(h.server.personalFileGate)
 		}
 	}
+
 	if h.server.personalAccountsRouted {
 		personalOptions.Accounts = h.server.callPersonalAccounts
 	}
@@ -144,9 +153,6 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 	h.personal = personalhost.New(rt.UserBinding(), personalOptions)
 	if rt.PluginSessionRouter != nil {
 		h.unbindPersonal = rt.PluginSessionRouter.BindPersonalHost(h.personal.Call)
-	}
-	if h.actions != nil {
-		h.actions.start()
 	}
 	go h.runAttentionPolicy()
 	return h, nil
@@ -178,9 +184,8 @@ func (h *UserHost) Close() error {
 		h.unbindPersonal()
 	}
 	h.closeErr = h.personal.Close()
-	if h.actions != nil {
-		h.closeErr = errors.Join(h.closeErr, h.actions.close())
-	}
+	h.server.personalEffects.Close()
+	h.closeErr = errors.Join(h.closeErr, h.server.personalCoordination.Close())
 	h.server.Close()
 	<-h.attentionDone
 	close(h.closeDone)

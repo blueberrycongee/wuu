@@ -780,8 +780,12 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			return pluginhost.SessionCancelResult{}, err
 		}
 		turnID, queueID = params.TurnID, params.QueueID
-		if s.personalActions != nil {
-			reviewScope, scopeErr := s.personalActions.scope(ctx, sessionID)
+		if s.personalCoordinationAvailable(binding) {
+			rawScope, scopeErr := s.invokePersonalCoordination(ctx, "scope", personalCoordinationRequest{SessionID: sessionID}, nil)
+			var reviewScope personalreview.Scope
+			if scopeErr == nil {
+				scopeErr = json.Unmarshal(rawScope, &reviewScope)
+			}
 			if scopeErr == nil && reviewScope.TaskID == scope.TaskID && reviewScope.RequirementsRevision == scope.Revision {
 				cancelReviews = true
 				reviewScopes = []personalreview.Scope{reviewScope}
@@ -808,11 +812,10 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			}
 		}
 	}
-	if cancelReviews && s.personalActions != nil && metadata.Owner == "plugin:"+pluginID {
-		if err := s.personalActions.engine.CancelExecution(ctx, s.rt.UserBinding().UserSpaceID, sessionID, reviewScopes...); err != nil {
+	if cancelReviews && s.personalCoordinationAvailable(binding) && metadata.Owner == "plugin:"+pluginID {
+		if _, err := s.invokePersonalCoordination(ctx, "cancel", personalCoordinationRequest{SessionID: sessionID, Scopes: reviewScopes}, nil); err != nil {
 			return pluginhost.SessionCancelResult{}, err
 		}
-		s.personalActions.signal()
 	}
 	if queueID != "" {
 		if s.clientInputReceiptsEnabled() {

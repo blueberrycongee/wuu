@@ -764,3 +764,34 @@ composition 可以将客户端绑定到其他 provider，或禁用原生模块�
 已接受的调用保留原服务图直到完成；旧代清理不会关闭新代 broker。使用 runtime
 bindings 的 `NewUserHost` 不接收预先构造的账户 broker。审批／记忆协调器与原生
 文件审批入口仍是独立于该账户服务的部分。
+
+### Personal 协调器与宿主副作用机制
+
+`personal.coordination@1` 是可替换的审核、记忆、文件及连接器策略服务。
+Personal 组合选择 `wuu.personal-client`、原生协调器
+`wuu.personal-actions-consumer` 和宿主机制 `wuu.personal-effects`。
+替换绑定或禁用协调器不会创建原生回退；Go 宿主仍负责入口身份验证、
+会话解析和资源边界检查。
+
+协调器请求为 `{operation?, input?, session_id?, call?, scopes?}`。
+`call` 承载现有 `review.*` / `memory.*` 操作；`file-gate` 接收工具调用并返回
+工具结果；`scope` / `cancel` 支持精确会话与任务取消；`inspection` 处理经所有者
+认证的审核策略、设置和会话恢复，并与正在进行的 Personal 副作用串行；`initialize` / `drain` 用于生命周期及调度。
+`connector-snapshot` 的 `input` 为 `{actor}`，返回 `{authority}`；
+`connector-commit` 的 `input` 为 `{actor, expected, effect_id}`。
+actor 沿用 `{ProductDomain, UserSpaceID, SessionID}`。原生协调器必须在持久化
+权限检查的临界区内执行副作用，不能把布尔授权响应当作实际提交。
+
+替代实现声明 `host.personal-effects@1`：`prepare-file` 接收工具调用，返回
+`{effect_id, file}` 冻结动作；`execute` 接收 `{effect_id}`，返回 `{tool_result}`，
+每个句柄至多执行一次；`release` 接收 `{effect_id}`，可重复调用且声明为清理方法。
+只有当前选中的协调器可调用。跨进程回调使用执行 ID 继承宿主来源，不接受序列化
+State、工具箱或所有者声明作为权限。
+
+延迟文件句柄可跨越初始回调，保留原始服务图及工具箱；后续所有者确认不会把旧动作
+改绑到新一代。句柄不是持久化审批记录：冷启动恢复需要新认证及冻结动作重新验证，
+不确定结果不能自动重放。连接器句柄限于同步 broker 回调，回调结束即释放。
+兼容原生代际通过引用计数共享待处理状态，旧代清理不能关闭新代已借用的协调器。
+禁用或崩溃先封闭入口，再取消并排空副作用；宿主关闭也释放待处理资源。
+原生机制使用 `ServiceRegistry.RegisterRetirementCleanup` 建立物理清理屏障，
+仅把可能重新进入关闭流程的最终图引用释放交给 `DeferServiceCompletion`，不增加策略权限。
