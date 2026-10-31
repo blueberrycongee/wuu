@@ -1225,10 +1225,13 @@ export function AppSidebar({
     .filter((thread) => !thread.archived && !thread.pinned
       && !projectIndex.summaries.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id)),
   [allSidebarThreads, projectIndex]);
-  const { threads: recentConversations, interactionProps: conversationInteractionProps } =
-    useSidebarConversationActivity(
-      conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
-    );
+  const {
+    threads: recentConversations,
+    interactionProps: conversationInteractionProps,
+    onReorder: reorderRecentConversations,
+  } = useSidebarConversationActivity(
+    conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
+  );
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
@@ -2252,6 +2255,7 @@ export function AppSidebar({
                       ))}
                       <OrganizationThreadList
                         threads={recentConversations}
+                        onReorder={reorderRecentConversations}
                         activeID={activeThreadID}
                         pendingThreadID={pendingThreadID}
                         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
