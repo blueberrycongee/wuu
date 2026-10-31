@@ -183,7 +183,7 @@ export class PersonalPlugin implements RuntimePlugin {
         { id: "react_to_message", description: "Set, replace, or remove your own emoji reaction on an exact persisted original user message in this main Personal conversation. This is expression, not a textual reply or task action. Use null to remove; expected_revision comes from the reaction state (0 if absent). Never impersonate owner feedback or treat reactions as authorization. " + reactionGuidance, input_schema: schema({ message_seq: { type: "integer", minimum: 1 }, emoji: { type: ["string", "null"], maxLength: 32 }, expected_revision: integer, request_id: { type: "string", maxLength: 128 } }, "message_seq", "emoji", "expected_revision", "request_id"), activity: { concurrency_safe: true } },
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence. A Calendar change source requires kind task, cron, and a verified matching Calendar source account/generation with a fixed window at most 31 days; first baseline is silent and no account connection is initiated.", input_schema: schema({ request_id: string, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: schema({ kind: { type: "string", enum: ["calendar"] }, account_id: string, generation: string, calendar_id: string, time_min: string, time_max: string, timezone: string }, "kind", "account_id", "generation", "calendar_id", "time_min", "time_max", "timezone") }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string, expected_revision: integer, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
-        { id: "list_sessions", description: "List existing registered sessions available to receive delegated work and unavailable hosts. Discovery is not control permission. Use exact returned locators; never invent a target or replace an unavailable session.", input_schema: schema({}), activity: {read_only:true,concurrency_safe:true} },
+        { id: "list_sessions", description: "List existing registered sessions available to receive delegated work and unavailable hosts. Discovery is not control permission. Names can repeat: choose the exact returned locator, asking the user to disambiguate when needed. Owner-local targets use the registered desktop owner connection; federation targets retain their separate receiver policy. Never switch paths after a refusal, invent a locator, or replace an unavailable session.", input_schema: schema({}), activity: {read_only:true,concurrency_safe:true} },
         { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. For an already-added session, supply its exact existing_session locator; never create a replacement. Existing-target delegation is text-only; attachments must be handled at the original target, never invent cross-host file paths. Preserve the user wording, distinguish your task goal from the original request. The host must authorize this exact target. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string, title: string, goal: string, existing_session: existingTargetSchema, authorization_refs: { type: "array", items: string } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
         { id: "accept_task_result", description: "From the main Personal controller, accept the current existing-session worker response after reviewing it against the task objective. A question or incomplete response requires a same-target follow-up, not acceptance. Bind the exact worker request_id and latest task revision. Record the decision and evidence; this grants no additional execution permission.", input_schema: schema({task_id:string,expected_revision:integer,request_id:string,summary:string,evidence:{type:"array",minItems:1,maxItems:20,items:string}}, "task_id","expected_revision","request_id","summary","evidence"), activity:{concurrency_safe:true} },
         { id: "list_tasks", description: "Find Personal matters by state or text, including tasks that need an answer. Independent goals use independent tasks; additions or corrections update the existing task.", input_schema: schema({ query: string, state: string }), activity: { read_only: true, concurrency_safe: true } },
@@ -206,12 +206,16 @@ export class PersonalPlugin implements RuntimePlugin {
     for (const agent of await this.list<NamedAgent>("agent")) if (agent.agent_id === this.mainID() && agent.status === "creating") {
       try { await this.bindAgent(agent); } catch { /* Opening reports the persistent recovery error; other agents remain usable. */ }
     }
-    for (const agent of await this.list<NamedAgent>("agent")) if (["stopping", "paused", "archived"].includes(agent.status)) {
+    const startupTasks = await this.list<PersonalTask>("task");
+    for (const agent of await this.list<NamedAgent>("agent")) if (["stopping", "paused", "archived"].includes(agent.status) && !startupTasks.some(task => task.agent_id === agent.agent_id && task.existing_session && taskNeedsRecovery(task))) {
       try { await this.settleAgent(agent.agent_id); } catch { /* Durable owner cancellation remains visible and retryable. */ }
     }
-    for (const task of await this.list<PersonalTask>("task")) {
+    for (const task of startupTasks) {
       if (!this.active || this.lifetime?.aborted) break;
-      if (!terminalTask(task) || pendingCancellation(task) || task.delivery && ["pending", "submitted"].includes(task.delivery.status)) {
+      // Route grant restoration calls our lineage service. Defer it until the
+      // activation barrier opens, using the existing background recovery job.
+      if (task.existing_session) continue;
+      if (taskNeedsRecovery(task)) {
         try { await this.reconcile(task); } catch { /* One blocked matter must not disable other conversations. */ }
       }
     }
@@ -220,21 +224,25 @@ export class PersonalPlugin implements RuntimePlugin {
     lifecycle.signal.throwIfAborted();
     await startBackground(host, { key: "recovery", service: "personal.recovery", method: "run" });
   }
-  private async recoverPending(): Promise<void> {
+  private async recoverPending(routedOnly = false): Promise<void> {
     if (this.recovering || !this.active || this.lifetime?.aborted) return;
     this.recovering = true;
     try {
-      for (const agent of await this.list<NamedAgent>("agent")) if (agent.status === "stopping") {
+      const tasks = await this.list<PersonalTask>("task");
+      for (const agent of await this.list<NamedAgent>("agent")) if (!routedOnly && agent.status === "stopping" || ["stopping", "paused", "archived"].includes(agent.status) && tasks.some(task => task.agent_id === agent.agent_id && task.existing_session && taskNeedsRecovery(task))) {
         try { await this.settleAgent(agent.agent_id); } catch { /* Retry the durable stop intent on the next bounded recovery tick. */ }
       }
       for (const task of await this.list<PersonalTask>("task")) {
         if (!this.active || this.lifetime?.aborted) break;
-        if (!terminalTask(task) || pendingCancellation(task) || task.delivery && ["pending", "submitted"].includes(task.delivery.status)) {
+        if (routedOnly && !task.existing_session) continue;
+        if (taskNeedsRecovery(task)) {
           try { await this.reconcile(task); } catch { /* The durable outbox remains pending for the next reconciliation. */ }
         }
       }
-      await this.routines.recover();
-      await this.recoverFeedback();
+      if (!routedOnly) {
+        await this.routines.recover();
+        await this.recoverFeedback();
+      }
       this.recoveryFailure = undefined;
     } catch (error) {
       // A timer has no caller to handle a rejected promise. Keep its durable
@@ -769,7 +777,7 @@ export class PersonalPlugin implements RuntimePlugin {
     this.assertActive();
     let task = await this.task(original.task_id);
     if (task.cancel_requested || terminalTask(task) || task.requirements_revision !== original.requirements_revision || pendingCancellation(task)) return task;
-    if (!authorizationCurrent(task.authorization)) return this.change<PersonalTask>("task",task.task_id,current => current?.requirements_revision === task.requirements_revision ? {...current,authorization_state:"needs_authorization",state:"waiting_user",progress:"Unattended authorization expired; resume from the owner conversation",reconciliation_required:false} : current!);
+    if (!authorizationCurrent(task.authorization)) return this.change<PersonalTask>("task",task.task_id,current => current?.requirements_revision === task.requirements_revision && !authorizationCurrent(current.authorization) ? {...current,authorization_state:"needs_authorization",state:"waiting_user",progress:"Unattended authorization expired; resume from the owner conversation",reconciliation_required:false} : current!);
     const agent = await this.agent(task.agent_id, true);
     if (agent.status !== "active" || !await this.routines.canExecute(task)) return (await this.stopTask({ task_id: task.task_id })).task;
     let dispatchedSession = task.execution.session_id;
@@ -962,14 +970,14 @@ export class PersonalPlugin implements RuntimePlugin {
   }
   private async reconcileAuthorized(task: PersonalTask): Promise<PersonalTask> {
     this.assertActive();
-    if (!terminalTask(task) && !task.cancel_requested && !authorizationCurrent(task.authorization)) return this.change<PersonalTask>("task",task.task_id,current => current?.requirements_revision === task.requirements_revision ? {...current,authorization_state:"needs_authorization",state:"waiting_user",reconciliation_required:false,progress:"Unattended authorization expired; resume from the owner conversation"} : current!);
+    if (!terminalTask(task) && !task.cancel_requested && !authorizationCurrent(task.authorization)) return this.change<PersonalTask>("task",task.task_id,current => current?.requirements_revision === task.requirements_revision && !authorizationCurrent(current.authorization) ? {...current,authorization_state:"needs_authorization",state:"waiting_user",reconciliation_required:false,progress:"Unattended authorization expired; resume from the owner conversation"} : current!);
     if (!terminalTask(task) && ((await this.agent(task.agent_id, true)).status !== "active" || !await this.routines.canExecute(task))) return (await this.stopTask({ task_id: task.task_id })).task;
     if (pendingCancellation(task)) { task = await this.settlePrevious(task); if (pendingCancellation(task)) return task; }
     if (task.delivery && ["pending", "submitted"].includes(task.delivery.status)) { await this.transition(task.task_id, () => this.deliver(task)); return this.task(task.task_id); }
     if (terminalTask(task)) return task;
     if (task.worker_result && task.execution.finished_state === "completed" && !task.cancel_requested) return task;
     if (task.cancel_requested) return this.cancelExecution(task);
-    if (!task.execution.session_id) return this.dispatch(task);
+    if (!task.execution.session_id || task.existing_session && task.execution.status === "pending" && !task.execution.dispatch_pending) return this.dispatch(task);
     if (task.connector_wait || task.connector_resume_pending) return this.recoverConnector(task);
     if (task.review_resume_pending) { await this.resumeAction({ session_id: task.execution.session_id, action_id: task.review_resume_pending }); return this.task(task.task_id); }
     try {
@@ -1498,7 +1506,7 @@ export class PersonalPlugin implements RuntimePlugin {
       if (!execution) throw new Error("Personal recovery execution is unavailable");
       const signal = this.lifetime ? AbortSignal.any([this.lifetime, execution.signal]) : execution.signal;
       if (signal.aborted) return {};
-      let pending = Promise.resolve();
+      let pending = this.recoverPending(true);
       const stopped = new Promise<void>(resolve => signal.addEventListener("abort", () => { clearInterval(this.recoveryTimer); resolve(); }, { once: true }));
       this.recoveryTimer = setInterval(() => { pending = pending.then(() => signal.aborted ? undefined : this.recoverPending()); }, 15_000);
       await stopped;
@@ -1888,6 +1896,7 @@ export class PersonalPlugin implements RuntimePlugin {
     }
   }
 }
+function taskNeedsRecovery(task: PersonalTask): boolean { return !terminalTask(task) || pendingCancellation(task) || Boolean(task.delivery && ["pending", "submitted"].includes(task.delivery.status)); }
 function terminalTask(task: PersonalTask): boolean { return ["completed", "failed", "stopped"].includes(task.state); }
 export default new PersonalPlugin();
 

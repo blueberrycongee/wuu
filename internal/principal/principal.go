@@ -180,3 +180,22 @@ func Authenticate(ctx context.Context, adapter Authenticator, credential Credent
 	}
 	return verified, nil
 }
+
+// Constrain adds a live admission check without changing the authenticated
+// identity, owner provenance, or expiry. It can only attenuate existing authority.
+func (v Verified) Constrain(check func(context.Context) error) (Verified, error) {
+	if check == nil || !v.Valid() {
+		return Verified{}, errors.New("valid principal and constraint required")
+	}
+	original := v
+	// A new constraint may be tied to a transient source. Do not advertise
+	// independent durable authority that a descendant grant could outlive.
+	v.durableAuthority = ""
+	v.revalidate = func(ctx context.Context) error {
+		if err := original.Check(ctx); err != nil {
+			return err
+		}
+		return check(ctx)
+	}
+	return v, nil
+}

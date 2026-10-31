@@ -22,6 +22,8 @@ test('Personal process controls an exact existing target across lost replies, fo
  const original=structuredClone(targetMetadata);
  const contexts={};let created=0,sends=0,cancels=0,loseSend=false,loseBeforeAdmission=false,unavailable=false,sendOffline=false,runtime;
  let routingSupported=true;
+ let grantHold;
+ let autoRecover=false,backgroundDone;
  let sourceRecords=[];
  const routeInputs=[];let concurrentHold,concurrentReads=0;
  const host=async frame=>{
@@ -39,7 +41,8 @@ test('Personal process controls an exact existing target across lost replies, fo
    case 'host.storage.compare-exchange':{const current=storage.get(key)??null;if(current!==params.expected)return {swapped:false,value:current};storage.set(key,params.value);return {swapped:true,value:params.value};}
    case 'host.file-lock':return method==='acquire'?{lock_id:'lock'}:{released:true};
    case 'host.client.invalidate':return {delivered:true};
-   case 'host.background':return {job_id:'background',execution_id:'background'};
+   case 'host.background':if(autoRecover)backgroundDone=runtime.call('service.invoke',{service:'personal.recovery',method:'run',caller:'personal',execution_id:'background-recovery',params:{}}).catch(error=>error);return {job_id:'background',execution_id:'background'};
+   case 'host.session.cancel':assert.equal(params.session_id,'personal-main');return {session_id:params.session_id,cancelled:true};
    case 'host.personal':if(params.operation==='owner.check')return {ok:true,value:{}};throw Error(`Unexpected Personal effect ${params.operation}`);
    case 'session.transport':assert.equal(method,'list-targets');return {version:1,targets:[{locator:target,title:'Existing Coding'}],unavailable:[]};
    case 'host.session.create':{created++;assert.equal(created,1,'only main binding may be created');const session_id='personal-main';contexts[session_id]={session_id,...params};return {session_id,created:true};}
@@ -50,6 +53,7 @@ test('Personal process controls an exact existing target across lost replies, fo
    case 'host.execution.authorization':{
     if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run'],...(routingSupported?{host_features:['session-route.v1']}:{})};
     if(params.operation==='issue'){
+     if(params.kind==='exact-run'&&grantHold&&!grantHold.started){grantHold.started=true;grantHold.onStart();await grantHold.wait;}
      assert.equal(params.session_id,'personal-main','source authority stays on owned controller');
      const observation=await runtime.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'host',execution_id:'lineage',params:{kind:params.kind,task_id:params.task_id,session_id:params.session_id,request_id:params.run_id??params.request_id,...(params.parent?{parent:grants.get(params.parent.id)}:{})}});
      assert.deepEqual(observation.route,{locator:target,operations:['send','inspect','cancel']});
@@ -84,9 +88,11 @@ test('Personal process controls an exact existing target across lost replies, fo
   createInterface({input:child.stdout}).on('line',line=>{const frame=JSON.parse(line);frames.push({direction:'plugin',frame});if(frame.method)host(frame).then(result=>send({id:frame.id,result}),error=>send({id:frame.id,error:{code:error.code??'fixture_error',message:error.message}}));else{const entry=pending.get(frame.id);if(!entry)return;pending.delete(frame.id);frame.error?entry.reject(Error(frame.error.message)):entry.resolve(frame.result);}});
   const call=(method,params={})=>new Promise((resolve,reject)=>{const id=`request-${++seq}`,timer=setTimeout(()=>{pending.delete(id);reject(Error(`Timeout ${method}: ${stderr}`));},10000);pending.set(id,{resolve:r=>{clearTimeout(timer);resolve(r)},reject:e=>{clearTimeout(timer);reject(e)}});send({id,method,params});});
   const client=(method,input={})=>call('capability.invoke',{capability:'plugin.client.request',input:{method,input},execution_id:`client-${seq}`}).then(r=>r.output.result);
+  // Activation may restore a persisted grant through the current process.
+  runtime={call,client};
   await call('initialize',{protocol_version:1,capability_protocol_version:3,lifecycle_version:2,plugin_id:'personal',plugin_root:scratch,project_root:scratch,wuu_home:scratch,workspace_state_dir:join(scratch,'state'),product_domain:'personal',user_space_id:'local',supported_host_services:['host.service.call']});
   await call('prepare');await call('activate');
-  return {call,client,async close(){await call('shutdown');const exited=once(child,'exit');child.stdin.end();await exited;children.delete(child);assert.equal(child.exitCode,0,stderr)}};
+  return {call,client,async crash(){const exited=once(child,'exit');child.kill('SIGKILL');await exited;children.delete(child);for(const entry of pending.values())entry.reject(Error('fixture process crashed'));pending.clear();},async close(){await call('shutdown');const exited=once(child,'exit');child.stdin.end();await exited;children.delete(child);assert.equal(child.exitCode,0,stderr)}};
  }
  t.after(async()=>{for(const child of children)child.kill();const out=join(root,'.tmp/e2e/personal-existing-session');await mkdir(out,{recursive:true});await writeFile(join(out,'protocol.jsonl'),frames.map(f=>JSON.stringify(f)).join('\n')+'\n');});
  runtime=await start();const {agent}=await runtime.client('agents.ensure_default');
@@ -141,5 +147,37 @@ test('Personal process controls an exact existing target across lost replies, fo
  assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.revision,blocked.revision);
  const revised=(await runtime.client('tasks.update',{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'The files are already at the target; use its existing context'})).task;
  assert.equal(sends,beforeAttachment+1);assert.equal(revised.state,'running');assert(!revised.previous_executions[0].cancel_pending);
- await runtime.close();
+ let grantStarted,grantRelease;const grantReady=new Promise(resolve=>grantStarted=resolve),grantWait=new Promise(resolve=>grantRelease=resolve);
+ grantHold={started:false,onStart:grantStarted,wait:grantWait};
+ const sendsBeforeGrantRace=sends;
+ const racedCreate=runtime.client('tasks.create',{agent_id:agent.agent_id,request_id:'grant-admission-race',title:'Concurrent grant issuance',goal:'Read existing context',existing_session:target});
+ await grantReady;
+ const pendingGrant=[...storage.values()].map(raw=>JSON.parse(raw)).find(value=>value.request_id==='grant-admission-race');
+ assert(pendingGrant.authorization);assert(!pendingGrant.execution.authorization);
+ await runtime.client('tasks.reconcile',{task_id:pendingGrant.task_id});
+ grantRelease();await racedCreate;grantHold=undefined;
+ const admittedGrant=(await runtime.client('tasks.get',{task_id:pendingGrant.task_id})).task;
+ assert.equal(admittedGrant.authorization_state,undefined,'in-flight run grant must not poison authorized task recovery');
+ assert.equal(admittedGrant.execution.status,'submitted');assert.equal(sends,sendsBeforeGrantRace+1,'concurrent grant completion keeps one receiver request');
+ turns.set(admittedGrant.execution.request_id,{request_id:admittedGrant.execution.request_id,state:'completed',turn_id:'grant-race-result',final_output:'Result after grant admission'});
+ assert.equal((await runtime.client('tasks.reconcile',{task_id:admittedGrant.task_id})).task.state,'awaiting_review');
+ let crashReady;grantHold={started:false,onStart:()=>crashReady(),wait:new Promise(()=>{})};
+ const readyToCrash=new Promise(resolve=>crashReady=resolve);
+ const interruptedCreate=runtime.client('tasks.create',{agent_id:agent.agent_id,request_id:'grant-crash-recovery',title:'Recover grant issuance',goal:'Read existing context',existing_session:target}).catch(error=>error);
+ await readyToCrash;
+ const persistedPending=[...storage.values()].map(raw=>JSON.parse(raw)).find(value=>value.request_id==='grant-crash-recovery');
+ assert(persistedPending.authorization);assert(!persistedPending.execution.authorization);
+ await runtime.crash();assert.match((await interruptedCreate).message,/crashed/);grantHold=undefined;
+ autoRecover=true;runtime=await start();
+ let afterCrash;for(let attempt=0;attempt<100;attempt++){afterCrash=(await runtime.client('tasks.get',{task_id:persistedPending.task_id})).task;if(afterCrash.execution.status==='submitted')break;await new Promise(resolve=>setTimeout(resolve,20));}
+ assert.equal(afterCrash.authorization_state,undefined);assert.equal(afterCrash.execution.status,'submitted');
+ assert.equal(afterCrash.execution.request_id,persistedPending.execution.request_id,'restart retains the authorizing run identity');
+ await runtime.close();assert.equal((await backgroundDone) instanceof Error,false,'shutdown drains the tracked recovery service');
+ for(const [key,raw] of storage){const record=JSON.parse(raw);if(record.agent_id===agent.agent_id&&record.task_id){record.state='stopped';record.execution.finished_state='interrupted';record.previous_executions=[];record.previous_deliveries=[];record.delivery=undefined;if(record.task_id===afterCrash.task_id){record.state='completed';record.execution.finished_state='completed';record.delivery={kind:'notice',request_id:'pending-paused-feedback',status:'pending',prompt:'Do not deliver while owner is paused'};}storage.set(key,JSON.stringify(record));}else if(record.agent_id===agent.agent_id&&record.main_session_id){record.status='paused';storage.set(key,JSON.stringify(record));}}
+ runtime=await start();
+ let pausedTask;for(let attempt=0;attempt<100;attempt++){pausedTask=[...storage.values()].map(raw=>JSON.parse(raw)).find(record=>record.task_id===afterCrash.task_id);if(pausedTask.delivery?.status==='suppressed')break;await new Promise(resolve=>setTimeout(resolve,20));}
+ assert.equal(pausedTask.delivery.status,'suppressed','post-activation cleanup suppresses terminal routed feedback for paused owner');
+
+
+ await runtime.close();assert.equal((await backgroundDone) instanceof Error,false);
 });
