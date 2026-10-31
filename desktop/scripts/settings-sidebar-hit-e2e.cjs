@@ -695,6 +695,11 @@ async function chromeToggleGeometry(win) {
     }
     const header = activeHeader.getBoundingClientRect();
     const headerStyle = getComputedStyle(activeHeader);
+    const stackedSettingsRows = settingsOpen && headerStyle.gridTemplateColumns.trim().split(/\s+/).length === 1
+      ? {
+        title: activeHeader.querySelector('h1').getBoundingClientRect().toJSON(),
+        actions: activeHeader.querySelector('.settings-page-actions').getBoundingClientRect().toJSON(),
+      } : null;
     const peers = [...activeHeader.querySelectorAll('h1, .conversation-title-heading .icon-button, .title-actions .icon-button, .settings-page-actions button')]
       .filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
       .map(element => {
@@ -741,7 +746,7 @@ async function chromeToggleGeometry(win) {
         drawerOwned: !!element.closest(settingsOpen ? '.settings-sidebar' : '.sidebar-content'), samples };
     });
     return {
-      header: header.toJSON(), peers, separationTargets, drawerBounds,
+      header: header.toJSON(), peers, stackedSettingsRows, separationTargets, drawerBounds,
       toggleState: { expectedSuppressed: !!document.querySelector('.mac-window-controls') && !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), hidden: button.hidden, inert: button.inert },
       contentAxis: (header.top + parseFloat(headerStyle.paddingTop) + header.bottom - parseFloat(headerStyle.paddingBottom)) / 2,
       shellRow: shellBounds.toJSON(), shellControls,
@@ -854,8 +859,23 @@ function assertTopRow(geometry, context) {
       `Shell controls share their own row, separate from content headings: ${details}`);
   }
   assertControlSeparation(geometry, context);
+  const rows = geometry.stackedSettingsRows;
+  if (rows) {
+    assert.equal(context.page, "settings", `Only settings content can declare stacked rows: ${details}`);
+    assert.ok(rows.title.height > 0 && rows.actions.height > 0,
+      `Both responsive header rows must remain present: ${details}`);
+    assert.ok(rows.actions.top >= rows.title.bottom,
+      `Responsive actions follow the title without overlapping it: ${details}`);
+    for (const row of [rows.title, rows.actions]) {
+      assert.ok(row.top >= geometry.header.top - 0.1 && row.bottom <= geometry.header.bottom + 0.1,
+        `Responsive rows stay inside their content header: ${details}`);
+    }
+  }
   for (const peer of geometry.peers) {
-    assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);
+    const row = rows && (peer.button ? rows.actions : rows.title);
+    const peerAxis = row ? row.top + row.height / 2 : axis;
+    assert.ok(Math.abs(peer.centerY - peerAxis) < 0.6,
+      `Peer controls must share their declared header row axis: ${details}`);
     assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
       `Chrome must not be vertically clipped: ${details}`);
     // A hover drawer overlays the canvas without shifting its header. Its
