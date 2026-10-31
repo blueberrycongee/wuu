@@ -38,7 +38,7 @@ func (h *Host) ownClients(clients []Client) error {
 				h.serviceRegistry.stopProviderAdmission(client.ID())
 				retirementErr := h.serviceRegistry.waitRetirementCleanup(client.ID())
 				h.serviceRegistry.cancelCallerScopes(client.ID())
-				h.serviceRegistry.waitRetainedServiceScopes(client.ID())
+				h.serviceRegistry.waitServiceDisposal(client.ID())
 				finishCleanup := h.serviceRegistry.allowShutdownCleanup(client.ID())
 				defer finishCleanup()
 				defer func() {
