@@ -194,6 +194,11 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 			}
 		}
 	}
+	if resolved.Includes(ClientInputReceiptsConsumer) {
+		// Receipt updates share the captured session authority and its atomic
+		// history admission; there is no independent receipt storage route.
+		packageRequirements[ClientInputReceiptsConsumer] = []string{sessionStateConsumer}
+	}
 	for _, transfer := range transfers {
 		consumer := newStorageTransferConsumer(host, registry, transfer)
 		nativeModules = append(nativeModules, consumer)
@@ -465,7 +470,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{sessionStateConsumer, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, modelExecutionConsumer, engineExecutionConsumer, StateServicesConsumer}
+	available := []string{ClientInputReceiptsConsumer, sessionStateConsumer, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, modelExecutionConsumer, engineExecutionConsumer, StateServicesConsumer}
 	for _, factory := range defaultNativeProviderCatalog() {
 		available = append(available, factory.ID)
 	}
