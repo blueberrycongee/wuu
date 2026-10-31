@@ -68,7 +68,19 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 			}
 		}
 	}
-	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
+	consumer := &embeddedModelConsumer{}
+	for _, client := range additional {
+		if provider, ok := client.(interface {
+			ProvidedServices() []pluginhost.ServiceDescriptor
+		}); ok {
+			for _, service := range provider.ProvidedServices() {
+				if service.Name == pluginprotocol.AgentPolicyService {
+					consumer.policy = true
+				}
+			}
+		}
+	}
+	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, consumer, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
 	// User-host fixtures may bind their user space after runtime construction.
 	// Select their review ledger through the same declared consumer as production.
@@ -158,7 +170,10 @@ type embeddedCompactionFixture struct{ *compactionservice.Service }
 
 func (*embeddedCompactionFixture) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 
-type embeddedModelConsumer struct{ active atomic.Bool }
+type embeddedModelConsumer struct {
+	active atomic.Bool
+	policy bool
+}
 
 func (*embeddedModelConsumer) ID() string { return "wuu.session-execution" }
 func (c *embeddedModelConsumer) Status() pluginhost.Status {
@@ -169,10 +184,14 @@ func (c *embeddedModelConsumer) Status() pluginhost.Status {
 	return pluginhost.Status{ID: c.ID(), State: state}
 }
 func (*embeddedModelConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
-func (*embeddedModelConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{
+func (c *embeddedModelConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	required := []pluginhost.ServiceRequirement{
 		{Name: promptservice.ServiceName, MajorVersion: 1, Required: true}, {Name: compactionservice.ServiceName, MajorVersion: 1, Required: true}, {Name: titleservice.ServiceName, MajorVersion: 1, Required: true},
 	}
+	if c.policy {
+		required = append(required, pluginhost.ServiceRequirement{Name: pluginprotocol.AgentPolicyService, MajorVersion: 1, Required: true})
+	}
+	return required
 }
 func (c *embeddedModelConsumer) Activate(context.Context) error { c.active.Store(true); return nil }
 func (c *embeddedModelConsumer) Close(context.Context) error    { c.active.Store(false); return nil }

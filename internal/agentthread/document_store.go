@@ -24,11 +24,24 @@ func NewDocumentStore(documents persistence.Documents, sessionID string, legacyD
 	return &Store{documents: documents, documentKey: sessionID, dir: dir, legacyDirs: append([]string(nil), legacyDirs...)}
 }
 
+// NewDocumentStoreWithLegacyResolver discovers legacy paths only when the
+// selected provider has no image for the session.
+func NewDocumentStoreWithLegacyResolver(documents persistence.Documents, sessionID string, resolver func() ([]string, error)) *Store {
+	return &Store{documents: documents, documentKey: sessionID, legacyDirsResolver: resolver}
+}
+
 func (s *Store) access(body func(*Store) error) error {
 	now := time.Now().UTC()
 	return persistence.AccessDocumentImage(context.Background(), s.documents, DocumentNamespace, s.documentKey, func(image *persistence.DocumentImage) error {
-
-		for _, dir := range s.legacyDirs {
+		dirs := s.legacyDirs
+		if s.legacyDirsResolver != nil {
+			var err error
+			dirs, err = s.legacyDirsResolver()
+			if err != nil {
+				return err
+			}
+		}
+		for _, dir := range dirs {
 			if dir == "" {
 				continue
 			}

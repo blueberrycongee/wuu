@@ -175,7 +175,7 @@ describe("selected public composer continuity", () => {
   });
 
   it("announces a failed send once, retains input, and clears its notice when retry starts", async () => {
-    const toast = vi.spyOn(Notices, "showErrorToast");
+    const toast = vi.spyOn(Notices, "showActionErrorToast");
     const fixture = setup();
     const operation = { operationID: "send-one", messageID: "send-one", ownerTabId: "draft-one", mode: "send" as const, phase: "sending" as const, draftPending: true };
     await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "Retained draft" } }, submission: { ...view.submission, operations: [operation] } }));
@@ -396,7 +396,7 @@ describe("selected public composer continuity", () => {
 
 
 it("does not toast a retired composer refresh after switching to the replacement owner", async () => {
-  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const notice = vi.spyOn(Notices, "showActionErrorToast").mockImplementation(() => undefined);
   const fixture = setup();
   let reject!: (error: unknown) => void;
   const invoke = fixture.application.invoke;

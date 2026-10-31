@@ -252,6 +252,7 @@ var sessionDomainArity = {
   "ChangeClientInput": [6, 1],
   "AppendAcceptedClientHistoryRecord": [6, 1],
   "SettleClientInputExecution": [5, 0],
+  "MarkClientInputsRead": [2, 0],
   "ListClientInputRecoveryCandidates": [1, 1],
   "RecoverClientInput": [2, 0],
   "ClientInputHistoryReceipts": [1, 1],

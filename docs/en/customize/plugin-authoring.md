@@ -804,9 +804,11 @@ The `security.authorize` service may further restrict an operation, but cannot r
 
 ## Agent-managed development
 
-The built-in deferred `plugin_manager` tool accepts `status`, `apply`, `enable`, and `disable`. `apply` takes a workspace-local TypeScript file or development package directory and performs a one-shot publish through a host-selected CLI bridge. It accepts neither arbitrary commands nor a caller-selected Wuu home. Source execution requires host-code authorization before validation/import, separately from permission to write the source file. See the [agent workflow](plugin-quickstart.md#let-the-agent-add-a-tool).
+The built-in deferred `plugin_manager` tool accepts `status`, `apply`, `enable`, `disable`, and `reload`. `apply` takes a workspace-local TypeScript file or development package directory and performs a one-shot publish through a host-selected CLI bridge. It accepts neither arbitrary commands nor a caller-selected Wuu home. Source execution requires host-code authorization before validation/import, separately from permission to write the source file. See the [agent workflow](plugin-quickstart.md#let-the-agent-add-a-tool).
 
 Status returns a `plugins` list. Compare `published_fingerprint` with `current_conversation_fingerprint` and inspect `adoption_pending`, `desired_enabled`, `trusted`, and `current_conversation_runtime_state`. An `error` reports runtime diagnostics when present. These fields report publication, policy, and this conversation's bindings; they do not prove a particular tool succeeded or a desktop view rendered.
+
+The separate `hosts` list queries live app-server hosts, including independent user/product hosts. Each entry reports its binding, generation, executable and storage identities, fingerprint, runtime state, and error. `wuu plugin hosts [id]` exposes the same observations. An empty list means no compatible host reported; it is not activation evidence. `wuu plugin reload <id>` (or `plugin_manager` action `reload`) rebuilds host generations to recover a repaired failed runtime. A client request retry does not reload the runtime.
 
 An ordinary update leaves the current turn and its outstanding workers or managed processes on their tool and prompt generation. Discover and invoke updated tools at the next idle turn boundary after that work settles. A committed disable or removal instead revokes the plugin across retained generations without waiting for an idle turn. Publication is not a tool invocation or a rendered UI check, and it does not schedule a continuation by itself.
 
@@ -817,6 +819,10 @@ Local UI control is an exception to ordinary generation retention. Updating an o
 `wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` declares contracts in the actual host; `prepare` then validates state through the selected services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
 
 `wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
+
+An authorized development override keeps the installed home-wide package’s storage identity while retaining its `plugin:dev:<id>` executable identity and development permissions. The signed generation receipt pins this binding across subsequent publications. Existing receipts without a binding acquire it on the next publication; a standalone development package keeps its own storage identity. Overriding code does not replay or rewrite ownership transfers.
+
+Before replacing the published package, `dev` asks every registered live host to prepare the candidate with that host’s selected providers and configuration. Rejection preserves the published package and running generation. After publication, results include each host’s observed activation state; an activation failure reports that publication already committed. Repair and republish, or explicitly reload, without deleting ownership metadata. Hosts running an older core must be restarted with a compatible core to participate.
 
 For monorepo packages, `package.json` may declare additional build inputs with `"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`. Paths are relative to the package directory; sibling files and directories are supported. Wuu watches and fingerprints those inputs as well as the package, so edits rebuild and publish without restarting. Absolute paths, package ancestors, symlinked inputs, and more than 64 additional inputs are rejected. Keep generated files out of the list; `.git`, `node_modules`, and `dist` descendants remain ignored. This metadata affects development watching only, not runtime permissions.
 
@@ -843,8 +849,9 @@ are fingerprinted package inputs, not cross-plugin storage RPC permissions.
 
 Importers must defer reading the imported prefix until their effectful activation
 callback, not cache its contents during initialization. Preparation does not mutate
-storage. At accepted startup or generation activation,
-the host validates the complete target document before fencing the source prefix,
+storage. The selected settings provider checks ownership, target conflicts, and
+quotas during preparation; a failed check rejects the candidate before commit.
+At accepted startup or generation activation, the host rechecks the complete target document before fencing the source prefix,
 then atomically persists the raw copied values and an import receipt. Conflicts or
 storage quota overflow fail closed without overwriting target state. Transfer
 failures block the importing runtime. Pending transfers recover on the next

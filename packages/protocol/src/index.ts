@@ -3219,6 +3219,8 @@ export type WuuDesktopApi = {
   discoverRecentWorkspaces?: () => Promise<RecentWorkspacesResult>;
   chooseWorkspaceDirectory?: () => Promise<string | null>;
   importWorkspaces?: (paths: string[]) => Promise<ProjectListResult>;
+  /** Recover a missing selected desktop workspace during initial bootstrap. */
+  recoverUnavailableProject?: () => Promise<ProjectRuntimeIssue | undefined>;
   listProjects: () => Promise<ProjectListResult>;
   createBlankProject: () => Promise<ProjectListResult>;
   chooseProjectFolder: () => Promise<ProjectListResult>;

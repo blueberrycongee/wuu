@@ -25,6 +25,13 @@ const startupEntryNs = process.hrtime.bigint();
 // WUU_STARTUP_PREPARE_ONLY=1 prepares modern pinned data without importing the app.
 // WUU_SWITCH_SUBSCRIPTION_TURNS=30000 adds ~2 GiB of unrelated subscription
 // history, two built-in services, and cross-project new-draft regression checks.
+// WUU_SWITCH_ROOT_STRESS=1 measures a new-draft switch with hundreds of
+// migrated sessions and thousands of historical workspace roots.
+// WUU_SWITCH_ROOT_THREAD_STRESS=1 measures opening an existing conversation
+// against the same migrated-session and historical-root fixture.
+// WUU_SWITCH_MISSING_WORKSPACE=1 removes a synthetic destination directory
+// after its history appears, then measures recovery from a native row click.
+// WUU_STARTUP_MISSING_WORKSPACE=1 starts with a missing selected workspace.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -65,12 +72,18 @@ const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
+const rootThreadStress = process.env.WUU_SWITCH_ROOT_THREAD_STRESS === '1';
+const rootStress = process.env.WUU_SWITCH_ROOT_STRESS === '1' || rootThreadStress;
+const missingWorkspace = process.env.WUU_SWITCH_MISSING_WORKSPACE === '1';
+const startupMissingWorkspace = process.env.WUU_STARTUP_MISSING_WORKSPACE === '1';
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
 const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
 const presentationMode = process.env.WUU_SWITCH_PRESENTATION === '1';
 if (presentationMode) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sameWorkspace, false, 'Presentation acceptance is a separate product workload');
 if (sameWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sidebarThreads > 0, false, 'Same-workspace switching is a separate diagnostic workload');
+if (missingWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || rootStress || subscriptionTurns > 0 || sameWorkspace, false, 'Missing-workspace recovery is a separate workload');
+if (startupMissingWorkspace) assert.equal(startupOnly || missingWorkspace || pacedStream || streamOnly || rootStress || subscriptionTurns > 0 || sameWorkspace, false, 'Unavailable-workspace startup is a separate workload');
 if (streamOnly) {
   assert.ok(pacedStream, 'Stream-only mode requires paced streaming');
   assert.equal(subscriptionTurns, 0, 'Stream-only mode excludes subscription diagnostics');
@@ -206,6 +219,18 @@ for (let index = 0; index < sidebarThreads; index++) {
     ...(startupOnly ? { permission_mode: 'standard' } : {}),
   }, history: [] });
 }
+if (rootStress) {
+  for (let index = 0; index < 522; index++) {
+    const project = projects[index < 467 ? 2 : 0];
+    const archived = index < 21 || (index >= 467 && index < 496);
+    seeds.push({ session: {
+      id: `root-stress-thread-${index}`, title: `Root stress session ${index}`,
+      cwd: project.path, workspace_id: project.id, provider: 'fixture', model: 'fixture',
+      permission_mode: 'standard', created_at: stamp, updated_at: stamp,
+      ...(archived ? { archived_at: stamp } : {}),
+    }, history: [] });
+  }
+}
 if (presentationMode) {
   Object.assign(seeds[0].history.at(-2), { origin: 'host', presentation_kind: 'session_message', related_session_id: 'switch-related', name: 'Related conversation' });
   seeds.push({ session: { ...seeds[0].session, id: 'switch-related', title: 'Related conversation' },
@@ -242,6 +267,7 @@ if (prepareOnly) {
   console.log('PREPARED_STARTUP', fixture);
   process.exit(0);
 }
+if (startupMissingWorkspace) fs.renameSync(projects[selectedIndex].path, `${projects[selectedIndex].path}-unavailable`);
 startupProbe?.mark('fixture-ready');
 const timings = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
@@ -255,12 +281,16 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   const start = performance.now();
   // Insert at invocation, not completion, so overlapping RPCs keep attribution.
   const timing = { channel, startedAt: start, ...(startupProbe ? { launchMs: startupProbe.launchMs() } : {}), ms: null };
+  if (missingWorkspace && channel === 'wuu:project-select') timing.projectId = args[1];
   timings.push(timing);
   const subscriptionRead = channel === 'wuu:engines-list' && args[1]?.include_quota === true;
   if (subscriptionRead) subscriptionEntered = true;
   const delayInitialization = measuring && channel === 'wuu:initialize' && initDelayMs > 0;
   try {
     const result = await listener(...args);
+    timing.outcome = 'ok';
+    if (missingWorkspace && channel === 'wuu:project-select') timing.runtimeIssue = result?.runtime_issue?.code;
+    if (Array.isArray(result?.threads)) timing.resultCount = result.threads.length;
     if (startupProbe && channel === 'wuu:initialize') startupProbe.initialized(result);
     if (subscriptionRead) {
       timing.historyResponseMs = +(performance.now() - start).toFixed(1);
@@ -273,6 +303,9 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
       await archiveGate;
     }
     return result;
+  } catch (error) {
+    timing.outcome = 'error';
+    throw error;
   } finally {
     timing.ms = +(performance.now() - start).toFixed(1);
   }
@@ -286,7 +319,7 @@ const evaluate = async (win, fn, arg) => {
   if (result.error) throw new Error(result.error);
   return result.value;
 };
-async function waitFor(win, fn, arg, timeout = 30000) {
+async function waitFor(win, fn, arg, timeout = rootStress ? 90000 : 30000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
     if (await evaluate(win, fn, arg)) return;
@@ -337,7 +370,7 @@ const results = [];
 const subscriptionResults = [];
 let startup;
 async function checkSubscriptionNavigation(win) {
-  if (!subscriptionTurns) return;
+  if (!subscriptionTurns && !rootStress) return;
   async function newDraft(index, scenario) {
     await showSessionSidebar(win);
     const point = await evaluate(win, async index => {
@@ -358,8 +391,9 @@ async function checkSubscriptionNavigation(win) {
     await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
     await waitFor(win, index => {
       const input = document.querySelector('.composer textarea');
-      const workspace = document.querySelector('.composer-workspace-bar');
-      return workspace?.textContent.includes(`Switch project ${index}`) && input && !input.disabled && !input.readOnly && !input.closest('[inert]') && !document.querySelector('.cached-conversation-pane[data-active="true"]') && document.activeElement === input;
+      const workspace = document.querySelector('.composer-workspace-bar, .composer-workspace-rail');
+      const label = workspace?.querySelector('button[aria-label]')?.getAttribute('aria-label') || workspace?.textContent;
+      return label?.includes(`Switch project ${index}`) && input && !input.disabled && !input.readOnly && !input.closest('[inert]') && !document.querySelector('.cached-conversation-pane[data-active="true"]') && document.activeElement === input;
     }, index);
     win.webContents.insertText('subscription navigation probe');
     await waitFor(win, () => {
@@ -381,6 +415,7 @@ async function checkSubscriptionNavigation(win) {
     await clearDraft(win, 'subscription navigation probe');
   }
   await newDraft(2, 'first-project-visit-new-draft');
+  if (rootStress) return;
   let release;
   subscriptionGate = new Promise(resolve => { release = resolve; });
   await evaluate(win, () => {
@@ -423,6 +458,55 @@ async function showSessionSidebar(win) {
   await evaluate(win, () => {
     document.querySelector('.conversation-pane [data-wuu-component="sidebar-toggle"][aria-pressed="false"]')?.click();
   });
+}
+async function checkMissingWorkspace(win) {
+  await showSessionSidebar(win);
+  await waitFor(win, () => !![...document.querySelectorAll('.project-group[data-section-id="project-2"] .thread-row')]
+    .find(row => row.textContent.includes('Switch session 2')));
+  const point = await evaluate(win, async () => {
+    const row = [...document.querySelectorAll('.project-group[data-section-id="project-2"] .thread-row')]
+      .find(item => item.textContent.includes('Switch session 2'));
+    const button = row.querySelector('.thread-row-main');
+    button.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const rect = button.getBoundingClientRect();
+    return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+  });
+  await evaluate(win, () => document.querySelector('.composer textarea').focus());
+  win.webContents.insertText('preserve unavailable workspace draft');
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value === 'preserve unavailable workspace draft');
+  fs.renameSync(projects[2].path, `${projects[2].path}-unavailable`);
+  const offset = timings.length, start = performance.now();
+  const debug = win.webContents.debugger;
+  await debug.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
+  await debug.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
+  let failure;
+  try {
+    await waitFor(win, () => {
+      const input = document.querySelector('.composer textarea');
+      return !!document.querySelector('[role="alert"]') && input && !input.disabled && !input.readOnly
+        && !!document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]');
+    }, undefined, 8000);
+  } catch (error) { failure = error; }
+  const readyMs = +(performance.now() - start).toFixed(1);
+  const view = await evaluate(win, async () => ({
+    selectedProjectId: (await window.wuu.listProjects()).active_context?.project_id,
+    inputDisabled: document.querySelector('.composer textarea')?.disabled,
+    draft: document.querySelector('.composer textarea')?.value,
+    sourceVisible: !!document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]'),
+    switching: !!document.querySelector('.view-switch-loading, .view-switch-loading-conversation'),
+    notice: document.querySelector('[role="alert"]')?.textContent,
+  }));
+  const result = { scenario: 'missing-workspace-history-click', readyMs, timedOut: !!failure, view,
+    rpc: timings.slice(offset).map(t => ({ ...t, startMs: +(t.startedAt - start).toFixed(1) })) };
+  fs.writeFileSync(path.join(output, 'missing-workspace-results.json'), JSON.stringify(result, null, 2));
+  fs.writeFileSync(path.join(output, 'missing-workspace.png'), (await win.webContents.capturePage()).toPNG());
+  console.log('MISSING_WORKSPACE', JSON.stringify(result));
+  if (failure) throw failure;
+  assert.equal(view.selectedProjectId, 'project-0');
+  assert.equal(view.draft, 'preserve unavailable workspace draft');
+  assert.match(view.notice, /project-2/);
+  assert.equal(view.switching, false);
 }
 let providerServer;
 let providerResponse;
@@ -905,7 +989,7 @@ app.on('browser-window-created', (_event, win) => {
   main ||= win; if (win === main) startupProbe?.observeWindow(win);
 
 });
-const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, startupOnly ? 30000 : 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
+const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, startupOnly ? 30000 : rootStress ? 300000 : 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
 const launchStart = performance.now();
 startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); return import(pathToFileURL(mainBundle).href); }).then(async () => {
   while (!main) await delay(25);
@@ -914,7 +998,7 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     await waitFor(main, () => location.protocol === 'file:' && document.readyState !== 'loading');
     await startupProbe.verifyDisplay(main, evaluate);
   }
-  await waitFor(main, () => !!document.querySelector('.composer textarea'));
+  await waitFor(main, () => !!document.querySelector('.composer textarea'), undefined, startupMissingWorkspace ? 12000 : undefined);
   startupProbe?.mark('composer-dom-observed');
   if (!startupOnly) { main.show(); main.focus(); }
   await evaluate(main, enabled => { window.__switchTrace = enabled; }, traceEnabled);
@@ -926,6 +1010,26 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
   console.log('FIXTURE', fixture);
+  if (startupMissingWorkspace) {
+    await waitFor(main, () => document.querySelector('[role="alert"]')?.textContent.includes('project-0'));
+    const initial = await evaluate(main, async () => ({
+      notice: document.querySelector('[role="alert"]')?.textContent,
+      workspace: await window.wuu.listProjects(),
+      editable: !document.querySelector('.composer textarea').disabled,
+    }));
+    assert.equal(initial.workspace.active_context.kind, 'no_project');
+    assert.equal(initial.workspace.projects.find(project => project.id === 'project-0').missing, true);
+    assert.equal(initial.editable, true);
+    fs.writeFileSync(path.join(output, 'startup-missing-workspace.png'), (await main.webContents.capturePage()).toPNG());
+    await showSessionSidebar(main);
+    await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) group.querySelector('button[aria-expanded="false"]')?.click(); });
+    await switchTo(main, 2, 'startup-unavailable-switch');
+    const after = await evaluate(main, () => window.wuu.listProjects());
+    assert.equal(after.active_project_id, 'project-2');
+    assert.equal(after.projects.find(project => project.id === 'project-0').missing, true);
+    fs.writeFileSync(path.join(output, 'startup-missing-workspace-results.json'), JSON.stringify({ initial, after, switch: results.at(-1) }, null, 2));
+    clearTimeout(timeout); app.quit(); return;
+  }
   // A fresh profile may land in a draft. Select the source before measuring switches.
   if (!startupOnly) await switchTo(main, selectedIndex, 'setup');
   await waitFor(main, index => !!document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-${index}"]`), selectedIndex);
@@ -943,6 +1047,30 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   while (timings.some(t => t.ms === null)) {
     assert.ok(Date.now() < startupDeadline, 'Startup IPC did not settle');
     await delay(25);
+  }
+  if (missingWorkspace) {
+    await checkMissingWorkspace(main);
+    clearTimeout(timeout); app.quit(); return;
+  }
+  if (rootStress) {
+    const root = path.join(home, 'workspaces');
+    for (let index = 0; index < 3274; index++) {
+      const workspace = path.join(root, `historical-${String(index).padStart(4, '0')}`);
+      fs.mkdirSync(workspace, { recursive: true });
+      if (index < 69) fs.mkdirSync(path.join(workspace, 'sessions'));
+      if (index < 4) fs.mkdirSync(path.join(workspace, 'worktrees'));
+    }
+    if (rootThreadStress) await switchTo(main, 2, 'first-project-visit-existing-conversation');
+    else await checkSubscriptionNavigation(main);
+    fs.writeFileSync(path.join(output, 'workspace-root-results.json'), JSON.stringify({
+      scope: `Synthetic migrated sessions and historical workspace roots; Linux/Xvfb; native click to ${rootThreadStress ? 'an editable existing conversation' : 'an editable new draft'}.`,
+      sourceCommit: process.env.WUU_SWITCH_SOURCE_COMMIT, historicalWorkspaceRoots: 3274,
+      targetSessionCount: 467, otherSessionCount: 55, archivedSessionCount: 50,
+      coreSha256: createHash('sha256').update(fs.readFileSync(process.env.WUU_DESKTOP_CORE)).digest('hex'),
+      samples: rootThreadStress ? results.filter(result => result.scenario === 'first-project-visit-existing-conversation') : subscriptionResults,
+    }, null, 2));
+    fs.writeFileSync(path.join(output, 'workspace-root-final.png'), (await main.webContents.capturePage()).toPNG());
+    clearTimeout(timeout); app.quit(); return;
   }
   if (presentationMode) {
     const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');

@@ -33,6 +33,20 @@ func TestStorageTransferPlanTrustReciprocityAndScope(t *testing.T) {
 	if plan[0].transfer.SourceSubjectID != source.SubjectID {
 		t.Fatalf("wrong source subject: %+v", plan)
 	}
+	dev := target
+	dev.Official, dev.AuthorizedDev = false, true
+	dev.SubjectID, dev.StorageSubjectID = "plugin:dev:receiver", target.SubjectID
+	devPlan, err := resolveStorageTransfers(cfg, []pluginpkg.Plugin{source, dev}, []pluginpkg.Plugin{dev}, binding)
+	if err != nil || len(devPlan) != 1 || devPlan[0].transfer != plan[0].transfer {
+		t.Fatalf("development override changed an existing transfer: %+v %v", devPlan, err)
+	}
+	home := t.TempDir()
+	if err := pluginsettings.MoveStatePrefix(home, "", plan[0].transfer); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginsettings.MoveStatePrefix(home, "", devPlan[0].transfer); err != nil {
+		t.Fatalf("development activation conflicts with committed ownership: %v", err)
+	}
 	if got, err := resolveStorageTransfers(cfg, []pluginpkg.Plugin{source, target}, []pluginpkg.Plugin{target}, userspace.Binding{}); err != nil || len(got) != 0 {
 		t.Fatalf("cross domain transfer: %+v %v", got, err)
 	}
@@ -68,11 +82,6 @@ func TestStorageTransferRunsAfterCommitBeforeActivation(t *testing.T) {
 			if _, err := pluginsettings.UpdateState(home, "", move.SourceSubjectID, move.Scope, func(values map[string]string) error { values["records.one"] = "original"; return nil }); err != nil {
 				t.Fatal(err)
 			}
-			if failure == "collision" {
-				if _, err := pluginsettings.UpdateState(home, "", move.TargetSubjectID, move.Scope, func(values map[string]string) error { values["records.one"] = "newer"; return nil }); err != nil {
-					t.Fatal(err)
-				}
-			}
 			committed := false
 			client := &preparedGenerationClient{generationClient: &generationClient{id: "target"}, onActivate: func() {
 				if !committed {
@@ -99,6 +108,14 @@ func TestStorageTransferRunsAfterCommitBeforeActivation(t *testing.T) {
 				t.Fatal(failures)
 			}
 			candidate.host.AttachServiceRegistry(registry, nil)
+			if err := candidate.host.PrepareAvailable(context.Background(), map[string]bool{"target": true}); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "collision" {
+				if _, err := pluginsettings.UpdateState(home, "", move.TargetSubjectID, move.Scope, func(values map[string]string) error { values["records.one"] = "newer"; return nil }); err != nil {
+					t.Fatal(err)
+				}
+			}
 			err := s.ActivatePluginGeneration(candidate, func() error {
 				if failure == "commit" {
 					return errors.New("commit rejected")
@@ -146,5 +163,35 @@ func TestInitialStorageTransferDoesNotFenceFailedRuntime(t *testing.T) {
 	source, err := pluginsettings.ReadState(binding.State(home), "", move.SourceSubjectID, move.Scope)
 	if err != nil || source.Values["records.one"] != "original" {
 		t.Fatalf("failed initial runtime fenced source: %+v %v", source, err)
+	}
+}
+
+func TestStorageTransferPreparationRejectsChangedOwner(t *testing.T) {
+	home := t.TempDir()
+	move := pluginsettings.StateTransfer{ID: "records-v1", SourceSubjectID: "plugin:bundled:source", TargetSubjectID: "plugin:bundled:target", Scope: pluginsettings.ScopeUser, KeyPrefix: "records."}
+	if _, err := pluginsettings.UpdateState(home, "", move.SourceSubjectID, move.Scope, func(values map[string]string) error { values["records.one"] = "original"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginsettings.MoveStatePrefix(home, "", move); err != nil {
+		t.Fatal(err)
+	}
+	move.TargetSubjectID = "plugin:dev:target"
+	client := &preparedGenerationClient{generationClient: &generationClient{id: "target"}}
+	host := pluginhost.New(client)
+	defer host.Close(context.Background())
+	registry := pluginhost.NewServiceRegistry()
+	settings := pluginsettings.NewService(pluginsettings.Module, home, "")
+	migration := newStorageTransferConsumer(host, registry, pluginStorageTransfer{targetID: "target", transfer: move})
+	host.Add(settings)
+	host.Add(migration)
+	host.SetPackageRequirements(map[string][]string{"target": {migration.ID()}})
+	registry.RegisterClients(settings, migration)
+	host.AttachServiceRegistry(registry, nil)
+	if err := host.PrepareAvailable(context.Background(), map[string]bool{"target": true}); err == nil {
+		t.Fatal("preparation accepted a conflicting durable owner")
+	}
+	doc, err := pluginsettings.ReadState(home, "", "plugin:bundled:target", move.Scope)
+	if err != nil || doc.Values["records.one"] != "original" || client.activateCall != 0 {
+		t.Fatalf("preparation changed live state: %+v %v", doc, err)
 	}
 }

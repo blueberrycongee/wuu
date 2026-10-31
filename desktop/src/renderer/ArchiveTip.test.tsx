@@ -128,6 +128,46 @@ describe("ArchiveTip", () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a notice readable while hovered, then allows it to expire", () => {
+    const { onDismiss } = renderTip();
+    const tip = container.querySelector<HTMLElement>(".archive-tip")!;
+    act(() => { tip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); });
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(onDismiss).not.toHaveBeenCalled();
+    act(() => { tip.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })); });
+    act(() => { vi.advanceTimersByTime(6_000); });
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("does not remove a keyboard-focused recovery action", () => {
+    const { onDismiss, onViewArchive } = renderTip();
+    const action = container.querySelector<HTMLButtonElement>(".archive-tip-action")!;
+    act(() => { action.focus(); });
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(onDismiss).not.toHaveBeenCalled();
+    act(() => { action.click(); });
+    expect(onViewArchive).toHaveBeenCalledOnce();
+    act(() => { action.blur(); });
+    act(() => { vi.advanceTimersByTime(6_000); });
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a manual dismissal when its owner unmounts", () => {
+    const { onDismiss } = renderTip();
+    act(() => { container.querySelector<HTMLButtonElement>(".archive-tip-dismiss")!.click(); });
+    act(() => { root!.unmount(); });
+    root = null;
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("completes manual dismissal only once rather than firing the automatic timer too", () => {
+    const { onDismiss } = renderTip();
+    act(() => { container.querySelector<HTMLButtonElement>(".archive-tip-dismiss")!.click(); });
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
   it("clears timers when the component unmounts mid-flight", () => {
     const onDismiss = vi.fn();
     renderTip({ onDismiss });

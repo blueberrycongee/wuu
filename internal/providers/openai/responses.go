@@ -330,9 +330,18 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 }
 
 func marshalResponsesRequest(payload responsesRequest) ([]byte, error) {
+	object, err := responsesRequestObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(object)
+}
+
+func responsesRequestObject(payload responsesRequest) (map[string]any, error) {
 	// Always serialize through the sorted-key map form so the body's key
 	// order cannot flip between requests when options appear or disappear —
-	// automatic prefix caching matches raw bytes.
+	// automatic prefix caching matches raw bytes. Keep the assembled object
+	// available for transport fields without serializing and parsing it again.
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -354,7 +363,7 @@ func marshalResponsesRequest(payload responsesRequest) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return json.Marshal(object)
+	return object, nil
 }
 
 func mergeResponsesProviderOptions(object map[string]any, options map[string]any) {

@@ -537,6 +537,27 @@ pass its correctness gate before an index is emitted. Higher than 100 means
 faster for that sample. Also inspect successful P50/P90, completion and failures;
 a small sample does not establish tail latency or a general product score.
 
+Use `-loop-workload short|long|tools|many-tools` for the default driver with an
+exact short answer, 128 output lines, or 8/64 dependent synthetic tool calls.
+Each tool result reveals the token required by the next call. For example:
+
+```sh
+go run ./scripts/provider-latency-e2e -provider openai-codex \
+  -model gpt-6.1-terra -reuse-codex-credentials -transport auto \
+  -loop-workload many-tools -records 320 -repeats 4 -timeout 600s \
+  -label candidate > .tmp/provider-latency/loop-candidate.jsonl
+```
+
+`-model` overrides the model in this process. `-reuse-codex-credentials` explicitly
+selects the native, read-only Codex CLI credential source for loop workloads.
+These workloads use low reasoning effort, disable automatic compaction, and
+exclude durable runtime storage. They report request-ready/model-done timestamps,
+provider replay state, allocations, tool-definition reads and retry counts. A
+recovered extra submission fails the strict `passed` check even if the task
+finishes correctly; retain that sample and its elapsed time. The transport scorer
+does not score `loop_sample` records. Compare complete tasks by workload,
+history size and transport, and record concurrency when running variants together.
+
 Use `-list-providers` to list configured names and models without credentials.
 For command scheduling, add `-shell-workload -repeats 3 -timeout 120s` with either
 configured DeepSeek or Codex. Add `-shell-delay 0s` for the short-command control.

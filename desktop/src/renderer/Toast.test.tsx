@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearToasts,
+  dismissToast,
+  showActionErrorToast,
   showErrorToast,
   showToast,
   ToastViewport,
@@ -90,6 +92,27 @@ describe("ToastViewport", () => {
   ])("still presents failures without an owned retirement: %s", error => {
     act(() => { showErrorToast(error); });
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(error.message);
+  });
+
+  it("does not hide an explicit failure when its rejection has no message", () => {
+    act(() => { showActionErrorToast(undefined); });
+    expect(container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  });
+
+  it("coalesces a failure already waiting in the queue and returns its dismissible handle", () => {
+    let first: number | undefined;
+    let duplicate: number | undefined;
+    act(() => {
+      showErrorToast("active failure");
+      first = showErrorToast("queued failure");
+      duplicate = showErrorToast("queued failure");
+    });
+    expect(duplicate).toBe(first);
+    act(() => {
+      dismissToast(duplicate!);
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("queues distinct notices and suppresses repeated failures", () => {

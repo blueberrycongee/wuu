@@ -61,6 +61,59 @@ func TestPublishDevGenerationFailurePreservesPreviousGeneration(t *testing.T) {
 	}
 }
 
+func TestDevGenerationRetainsStorageOwnerWithoutBundledPrivileges(t *testing.T) {
+	home, source := t.TempDir(), t.TempDir()
+	installed := findDevGenerationTestPlugin(Discover("", home), "personal")
+	if installed == nil {
+		t.Fatal("bundled fixture unavailable")
+	}
+	writeDevGenerationTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"personal","version":"1"}`)
+	authorization := writeDevGenerationTestAuthorization(t, home, "personal", source)
+	for i := 0; i < 2; i++ {
+		published, err := PublishDevGeneration(home, source, source, authorization)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := findDevGenerationTestPlugin(Discover("", home), "personal")
+		if found == nil || found.StorageSubject() != installed.SubjectID || published.StorageSubject() != installed.SubjectID || found.SubjectID != "plugin:dev:personal" || found.Official || !found.AuthorizedDev || found.Source != "dev" {
+			t.Fatalf("lost storage continuity or elevated provenance: %+v", found)
+		}
+	}
+	path := filepath.Join(home, "dev", "generations", "personal", devGenerationReceiptFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt devGenerationReceipt
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt.StorageSubjectID = "plugin:bundled:memory"
+	raw, _ = json.Marshal(receipt)
+	writeDevGenerationTestFile(t, path, string(raw))
+	if found := findDevGenerationTestPlugin(Discover("", home), "personal"); found == nil || found.AuthorizedDev {
+		t.Fatalf("tampered ownership binding admitted: %+v", found)
+	}
+}
+
+func TestDevGenerationPinsOwnerAcrossInstalledPackageChanges(t *testing.T) {
+	home, source := t.TempDir(), t.TempDir()
+	writeDevGenerationTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"owner-fixture","version":"1"}`)
+	authorization := writeDevGenerationTestAuthorization(t, home, "owner-fixture", source)
+	first, err := PublishDevGeneration(home, source, source, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDevGenerationTestFile(t, filepath.Join(home, "plugins", "owner-fixture", "plugin.json"), `{"id":"owner-fixture","version":"2"}`)
+	next, err := PublishDevGeneration(home, source, source, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.StorageSubject() != first.SubjectID {
+		t.Fatalf("an installed namesake redirected existing development data: %+v", next)
+	}
+}
+
 // Model process termination at the exact rename boundary: no deferred cleanup
 // runs and a fresh Discover must recover solely from the persisted files.
 func TestDiscoverDevGenerationAfterInterruptedPublish(t *testing.T) {

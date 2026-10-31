@@ -101,6 +101,12 @@ func TestSettingsServiceTransferPreservesFencesAndReceipts(t *testing.T) {
 	seedState(t, stateRoot, transfer.SourceSubjectID, map[string]string{"records.changed": "old", "records.deleted": "old", "other.source": "keep"})
 	service := NewServiceWithStateRoot("test.settings", home, stateRoot, project)
 	client := settingsServiceClient(service)
+	if err := client.CheckStateTransfer(ctx, transfer); err != nil {
+		t.Fatalf("read-only preparation rejected: %v", err)
+	}
+	if source := loadState(t, stateRoot, transfer.SourceSubjectID); source.Values["records.changed"] != "old" {
+		t.Fatal("preparation fenced the source")
+	}
 	if err := client.MoveStatePrefix(ctx, transfer); err == nil {
 		t.Fatal("prepared provider transferred state")
 	}
