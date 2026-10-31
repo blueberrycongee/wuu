@@ -1665,7 +1665,7 @@ export function AppSidebar({
       <div className="sidebar-content" inert={!sidebarVisible || settingsActive} aria-hidden={settingsActive || undefined}>
         <div className="traffic-spacer" />
         {pluginCatalogActive ? (
-          <nav className="sidebar-section-navigation" aria-label={t("skills.catalogLabel")}>
+          <nav className="sidebar-section-navigation extensions-navigation" aria-label={t("skills.catalogLabel")}>
             <h2 className="sidebar-section-title">{t("skills.title")}</h2>
             {(["plugins", "skills"] as const).map((section) => {
               const label = t(section === "plugins" ? "skills.tabPlugins" : "skills.tabSkills");

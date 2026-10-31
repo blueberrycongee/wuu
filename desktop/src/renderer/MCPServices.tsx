@@ -9,7 +9,7 @@ import { MCPDiagnostic, MCPFailure } from "./MCPDiagnostic";
 import { confirmAction } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
-import { AlertCircle, AlertTriangle, MoreHorizontal, Plug } from "./WuuIcons";
+import { AlertCircle, AlertTriangle, MoreHorizontal, Plug, Plus } from "./WuuIcons";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 
 type MCPAction = "connect" | "disconnect" | "refresh" | "login" | "logout" | "edit" | "remove";
@@ -114,7 +114,7 @@ export function MCPServices({ pluginID, enabled = true, filter = "" }: { pluginI
   }
 
   if ((pluginID || filter.trim()) && visible.length === 0 && !loadError) return null;
-  return <SettingsSection testID="mcp-services" title={pluginID ? "MCP" : t("mcp.services")} actions={!pluginID ? <button type="button" className="settings-button" onClick={() => setEditor({ name: "" })}>{t("mcp.add")}</button> : undefined}>
+  return <SettingsSection testID="mcp-services" title={pluginID ? "MCP" : t("mcp.services")} actions={!pluginID ? <button type="button" className="settings-button settings-button-ghost" onClick={() => setEditor({ name: "" })}><Plus className="icon" aria-hidden="true" />{t("mcp.add")}</button> : undefined}>
     {loadError ? <div className="mcp-load-failure">
       <MCPFailure message={t("mcp.listFailed")} diagnostic={loadError} />
       <button type="button" className="settings-button settings-button-ghost" data-testid="mcp-list-retry" onClick={() => void refresh()}>{t("mcp.refresh")}</button>
@@ -162,7 +162,7 @@ export function MCPServices({ pluginID, enabled = true, filter = "" }: { pluginI
         <div className="mcp-service-actions">
           {enabled && server.state !== "disabled" ? <>
             {needsAuth ? <button type="button" className="settings-button" disabled={!!busy} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
-              : <button type="button" className="settings-button" disabled={!!busy} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
+              : <button type="button" className={`settings-button${server.connected ? " settings-button-ghost" : ""}`} disabled={!!busy} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
           </> : null}
           {actions.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={!!busy}
             aria-label={t("provider.moreActions", { name })} aria-haspopup="menu" aria-expanded={menu?.name === server.name}
