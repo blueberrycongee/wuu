@@ -267,7 +267,9 @@ describe("EngineSettingsSection", () => {
     expect(onUpdate).not.toHaveBeenCalled();
     const save = document.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-path-save"]')!;
     await act(async () => save.click());
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Cannot save path");
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.settings-mcp-details-toggle')!.click());
+    expect(container.querySelector("pre")?.textContent).toBe("Cannot save path");
     expect(input.value).toBe("/custom/codex");
     expect(save.disabled).toBe(false);
     await act(async () => save.click());
@@ -310,4 +312,67 @@ it("keeps disabled models recoverable and preserves model selection while reorde
   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} selectedEngineID={undefined} />}</SettingsControlsProvider>));
   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-model-id="opus"] [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+});
+
+
+it("offers recovery beside a model catalog failure without entering advanced settings", async () => {
+  const failed: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, models_error: "catalog request timed out" }] };
+  const recovered: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "restored", display_name: "Restored model" }] }] };
+  const onRefresh = vi.fn().mockResolvedValue(recovered);
+  const onUpdate = vi.fn();
+  const props = { selectedEngineID: "codex", onSelectEngine: vi.fn(), onCloseEngine: vi.fn(), onRefresh, onUpdate };
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><EngineSettingsSection {...props} result={failed} /></SettingsControlsProvider>));
+  const retry = container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!;
+  expect(retry.closest("details")).toBeNull();
+  await act(async () => retry.click());
+  expect(onRefresh).toHaveBeenCalledOnce();
+  expect(onUpdate).not.toHaveBeenCalled();
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><EngineSettingsSection {...props} result={recovered} /></SettingsControlsProvider>));
+  expect(container.querySelector('[data-testid="settings-error-retry"]')).toBeNull();
+  expect(container.querySelector('[data-model-id="restored"]')).not.toBeNull();
+});
+
+it("does not present failed inventory loading as an ongoing detection", async () => {
+  const onRefresh = vi.fn().mockResolvedValue(inventory);
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><EngineSettingsSection
+    loadError="agent inventory unavailable" onSelectEngine={vi.fn()} onCloseEngine={vi.fn()} onRefresh={onRefresh} onUpdate={vi.fn()} /></SettingsControlsProvider>));
+  expect(container.querySelector('[role="status"][aria-busy="true"]')).toBeNull();
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!.click());
+  expect(onRefresh).toHaveBeenCalledOnce();
+});
+
+it("replaces a failed account catalog snapshot when a retry recovers inventory", async () => {
+  const initial: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true }] };
+  const failed: EngineListResult = { engines: [{ ...initial.engines[0], models_error: "old catalog failure", quota: {
+    status: "available", kind: "subscription", checked_at: new Date().toISOString(), account: { id: "account-a", label: "Retained account" },
+  } }] };
+  const recovered: EngineListResult = { engines: [{ ...initial.engines[0], models: [{ id: "recovered", display_name: "Recovered model" }] }] };
+  window.wuu.listEngines = vi.fn().mockResolvedValue(failed);
+  const onRefresh = vi.fn().mockResolvedValue(recovered);
+  const props = { selectedEngineID: "codex", onSelectEngine: vi.fn(), onCloseEngine: vi.fn(), onRefresh, onUpdate: vi.fn() };
+  const controls = createApplicationSettingsControls();
+  await act(async () => root.render(<SettingsControlsProvider controls={controls}><EngineSettingsSection {...props} result={initial} /></SettingsControlsProvider>));
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="engine-auth-entry"]')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="engine-auth-local"]')!.click());
+  expect(container.querySelector('[data-testid="settings-error-retry"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!.click());
+  await act(async () => root.render(<SettingsControlsProvider controls={controls}><EngineSettingsSection {...props} result={recovered} /></SettingsControlsProvider>));
+  expect(container.querySelector('[data-testid="settings-error-retry"]')).toBeNull();
+  expect(container.querySelector('[data-model-id="recovered"]')).not.toBeNull();
+  expect(container.textContent).toContain("Retained account");
+});
+
+it("keeps embedded inventory recovery available after another failed retry", async () => {
+  const onRefresh = vi.fn().mockRejectedValueOnce(new Error("still unavailable")).mockResolvedValueOnce(inventory);
+  const props = { embedded: true, loadError: "inventory unavailable", onSelectEngine: vi.fn(), onCloseEngine: vi.fn(), onRefresh, onUpdate: vi.fn() };
+  const controls = createApplicationSettingsControls();
+  await act(async () => root.render(<SettingsControlsProvider controls={controls}><EngineSettingsSection {...props} /></SettingsControlsProvider>));
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!.click());
+  expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')?.disabled).toBe(false);
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!.click());
+  expect(onRefresh).toHaveBeenCalledTimes(2);
+  await act(async () => root.render(<SettingsControlsProvider controls={controls}><EngineSettingsSection {...props} loadError="" result={inventory} /></SettingsControlsProvider>));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
 });

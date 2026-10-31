@@ -13,6 +13,10 @@ export async function activate(api) {
     "automation.history": "Recent runs", "automation.more": "More actions",
 
     "automation.title": "Automations",
+    "automation.refreshFailed": "Schedules could not be refreshed. Displayed tasks may be out of date.",
+    "automation.workspacesFailed": "Workspaces could not be loaded.",
+    "automation.actionFailed": "Could not update the automation. Please try again.",
+    "automation.retry": "Retry", "automation.details": "Technical details",
     "automation.sidebar.running": "Running now", "automation.sidebar.upcoming": "Up next",
     "automation.sidebar.loading": "Loading schedules…", "automation.sidebar.refreshError": "Could not refresh schedules",
     "automation.run.starting": "Starting",
@@ -38,6 +42,10 @@ export async function activate(api) {
     "automation.history": "最近运行", "automation.more": "更多操作",
 
     "automation.title": "自动化",
+    "automation.refreshFailed": "自动化列表暂时无法刷新，当前显示的任务可能不是最新状态。",
+    "automation.workspacesFailed": "工作区暂时无法加载。",
+    "automation.actionFailed": "自动化未能更新，请重试。",
+    "automation.retry": "重试", "automation.details": "技术详情",
     "automation.sidebar.running": "正在运行", "automation.sidebar.upcoming": "接下来",
     "automation.sidebar.loading": "正在加载调度…", "automation.sidebar.refreshError": "调度信息刷新失败",
     "automation.run.starting": "正在启动",
@@ -130,6 +138,9 @@ export async function activate(api) {
     .plugin-automation-sidebar .plugin-automation-sidebar-item:focus-visible { outline-offset:-2px; }
     .plugin-automation-sidebar-item:disabled { cursor:default; opacity:0.45; }
     .plugin-automation-empty { min-height:160px; }
+    .plugin-automation-unavailable { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; color:var(--ink-muted); overflow-wrap:anywhere; }
+    .plugin-automation-unavailable details { flex-basis:100%; }
+    .plugin-automation-unavailable pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
     .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
@@ -497,7 +508,7 @@ export async function activate(api) {
       h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))));
   }
 
-  function Editor({ tr, locale, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, swap, separator }) {
+  function Editor({ tr, locale, task, initial, workspace, threads, busy, onSave, onPause, onRemove, onClose, runs, readOnly, closing, swap, separator }) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
     const [localError, setLocalError] = React.useState("");
@@ -557,7 +568,7 @@ export async function activate(api) {
               h("section", { className: "plugin-automation-form-group" },
                 h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.schedule")),
                 h("div", { className: "plugin-automation-form-card" }, h(ScheduleFields, { tr, locale, draft, onChange: setDraft })))),
-            error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
+            localError ? h("div", { className: "plugin-automation-error", role: "alert" }, localError) : null,
             task ? h("section", { className: "plugin-automation-history" },
               h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")),
               runs.length ? runs.slice(0, 5).map((run) => h("div", { key: run.id },
@@ -658,7 +669,7 @@ export async function activate(api) {
       items) : null;
     return h("div", { className: "plugin-automation-sidebar" },
       h("p", { className: "plugin-automation-sidebar-workspace" }, workspace.name || workspaceName(workspace.root)),
-      error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status", title: error }, tr("automation.sidebar.refreshError")) : null,
+      error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status" }, tr("automation.sidebar.refreshError")) : null,
       !loaded ? (!error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status" }, tr("automation.sidebar.loading")) : null) : h(React.Fragment, null,
         group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at))),
         group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)))));
@@ -679,7 +690,15 @@ export async function activate(api) {
     const [loadedID, setLoadedID] = React.useState("");
     const [refreshError, setRefreshError] = React.useState("");
     const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState("");
+    const [workspaceError, setWorkspaceError] = React.useState("");
+    const [loadingWorkspaces, setLoadingWorkspaces] = React.useState(false);
+    const workspaceRequest = React.useRef(0);
+    const activeView = React.useRef(true);
+    const notice = React.useRef(null);
+    React.useEffect(() => {
+      activeView.current = true;
+      return () => { activeView.current = false; notice.current?.dispose(); };
+    }, []);
     const [query, setQuery] = React.useState("");
     const [threads, setThreads] = React.useState([]);
     const epoch = React.useRef(0);
@@ -697,16 +716,26 @@ export async function activate(api) {
         setRefreshError("");
       } catch (reason) { if (current === epoch.current) setRefreshError(String(reason)); }
     }, []);
-    React.useEffect(() => {
-      let cancelled = false;
-      api.listWorkspaces().then((snapshot) => {
-        if (cancelled) return;
+    const loadWorkspaces = React.useCallback(async () => {
+      const request = ++workspaceRequest.current;
+      setLoadingWorkspaces(true);
+      try {
+        const snapshot = await api.listWorkspaces();
+        if (!activeView.current || api.signal.aborted || request !== workspaceRequest.current) return;
         const items = (snapshot?.workspaces || []).filter((item) => item.available !== false && item.id);
         setWorkspaces(items);
         setWorkspaceID(items.find((item) => item.id === snapshot.activeWorkspaceId)?.id || items[0]?.id || "");
-      }).catch((reason) => { if (!cancelled) setError(String(reason)); });
-      return () => { cancelled = true; epoch.current++; };
+        setWorkspaceError("");
+      } catch (reason) {
+        if (activeView.current && !api.signal.aborted && request === workspaceRequest.current) setWorkspaceError(String(reason?.message || reason));
+      } finally {
+        if (activeView.current && !api.signal.aborted && request === workspaceRequest.current) setLoadingWorkspaces(false);
+      }
     }, []);
+    React.useEffect(() => {
+      void loadWorkspaces();
+      return () => { epoch.current++; };
+    }, [loadWorkspaces]);
     React.useEffect(() => {
       void refresh(workspaceID);
       const refreshVisible = () => { if (!document.hidden) void refresh(workspaceID); };
@@ -732,13 +761,18 @@ export async function activate(api) {
     }, [tasks, loaded]);
     const act = async (method, input) => {
       if (!workspace || busy || refreshError || !loaded) return null;
-      setBusy(true); setError("");
+      setBusy(true);
+      notice.current?.dispose();
+      const attempt = crypto.randomUUID();
       try {
         const result = await requestScheduler(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
+        if (!activeView.current || api.signal.aborted) return null;
         await refresh(workspace.id);
-        return result;
-      } catch (reason) { setError(String(reason)); return null; }
-      finally { setBusy(false); }
+        return activeView.current && !api.signal.aborted ? result : null;
+      } catch {
+        if (activeView.current && !api.signal.aborted) notice.current = api.showNotice({ message: tr("automation.actionFailed"), tone: "error", key: `automation-action:${attempt}` });
+        return null;
+      } finally { if (activeView.current && !api.signal.aborted) setBusy(false); }
     };
     const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
     // One-shot tasks leave the schedule on dispatch. Their retained snapshots
@@ -753,7 +787,7 @@ export async function activate(api) {
     const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || sortedRuns.find((run) => run.task_id === selection.id)?.task : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
-      setError("");
+      notice.current?.dispose();
       if (!selection || panelClosing) return;
       if (panelMotionMs("--environment-panel-exit-duration", 220) === 0) {
         setSelection(null);
@@ -767,13 +801,12 @@ export async function activate(api) {
       const timer = window.setTimeout(() => {
         setSelection(null);
         setPanelClosing(false);
-        setError("");
       }, panelMotionMs("--environment-panel-exit-duration", 220));
       return () => window.clearTimeout(timer);
     }, [panelClosing]);
     // Opening from a closed panel plays its entrance; choosing again while it
     // stays open swaps the content in place.
-    const choose = (next) => { setError(""); setSwap(panelOpen && !panelClosing); setPanelClosing(false); setSelection(next); };
+    const choose = (next) => { notice.current?.dispose(); setSwap(panelOpen && !panelClosing); setPanelClosing(false); setSelection(next); };
     React.useEffect(() => {
       publishSidebar(props.context, { tasks, runs, workspace, loaded, error: refreshError, selectedID: panelClosing ? null : selection?.id, busy, choose });
     });
@@ -809,18 +842,21 @@ export async function activate(api) {
               label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
               placeholder: tr("automation.workspaceNone"),
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
-              onChange: (id) => { epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); setRefreshError(""); },
+              onChange: (id) => { notice.current?.dispose(); epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setRefreshError(""); },
             })),
             h(Button, { className: "plugin-automation-create", disabled: busy || !workspace || !loaded || !!refreshError, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
-          refreshError || (error && !panelOpen) ? h("p", { className: "plugin-automation-error", role: "alert" }, refreshError || error) : null,
-          !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
+          refreshError || workspaceError ? h("div", { className: "plugin-automation-unavailable", role: "alert" },
+            h("span", null, tr(workspaceError ? "automation.workspacesFailed" : "automation.refreshFailed")),
+            h(Button, { variant: "ghost", disabled: loadingWorkspaces, onClick: () => workspaceError ? void loadWorkspaces() : void refresh(workspaceID) }, tr("automation.retry")),
+            workspaceError ? h("details", null, h("summary", null, tr("automation.details")), h("pre", null, workspaceError)) : null) : null,
+          workspaceError ? null : !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
             : loaded && !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty") })
             : h(React.Fragment, null,
               scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false))) : null,
               finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
-          key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
+          key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy,
           readOnly: !!refreshError || (!!selectedTask && !tasks.some((task) => task.id === selectedTask.id)),
           closing: panelClosing, swap, separator: resize.separator,
           runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: closePanel,

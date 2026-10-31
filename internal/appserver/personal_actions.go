@@ -241,7 +241,7 @@ func (p *personalActions) withAuthority(ctx context.Context, scope personalrevie
 	}
 	// This is a selected-provider snapshot, not an execution fence. Dispatch
 	// requires the distinct WithExecutionAuthority boundary in the review engine.
-	doc, err := services.Settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
+	doc, err := services.Settings.ReadState(ctx, selected.StorageSubject(), pluginsettings.ScopeUser)
 	if err != nil {
 		return err
 	}

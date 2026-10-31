@@ -197,6 +197,9 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 	for _, transfer := range transfers {
 		consumer := newStorageTransferConsumer(host, registry, transfer)
 		nativeModules = append(nativeModules, consumer)
+		// Ownership conflicts must preserve the current graph, even when the
+		// target is an optional addon. Activation still rechecks for races.
+		required[consumer.ID()] = true
 		packageRequirements[transfer.targetID] = append(packageRequirements[transfer.targetID], consumer.ID())
 	}
 	host.SetPackageRequirements(packageRequirements)

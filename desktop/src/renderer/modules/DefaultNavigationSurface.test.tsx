@@ -136,7 +136,7 @@ it.each(["retired", "failure"])("handles a pending navigation refresh after %s",
     if (action === "navigation.refresh") return new Promise((_resolve, fail) => { reject = fail; });
     return undefined;
   });
-  const toast = vi.spyOn(Toast, "showErrorToast");
+  const toast = vi.spyOn(Toast, "showActionErrorToast");
   let application!: ApplicationServiceV1;
   const host = new PluginHost({ react: React, application: controller });
   await host.activateGeneration({ pluginId: "navigation-refresh", generation: "one", register: api => { application = api.application; } });

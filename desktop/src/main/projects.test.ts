@@ -376,6 +376,43 @@ describe("ProjectManager runtime context availability", () => {
     expect(manager.ensureRuntimeContext()).toEqual(activeContext);
   });
 
+  it("recovers an unavailable startup workspace without removing it or other projects", async () => {
+    const missingPath = await createProjectDir("offline");
+    const availablePath = await createProjectDir("available");
+    const missing = project("missing", "offline", missingPath);
+    const available = project("available", "available", availablePath);
+    await writeStore(canonicalStorePath(), [missing, available], {
+      kind: "project", project_id: missing.id, cwd: missingPath,
+    });
+    await rm(missingPath, { recursive: true });
+
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
+    expect(manager.recoverUnavailableProject()).toMatchObject({
+      code: "active_project_unavailable", project_id: missing.id, cwd: missingPath,
+    });
+    const afterRecovery = manager.list();
+    expect(afterRecovery.active_context).toEqual({ kind: "no_project", cwd: join(home, "scratch", "default") });
+    expect(afterRecovery.projects.map(item => item.id)).toEqual([missing.id, available.id]);
+    expect(afterRecovery.projects[0]?.missing).toBe(true);
+    expect(manager.select(available.id).active_context).toEqual({
+      kind: "project", project_id: available.id, cwd: availablePath,
+    });
+    expect(manager.recoverUnavailableProject()).toBeUndefined();
+    expect(manager.list().active_project_id).toBe(available.id);
+  });
+
+  it("does not replace a workspace that became available before recovery", async () => {
+    const projectPath = await createProjectDir("restored");
+    const restored = project("restored", "restored", projectPath);
+    const active: RuntimeContext = { kind: "project", project_id: restored.id, cwd: projectPath };
+    await writeStore(canonicalStorePath(), [restored], active);
+    const before = await readFile(canonicalStorePath(), "utf8");
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
+    expect(manager.recoverUnavailableProject()).toBeUndefined();
+    expect(manager.list().active_context).toEqual(active);
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(before);
+  });
+
   it("still moves to scratch after the user explicitly removes the active project", async () => {
     const projectPath = await createProjectDir("removed-active");
     const activeProject = project("project-1", "removed-active", projectPath);

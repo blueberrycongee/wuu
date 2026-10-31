@@ -221,7 +221,9 @@ type StreamRunner struct {
 	DriverBindingStore     loopdriver.BindingStore
 	DriverCheckpointStore  loopdriver.CheckpointStore
 	ModelInputReceiptStore ModelInputReceiptStore
-	RequestContextStore    RequestContextStore
+	// OnModelContext observes the assembled driver request before downstream model adapters.
+	OnModelContext      func(context.Context, []providers.ChatMessage)
+	RequestContextStore RequestContextStore
 
 	usageMu                sync.Mutex
 	conversationUsage      *UsageTracker

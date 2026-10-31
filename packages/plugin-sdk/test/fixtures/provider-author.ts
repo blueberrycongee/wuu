@@ -103,6 +103,7 @@ export default {
     await settingsStore.releaseInspection({id:settingsInspection.id,subject:'author',scope:'user'});
     const settings = await settingsStore.read({subject:'author',scope:'workspace'});
     const transfer: StateTransfer = { id: 'move-1', source_subject_id: 'old-owner', target_subject_id: 'author', key_prefix: 'records.', scope: 'user' };
+    await settingsStore.checkStateTransfer(transfer);
     await settingsStore.transferState(transfer);
     let transferUnsupported: unknown, transferUncertain: unknown;
     try { await settingsStore.transferState({...transfer, id: 'unsupported'}); }

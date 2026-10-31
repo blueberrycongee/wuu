@@ -67,7 +67,7 @@ func (p *personalActions) withTaskInspection(ctx context.Context, use func(conte
 	}
 	defer func() { err = errors.Join(err, settingsScope.Close()) }()
 	settings := pluginsettings.NewClient(inspectionServiceCall(state.Host, settingsScope, runtime.StateServicesConsumer, pluginsettings.ServiceName))
-	return settings.WithStateInspection(settingsScope.Context, selected.SubjectID, pluginsettings.ScopeUser, func(doc pluginsettings.StateDocument) (err error) {
+	return settings.WithStateInspection(settingsScope.Context, selected.StorageSubject(), pluginsettings.ScopeUser, func(doc pluginsettings.StateDocument) (err error) {
 		sessionScope, err := state.Host.OpenServiceScope(settingsScope.Context, runtime.SessionStateConsumer, session.ServiceName)
 		if err != nil {
 			return err

@@ -1,3 +1,5 @@
+import { SettingsFailure } from "./SettingsFailure";
+import { rawErrorMessage } from "./UserFacingErrors";
 import { useSettingsOperationScope } from "./SettingsOperationScope";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -37,13 +39,13 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
   const [accountsScope, setAccountsScope] = useState<typeof scope>();
   const [signingIn, setSigningIn] = useState(false);
   const [makeDefault, setMakeDefault] = useState(defaultOn);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ kind: "accounts" | "models" | "save"; diagnostic: string }>();
   const [authNotice, setAuthNotice] = useState("");
   const [name, setName] = useState(() => availableName(providers));
   const account = accountsScope === scope ? accounts.find(item => item.id === accountId) : undefined;
   useEffect(() => {
     setAccounts([]); setAccountsScope(undefined);
-    setBusy(false); setSigningIn(false); setAuthNotice("");
+    setBusy(false); setSigningIn(false); setAuthNotice(""); setError(undefined);
     saving.current = undefined;
   }, [scope]);
   useEffect(() => {
@@ -54,21 +56,22 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
     let active = true;
     void settingsControls.listChatGPTAccounts().then(result => {
       if (!active || !scope.active) return;
+      setError(current => current?.kind === "accounts" ? undefined : current);
       setAccounts(result.accounts);
       setAccountsScope(scope);
       setAccountId(current => result.accounts.some(item => item.id === current) ? current : result.accounts.find(item => item.status === "connected")?.id || "");
-    }, cause => { if (active && scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); });
+    }, cause => { if (active && scope.active && !isPluginLifecycleCancellation(cause)) setError({ kind: "accounts", diagnostic: rawErrorMessage(cause) }); });
     return () => { active = false; };
   }, [scope, revision]);
   useEffect(() => {
     let active = true;
-    setModels([]); setCatalogAccount(""); setError("");
+    setModels([]); setCatalogAccount(""); setError(current => current?.kind === "models" ? undefined : current);
     if (!accountId || account?.status !== "connected") { setLoading(false); return; }
     setLoading(true);
     void settingsControls.listChatGPTModels(accountId).then(result => {
       if (!active || !scope.active) return;
       setModels(result.models); setModel(current => result.models.some(item => item.id === current) ? current : result.models[0]?.id ?? ""); setCatalogAccount(accountId);
-    }, cause => { if (active && scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); }).finally(() => { if (active && scope.active) setLoading(false); });
+    }, cause => { if (active && scope.active && !isPluginLifecycleCancellation(cause)) setError({ kind: "models", diagnostic: rawErrorMessage(cause) }); }).finally(() => { if (active && scope.active) setLoading(false); });
     return () => { active = false; };
   }, [scope, accountId, account?.status, revision]);
   const canSave = !running && !busy && !signingIn && !loading && account?.status === "connected" && catalogAccount === accountId &&
@@ -77,11 +80,11 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
     if (!scope.active || !canSave || saving.current) return;
     const operation = {};
     saving.current = operation;
-    setBusy(true); setError("");
+    setBusy(true); setError(undefined);
     try {
       await onSave(name.trim(), model, undefined, { type: "chatgpt", create_provider: true, chatgpt_account_id: accountId, keep_selection: !makeDefault });
       if (scope.active && saving.current === operation) onConnected(name.trim());
-    } catch (cause) { if (scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); }
+    } catch (cause) { if (scope.active && !isPluginLifecycleCancellation(cause)) setError({ kind: "save", diagnostic: rawErrorMessage(cause) }); }
     finally { if (scope.active && saving.current === operation) { saving.current = undefined; setBusy(false); } }
   }
   function authenticated(id: string): void { setAccountId(id); setRevision(value => value + 1); }
@@ -106,7 +109,8 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
       <label className="model-connect-field"><span>{t("provider.identifier")}</span><input className="settings-input" value={name} disabled={busy} onChange={event => setName(event.currentTarget.value)} /></label>
       <div className="model-connect-toggle"><span>{t("provider.useAsDefault")}</span><button type="button" className="settings-switch" role="switch" aria-label={t("provider.useAsDefault")} aria-checked={makeDefault} disabled={busy} onClick={() => setMakeDefault(value => !value)}><span className="settings-switch-thumb" /></button></div>
       {authNotice ? <p className="settings-muted-line" role="status">{authNotice}</p> : null}
-      {error ? <p className="settings-error" role="alert">{error}</p> : null}
+      {error ? <SettingsFailure message={t(error.kind === "accounts" ? "settings.accountsLoadFailed" : error.kind === "models" ? "settings.modelsLoadFailed" : "settings.connectionSaveFailed")}
+        diagnostic={error.diagnostic} onRetry={error.kind === "save" ? undefined : () => { setError(undefined); setRevision(value => value + 1); }} retrying={loading || busy} /> : null}
     </div>
   </Surface>;
 }

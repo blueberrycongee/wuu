@@ -32,7 +32,7 @@ func (p *personalActions) connectorAuthority(ctx context.Context, actor personal
 	if err != nil {
 		return "", err
 	}
-	doc, err := services.Settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
+	doc, err := services.Settings.ReadState(ctx, selected.StorageSubject(), pluginsettings.ScopeUser)
 	if err != nil {
 		return "", err
 	}
