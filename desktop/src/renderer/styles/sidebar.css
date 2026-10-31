@@ -2028,19 +2028,13 @@ html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .p
  * contains independently expanded project/folder folds. Text stays in place
  * while the outer clip moves, without a second fade or translate phase. */
 .thread-list-collapse {
-  interpolate-size: allow-keywords;
-  height: 0;
+  --reveal-duration: var(--section-fold-ms);
+  --reveal-easing: var(--section-fold-ease);
   margin-top: 0;
-  min-height: 0;
-  overflow: clip;
-  transition:
-    height var(--section-fold-ms) var(--section-fold-ease),
-    margin-top var(--section-fold-ms) var(--section-fold-ease);
   contain: layout paint;
 }
 
 .thread-list-collapse[data-state="open"] {
-  height: auto;
   margin-top: var(--sidebar-section-body-gap);
 }
 
@@ -2121,6 +2115,10 @@ html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .p
   outline-offset: -2px;
   background: var(--sidebar-thread-list-button-hover-bg);
   color: var(--ink);
+}
+
+.sidebar-draft-reveal {
+  --reveal-gap: var(--sidebar-functional-row-gap);
 }
 
 .sidebar-session-row {
