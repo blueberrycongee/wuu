@@ -479,10 +479,6 @@
   }
 }
 
-.settings-row-control > .settings-language-select {
-  width: auto;
-}
-
 .settings-language-select .settings-language-trigger {
   justify-content: flex-end;
   gap: var(--space-2);
@@ -582,6 +578,11 @@
 .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
   width: var(--settings-control-width);
   max-width: 100%;
+}
+
+/* This choice is a compact trailing label, not a full-width text field. */
+.settings-row-control > .select-menu.settings-language-select {
+  width: auto;
 }
 
 /* Notes below a group: font loading, save failures, list errors. */
