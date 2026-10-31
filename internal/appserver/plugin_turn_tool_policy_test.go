@@ -116,20 +116,20 @@ func TestPluginTurnToolPolicyRejectsUnsupportedAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	params := pluginhost.SessionSendParams{RequestID: "restricted", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "feedback"}, DisableTools: true, IfRunning: "steer"}
-	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || !strings.Contains(err.Error(), "steer") {
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || err.Error() != "disable_tools cannot be used when if_running is steer" {
 		t.Fatalf("steer: %v", err)
 	}
 	params.IfRunning = "queue"
 	if _, err := rt.Sessions.SetEngine(created.SessionID, "codex"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || !strings.Contains(err.Error(), "disable_tools") {
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || err.Error() != "the selected agent engine cannot enforce disable_tools" {
 		t.Fatalf("external: %v", err)
 	}
 	params.DisableTools = false
 	params.ToolPolicy = &pluginhost.SessionTurnToolPolicy{Allow: []string{"read_file"}}
-	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil {
-		t.Fatal("external engine accepted tool_policy")
+	if _, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "observer", params); err == nil || err.Error() != "the selected agent engine cannot enforce tool_policy" {
+		t.Fatalf("external engine policy refusal: %v", err)
 	}
 	if srv.hasQueuedUserTurns(created.SessionID) {
 		t.Fatal("unsupported work queued")

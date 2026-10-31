@@ -978,7 +978,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		params.ToolPolicy = &turnPolicy
 	}
 	if (params.DisableTools || params.ToolPolicy != nil) && params.IfRunning == pluginhost.SessionIfRunningSteer {
-		return pluginhost.SessionSendResult{}, errors.New("disable_tools or tool_policy cannot be used when if_running is steer")
+		return pluginhost.SessionSendResult{}, fmt.Errorf("%s cannot be used when if_running is steer", turnToolRestrictionName(params.DisableTools))
 	}
 	if params.IfRunning == pluginhost.SessionIfRunningSteer && len(params.Input.ContextBlocks) > 0 {
 		return pluginhost.SessionSendResult{}, errors.New("context_blocks cannot be used when if_running is steer")
@@ -997,7 +997,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	if (params.DisableTools || params.ToolPolicy != nil) && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
-		return pluginhost.SessionSendResult{}, errors.New("the selected agent engine cannot enforce disable_tools or tool_policy")
+		return pluginhost.SessionSendResult{}, fmt.Errorf("the selected agent engine cannot enforce %s", turnToolRestrictionName(params.DisableTools))
 	}
 	owner := "plugin:" + pluginID
 	processDelivery := pluginhost.HasProcessSessionDelivery(ctx, params.SessionID)
@@ -1426,4 +1426,13 @@ func (s *Server) restoreUserSessionAuthorization(ctx context.Context, pluginID s
 		resources = append(resources, access.Resource{Kind: "session", ID: strings.TrimSpace(sessionID)})
 	}
 	return s.rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, strings.TrimSpace(sessionID), "user/session/"+operation, resources...)
+}
+
+// Keep the established disable_tools refusal stable: callers distinguish this
+// definite pre-admission rejection from uncertain service transport failures.
+func turnToolRestrictionName(disableTools bool) string {
+	if disableTools {
+		return "disable_tools"
+	}
+	return "tool_policy"
 }

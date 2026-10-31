@@ -2870,7 +2870,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// admitted engine has proved that it can enforce the restriction.
 	if (turnRuntime.DisableTools || turnRuntime.ToolPolicy != nil) && (runner == nil || agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu ||
 		threadRuntime != nil && agentengine.NormalizeEngineID(string(threadRuntime.EngineID)) != agentengine.EngineWuu) {
-		capabilityErr = errors.New("the selected agent engine cannot enforce disable_tools or tool_policy")
+		capabilityErr = fmt.Errorf("the selected agent engine cannot enforce %s", turnToolRestrictionName(turnRuntime.DisableTools))
 	}
 	var capabilities *externalCapabilities
 	if capabilityErr == nil {
@@ -4659,7 +4659,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	if (snapshot.DisableTools || snapshot.ToolPolicy != nil) && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
 		th.mu.Unlock()
 		cancel()
-		return startedThreadTurn{}, false, errors.New("the selected agent engine cannot enforce disable_tools or tool_policy")
+		return startedThreadTurn{}, false, fmt.Errorf("the selected agent engine cannot enforce %s", turnToolRestrictionName(snapshot.DisableTools))
 	}
 	if th.running {
 		th.mu.Unlock()
