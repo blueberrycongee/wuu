@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let app-server shutdown proceed when queued worker launch is stalled, while retaining its state until queued cancellation and worker ownership have settled.
+
 - Show complete font names in the appearance settings and widen their menus.
 
 - Keep desktop error notices readable during pointer and keyboard interaction, report failed link and command actions without inserting errors into message prose, and preserve working browser pages when opening externally fails.

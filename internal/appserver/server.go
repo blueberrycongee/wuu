@@ -300,6 +300,9 @@ type Server struct {
 	afterLifecycleHistoryAppendForTest  func(threadID string)
 	deleteSessionForTest                func(string) (session.Session, error)
 	afterWorkerShutdownStopWavesForTest func()
+	beforeRuntimeInstallForTest         func(*runtime.ThreadRuntime)
+	shutdownDrainTimeoutForTest         time.Duration
+	afterShutdownThreadReleaseForTest   func()
 	beforeQueuedTurnBackgroundForTest   func()
 	beforeQueuedTurnThreadLookupForTest func()
 
@@ -894,9 +897,9 @@ func (s *Server) Close() {
 				cancel()
 			}
 		}
+		stops := make(map[*agentcontrol.AgentControl]<-chan struct{})
 		for control := range controls {
-			control.StopAll()
-			control.YieldWorkerTerminalFinalizations()
+			startShutdownStop(control, stops)
 		}
 
 		s.stopInferenceJournalMaintenance()
@@ -948,13 +951,10 @@ func (s *Server) Close() {
 		clear(s.pendingAgentCompletionTurns)
 		clear(s.drainingAgentCompletionTurns)
 		s.agentCompletionMu.Unlock()
-		s.waitForOwnedShutdown(threads, controls)
+		s.waitForOwnedShutdown(threads, controls, stops)
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
-			s.releaseThreadRuntime(th)
-			if th.state != nil {
-				_ = th.state.Close()
-			}
+			s.releaseThreadAfterShutdown(th, stops)
 		}
 		s.releaseEngineScopes()
 		s.clientInputMu.Lock()
@@ -984,11 +984,92 @@ func (s *Server) Close() {
 // terminal records and execution leases keep the drained state recoverable.
 const ownedShutdownDrainTimeout = time.Minute
 
-func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agentcontrol.AgentControl]struct{}) {
+// A queue launch may be blocked in storage while holding queueDrainMu. StopAll
+// cancels active workers first, then serializes queue compensation on that
+// mutex; keep that compensation owned after bounded Close returns.
+func startShutdownStop(control *agentcontrol.AgentControl, stops map[*agentcontrol.AgentControl]<-chan struct{}) {
+	if control == nil || stops[control] != nil {
+		return
+	}
+	done := make(chan struct{})
+	stops[control] = done
+	go func() {
+		defer close(done)
+		var work sync.WaitGroup
+		work.Add(2)
+		go func() { defer work.Done(); control.StopAll() }()
+		go func() { defer work.Done(); control.YieldWorkerTerminalFinalizations() }()
+		work.Wait()
+	}()
+}
+
+func shutdownStopsActive(stops map[*agentcontrol.AgentControl]<-chan struct{}) bool {
+	for _, done := range stops {
+		select {
+		case <-done:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) releaseThreadAfterShutdown(th *threadState, stops map[*agentcontrol.AgentControl]<-chan struct{}) {
+	if th == nil {
+		return
+	}
+	th.mu.Lock()
+	var control *agentcontrol.AgentControl
+	if th.execRuntime != nil {
+		control = th.execRuntime.AgentControl
+	}
+	binding := th.state
+	th.mu.Unlock()
+	finish := func() {
+		if done := stops[control]; done != nil {
+			<-done
+		}
+		if control != nil {
+			_ = control.WaitOwnedWorkerExecutions(context.Background())
+		}
+		s.releaseThreadRuntime(th)
+		if binding != nil {
+			_ = binding.Close()
+		}
+		if s.afterShutdownThreadReleaseForTest != nil {
+			s.afterShutdownThreadReleaseForTest()
+		}
+	}
+	if done := stops[control]; done != nil {
+		select {
+		case <-done:
+			if control == nil || !control.HasOwnedWorkerExecutions() {
+				finish()
+				return
+			}
+		default:
+		}
+	}
+	if control != nil && control.HasOwnedWorkerExecutions() {
+		go finish()
+		return
+	}
+	if stops[control] != nil {
+		go finish()
+		return
+	}
+	finish()
+}
+
+func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agentcontrol.AgentControl]struct{}, stops map[*agentcontrol.AgentControl]<-chan struct{}) {
 	if s == nil {
 		return
 	}
-	deadline := time.Now().Add(ownedShutdownDrainTimeout)
+	drainTimeout := ownedShutdownDrainTimeout
+	if s.shutdownDrainTimeoutForTest > 0 {
+		drainTimeout = s.shutdownDrainTimeoutForTest
+	}
+	deadline := time.Now().Add(drainTimeout)
 	// Drain/title/side workers can still have admitted a turn immediately before
 	// Close marked the server closed. Wait for those launchers first, then for
 	// every turn/worker lease this Server owns to be released by its normal
@@ -1001,8 +1082,8 @@ func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agen
 	}()
 	select {
 	case <-background:
-	case <-time.After(ownedShutdownDrainTimeout):
-		log.Printf("wuu: shutdown drain timed out after %s: owned background goroutines still running", ownedShutdownDrainTimeout)
+	case <-time.After(drainTimeout):
+		log.Printf("wuu: shutdown drain timed out after %s: owned background goroutines still running", drainTimeout)
 	}
 	// A launcher already inside startBackground may have attached a thread
 	// runtime after the first shutdown snapshot. Once all launchers and turns
@@ -1011,15 +1092,14 @@ func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agen
 	collectThreadAgentControls(threads, controls)
 	for control := range controls {
 		control.BeginShutdown()
-		control.StopAll()
-		control.YieldWorkerTerminalFinalizations()
+		startShutdownStop(control, stops)
 	}
 	if s.afterWorkerShutdownStopWavesForTest != nil {
 		s.afterWorkerShutdownStopWavesForTest()
 	}
-	for shutdownExecutionActive(threads, controls) {
+	for shutdownExecutionActive(threads, controls) || shutdownStopsActive(stops) {
 		if !time.Now().Before(deadline) {
-			log.Printf("wuu: shutdown drain timed out after %s: releasing with owned executions still active", ownedShutdownDrainTimeout)
+			log.Printf("wuu: shutdown drain timed out after %s: releasing with owned executions still active", drainTimeout)
 			forceReleaseAbandonedThreadExecutions(threads)
 			return
 		}
