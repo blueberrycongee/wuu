@@ -249,7 +249,7 @@ function renderSettings(props: {
 }
 
 describe("SettingsView shell", () => {
-  it("refreshes retained build, MCP and remote reads on controls replacement and ignores late retired results", async () => {
+  it("refreshes retained build and remote reads on controls replacement and ignores late retired results", async () => {
     installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
     const base = createApplicationSettingsControls({ host: registry, controller: workbench });
     let completeOld!: (value: RemoteControlSnapshot) => void;
@@ -279,7 +279,7 @@ describe("SettingsView shell", () => {
     expect(previous.getRemoteControlSnapshot).toHaveBeenCalledTimes(2);
     await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: next }));
     expect(next.getBuildInfo).toHaveBeenCalledOnce();
-    expect(next.listMCPServers).toHaveBeenCalledOnce();
+    expect(next.listMCPServers).not.toHaveBeenCalled();
     expect(off).toHaveBeenCalledOnce();
     expect(next.subscribeRemote).toHaveBeenCalledOnce();
     expect(next.getRemoteControlSnapshot).toHaveBeenCalledOnce();
@@ -1163,6 +1163,137 @@ describe("SettingsView model services", () => {
 });
 
 describe("SettingsView advanced settings", () => {
+  it.each(["50.0", "050", "50.5"])("acknowledges saved numeric draft %s and accepts later authoritative updates", async (draft) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
+    const settings = { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false };
+    const initialized = baseInitialized({ advanced_settings: settings });
+    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, draft); });
+    await act(async () => { input.blur(); });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { ...settings, compact_threshold_pct: Number(draft) / 100 } } });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { ...settings, compact_threshold_pct: 0.7 } } });
+    expect(input.value).toBe("70");
+  });
+
+  it("preserves a newer uncommitted numeric draft when a saved response refreshes settings", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let complete!: () => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { complete = done; })).mockResolvedValue(undefined);
+    const initialized = baseInitialized();
+    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.blur(); });
+    act(() => { input.focus(); setInputValue(input, "60"); });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false, compact_threshold_pct: 0.5, compact_keep_recent_tokens: 12345 } } });
+    await act(async () => { complete(); });
+    expect(input.value).toBe("60");
+    expect(container.querySelectorAll<HTMLInputElement>(".settings-input-num")[1].value).toBe("12345");
+    await act(async () => { input.blur(); });
+    expect(onAdvancedSave).toHaveBeenLastCalledWith({ compact_threshold_pct: 0.6 });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves the newer auto-compaction choice when an earlier save refreshes settings", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let complete!: () => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { complete = done; })).mockResolvedValue(undefined);
+    const initialized = baseInitialized();
+    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: true } } });
+    await act(async () => { complete(); });
+    expect(container.querySelector(".settings-switch")!.getAttribute("aria-checked")).toBe("true");
+  });
+
+
+  it.each(["page", "newer toggle"] as const)("retires auto-compaction rollback after a %s", async (replacement) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    const props = { initialized: baseInitialized(), page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    if (replacement === "page") {
+      renderSettings({ ...props, page: "general" });
+      renderSettings(props);
+    } else {
+      act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+      await act(async () => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    }
+    await act(async () => { reject(new Error("retired toggle failed")); });
+    expect(container.querySelector(".settings-switch")!.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).not.toContain("retired toggle failed");
+  });
+
+  it("commits focused Enter once and allows retry after a failed save", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "advanced", onAdvancedSave });
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(1);
+    await act(async () => { reject(new Error("retry this save")); });
+    expect(container.textContent).toContain("retry this save");
+    act(() => { input.focus(); input.blur(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("retry this save");
+  });
+
+  it.each(["page", "controls"] as const)("retires numeric save feedback on %s replacement without losing the draft", async (replacement) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    const props = { initialized: baseInitialized(), page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.blur(); });
+    const next = replacement === "controls" ? { ...props, controls: createApplicationSettingsControls({ host: registry, controller: workbench }) } : props;
+    if (replacement === "page") renderSettings({ ...props, page: "general" });
+    renderSettings(next);
+    await act(async () => { reject(new Error("retired save failed")); });
+    expect(container.textContent).not.toContain("retired save failed");
+    const restored = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    expect(restored.value).toBe("50");
+    act(() => { restored.focus(); restored.blur(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["resolve", "reject"] as const)("ignores an older numeric save that settles by %s after the newer save", async (settlement) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done, fail) => { resolve = done; reject = fail; })).mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "advanced", onAdvancedSave });
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.blur(); });
+    act(() => { input.focus(); setInputValue(input, "60"); });
+    await act(async () => { input.blur(); });
+    await act(async () => { if (settlement === "resolve") resolve(); else reject(new Error("older save failed")); });
+    expect(input.value).toBe("60");
+    expect(container.textContent).not.toContain("older save failed");
+    act(() => { input.focus(); input.blur(); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+  });
+
+
   it("renders compaction controls and saves each field on commit", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -1754,6 +1885,29 @@ describe("SettingsView About section", () => {
     act(() => root!.render(null));
     await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
     expect(api.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("loads MCP only while its page is open and retires pending login on navigation", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0 }] });
+    let admitted!: (result: { authorization_url: string; state: string }) => void;
+    api.startMCPAuth = vi.fn().mockReturnValue(new Promise(resolve => { admitted = resolve; }));
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    const show = (page: SettingsPage) => renderSettings({ initialized: baseInitialized(), page, controls, locale: "en-US" });
+    await act(async () => show("general"));
+    expect(api.listMCPServers).not.toHaveBeenCalled();
+    await act(async () => show("mcp"));
+    expect(api.listMCPServers).toHaveBeenCalledOnce();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')!.click());
+    await act(async () => show("general"));
+    await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
+    expect(api.openExternal).not.toHaveBeenCalled();
+    await act(async () => show("mcp"));
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('.settings-mcp-code-input')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')?.disabled).toBe(false);
   });
 
   it("ignores a retired MCP failure refresh when settings controls change", async () => {
