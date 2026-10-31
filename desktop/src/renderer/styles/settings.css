@@ -419,6 +419,14 @@
   gap: var(--space-2) var(--space-6);
 }
 
+/* Let the page title lead the inset section column without shifting content.
+ * Compensating bottom padding preserves the first section's vertical position. */
+.settings-page .settings-page-header {
+  margin-inline-start: calc(var(--space-4) * -1);
+  margin-block-start: calc(var(--space-2) * -1);
+  padding-block-end: var(--space-2);
+}
+
 .settings-page-heading {
   display: grid;
   min-width: 0;
