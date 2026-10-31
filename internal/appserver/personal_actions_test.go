@@ -115,12 +115,10 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prefix := "personal.v1." + personalHash([]byte(f.rt.UserSpaceID))[:28] + "."
 			_, err = pluginsettings.UpdateState(f.rt.DataRoot, f.rt.RootDir, "plugin:bundled:personal", pluginsettings.ScopeUser, func(values map[string]string) error {
-				agent, _ := json.Marshal(map[string]any{"agent_id": "main", "user_space_id": f.rt.UserSpaceID, "main_session_id": f.id, "status": "active"})
-				task, _ := json.Marshal(map[string]any{"task_id": "approval-task", "agent_id": "main", "user_space_id": f.rt.UserSpaceID, "requirements_revision": 1, "state": "running", "goal": "Save requested note", "source": map[string]any{"session_id": f.id, "message_seq": f.sourceSeq, "message_binding": "host_turn"}, "execution": map[string]any{"session_id": worker, "request_id": "original-worker-turn", "requirements_revision": 1}})
-				values[prefix+"agent.main"] = string(agent)
-				values[prefix+"task.approval-task"] = string(task)
+				facts := personalExecutionFacts{SessionID: worker, AgentID: "main", MainSessionID: f.id, Active: true, Task: &personalTaskFacts{ID: "approval-task", Revision: 1, RunID: "original-worker-turn", Active: true, Goal: "Save requested note", SourceSessionID: f.id, SourceMessageSeq: f.sourceSeq}}
+				raw, _ := json.Marshal(facts)
+				values["fixture.facts."+worker] = string(raw)
 				return nil
 			})
 			if err != nil {
@@ -209,13 +207,17 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 type personalReceiptServiceClient struct {
 	pluginClientRequestTestRuntime
 	calls atomic.Int32
+	facts func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error)
 }
 
 func (c *personalReceiptServiceClient) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return []pluginhost.ServiceDescriptor{{Name: "personal.agents", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "actions.sync", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}, {Name: "actions.resume", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}}}}
+	return []pluginhost.ServiceDescriptor{{Name: "personal.agents", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "observe-execution", InputSchema: "personal.execution-facts.input.v1", OutputSchema: "personal.execution-facts.output.v1"}, {Name: "legacy-memory", InputSchema: "personal.legacy-memory.input.v1", OutputSchema: "personal.legacy-memory.output.v1"}, {Name: "actions.sync", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}, {Name: "actions.resume", InputSchema: "personal.action.input.v1", OutputSchema: "personal.action.output.v1"}}}}
 }
 func (c *personalReceiptServiceClient) RequiredServices() []pluginhost.ServiceRequirement { return nil }
-func (c *personalReceiptServiceClient) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (c *personalReceiptServiceClient) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if params.Method == "observe-execution" || params.Method == "legacy-memory" {
+		return c.facts(ctx, params)
+	}
 	c.calls.Add(1)
 	return json.RawMessage(`{"accepted":true}`), nil
 }

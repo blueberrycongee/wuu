@@ -3147,3 +3147,4 @@ export * from "./resource-policy.js";
 export * from "./execution-authorization.js";
 
 export * from "./personal-memory.js";
+export * from "./personal-authority.js";

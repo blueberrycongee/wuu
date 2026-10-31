@@ -2,7 +2,10 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/permissionpolicy"
@@ -59,7 +62,9 @@ func (*personalTestSessionConsumer) RequiredServices() []pluginhost.ServiceRequi
 
 func attachPersonalBoundaryGeneration(t *testing.T, rt *runtime.Session, decorateDocuments ...func(*persistence.Service) pluginhost.Client) *personalReceiptServiceClient {
 	t.Helper()
-	provider := &personalReceiptServiceClient{pluginClientRequestTestRuntime: pluginClientRequestTestRuntime{id: "personal"}}
+	providerID := rt.ActivePlugins[0].ID
+	provider := &personalReceiptServiceClient{pluginClientRequestTestRuntime: pluginClientRequestTestRuntime{id: providerID}}
+	provider.facts = fixturePersonalFacts(rt, providerID)
 	documents := persistence.NewService("fixture.documents", filepath.Join(rt.SessionDir, "documents"), "sqlite")
 	var selectedDocuments pluginhost.Client = documents
 	if len(decorateDocuments) > 0 {
@@ -79,4 +84,44 @@ func attachPersonalBoundaryGeneration(t *testing.T, rt *runtime.Session, decorat
 		selectedDocuments,
 	)
 	return provider
+}
+
+const personalMemoryPrefix = "personal.records.v1."
+
+// The fixture provider deliberately uses a different storage schema from the
+// bundled plugin. Consumers only see the public business observation.
+func fixturePersonalFacts(rt *runtime.Session, providerID string) func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	return func(ctx context.Context, call pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+		subject := "plugin:bundled:" + providerID
+		doc, err := pluginsettings.ReadState(rt.ProductDataRoot(), rt.RootDir, subject, pluginsettings.ScopeUser)
+		if err != nil {
+			return nil, err
+		}
+		if call.Method == "legacy-memory" {
+			records := map[string]string{}
+			for key, value := range doc.Values {
+				if strings.HasPrefix(key, personalMemoryPrefix) {
+					records[strings.TrimPrefix(key, personalMemoryPrefix)] = value
+				}
+			}
+			return json.Marshal(records)
+		}
+		var input struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(call.Params, &input); err != nil {
+			return nil, err
+		}
+		if value := doc.Values["fixture.facts."+input.SessionID]; value != "" {
+			return json.RawMessage(value), nil
+		}
+		metadata, found, err := rt.Sessions.WithContext(ctx).Find(input.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, errors.New("unknown fixture session")
+		}
+		return json.Marshal(personalExecutionFacts{SessionID: input.SessionID, AgentID: metadata.AgentID, MainSessionID: input.SessionID, Active: true})
+	}
 }

@@ -200,6 +200,8 @@ test('packed provider clients preserve wire values and callback scope', {timeout
       else assert.fail(`unexpected service ${service}/${method}`);
       send({id:message.id,result:reply});
     }
+    assert.deepEqual(result.executionFacts,{session_id:'packed-session',agent_id:'packed-agent',main_session_id:'packed-session',active:true});
+    assert.deepEqual(result.authorityMethods.map(method => method.name),['observe-execution','legacy-memory']);
     assert.deepEqual(result.effectFence,{id:'effect-one',decision:{outcome:'deny',reason:'bounded policy'}});
     assert.deepEqual(result.stewardship,stewardship);
     assert.equal(result.grantPolicy.default_lifetime_seconds,3600);

@@ -229,7 +229,8 @@ describe("sidebar collapse-state independence", () => {
     expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
     act(() => host.unload("alternate-settings"));
     expect(container.textContent).not.toContain("Selected UI surface is unavailable");
-    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternate-settings:fixture");
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(notice).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
   });
 

@@ -39,6 +39,30 @@ Use a regular `.ts` file, not a symlink. Only Node builtins and `@wuu/plugin-sdk
 
 Source changes are debounced and reconciled every two seconds, including after filesystem-watch errors. `--poll 500ms` changes that positive interval; `--watch=false` publishes once and exits. Ctrl+C stops watching, leaving the published development generation available. Disable it through Skills & Plugins or `wuu plugin disable <id>` using the ID printed by the command.
 
+### Recover an older development generation
+
+Development receipts created before storage-owner bindings can still load with a
+`plugin:dev:<id>` storage identity. If the installed plugin already received an
+ownership transfer, that older generation can fail with `plugin storage transfer
+conflicts with existing ownership metadata`; restarting alone does not update its
+receipt.
+
+When the existing transfer belongs to the installed plugin and the development
+identity has no separate state, republish the same authorized source with the
+current Wuu CLI and the same `WUU_HOME`:
+
+```bash
+wuu plugin dev --watch=false /path/to/authorized/source
+```
+
+Normal publication validates the candidate and writes a signed storage-owner
+binding. It does not delete ownership metadata or replay completed transfers over
+updated or forgotten records. Verify the published plugin's activation before
+retrying its UI. If the development identity already has separate data, or the
+conflict names another owner, resolve that ownership explicitly rather than
+using this procedure to combine namespaces. Never delete storage files, fences,
+or receipts to suppress the error.
+
 ## Let the agent add a tool
 
 In a Wuu-engine conversation, the deferred `plugin_manager` tool provides a scoped development path:

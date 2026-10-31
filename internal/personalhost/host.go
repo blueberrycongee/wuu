@@ -30,6 +30,9 @@ type Calendar interface {
 	Close() error
 }
 type Options struct {
+	// Accounts routes account operations to the selected generation. When set,
+	// Calendar and Connectors are not consulted.
+	Accounts func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Authorize is the selected resource policy. Live owner transport admission
 	// and verified session identity are additional proof, never substitutes.
 	Authorize                     func(context.Context, string, string) error
@@ -52,6 +55,8 @@ type Host struct {
 	options                  Options
 	closed                   bool
 	closeErr                 error
+	calls                    sync.WaitGroup
+	closeDone                chan struct{}
 	authorizationDiagnostics map[string]personalcalendar.Failure
 }
 
@@ -60,23 +65,36 @@ func New(binding userspace.Binding, options Options) *Host {
 }
 func (h *Host) Close() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.closed {
+		done := h.closeDone
+		h.mu.Unlock()
+		<-done
 		return h.closeErr
 	}
 	h.closed = true
+	h.closeDone = make(chan struct{})
+	h.mu.Unlock()
+	h.calls.Wait()
 	if h.options.Calendar != nil {
 		h.closeErr = h.options.Calendar.Close()
 	}
 	if h.options.Connectors != nil {
 		h.closeErr = errors.Join(h.closeErr, h.options.Connectors.Close())
 	}
+	close(h.closeDone)
 	return h.closeErr
 }
 
 // Call's verifiedSession is resolved from host session metadata before dispatch.
 // Control operations derive their actor from the separate owner admission.
 func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, verifiedSession string) (json.RawMessage, error) {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return nil, errors.New("Personal host is closed")
+	}
+	h.mu.Unlock()
+
 	if _, _, known := OperationAccess(operation); !known {
 		return nil, errors.New("Personal host operation is unavailable")
 	}
@@ -88,6 +106,29 @@ func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, 
 	}
 	if err := h.options.Authorize(ctx, operation, verifiedSession); err != nil {
 		return nil, err
+	}
+
+	if h.options.Accounts != nil && (strings.HasPrefix(operation, "calendar.") || strings.HasPrefix(operation, "connectors.")) {
+		h.mu.Lock()
+		if h.closed {
+			h.mu.Unlock()
+			return nil, errors.New("Personal host is closed")
+		}
+		h.calls.Add(1)
+		h.mu.Unlock()
+		defer h.calls.Done()
+		_, execution, _ := OperationAccess(operation)
+		if h.binding.Validate() != nil || !h.binding.IsUser() || h.binding.Domain() != "personal" {
+			return nil, errors.New("Personal host binding is required")
+		}
+		if execution {
+			if verifiedSession == "" {
+				return nil, errors.New("host-resolved execution is required")
+			}
+		} else if err := clientauthority.RequireOwner(ctx, h.binding); err != nil {
+			return nil, err
+		}
+		return h.options.Accounts(ctx, operation, raw, verifiedSession)
 	}
 
 	if strings.HasPrefix(operation, "memory.") {

@@ -1,3 +1,4 @@
+import type { UIRegisterFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -100,6 +101,7 @@ import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from 
 import { showErrorToast } from "./Toast";
 
 export interface WorkspacePanelLayout {
+  registerFocusTarget?: UIRegisterFocusTargetV1;
   open: boolean;
   covered?: boolean;
   toolsVisible?: boolean;
@@ -251,7 +253,7 @@ function WorkspacePanelContent({
   application, slots, open, covered = false, toolsVisible = true, present, prewarm = false,
   globalized, sheetPhase = "docked", onToggleGlobalize, canExitGlobalized = true,
   browserOverlaySuppressed = false, onDirtyFileTabsChange, conversationTabVisible = false,
-  documentComposer = false, pane, runtimeControlsRef,
+  documentComposer = false, pane, runtimeControlsRef, registerFocusTarget,
 }: WorkspacePanelLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const { t } = useI18n();
   const [toolRailCollapsed, setToolRailCollapsed] = useState(
@@ -262,6 +264,7 @@ function WorkspacePanelContent({
     setToolRailCollapsed(collapsed);
     window.localStorage.setItem(WORKSPACE_TOOL_RAIL_COLLAPSED_KEY, String(collapsed));
   };
+  const panelRef = useRef<HTMLElement>(null);
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const preview = snapshot.previewWorkspace;
   // Detach public immutable display data before using the existing mutable leaf renderers.
@@ -375,6 +378,14 @@ function WorkspacePanelContent({
     [...(conversationTab ? [WORKSPACE_CONVERSATION_TAB_ID] : []), ...visibleTabs.map((tab) => tab.id)],
     addButtonRef,
   );
+  useLayoutEffect(() => registerFocusTarget?.({
+    focus: options => {
+      const tab = tabListRef.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
+      if (!open || covered || !tab) return false;
+      tab.focus(options); return true;
+    },
+    contains: element => panelRef.current?.contains(element) ?? false,
+  }), [registerFocusTarget, open, covered, tabListRef]);
 
   useLayoutEffect(() => {
     const content = activeTab?.kind === "artifact" ? artifactContentRef.current : fileContentRef.current;
@@ -776,6 +787,7 @@ function WorkspacePanelContent({
       </nav>
     ) : null}
     <aside
+      ref={panelRef}
       className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={conversationActive ? "conversation" : activeTab?.kind ?? "picker"}

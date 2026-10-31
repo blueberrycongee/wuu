@@ -50,6 +50,8 @@ type Broker struct {
 	mu                sync.Mutex
 	activeMu          sync.Mutex
 	oauthMu           sync.Mutex
+	oauthAdmissionMu  sync.Mutex
+	oauthWork         sync.WaitGroup
 	attempts          map[string]*oauthPending
 	active            map[string]context.CancelFunc
 	authorization     func(context.Context, Actor) (string, error)
@@ -96,8 +98,26 @@ func (b *Broker) SetAuthorizationBoundary(boundary AuthorizationBoundary) {
 	b.withAuthorization = boundary
 }
 
-func (b *Broker) Close() error { b.cancel(); return nil }
-func hash(s string) string     { v := sha256.Sum256([]byte(s)); return hex.EncodeToString(v[:]) }
+// Close fences new OAuth admissions before cancellation, then drains callback
+// commits and transport teardown while the owning provider still has credentials.
+func (b *Broker) Close() error {
+	b.oauthAdmissionMu.Lock()
+	b.cancel()
+	b.oauthAdmissionMu.Unlock()
+	b.oauthWork.Wait()
+	return nil
+}
+
+func (b *Broker) beginOAuth() bool {
+	b.oauthAdmissionMu.Lock()
+	defer b.oauthAdmissionMu.Unlock()
+	if b.lifetime.Err() != nil {
+		return false
+	}
+	b.oauthWork.Add(1)
+	return true
+}
+func hash(s string) string { v := sha256.Sum256([]byte(s)); return hex.EncodeToString(v[:]) }
 func validateActor(a Actor) error {
 	if a.ProductDomain != "personal" || a.UserSpaceID == "" || a.SessionID == "" || len(a.UserSpaceID) > 512 {
 		return fault("personal_scope_required")

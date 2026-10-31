@@ -59,7 +59,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		{Name: ArtifactServiceName, MajorVersion: 1},
 		{Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor},
 	}}
-	return []pluginhost.Client{tool, loop, state, &runtimeServiceConsumer{id: modelExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: selectedModelService, MajorVersion: 1, Required: true}, {Name: capacityPolicyService, MajorVersion: 1, Required: true}, {Name: capacityResourceService, MajorVersion: 1, Required: true}}}, &runtimeServiceConsumer{id: engineExecutionConsumer, state: pluginhost.StatePrepared}}
+	return []pluginhost.Client{tool, loop, state, NewClientInputReceiptsConsumer(), &runtimeServiceConsumer{id: modelExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: selectedModelService, MajorVersion: 1, Required: true}, {Name: capacityPolicyService, MajorVersion: 1, Required: true}, {Name: capacityResourceService, MajorVersion: 1, Required: true}}}, &runtimeServiceConsumer{id: engineExecutionConsumer, state: pluginhost.StatePrepared}}
 }
 
 func (c *runtimeServiceConsumer) ID() string { return c.id }
@@ -98,4 +98,22 @@ func selectsRuntimeModule(host *pluginhost.Host, id string) bool {
 		}
 	}
 	return false
+}
+
+// ClientInputReceiptsConsumer is the composition identity of the host observer.
+// Persistence remains the selected session.domain implementation. Normal UI and
+// session endpoints do not accept caller-supplied model-context observations.
+const ClientInputReceiptsConsumer = "wuu.client-input-receipts"
+
+// NewClientInputReceiptsConsumer explicitly selects durable input receipts for
+// embedded hosts. Product identity alone never enables this capability.
+func NewClientInputReceiptsConsumer() pluginhost.Client {
+	return &runtimeServiceConsumer{id: ClientInputReceiptsConsumer, state: pluginhost.StatePrepared}
+}
+
+// ClientInputReceiptsSelected reports composition selection, including a failed
+// selected consumer, so dependency failures are surfaced rather than downgraded
+// into non-durable input acceptance.
+func ClientInputReceiptsSelected(host *pluginhost.Host) bool {
+	return host != nil && selectsRuntimeModule(host, ClientInputReceiptsConsumer)
 }
