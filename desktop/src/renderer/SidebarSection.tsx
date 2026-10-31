@@ -34,7 +34,7 @@ export function SidebarCollapseBody({
     prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280) + 32);
 
   if (!children) return null;
-  const collapseClassName = ["thread-list-collapse", className].filter(Boolean).join(" ");
+  const collapseClassName = ["motion-height-reveal", "thread-list-collapse", className].filter(Boolean).join(" ");
   return (
     <div
       className={collapseClassName}
