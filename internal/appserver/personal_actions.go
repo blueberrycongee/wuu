@@ -25,7 +25,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -230,7 +229,7 @@ func (p *personalActions) withAuthority(ctx context.Context, scope personalrevie
 	}
 	defer state.Close()
 	ctx = runtime.WithInvocationState(ctx, state)
-	selected, services, err := p.selectedTaskProvider(state)
+	selected, _, err := p.selectedTaskProvider(state)
 	if errors.Is(err, errPersonalTaskInactive) {
 		// Definitive lifecycle revocation invalidates unclaimed approvals. It
 		// supplies no task data or positive authority and cannot dispatch effects.
@@ -241,11 +240,7 @@ func (p *personalActions) withAuthority(ctx context.Context, scope personalrevie
 	}
 	// This is a selected-provider snapshot, not an execution fence. Dispatch
 	// requires the distinct WithExecutionAuthority boundary in the review engine.
-	doc, err := services.Settings.ReadState(ctx, selected.StorageSubject(), pluginsettings.ScopeUser)
-	if err != nil {
-		return err
-	}
-	authority, err := p.authority(ctx, state, selected, scope.SessionID, scope.TaskID, doc)
+	authority, err := p.authority(ctx, state, selected, scope.SessionID, scope.TaskID)
 	if err != nil {
 		return err
 	}
@@ -259,7 +254,11 @@ func (p *personalActions) withAuthority(ctx context.Context, scope personalrevie
 }
 
 func personalHash(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
-func (p *personalActions) authority(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, sessionID, taskID string, doc pluginsettings.StateDocument) (personalreview.Authority, error) {
+func (p *personalActions) authority(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, sessionID, taskID string) (personalreview.Authority, error) {
+	return p.authorityWithFacts(ctx, state, selected, sessionID, taskID, nil)
+}
+
+func (p *personalActions) authorityWithFacts(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, sessionID, taskID string, observed *personalExecutionFacts) (personalreview.Authority, error) {
 	owner := "plugin:" + selected.ID
 	b := p.server.rt.UserBinding()
 	a := personalreview.Authority{Domain: b.Domain(), OwnerID: p.ownerID(), Scope: personalreview.Scope{SpaceID: b.UserSpaceID, SessionID: sessionID}, Active: true}
@@ -280,70 +279,30 @@ func (p *personalActions) authority(ctx context.Context, state *runtime.State, s
 	sourceSession := sessionID
 	sourceSeq := 0
 	contextParts := []string{metadata.ID, metadata.CWD, metadata.EngineID, metadata.PermissionMode, selected.ID, selected.SubjectID, selected.Fingerprint}
-	taskFound := false
-	prefix := "personal.v1." + personalHash([]byte(b.UserSpaceID))[:28] + "."
-	owningAgent := metadata.AgentID
-	var routineID string
-	var routineRevision int64
-	for key, raw := range doc.Values {
-		if !strings.HasPrefix(key, prefix+"task.") && !strings.HasPrefix(key, prefix+"agent.") {
-			continue
+	if observed == nil {
+		facts, err := p.executionFacts(ctx, state, sessionID)
+		if err != nil {
+			return a, err
 		}
-		var item struct {
-			UserSpaceID          string `json:"user_space_id"`
-			TaskID               string `json:"task_id"`
-			AgentID              string `json:"agent_id"`
-			MainSessionID        string `json:"main_session_id"`
-			State                string `json:"state"`
-			Status               string `json:"status"`
-			Goal                 string `json:"goal"`
-			RoutineID            string `json:"routine_id"`
-			RoutineRevision      int64  `json:"routine_revision"`
-			RequirementsRevision int64  `json:"requirements_revision"`
-			Cancel               bool   `json:"cancel_requested"`
-			Source               struct {
-				SessionID  string `json:"session_id"`
-				MessageSeq int    `json:"message_seq"`
-				Binding    string `json:"message_binding"`
-			} `json:"source"`
-			Execution struct {
-				SessionID            string `json:"session_id"`
-				RequestID            string `json:"request_id"`
-				RequirementsRevision int64  `json:"requirements_revision"`
-			} `json:"execution"`
+		observed = &facts
+	}
+	facts := *observed
+	if facts.AgentID != metadata.AgentID || !facts.Active {
+		a.Active = false
+	}
+	if task := facts.Task; task != nil {
+		a.Scope.TaskID, a.Scope.RequirementsRevision = task.ID, task.Revision
+		a.Active = a.Active && task.Active
+		sourceSession, sourceSeq = task.SourceSessionID, task.SourceMessageSeq
+		contextParts = append(contextParts, task.ID, task.Goal, strconv.FormatInt(task.Revision, 10), task.RunID)
+		if task.RoutineID != "" {
+			contextParts = append(contextParts, task.RoutineID, strconv.FormatInt(task.RoutineRevision, 10))
 		}
-		if json.Unmarshal([]byte(raw), &item) != nil || item.UserSpaceID != b.UserSpaceID {
-			continue
-		}
-		if item.MainSessionID == sessionID && item.Status != "active" {
-			a.Active = false
-		}
-		if item.TaskID == "" || item.Execution.SessionID != sessionID {
-			continue
-		}
-		if taskFound {
-			return a, errors.New("ambiguous Personal execution ownership")
-		}
-		taskFound = true
-		a.Scope.TaskID = item.TaskID
-		a.Scope.RequirementsRevision = item.RequirementsRevision
-		a.Active = !item.Cancel && item.RequirementsRevision > 0 && item.Execution.RequirementsRevision == item.RequirementsRevision && item.State != "stopped" && item.State != "completed" && item.State != "failed"
-		sourceSession = item.Source.SessionID
-		owningAgent = item.AgentID
-		routineID = item.RoutineID
-		routineRevision = item.RoutineRevision
-		// Historical task versions did not retain each changed human source. Those
-		// remain manually reviewable, never eligible for inferred automatic consent.
-		if item.Source.Binding == "host_turn" && item.RequirementsRevision == 1 {
-			sourceSeq = item.Source.MessageSeq
-		}
-		contextParts = append(contextParts, item.TaskID, item.Goal, strconv.FormatInt(item.RequirementsRevision, 10), item.Execution.RequestID)
-		if granted, delegated := runtime.ExecutionAuthorizationScope(ctx); delegated && (granted.TaskID != item.TaskID || granted.RunID != item.Execution.RequestID || granted.Revision != item.RequirementsRevision) {
+		if granted, delegated := runtime.ExecutionAuthorizationScope(ctx); delegated && (granted.TaskID != task.ID || granted.RunID != task.RunID || granted.Revision != task.Revision) {
 			a.Active = false
 			a.BoundaryReason = "task execution no longer matches admitted run"
 		}
-	}
-	if !taskFound {
+	} else {
 		if metadata.ParentID != "" {
 			a.Active = false
 			a.BoundaryReason = "background task authority is unavailable"
@@ -353,46 +312,7 @@ func (p *personalActions) authority(ctx context.Context, state *runtime.State, s
 		if strings.HasPrefix(taskID, prefix) {
 			sourceSeq, _ = strconv.Atoi(strings.TrimPrefix(taskID, prefix))
 		}
-		a.Scope.TaskID = prefix + strconv.Itoa(sourceSeq)
-		a.Scope.RequirementsRevision = 1
-	}
-
-	var agentState struct {
-		AgentID     string `json:"agent_id"`
-		UserSpaceID string `json:"user_space_id"`
-		Status      string `json:"status"`
-	}
-	if raw, ok := doc.Values[prefix+"agent."+owningAgent]; ok {
-		if json.Unmarshal([]byte(raw), &agentState) != nil || agentState.AgentID != owningAgent || agentState.UserSpaceID != b.UserSpaceID || agentState.Status != "active" {
-			a.Active = false
-		}
-	} else if taskFound {
-		a.Active = false
-	}
-	if routineID != "" {
-		var routine struct {
-			RoutineID           string `json:"routine_id"`
-			AgentID             string `json:"agent_id"`
-			ConfigRevision      int64  `json:"config_revision"`
-			Status              string `json:"status"`
-			Cron                string `json:"cron"`
-			CancellationPending bool   `json:"cancellation_pending"`
-			SourceBlocked       bool   `json:"source_blocked"`
-			Source              *struct {
-				TimeMax string `json:"time_max"`
-			} `json:"source"`
-		}
-		raw, ok := doc.Values["personal.routines.v1."+personalHash([]byte(b.UserSpaceID))[:28]+".routine."+routineID]
-		if !ok || json.Unmarshal([]byte(raw), &routine) != nil || routine.RoutineID != routineID || routine.AgentID != owningAgent || routine.ConfigRevision != routineRevision || routine.CancellationPending || routine.SourceBlocked || (routine.Status != "active" && !(routine.Status == "completed" && routine.Cron == "" && routine.Source == nil)) {
-			a.Active = false
-		}
-		if routine.Source != nil {
-			until, err := time.Parse(time.RFC3339, routine.Source.TimeMax)
-			if err != nil || !time.Now().Before(until) {
-				a.Active = false
-			}
-		}
-		contextParts = append(contextParts, routineID, strconv.FormatInt(routineRevision, 10))
+		a.Scope.TaskID, a.Scope.RequirementsRevision = prefix+strconv.Itoa(sourceSeq), 1
 	}
 	if sourceSeq > 0 {
 		sourceMeta, ok, err := state.Sessions.Find(sourceSession)

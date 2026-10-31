@@ -721,3 +721,21 @@ registry 请求不占用串行 RPC 分派循环，无关发送和读取无需等
 下载；RPC 下载继承请求 context，连接对应的 server 关闭时会取消并等待其退出。
 没有独立的包下载取消 RPC。
 官方和社区 npm 包都走这些公开契约，安装不会授予内置包特权。
+
+### Personal 执行事实
+
+替代 `personal.agents@1` 的 provider 实现 `observe-execution`，输入为
+`{session_id}`，返回 SDK 的 `PersonalExecutionFacts`。provider 负责解析自己的
+agent、任务、需求版本、run、活动/取消状态、所属 routine 和准确的原始用户消息来源。
+宿主独立验证 session 所有权、真实历史、选中的 generation 和执行授权。业务事实本身
+不授予执行权限。
+
+使用现有 Personal review/memory coordinator 时，应将这些持久化事实存放在 provider
+自己的**用户域 host storage** 中；键和值的格式由 provider 决定。执行副作用时，
+coordinator 保留选中的 provider，并对该不透明存储、session 和 review 状态持有
+持久化 inspection。一次事实读取不是事务或执行保护。替代存储后端必须保持 host
+storage 的 inspection 契约；内存缓存不能成为事实读取的独立权威。
+
+`legacy-memory` 返回待迁入选中 memory journal 的旧记录 ID 到序列化值的映射；没有
+旧数据则返回空对象。coordinator 不再解释其他插件的私有存储键。两个方法都不修改
+状态、不恢复任务。provider 被禁用或不可用时，不得偷偷回退到内置实现。

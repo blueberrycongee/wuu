@@ -514,6 +514,12 @@ function personalMemory(host) {
   };
 }
 
+// packages/plugin-sdk/src/personal-authority.ts
+var PERSONAL_AUTHORITY_METHODS = [
+  { name: "observe-execution", input_schema: "personal.execution-facts.input.v1", output_schema: "personal.execution-facts.output.v1" },
+  { name: "legacy-memory", input_schema: "personal.legacy-memory.input.v1", output_schema: "personal.legacy-memory.output.v1" }
+];
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var SESSION_ATTENTION_CAPABILITY = "session.attention";
@@ -2936,7 +2942,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
     return {
       protocol_version: 3,
       required_services: [requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
-      provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map((name) => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [{ name: "resolve-lineage", input_schema: "execution.lineage.resolve.input.v1", output_schema: "execution.lineage.resolve.output.v1" }, ...methodNames.map((name) => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
+      provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map((name) => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [...PERSONAL_AUTHORITY_METHODS, { name: "resolve-lineage", input_schema: "execution.lineage.resolve.input.v1", output_schema: "execution.lineage.resolve.output.v1" }, ...methodNames.map((name) => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
         { id: "agent.system_prompt.section", kind: "transform", version: 1 },
         { id: clientCapability, kind: "decision", version: 1 },
@@ -4343,8 +4349,40 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
     }
     if (call.service === "automation.trigger" && call.method === "fire") return this.routines.fire(object3(call.params));
     if (call.service !== service) throw new Error("unknown service");
+    if (call.method === "observe-execution") return this.observeExecution(text3(object3(call.params), "session_id", true));
+    if (call.method === "legacy-memory") {
+      const prefix = "personal.records.v1.";
+      const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
+      const records = {};
+      for (const key of keys.filter((key2) => key2.startsWith(prefix))) {
+        const { value } = await this.host.call("host.storage.get", { scope: "user", key });
+        if (value !== null) records[key.slice(prefix.length)] = value;
+      }
+      return records;
+    }
     if (call.method === "resolve-lineage") return this.resolveLineage(call.params);
     return this.request(call.method.replaceAll("-", "_"), object3(call.params), executionHost, execution);
+  }
+  async observeExecution(sessionID) {
+    const tasks = (await this.list("task")).filter((task2) => task2.user_space_id === this.space && task2.execution.session_id === sessionID);
+    if (tasks.length > 1) throw new Error("ambiguous Personal execution ownership");
+    const task = tasks[0];
+    const agents = await this.list("agent");
+    const agent = agents.find((agent2) => agent2.user_space_id === this.space && (task ? agent2.agent_id === task.agent_id : agent2.main_session_id === sessionID));
+    if (!agent) throw new Error("Personal execution has no owning agent");
+    const facts = { session_id: sessionID, agent_id: agent.agent_id, main_session_id: agent.main_session_id, active: agent.status === "active" };
+    if (task) facts.task = {
+      id: task.task_id,
+      revision: task.requirements_revision,
+      run_id: task.execution.request_id,
+      active: !task.cancel_requested && task.requirements_revision > 0 && task.execution.requirements_revision === task.requirements_revision && !terminalTask(task) && await this.routines.canExecute(task),
+      goal: task.goal,
+      source_session_id: task.source.session_id,
+      source_message_seq: task.source.message_binding === "host_turn" && task.requirements_revision === 1 ? task.source.message_seq ?? 0 : 0,
+      routine_id: task.routine_id,
+      routine_revision: task.routine_revision
+    };
+    return facts;
   }
   async resolveLineage(input) {
     if (!input || !["exact-run", "task-lineage"].includes(input.kind) || !input.task_id || input.session_id !== void 0 && typeof input.session_id !== "string" || input.kind === "exact-run" && !input.request_id) throw new Error("invalid lineage request");

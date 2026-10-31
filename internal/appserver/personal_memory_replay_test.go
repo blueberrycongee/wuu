@@ -21,9 +21,8 @@ import (
 func newPersonalMemoryReplayFixture(t *testing.T, documents ...func(*persistence.Service) pluginhost.Client) (*personalBoundaryFixture, memoryRecordSource) {
 	t.Helper()
 	f := newPersonalBoundaryFixture(t, nil, documents...)
-	prefix := "personal.v1." + personalHash([]byte(f.rt.UserSpaceID))[:28] + "."
 	_, err := pluginsettings.UpdateState(f.rt.DataRoot, f.rt.RootDir, "plugin:bundled:personal", pluginsettings.ScopeUser, func(v map[string]string) error {
-		v[prefix+"agent.main"] = fmt.Sprintf(`{"agent_id":"main","user_space_id":%q,"main_session_id":%q,"status":"active"}`, f.rt.UserSpaceID, f.id)
+		v["fixture.facts."+f.id] = fmt.Sprintf(`{"session_id":%q,"agent_id":"main","main_session_id":%q,"active":true}`, f.id, f.id)
 		return nil
 	})
 	if err != nil {
