@@ -131,6 +131,7 @@ type threadState struct {
 	running               bool
 	currentTurn           string
 	currentTurnKind       TurnKind
+	currentTurnIsolated   bool
 	currentExecutionRunID string
 	currentTurnResumed    bool
 	runningProviderName   string
@@ -1815,6 +1816,9 @@ func (s *Server) writeResponse(id json.RawMessage, result any, err error) error 
 			Code:    "error",
 			Message: err.Error(),
 		}
+	}
+	if errors.Is(err, errIsolatedTurnRequiresQueue) {
+		resp.Error.Code = "isolated_turn_requires_queue"
 	}
 	var denied *access.Denied
 	if errors.As(err, &denied) {

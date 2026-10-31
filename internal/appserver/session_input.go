@@ -124,7 +124,7 @@ func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, s
 			}
 		}
 	}
-	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact || th.interrupting {
+	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact || th.currentTurnIsolated || th.interrupting {
 		return "", false
 	}
 	for _, existing := range th.pendingSteers {
@@ -198,7 +198,9 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 		turnAdmissionHooks{afterLease: func(admitted *threadState, input *providers.ChatMessage) error {
 			var runtimeErr error
 			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
-			if runtimeErr == nil {
+			// An isolated review cannot resume an owner's interrupted worker
+			// tree or claim its unrelated completion obligations.
+			if runtimeErr == nil && snapshot.ToolPolicy == nil {
 				s.foldFrozenWorkerTree(admitted, threadRuntime)
 			}
 			return runtimeErr

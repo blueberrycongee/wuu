@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/userspace"
+	"slices"
 	"testing"
 	"time"
 
@@ -163,7 +164,7 @@ func TestSelectedExecutionRouteGateway(t *testing.T) {
 	var features struct {
 		HostFeatures []string `json:"host_features"`
 	}
-	if err = json.Unmarshal(featureRaw, &features); err != nil || len(features.HostFeatures) != 1 || features.HostFeatures[0] != "session-route.v1" {
+	if err = json.Unmarshal(featureRaw, &features); err != nil || !slices.Contains(features.HostFeatures, "session-route.v1") || !slices.Contains(features.HostFeatures, "session-turn-tool-policy.v1") {
 		t.Fatalf("missing route feature: %s, %v", featureRaw, err)
 	}
 	owner := principal.WithContext(context.Background(), principal.LocalOwner())

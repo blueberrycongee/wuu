@@ -235,6 +235,7 @@ describe("AppServerClientPool admission", () => {
           reply(4, { error: { code: "error", message: "fixture request failed" } });
           await rejected;
           await expect(fifth).rejects.toBeInstanceOf(AppServerResponseError);
+          await expect(fifth).rejects.toMatchObject({code:"error"});
         } else {
           const result = operation === "turn"
             ? { turn: { status: "in_progress" } }

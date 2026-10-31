@@ -134,6 +134,7 @@ type turnRuntimeSnapshot struct {
 	AdmissionDelegation    *access.Delegation                     `json:"-"`
 	AdmissionAuthorization *runtime.ExecutionAuthorizationBinding `json:"-"`
 
+	ToolPolicy        *pluginhost.SessionTurnToolPolicy `json:",omitempty"`
 	DisableTools      bool
 	SourceMessage     *providers.MessageRef
 	MessageRelation   *providers.MessageRelation
@@ -871,6 +872,9 @@ func (s *Server) handleTurnDequeue(req Request) error {
 	return nil
 }
 
+// This refusal is definitely pre-admission; clients may queue the same input.
+var errIsolatedTurnRequiresQueue = errors.New("this turn is isolated; queue the message or stop the turn before sending")
+
 func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	var params TurnSteerParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -921,6 +925,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	}
 	th.mu.Unlock()
 	if err != nil {
+		if isHeld && errors.Is(err, errIsolatedTurnRequiresQueue) {
+			err = errors.New("this turn is isolated; resume the original held input separately")
+		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 	// Skill resolution can acquire the thread runtime; keep it outside the admission lock.
@@ -971,6 +978,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	}
 	if err := th.validateSteerTargetLocked(params.ExpectedTurnID); err != nil {
 		th.mu.Unlock()
+		if isHeld && errors.Is(err, errIsolatedTurnRequiresQueue) {
+			err = errors.New("this turn is isolated; resume the original held input separately")
+		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 	turnID := th.currentTurn
@@ -1045,6 +1055,9 @@ func (th *threadState) validateSteerTargetLocked(expectedTurnID string) error {
 	if expectedTurnID != th.currentTurn {
 		return fmt.Errorf("expected active turn id `%s` but found `%s`", expectedTurnID, th.currentTurn)
 	}
+	if th.currentTurnIsolated {
+		return errIsolatedTurnRequiresQueue
+	}
 	if th.currentTurnKind == TurnKindCompact {
 		return errors.New("cannot steer a compact turn")
 	}
@@ -1101,7 +1114,7 @@ func (s *Server) steerAgentCompletion(binding *runtime.State, threadID, resultID
 	}
 	th.mu.Lock()
 	defer th.mu.Unlock()
-	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact {
+	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact || th.currentTurnIsolated {
 		return false
 	}
 	// A previous turn may have saved its answer while the pause gate ran.
@@ -2855,9 +2868,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	capabilityErr := instructionsErr
 	// A restricted turn must not initialize an external bridge before its
 	// admitted engine has proved that it can enforce the restriction.
-	if turnRuntime.DisableTools && (runner == nil || agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu ||
+	if (turnRuntime.DisableTools || turnRuntime.ToolPolicy != nil) && (runner == nil || agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu ||
 		threadRuntime != nil && agentengine.NormalizeEngineID(string(threadRuntime.EngineID)) != agentengine.EngineWuu) {
-		capabilityErr = errors.New("the selected agent engine cannot enforce disable_tools")
+		capabilityErr = errors.New("the selected agent engine cannot enforce disable_tools or tool_policy")
 	}
 	var capabilities *externalCapabilities
 	if capabilityErr == nil {
@@ -2966,8 +2979,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if th != nil {
 		th.mu.Lock()
 		turnWorktreePath = strings.TrimSpace(th.WorktreePath)
-		frozenTreeContext = th.frozenTreeContext
-		th.frozenTreeContext = nil
+		if turnRuntime.ToolPolicy == nil {
+			frozenTreeContext = th.frozenTreeContext
+			th.frozenTreeContext = nil
+		}
 		if th.steerWake == nil {
 			th.steerWake = make(chan struct{})
 		}
@@ -3002,8 +3017,15 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	restoreRunner := func() {}
 	if runner != nil {
 		baseTurnTools = runner.Tools
+		if turnRuntime.ToolPolicy != nil {
+			policy := pluginhost.SessionToolPolicy(*turnRuntime.ToolPolicy)
+			if policy.Allow != nil && len(policy.Allow) == 0 {
+				policy.Deny = append(append([]string(nil), policy.Deny...), "*")
+			}
+			runner.Tools = newSessionToolPolicyExecutor(runner.Tools, policy)
+		}
 		if turnRuntime.DisableTools {
-			runner.Tools = newSessionToolPolicyExecutor(baseTurnTools, pluginhost.SessionToolPolicy{Deny: []string{"*"}})
+			runner.Tools = newSessionToolPolicyExecutor(runner.Tools, pluginhost.SessionToolPolicy{Deny: []string{"*"}})
 		}
 		baseForceInitialCompact = runner.ForceInitialCompact
 		baseResumeSampling = runner.ResumeSampling
@@ -3353,11 +3375,13 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			if len(steers) > 0 {
 				messages = append(messages, steers...)
 			}
+			// Isolated turns cannot absorb unrelated durable results. Leave their
+			// delivery obligations intact for a separate ordinary turn.
 			var completionBatch []outboundNotification
 			// Reused runtimes have no installation replay to collect retained
 			// agent results after a human message permits recovery. Collect them
 			// with the same pause and answer-receipt gates as process results.
-			if threadRuntime != nil && threadRuntime.AgentControl != nil {
+			if turnRuntime.ToolPolicy == nil && threadRuntime != nil && threadRuntime.AgentControl != nil {
 				control := threadRuntime.AgentControl
 				pending, pendingErr := control.PendingRootAgentCompletions()
 				if pendingErr != nil {
@@ -3389,7 +3413,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			// Completed processes join the next request while work is active.
 			// Keep the durable obligation until this turn's answer is persisted;
 			// the existing completion queue remains the recovery path on failure.
-			if threadRuntime != nil && threadRuntime.ProcessManager != nil {
+			if turnRuntime.ToolPolicy == nil && threadRuntime != nil && threadRuntime.ProcessManager != nil {
 				manager := threadRuntime.ProcessManager
 				pending, err := manager.PendingCompletions()
 				if err != nil {
@@ -4632,10 +4656,10 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		cancel()
 		return startedThreadTurn{}, false, errServerClosed
 	}
-	if snapshot.DisableTools && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	if (snapshot.DisableTools || snapshot.ToolPolicy != nil) && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
 		th.mu.Unlock()
 		cancel()
-		return startedThreadTurn{}, false, errors.New("the selected agent engine cannot enforce disable_tools")
+		return startedThreadTurn{}, false, errors.New("the selected agent engine cannot enforce disable_tools or tool_policy")
 	}
 	if th.running {
 		th.mu.Unlock()
@@ -4949,13 +4973,15 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	// Completion results folded from a lifted tree freeze are answered by
 	// this user turn (foldFrozenWorkerTree staged them under the same lock
 	// discipline as the snapshot fields).
-	if len(th.frozenTreeResultIDs) > 0 {
+	if snapshot.ToolPolicy == nil && len(th.frozenTreeResultIDs) > 0 {
 		turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, th.frozenTreeResultIDs...)
 		th.frozenTreeResultIDs = nil
 	}
 	turnRuntime.ExecutionRunID = snapshot.ExecutionRunID
 	turnRuntime.PluginTurn = clonePluginTurnReference(snapshot.PluginTurn)
 	turnRuntime.DisableTools = snapshot.DisableTools
+	turnRuntime.ToolPolicy = snapshot.ToolPolicy
+	th.currentTurnIsolated = snapshot.ToolPolicy != nil
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()

@@ -188,7 +188,7 @@ export class RemoteAppServerClient implements PooledAppServerClient {
         onResponse?.({ id: "remote-response", result });
       });
     } catch (error) {
-      if (record(error) && error.kind === "app-server-response" && typeof error.message === "string") throw new AppServerResponseError(error.message);
+      if (record(error) && error.kind === "app-server-response" && typeof error.message === "string") throw new AppServerResponseError(error.message, typeof error.code === "string" ? error.code : undefined);
       if (error instanceof SessionOutcomeUnknownError || error instanceof UserHostBindingError) throw error;
       throw new SessionOutcomeUnknownError("the connection ended before a response was confirmed");
     }
