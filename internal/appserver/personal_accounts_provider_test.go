@@ -127,7 +127,7 @@ func TestPersonalAccountsCompositionSelectionAndReload(t *testing.T) {
 	cfg := config.Default()
 	cfg.DefaultProvider = "fixture"
 	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "fixture"}}
-	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{personalActionsConsumerID: true, PersonalAccountsModule: true, PersonalAccountsConsumer: true}}}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{personalActionsConsumerID: true, PersonalEffectModule: true, PersonalAccountsModule: true, PersonalAccountsConsumer: true}}}}
 	bindings := NewRuntimeBindings()
 	var brokers []*accountLifecycleBroker
 	bindings.SetPersonalAccountsFactory(func(runtime.NativeProviderContext) (personalhost.Options, error) {

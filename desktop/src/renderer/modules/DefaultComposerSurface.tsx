@@ -20,9 +20,8 @@ import { showApplicationActionError } from "../ApplicationActionError";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { useI18n } from "../i18n";
 import { threadContinuationTarget } from "../TurnContinuation";
-import { TopNotice } from "../TopNotice";
-import { UILayerPortal } from "../ui/layers/UILayerHost";
-import { CircleAlert } from "../WuuIcons";
+import { ScopedToast } from "../Toast";
+import { DraftRecoveryNotice } from "../DraftRecoveryNotice";
 
 export interface DefaultComposerLayout {
   side?: { readonly parentThreadId: string };
@@ -263,10 +262,15 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     onCancel={() => application.invoke("question.cancel", { requestId: offer.request_id })}
     onHold={() => application.invoke("question.hold", { requestId: offer.request_id })}
     onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null); }} /> : undefined;
+  const failedDraftTabID = view.submission.failedDraftTabIds.find(id => view.tabs.items.some(tab => tab.id === id));
+  const recoveryNotice = visible && !switching && view.tabs.activePane === pane && failedDraftTabID ?
+    <DraftRecoveryNotice interrupted={view.drafts.recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)} onOpen={() => {
+      void presentNavigation(() => application.invoke("tab.select", { tabId: failedDraftTabID })).catch(reportPresentedNavigationError);
+    }} /> : null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} hidden={!visible} inert={!visible} style={{ display: visible ? "contents" : "none" }}>
     <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
       queuedCount={queued(pending?.queued).length} pendingCount={queued(pending?.queued).length + queued(pending?.guides).length}
-      variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
+      variant={variant} mainConversation containerRef={containerRef} topAccessory={question} statusAccessory={recoveryNotice}
       runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
@@ -350,11 +354,9 @@ function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, vi
     else if (newFailure) setAnnouncedID(operationID);
   }, [ownerTabId, operationID, sourceOwnerTabId, visible]);
   if (!visible || observed.current.ownerTabId !== ownerTabId || !operationID || announcedID !== operationID) return null;
-  return <UILayerPortal layer="notice"><TopNotice key={operationID}
-    message={t("composer.sendFailedDraftRetained")} icon={CircleAlert} isError
-    action={{ label: t("appState.retryAction"), onClick: () => { setAnnouncedID(undefined); onRetry(); } }}
-    dismissAriaLabel={t("common.closeNotice")} onDismiss={() => setAnnouncedID(undefined)} />
-  </UILayerPortal>;
+  return <ScopedToast message={t("composer.sendFailedDraftRetained")} tone="error" dedupeKey={`submission:${ownerTabId}:${operationID}`}
+    action={{ label: t("appState.retryAction"), onClick: () => { setAnnouncedID(undefined); onRetry(); } }} />;
+
 }
 
 export function activatePresentation(api: ApplicationPresentationAPI): void {

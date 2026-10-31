@@ -227,7 +227,8 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	personalActions        *personalActions
+	personalCoordination   *personalCoordinatorBridge
+	personalEffects        *PersonalEffectBridge
 	personalAccountsRouted bool
 	clientInputMu          sync.Mutex
 	clientInputOwner       string

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 )
@@ -164,7 +166,11 @@ func TestConsumerScopedCancellationRetainsDelegates(t *testing.T) {
 	wrapper := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "wrapper", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}, required: required}}
 	reader := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "reader", state: StateActive, required: required}}
 	entered, canceled, resume := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	var baseClosed atomic.Bool
+	readerClosed := make(chan struct{})
+	reader.close = func(context.Context) error { close(readerClosed); return nil }
+	resumeCallback := sync.OnceFunc(func() { close(resume) })
+	defer resumeCallback()
+	var baseClosed, callbackObservedLive atomic.Bool
 	base.close = func(context.Context) error { baseClosed.Store(true); return nil }
 	base.invoke = func(ctx context.Context, input ServiceInvokeParams) (json.RawMessage, error) {
 		if InShutdownCleanup(ctx) {
@@ -180,6 +186,7 @@ func TestConsumerScopedCancellationRetainsDelegates(t *testing.T) {
 		if baseClosed.Load() {
 			return nil, errors.New("delegate disposed before admitted callback ended")
 		}
+		callbackObservedLive.Store(true)
 		return json.RawMessage(`{}`), nil
 	}
 	wrapper.invoke = func(ctx context.Context, input ServiceInvokeParams) (json.RawMessage, error) {
@@ -202,6 +209,10 @@ func TestConsumerScopedCancellationRetainsDelegates(t *testing.T) {
 	host := New(reader, wrapper, base)
 	host.AttachServiceRegistry(registry, nil)
 	registry.Activate()
+	shutdownStarted := make(chan struct{})
+	if _, err := registry.RegisterRetirementCleanup(reader.id, func(context.Context) error { close(shutdownStarted); return nil }); err != nil {
+		t.Fatal(err)
+	}
 	callCtx, cancelCall := context.WithCancel(context.Background())
 	result := make(chan *HostServiceError, 1)
 	go func() {
@@ -216,13 +227,34 @@ func TestConsumerScopedCancellationRetainsDelegates(t *testing.T) {
 	if err := host.Close(closeCtx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("shutdown cancellation: %v", err)
 	}
+	<-shutdownStarted
+	// A caller-only participant must be allowed to close before its delegates;
+	// its cleanup can be what releases the outstanding downstream invocation.
+	progress, cancelProgress := context.WithTimeout(context.Background(), time.Second)
+	defer cancelProgress()
+	select {
+	case <-readerClosed:
+	case <-progress.Done():
+		t.Fatal("caller-only participation blocked consumer cleanup")
+	}
+	// The live observation deadline expires only after the shutdown worker has
+	// reached owner cleanup. Logical cancellation cannot dispose a delegate while
+	// its native callback still holds the admitted execution.
+	observation, cancelObservation := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelObservation()
+	if err := host.Close(observation); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("physical callback drain returned early: %v", err)
+	}
 	if baseClosed.Load() {
 		t.Fatal("cancellation disposed selected delegate while callback still owned it")
 	}
-	close(resume)
+	resumeCallback()
 	<-result
 	if err := host.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if !callbackObservedLive.Load() {
+		t.Fatal("native callback observed its delegate already disposed")
 	}
 	if !flushed.Load() || !baseClosed.Load() {
 		t.Fatal("adapter cleanup did not precede delegate disposal")

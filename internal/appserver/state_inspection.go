@@ -45,19 +45,50 @@ func (s *Server) handleStateInspections(ctx context.Context, req Request) error 
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	reconcile := req.Method == MethodStateInspectionsReconcile
+	var state *runtime.State
+	var err error
+	if runtime.HasInvocationState(ctx) {
+		state, err = runtime.RetainProductInvocationState(ctx)
+	} else {
+		state, err = s.rt.RetainState()
+	}
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer state.Close()
+	ctx = runtime.WithInvocationState(ctx, state)
+	if params.Target == "review-policy" || s.personalCoordinationAvailable(state) {
+		raw, err := s.invokePersonalCoordination(ctx, "inspection", personalCoordinationRequest{Operation: req.Method, Input: req.Params}, nil)
+		return s.writeResponse(req.ID, raw, err)
+	}
+	result, err := s.inspectStateInspections(ctx, req.Method, params, nil)
+	return s.writeResponse(req.ID, result, err)
+}
+
+func (s *Server) inspectStateInspections(ctx context.Context, method string, params stateInspectionParams, actions *personalActions) (any, error) {
+	caller, ok := principal.FromContext(ctx)
+	if !ok || !caller.Valid() || !caller.IsOwner() {
+		return nil, errors.New("authenticated owner maintenance is required")
+	}
+	reconcile := method == MethodStateInspectionsReconcile
 	if reconcile && (!params.WritersStopped || strings.TrimSpace(params.Reason) == "") {
-		return s.writeResponse(req.ID, nil, errors.New("manual reconciliation requires writers_stopped and recorded disposition evidence"))
+		return nil, errors.New("manual reconciliation requires writers_stopped and recorded disposition evidence")
 	}
 	if params.Scope == "" {
 		params.Scope = pluginsettings.ScopeUser
 	}
 	if s.rt.UserBinding().IsUser() && params.Scope != pluginsettings.ScopeUser {
-		return s.writeResponse(req.ID, nil, errors.New("user-host maintenance cannot inspect workspace state"))
+		return nil, errors.New("user-host maintenance cannot inspect workspace state")
 	}
-	state, err := s.rt.RetainState()
+	var state *runtime.State
+	var err error
+	if runtime.HasInvocationState(ctx) {
+		state, err = runtime.RetainProductInvocationState(ctx)
+	} else {
+		state, err = s.rt.RetainState()
+	}
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, err
 	}
 	defer state.Close()
 	var consumer, service string
@@ -67,55 +98,56 @@ func (s *Server) handleStateInspections(ctx context.Context, req Request) error 
 	case "sessions":
 		consumer, service = runtime.SessionStateConsumer, session.ServiceName
 	case "review-policy":
-		if s.personalActions == nil {
-			return s.writeResponse(req.ID, nil, errors.New("selected review ledger is unavailable"))
+		if actions == nil {
+			return nil, errors.New("selected review ledger is unavailable")
 		}
 		consumer, service = personalActionsConsumerID, persistence.ServiceName
 	default:
-		return s.writeResponse(req.ID, nil, errors.New("inspection target must be settings, sessions, or review-policy"))
+		return nil, errors.New("inspection target must be settings, sessions, or review-policy")
 	}
 	if state.Host == nil || state.Host.ServiceRegistry() == nil {
-		return s.writeResponse(req.ID, nil, errors.New("selected inspection provider is unavailable"))
+		return nil, errors.New("selected inspection provider is unavailable")
 	}
 	provider, ok := state.Host.ServiceRegistry().ProviderPluginIDFor(consumer, service, 1)
 	if !ok {
-		return s.writeResponse(req.ID, nil, errors.New("selected inspection provider is unavailable"))
+		return nil, errors.New("selected inspection provider is unavailable")
 	}
 	resources := []access.Resource{{Kind: "state-provider", ID: provider}}
 	if s.rt.UserBinding().IsUser() {
 		resources = append(resources, access.Resource{Kind: "user-space", ID: s.rt.UserBinding().UserSpaceID})
 	}
-	if err := s.AuthorizeResource(ctx, req.Method, resources...); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if err := s.AuthorizeResource(ctx, method, resources...); err != nil {
+		return nil, err
 	}
-	s.appendContextResponseScope(ctx, req.Method, resources...)
-	if reconcile && s.personalActions != nil {
+	s.appendContextResponseScope(ctx, method, resources...)
+	if reconcile && actions != nil {
 		select {
-		case s.personalActions.effectGate <- struct{}{}:
-			defer func() { <-s.personalActions.effectGate }()
+		case actions.effectGate <- struct{}{}:
+			defer func() { <-actions.effectGate }()
 		case <-ctx.Done():
-			return s.writeResponse(req.ID, nil, ctx.Err())
+			return nil, ctx.Err()
 		}
 	}
 	serviceScope, err := state.Host.OpenServiceScope(ctx, consumer, service)
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, err
 	}
 	defer serviceScope.Close()
 	ctx = serviceScope.Context
 	// Only this authenticated maintenance ingress can attest exact provider
 	// bytes; ordinary consumers cannot turn a declared storage call into repair.
+	maintenanceAction := method
 	call := func(callCtx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 		if method == "list-inspections" || method == "ListInspections" || method == "reconcile-inspection" || method == "ReconcileInspection" {
 			if err := caller.Check(callCtx); err != nil {
 				return nil, err
 			}
-			if err := s.AuthorizeResource(callCtx, req.Method, resources...); err != nil {
+			if err := s.AuthorizeResource(callCtx, maintenanceAction, resources...); err != nil {
 				return nil, err
 			}
 			callCtx = pluginhost.WithServiceAdmission(callCtx, consumer, service, method, pluginhost.ServiceAdmission{
 				Version: 1, Principal: caller.Identity(), Authority: caller.DurableAuthority(),
-				Action: req.Method, InputDigest: executionauth.RawRequestDigest(raw),
+				Action: maintenanceAction, InputDigest: executionauth.RawRequestDigest(raw),
 			})
 		}
 		result, callErr := state.Host.CallService(callCtx, consumer, service, method, raw)
@@ -157,7 +189,7 @@ func (s *Server) handleStateInspections(ctx context.Context, req Request) error 
 	case "review-policy":
 		store, storeErr := personalreview.NewDocumentStore(persistence.NewClient(call))
 		if storeErr != nil {
-			return s.writeResponse(req.ID, nil, storeErr)
+			return nil, storeErr
 		}
 		defer store.Close()
 		if !reconcile {
@@ -173,9 +205,9 @@ func (s *Server) handleStateInspections(ctx context.Context, req Request) error 
 		}
 	}
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, err
 	}
-	return s.writeResponse(req.ID, map[string]any{"target": params.Target, "provider": provider, "manual_reconciliation_only": true, "result": result}, nil)
+	return map[string]any{"target": params.Target, "provider": provider, "manual_reconciliation_only": true, "result": result}, nil
 }
 
 func requireSingleHostInspection(authority persistence.InspectionTopology) error {

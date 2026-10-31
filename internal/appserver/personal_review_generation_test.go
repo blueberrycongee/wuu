@@ -55,15 +55,16 @@ func TestPersonalReviewRequestsFollowSelectedGeneration(t *testing.T) {
 	cfg := config.Default()
 	cfg.DefaultProvider = "fixture"
 	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "fixture"}}
-	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{personalActionsConsumerID: true}}}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{personalActionsConsumerID: true, PersonalCoordinationConsumer: true, PersonalEffectModule: true}}}}
 	var providers []*reviewDocumentGeneration
 	factory := runtime.NativeProviderFactory{ID: persistence.SQLiteModule, DefaultEnabled: true, Build: func(in runtime.NativeProviderContext) (pluginhost.Client, error) {
 		p := &reviewDocumentGeneration{Service: persistence.NewService(persistence.SQLiteModule, filepath.Join(in.DataRoot, "sessions", "documents"), "sqlite"), omitClaims: len(providers) >= 2}
 		providers = append(providers, p)
 		return p, nil
 	}}
+	bindings := NewRuntimeBindings()
 	plugins := []pluginpkg.Plugin{}
-	rt, err := runtime.NewSession(runtime.Options{RootDir: t.TempDir(), WuuHome: home, HomeDir: home, UserSpaceID: "review-space", ProductDomain: "personal", Config: cfg, DiscoveredPlugins: &plugins, NativeProviders: []runtime.NativeProviderFactory{factory, PersonalActionsConsumerFactory()}, NonInteractive: true})
+	rt, err := runtime.NewSession(runtime.Options{RootDir: t.TempDir(), WuuHome: home, HomeDir: home, UserSpaceID: "review-space", ProductDomain: "personal", Config: cfg, DiscoveredPlugins: &plugins, NativeProviders: append(bindings.NativeProviders(), factory), NonInteractive: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestPersonalReviewRequestsFollowSelectedGeneration(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	host, err := NewUserHost(rt, personalhost.Options{})
+	host, err := NewUserHost(rt, personalhost.Options{}, WithRuntimeBindings(bindings))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +89,7 @@ func TestPersonalReviewRequestsFollowSelectedGeneration(t *testing.T) {
 	if _, err = host.personal.Call(owner, "review.list", nil, ""); err != nil {
 		t.Fatal(err)
 	}
+	core := host.actionsForTest(t)
 	admitted, err := rt.RetainState()
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +109,9 @@ func TestPersonalReviewRequestsFollowSelectedGeneration(t *testing.T) {
 	if _, err = host.personal.Call(owner, "review.list", nil, ""); err != nil {
 		t.Fatal(err)
 	}
+	if host.actionsForTest(t) != core {
+		t.Fatal("compatible successor replaced pending admission coordinator")
+	}
 	if providers[0].reads.Load() != before0 || providers[1].reads.Load() <= before1 {
 		t.Fatalf("fresh review request calls: original=%d replacement=%d", providers[0].reads.Load()-before0, providers[1].reads.Load()-before1)
 	}
@@ -119,6 +124,9 @@ func TestPersonalReviewRequestsFollowSelectedGeneration(t *testing.T) {
 	}
 	if err := admitted.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if core.ctx.Err() != nil {
+		t.Fatal("old generation cleanup closed shared replacement coordinator")
 	}
 	before1 = providers[1].reads.Load()
 	if _, err := host.personal.Call(runtime.WithInvocationState(owner, admitted), "review.list", nil, ""); err == nil {

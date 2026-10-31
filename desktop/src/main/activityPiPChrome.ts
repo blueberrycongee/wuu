@@ -144,12 +144,13 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     var capturePaused=capture.status==="stopped";
     var captureBlocked=["blank","suspended","error"].includes(capture.status);
     var placeholder=!mounted||captureBlocked;
-    document.getElementById("ph-status").textContent=text(captureBlocked?"activityPreviewUnavailable":capturePaused||terminal||activity.controller==="none"?"activityPreviewPaused":"activityPreviewLoading");
+    var recovering=activity.kind==="cua"&&captureBlocked&&!terminal&&activity.controller!=="none";
+    document.getElementById("ph-status").textContent=text(recovering?"activityPreviewLoading":captureBlocked?"activityPreviewUnavailable":capturePaused||terminal||activity.controller==="none"?"activityPreviewPaused":"activityPreviewLoading");
     var retry=document.getElementById("retry");
     retry.textContent=text("activityPreviewRetry");
-    retry.hidden=!captureBlocked||terminal||activity.controller==="none";
+    retry.hidden=recovering||!captureBlocked||terminal||activity.controller==="none";
     ph.classList.toggle("gone",!placeholder);
-    ph.classList.toggle("preparing",placeholder&&!captureBlocked&&!capturePaused&&!terminal);
+    ph.classList.toggle("preparing",placeholder&&(!captureBlocked||recovering)&&!capturePaused&&!terminal);
     // States that ask for a decision keep the controls visible.
     var notable=terminal||activity.state==="waiting_confirmation"||
       capturePaused||manual||(activity.controller==="none"&&activity.state!=="starting");

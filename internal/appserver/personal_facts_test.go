@@ -38,12 +38,12 @@ func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 		t.Fatalf("replacement state: %+v %v", document, err)
 	}
 	actor := personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: f.rt.UserSpaceID, SessionID: f.id}
-	authority, err := f.host.actions.connectorAuthority(f.owner, actor)
+	authority, err := f.host.actionsForTest(t).connectorAuthority(f.owner, actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	called := false
-	if err := f.host.actions.withConnectorAuthorization(f.owner, actor, authority, func(context.Context) error {
+	if err := f.host.actionsForTest(t).withConnectorAuthorization(f.owner, actor, authority, func(context.Context) error {
 		called = true
 		_, updateErr := pluginsettings.UpdateState(f.rt.ProductDataRoot(), f.rt.RootDir, subject, pluginsettings.ScopeUser, func(values map[string]string) error { values["fixture.facts."+f.id] = `{}`; return nil })
 		if updateErr == nil {
@@ -54,7 +54,7 @@ func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 		t.Fatalf("connector effect: %v %v", called, err)
 	}
 	raw, _ := json.Marshal(map[string]string{"ref": memoryCanonicalRef(f.id, f.sourceSeq)})
-	sourceRaw, err := f.host.actions.callMemory(f.owner, "memory.source", raw, f.id)
+	sourceRaw, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.source", raw, f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,19 +66,19 @@ func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 	commitPersonalMemoryReplay(t, f, memoryWrite{ID: "replacement-write", Key: "mem_" + personalHash([]byte("replacement-fact")), Value: value})
 	record := f.pending(f.sourceContext())
 	// Hold dispatch while the owner approves, then revoke the provider's facts.
-	f.host.actions.drainMu.Lock()
+	f.host.actionsForTest(t).drainMu.Lock()
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(record), ""); err != nil {
-		f.host.actions.drainMu.Unlock()
+		f.host.actionsForTest(t).drainMu.Unlock()
 		t.Fatal(err)
 	}
 	facts.Active = false
 	save()
-	f.host.actions.drainMu.Unlock()
+	f.host.actionsForTest(t).drainMu.Unlock()
 	called = false
-	if err := f.host.actions.withConnectorAuthorization(f.owner, actor, authority, func(context.Context) error { called = true; return nil }); err == nil || called {
+	if err := f.host.actionsForTest(t).withConnectorAuthorization(f.owner, actor, authority, func(context.Context) error { called = true; return nil }); err == nil || called {
 		t.Fatalf("inactive replacement executed: %v %v", called, err)
 	}
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {
@@ -92,7 +92,7 @@ func TestPersonalReplacementReviewExecutes(t *testing.T) {
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(record), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	f.assertContents(filepath.Join(f.rt.RootDir, "note.txt"), "saved once")
@@ -119,11 +119,11 @@ func TestPersonalReplacementTaskRevisionInvalidatesApprovedAction(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, _, err := f.host.actions.selectedTaskProvider(state)
+	selected, _, err := f.host.actionsForTest(t).selectedTaskProvider(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, err := f.host.actions.authority(f.owner, state, selected, worker, "replacement-task")
+	observed, err := f.host.actionsForTest(t).authority(f.owner, state, selected, worker, "replacement-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ waitPending:
 		case <-deadline.C:
 			t.Fatal("pending approval unavailable")
 		case <-tick.C:
-			records, err := f.host.actions.engine.Records(ctx, f.rt.UserSpaceID)
+			records, err := f.host.actionsForTest(t).engine.Records(ctx, f.rt.UserSpaceID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,16 +171,16 @@ waitPending:
 			}
 		}
 	}
-	f.host.actions.drainMu.Lock()
+	f.host.actionsForTest(t).drainMu.Lock()
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(record), ""); err != nil {
-		f.host.actions.drainMu.Unlock()
+		f.host.actionsForTest(t).drainMu.Unlock()
 		t.Fatal(err)
 	}
 	facts.Task.Revision = 2
 	facts.Task.Goal = "Different request"
 	save()
-	f.host.actions.drainMu.Unlock()
-	if err := f.host.actions.drain(context.Background()); err != nil {
+	f.host.actionsForTest(t).drainMu.Unlock()
+	if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(f.rt.RootDir, "note.txt")); !os.IsNotExist(err) {

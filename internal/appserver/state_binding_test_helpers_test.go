@@ -80,7 +80,7 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 			}
 		}
 	}
-	clients := []pluginhost.Client{runtime.NewClientInputReceiptsConsumer(), access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, consumer, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
+	clients := []pluginhost.Client{runtime.NewClientInputReceiptsConsumer(), &fixturePersonalEffects{}, NewPersonalCoordinationConsumer(), access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, consumer, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
 	// User-host fixtures may bind their user space after runtime construction.
 	// Select their review ledger through the same declared consumer as production.
@@ -92,6 +92,7 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 		}); ok {
 			for _, service := range provider.ProvidedServices() {
 				hasDocuments = hasDocuments || service.Name == persistence.ServiceName
+				hasReview = hasReview || service.Name == PersonalCoordinationService
 			}
 		}
 	}
@@ -508,4 +509,18 @@ func (c *embeddedAccessConsumer) Status() pluginhost.Status {
 }
 func (*embeddedAccessConsumer) RequiredServices() []pluginhost.ServiceRequirement {
 	return []pluginhost.ServiceRequirement{{Name: access.ServiceName, MajorVersion: 1, Required: true}}
+}
+
+// Embedded fixtures explicitly select the same public host mechanism. Its
+// runtime bridge is supplied only by authenticated in-process ingress scope.
+type fixturePersonalEffects struct{ personalEffectMechanisms }
+
+func (m *fixturePersonalEffects) InvokeService(ctx context.Context, call pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	scope := personalEffectScopeForCall(ctx, call)
+	if scope == nil || scope.state == nil {
+		return nil, errors.New("missing fixture effect scope")
+	}
+	provider := &personalEffectMechanisms{bridge: scope.bridge, registry: scope.state.Host.ServiceRegistry()}
+	provider.active.Store(true)
+	return provider.InvokeService(ctx, call)
 }

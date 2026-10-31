@@ -377,6 +377,14 @@ Most kernel services use method `call`. Storage is not a transaction across keys
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
+For `host.session.send`, `session_send_unavailable` means the host had no send
+handler and did not dispatch this call. After the service recovers, an explicit
+retry may release that unaccepted request identity. This code is reserved for
+that boundary: if an invoked handler returns it, including from a nested call,
+the outer send reports `host_error` instead. Generic `service_unavailable`, other
+errors, and timeouts do not prove non-admission; retain the request identity and
+reconcile its receipt before replacing it.
+
 `host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. General per-turn allow/deny policies are not supported.
 
 `host.session.history.read` is a read-only view of physical audit records, including hidden model context and tool records. Records carry optional `hidden`, `read_only`, and `origin` metadata; omitted flags are false and omitted origin is empty for legacy records. A `user` role alone does not establish human authorship. Retain these fields when building a conversation projection: exclude hidden records, and treat user-role records as human input only when they are not read-only and their origin is `user` or empty. Do not classify messages by their wording or strip matching text from genuine input. Projection does not delete audit records or alter provider context.
@@ -997,3 +1005,46 @@ completion; closing an old generation cannot close the new generation's broker.
 `NewUserHost` with runtime bindings does not accept preconstructed account brokers.
 The review/memory coordinator and native file-review gate are separate from this
 account service.
+
+### Personal coordination and host effects
+
+`personal.coordination@1` is the replaceable review/memory/file/connector policy
+service. The Personal bundle selects `wuu.personal-client`, the native
+`wuu.personal-actions-consumer` coordinator, and `wuu.personal-effects` host
+mechanisms. Binding the client to another provider or disabling the coordinator
+never constructs a native fallback. The Go host still authenticates ingress,
+resolves sessions and enforces resource boundaries.
+
+Coordinator requests are `{operation?, input?, session_id?, call?, scopes?}`.
+`call` handles `review.*` and `memory.*` with the existing operation input/result;
+`file-gate` receives a tool call and returns a tool result; `scope` and `cancel`
+support exact session/task cancellation; `inspection` handles owner-admitted
+review-policy/settings/session recovery, serialized with live Personal effects. `initialize` and `drain` are lifecycle/scheduler methods.
+Connector methods use `input`: `connector-snapshot` accepts `{actor}` and returns
+`{authority}`, while `connector-commit` accepts `{actor, expected, effect_id}`.
+The actor is the existing `{ProductDomain, UserSpaceID, SessionID}` wire shape.
+The native coordinator executes the effect *inside* its durable authority
+inspections; a boolean authorization response is not an effect commit.
+
+A replacement declares `host.personal-effects@1`. Its public methods are:
+
+- `prepare-file`: a tool call -> `{effect_id, file}` containing the frozen action.
+- `execute`: `{effect_id}` -> `{tool_result}`; each handle executes at most once.
+- `release`: `{effect_id}` -> `{}`; a declared cleanup method, safe to repeat.
+
+Only the selected coordinator can use these mechanisms. Process callbacks carry
+host provenance through their execution ID, not serialized State/toolkit or owner
+claims. Deferred file handles survive the originating callback and retain the
+original graph and toolkit; later authenticated owner admission does not retarget
+them. They are process-local capabilities, not durable approval receipts. A cold
+restart requires new admission and revalidation of the persisted frozen action;
+uncertain outcomes are never automatically replayed. Connector handles are
+synchronous and expire when the broker callback finishes.
+
+Compatible native generations share pending coordination state with counted
+ownership. Old-generation disposal cannot close a core borrowed by its successor.
+Explicit disable/crash seals admission, cancels and drains owned effects before
+provider disposal; host close also releases pending resources. Native mechanisms
+use `ServiceRegistry.RegisterRetirementCleanup` for this physical cleanup barrier
+and `DeferServiceCompletion` only for final graph-reference releases, which may
+reenter shutdown. These are lifecycle mechanisms, not extra policy authority.

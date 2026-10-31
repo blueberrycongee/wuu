@@ -74,7 +74,7 @@ func (*personalAccountsProvider) ProvidedServices() []pluginhost.ServiceDescript
 	return []pluginhost.ServiceDescriptor{PersonalAccountsDescriptor()}
 }
 func (*personalAccountsProvider) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true}, {Name: PersonalCoordinationService, MajorVersion: 1}}
 }
 func (p *personalAccountsProvider) Activate(ctx context.Context) error {
 	p.mu.Lock()
@@ -165,16 +165,8 @@ func (p *personalAccountsProvider) InvokeService(ctx context.Context, call plugi
 			return nil
 		}
 		if broker, ok := options.Connectors.(*personalconnectors.Broker); ok {
-			if server.personalActions == nil {
-				p.mu.Unlock()
-				_ = broker.Close()
-				if options.Calendar != nil {
-					_ = options.Calendar.Close()
-				}
-				return nil, errors.New("selected connector execution authority is unavailable")
-			}
-			broker.SetAuthorization(server.personalActions.connectorAuthority)
-			broker.SetAuthorizationBoundary(server.personalActions.withConnectorAuthorization)
+			broker.SetAuthorization(server.connectorSnapshot)
+			broker.SetAuthorizationBoundary(server.connectorCommit)
 		}
 		p.host = personalhost.New(p.input.UserBinding, options)
 		p.server = server
@@ -223,6 +215,9 @@ func (s *Server) callPersonalAccounts(ctx context.Context, operation string, raw
 		return nil, errors.New("selected Personal account provider is unavailable")
 	}
 	ctx = context.WithValue(runtime.WithInvocationState(ctx, state), personalAccountsScopeKey{}, s)
+	if s.personalEffects != nil {
+		ctx = s.personalEffects.Context(ctx, s, state, nil)
+	}
 	input, err := json.Marshal(runtime.PersonalHostCall{Operation: operation, Input: raw, SessionID: sessionID})
 	if err != nil {
 		return nil, err

@@ -103,10 +103,8 @@ import {
   conversationHeadingTitle
 } from "./ThreadTitles";
 import { showErrorToast, showToast } from "./Toast";
-import { TopNotice } from "./TopNotice";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
-import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { WebWorkspacePanel } from "./WebWorkspace";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
@@ -118,7 +116,6 @@ import {
 } from "./WorkspaceBrowserOpen";
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
-import { CircleAlert } from "./WuuIcons";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
@@ -181,7 +178,6 @@ export function App({ application, slots, shellPluginId }: {
   const presentNavigation = usePresentedNavigation();
   const popOutInit = application.desktop.popOut.kind && application.desktop.popOut.context ? application.desktop.popOut : null;
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
-  const recoveryNotices = useSyncExternalStore(application.subscribe, () => application.getSnapshot().drafts.recoveryNotices);
   const workspaceSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().workspaces);
   const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
   const configuration = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.configuration);
@@ -530,7 +526,6 @@ export function App({ application, slots, shellPluginId }: {
     useState<EnvironmentDialog | null>(null);
   const conversationDetails = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationDetails);
   const contextCompositionEntries = useMemo(() => structuredClone(conversationDetails.filter(entry => entry.kind === "context")) as ContextCompositionEntry[], [conversationDetails]);
-  const [settingsNoticeVisible, setSettingsNoticeVisible] = useState(false);
   const pendingFork = conversationActions.pendingFork;
   const cancelPendingFork = (): void => { void application.invoke("history.cancel-fork", {}).catch(showErrorToast); };
   const {
@@ -1486,7 +1481,6 @@ export function App({ application, slots, shellPluginId }: {
     });
   }, [application, revealWebsite]);
 
-  const selectSessionTab = (tabId: string): Promise<void> => presentNavigation(() => application.invoke("tab.select", { tabId })).catch(reportPresentedNavigationError);
 
   function closePrimaryPluginView(): void {
     setActiveWebsiteID(undefined);
@@ -1558,28 +1552,6 @@ export function App({ application, slots, shellPluginId }: {
     return application.invoke("context-chat.submit", { text, page, context, sessionId });
   }
 
-  const failedDraftTabID = submissionView.failedDraftTabIds.find((id) => tabs.items.some((tab) => tab.id === id));
-  const failedDraftNotice = failedDraftTabID ? (
-    <UILayerPortal layer="notice">
-      <TopNotice
-        key={failedDraftTabID}
-        message={t(recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)
-          ? "composer.recoveredInterruptedDraft" : "composer.failedDraftSaved")}
-        icon={CircleAlert}
-        isError
-        persistent
-        action={{ label: t("composer.openFailedDraft"), onClick: () => {
-          revealConversationFromFocusedWorkspace();
-          void selectSessionTab(failedDraftTabID);
-        } }}
-        dismissAriaLabel={t("composer.discardFailedDraft")}
-        onDismiss={() => {
-          void application.invoke("tab.close", { tabId: failedDraftTabID }).catch(showErrorToast);
-        }}
-      />
-    </UILayerPortal>
-  ) : null;
-
   useEffect(() => {
     const back = (event: Event): void => {
       if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
@@ -1627,7 +1599,6 @@ export function App({ application, slots, shellPluginId }: {
       <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split
         ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
         : application.getSnapshot().drafts.activeTabId }}>
-      {!settingsNoticeVisible && failedDraftNotice}
       <ImagePreviewProvider>
       <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
@@ -1922,7 +1893,6 @@ export function App({ application, slots, shellPluginId }: {
         />
       ) : null}
       <slots.Slot name={`${shellPluginId}/application.settings`} context={{ layout: {
-        onNoticeVisibilityChange: setSettingsNoticeVisible,
         browserSettingsAllowed: !poppedOutMode,
         embedded: embeddedSettings,
         embeddedDrawerPhase: sidebarDrawerPhase,

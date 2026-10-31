@@ -330,6 +330,12 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 
+对于 `host.session.send`，`session_send_unavailable` 表示宿主没有发送处理器，
+本次调用未被分派。服务恢复后，显式重试可以释放这条未被接受的请求身份。
+该错误码仅保留给此边界：已调用的处理器返回同码（包括嵌套调用返回）时，
+外层发送会改报 `host_error`。通用的 `service_unavailable`、其他错误和超时
+均不能证明未被接纳；应保留请求身份并核对回执，再决定是否替换。
+
 `host.session.send` 支持可选的 `disable_tools: true`，仅对本轮禁用所有工具。宿主移除模型可见的工具并拒绝工具执行，包括 code-mode 分发；不会影响后续轮次，也不会授予权限。省略或设为 false 时保持普通行为。禁用工具的轮次不能使用 `if_running: "steer"` 或外部代理引擎，不支持的请求会在接纳前被拒绝。暂不支持按轮次配置通用工具允许／拒绝列表。
 
 `host.session.history.read` 只读返回物理审计记录，包括隐藏的模型上下文和工具记录。记录带有可选的 `hidden`、`read_only` 和 `origin` 元数据；省略的布尔标志视为 false，旧记录省略的来源视为空字符串。仅凭 `user` 角色不能认定内容由用户输入。构建对话视图时应保留并使用这些字段：排除隐藏记录，只有非只读且来源为 `user` 或空字符串的用户角色记录才作为真实用户输入。不要按文字特征判断来源，也不要删改真实输入中的相似文字。对话筛选不删除审计记录，也不改变提供方上下文。
@@ -766,3 +772,34 @@ composition 可以将客户端绑定到其他 provider，或禁用原生模块�
 已接受的调用保留原服务图直到完成；旧代清理不会关闭新代 broker。使用 runtime
 bindings 的 `NewUserHost` 不接收预先构造的账户 broker。审批／记忆协调器与原生
 文件审批入口仍是独立于该账户服务的部分。
+
+### Personal 协调器与宿主副作用机制
+
+`personal.coordination@1` 是可替换的审核、记忆、文件及连接器策略服务。
+Personal 组合选择 `wuu.personal-client`、原生协调器
+`wuu.personal-actions-consumer` 和宿主机制 `wuu.personal-effects`。
+替换绑定或禁用协调器不会创建原生回退；Go 宿主仍负责入口身份验证、
+会话解析和资源边界检查。
+
+协调器请求为 `{operation?, input?, session_id?, call?, scopes?}`。
+`call` 承载现有 `review.*` / `memory.*` 操作；`file-gate` 接收工具调用并返回
+工具结果；`scope` / `cancel` 支持精确会话与任务取消；`inspection` 处理经所有者
+认证的审核策略、设置和会话恢复，并与正在进行的 Personal 副作用串行；`initialize` / `drain` 用于生命周期及调度。
+`connector-snapshot` 的 `input` 为 `{actor}`，返回 `{authority}`；
+`connector-commit` 的 `input` 为 `{actor, expected, effect_id}`。
+actor 沿用 `{ProductDomain, UserSpaceID, SessionID}`。原生协调器必须在持久化
+权限检查的临界区内执行副作用，不能把布尔授权响应当作实际提交。
+
+替代实现声明 `host.personal-effects@1`：`prepare-file` 接收工具调用，返回
+`{effect_id, file}` 冻结动作；`execute` 接收 `{effect_id}`，返回 `{tool_result}`，
+每个句柄至多执行一次；`release` 接收 `{effect_id}`，可重复调用且声明为清理方法。
+只有当前选中的协调器可调用。跨进程回调使用执行 ID 继承宿主来源，不接受序列化
+State、工具箱或所有者声明作为权限。
+
+延迟文件句柄可跨越初始回调，保留原始服务图及工具箱；后续所有者确认不会把旧动作
+改绑到新一代。句柄不是持久化审批记录：冷启动恢复需要新认证及冻结动作重新验证，
+不确定结果不能自动重放。连接器句柄限于同步 broker 回调，回调结束即释放。
+兼容原生代际通过引用计数共享待处理状态，旧代清理不能关闭新代已借用的协调器。
+禁用或崩溃先封闭入口，再取消并排空副作用；宿主关闭也释放待处理资源。
+原生机制使用 `ServiceRegistry.RegisterRetirementCleanup` 建立物理清理屏障，
+仅把可能重新进入关闭流程的最终图引用释放交给 `DeferServiceCompletion`，不增加策略权限。
