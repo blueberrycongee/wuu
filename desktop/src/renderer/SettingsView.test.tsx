@@ -249,7 +249,7 @@ function renderSettings(props: {
 }
 
 describe("SettingsView shell", () => {
-  it("refreshes retained build, MCP and remote reads on controls replacement and ignores late retired results", async () => {
+  it("refreshes retained build and remote reads on controls replacement and ignores late retired results", async () => {
     installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
     const base = createApplicationSettingsControls({ host: registry, controller: workbench });
     let completeOld!: (value: RemoteControlSnapshot) => void;
@@ -279,7 +279,7 @@ describe("SettingsView shell", () => {
     expect(previous.getRemoteControlSnapshot).toHaveBeenCalledTimes(2);
     await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: next }));
     expect(next.getBuildInfo).toHaveBeenCalledOnce();
-    expect(next.listMCPServers).toHaveBeenCalledOnce();
+    expect(next.listMCPServers).not.toHaveBeenCalled();
     expect(off).toHaveBeenCalledOnce();
     expect(next.subscribeRemote).toHaveBeenCalledOnce();
     expect(next.getRemoteControlSnapshot).toHaveBeenCalledOnce();
@@ -1754,6 +1754,29 @@ describe("SettingsView About section", () => {
     act(() => root!.render(null));
     await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
     expect(api.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("loads MCP only while its page is open and retires pending login on navigation", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0 }] });
+    let admitted!: (result: { authorization_url: string; state: string }) => void;
+    api.startMCPAuth = vi.fn().mockReturnValue(new Promise(resolve => { admitted = resolve; }));
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    const show = (page: SettingsPage) => renderSettings({ initialized: baseInitialized(), page, controls, locale: "en-US" });
+    await act(async () => show("general"));
+    expect(api.listMCPServers).not.toHaveBeenCalled();
+    await act(async () => show("mcp"));
+    expect(api.listMCPServers).toHaveBeenCalledOnce();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')!.click());
+    await act(async () => show("general"));
+    await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
+    expect(api.openExternal).not.toHaveBeenCalled();
+    await act(async () => show("mcp"));
+    expect(api.listMCPServers).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('.settings-mcp-code-input')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Log in to docs"]')?.disabled).toBe(false);
   });
 
   it("ignores a retired MCP failure refresh when settings controls change", async () => {
