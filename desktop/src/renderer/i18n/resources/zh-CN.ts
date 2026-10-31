@@ -751,6 +751,7 @@ export const zhCN = {
   "plugins.activationReportUnavailable": "插件状态未能上报。",
   "plugins.applicationUnavailable": "应用未能加载。",
   "plugins.connectionUnavailable": "连接未能恢复。请重新连接后重试。",
+  "plugins.retrySurface": "重试",
   "plugins.surfaceUnavailable": "插件视图未能显示。请在设置中查看详情。",
   "plugins.viewUnavailable": "插件视图不可用。",
   "common.loading": "加载中",

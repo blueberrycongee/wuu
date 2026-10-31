@@ -754,6 +754,7 @@ export const enUS = {
   "plugins.activationReportUnavailable": "Plugin status could not be reported.",
   "plugins.applicationUnavailable": "The application could not be loaded.",
   "plugins.connectionUnavailable": "The connection could not be restored. Reconnect to retry.",
+  "plugins.retrySurface": "Try again",
   "plugins.surfaceUnavailable": "A plugin view could not be displayed. Check its details in Settings.",
   "plugins.viewUnavailable": "This plugin view is unavailable.",
   "common.loading": "Loading",
