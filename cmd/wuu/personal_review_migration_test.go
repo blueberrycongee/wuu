@@ -37,7 +37,9 @@ func TestPersonalReviewMigrationCLIRequiresStoppedHostAndExplicitApplyDigest(t *
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	cfg.Composition = composition.DefaultConfig("headless", appserver.NewPersonalActionsConsumer().ID())
+	// Explicit profiles select the coordinator's mechanism dependency too;
+	// migration still performs no file effects or model calls.
+	cfg.Composition = composition.DefaultConfig("headless", appserver.NewPersonalActionsConsumer().ID(), appserver.PersonalEffectModule)
 	cfg.DefaultProvider = "fixture"
 	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:1/v1", APIKey: "synthetic", Model: "not-called"}}
 	raw, _ := json.Marshal(cfg)
