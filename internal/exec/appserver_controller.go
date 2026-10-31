@@ -41,6 +41,12 @@ type localAppServerController struct {
 }
 
 func NewLocalAppServerController(ctx context.Context, opts Options) (Controller, error) {
+	if ctx == nil {
+		return nil, errors.New("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	embedded, err := wuusdk.New(wuusdk.Options{
 		WorkDir:          opts.Workdir,
 		ConfigPath:       opts.ConfigPath,
@@ -58,12 +64,27 @@ func NewLocalAppServerController(ctx context.Context, opts Options) (Controller,
 	if err != nil {
 		return nil, err
 	}
-	client, err := embedded.Connect(ctx, wuusdk.ClientOptions{Name: "wuu-exec", DeferredNotificationContent: true})
-	if err != nil {
+	// Execution cancellation still needs this transport to interrupt and settle
+	// its durable Run. Startup follows the caller; successful handoff is owned
+	// by Shutdown rather than by stdout or the execution deadline.
+	connectionCtx, disconnect := context.WithCancel(context.WithoutCancel(ctx))
+	stopStartupCancellation := context.AfterFunc(ctx, disconnect)
+	client, err := embedded.Connect(connectionCtx, wuusdk.ClientOptions{Name: "wuu-exec", DeferredNotificationContent: true})
+	startupStopped := stopStartupCancellation()
+
+	if err != nil || !startupStopped {
+		disconnect()
+		if client != nil {
+			_ = client.Close(context.Background())
+		}
 		_ = embedded.Close()
+		if err == nil {
+			err = ctx.Err()
+		}
 		return nil, err
 	}
 	controller := &localAppServerController{
+		cancel:      disconnect,
 		sdkRuntime:  embedded,
 		sdkClient:   client,
 		sdkInit:     client.Initialization(),
@@ -80,7 +101,7 @@ func NewLocalAppServerController(ctx context.Context, opts Options) (Controller,
 	if value := strings.TrimSpace(opts.Effort); value != "" {
 		controller.selection.Effort = &value
 	}
-	controller.sdkEvents = client.Subscribe(ctx, wuusdk.SubscriptionOptions{})
+	controller.sdkEvents = client.Subscribe(connectionCtx, wuusdk.SubscriptionOptions{})
 	go controller.bridgeSDKEvents()
 	return controller, nil
 }
@@ -237,8 +258,9 @@ func (c *localAppServerController) InterruptRun(ctx context.Context, runID, reas
 	return result.Run, err
 }
 
-// shutdownFallbackTimeout bounds Shutdown when the caller's context carries
-// no deadline, so a wedged turn can never hang shutdown forever.
+// shutdownFallbackTimeout is the CLI cleanup budget and bounds Shutdown when
+// its caller supplies no deadline. Owned turns can finish durable persistence,
+// but a wedged turn cannot hang process exit forever.
 const shutdownFallbackTimeout = 10 * time.Second
 
 func (c *localAppServerController) Shutdown(ctx context.Context) error {
@@ -312,6 +334,9 @@ func (c *localAppServerController) startSDKShutdown() <-chan struct{} {
 }
 
 func (c *localAppServerController) finishSDKShutdown() {
+	if c.cancel != nil {
+		defer c.cancel()
+	}
 	// Draining keeps the event bridge from blocking while Client.Close cancels
 	// its subscription and waits for the app-server connection to finish.
 	drainDone := make(chan struct{})
