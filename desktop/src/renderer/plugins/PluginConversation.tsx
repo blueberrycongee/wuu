@@ -105,7 +105,7 @@ export function PluginConversationView({ presentation = "standard", conversation
   return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>
-      <div className="title-actions">{status}{showHistorySearch && <button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} title={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>}{actions}</div>
+      <div className="title-actions">{status}{showHistorySearch && <button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>}{actions}</div>
     </header>
     <ConversationReadingBoundary conversationId={conversationId} loading={loading} controller={controller}>
       <div className="scroll-region plugin-conversation-scroll" ref={controller.scrollRef} onScroll={controller.handleScrollFrame} data-scroll-fade=""

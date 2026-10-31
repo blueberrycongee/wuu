@@ -1765,7 +1765,7 @@ export function AppSidebar({
           onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         >
-          <Tooltip asChild content={t("sidebar.searchConversations")}><button
+          <button
             className="icon-button conversation-search-trigger"
             type="button"
             aria-label={t("sidebar.searchConversations")}
@@ -1775,7 +1775,7 @@ export function AppSidebar({
             disabled={!hasRuntimeContext}
           >
             <Search className="icon-lg" />
-          </button></Tooltip>
+          </button>
         </SidebarBrand>
         {unreadViewOpen ? (
           <section
@@ -2241,7 +2241,7 @@ export function AppSidebar({
                       />
                     </button>
                     <div className="sidebar-functional-heading-action">
-                      <Tooltip asChild content={t("sidebar.newConversation")}><button
+                      <button
                         className="sidebar-row-icon-button sidebar-recents-new-thread"
                         type="button"
                         aria-label={t("sidebar.newConversation")}
@@ -2253,7 +2253,7 @@ export function AppSidebar({
                         }}
                       >
                         <SquarePen className="icon" aria-hidden="true" />
-                      </button></Tooltip>
+                      </button>
                     </div>
                   </div>
                   <SidebarCollapseBody

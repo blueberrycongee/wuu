@@ -746,14 +746,14 @@ function WorkbenchView({ controller, definition, view, siblingViews, active, has
             context={commandContext}
             buttonClassName="settings-button settings-button-ghost settings-icon-button"
           />
-          <Tooltip asChild content={t("common.close")}><button
+          <button
             type="button"
             className="settings-button settings-button-ghost settings-icon-button"
             aria-label={t("common.close")}
             onClick={() => void controller.closeView(view.id)}
           >
             <X className="icon" aria-hidden="true" />
-          </button></Tooltip>
+          </button>
         </div>
       </header> : null}
       <PluginErrorBoundary

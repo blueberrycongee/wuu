@@ -1,4 +1,3 @@
-import { Tooltip } from "./Tooltip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motionDurationMs } from "./motion";
 import type { IconComponent } from "./WuuIcons";
@@ -89,7 +88,7 @@ export function TopNotice({
           {action.label}
         </button>
       ) : null}
-      <Tooltip asChild content={dismissAriaLabel}><button
+      <button
         type="button"
         className="archive-tip-dismiss"
         aria-label={dismissAriaLabel}
@@ -99,7 +98,7 @@ export function TopNotice({
         }}
       >
         <X className="icon-sm" />
-      </button></Tooltip>
+      </button>
     </div>
   );
 }

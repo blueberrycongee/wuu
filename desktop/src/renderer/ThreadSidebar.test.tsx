@@ -883,6 +883,20 @@ describe("WorkspaceGroup missing workspace", () => {
     missing,
   });
 
+  it.each([false, true])("only explains a new-conversation button when its workspace is missing (%s)", (missing) => {
+    vi.useFakeTimers();
+    try {
+      renderWorkspace(makeWorkspace(missing));
+      const button = container.querySelector<HTMLButtonElement>(".project-row-new-thread")!;
+      expect(button.getAttribute("aria-label")).toBeTruthy();
+      act(() => {
+        button.dispatchEvent(new Event("pointerover", { bubbles: true }));
+        vi.advanceTimersByTime(600);
+      });
+      expect(document.querySelector(".tooltip-layer") !== null).toBe(missing);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("dims a missing workspace and disables its 新建对话 button", () => {
     renderWorkspace(makeWorkspace(true));
     expect(container.querySelector(".project-group-missing")).not.toBeNull();

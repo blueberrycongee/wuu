@@ -111,7 +111,7 @@ export function MacWindowControls({ desktop }: { desktop: ApplicationDesktopCont
         {fullscreen && (
           <div className="mac-window-control-group" role="group" aria-label={t("shell.windowControls")}>
             <button type="button" className="mac-window-control mac-window-close"
-              aria-label={t("shell.closeWindow")} title={t("shell.closeWindow")}
+              aria-label={t("shell.closeWindow")}
               onClick={() => { void desktop.close?.().catch(() => {}); }}>
               <svg viewBox="0 0 10 10" aria-hidden="true"><path d="m3 3 4 4m0-4L3 7" /></svg>
             </button>

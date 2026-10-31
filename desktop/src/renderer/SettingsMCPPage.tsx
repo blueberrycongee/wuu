@@ -294,7 +294,7 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
                         >
                           <Check className="icon" aria-hidden="true" />
                         </button></Tooltip>
-                        <Tooltip asChild content={t("mcp.cancelLogin")}><button
+                        <button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
                           aria-label={t("mcp.cancelLoginNamed", { name })}
@@ -305,7 +305,7 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
                           }}
                         >
                           <X className="icon" aria-hidden="true" />
-                        </button></Tooltip>
+                        </button>
                       </>
                     ) : (
                       <div className="settings-row-actions">

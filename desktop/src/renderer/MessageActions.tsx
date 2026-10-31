@@ -267,7 +267,7 @@ export function MessageImageGrid({
               </button>
             ) : null}
             {onRemove ? (
-              <Tooltip asChild content={t("common.remove")}><button
+              <button
                 type="button"
                 className="message-image-remove"
                 aria-label={t("composer.removeImage", { number: index + 1 })}
@@ -277,7 +277,7 @@ export function MessageImageGrid({
                 }}
               >
                 <X size={12} aria-hidden="true" />
-              </button></Tooltip>
+              </button>
             ) : null}
           </div>
         );
@@ -340,14 +340,14 @@ export function MessageFileList({
               </span>
             </div>}
             {onRemove ? (
-              <Tooltip asChild content={t("common.remove")}><button
+              <button
                 type="button"
                 className="message-file-remove"
                 aria-label={t("message.removeFileNamed", { name: filename })}
                 onClick={() => onRemove(index)}
               >
                 <X size={12} aria-hidden="true" />
-              </button></Tooltip>
+              </button>
             ) : null}
           </div>
         );
