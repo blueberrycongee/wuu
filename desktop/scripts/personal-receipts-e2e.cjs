@@ -56,9 +56,9 @@ app.whenReady().then(async () => {
     const failureIcon = await evaluate(() => {
       const button = document.querySelector('[data-receipt-id="receipt-held"] button');
       const r = button.getBoundingClientRect(), body = button.closest('.plugin-conversation-message').querySelector('.bubble-message-body').getBoundingClientRect();
-      return { left: r.left, right: r.right, center: (r.top + r.bottom) / 2, bodyLeft: body.left, bodyCenter: (body.top + body.bottom) / 2 };
+      return { left: r.left, right: r.right, center: (r.top + r.bottom) / 2, bodyRight: body.right, bodyCenter: (body.top + body.bottom) / 2, viewport: innerWidth };
     });
-    assert(failureIcon.left >= 0 && failureIcon.right <= failureIcon.bodyLeft && Math.abs(failureIcon.center - failureIcon.bodyCenter) < 1, JSON.stringify(failureIcon));
+    assert(failureIcon.left > failureIcon.bodyRight && failureIcon.right <= failureIcon.viewport && Math.abs(failureIcon.center - failureIcon.bodyCenter) < 1, JSON.stringify(failureIcon));
     await evaluate(() => document.querySelector('[data-receipt-id="receipt-held"] button').click());
     await until(() => !document.querySelector('[data-receipt-id="receipt-held"] [data-action="retry-message"]'));
     await evaluate(() => window.__receiptScenario.admit('held'));

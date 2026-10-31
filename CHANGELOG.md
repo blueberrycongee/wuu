@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Made authenticated input/context receipts an explicitly selected `wuu.client-input-receipts` host capability, available to bound Coding compositions as well as the default Personal composition.
+
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
 - Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.
@@ -181,6 +183,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Bound macOS Computer Use child enumeration and expose incomplete branches when native reads fail or traversal limits are reached. Partial observations no longer report confirmed removals or establish unique-label activation targets.
+- Show Personal desktop send failures consistently as a red outlined retry icon to the right of the message bubble in both main conversations and replies, with reserved space to prevent clipping.
 
 - Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
