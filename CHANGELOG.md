@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Wait for worker ownership bookkeeping to finish after execution locks are released before reporting that workers have drained.
+
 - Let app-server shutdown proceed when queued worker launch is stalled, while retaining its state until queued cancellation and worker ownership have settled.
 
 - Show complete font names in the appearance settings and widen their menus.
