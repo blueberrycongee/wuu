@@ -27,6 +27,8 @@ const startupEntryNs = process.hrtime.bigint();
 // history, two built-in services, and cross-project new-draft regression checks.
 // WUU_SWITCH_ROOT_STRESS=1 measures a new-draft switch with hundreds of
 // migrated sessions and thousands of historical workspace roots.
+// WUU_SWITCH_ROOT_THREAD_STRESS=1 measures opening an existing conversation
+// against the same migrated-session and historical-root fixture.
 // WUU_SWITCH_MISSING_WORKSPACE=1 removes a synthetic destination directory
 // after its history appears, then measures recovery from a native row click.
 const assert = require('node:assert/strict');
@@ -69,7 +71,8 @@ const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
-const rootStress = process.env.WUU_SWITCH_ROOT_STRESS === '1';
+const rootThreadStress = process.env.WUU_SWITCH_ROOT_THREAD_STRESS === '1';
+const rootStress = process.env.WUU_SWITCH_ROOT_STRESS === '1' || rootThreadStress;
 const missingWorkspace = process.env.WUU_SWITCH_MISSING_WORKSPACE === '1';
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
@@ -1033,13 +1036,14 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
       if (index < 69) fs.mkdirSync(path.join(workspace, 'sessions'));
       if (index < 4) fs.mkdirSync(path.join(workspace, 'worktrees'));
     }
-    await checkSubscriptionNavigation(main);
+    if (rootThreadStress) await switchTo(main, 2, 'first-project-visit-existing-conversation');
+    else await checkSubscriptionNavigation(main);
     fs.writeFileSync(path.join(output, 'workspace-root-results.json'), JSON.stringify({
-      scope: 'Synthetic migrated sessions and historical workspace roots; Linux/Xvfb; native click to an editable new draft.',
+      scope: `Synthetic migrated sessions and historical workspace roots; Linux/Xvfb; native click to ${rootThreadStress ? 'an editable existing conversation' : 'an editable new draft'}.`,
       sourceCommit: process.env.WUU_SWITCH_SOURCE_COMMIT, historicalWorkspaceRoots: 3274,
       targetSessionCount: 467, otherSessionCount: 55, archivedSessionCount: 50,
       coreSha256: createHash('sha256').update(fs.readFileSync(process.env.WUU_DESKTOP_CORE)).digest('hex'),
-      samples: subscriptionResults,
+      samples: rootThreadStress ? results.filter(result => result.scenario === 'first-project-visit-existing-conversation') : subscriptionResults,
     }, null, 2));
     fs.writeFileSync(path.join(output, 'workspace-root-final.png'), (await main.webContents.capturePage()).toPNG());
     clearTimeout(timeout); app.quit(); return;
