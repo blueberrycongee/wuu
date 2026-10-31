@@ -1,5 +1,5 @@
 import { useSettingsControls } from "../SettingsControlsContext";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 import { SettingsGroup } from "../SettingsSection";
 import { BackgroundSettings } from "./BackgroundSettings";
@@ -31,7 +31,7 @@ function SkinCard({ skin, mode, selected, choose, title, image }: {
   </button>;
 }
 
-export function ShellSkinSettings(): JSX.Element {
+export function ShellSkinSettings({ children }: { children?: ReactNode }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
   const { skins, selected } = useShellSkins(controls);
@@ -59,13 +59,16 @@ export function ShellSkinSettings(): JSX.Element {
   };
   const unavailable = !["default", "custom"].includes(selected) && !skins.some(skin => skin.key === selected);
   return <>
-    <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
-      <SkinCard mode={mode} selected={selected === "default" || (selected === "custom" && !preferences)} choose={() => choose("default")} title={t("settings.skinDefault")} />
-      {skins.map(skin => <SkinCard key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
-      {preferences && <SkinCard mode={mode} selected={selected === "custom"} choose={() => choose("custom")} title={t("settings.skinCustom")} image={image} />}
-    </div>
+    {(skins.length > 0 || preferences || unavailable) && <div className="settings-form">
+      <span className="settings-row-label-title">{t("settings.shellSkin")}</span>
+      <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
+        <SkinCard mode={mode} selected={selected === "default" || (selected === "custom" && !preferences)} choose={() => choose("default")} title={t("settings.skinDefault")} />
+        {skins.map(skin => <SkinCard key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
+        {preferences && <SkinCard mode={mode} selected={selected === "custom"} choose={() => choose("custom")} title={t("settings.skinCustom")} image={image} />}
+      </div>
+    </div>}
     {unavailable && <p className="settings-description" role="status">{t("settings.skinUnavailable")}</p>}
     {error && <p role="alert">{t("settings.saveFailed")}</p>}
-    <SettingsGroup><BackgroundSettings /></SettingsGroup>
+    <SettingsGroup><BackgroundSettings />{children}</SettingsGroup>
   </>;
 }
