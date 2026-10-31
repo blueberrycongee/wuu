@@ -134,6 +134,10 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 		kernel.state.host = host
 		nativeConsumers = append(nativeConsumers, kernel.state)
 	}
+	// A non-nil requirement set denotes candidate admission, which must not
+	// replace the live graph when a storage transfer fails. Cold starts have no
+	// graph to preserve and may quarantine an optional importer instead.
+	requireStorageTransfers := required != nil
 	required = maps.Clone(required)
 	if required == nil {
 		required = make(map[string]bool)
@@ -197,9 +201,11 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 	for _, transfer := range transfers {
 		consumer := newStorageTransferConsumer(host, registry, transfer)
 		nativeModules = append(nativeModules, consumer)
-		// Ownership conflicts must preserve the current graph, even when the
-		// target is an optional addon. Activation still rechecks for races.
-		required[consumer.ID()] = true
+		// Explicitly required importers are also enforced through this dependency.
+		// Activation still rechecks ownership for races after preparation.
+		if requireStorageTransfers {
+			required[consumer.ID()] = true
+		}
 		packageRequirements[transfer.targetID] = append(packageRequirements[transfer.targetID], consumer.ID())
 	}
 	host.SetPackageRequirements(packageRequirements)
