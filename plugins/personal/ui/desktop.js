@@ -366,8 +366,9 @@ export async function activate(api) {
     .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
     .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
     .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
-    .mosaic-receipt[data-delivery-status="failed"] { position:absolute;position-anchor:--personal-receipt-bubble;right:calc(anchor(left) + 4px);top:anchor(center);transform:translateY(-50%); }
-    .mosaic-receipt-retry { display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--danger);cursor:pointer; }
+    .plugin-conversation-message:has(> .mosaic-receipt[data-delivery-status="failed"]) { --personal-retry-size:24px;--personal-retry-gap:8px;padding-right:calc(var(--personal-retry-size) + var(--personal-retry-gap)); }
+    .mosaic-receipt[data-delivery-status="failed"] { position:absolute;position-anchor:--personal-receipt-bubble;left:calc(anchor(right) + var(--personal-retry-gap));top:anchor(center);transform:translateY(-50%); }
+    .mosaic-receipt-retry { display:grid;place-items:center;width:var(--personal-retry-size);height:var(--personal-retry-size);padding:0;border:0;border-radius:50%;background:transparent;color:var(--danger);cursor:pointer; }
     .mosaic-receipt-retry svg { width:18px;height:18px; }
     .mosaic-receipt-retry:hover { background:var(--field-hover-bg); }
     .mosaic-receipt-retry:focus-visible { outline:2px solid var(--danger);outline-offset:2px; }
@@ -843,7 +844,7 @@ export async function activate(api) {
     const zh = locale?.startsWith("zh");
     const retryLabel = zh ? "发送失败，点击重试" : "Send failed. Click to retry";
     return h("div", { className: "mosaic-receipt", role: "status", "data-transient": transient || undefined, "data-receipt-state": state, "data-delivery-status": failed ? "failed" : read ? "read" : "delivered", "data-receipt-id": receipt?.receipt_id }, failed
-      ? h("button", { type: "button", className: "mosaic-receipt-retry", "data-action": "retry-message", "aria-label": retryLabel, title: retryLabel, disabled: busy, onClick: onRetry }, h("svg", { viewBox: "0 0 20 20", "aria-hidden": true }, h("circle", { cx: 10, cy: 10, r: 9, fill: "currentColor" }), h("path", { d: "M10 5.5v5M10 14h.01", fill: "none", stroke: "var(--paper)", strokeWidth: 1.8, strokeLinecap: "round" })))
+      ? h("button", { type: "button", className: "mosaic-receipt-retry", "data-action": "retry-message", "aria-label": retryLabel, title: retryLabel, disabled: busy, onClick: onRetry }, h("svg", { viewBox: "0 0 20 20", "aria-hidden": true }, h("circle", { cx: 10, cy: 10, r: 9, fill: "none", stroke: "currentColor", strokeWidth: 1.5 }), h("path", { d: "M10 5.5v5M10 14h.01", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" })))
       : h("span", null, read ? zh ? "已读" : "Read" : zh ? "已送达" : "Delivered"));
   }
   function PersonalHome({ locale, host }) {

@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Show Personal desktop send failures consistently as a red outlined retry icon to the right of the message bubble in both main conversations and replies, with reserved space to prevent clipping.
+
 - Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
