@@ -181,6 +181,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Keep unavailable plugin surfaces visible with scoped render retries instead of blank panes or a full application restart; preserve optional wrapper content and diagnostic details.
+- Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
 
