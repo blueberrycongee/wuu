@@ -74,6 +74,9 @@ export interface ExecutionAuthorizationRevoke {
 }
 export interface ExecutionAuthorizationRevocation { readonly revoked: boolean; }
 export interface ExecutionAuthorizationPolicy {
+  /** Added by the host grant gateway, not provider authorization. Missing means
+   * unsupported; session-route.v1 enables exact existing-session routing only. */
+  readonly host_features?: readonly string[];
   readonly default_lifetime_seconds: number;
   readonly max_lifetime_seconds: number;
   readonly authority_kinds: readonly string[];

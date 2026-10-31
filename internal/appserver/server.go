@@ -257,6 +257,7 @@ type Server struct {
 	clientMethods               map[string]struct{}
 	deferredNotificationContent atomic.Bool
 	rendererClients             rendererClientScope
+	desktopSessionTransport     *desktopSessionTransportBridge
 	projectRegistration         *projectServerRegistration
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
@@ -832,6 +833,9 @@ func (s *Server) Close() {
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		if s.desktopSessionTransport != nil {
+			s.desktopSessionTransport.unbind(s)
+		}
 		s.pluginControl.Close()
 		if s.packageDownloadCancel != nil {
 			s.packageDownloadCancel()
@@ -1859,10 +1863,14 @@ func (s *Server) writeJSONContext(ctx context.Context, v any) error {
 			return sink.writeRecipientNotification(notification)
 		}
 	}
+	request, isRequest := v.(Request)
 	var allowed bool
 	var guard func() error
 	v, guard, allowed = s.authorizeOutbound(ctx, v)
 	if !allowed {
+		if isRequest && (request.Method == desktopSessionDispatch || request.Method == desktopSessionTargets) {
+			return &access.Denied{Action: request.Method, Reason: "source-transport-delivery-denied"}
+		}
 		return nil
 	}
 	var transportErr error

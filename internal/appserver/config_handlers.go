@@ -69,9 +69,14 @@ func (s *Server) handleInitialize(req Request) error {
 			isolation.Host = "verified"
 		}
 	}
+	var federationLocator *pluginhost.SessionLocatorV1
+	if federation, err := s.currentSessionFederation(); err == nil && federation != nil {
+		federationLocator = &pluginhost.SessionLocatorV1{Version: 1, ExecutionHost: federation.config.HostID, StorageHost: federation.config.StorageHost}
+	}
 	shell, surfaces := s.rt.ApplicationBindings()
 	return s.writeResponse(req.ID, InitializeResult{
-		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, UserHostIsolation: isolation,
+		SessionFederation: federationLocator,
+		UserSpaceID:       s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, UserHostIsolation: isolation,
 		ResourceAccess: resourceAccessCapabilities(), ApplicationShell: shell, ApplicationSurfaces: surfaces,
 		Status:          status,
 		Issues:          issues,

@@ -21,6 +21,8 @@ test('Personal process controls an exact existing target across lost replies, fo
  const targetMetadata={session_id:target.session_id,owner:'user',parent_session_id:'unchanged-parent',visibility:'user',state:'idle'};
  const original=structuredClone(targetMetadata);
  const contexts={};let created=0,sends=0,cancels=0,loseSend=false,loseBeforeAdmission=false,unavailable=false,sendOffline=false,runtime;
+ let routingSupported=true;
+ let sourceRecords=[];
  const routeInputs=[];let concurrentHold,concurrentReads=0;
  const host=async frame=>{
   const {service,method,params}=frame.params;const key=`${params?.scope}:${params?.key}`;
@@ -43,10 +45,10 @@ test('Personal process controls an exact existing target across lost replies, fo
    case 'host.session.create':{created++;assert.equal(created,1,'only main binding may be created');const session_id='personal-main';contexts[session_id]={session_id,...params};return {session_id,created:true};}
    case 'host.session.context':return contexts[params.session_id];
    case 'host.session.inspect':assert.equal(params.session_id,'personal-main');return {session:contexts['personal-main'],turn:turns.get(params.request_id)};
-   case 'host.session.send':assert.equal(params.session_id,'personal-main');assert.equal(params.disable_tools,true);turns.set(params.request_id,{request_id:params.request_id,state:'completed',turn_id:`feedback-${params.request_id}`});return {session_id:params.session_id,state:'running',turn_id:`feedback-${params.request_id}`};
-   case 'host.session.history.read':return {session_id:params.session_id,records:[],head_seq:0,snapshot_seq:0,has_more:false};
+   case 'host.session.send':assert.equal(params.session_id,'personal-main');assert.equal(params.presentation?.related_session_id,undefined,'external target must not become an owned local session relation');assert.equal(params.disable_tools,true);turns.set(params.request_id,{request_id:params.request_id,state:'completed',turn_id:`feedback-${params.request_id}`});return {session_id:params.session_id,state:'running',turn_id:`feedback-${params.request_id}`};
+   case 'host.session.history.read':return {session_id:params.session_id,records:sourceRecords.filter(record=>record.seq===params.start_seq),head_seq:0,snapshot_seq:0,has_more:false};
    case 'host.execution.authorization':{
-    if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run']};
+    if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run'],...(routingSupported?{host_features:['session-route.v1']}:{})};
     if(params.operation==='issue'){
      assert.equal(params.session_id,'personal-main','source authority stays on owned controller');
      const observation=await runtime.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'host',execution_id:'lineage',params:{kind:params.kind,task_id:params.task_id,session_id:params.session_id,request_id:params.run_id??params.request_id,...(params.parent?{parent:grants.get(params.parent.id)}:{})}});
@@ -89,6 +91,7 @@ test('Personal process controls an exact existing target across lost replies, fo
  t.after(async()=>{for(const child of children)child.kill();const out=join(root,'.tmp/e2e/personal-existing-session');await mkdir(out,{recursive:true});await writeFile(join(out,'protocol.jsonl'),frames.map(f=>JSON.stringify(f)).join('\n')+'\n');});
  runtime=await start();const {agent}=await runtime.client('agents.ensure_default');
  const create=()=>runtime.client('tasks.create',{agent_id:agent.agent_id,request_id:'existing-task',title:'Use existing context',goal:'Read the existing work and report',existing_session:target});
+ routingSupported=false;await assert.rejects(create(),/routing is unavailable/);assert.equal(created,1);assert.equal(sends,0);assert(![...storage.values()].map(raw=>JSON.parse(raw)).some(value=>value.request_id==='existing-task'));routingSupported=true;
  loseSend=true;let {task}=await create();assert.equal(task.execution.status,'unknown');assert.equal(created,1);assert.equal(sends,1);assert(task.execution.dispatch_pending);
  ({task}=await create());assert.equal(sends,1,'retry does not invent a second run');
  const run=task.execution.request_id;turns.set(run,{request_id:run,state:'completed',turn_id:'worker-turn',final_output:'Which branch should I use?'});
@@ -123,5 +126,20 @@ test('Personal process controls an exact existing target across lost replies, fo
  const concurrentTask=[...storage.values()].map(raw=>JSON.parse(raw)).find(value=>value.request_id==='concurrent-unknown');
  assert(concurrentReads>=2,'second dispatch captured pending state before first outcome');assert.equal(concurrentTask.execution.status,'unknown');assert.equal(concurrentTask.execution.dispatch_pending,true);
  concurrentHold=undefined;sendOffline=false;
+ const createFromSource=(request_id)=>runtime.call('tool.execute',{tool_id:'create_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'source-turn',call_id:request_id,execution_id:request_id,source_message:{session_id:'personal-main',seq:7},arguments:{request_id,title:'Original wording',goal:'Controller reformulation',existing_session:target}}).then(r=>JSON.parse(r.result.content[0].text));
+ sourceRecords=[{seq:7,role:'user',origin:'user',content:'原话：请检查这个已有会话，不要新建。'}];
+ const sourceTask=(await createFromSource('original-text')).task;
+ assert.equal(sourceTask.source.original_text,sourceRecords[0].content);
+ assert(routeInputs.at(-1).params.input.prompt.includes(sourceRecords[0].content));
+ assert(routeInputs.at(-1).params.input.prompt.includes('Controller task goal (not a verbatim user quote)'));
+ sourceRecords=[{...sourceRecords[0],attachments:[{path:'/private/source-only.pdf'}]}];
+ const beforeAttachment=sends, blocked=(await createFromSource('attachment-text-only')).task;
+ assert.equal(sends,beforeAttachment);assert.equal(blocked.execution.dispatch_pending,false);assert.match(blocked.error,/text-only/);
+ assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.task_id,blocked.task_id);
+ await assert.rejects(runtime.call('tool.execute',{tool_id:'update_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'followup-turn',call_id:'attached-followup',execution_id:'attached-followup',source_message:{session_id:'personal-main',seq:7},arguments:{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'Read the attached file'}}),/text-only/);
+ assert.equal(sends,beforeAttachment);
+ assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.revision,blocked.revision);
+ const revised=(await runtime.client('tasks.update',{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'The files are already at the target; use its existing context'})).task;
+ assert.equal(sends,beforeAttachment+1);assert.equal(revised.state,'running');assert(!revised.previous_executions[0].cancel_pending);
  await runtime.close();
 });

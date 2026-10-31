@@ -156,6 +156,16 @@ func TestSelectedExecutionRouteGateway(t *testing.T) {
 		}
 		return result, nil
 	}
+	featureRaw, err := invoke(context.Background(), ExecutionAuthorizationIntent{Operation: "describe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var features struct {
+		HostFeatures []string `json:"host_features"`
+	}
+	if err = json.Unmarshal(featureRaw, &features); err != nil || len(features.HostFeatures) != 1 || features.HostFeatures[0] != "session-route.v1" {
+		t.Fatalf("missing route feature: %s, %v", featureRaw, err)
+	}
 	owner := principal.WithContext(context.Background(), principal.LocalOwner())
 	issue := ExecutionAuthorizationIntent{Operation: "issue", RequestID: "root-route", Kind: "task-lineage", AuthorityService: "fixture.tasks", TaskID: "task-one", SessionID: "main-one", MaxDepth: 2, ExpiresAt: time.Now().Add(time.Hour).UTC(), RequestedActions: []string{"session/route/send", "session/route/inspect", "session/route/cancel", "user/session/send", "user/session/inspect"}}
 	raw, err := invoke(owner, issue)

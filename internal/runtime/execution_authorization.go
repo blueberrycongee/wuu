@@ -315,7 +315,10 @@ func (s *Session) HandleExecutionAuthorization(ctx context.Context, pluginID str
 		if err != nil {
 			return nil, err
 		}
-		return json.Marshal(result)
+		return json.Marshal(struct {
+			executionauth.PolicyInfo
+			HostFeatures []string `json:"host_features"`
+		}{result, []string{"session-route.v1"}})
 	}
 	if intent.Operation == "inspect" {
 		if ref == nil {
