@@ -255,10 +255,11 @@ describe("SettingsView shell", () => {
     let completeOld!: (value: RemoteControlSnapshot) => void;
     let completeOldAction!: (value: RemoteControlSnapshot) => void;
     const off = vi.fn();
+    let refreshPrevious!: () => void;
     const previous = { ...base, capabilities: { ...base.capabilities, remote: true },
       getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
       listMCPServers: vi.fn(async () => ({ servers: [] })),
-      subscribeRemote: vi.fn(() => off),
+      subscribeRemote: vi.fn((listener: () => void) => { refreshPrevious = listener; return off; }),
       setRemoteHostEnabled: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOldAction = resolve; })),
       getRemoteControlSnapshot: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOld = resolve; })),
     };
@@ -267,22 +268,31 @@ describe("SettingsView shell", () => {
       getRemoteControlSnapshot: vi.fn(async () => ({ status: null, pair_uri: null, host_running: true, host_enabled: true })),
     };
     await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: previous }));
+    // Unknown access is not an off switch. Establish a real snapshot before
+    // starting the old provider's mutation and a separate background read.
+    expect(container.querySelector('[data-testid="settings-remote-page"] [role="switch"]')).toBeNull();
+    await act(async () => completeOld({ status: null, pair_uri: null, host_running: false, host_enabled: false }));
     const toggle = container.querySelector<HTMLButtonElement>('[data-testid="settings-remote-page"] [role="switch"]');
     await act(async () => toggle!.click());
     expect(previous.setRemoteHostEnabled).toHaveBeenCalledOnce();
+    await act(async () => refreshPrevious());
+    expect(previous.getRemoteControlSnapshot).toHaveBeenCalledTimes(2);
     await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: next }));
     expect(next.getBuildInfo).toHaveBeenCalledOnce();
     expect(next.listMCPServers).toHaveBeenCalledOnce();
     expect(off).toHaveBeenCalledOnce();
     expect(next.subscribeRemote).toHaveBeenCalledOnce();
     expect(next.getRemoteControlSnapshot).toHaveBeenCalledOnce();
-    expect(container.querySelector('[data-testid="settings-remote-page"] [role="switch"]')).toBe(toggle);
-    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    const nextToggle = container.querySelector<HTMLButtonElement>('[data-testid="settings-remote-page"] [role="switch"]');
+    expect(nextToggle?.getAttribute("aria-checked")).toBe("true");
+    expect(nextToggle?.disabled).toBe(false);
     await act(async () => {
       completeOld({ status: null, pair_uri: null, host_running: false, host_enabled: false });
       completeOldAction({ status: null, pair_uri: null, host_running: false, host_enabled: false });
     });
-    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector('[data-testid="settings-remote-page"] [role="switch"]')).toBe(nextToggle);
+    expect(nextToggle?.getAttribute("aria-checked")).toBe("true");
+    expect(nextToggle?.disabled).toBe(false);
   });
 
   it.each(["agents", "subscriptions"] as const)("redirects legacy %s destinations into model connections for controlled navigation", (page) => {
