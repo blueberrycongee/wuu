@@ -204,6 +204,46 @@ it("carries workspace presentation identity without replaying workspace or draft
   expect(app.getSnapshot().workspaces.activeRoot).toBe("/b");
 });
 
+it("returns to the source when a history's workspace is unavailable", async () => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/missing" };
+  const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  const initialized = { provider: "fixture", model: "fixture", providers: [],
+    application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
+    extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: "source" }] };
+  let selected = source;
+  const resume = vi.fn();
+  const initialize = vi.fn();
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })), initialize, resumeThread: resume,
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: source, activeProjectId: "a", projects, threads: [], initialized: initialized as never });
+  vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => {
+    selected = context as typeof selected;
+    return { projects, active_context: selected, ...(selected.cwd === target.cwd ? { runtime_issue: {
+      code: "active_project_unavailable", message: "Destination workspace unavailable", project_id: "b", cwd: target.cwd,
+    } } : {}) };
+  });
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "source", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("composer.set-draft", { text: "retain source draft" });
+
+  const result = await app.invoke("thread.activate", { threadId: "history", workspaceId: "b" }).catch(error => error);
+
+  expect(app.getSnapshot().tabs.pending).toBeUndefined();
+  expect(result).toBeInstanceOf(Error);
+  expect(String(result)).toContain("Destination workspace unavailable");
+  expect(selected).toEqual(source);
+  expect(app.getSnapshot().workspaces.activeRoot).toBe(source.cwd);
+  expect(app.getSnapshot().composer.draftText).toBe("retain source draft");
+  expect(initialize).not.toHaveBeenCalled();
+  expect(resume).not.toHaveBeenCalled();
+});
+
 it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected", "resume-missing", "activation-rejected"] as const)("fences a cross-workspace history read at the selected application graph (%s)", async mode => {
   const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
   const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
