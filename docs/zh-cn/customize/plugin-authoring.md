@@ -746,3 +746,23 @@ storage 的 inspection 契约；内存缓存不能成为事实读取的独立权
 `personal.agents` 加入 SDK 的 `concurrentServices`：宿主可能在完成原调用前回读
 这些事实，不能把回读排在正在等待宿主的调用之后。通过存储与 inspection 契约同步
 状态修改，而不是串行阻塞整个服务。
+
+### Personal 账户 provider 生命周期
+
+日历与连接器操作通过选中的 `personal.accounts@1` 服务执行。Personal bundle
+选择 `wuu.personal-account-client` 和原生 `wuu.personal-accounts` provider；
+composition 可以将客户端绑定到其他 provider，或禁用原生模块，不会隐式回退。
+
+`call` 方法接收 `{operation, input, session_id?}`，操作名沿用 `host.personal`
+的日历与连接器操作。宿主先解析执行会话、检查资源策略，并为账户控制操作验证
+仍然有效的所有者准入，再调用选中的服务。序列化的会话 ID 本身不授予权限。
+返回值为 `{value}`、`{calendar_error: {code, persistence_failed?}}` 或
+`{connector_error: {code}}`；传输与准入失败仍使用服务错误。该契约不返回凭据
+或授权 URL。
+
+原生嵌入方在创建 runtime 前配置 `RuntimeBindings.SetPersonalAccountsFactory`。
+只有对应代的 provider 首次收到调用时，工厂才创建全新的账户资源，不能返回已由
+其他代持有的 broker。provider 声明凭据依赖，拥有自己的 OAuth 尝试和清理职责。
+已接受的调用保留原服务图直到完成；旧代清理不会关闭新代 broker。使用 runtime
+bindings 的 `NewUserHost` 不接收预先构造的账户 broker。审批／记忆协调器与原生
+文件审批入口仍是独立于该账户服务的部分。

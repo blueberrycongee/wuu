@@ -94,6 +94,11 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		h.server.Close()
 		return nil, err
 	}
+	if h.server.personalAccountsRouted && (personalOptions.Calendar != nil || personalOptions.Connectors != nil) {
+		h.attentionCancel()
+		h.server.Close()
+		return nil, errors.New("generation-owned Personal accounts require RuntimeBindings.SetPersonalAccountsFactory")
+	}
 	if h.server.bootOwner && strings.TrimSpace(rt.WuuHome) != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		h.server.storageMaintenanceCancel = cancel
@@ -122,6 +127,10 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 			rt.Toolkit.SetFileActionGate(h.actions.gate)
 		}
 	}
+	if h.server.personalAccountsRouted {
+		personalOptions.Accounts = h.server.callPersonalAccounts
+	}
+
 	additionalAuthorization := personalOptions.Authorize
 	personalOptions.Authorize = func(ctx context.Context, operation, verifiedSession string) error {
 		if err := h.authorizePersonalOperation(ctx, operation, verifiedSession); err != nil {
