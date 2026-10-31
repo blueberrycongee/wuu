@@ -4,7 +4,7 @@ These recommendations help people and coding agents build plugins that work with
 
 ## Choose how to extend Wuu
 
-- Use the smallest public extension point that fits. Add a tool, service, or UI contribution before replacing a complete provider.
+- Choose the public extension point that fits the intended change. Additive contributions, partial delegation, and complete provider replacement are equally supported choices; replacement does not require trying an additive approach first.
 - Use `@wuu/plugin-sdk` and documented host services instead of another plugin's private files, process, or renderer state. An additive plugin can consume a service without replacing its provider.
 - Declare runtime services in `required_services` and desktop services in `desktop.required_services`. Package dependencies select packages and their activation order; service requirements select an API name and major version. Declare both when you need both.
 - Give optional dependencies an explicit unavailable path. Keep unrelated features usable and report the affected feature's failure.
@@ -31,7 +31,7 @@ These recommendations help people and coding agents build plugins that work with
 
 - Validate tool arguments and external data at the point of use, including constraints the declared schema does not express. Declare a tool's real effects and concurrency behavior in `activity`; opt into concurrent execution only when shared state is safe.
 - Use the callback's execution context for session and workspace identity. Do not substitute the currently selected conversation for a missing identity, or treat a UI snapshot as authority for an action.
-- Keep durable plugin state in the appropriate host storage or service. For concurrent updates to one storage value, use `host.storage.compare_exchange`, check the result, and bound retries. Preserve user data when disabling or reloading a plugin.
+- Keep durable plugin state in the appropriate host storage or service. For competing read-modify-write operations on one `host.storage` value, use `host.storage.compare_exchange`, check the result, and bound retries. Other state services and providers use their own concurrency or transaction contracts. Preserve user data when disabling or reloading a plugin.
 - Declare non-secret settings with an appropriate `live`, `next-operation`, or `restart` application mode. Capture a snapshot when an operation needs related settings to stay together. Keep coupled values in one scope; a combined user and workspace snapshot is not a cross-scope transaction.
 - Use the host credential service for supported authenticated requests. Do not put secrets in tool arguments, ordinary settings or storage, logs, or packaged files. Plugin code is trusted and runs with user authority; requested permissions do not sandbox it.
 
@@ -42,6 +42,8 @@ These recommendations help people and coding agents build plugins that work with
 - Handle asynchronous action failures in the affected view. Keep a failed optional contribution from presenting unrelated work as failed, and release view-owned resources on unmount.
 
 ## Check the behavior you changed
+
+Match verification to the task: local trials and development need relevant checks and an exercise of the changed behavior; merging and publishing follow their applicable gates. These recommendations do not turn a local trial into a release workflow.
 
 - For a packaged plugin, use `wuu plugin validate` for package structure and `wuu plugin test` for initialization and negotiation. These checks do not prove a tool result or desktop view works.
 - Exercise the changed feature in a real conversation or desktop view as appropriate. For UI changes, inspect the rendered result rather than relying on registration alone.
