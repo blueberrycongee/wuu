@@ -16,6 +16,12 @@ import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import "../../src/renderer/styles.css";
 
 let recoveryOpened = 0;
+const recoveryInputEvents: { type: string; trusted: boolean; x: number; y: number; at: number }[] = [];
+for (const type of ["mousedown", "mouseup", "click"]) document.addEventListener(type, event => {
+  if (!(event.target instanceof Element) || !event.target.closest('[data-wuu-component="draft-recovery"] button')) return;
+  const pointer = event as MouseEvent;
+  recoveryInputEvents.push({ type, trusted: event.isTrusted, x: pointer.clientX, y: pointer.clientY, at: performance.now() });
+}, true);
 const fixture = window as any;
 let reads = 0;
 let remoteReads = 0;
@@ -48,6 +54,7 @@ fixture.feedback = {
   reads: () => reads,
   remoteReads: () => remoteReads,
   recoveryOpened: () => recoveryOpened,
+  recoveryInputEvents: () => recoveryInputEvents,
   remoteFailure: (fail: boolean, notify = false) => { remoteFail = fail; if (notify) remoteChanged(); },
   applyAppearance: (theme: string, font: number) => {
     document.documentElement.dataset.theme = theme;

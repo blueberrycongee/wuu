@@ -24,7 +24,7 @@ if (process.argv.includes("--build-only")) {
 const { app, BrowserWindow } = require("electron");
 app.setPath("userData", path.join(temp, "profile"));
 const report = { status: "running", kind: "production-component fixture", platform: process.platform,
-  versions: process.versions, checks: [], samples: [], screenshots: [], errors: [],
+  versions: process.versions, checks: [], samples: [], screenshots: [], errors: [], recoveryInteractions: [],
   limitations: ["Synthetic services; no live model, account, Go core or full App composition.", "Electron capture is not physical-display approval."] };
 const save = () => fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
 let win;
@@ -48,6 +48,7 @@ async function target(selector) {
 async function click(selector) {
   const point = await target(selector);
   for (const type of ["mouseMove", "mouseDown", "mouseUp"]) win.webContents.sendInputEvent({ type, ...point, button: "left", clickCount: 1 });
+  return point;
 }
 async function capture(name) {
   await evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
@@ -163,8 +164,16 @@ async function run() {
     await until(async () => !await present(notice), "all transient notices dismissed");
     assert.ok(await present('[data-wuu-component="draft-recovery"]'), "dismissal preserves durable recovery");
     assert.equal(await evaluate(() => document.querySelector('[data-testid="retained-draft"]').value), before);
-    await click('[data-wuu-component="draft-recovery"] button');
-    assert.ok(await evaluate(() => window.feedback.recoveryOpened() > 0), "recovery remains actionable");
+    const previousOpens = await evaluate(() => window.feedback.recoveryOpened());
+    const interaction = { theme, font, width, previousOpens, point: await click('[data-wuu-component="draft-recovery"] button') };
+    report.recoveryInteractions.push(interaction);
+    // sendInputEvent queues native input; executeJavaScript is not an input ACK.
+    // Require a new activation in each theme instead of borrowing the first click.
+    try {
+      await until(() => evaluate(expected => window.feedback.recoveryOpened() === expected, previousOpens + 1), "recovery remains actionable after native click");
+    } finally {
+      interaction.observed = await evaluate(() => ({ opened: window.feedback.recoveryOpened(), events: window.feedback.recoveryInputEvents() }));
+    }
     await capture(`draft-recovery-${theme}-${font}-${width}`);
   }
   report.checks.push("global and two surface notices render sequentially at one anchor; dismissals preserve editable draft and persistent recovery; recovery remains actionable at light 15px and dark 20px (surrounding editor is a fixture; public tab.select and no tab.close covered by integration tests)");
