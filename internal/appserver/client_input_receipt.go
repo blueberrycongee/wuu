@@ -22,9 +22,10 @@ func clientInputFingerprint(params pluginhost.SessionSendParams) string {
 		Input        pluginhost.SessionInput
 		Relation     *providers.MessageRelation
 		Cause        string
+		ToolPolicy   *pluginhost.SessionTurnToolPolicy `json:",omitempty"`
 		DisableTools bool
 		Presentation *pluginhost.SessionInputPresentation
-	}{params.Input, params.Relation, params.Cause, params.DisableTools, params.Presentation}
+	}{params.Input, params.Relation, params.Cause, params.ToolPolicy, params.DisableTools, params.Presentation}
 	encoded, _ := json.Marshal(value)
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])

@@ -937,7 +937,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	var clientAttachments []runtime.ClientInputAttachment
 	if params.ResumeReceiptID != "" {
-		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools {
+		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools || params.ToolPolicy != nil {
 			return pluginhost.SessionSendResult{}, errors.New("resume must reference only the immutable accepted input")
 		}
 		if err := runtime.AuthorizeClientInputResume(ctx, pluginID, params.UserInputRequestID, params.ResumeReceiptID, params.SessionID, params.RequestID); err != nil {
@@ -962,8 +962,23 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if params.IfRunning != pluginhost.SessionIfRunningQueue && params.IfRunning != pluginhost.SessionIfRunningSteer {
 		return pluginhost.SessionSendResult{}, errors.New("if_running must be queue or steer")
 	}
-	if params.DisableTools && params.IfRunning == pluginhost.SessionIfRunningSteer {
-		return pluginhost.SessionSendResult{}, errors.New("disable_tools cannot be used when if_running is steer")
+	if params.ToolPolicy != nil {
+		emptyAllow := params.ToolPolicy.Allow != nil && len(params.ToolPolicy.Allow) == 0
+		policy, err := normalizeSessionToolPolicy(pluginhost.SessionToolPolicy(*params.ToolPolicy))
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		// Preserve explicit deny-all through JSON snapshots, whose empty Allow
+		// is otherwise omitted and has legacy session-policy semantics.
+		if emptyAllow {
+			policy.Allow = nil
+			policy.Deny = append(policy.Deny, "*")
+		}
+		turnPolicy := pluginhost.SessionTurnToolPolicy(policy)
+		params.ToolPolicy = &turnPolicy
+	}
+	if (params.DisableTools || params.ToolPolicy != nil) && params.IfRunning == pluginhost.SessionIfRunningSteer {
+		return pluginhost.SessionSendResult{}, fmt.Errorf("%s cannot be used when if_running is steer", turnToolRestrictionName(params.DisableTools))
 	}
 	if params.IfRunning == pluginhost.SessionIfRunningSteer && len(params.Input.ContextBlocks) > 0 {
 		return pluginhost.SessionSendResult{}, errors.New("context_blocks cannot be used when if_running is steer")
@@ -981,8 +996,8 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if err := s.requireUserSessionBinding(metadata); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	if params.DisableTools && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
-		return pluginhost.SessionSendResult{}, errors.New("the selected agent engine cannot enforce disable_tools")
+	if (params.DisableTools || params.ToolPolicy != nil) && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+		return pluginhost.SessionSendResult{}, fmt.Errorf("the selected agent engine cannot enforce %s", turnToolRestrictionName(params.DisableTools))
 	}
 	owner := "plugin:" + pluginID
 	processDelivery := pluginhost.HasProcessSessionDelivery(ctx, params.SessionID)
@@ -1163,6 +1178,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 	snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
 	snapshot.DisableTools = params.DisableTools
+	snapshot.ToolPolicy = params.ToolPolicy
 	snapshot.RequestContext = requestContext
 	snapshot.Control = control
 	origin, err := invocation.RetainExecution()
@@ -1268,6 +1284,9 @@ func pluginSessionSource(owner string, params pluginhost.SessionCreateParams) st
 
 func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost.SessionToolPolicy, error) {
 	normalize := func(kind string, names []string) ([]string, error) {
+		if names == nil {
+			return nil, nil
+		}
 		seen := make(map[string]struct{}, len(names))
 		out := make([]string, 0, len(names))
 		for _, name := range names {
@@ -1407,4 +1426,13 @@ func (s *Server) restoreUserSessionAuthorization(ctx context.Context, pluginID s
 		resources = append(resources, access.Resource{Kind: "session", ID: strings.TrimSpace(sessionID)})
 	}
 	return s.rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, strings.TrimSpace(sessionID), "user/session/"+operation, resources...)
+}
+
+// Keep the established disable_tools refusal stable: callers distinguish this
+// definite pre-admission rejection from uncertain service transport failures.
+func turnToolRestrictionName(disableTools bool) string {
+	if disableTools {
+		return "disable_tools"
+	}
+	return "tool_policy"
 }

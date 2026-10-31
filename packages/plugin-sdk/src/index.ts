@@ -1578,6 +1578,10 @@ export interface HostServiceContracts {
       execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
       /** Prohibits all tools for this turn. Unsupported with steer or external engines. */
       disable_tools?: boolean;
+      /** Attenuation for this isolated turn only. Explicit allow: [] denies all.
+       * Steering into/out of this turn is unsupported; use queued input.
+       * Requires host feature session-turn-tool-policy.v1 and a native engine. */
+      tool_policy?: { allow?: string[]; deny?: string[] };
       user_input_request_id?: string;
       resume_accepted?: boolean;
       resume_receipt_id?: string;

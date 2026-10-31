@@ -1245,7 +1245,7 @@ export class AppServerClient {
     // otherwise put a newer notification ahead of this snapshot response.
     pending.onResponse?.(response);
     if (response.error) {
-      pending.reject(new AppServerResponseError(response.error.message));
+      pending.reject(new AppServerResponseError(response.error.message, response.error.code));
       return;
     }
     pending.resolve(response.result);

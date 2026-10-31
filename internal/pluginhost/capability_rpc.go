@@ -271,6 +271,21 @@ type SessionToolPolicy struct {
 	Deny  []string `json:"deny,omitempty"`
 }
 
+// SessionTurnToolPolicy shares session attenuation rules, except an explicit
+// empty Allow denies all. Preserve that distinction across transport snapshots.
+type SessionTurnToolPolicy SessionToolPolicy
+
+func (p SessionTurnToolPolicy) MarshalJSON() ([]byte, error) {
+	var allow *[]string
+	if p.Allow != nil {
+		allow = &p.Allow
+	}
+	return json.Marshal(struct {
+		Allow *[]string `json:"allow,omitempty"`
+		Deny  []string  `json:"deny,omitempty"`
+	}{allow, p.Deny})
+}
+
 // ExecutionAuthorizationReference identifies opaque selected-provider authority.
 // It is not an owner claim and is revalidated before every restored operation.
 type ExecutionAuthorizationReference struct {
@@ -381,6 +396,9 @@ type SessionSendParams struct {
 	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
 	ResumeReceiptID        string                           `json:"resume_receipt_id,omitempty"`
 	ResumeAccepted         bool                             `json:"resume_accepted,omitempty"`
+	// ToolPolicy attenuates this turn only and isolates it from steering input.
+	// An explicit empty allow list disables every tool. Unsupported with steer or external engines.
+	ToolPolicy *SessionTurnToolPolicy `json:"tool_policy,omitempty"`
 	// DisableTools prohibits every tool for this turn. Unsupported with steer or external engines.
 	DisableTools bool                       `json:"disable_tools,omitempty"`
 	Relation     *providers.MessageRelation `json:"relation,omitempty"`

@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -941,4 +942,82 @@ await:
 	if reconciled.CompletionConsumedBy != "history_answer" {
 		t.Fatalf("completion consumer=%q, want history_answer", reconciled.CompletionConsumedBy)
 	}
+}
+
+// A review's authority is not permission to consume unrelated durable results.
+// Recovery polling must preserve those obligations for a later ordinary turn.
+func TestIsolatedTurnPreservesPendingProcessCompletion(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	provider := newGatedProvider(8)
+	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
+	attachTestModelGeneration(t, rt)
+	manager, err := process.NewManager(rt.RootDir, filepath.Join(rt.RootDir, "process-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadID := "isolated-process-results"
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	server := New(rt, out)
+	t.Cleanup(server.Close)
+	th := newThreadState(threadID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
+	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner, ProcessManager: manager}
+	server.threads[threadID] = th
+	started, err := server.startQueuedTurn(testRuntimeState(t, server.rt), context.Background(), threadID, queuedTurn{id: "review", msg: providers.ChatMessage{Role: "user", Content: "Review only this task."}, snapshot: turnRuntimeSnapshot{ToolPolicy: &pluginhost.SessionTurnToolPolicy{Allow: []string{}}}})
+	if err != nil || !started {
+		t.Fatalf("start: %v %v", started, err)
+	}
+	first := provider.next(t)
+	events := make(chan process.Event, 16)
+	manager.Subscribe(events)
+	p, err := manager.Start(context.Background(), process.StartOptions{Command: "printf 'unrelated result\\n'", OwnerKind: process.OwnerMainAgent, OwnerID: threadID, Lifecycle: process.LifecycleManaged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case event := <-events:
+			if event.Process.ID == p.ID && event.Cause == process.EventCauseNaturalExit {
+				goto completed
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("process did not finish")
+		}
+	}
+completed:
+	first.response <- providers.ChatResponse{Content: "Continue review.", FinishReason: providers.FinishReasonContinue}
+	second := provider.next(t)
+	for _, msg := range second.request.Messages {
+		if len(processCompletionIDs(msg.ClientID)) > 0 {
+			t.Fatalf("isolated turn absorbed completion: %+v", msg)
+		}
+	}
+	second.response <- providers.ChatResponse{Content: "Review done."}
+	waitForTurnCompletedForThread(t, out, threadID)
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, threadID)
+	pending, err := manager.CompletionPending(p.ID)
+	if err != nil || !pending {
+		t.Fatalf("review consumed pending result: %v %v", pending, err)
+	}
+	started, err = server.startQueuedTurn(testRuntimeState(t, server.rt), context.Background(), threadID, queuedTurn{id: "ordinary", msg: providers.ChatMessage{Role: "user", Content: "Resume ordinary work."}})
+	if err != nil || !started {
+		t.Fatalf("ordinary start: %v %v", started, err)
+	}
+	third := provider.next(t)
+	found := false
+	for _, msg := range third.request.Messages {
+		for _, id := range processCompletionIDs(msg.ClientID) {
+			if id == p.ID {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ordinary turn did not recover preserved completion")
+	}
+	third.response <- providers.ChatResponse{Content: "Result checked."}
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, threadID)
 }

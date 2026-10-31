@@ -3562,7 +3562,12 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
-  ) => Promise<{ turn_id: string; delivery?: "active_turn" | "queued" }>;
+  ) => Promise<{
+    turn_id: string;
+    delivery?: "active_turn" | "queued";
+    /** Present only when an isolated-turn refusal was safely queued as independent user input. */
+    queued?: QueuedTurn;
+  }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
     threadId: string,

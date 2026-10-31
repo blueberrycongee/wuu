@@ -1,3 +1,4 @@
+import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
 import { RegisteredSessionTransport, REGISTERED_SESSION_REVERSE_METHODS } from "./registeredSessionTransport";
 import { resolveUserHostContext } from "./userHost";
 import { PresentationFrameCapture } from "./presentationFrame";
@@ -3110,8 +3111,14 @@ app.whenReady().then(async () => {
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
       targetContext?: RuntimeContext,
-    ) =>
-      appServerRequest(event, "turn/steer", {
+    ) => {
+      const context = targetContext
+        ? targetContext.kind === "user"
+          ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain, targetContext.composition_profile)
+          : projectManager.resolveSubmissionContext(targetContext)
+        : runtimeContextForEvent(event);
+      const request = appServerClientPool.bindSessionRequest(context, threadId);
+      return steerOrQueueIsolatedTurn(request, {
         thread_id: threadId,
         expected_turn_id: expectedTurnId,
         prompt,
@@ -3120,7 +3127,8 @@ app.whenReady().then(async () => {
         client_id: clientId,
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }, targetContext),
+      });
+    },
   );
   ipcMain.handle("wuu:turn-unsteer", (event, threadId: string, steerId: string) =>
     appServerRequest<{ ok: boolean }>(event, "turn/unsteer", {
