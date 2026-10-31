@@ -81,6 +81,7 @@ app.whenReady().then(async () => {
   await evaluate(win, () => document.querySelector('[role="menuitemradio"][data-value="en-US"]').click());
   await waitFor(win, () => document.querySelector('[data-testid="settings-language-select"]').getAttribute('aria-expanded') === 'false');
   await waitFor(win, () => document.documentElement.lang === "en-US");
+  assert.equal(await evaluate(win, () => window.wuu.getLanguagePreference()), "en-US");
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc"]');
   for (const font of [15, 20]) {
     await win.webContents.executeJavaScript(`document.documentElement.style.setProperty('--font-ui', '${font}px')`);

@@ -52,6 +52,7 @@ app.whenReady().then(async () => {
  await evaluate(win, () => document.querySelector('[role="menuitemradio"][data-value="en-US"]').click());
  await waitFor(win, () => document.querySelector('[data-testid="settings-language-select"]').getAttribute('aria-expanded') === 'false');
  await waitFor(win,()=>document.documentElement.lang==="en-US");
+ assert.equal(await evaluate(win, () => window.wuu.getLanguagePreference()), "en-US");
  for(const theme of ["light","dark"]) for(const font of [15,20]) for(const width of [1180,640]) {
   win.setContentSize(width,860);
   await win.webContents.executeJavaScript(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--font-ui','${font}px')`);
