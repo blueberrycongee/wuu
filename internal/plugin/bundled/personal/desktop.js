@@ -1605,17 +1605,17 @@ ${personalReviewStyles}
     .mosaic[data-panel-open="true"] .mosaic-identity-label { visibility:hidden;opacity:0;pointer-events:none; }
     .mosaic-profile-name-button { border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
     .mosaic-name-backdrop { position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:#00000026;padding:16px; }
-    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;left:50%;bottom:12px;transform:translateX(-50%);box-sizing:border-box;width:calc(100% - 48px);max-width:calc(100% - 24px);max-height:calc(100% - 48px);border:1px solid var(--hairline);border-radius:36px;background:var(--paper);box-shadow:0 16px 32px -8px rgb(0 0 0 / .19);overflow:hidden; }
+    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;inset:auto 8px 8px;box-sizing:border-box;max-height:min(52%,480px);border:1px solid var(--hairline);border-radius:28px;background:var(--paper);box-shadow:0 12px 28px -8px rgb(0 0 0 / .16);overflow:hidden;-webkit-app-region:no-drag; }
     .mosaic .mosaic-replies .plugin-conversation { display:flex;flex-direction:column;height:auto;min-height:0;flex:1 1 auto;max-height:none;overflow:hidden; }
     .mosaic .mosaic-replies .plugin-conversation-titlebar { display:none; }
     .mosaic-replies .title-block { display:none; }
-    .mosaic-replies-close { position:absolute;top:16px;right:16px;z-index:6;display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);box-shadow:0 2px 8px rgb(0 0 0 / .06);color:var(--ink);cursor:pointer; }
-    .mosaic-replies-close svg { width:16px;height:16px; }
-    .mosaic-replies-close:hover { background:var(--surface-2);color:var(--ink); }
-    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:20px 24px 0; }
+    .mosaic-replies-toolbar { display:flex;justify-content:flex-end;flex:none;padding:8px 16px 0; }
+    .mosaic-replies-close { flex:none;width:var(--control-size-toolbar);height:var(--control-size-toolbar);padding:0;border:0;box-shadow:none;color:var(--ink-muted);cursor:pointer; }
+    .mosaic-replies-close svg { width:18px;height:18px;pointer-events:none; }
+    .mosaic-replies-close:focus-visible { outline:2px solid var(--ink);outline-offset:2px; }
+    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:12px 16px 0; }
     .mosaic .mosaic-replies .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding:0 0 var(--mosaic-message-tail-space); }
-    .mosaic-replies .plugin-conversation-flow > :first-child { padding-right:36px; }
-    .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 24px 16px;box-sizing:border-box; }
+    .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 16px 12px;box-sizing:border-box; }
     .mosaic-replies .composer-wrap { margin:0;padding:0; }
     .mosaic-replies .composer-stack { width:100%;--composer-expanded-offset:0px; }
     .mosaic-replies .plugin-conversation-attachment:has(> img) > .conversation-file-card { display:none; }
@@ -1631,7 +1631,7 @@ ${personalReviewStyles}
     .mosaic-reply-task-context { margin:0;overflow-wrap:anywhere; }
     .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
     .mosaic-reply-task-context > p { margin:8px 0 0; }
-    @media(max-width:720px) { .mosaic-replies { width:calc(100% - 24px);border-radius:28px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:16px; } }
+    @media(max-width:720px) { .mosaic-replies { inset-inline:6px;border-radius:24px;max-height:60%; } .mosaic-replies-toolbar { padding-inline:12px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:12px; } }
     .mosaic-name-dialog { position:relative;width:min(360px,100%);max-height:100%;overflow:auto;min-height:450px;display:flex;flex-direction:column;align-items:center;gap:20px;padding:48px 32px 24px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
     .mosaic-name-input { width:100%;min-width:0;border:0;border-radius:12px;background:var(--surface-1);color:var(--ink);padding:12px 8px;text-align:center;font-size:32px;font-weight:600; }
@@ -2614,6 +2614,7 @@ ${personalReviewStyles}
       });
       const replyLoadVersion = React.useRef(0), replyPaging = React.useRef(false);
       const replyPanelRef = React.useRef(null), replyTrigger = React.useRef(null);
+      const replyMotion = React.useRef(null), replyClosing = React.useRef(false);
       const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
       const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
       const [, setDraftVersion] = React.useState(0);
@@ -3034,19 +3035,52 @@ ${personalReviewStyles}
           for (const record2 of history?.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           setReplyHistory(history);
           closePanel(false);
+          if (replyClosing.current && replyMotion.current) {
+            replyClosing.current = false;
+            replyMotion.current.onfinish = null;
+            replyMotion.current.reverse();
+          }
           setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
         } catch (cause) {
           if (version === replyLoadVersion.current) report(cause);
         }
       };
-      const closeReplies = () => {
-        replyLoadVersion.current++;
-        setReplySelection(null);
-        requestAnimationFrame(() => {
-          const trigger = replyTrigger.current;
+      React.useLayoutEffect(() => {
+        const panel = replyPanelRef.current;
+        if (!replySelection && replyClosing.current) {
+          const trigger = replyTrigger.current, main = rootRef.current?.querySelector(".mosaic-main");
           if (trigger?.isConnected && !trigger.closest("[inert],[hidden]")) trigger.focus({ preventScroll: true });
-          else rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true });
-        });
+          if (!main?.contains(document.activeElement)) main?.querySelector("textarea")?.focus({ preventScroll: true });
+        }
+        replyClosing.current = false;
+        if (!replySelection || !panel?.animate || reducePanelMotion()) return;
+        const motion = panel.animate([{ transform: "translateY(calc(100% + 8px))", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }], { duration: 360, easing: "cubic-bezier(.16,1,.3,1)", fill: "both" });
+        replyMotion.current = motion;
+        const reduced2 = () => {
+          if (reducePanelMotion()) motion.finish();
+        };
+        const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+        media?.addEventListener("change", reduced2);
+        const observer = new MutationObserver(reduced2);
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion"] });
+        return () => {
+          motion.onfinish = null;
+          motion.cancel();
+          replyMotion.current = null;
+          media?.removeEventListener("change", reduced2);
+          observer.disconnect();
+        };
+      }, [replySelection?.key]);
+      const closeReplies = () => {
+        if (replyClosing.current) return;
+        replyClosing.current = true;
+        replyLoadVersion.current++;
+        const finish = () => setReplySelection(null);
+        const motion = replyMotion.current;
+        if (motion && !reducePanelMotion()) {
+          motion.onfinish = finish;
+          motion.reverse();
+        } else finish();
       };
       React.useEffect(() => {
         if (replySelection) replyPanelRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
@@ -3442,7 +3476,7 @@ ${personalReviewStyles}
             first?.focus();
           }
         }
-      } }, h("button", { type: "button", className: "mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" }))), sendRefreshNotice, h(
+      } }, h("div", { className: "mosaic-replies-toolbar" }, h("button", { type: "button", className: "icon-button mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" })))), sendRefreshNotice, h(
         ConversationView,
         {
           presentation: "bubbles",
