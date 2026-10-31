@@ -677,8 +677,11 @@ async function chromeToggleGeometry(win) {
     const glyph = icon.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     const settingsOpen = document.querySelector('.app-shell').hasAttribute('data-settings-open');
-    const activeHeader = document.querySelector(settingsOpen ? '.settings-titlebar' : '.conversation-pane .titlebar');
-    const headers = [activeHeader];
+    // Desktop settings titles/actions live in the content column; native
+    // sidebar controls still belong to the independent window strip.
+    const windowStrip = document.querySelector(settingsOpen ? '.settings-titlebar' : '.conversation-pane .titlebar');
+    const activeHeader = settingsOpen ? document.querySelector('.settings-page-header') : windowStrip;
+    const headers = [...new Set([windowStrip, activeHeader])];
     const clippedChrome = [];
     for (const header of headers) {
       const bounds = header.getBoundingClientRect();
@@ -702,7 +705,7 @@ async function chromeToggleGeometry(win) {
           button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit),
           coveredByDrawer: Boolean(document.querySelector(settingsOpen ? '.sidebar-drawer-open .settings-sidebar' : '.sidebar-drawer-open .sidebar')?.contains(hit)) };
       });
-    const shellRow = document.querySelector('.mac-window-controls') ? activeHeader : document.querySelector('.workbench-window-chrome');
+    const shellRow = document.querySelector('.mac-window-controls') ? windowStrip : document.querySelector('.workbench-window-chrome');
     const shellBounds = shellRow.getBoundingClientRect();
     const shellStyle = getComputedStyle(shellRow);
     const shellControls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-right-sidebar-toggle')]
