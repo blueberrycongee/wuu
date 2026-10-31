@@ -346,7 +346,8 @@ describe("selected public composer continuity", () => {
     await act(async () => host.unload("alternative"));
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.querySelector("[role=alert]")).toBeNull();
-    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternative:one");
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(notice).not.toHaveBeenCalled();
     await act(async () => root.render(null));
     host.unload("side-extension"); host.unload("composer"); host.unload("wuu.default-preview");
   });
