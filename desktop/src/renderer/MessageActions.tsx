@@ -98,12 +98,12 @@ export function MessageTime({ timestamp, className = "" }: { timestamp?: string 
   if (!timestamp) return null;
 
   return (
-    <Tooltip asChild content={formatDate(timestamp, { dateStyle: "full", timeStyle: "long" })}><time
+    <time
       className={`message-time ${className}`}
       dateTime={timestamp}
     >
       {formatDate(timestamp, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-    </time></Tooltip>
+    </time>
   );
 }
 
