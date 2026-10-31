@@ -739,3 +739,8 @@ storage 的 inspection 契约；内存缓存不能成为事实读取的独立权
 `legacy-memory` 返回待迁入选中 memory journal 的旧记录 ID 到序列化值的映射；没有
 旧数据则返回空对象。coordinator 不再解释其他插件的私有存储键。两个方法都不修改
 状态、不恢复任务。provider 被禁用或不可用时，不得偷偷回退到内置实现。
+
+若同一 runtime 还会调用 `host.personal`（例如 memory 操作），应将
+`personal.agents` 加入 SDK 的 `concurrentServices`：宿主可能在完成原调用前回读
+这些事实，不能把回读排在正在等待宿主的调用之后。通过存储与 inspection 契约同步
+状态修改，而不是串行阻塞整个服务。

@@ -963,3 +963,9 @@ migration into the selected memory journal, or an empty object if none exist.
 The coordinator never interprets another plugin's private storage keys. Neither
 method writes state or restarts a task. A disabled or unavailable provider must
 not be replaced with a hidden bundled fallback.
+
+If the same runtime also calls back into `host.personal` (for example from a memory
+operation), include `personal.agents` in its SDK `concurrentServices`: the host may
+read these facts before completing the original call. Do not queue that read
+behind the invocation waiting for the host. Keep mutations synchronized through
+storage and the inspection contract rather than serializing the entire service.
