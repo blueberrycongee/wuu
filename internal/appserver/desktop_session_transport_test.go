@@ -12,10 +12,13 @@ import (
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -231,6 +234,14 @@ func runRegisteredPersonalSource(t *testing.T) {
 	}
 	t.Setenv("WUU_HOME", filepath.Join(home, "wuu"))
 	var discovered, created atomic.Bool
+	publicTools := map[string]string{}
+	reviewed := map[string]bool{}
+	var reviewRecords []map[string]any
+	var modelMu sync.Mutex
+	invoke := func(id, local string, args any) providers.ChatResponse {
+		raw, _ := json.Marshal(args)
+		return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: id, Name: publicTools[local], Arguments: string(raw)}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}
+	}
 	var catalogValue func(any) map[string]any
 	catalogValue = func(value any) map[string]any {
 		if text, ok := value.(string); ok {
@@ -259,7 +270,49 @@ func runRegisteredPersonalSource(t *testing.T) {
 		}
 		return nil
 	}
-	endpoint := newTestOpenAIEndpoint(t, "registered-model", "registered-title", func(_ context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	endpoint := newTestOpenAIEndpoint(t, "registered-model", "registered-title", func(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+
+		modelMu.Lock()
+		defer modelMu.Unlock()
+		latestUser := ""
+		for _, message := range request.Messages {
+			if message.Role == "user" && !strings.HasPrefix(message.Name, "wuu_") && !strings.HasPrefix(message.Content, "Personal identity revision") {
+				latestUser = message.Content
+			}
+		}
+		if strings.Contains(latestUser, "Check normal tools after review") {
+			names := []string{}
+			for _, tool := range request.Tools {
+				names = append(names, tool.Name)
+			}
+			raw, _ := json.Marshal(names)
+			_ = os.WriteFile(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR")+".normal-tools", raw, 0600)
+			return providers.ChatResponse{Content: "Normal human conversation tools restored"}, nil
+		}
+		match := regexp.MustCompile(`Review only Personal task ([^,]+), requirements revision ([0-9]+), worker request ([^.]+)\.`).FindStringSubmatch(latestUser)
+		if len(match) == 4 {
+			if len(request.Tools) != 1 || request.Tools[0].Name != publicTools["review_task_response"] {
+				return providers.ChatResponse{}, errors.New("review must expose only its resolved direct decision tool, without run_code")
+			}
+			if reviewed[match[3]] {
+				return providers.ChatResponse{Content: "Recorded controller decision; awaiting its committed application"}, nil
+			}
+			decision := "accept"
+			if os.Getenv("WUU_REGISTERED_REVIEW_FOLLOWUP") == "1" && len(reviewed) == 0 {
+				decision = "follow_up"
+			}
+			revision, _ := strconv.Atoi(match[2])
+			args := map[string]any{"task_id": match[1], "requirements_revision": revision, "worker_request_id": match[3], "decision": decision, "summary": "Controller reviewed the existing Coding response", "evidence": []string{"Existing Coding response returned from the selected registered session"}}
+			if decision == "follow_up" {
+				args["follow_up"] = "Confirm the existing result and return the final summary within the original objective"
+			}
+			raw, _ := json.Marshal(args)
+			reviewed[match[3]] = true
+			reviewRecords = append(reviewRecords, map[string]any{"tool": request.Tools[0].Name, "arguments": args, "tools_count": len(request.Tools)})
+			evidence, _ := json.Marshal(reviewRecords)
+			_ = os.WriteFile(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR")+".reviews", evidence, 0600)
+			return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "review-" + match[3], Name: request.Tools[0].Name, Arguments: string(raw)}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
+		}
 		var observedCatalog map[string]any
 		for _, message := range request.Messages {
 			if message.Role == "tool" && strings.Contains(message.Content, `"actual-personal-task"`) && strings.Contains(message.Content, `"task_id"`) {
@@ -286,26 +339,29 @@ func runRegisteredPersonalSource(t *testing.T) {
 				}
 			}
 			if selected != nil {
-				for _, tool := range request.Tools {
-					if strings.Contains(tool.Name, "create_task") {
-						args, _ := json.Marshal(map[string]any{"request_id": "actual-personal-task", "title": "Use existing Coding session", "goal": "Read existing work and report the result", "existing_session": selected["locator"]})
-						created.Store(true)
-						return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "delegate-existing", Name: tool.Name, Arguments: string(args)}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
-					}
-				}
+				created.Store(true)
+				return invoke("delegate-existing", "create_task", map[string]any{"request_id": "actual-personal-task", "title": "Use existing Coding session", "goal": "Read existing work and report the result", "existing_session": selected["locator"]}), nil
 			}
 		}
-		if !discovered.Load() {
-			for _, tool := range request.Tools {
-				if strings.Contains(tool.Name, "list_sessions") {
-					discovered.Store(true)
-					return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "discover-existing", Name: tool.Name, Arguments: `{}`}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
+		if !discovered.Load() && strings.Contains(latestUser, "Use my existing Coding workspace") {
+			discovered.Store(true)
+			return invoke("discover-existing", "list_sessions", map[string]any{}), nil
+		}
+		if os.Getenv("WUU_REGISTERED_HOLD_MAIN") == "1" && len(reviewed) == 0 && created.Load() {
+			for {
+				if _, err := os.Stat(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR") + ".release-main"); err == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return providers.ChatResponse{}, ctx.Err()
+				case <-time.After(20 * time.Millisecond):
 				}
 			}
 		}
 		return providers.ChatResponse{Content: "Personal received the existing Coding result"}, nil
 	})
-	cfg := config.Config{DefaultProvider: "registered-model", Agent: config.AgentConfig{ToolLoading: config.ToolLoadingFlat}, Providers: map[string]config.ProviderConfig{"registered-model": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "synthetic-unused", Model: "fake-model"}}}
+	cfg := config.Config{PTC: config.PTCConfig{Enabled: os.Getenv("WUU_REGISTERED_REVIEW_PTC") == "1"}, DefaultProvider: "registered-model", Agent: config.AgentConfig{ToolLoading: config.ToolLoadingFlat}, Providers: map[string]config.ProviderConfig{"registered-model": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "synthetic-unused", Model: "fake-model"}}}
 	cfg.Agent.ModelRoles.Title = config.ModelRoleConfig{Provider: "registered-model", Model: "registered-title"}
 	cfgPath := filepath.Join(home, "config.json")
 	raw, _ := json.Marshal(cfg)
@@ -344,6 +400,22 @@ func runRegisteredPersonalSource(t *testing.T) {
 	}
 	if descriptor == nil {
 		t.Fatal("generated Personal package absent")
+	}
+	for _, definition := range rt.PluginHost.ToolDefinitions() {
+		registered, found := rt.PluginHost.Tool(definition.Name)
+		if !found {
+			continue
+		}
+		for _, local := range []string{"list_sessions", "create_task", "review_task_response"} {
+			if registered.Registration.ID == local {
+				publicTools[local] = registered.PublicName
+			}
+		}
+	}
+	for _, local := range []string{"list_sessions", "create_task", "review_task_response"} {
+		if publicTools[local] == "" {
+			t.Fatalf("Personal tool missing: %s", local)
+		}
 	}
 	ready, _ := json.Marshal(descriptor)
 	if err := os.WriteFile(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR"), ready, 0600); err != nil {
