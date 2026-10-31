@@ -942,3 +942,32 @@ context and are canceled and drained when the connection's server closes.
 There is no separate package-download cancel RPC. Official and community npm
 packages go through these same public contracts; installation does not grant
 bundled-package privileges.
+
+### Personal execution facts
+
+A replacement `personal.agents@1` provider exposes `observe-execution` with
+`{session_id}` and returns `PersonalExecutionFacts` from the SDK. It resolves its
+own agent, task, requirement revision, run, active/cancelled state, owning routine,
+and exact original human source. The host independently checks session ownership,
+source history, the selected generation and execution grant. These facts do not
+grant permission to execute an action.
+
+For the existing Personal review/memory coordinator, store these durable facts in
+the provider's **user-scoped host storage**, in any key/value format. During an
+effect the coordinator retains the selected provider and holds that storage's
+opaque durable inspection, along with session and review guards. A standalone
+observation is not a transaction or an execution fence. An alternative storage
+backend must preserve the host storage inspection contract; an in-memory cache
+must not become an independent authority for these observations.
+
+`legacy-memory` returns a map of legacy record IDs to their serialized values for
+migration into the selected memory journal, or an empty object if none exist.
+The coordinator never interprets another plugin's private storage keys. Neither
+method writes state or restarts a task. A disabled or unavailable provider must
+not be replaced with a hidden bundled fallback.
+
+If the same runtime also calls back into `host.personal` (for example from a memory
+operation), include `personal.agents` in its SDK `concurrentServices`: the host may
+read these facts before completing the original call. Do not queue that read
+behind the invocation waiting for the host. Keep mutations synchronized through
+storage and the inspection contract rather than serializing the entire service.
