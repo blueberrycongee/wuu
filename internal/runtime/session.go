@@ -1750,7 +1750,14 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	binding := s.UserBinding()
-	if binding.IsUser() && binding.ProductDomain == "personal" {
+	receiptHost, receiptSessions := s.PluginHost, s.Sessions
+	if generation != nil {
+		receiptHost = generation.host
+		if generation.state != nil {
+			receiptSessions = generation.state.sessions
+		}
+	}
+	if binding.IsUser() && binding.Validate() == nil && ClientInputReceiptsSelected(receiptHost) {
 		prior := runner.OnModelContext
 		runner.OnModelContext = func(ctx context.Context, messages []providers.ChatMessage) {
 			if prior != nil {
@@ -1765,7 +1772,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			if len(refs) == 0 {
 				return
 			}
-			if err := s.Sessions.WithContext(ctx).MarkClientInputsRead(session.ClientInputScope{Binding: binding, SessionID: id}, refs); err != nil {
+			if err := receiptSessions.WithContext(ctx).MarkClientInputsRead(session.ClientInputScope{Binding: binding, SessionID: id}, refs); err != nil {
 				providers.DebugLogf("record model context read: %v", err)
 			}
 		}

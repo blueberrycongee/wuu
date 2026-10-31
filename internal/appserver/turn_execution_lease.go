@@ -504,7 +504,7 @@ func (s *Server) abortStartedThreadTurnDurably(th *threadState, started startedT
 		diagnostic := BuildTurnError(cause, "")
 		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, &diagnostic, time.Now().UTC(), nil, "", "", providers.TokenUsage{})
 	}
-	if s.clientInputReceiptsEnabled() && persistErr == nil && started.userMsgSeq > 0 && started.runtime.PluginTurn != nil {
+	if s.clientInputReceiptsEnabled(th.state) && persistErr == nil && started.userMsgSeq > 0 && started.runtime.PluginTurn != nil {
 		ref := started.runtime.PluginTurn
 		persistErr = th.state.Sessions.SettleClientInputExecution(s.clientInputScope(th.ID, ref.PluginID), ref.RequestID, started.turnID, "failed", cause.Error())
 	}
