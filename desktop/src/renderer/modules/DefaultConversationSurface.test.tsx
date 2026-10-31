@@ -122,7 +122,7 @@ it("uses the selected composer for both split owners and removes it when disable
 
 
 it("keeps a successful workspace switch quiet when the retired request rejects with an abort", async () => {
-  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const notice = vi.spyOn(Notices, "showActionErrorToast").mockImplementation(() => undefined);
   const h = fixture();
   const workspaces = [{ id: "first", name: "First", root: "/first", available: true }, { id: "second", name: "Second", root: "/second", available: true }];
   h.update({ ...h.get(), conversation: { loading: false, turns: [] }, conversationWorkspace: { activePane: "primary", turnStreamStatus: {}, threads: [] }, workspaces: { workspaces, activeWorkspaceId: "first", activeRoot: "/first" } });
@@ -141,7 +141,7 @@ it.each([
   new DOMException("signal is aborted without reason", "AbortError"),
   new Error("Workspace is unavailable. Reconnect and retry."),
 ])("keeps current action failures visible rather than treating every abort as retirement", async error => {
-  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const notice = vi.spyOn(Notices, "showActionErrorToast").mockImplementation(() => undefined);
   const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
   const h = fixture();
   h.invoke.mockRejectedValueOnce(error);

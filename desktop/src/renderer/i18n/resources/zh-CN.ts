@@ -1,4 +1,11 @@
 export const zhCN = {
+  "settings.errorRetry": "重试",
+  "settings.accountsLoadFailed": "未能加载账号，请重试。",
+  "settings.modelsLoadFailed": "未能加载模型，请检查连接后重试。",
+  "settings.connectionSaveFailed": "未能保存连接。已保留填写内容，可以重新连接。",
+  "settings.operationFailed": "未能完成这项操作，请查看详情后重试。",
+  "settings.enginesLoadFailed": "未能加载 Agent，请重试。",
+
   "conversationAttachment.readFailed": "无法读取已验证的附件，请重试。",
   "conversationAttachment.open": "打开 {name}",
   "conversationAttachment.download": "下载",

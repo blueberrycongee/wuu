@@ -1,6 +1,13 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "settings.errorRetry": "Try again",
+  "settings.accountsLoadFailed": "Could not load your accounts. Try again.",
+  "settings.modelsLoadFailed": "Could not load models. Check the connection and try again.",
+  "settings.connectionSaveFailed": "Could not save this connection. Your entries are still here; try connecting again.",
+  "settings.operationFailed": "Could not complete this change. Check the details and try again.",
+  "settings.enginesLoadFailed": "Could not load agents. Try again.",
+
   "conversationAttachment.readFailed": "Could not read the verified attachment. Please retry.",
   "conversationAttachment.open": "Open {name}",
   "conversationAttachment.download": "Download",
