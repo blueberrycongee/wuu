@@ -77,6 +77,9 @@ func (s *Server) observePluginPublication(ctx context.Context, request plugincon
 		err := s.refreshPluginGenerationIfChanged()
 		pending := errors.Is(err, errPluginGenerationRefreshBusy)
 		if err == nil {
+			// Additive preparation admits work on the old graph before the
+			// candidate is committed. Admission readiness is not activation.
+			pending = s.pluginAdditivePreparation.Load() != nil || s.pluginGenerationRefreshing.Load()
 			for _, status := range s.pluginControlStatus(request.PluginID).Plugins {
 				pending = pending || (status.State == "active" && status.Fingerprint != request.Fingerprint)
 			}

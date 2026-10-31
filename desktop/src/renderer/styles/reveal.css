@@ -1,0 +1,30 @@
+/* Intrinsic-height reveals share geometry and reduced-motion tokens.
+ * data-state drives controlled folds; data-enter opts a newly mounted item
+ * into an entrance. Callers decide what is new, so restored content stays still.
+ * Set --reveal-gap to the parent's sibling gap: the entering slot compensates
+ * for that gap at zero height, then releases it as the content opens. */
+.motion-height-reveal {
+  interpolate-size: allow-keywords;
+  height: auto;
+  min-height: 0;
+  overflow: clip;
+  opacity: 1;
+  margin-block-end: 0;
+  transition:
+    height var(--reveal-duration, var(--motion-slow)) var(--reveal-easing, var(--ease-out)),
+    margin-block-start var(--reveal-duration, var(--motion-slow)) var(--reveal-easing, var(--ease-out)),
+    margin-block-end var(--reveal-duration, var(--motion-slow)) var(--reveal-easing, var(--ease-out)),
+    opacity var(--reveal-duration, var(--motion-slow)) var(--reveal-easing, var(--ease-out));
+}
+
+.motion-height-reveal:is([data-state="closed"], [data-state="closing"]) {
+  height: 0;
+}
+
+@starting-style {
+  .motion-height-reveal[data-enter] {
+    height: 0;
+    opacity: 0;
+    margin-block-end: calc(-1 * var(--reveal-gap, 0px));
+  }
+}
