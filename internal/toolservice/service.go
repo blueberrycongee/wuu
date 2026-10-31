@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -50,15 +51,24 @@ type backendEntry struct {
 // Service owns scoped default backend initialization and teardown. External
 // selections never invoke these factories and never inherit this tool catalog.
 type Service struct {
-	mu        sync.Mutex
-	state     pluginhost.State
-	backends  map[*Scope]*backendEntry
-	closeDone chan struct{}
-	closeErr  error
+	resolveOwn func(string, string) ResolveOwnResult
+	mu         sync.Mutex
+	state      pluginhost.State
+	backends   map[*Scope]*backendEntry
+	closeDone  chan struct{}
+	closeErr   error
 }
 
 func NewService() *Service {
 	return &Service{state: pluginhost.StatePrepared, backends: make(map[*Scope]*backendEntry)}
+}
+
+// NewServiceWithOwnToolResolver binds host-owned declaration provenance only.
+// The callback must use its captured generation, never a payload-selected host.
+func NewServiceWithOwnToolResolver(resolve func(string, string) ResolveOwnResult) *Service {
+	s := NewService()
+	s.resolveOwn = resolve
+	return s
 }
 func (*Service) ID() string { return DefaultModule }
 func (s *Service) Status() pluginhost.Status {
@@ -185,6 +195,24 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	}
 	if p.Service != ServiceName {
 		return nil, &pluginhost.HostServiceError{Code: "service_not_found", Message: "unknown tool service"}
+	}
+	if p.Method == "resolve-own" {
+		var input ResolveOwnRequest
+		if err := decode(p.Params, &input); err != nil {
+			return nil, err
+		}
+		input.ToolID = strings.TrimSpace(input.ToolID)
+		if input.ToolID == "" || strings.TrimSpace(p.Caller) == "" {
+			return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "resolve-own requires a tool_id and authenticated caller"}
+		}
+		s.mu.Lock()
+		active, resolve := s.state == pluginhost.StateActive, s.resolveOwn
+		s.mu.Unlock()
+		if !active || resolve == nil {
+			return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "own tool binding resolution is unavailable"}
+		}
+		// No backend scope is required or initialized for this read-only lookup.
+		return json.Marshal(resolve(p.Caller, input.ToolID))
 	}
 	switch p.Method {
 	case "list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize":

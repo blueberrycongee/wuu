@@ -30,3 +30,7 @@ console.log(`Generated Personal acceptance evidence: ${evidence}.personal.json`)
 const federationPersonal = JSON.parse(readFileSync(evidence + '.personal-federation.json', 'utf8'));
 if (federationPersonal.passed !== true || federationPersonal.checks.length < 6) throw new Error('Conversational federation acceptance did not execute successfully');
 console.log(`Conversational federation evidence: ${evidence}.personal-federation.json`);
+
+const ptc = JSON.parse(readFileSync(evidence + ".personal-ptc.json", "utf8"));
+if (ptc.passed !== true || !ptc.checks.some(check => check.includes("Code Mode") && check.includes("controller decision"))) throw new Error("Actual Code Mode review acceptance did not execute successfully");
+console.log(`Code Mode direct controller review evidence: ${evidence}.personal-ptc.json`);
