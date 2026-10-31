@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ApplicationPresentationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationSettingsLayoutV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { EngineListResult, InitializeResult } from "../../shared/protocol";
@@ -7,11 +7,8 @@ import { useArchiveDeletion } from "../useArchiveDeletion";
 import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import { useSettingsRuntimeState } from "../SettingsRuntimeState";
 import type { SettingsPage } from "../SettingsView";
-import { showErrorToast } from "../Toast";
+import { ScopedToast, showErrorToast } from "../Toast";
 import { useI18n } from "../i18n";
-import { UILayerPortal } from "../ui/layers/UILayerHost";
-import { TopNotice } from "../TopNotice";
-import { CircleAlert, RefreshCw } from "../WuuIcons";
 
 export function DefaultSettingsSurface({ application, ...layout }: ApplicationSettingsLayoutV1 & {
   application: ApplicationServiceV1;
@@ -27,13 +24,9 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
   const initialized = useMemo(() => structuredClone(settings.configuration) as InitializeResult | undefined, [settings.configuration]);
   const engines = useMemo(() => structuredClone(settings.engineInventory) as EngineListResult | undefined, [settings.engineInventory]);
   const { t } = useI18n();
-  const [catalogNotice, setCatalogNotice] = useState<{ message: string; isError: boolean }>();
-  const dismissCatalogNotice = useCallback(() => setCatalogNotice(undefined), []);
-  useEffect(() => {
-    layout.onNoticeVisibilityChange?.(Boolean(catalogNotice));
-    return () => layout.onNoticeVisibilityChange?.(false);
-  }, [catalogNotice, layout.onNoticeVisibilityChange]);
-  const lifetime = useMemo(() => ({ active: true }), [application]);
+  const [catalogNotice, setCatalogNotice] = useState<{ id: number; message: string; isError: boolean }>();
+  const catalogRequest = useRef(0);
+  const lifetime = useMemo(() => ({ active: true }), [application, settings.open]);
   useEffect(() => {
     lifetime.active = true;
     setCatalogNotice(undefined);
@@ -48,17 +41,16 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
   async function refreshModelCatalog(): Promise<void> {
     if (!lifetime.active) return;
     setCatalogNotice(undefined);
+    const id = ++catalogRequest.current;
     try {
       const result = await application.invoke("settings.refresh-model-catalog", {});
-      if (lifetime.active) setCatalogNotice({ message: t("settings.modelCatalogUpdated", { count: result.modelCount }), isError: false });
+      if (lifetime.active && id === catalogRequest.current) setCatalogNotice({ id, message: t("settings.modelCatalogUpdated", { count: result.modelCount }), isError: false });
     } catch (error) {
-      if (lifetime.active && !isPluginLifecycleCancellation(error)) setCatalogNotice({ message: t("settings.modelCatalogUpdateFailed"), isError: true });
+      if (lifetime.active && id === catalogRequest.current && !isPluginLifecycleCancellation(error)) setCatalogNotice({ id, message: t("settings.modelCatalogUpdateFailed"), isError: true });
     }
   }
   return <>
-    {catalogNotice && <UILayerPortal layer="notice"><TopNotice message={catalogNotice.message}
-      icon={catalogNotice.isError ? CircleAlert : RefreshCw} isError={catalogNotice.isError}
-      onDismiss={dismissCatalogNotice} dismissAriaLabel={t("common.closeNotice")} /></UILayerPortal>}
+    {settings.open && catalogNotice && <ScopedToast key={catalogNotice.id} message={catalogNotice.message} tone={catalogNotice.isError ? "error" : "info"} />}
     {settings.open && <div className={layout.embedded ? "settings-workbench-layer" : "settings-standalone-layer"}>
       <SettingsShellRenderer {...layout} application={application} initialized={initialized} running={settings.runtimeSwitchPending}
         runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryError={settings.engineInventoryError}

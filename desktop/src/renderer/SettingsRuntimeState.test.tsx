@@ -1,3 +1,4 @@
+import { clearToasts, ToastViewport } from "./Toast";
 import { createScopedTestApplication } from "./test-support/ScopedApplication";
 import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { act, createElement } from "react";
@@ -47,7 +48,7 @@ async function renewableRuntime(application: Pick<ApplicationServiceV1, "invoke"
 let mountedRoots: Root[] = [];
 const generationCleanups: Array<() => void> = [];
 
-afterEach(() => {
+afterEach(() => { act(() => clearToasts());
   act(() => {
     for (const root of mountedRoots) root.unmount();
   });
@@ -296,7 +297,7 @@ it.each(["success", "failure", "retired"] as const)("does not publish an old mod
   const root = createRoot(container); mountedRoots.push(root);
   const visibility = vi.fn();
   const layout = settingsLayout(visibility);
-  const render = (application: ApplicationServiceV1) => act(async () => root.render(<WuuUIRoot><DefaultSettingsSurface {...layout} application={application} /></WuuUIRoot>));
+  const render = (application: ApplicationServiceV1) => act(async () => root.render(<WuuUIRoot><ToastViewport /><DefaultSettingsSurface {...layout} application={application} /></WuuUIRoot>));
   const current = () => vi.mocked(SettingsShellRenderer).mock.calls.at(-1)![0];
   await render(previous);
   let oldWork!: Promise<void>; let nextWork!: Promise<void>;
@@ -309,9 +310,9 @@ it.each(["success", "failure", "retired"] as const)("does not publish an old mod
     else oldResult.reject(outcome === "retired" ? new PluginLifecycleCancellationError() : new Error("old catalog failed"));
     await oldWork;
   });
-  expect(visibility).not.toHaveBeenCalledWith(true);
+  expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
   await act(async () => { nextResult.resolve({ modelCount: 20 }); await nextWork; });
-  expect(visibility).toHaveBeenCalledWith(true);
+  expect(container.querySelector('[data-wuu-component="notice"]')).not.toBeNull();
 });
 
 it.each([true, false])("keeps catalog retirement quiet without hiding genuine errors before successor props (retired: %s)", async retired => {
@@ -324,10 +325,10 @@ it.each([true, false])("keeps catalog retirement quiet without hiding genuine er
   const root = createRoot(container); mountedRoots.push(root);
   const visibility = vi.fn();
   const layout = settingsLayout(visibility);
-  await act(async () => root.render(<WuuUIRoot><DefaultSettingsSurface {...layout} application={application} /></WuuUIRoot>));
+  await act(async () => root.render(<WuuUIRoot><ToastViewport /><DefaultSettingsSurface {...layout} application={application} /></WuuUIRoot>));
   visibility.mockClear();
   await act(async () => { await vi.mocked(SettingsShellRenderer).mock.calls.at(-1)![0].onRefreshModelCatalog(); });
-  expect(visibility.mock.calls.some(([visible]) => visible)).toBe(!retired);
+  expect(Boolean(container.querySelector('[data-wuu-component="notice"]'))).toBe(!retired);
 });
 
 it("reloads engine inventory when its owning context changes while settings remain open", async () => {
