@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1336,12 +1337,12 @@ func responsesWebSocketStoreContinuation(session *responsesWebSocketSession, gen
 }
 
 func responsesRequestRestJSON(payload responsesRequest) ([]byte, error) {
-	body, err := marshalResponsesRequest(payload)
+	// Input is compared separately against the continuation baseline. Exclude
+	// it before serialization so this settings check never walks the history.
+	payload.Input = nil
+	payload.PreviousResponseID = ""
+	object, err := responsesRequestObject(payload)
 	if err != nil {
-		return nil, err
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil {
 		return nil, err
 	}
 	delete(object, "input")
@@ -1366,6 +1367,11 @@ func responsesInputItemEqual(a, b responsesInputItem) bool {
 }
 
 func jsonBytesEqual(a, b []byte) bool {
+	// Replayed items usually have identical encodings. Keep semantic JSON
+	// comparison for compatible endpoints that change key order or formatting.
+	if bytes.Equal(a, b) {
+		return true
+	}
 	var av any
 	var bv any
 	if err := json.Unmarshal(a, &av); err != nil {
@@ -1423,23 +1429,15 @@ func responsesInputItemText(item responsesInputItem) string {
 }
 
 func marshalResponsesWebSocketCreate(ctx context.Context, payload responsesRequest) ([]byte, error) {
-	body, err := marshalResponsesRequest(payload)
+	object, err := responsesRequestObject(payload)
 	if err != nil {
-		return nil, err
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil {
 		return nil, err
 	}
 	routing := responsesTurnRoutingFromContext(ctx)
 	if token := routing.state.Token(routing.scope); token != "" {
-		metadata, err := json.Marshal(map[string]string{responsesTurnStateHeader: token})
-		if err != nil {
-			return nil, err
-		}
-		object["client_metadata"] = metadata
+		object["client_metadata"] = map[string]string{responsesTurnStateHeader: token}
 	}
-	object["type"] = json.RawMessage(`"response.create"`)
+	object["type"] = "response.create"
 	return json.Marshal(object)
 }
 

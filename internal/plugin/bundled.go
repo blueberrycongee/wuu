@@ -32,6 +32,7 @@ const EnableCUAMacEnv = "WUU_ENABLE_CUA_MAC"
 const EnableCUALinuxEnv = "WUU_ENABLE_CUA_LINUX"
 
 type DiscoverOptions struct {
+	ExcludeDev bool
 	GOOS       string
 	WuuVersion string
 	LookPath   func(string) (string, error)

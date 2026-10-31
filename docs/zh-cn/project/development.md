@@ -384,6 +384,24 @@ DNS/TLS 与 HTTP 时间、HTTP 暴露 Content-Length 时的请求体大小、连
 回合匹配，全部通过正确性检查后才输出指数。高于 100 表示该样本更快；同时检查成功样本
 的 P50/P90、完成时间及失败。小样本不能证明尾延迟或整体产品分数。
 
+用 `-loop-workload short|long|tools|many-tools` 通过默认 driver 运行精确短回答、
+128 行长输出，或 8/64 次依赖前一步结果的合成工具调用。每次工具结果才会揭示下一次
+调用需要的 token。例如：
+
+```sh
+go run ./scripts/provider-latency-e2e -provider openai-codex \
+  -model gpt-6.1-terra -reuse-codex-credentials -transport auto \
+  -loop-workload many-tools -records 320 -repeats 4 -timeout 600s \
+  -label candidate > .tmp/provider-latency/loop-candidate.jsonl
+```
+
+`-model` 只覆盖当前进程的模型。`-reuse-codex-credentials` 为循环负载显式选择本机
+只读 Codex CLI 凭证源。这些负载固定 low 推理档位，关闭自动压缩，不包含运行时持久存储。
+报告记录请求准备完成与模型完成的时间、服务商续接状态、内存分配、工具定义读取次数和
+重试次数。恢复产生额外提交时，即使任务正确完成，严格的 `passed` 检查仍为失败；应保留
+该样本及其全部耗时。传输评分脚本不为 `loop_sample` 记录评分，应按负载、历史规模和
+传输方式比较完整任务，并记录同时运行多个版本时的并发度。
+
 用 `-list-providers` 列出已配置的名称和模型，不输出凭证。测试命令调度时，
 对已配置的 DeepSeek 或 Codex 增加 `-shell-workload -repeats 3 -timeout 120s`。
 增加 `-shell-delay 0s` 可运行短命令对照。这个独立负载不使用合成历史、合成工具和预热参数。真实模型执行白名单内的 PTC

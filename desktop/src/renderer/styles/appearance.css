@@ -144,6 +144,11 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
   .settings-row-control:has(.appearance-font-picker) { width: 100%; }
 }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
+.appearance-font-picker .select-menu-value,
+.appearance-font-menu .select-menu-item-label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .composer textarea, .workspace-markdown-reading {
   font-size: var(--font-ui);
 }

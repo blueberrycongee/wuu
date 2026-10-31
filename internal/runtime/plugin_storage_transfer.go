@@ -19,8 +19,7 @@ type pluginStorageTransfer struct {
 	transfer pluginsettings.StateTransfer
 }
 
-// Resolve declarations without reading or mutating storage: candidate preparation
-// must not fence the currently published owner before its policy is committed.
+// Resolve declarations before read-only provider validation during preparation.
 func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.Plugin, binding userspace.Binding) ([]pluginStorageTransfer, error) {
 	if err := binding.Validate(); err != nil {
 		return nil, err
@@ -65,7 +64,7 @@ func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.P
 			if !trusted(source) || !trusted(target) {
 				return nil, fmt.Errorf("storage transfer %q requires independently trusted packages", declaration.ID)
 			}
-			if source.SubjectID == target.SubjectID {
+			if source.StorageSubject() == target.StorageSubject() {
 				return nil, fmt.Errorf("storage transfer %q has identical owners", declaration.ID)
 			}
 			matching := false
@@ -80,7 +79,7 @@ func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.P
 			if !matching {
 				return nil, fmt.Errorf("storage transfer %q lacks reciprocal source declaration", declaration.ID)
 			}
-			result = append(result, pluginStorageTransfer{targetID: target.ID, transfer: pluginsettings.StateTransfer{ID: declaration.ID, SourceSubjectID: source.SubjectID, TargetSubjectID: target.SubjectID, KeyPrefix: declaration.KeyPrefix, Scope: pluginsettings.ScopeUser}})
+			result = append(result, pluginStorageTransfer{targetID: target.ID, transfer: pluginsettings.StateTransfer{ID: declaration.ID, SourceSubjectID: source.StorageSubject(), TargetSubjectID: target.StorageSubject(), KeyPrefix: declaration.KeyPrefix, Scope: pluginsettings.ScopeUser}})
 		}
 	}
 	return result, nil
@@ -129,4 +128,17 @@ func (c *storageTransferConsumer) Activate(ctx context.Context) error {
 		}
 	}
 	return c.runtimeServiceConsumer.Activate(ctx)
+}
+
+func (c *storageTransferConsumer) Prepare(ctx context.Context) error {
+	for _, status := range c.host.Statuses() {
+		// This dependency prepares before its importer. Process runtimes are
+		// initialized at this point and become prepared only after this check.
+		if status.ID == c.transfer.targetID && (status.State == pluginhost.StateInitialized || status.State == pluginhost.StatePrepared) && c.host.DependencyFailures()[c.transfer.targetID] == nil {
+			if err := c.settings.CheckStateTransfer(ctx, c.transfer.transfer); err != nil {
+				return fmt.Errorf("plugin %q storage transfer %q preflight: %w", c.transfer.targetID, c.transfer.transfer.ID, err)
+			}
+		}
+	}
+	return nil
 }

@@ -101,7 +101,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 			return nil, err
 		}
 		docs := p.memoryDocuments(state)
-		records, err := personalmemory.NewJournal(docs, p.server.rt.UserBinding().UserSpaceID, selected.SubjectID).Records(ctx)
+		records, err := personalmemory.NewJournal(docs, p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject()).Records(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 		if err = decodePersonalAction(raw, &input); err != nil {
 			return nil, err
 		}
-		op, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.SubjectID).Operation(ctx, input.ID)
+		op, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject()).Operation(ctx, input.ID)
 		if errors.Is(err, personalmemory.ErrNotFound) {
 			return json.RawMessage("null"), nil
 		}
@@ -133,7 +133,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 			}
 		}
 		if op.State == "committed" {
-			records, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.SubjectID).Records(ctx)
+			records, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject()).Records(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -149,7 +149,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 		if err = decodePersonalAction(raw, &input); err != nil {
 			return nil, err
 		}
-		doc, err := services.Settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
+		doc, err := services.Settings.ReadState(ctx, selected.StorageSubject(), pluginsettings.ScopeUser)
 		if err != nil {
 			return nil, err
 		}
@@ -330,7 +330,7 @@ func (p *personalActions) openMemoryLease(ctx context.Context, state *runtime.St
 	if err != nil {
 		return fail(err)
 	}
-	l.journal = personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.SubjectID)
+	l.journal = personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject())
 	if _, available := state.Host.ServiceRegistry().ProviderPluginIDFor(personalActionsConsumerID, executionauth.ServiceName, 1); !available {
 		l.ctx = ctx
 		return l, nil
@@ -432,7 +432,7 @@ func (p *personalActions) commitMemory(ctx context.Context, state *runtime.State
 	if err != nil {
 		return nil, err
 	}
-	doc, err := l.settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
+	doc, err := l.settings.ReadState(ctx, selected.StorageSubject(), pluginsettings.ScopeUser)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +480,7 @@ func (p *personalActions) commitMemory(ctx context.Context, state *runtime.State
 		}
 		return nil, personalmemory.ErrAborted
 	}
-	taskRequest := pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: selected.SubjectID, Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}
+	taskRequest := pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: selected.StorageSubject(), Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}
 	var outcome personalmemory.Operation
 	runErr := func() error {
 		guard, err := l.settings.AcquireInspection(ctx, taskRequest)
@@ -603,7 +603,7 @@ func (l *personalMemoryLease) release(ctx context.Context) error {
 	}
 	// Release-before-acquire tombstones prevent delayed acquisitions after a
 	// rejected or lost request. None of these cleanup calls admits another write.
-	err = errors.Join(err, l.sessions.ReleaseInspection(ctx, op.SessionGuardID), l.settings.ReleaseInspection(ctx, pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: l.selected.SubjectID, Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}))
+	err = errors.Join(err, l.sessions.ReleaseInspection(ctx, op.SessionGuardID), l.settings.ReleaseInspection(ctx, pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: l.selected.StorageSubject(), Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}))
 	return err
 }
 
