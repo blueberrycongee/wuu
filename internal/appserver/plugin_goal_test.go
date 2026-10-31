@@ -76,18 +76,25 @@ func (b *goalBridge) RouteServiceCall(ctx context.Context, id string, call plugi
 		b.mu.Lock()
 		result = pluginhost.StorageGetResult{Value: b.value}
 		b.mu.Unlock()
-	case string(pluginhost.HostServiceStorageSet):
-		var p pluginhost.StorageSetParams
+	case pluginhost.KernelStorageCompareExchangeService:
+		var p pluginhost.StorageCompareExchangeParams
 		_ = json.Unmarshal(call.Params, &p)
 		b.mu.Lock()
-		b.value = &p.Value
+		swapped := (p.Expected == nil && b.value == nil) || (p.Expected != nil && b.value != nil && *p.Expected == *b.value)
+		if swapped {
+			b.value = p.Value
+		}
+		result = pluginhost.StorageCompareExchangeResult{Swapped: swapped, Value: b.value}
 		b.mu.Unlock()
-		result = struct{}{}
-		var state map[string]goalSnapshot
-		_ = json.Unmarshal([]byte(p.Value), &state)
-		for _, g := range state {
-			if g.Status == b.wantStatus && g.TokensUsed == b.wantTokens {
-				b.once.Do(func() { close(b.settled) })
+		if swapped && p.Value != nil {
+			var state struct {
+				Goals map[string]goalSnapshot `json:"goals"`
+			}
+			_ = json.Unmarshal([]byte(*p.Value), &state)
+			for _, g := range state.Goals {
+				if g.Status == b.wantStatus && g.TokensUsed == b.wantTokens {
+					b.once.Do(func() { close(b.settled) })
+				}
 			}
 		}
 	case string(pluginhost.HostServiceSessionSend):

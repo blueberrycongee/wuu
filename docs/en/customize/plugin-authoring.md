@@ -377,6 +377,14 @@ Most kernel services use method `call`. Storage is not a transaction across keys
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
+For `host.session.send`, `session_send_unavailable` means the host had no send
+handler and did not dispatch this call. After the service recovers, an explicit
+retry may release that unaccepted request identity. This code is reserved for
+that boundary: if an invoked handler returns it, including from a nested call,
+the outer send reports `host_error` instead. Generic `service_unavailable`, other
+errors, and timeouts do not prove non-admission; retain the request identity and
+reconcile its receipt before replacing it.
+
 `host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. General per-turn allow/deny policies are not supported.
 
 `host.session.history.read` is a read-only view of physical audit records, including hidden model context and tool records. Records carry optional `hidden`, `read_only`, and `origin` metadata; omitted flags are false and omitted origin is empty for legacy records. A `user` role alone does not establish human authorship. Retain these fields when building a conversation projection: exclude hidden records, and treat user-role records as human input only when they are not read-only and their origin is `user` or empty. Do not classify messages by their wording or strip matching text from genuine input. Projection does not delete audit records or alter provider context.

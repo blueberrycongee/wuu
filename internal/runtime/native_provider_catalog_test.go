@@ -237,3 +237,143 @@ func TestLegacyFeaturePresentationWithIndependentRenderer(t *testing.T) {
 		})
 	}
 }
+
+// Foreground pins intentionally outlive publication. Goal must fence its own
+// durable document rather than assuming StopBackground retires those writers.
+func TestGoalRetainedGenerationPreservesReplacementState(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node is required for the real bundled goal runtime")
+	}
+	previous := currentWuuVersion
+	currentWuuVersion = func() string { return "2026.10.19" }
+	t.Cleanup(func() { currentWuuVersion = previous })
+	root, home := t.TempDir(), t.TempDir()
+	cfg := config.Default()
+	cfg.DefaultProvider = "fixture"
+	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "fixture"}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{"goal": true, credentialstore.OSModule: false, credentialstore.FileModule: true}}}}
+	owner, err := NewSession(Options{RootDir: root, WuuHome: home, HomeDir: t.TempDir(), Config: cfg, NonInteractive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Cleanup()
+	old := owner.RetainPluginGeneration()
+	defer func() { owner.ReleasePluginGeneration(old) }()
+	call := func(host *pluginhost.Host, method, thread, args string) (string, error) {
+		t.Helper()
+		for _, def := range host.ToolDefinitions() {
+			if strings.HasPrefix(def.Name, "plugin_goal_"+method+"_") {
+				result, err := host.ExecuteTool(context.Background(), def.Name, pluginhost.ToolExecuteInput{SessionID: thread, ThreadID: thread, TurnID: "initial", CallID: method + "-" + thread, CWD: root, Arguments: json.RawMessage(args)})
+				if err != nil {
+					return "", err
+				}
+				return result.Content[0].Text, nil
+			}
+		}
+		t.Fatalf("missing Goal tool %s", method)
+		return "", nil
+	}
+	if _, err := call(old.host, "create_goal", "old", `{"objective":"Retained work"}`); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := owner.PreflightExtensionPolicy(cfg, "goal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(owner.PluginHost, "create_goal", "new", `{"objective":"Replacement work"}`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := call(owner.PluginHost, "get_goal", "new", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(old.host, "update_goal", "old", `{"status":"complete"}`); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Fatalf("retained mutation did not fail with ownership conflict: %v", err)
+	}
+	// Release the last foreground pin to run the old process's real shutdown.
+	if err := owner.releasePluginGeneration(old); err != nil {
+		t.Fatal(err)
+	}
+	old = nil
+	after, err := call(owner.PluginHost, "get_goal", "new", `{}`)
+	if err != nil || after != before {
+		t.Fatalf("old shutdown changed replacement goal: before=%s after=%s err=%v", before, after, err)
+	}
+}
+
+// The shipped Goal process must distinguish a host's pre-dispatch refusal from
+// an error returned after the selected send handler has accepted a request.
+func TestGoalSessionSendRejectionRecoveryThroughRealHost(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node is required for the real bundled goal runtime")
+	}
+	root, home := t.TempDir(), t.TempDir()
+	cfg := config.Default()
+	cfg.DefaultProvider = "fixture"
+	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "synthetic", Model: "fixture"}}
+	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{"goal": true, credentialstore.OSModule: false, credentialstore.FileModule: true}}}}
+	owner, err := NewSession(Options{RootDir: root, WuuHome: home, HomeDir: t.TempDir(), Config: cfg, NonInteractive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Cleanup()
+	request := func(method, thread string) error {
+		for _, capability := range owner.PluginHost.Capabilities("plugin.client.request") {
+			if capability.PluginID != "goal" {
+				continue
+			}
+			input := map[string]any{"thread_id": thread}
+			if method == "create_goal" {
+				input["objective"] = "Synthetic recovery work"
+			}
+			var output map[string]any
+			return owner.PluginHost.InvokeCapability(context.Background(), capability, map[string]any{"method": method, "input": input}, &output)
+		}
+		t.Fatal("Goal client capability missing")
+		return nil
+	}
+	if err := request("create_goal", "recovery"); err == nil {
+		t.Fatal("unbound send succeeded")
+	}
+	calls, inspected := 0, 0
+	accepted := make(map[string]bool)
+	code := ""
+	terminal := false
+	owner.PluginSessionRouter.BindExtended(nil, func(_ context.Context, _ string, params pluginhost.SessionSendParams) (pluginhost.SessionSendResult, error) {
+		calls++
+		accepted[params.RequestID] = true
+		if code == "nested" {
+			return NewPluginSessionRouter().Send(context.Background(), "nested", params)
+		}
+		if code != "" {
+			return pluginhost.SessionSendResult{}, &pluginhost.HostServiceError{Code: code, Message: "synthetic downstream failure after acceptance"}
+		}
+		return pluginhost.SessionSendResult{State: "running", SessionID: params.SessionID, TurnID: "accepted"}, nil
+	}, nil, nil, func(context.Context, string, pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, error) {
+		inspected++
+		if terminal {
+			return pluginhost.SessionInspectResult{Turn: &pluginhost.SessionTurnInspection{State: "completed"}}, nil
+		}
+		return pluginhost.SessionInspectResult{}, nil
+	}, nil, nil, nil)
+	if err := request("resume", "recovery"); err != nil || calls != 1 || inspected != 0 {
+		t.Fatalf("pre-dispatch rejection did not recover: calls=%d inspect=%d err=%v", calls, inspected, err)
+	}
+	for _, downstreamCode := range []string{"service_unavailable", "session_send_unavailable", "host_error", "nested"} {
+		code = downstreamCode
+		if err := request("create_goal", downstreamCode); err == nil {
+			t.Fatal("downstream error was hidden")
+		}
+		before := calls
+		if err := request("resume", downstreamCode); err == nil || !strings.Contains(err.Error(), "uncertain") {
+			t.Fatalf("accepted unknown request not preserved: %v", err)
+		}
+		if calls != before || len(accepted) != before {
+			t.Fatal("uncertain request was replayed")
+		}
+	}
+	terminal = true
+}

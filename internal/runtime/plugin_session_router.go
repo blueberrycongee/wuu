@@ -202,17 +202,27 @@ func (r *PluginSessionRouter) Create(ctx context.Context, pluginID string, param
 	return handler(ctx, pluginID, params)
 }
 
+// sessionSendUnavailableCode is reserved for a send rejected before invoking
+// any handler. Consumers may release an unaccepted request only for this code.
+const sessionSendUnavailableCode = "session_send_unavailable"
+
 func (r *PluginSessionRouter) Send(ctx context.Context, pluginID string, params pluginhost.SessionSendParams) (pluginhost.SessionSendResult, error) {
 	if r == nil {
-		return pluginhost.SessionSendResult{}, errors.New("session service is unavailable")
+		return pluginhost.SessionSendResult{}, serviceError(sessionSendUnavailableCode, "session service is unavailable before dispatch")
 	}
 	r.mu.RLock()
 	handler := r.send
 	r.mu.RUnlock()
 	if handler == nil {
-		return pluginhost.SessionSendResult{}, errors.New("session service is unavailable")
+		return pluginhost.SessionSendResult{}, serviceError(sessionSendUnavailableCode, "session service is unavailable before dispatch")
 	}
-	return handler(ctx, pluginID, params)
+	result, err := handler(ctx, pluginID, params)
+	var serviceErr *pluginhost.HostServiceError
+	if errors.As(err, &serviceErr) && serviceErr.Code == sessionSendUnavailableCode {
+		// A downstream failure cannot prove that this outer send was not accepted.
+		return result, serviceError("host_error", serviceErr.Message)
+	}
+	return result, err
 }
 
 type SessionResourceAccessHandler func(context.Context, string, string, *pluginhost.ExecutionAuthorizationReference, string) (context.Context, error)

@@ -43,6 +43,33 @@ shipped `agent.policy` implementation is separate from the contract client and
 validation; replacing it keeps the loop and its consumers. Removing the selected
 policy stops admission rather than restoring native retries or parallelism.
 
+## Goal state handoff and upgrades
+
+Goal claims its workspace state with an atomic compare-and-exchange on activation.
+The version-1 storage envelope contains an owner token and the goal map, including
+accepted continuation request identities. A retained generation cannot overwrite
+that document after a newer generation claims it. A conflicting operation fails
+explicitly; it is not merged or replayed. Reload pauses restored active goals and
+never starts a continuation automatically. Effects already issued before handoff
+can still finish; their saved request identities allow explicit controls to reconcile
+them. An unobserved request remains pending: resume or clear reports uncertainty
+and does not replace it until the host supplies an accepted or terminal receipt.
+A definite `session_send_unavailable` rejection happens before dispatch and can be
+retried through explicit resume after the service recovers. Other errors do not
+prove non-admission. If the host never records their outcome, automatic recovery
+cannot safely proceed.
+Old shutdown does not cancel a replacement's newly created request.
+
+For the first upgrade from a Goal binary that uses unconditional storage writes,
+fully stop Wuu before loading the new Goal provider. Update both the host
+(including its storage CAS retry fix) and Goal, then restart the host. Hot
+replacement cannot fence that older writer.
+Back up workspace state before upgrading. The new provider reads the legacy goal
+map, but older providers cannot read the new envelope. Downgrading requires a
+compatible state migration or restoring a pre-upgrade backup with the host stopped;
+a restored backup does not contain changes made after it was taken. Later handoffs
+between providers using this envelope do not require a cold restart.
+
 ## Minimal session host
 
 Composition version 4 ships a `minimal` profile. It starts the same
