@@ -449,14 +449,19 @@
   font-size: 0.9em;
 }
 
-/* Controls are taller than the title line; centering them on it keeps the
- * description directly under the title. */
+/* Let the title row contain the taller control rather than overflowing the
+ * header with negative margins. Descriptions stay below that first row. */
+.settings-page-header:has(> .settings-page-actions) .settings-page-title {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-field-height);
+}
+
 .settings-page-actions {
   display: flex;
   min-height: var(--settings-title-line);
   align-items: center;
   gap: var(--space-2);
-  margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
 }
 
 @container settings-page (max-width: 32em) {
@@ -466,16 +471,11 @@
 
   .settings-page-actions {
     flex-wrap: wrap;
-    margin-block: 0;
   }
 
   /* One icon action stays beside the title instead of taking a line. */
   .settings-page-header:has(> .settings-page-actions > .settings-icon-button:only-child) {
     grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .settings-page-actions:has(> .settings-icon-button:only-child) {
-    margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
   }
 }
 
