@@ -40,12 +40,16 @@ async function capture(name) {
     const conversation=document.querySelector('.mosaic-main > .plugin-conversation');
     if(!conversation?.checkVisibility())return null;
     const rect=selector=>conversation.querySelector(selector).getBoundingClientRect().toJSON();
-    return {header:rect('.plugin-conversation-titlebar'),identity:rect('.mosaic-identity'),viewport:rect('.plugin-conversation-scroll'),scrollTop:conversation.querySelector('.plugin-conversation-scroll').scrollTop};
+    const identity=rect('.mosaic-identity'),viewport=rect('.plugin-conversation-scroll');
+    const sideHits=[(viewport.left+identity.left)/2,(identity.right+viewport.right)/2].map(x=>Boolean(document.elementFromPoint(x,(identity.top+identity.bottom)/2)?.closest('.plugin-conversation-scroll')));
+    return {header:rect('.plugin-conversation-titlebar'),identity,viewport,sideHits,firstMessage:conversation.querySelector('.plugin-conversation-message')?.getBoundingClientRect().toJSON(),scrollTop:conversation.querySelector('.plugin-conversation-scroll').scrollTop};
   });
   if(identity){
     report.identity_checks.push({name,...identity});
     assert(identity.identity.top>=identity.header.top-1 && identity.identity.bottom<=identity.header.bottom+1,`${name}: identity escapes its header footprint`);
-    assert(identity.header.bottom<=identity.viewport.top+1,`${name}: identity header covers the scrolling reading area`);
+    assert(identity.viewport.top<=identity.identity.top && identity.viewport.bottom>identity.identity.bottom,`${name}: history must scroll behind the floating identity`);
+    assert(identity.sideHits.every(Boolean),`${name}: identity blocks reading-area input outside its footprint`);
+    if(identity.scrollTop===0 && identity.firstMessage) assert(identity.firstMessage.top>=identity.identity.bottom,`${name}: the first message cannot be scrolled clear of the identity`);
   }
   assert(geometry.scrollWidth<=geometry.width+1, `${name}: page horizontal overflow`);
   for(const control of geometry.controls) assert(control.left>=-1 && control.right<=geometry.width+1,`${name}: clipped review control ${control.text}`);
@@ -93,7 +97,7 @@ async function capture(name) {
     assert.equal(await composer.inputValue(),draft,`${name}: profile interaction replaced the draft`);
     assert(Math.abs(await viewport.evaluate(node=>node.scrollTop)-readingPosition)<=1,`${name}: profile interaction moved the reading position`);
     await capture(`${name}-profile-return`);
-    report.cases.push(`${name}: real wheel scrolling keeps identity outside the reading viewport; profile/Escape preserves draft, reading position and focus`);
+    report.cases.push(`${name}: real wheel scrolling passes beneath the floating identity; profile/Escape preserves draft, reading position and focus`);
   }
   // Real pointer input catches an invisible navigation drawer over the card;
   // DOM dispatch would approve successfully even when the owner cannot click.

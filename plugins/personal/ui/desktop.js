@@ -232,8 +232,9 @@ export async function activate(api) {
     .mosaic-profile-name { font-size:calc(var(--font-ui) * 1.2);font-weight:600;line-height:1.45; }
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
     .mosaic-profile-trigger { position:relative;width:40px;height:40px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
-    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);z-index:31; }
-    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:240px;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
+    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);width:max-content;max-width:100%;z-index:31; }
+    .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
+    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:min(240px,100%);box-sizing:border-box;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
     .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:20px;font-weight:400; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
     .mosaic[data-panel-open="true"] .mosaic-identity { visibility:hidden; }
@@ -274,12 +275,13 @@ export async function activate(api) {
     .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
-    /* The identity owns its intrinsic row so scrolled text cannot pass beneath it. */
-    .mosaic-main > .plugin-conversation { grid-template-rows:auto minmax(0,1fr); }
-    .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
+    /* Only the identity's halo covers history; its initial clearance scrolls away. */
+    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;justify-self:center;max-width:100%;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
+    .mosaic .mosaic-main > .plugin-conversation > .plugin-conversation-scroll > .plugin-conversation-flow { padding-top:calc(var(--mosaic-identity-height,0px) + var(--conversation-flow-top-gap)); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
-    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none; }
+    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none;-webkit-app-region:no-drag; }
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { mask-image:none; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
@@ -907,6 +909,16 @@ export async function activate(api) {
     const [, setDraftVersion] = React.useState(0);
     const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
     const sendMotion = useSendMotion(React, rootRef);
+    const [identityNode, setIdentityNode] = React.useState(null);
+    React.useLayoutEffect(() => {
+      const root = rootRef.current, header = identityNode?.closest('.plugin-conversation-titlebar');
+      if (!header) return;
+      const measure = () => root.style.setProperty('--mosaic-identity-height', `${header.offsetHeight}px`);
+      measure();
+      const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+      observer?.observe(header);
+      return () => observer?.disconnect();
+    }, [identityNode]);
     const panelRef = React.useRef(null), profileTrigger = React.useRef(null), focusVersion = React.useRef(0), panelID = React.useId();
     const reducePanelMotion = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const openPanel = () => { focusVersion.current++; if (panelPresent) setPanelVisible(true); setPanelPresent(true); setPanelPhase("opening"); setPanelOpen(true); };
@@ -1454,7 +1466,7 @@ export async function activate(api) {
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
-        actions: h("div", { className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
+        actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
         showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
         composer: h("div", { hidden: Boolean(replySelection) }, h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
