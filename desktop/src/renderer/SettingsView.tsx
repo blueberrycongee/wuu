@@ -370,6 +370,17 @@ function SettingsViewContent({
   // initialized state syncs in and after every successful commit. Blurring
   // an untouched field is a no-op instead of a redundant IPC round-trip.
   const advancedCommittedRef = useRef<Record<string, string>>({});
+  // Drafts survive navigation, but pending feedback belongs to the page and
+  // controls that initiated the save. Each field's latest request owns its result.
+  const advancedOwner = useMemo(() => ({
+    active: true,
+    requests: new Map<AdvancedField, { draft: string }>(),
+  }), [controls, activePage, initialized?.provider, initialized?.model]);
+  useLayoutEffect(() => {
+    advancedOwner.active = true;
+    setAdvancedError(null);
+    return () => { advancedOwner.active = false; };
+  }, [advancedOwner]);
 
   useEffect(() => {
     setActivePage(availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities));
@@ -468,12 +479,20 @@ function SettingsViewContent({
   // validation. No Save button, no "saved" confirmation — the control
   // staying put is the confirmation, consistent with the MCP toggles.
   function toggleAutoCompact(): void {
+    if (!advancedOwner.active) return;
     const next = !autoCompactDraft;
+    const request = { draft: String(next) };
+    advancedOwner.requests.set("autoCompact", request);
     setAutoCompactDraft(next);
     setAdvancedError(null);
+    const ownsResult = () => advancedOwner.active && advancedOwner.requests.get("autoCompact") === request;
     void onAdvancedSave({ disable_auto_compact: !next }).catch((saveError: unknown) => {
-      setAutoCompactDraft(!next);
-      setAdvancedError({ field: "autoCompact", message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
+      if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
+        setAutoCompactDraft(!next);
+        setAdvancedError({ field: "autoCompact", message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
+      }
+    }).finally(() => {
+      if (ownsResult()) advancedOwner.requests.delete("autoCompact");
     });
   }
 
@@ -485,7 +504,9 @@ function SettingsViewContent({
       maxContextTokens: maxContextTokensDraft,
     };
     const draft = drafts[field];
-    if (advancedCommittedRef.current[field] === draft) {
+    const pending = advancedOwner.requests.get(field);
+    if (!advancedOwner.active || pending?.draft === draft
+      || (!pending && advancedCommittedRef.current[field] === draft)) {
       return;
     }
     let update: RuntimeAdvancedSettingsUpdate | undefined;
@@ -526,11 +547,18 @@ function SettingsViewContent({
       return;
     }
     setAdvancedError(null);
+    const request = { draft };
+    advancedOwner.requests.set(field, request);
+    const ownsResult = () => advancedOwner.active && advancedOwner.requests.get(field) === request;
     try {
       await onAdvancedSave(update);
-      advancedCommittedRef.current[field] = draft;
+      if (ownsResult()) advancedCommittedRef.current[field] = draft;
     } catch (saveError) {
-      setAdvancedError({ field, message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
+      if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
+        setAdvancedError({ field, message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
+      }
+    } finally {
+      if (ownsResult()) advancedOwner.requests.delete(field);
     }
   }
 

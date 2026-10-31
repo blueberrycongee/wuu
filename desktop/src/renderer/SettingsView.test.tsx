@@ -1153,6 +1153,84 @@ describe("SettingsView model services", () => {
 });
 
 describe("SettingsView advanced settings", () => {
+  it.each(["page", "newer toggle"] as const)("retires auto-compaction rollback after a %s", async (replacement) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    const props = { initialized: baseInitialized(), page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    if (replacement === "page") {
+      renderSettings({ ...props, page: "general" });
+      renderSettings(props);
+    } else {
+      act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+      await act(async () => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    }
+    await act(async () => { reject(new Error("retired toggle failed")); });
+    expect(container.querySelector(".settings-switch")!.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).not.toContain("retired toggle failed");
+  });
+
+  it("commits focused Enter once and allows retry after a failed save", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "advanced", onAdvancedSave });
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(1);
+    await act(async () => { reject(new Error("retry this save")); });
+    expect(container.textContent).toContain("retry this save");
+    act(() => { input.focus(); input.blur(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("retry this save");
+  });
+
+  it.each(["page", "controls"] as const)("retires numeric save feedback on %s replacement without losing the draft", async (replacement) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    const props = { initialized: baseInitialized(), page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.blur(); });
+    const next = replacement === "controls" ? { ...props, controls: createApplicationSettingsControls({ host: registry, controller: workbench }) } : props;
+    if (replacement === "page") renderSettings({ ...props, page: "general" });
+    renderSettings(next);
+    await act(async () => { reject(new Error("retired save failed")); });
+    expect(container.textContent).not.toContain("retired save failed");
+    const restored = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    expect(restored.value).toBe("50");
+    act(() => { restored.focus(); restored.blur(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["resolve", "reject"] as const)("ignores an older numeric save that settles by %s after the newer save", async (settlement) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done, fail) => { resolve = done; reject = fail; })).mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "advanced", onAdvancedSave });
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.blur(); });
+    act(() => { input.focus(); setInputValue(input, "60"); });
+    await act(async () => { input.blur(); });
+    await act(async () => { if (settlement === "resolve") resolve(); else reject(new Error("older save failed")); });
+    expect(input.value).toBe("60");
+    expect(container.textContent).not.toContain("older save failed");
+    act(() => { input.focus(); input.blur(); });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+  });
+
+
   it("renders compaction controls and saves each field on commit", async () => {
     installBuildInfoStub({
       core: undefined,

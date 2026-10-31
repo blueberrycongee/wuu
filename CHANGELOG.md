@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Deduplicate pending advanced-settings commits and keep late save feedback from changing a newer edit or a reopened settings page. Preserve drafts across navigation and allow failed saves to be retried.
+
 - Load MCP settings only while its page is open and discard pending authorization results when leaving the page, preventing a late browser login from opening after navigation.
 - Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
