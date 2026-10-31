@@ -1,5 +1,6 @@
 // Production components with synthetic, in-memory failures. No account or network.
 import React from "react";
+import { SelectedSurfaceScene, selectedSurfaceEvidence } from "./selected-surface-fixture";
 import { createRoot } from "react-dom/client";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
@@ -28,6 +29,7 @@ const browser = { openURL: async () => { throw new Error("Synthetic link operati
 const root = createRoot(document.getElementById("root")!);
 const longError = "Could not open the file. Check its location and try again. " + "Additional diagnostic context. ".repeat(14) + "reference=" + "0123456789abcdef".repeat(24);
 fixture.feedback = {
+  selectedSurfaceEvidence,
   reads: () => reads,
   applyAppearance: (theme: string, font: number) => {
     document.documentElement.dataset.theme = theme;
@@ -43,7 +45,7 @@ fixture.feedback = {
     clearToasts();
     root.render(<I18nProvider><WuuUIRoot><div className="settings-scroll" style={{ height: "100%" }}><main style={{ padding: 32, width: "100%", maxWidth: 900, margin: "0 auto", flexShrink: 0 }}>
       <p>Synthetic error feedback acceptance · no live account</p>
-      {scene === "settings" ? <SettingsControlsProvider controls={controls}>
+      {scene === "selected-surface" ? <SelectedSurfaceScene /> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
         <ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={async () => { throw new Error("The fixture never saves"); }} onClose={() => {}} onConnected={() => {}} />
       </SettingsControlsProvider> : scene === "rich" ? <BrowserControlsProvider service={browser}><ImagePreviewProvider>
         <div id="fixture-prose"><RichContent text="Read [the reference](https://example.invalid/reference) before continuing." /></div>
