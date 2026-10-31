@@ -3,13 +3,14 @@
 
 :root {
   --settings-canvas: var(--surface-1);
-  --settings-card: var(--theme-override-color-surface, var(--gray-0));
-  /* A group is a sheet lifted off the canvas: a large corner, a faint edge
-   * and a soft shadow, so grouping reads without a gray frame. */
+  --settings-card: var(--surface-raised);
+  /* In-flow groups use a shared surface and divider hierarchy. Elevation
+   * belongs to controls and overlays, not every block of settings. */
   --settings-group-radius: var(--radius-md);
-  --settings-group-shadow: var(--shadow-card);
+  --settings-group-shadow: none;
   /* Row breathing room; empty lines and list rows share it. */
-  --settings-row-pad-block: var(--space-4);
+  --settings-row-pad-block: var(--space-3);
+  --settings-number-control-width: 9.5em;
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -581,8 +582,49 @@
   line-height: 1.5;
 }
 
+/* Disclosures use the same trailing plus/minus throughout Settings. Keep
+ * native details semantics, including keyboard activation and open state. */
+.settings-page details > summary {
+  list-style: none;
+}
+
+.settings-page details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-page details > summary:not(.settings-button) {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  margin-inline-start: 0;
+  padding-inline-end: calc(var(--icon-size-sm) + var(--space-3));
+  cursor: pointer;
+}
+
+.settings-page details > summary:not(.settings-button)::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 0;
+  top: 50%;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  transform: translateY(-50%);
+  color: var(--ink-soft);
+  background: linear-gradient(currentColor, currentColor) center / 100% 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 1.5px 100% no-repeat;
+  pointer-events: none;
+}
+
+.settings-page details[open] > summary:not(.settings-button)::after {
+  background-size: 100% 1.5px, 1.5px 0;
+}
+
+.settings-page details > summary > .settings-disclosure-chevron {
+  display: none;
+}
+
 /* --- Group ----------------------------------------------------------------
- * One lifted sheet per group; rows inside are separated by the softer
+ * One surface per group; rows inside are separated by the softer
  * hairline and never carry their own frames.
  * ------------------------------------------------------------------------- */
 
@@ -829,7 +871,7 @@
  * text, so the default and its unit still fit at large sizes. */
 .settings-input-num {
   flex: 0 0 auto;
-  width: 9.5em;
+  width: var(--settings-number-control-width);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }

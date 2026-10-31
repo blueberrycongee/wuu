@@ -60,7 +60,33 @@ export function createSettingsPanels(react: typeof React, ui: Parameters<typeof 
       });
       return ()=>mounted.destroy();
     },[]);
-    return h('section',{'data-personal-connections':true},h('h2',null,'连接与工具'),h('div',{ref:root}),h(ConnectorsPanel,{service:connectorService}),h(ShareCapturePanel));
+    return h('div',{'data-personal-connections':true},h('div',{ref:root}),h(ConnectorsPanel,{service:connectorService}),h(ShareCapturePanel));
   }
-  return { Connections, ConnectorConversation:()=>h(ConnectorsPanel,{service:connectorService,conversation:true}), ReviewConversation:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale,variant:"conversation"}), Review:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale}), styles:`${shareCaptureStyles}\n${connectorsStyles}\n${calendarStyles}\n${personalReviewStyles}\n.mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
+  return { Connections, ConnectorConversation:()=>h(ConnectorsPanel,{service:connectorService,conversation:true}), ReviewConversation:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale,variant:"conversation"}), Review:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale}), styles:`${shareCaptureStyles}\n${connectorsStyles}\n${calendarStyles}\n${personalReviewStyles}\n
+.mosaic-settings>[data-personal-connections]{display:flex;flex-direction:column;gap:var(--section-gap);min-width:0;}
+.mosaic-settings .gcal-view{max-width:none;margin:0;font-family:inherit;}
+.mosaic-settings .gcal-heading{margin-bottom:var(--section-heading-gap);gap:var(--space-3);}
+.mosaic-settings .gcal-icon{display:none;}
+.mosaic-settings .gcal-view h2{font-size:var(--font-title);font-weight:var(--weight-medium);margin:0 0 var(--space-1);}
+.mosaic-settings .gcal-connection{padding:var(--settings-row-pad-block) var(--card-padding);background:var(--settings-card);border:1px solid var(--hairline-soft);border-radius:var(--settings-group-radius);gap:var(--space-4);flex-wrap:wrap;}
+.mosaic-settings .gcal-button{min-height:var(--control-field-height);padding:var(--control-padding-block) var(--control-padding-inline);border:0;border-radius:var(--wuu-radius-control,var(--radius-sm));font-weight:var(--weight-medium);box-shadow:var(--shadow-soft);}
+.mosaic-settings .gcal-notice{padding:var(--space-3) 0 0;}
+.mosaic-settings .personal-connectors{margin:0;display:flex;flex-direction:column;gap:var(--section-heading-gap);}
+.mosaic-settings .personal-connectors-heading{align-items:flex-start;flex-wrap:nowrap;}
+.mosaic-settings .personal-connectors-heading>.plugin-ui-section-header{min-width:0;}
+.mosaic-settings .personal-connectors-heading>.plugin-ui-button{flex:none;}
+.mosaic-settings .personal-connectors-heading .plugin-ui-section-header p{margin:0;}
+.mosaic-settings .personal-connectors-heading h3{font-size:var(--font-title);font-weight:var(--weight-medium);}
+.mosaic-settings .personal-connectors-list{grid-template-columns:minmax(0,1fr);gap:0;margin:0;padding:0 var(--card-padding);background:var(--settings-card);border:1px solid var(--hairline-soft);border-radius:var(--settings-group-radius);}
+.mosaic-settings .personal-connector-provider{padding:var(--settings-row-pad-block) 0;border-top:0;border-bottom:1px solid var(--hairline-soft);}
+.mosaic-settings .personal-connector-provider:last-child{border-bottom:0;}
+.mosaic-settings .personal-connector-title h4{font-weight:var(--weight-regular);}
+.mosaic-settings .personal-connector-title>span{font-size:var(--font-sm);color:var(--ink-soft);}
+.mosaic-settings .personal-connector-provider p{margin:var(--space-1) 0;}
+.mosaic-settings .personal-connector-provider details{margin-top:var(--space-3);}
+.mosaic-settings .personal-review-overview{padding:var(--card-padding);background:var(--settings-card);border:1px solid var(--hairline-soft);border-radius:var(--settings-group-radius);}
+.mosaic-settings .personal-review-heading h3{font-weight:var(--weight-regular);}
+.mosaic-settings .personal-review-overview>[role=switch]{justify-self:end;}
+@container settings-page (max-width:32em){.mosaic-settings .gcal-agenda-form{grid-template-columns:minmax(0,1fr);}.mosaic-settings .gcal-event{grid-template-columns:minmax(0,1fr);}}
+` };
 }

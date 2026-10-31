@@ -61,17 +61,15 @@ export async function activate(api) {
     .plugin-memory-composer textarea { min-height:96px; max-height:200px; }
     .plugin-memory-composer .plugin-ui-button { flex:none; align-self:flex-end; }
 
-    .plugin-memory-files { display:flex; flex-direction:column; border:1px solid var(--hairline); border-radius:var(--radius-sm); padding:0 var(--card-padding); }
+    .plugin-memory-files { display:flex; flex-direction:column; padding:0 var(--card-padding); }
     .plugin-memory-file { min-width:0; padding:var(--space-3) 0; border-bottom:1px solid var(--hairline-soft); }
     .plugin-memory-file:last-child { border-bottom:0; }
     .plugin-memory-file-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--space-2); min-width:0; cursor:pointer; list-style:none; }
     .plugin-memory-file-head::-webkit-details-marker { display:none; }
-    .plugin-memory-file-head::before { content:"›"; color:var(--ink-muted); transition:transform var(--motion-fast) var(--ease-out); }
-    .plugin-memory-file[open] .plugin-memory-file-head::before { transform:rotate(90deg); }
     .plugin-memory-file-name { overflow:hidden; color:var(--ink); font-size:var(--font-ui); text-overflow:ellipsis; white-space:nowrap; }
     .plugin-memory-file-type { flex:none; padding:0 var(--space-2); border-radius:var(--radius-xs); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--ink-soft); font-size:var(--font-xs); line-height:1.6; }
     .plugin-memory-file-desc { overflow:hidden; color:var(--ink-tertiary); font-size:var(--font-sm); text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-memory-file pre { max-height:300px; margin:var(--space-3) 0 0; padding:var(--compact-padding-block) var(--compact-padding-inline); overflow:auto; border-radius:var(--radius-sm); background:var(--surface-1); color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere; font:var(--font-sm)/1.6 var(--wuu-font-family-mono, ui-monospace, monospace); }
+    .plugin-memory-file pre { max-height:300px; margin:var(--space-3) 0 0; padding:var(--compact-padding-block) var(--compact-padding-inline); overflow:auto; border-radius:var(--radius-sm); background:var(--surface-1); color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere; font:var(--font-code)/1.6 var(--wuu-font-family-mono, ui-monospace, monospace); }
 
     .plugin-memory-error { display:grid; gap:var(--space-1); padding:var(--compact-padding-block) var(--compact-padding-inline); border-radius:var(--radius-sm); background:var(--danger-soft); color:var(--ink); font-size:var(--font-ui); overflow-wrap:anywhere; }
     .plugin-memory-error summary { cursor:pointer; color:var(--ink-soft); font-size:var(--font-sm); }
@@ -204,7 +202,7 @@ export async function activate(api) {
           h(Button, { variant: "primary", disabled: chatBusy || !draft.trim(), onClick: () => void send() }, tr("memory.send"))))),
       error ? h("div", { className: "plugin-memory-error", role: "alert" }, h("strong", null, tr("memory.loadFailed")), h("details", null, h("summary", null, tr("memory.errorDetails")), h("pre", null, error))) : null,
       h(Section, { title: tr("memory.raw") },
-        files.length ? h("div", { className: "plugin-memory-files" }, files.map((file) => h("details", { className: "plugin-memory-file", key: file.name },
+        files.length ? h(api.ui.Card, { className: "plugin-memory-files" }, files.map((file) => h("details", { className: "plugin-memory-file", key: file.name },
           h("summary", { className: "plugin-memory-file-head" },
             h("span", { className: "plugin-memory-file-name" }, file.name),
             file.type ? h("span", { className: "plugin-memory-file-type" }, file.type) : null,

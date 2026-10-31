@@ -29,16 +29,17 @@ export async function activate(api) {
   } });
   api.registerStyle({ id: "subagent-status", css: `
     .plugin-subagent-settings { min-width:0; }
-    .plugin-subagent-aliases { border:1px solid var(--hairline); border-radius:var(--radius-sm); padding:0 var(--card-padding); }
-    .plugin-subagent-alias { min-width:0; padding:var(--space-4) 0; border-bottom:1px solid var(--hairline-soft); }
+    .plugin-subagent-aliases { min-width:0; }
+    .plugin-subagent-alias { min-width:0; border-bottom:1px solid var(--hairline-soft); }
     .plugin-subagent-alias:last-child { border-bottom:0; }
-    .plugin-subagent-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); }
+    .plugin-subagent-fields { display:flex; min-width:0; flex-direction:column; }
     .plugin-subagent-fields .plugin-ui-field-label { font-weight:var(--weight-regular); }
     .plugin-subagent-options { margin-top:var(--space-3); color:var(--ink-soft); font-size:var(--font-sm); }
     .plugin-subagent-options summary { cursor:pointer; margin-bottom:var(--space-3); }
-    .plugin-subagent-alias-footer { display:flex; justify-content:space-between; align-items:baseline; gap:var(--space-3); }
-    @container settings-page (max-width:560px) { .plugin-subagent-fields { grid-template-columns:minmax(0,1fr); } }
-    .plugin-subagent-actions { align-items:center; gap:var(--space-2); }
+    .plugin-subagent-alias-footer { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:var(--space-3); padding-bottom:var(--space-3); }
+    .plugin-subagent-options[open] { flex-basis:100%; min-width:0; }
+    .plugin-subagent-options[open] + .plugin-ui-button { margin-left:auto; }
+    .plugin-subagent-actions { justify-content:flex-end; align-items:center; gap:var(--space-2); }
     .plugin-subagent-saved { color:var(--ink-tertiary); font-size:var(--font-sm); }
     .plugin-subagent-settings-error { color:var(--danger); font-size:var(--font-ui); overflow-wrap:anywhere; }
   ` });
@@ -113,7 +114,7 @@ export async function activate(api) {
   });
 
   function ModelAliases({ host, translate }) {
-    const { Page, Section, Stack, Row, Button, TextInput, EmptyState } = api.ui;
+    const { Page, Section, Card, Stack, Row, Button, TextInput, EmptyState } = api.ui;
     const tr = typeof translate === "function" ? translate : (key) => key;
     const settings = host.settings;
     const aliases = settings ? settings.getValue("runtime.modelAliases") : {};
@@ -150,7 +151,7 @@ export async function activate(api) {
     });
     return h(Page, { className: "plugin-subagent-settings" }, h(Stack, { gap: "large" },
       h(Section, { title: tr("subagent.aliases.title"), description: tr("subagent.aliases.help") }, h(Stack, null,
-        rows.length ? h("div", { className: "plugin-subagent-aliases" }, rows.map((row) =>
+        rows.length ? h(Card, { className: "plugin-subagent-aliases" }, rows.map((row) =>
           h("div", { className: "plugin-subagent-alias", key: row.id },
             h("div", { className: "plugin-subagent-fields" }, field(row, "name", "research"), field(row, "provider"), field(row, "model")),
             h("div", { className: "plugin-subagent-alias-footer" },

@@ -3,7 +3,7 @@
 export async function activate(api) {
   const React = api.react;
   const h = React.createElement;
-  const { Page, Section, Row, Button } = api.ui;
+  const { Page, Section, Card, Row, Button } = api.ui;
   const turns = new Map();
   const observations = new Map();
   let workspaces = [];
@@ -239,10 +239,10 @@ export async function activate(api) {
     "nextMessage.save": "保存更改", "nextMessage.saved": "已保存",
   } });
   api.registerStyle({ id: "next-message-settings", css: `
-    .plugin-next-message .plugin-next-message-model-row { display:grid; width:100%; max-width:48ch; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--space-3); align-items:end; }
+    .plugin-next-message .plugin-next-message-actions { justify-content:flex-end; margin-top:var(--space-1); }
     .plugin-next-message .plugin-next-message-model-help,
     .plugin-next-message .plugin-next-message-data-summary { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.5; }
-    @media (max-width: 760px) { .plugin-next-message .plugin-next-message-model-row { grid-template-columns:minmax(0, 1fr); } }
+    .plugin-next-message .plugin-next-message-data-summary { margin-top:var(--space-1); }
   ` });
   function Settings({ host, translate: tr }) {
     const levelLabel = (level) => ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level)
@@ -303,7 +303,7 @@ export async function activate(api) {
     }
     return h(Page, { className: "plugin-next-message" },
       h(Section, { title: tr("nextMessage.title"), description: tr("nextMessage.help") },
-        h("div", { className: "plugin-next-message-model-row" },
+        h(Card, null,
           h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.model")),
             h("select", { className: "plugin-ui-input", value: selection ?? "", disabled: busy || selection === null || (models.length === 0 && aliases.length === 0),
               onChange: (event) => {
@@ -330,7 +330,7 @@ export async function activate(api) {
         selectedModel && !validVariant ? h("div", { role: "alert" }, tr("nextMessage.invalidVariant")) : null,
         selectedModel && ["high", "xhigh", "max", "ultra"].includes(selectedVariant)
           ? h("div", { className: "plugin-next-message-model-help" }, tr("nextMessage.slowVariant")) : null,
-        h(Row, null, h(Button, { variant: "primary", disabled: busy || selection === null || (!selectedModel && !selectedAlias) || (selectedModel && !validVariant), onClick: () => void save() }, tr("nextMessage.save")),
+        h(Row, { className: "plugin-next-message-actions" }, h(Button, { variant: "primary", disabled: busy || selection === null || (!selectedModel && !selectedAlias) || (selectedModel && !validVariant), onClick: () => void save() }, tr("nextMessage.save")),
           saved ? h("span", { role: "status" }, tr("nextMessage.saved")) : null,
           error ? h("span", { role: "alert" }, error) : null),
         h("div", { className: "plugin-next-message-data-summary" }, tr("nextMessage.dataSummary"))));

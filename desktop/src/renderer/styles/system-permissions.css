@@ -33,6 +33,11 @@
   font-size: var(--font-ui);
 }
 
+.settings-page .system-permission-row {
+  background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
+}
+
 .system-permission-symbol {
   display: grid;
   place-items: center;
