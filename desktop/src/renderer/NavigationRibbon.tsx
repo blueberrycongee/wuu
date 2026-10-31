@@ -18,6 +18,7 @@ import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
 import { focusAfterRibbonClose, RibbonDestination } from "./NavigationRibbonDestination";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showActionErrorToast } from "./Toast";
+import { TruncatedText } from "./TruncatedText";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 import { WebsiteIcon } from "./WebsiteIcon";
@@ -192,21 +193,21 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
         onDragEnd={({ active, over }) => { setDragging(false); if (over) reorder(String(active.id), String(over.id)); }}>
         <div className="sidebar-ribbon-main scrollbar-hidden">
           <SortableContext items={orderedIDs} strategy={verticalListSortingStrategy}>
-            {ordered.map((item) => <RibbonDestination key={item.id} item={item} tabStop={item.id === tabStop} nativeTooltip={Boolean(activeWebsiteId)}
+            {ordered.map((item) => <RibbonDestination key={item.id} item={item} tabStop={item.id === tabStop} labelVisible={width > RIBBON_COMPACT_WIDTH} nativeTooltip={Boolean(activeWebsiteId)}
               onMove={(direction) => move(item.id, direction)}
               onMenu={websiteIDs.has(item.id) ? (x, y) => setMenu({ id: item.id, x, y }) : undefined} />)}
           </SortableContext>
-          <Tooltip content={t("webWorkspace.newTab")} native={Boolean(activeWebsiteId)}>
+          <Tooltip content={t("webWorkspace.newTab")} disabled={width > RIBBON_COMPACT_WIDTH} native={Boolean(activeWebsiteId)}>
             <button type="button" className="sidebar-ribbon-button sidebar-ribbon-add" aria-label={t("webWorkspace.newTab")}
               disabled={!onNewTab} onClick={onNewTab}>
-              <Plus aria-hidden="true" /><span className="sidebar-ribbon-label">{t("webWorkspace.newTab")}</span>
+              <Plus aria-hidden="true" /><TruncatedText className="sidebar-ribbon-label" text={t("webWorkspace.newTab")} nativeTooltip={Boolean(activeWebsiteId)} />
             </button>
           </Tooltip>
         </div>
       </DndContext>
       <div className="sidebar-ribbon-footer">
         {footerLeading}
-        {!collapsed ? <RibbonVisibilityToggle collapsed={false} nativeTooltip={Boolean(activeWebsiteId)} /> : null}
+        {!collapsed ? <RibbonVisibilityToggle collapsed={false} labelVisible={width > RIBBON_COMPACT_WIDTH} nativeTooltip={Boolean(activeWebsiteId)} /> : null}
         {footer}
       </div>
       <span className="sr-only" role="status" aria-live="polite">{announcement}</span>

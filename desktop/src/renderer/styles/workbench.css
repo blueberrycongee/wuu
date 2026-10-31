@@ -745,6 +745,7 @@ button.conversation-reaction-badge { cursor:pointer; }
 .plugin-view-attachment-tabs { display: flex; flex: 1; overflow-x: auto; min-width: 0; }
 .plugin-view-attachment-tab { display: flex; align-items: center; min-width: 100px; max-width: 240px; }
 .plugin-view-attachment-tab > [role="tab"] { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink-muted); padding: var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
+.plugin-view-attachment-tab-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-view-attachment-tab > [aria-selected="true"] { color: var(--ink); background: var(--selection-surface); }
 .plugin-view-attachment-content { flex: 1; min-height: 0; overflow: auto; }
 .plugin-view-attachment-content > .conversation-attachment-preview { height: 100%; }

@@ -66,9 +66,9 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
       if (authority.active) setBusy(new Set(authority.pending));
     });
   };
-  const button = (action: PluginCommandAction, className: string): ReactNode => <CommandButton
+  const button = (action: PluginCommandAction, className: string, labelled = false): ReactNode => <CommandButton
     key={`${action.command.pluginId}:${action.command.id}`} action={action} buttonClassName={className}
-    busy={busy.has(action.command)} failed={failures.get(action.command)?.target === target}
+    labelled={labelled} busy={busy.has(action.command)} failed={failures.get(action.command)?.target === target}
     onInvoke={() => invoke(action.command)} />;
   const overflow = actions.slice(2);
   useEffect(() => { setOpen(false); setFailures(new Map()); }, [target]);
@@ -113,7 +113,7 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
           onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), trigger.current)}>
           {overflow.map((action) => <div className="composer-plugin-tools-item" key={`${action.command.pluginId}:${action.command.id}`}>
             <span className="composer-plugin-tools-label">{action.command.title}</span>
-            {button(action, "settings-button settings-button-ghost settings-icon-button")}
+            {button(action, "settings-button settings-button-ghost settings-icon-button", true)}
           </div>)}
         </div>
       </FloatingMenuPortal> : null}
@@ -121,16 +121,17 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
   </Fragment>;
 }
 
-function CommandButton({ action: { command, enabled }, buttonClassName, busy, failed, onInvoke }: {
+function CommandButton({ action: { command, enabled }, buttonClassName, busy, failed, labelled, onInvoke }: {
   action: PluginCommandAction;
   buttonClassName: string;
   busy: boolean;
   failed: boolean;
+  labelled: boolean;
   onInvoke: () => void;
 }): ReactNode {
   const { t } = useI18n();
   const label = failed ? `${command.title}: ${t("error.commandFailed")}` : command.title;
-  return <Tooltip asChild content={label}><button type="button" className={buttonClassName} aria-label={label}
+  return <Tooltip asChild content={label} disabled={labelled && !failed}><button type="button" className={buttonClassName} aria-label={label}
     disabled={!enabled || busy} aria-busy={busy || undefined} onClick={onInvoke}>
     {failed ? <AlertCircle className="icon" aria-hidden="true" /> : <PublicIcon name={command.icon} className="icon" />}
   </button></Tooltip>;

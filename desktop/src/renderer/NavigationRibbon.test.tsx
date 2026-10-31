@@ -152,3 +152,23 @@ describe("NavigationRibbon reopened positions", () => {
 });
 
 function renderWithDesktop(node: ReactNode) { root.render(<DesktopControlsProvider controls={desktop}>{node}</DesktopControlsProvider>); }
+
+// Visible navigation labels should not cover neighboring rows with duplicate
+// hints. Compact controls still need their accessible names on hover.
+it("shows destination hints only when the navigation label is hidden", () => {
+  saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), width: 200 });
+  act(() => renderWithDesktop(<NavigationRibbon items={[{ id: "extensions", title: "Extensions", icon: null, onSelect: () => {} }]} websites={[]} />));
+  const hover = (element: Element) => {
+    act(() => {
+      element.dispatchEvent(new Event("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(600);
+    });
+  };
+  hover(container.querySelector('[data-ribbon-id="extensions"]')!);
+  expect(document.querySelector(".tooltip-layer")).toBeNull();
+  hover(container.querySelector('[data-ribbon-id="extensions"] .sidebar-ribbon-label')!);
+  expect(document.querySelector(".tooltip-layer")).toBeNull();
+  act(() => saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), width: 52 }));
+  hover(container.querySelector('[data-ribbon-id="extensions"]')!);
+  expect(document.querySelector(".tooltip-layer")?.textContent).toBe("Extensions");
+});
