@@ -54,10 +54,10 @@ export function CompactConversationActions({
   };
   return (
     <div className="title-actions compact-conversation-actions">
-      <Tooltip asChild content={t("tabs.newConversation")}><button type="button" className="icon-button" aria-label={t("tabs.newConversation")}
+      <button type="button" className="icon-button" aria-label={t("tabs.newConversation")}
         disabled={!canStartNewThread} onClick={onStartNewThread}>
         <SquarePen size={18} aria-hidden="true" />
-      </button></Tooltip>
+      </button>
       {/* Without the environment panel one action remains, which needs no menu. */}
       {showPanelActions && !environmentAvailable && <Tooltip asChild content={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}><button type="button" className="icon-button"
         aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}

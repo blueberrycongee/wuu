@@ -46,6 +46,11 @@ describe("SidebarBrand bell", () => {
       );
     });
     const bell = container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!;
+    act(() => {
+      bell.dispatchEvent(new Event("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(600);
+    });
+    expect(document.querySelector(".tooltip-layer")).toBeNull();
 
     act(() => {
       bell.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));

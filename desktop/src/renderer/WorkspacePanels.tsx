@@ -82,6 +82,7 @@ import { WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceFileViewTab, type Workspac
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
 import { translateCurrent, useI18n } from "./i18n";
+import { TruncatedText } from "./TruncatedText";
 import { Tooltip } from "./Tooltip";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
@@ -843,21 +844,19 @@ function WorkspacePanelContent({
                   data-wuu-component="workspace-conversation-tab"
                   data-wuu-active={conversationActive ? "true" : "false"}
                 >
-                  <Tooltip content={conversationTab.title}>
-                    <button
-                      className="workspace-tool-tab-main"
-                      type="button"
-                      role="tab"
-                      aria-selected={conversationActive}
-                      aria-label={conversationTab.title}
-                      tabIndex={conversationActive ? 0 : -1}
-                      disabled={!open}
-                      onClick={conversationTab.onSelect}
-                    >
-                      <MessageCircle className="icon" />
-                      <span>{conversationTab.title}</span>
-                    </button>
-                  </Tooltip>
+                  <button
+                    className="workspace-tool-tab-main"
+                    type="button"
+                    role="tab"
+                    aria-selected={conversationActive}
+                    aria-label={conversationTab.title}
+                    tabIndex={conversationActive ? 0 : -1}
+                    disabled={!open}
+                    onClick={conversationTab.onSelect}
+                  >
+                    <MessageCircle className="icon" />
+                    <TruncatedText text={conversationTab.title} />
+                  </button>
                   {conversationTab.closable ? <button
                     className="workspace-tool-tab-close"
                     type="button"

@@ -1605,7 +1605,6 @@ export const enUS = {
   "message.showMoreFiles": "{count} more files",
   "message.collapseFiles": "Collapse files",
   "message.openRelatedSession": "Open related session",
-  "message.fromSession": "Sent by Wuu from {name}",
   "message.anotherSession": "another session",
   "message.viewFullProcess": "View full process",
   "message.viewProcess": "View process",

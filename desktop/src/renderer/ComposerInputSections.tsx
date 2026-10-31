@@ -823,7 +823,7 @@ function ComposerQueueItem({
             getText={() => message.text || queuedMessageFullPreview(message)}
           />
         ) : (
-          <Tooltip asChild content={t("common.edit")}><button
+          <button
             type="button"
             className="composer-queue-action composer-input-header-action edit"
             aria-label={editLabel}
@@ -831,7 +831,7 @@ function ComposerQueueItem({
             disabled={Boolean(message.operationState)}
           >
             <PencilLine className="icon-sm" aria-hidden="true" />
-          </button></Tooltip>
+          </button>
         )}
         {onGuide ? (
           <Tooltip asChild content={
@@ -860,7 +860,7 @@ function ComposerQueueItem({
             )}
           </button></Tooltip>
         ) : null}
-        <Tooltip asChild content={t("common.remove")}><button
+        <button
           type="button"
           className="composer-queue-action composer-input-header-action danger"
           aria-label={t("composer.removeQueuedMessage", { position })}
@@ -868,7 +868,7 @@ function ComposerQueueItem({
           disabled={message.operationState === "switching" || message.deliveryUnconfirmed}
         >
           <X className="icon-sm" aria-hidden="true" />
-        </button></Tooltip>
+        </button>
       </div>
     </li>
   );

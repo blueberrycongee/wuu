@@ -155,10 +155,9 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
                 } finally { if (request === sourceRequest.current) setOpeningSource(false); }
               }}>{sourceHeading}</button>
           </Tooltip> : <div className="pdf-quote-preview-source">{sourceHeading}</div>}
-          {onRemove ? <Tooltip content={t("responseSelection.remove")}>
-            <button type="button" className="pdf-quote-icon-action pdf-quote-remove-action" aria-label={t("responseSelection.remove")}
+          {onRemove ? <button type="button" className="pdf-quote-icon-action pdf-quote-remove-action" aria-label={t("responseSelection.remove")}
               onClick={() => { preview.close(); onRemove(); }}><Trash2 aria-hidden="true" /></button>
-          </Tooltip> : null}
+            : null}
         </div>
         <PdfQuoteExcerpt text={text} />
         {showComment && (onChangeComment || comment) ? onChangeComment ? <textarea

@@ -326,11 +326,7 @@ export function WorkspaceGroup({
                 }
         }
         newItemButton={
-          <Tooltip asChild content={
-              isMissing
-                ? t("threadSidebar.missingWorkspace")
-                : t("sidebar.newConversation")
-            }><button
+          <Tooltip asChild content={isMissing ? t("threadSidebar.missingWorkspace") : undefined}><button
             className="sidebar-row-icon-button project-row-new-thread"
             type="button"
             aria-label={t("threadSidebar.newInWorkspace", { name: project.name })}

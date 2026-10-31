@@ -1,4 +1,5 @@
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { ConversationTriggers } from "./ConversationTriggers";
 import { ENABLE_CONVERSATION_TRIGGERS } from "./FeatureFlags";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
@@ -220,7 +221,6 @@ function BuiltInThreadItemView({
       const relatedSessionID = item.related_session_id?.trim() || undefined;
       const sessionMessage = (item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message";
       const sourceName = item.name?.trim() || relatedSessionID || t("message.anotherSession");
-      const sourceLabel = t("message.fromSession", { name: sourceName });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a
       // related session get a navigation action.
@@ -242,7 +242,7 @@ function BuiltInThreadItemView({
         >
           <div className="user-message-motion" data-message-arrival>
           {sessionMessage ? (
-            <Tooltip asChild content={sourceLabel}><button
+            <button
               type="button"
               className="session-message-source"
               onClick={openRelatedSession}
@@ -250,8 +250,8 @@ function BuiltInThreadItemView({
               aria-label={`${t("message.openRelatedSession")}: ${sourceName}`}
             >
               <MessagesSquare aria-hidden="true" />
-              <span>{sourceName}</span>
-            </button></Tooltip>
+              <TruncatedText text={sourceName} />
+            </button>
           ) : null}
           {editing ? (
             <UserMessageInlineEditor

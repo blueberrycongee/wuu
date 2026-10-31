@@ -24,11 +24,14 @@ export function TruncatedText({
   className,
   as = "span",
   children,
+  nativeTooltip = false,
   ...rest
 }: {
   text: string;
   /** Optional styled rendering of the same text, measured as one text box. */
   children?: ReactNode;
+  /** Use native overlays when the text is beside an embedded browser. */
+  nativeTooltip?: boolean;
   className?: string;
   /** Host tag for the text box. Keeps block-level semantics (div/h2/strong). */
   as?: "span" | "div" | "strong" | "h2";
@@ -69,7 +72,7 @@ export function TruncatedText({
 
   const Tag = as as ElementType;
   return (
-    <Tooltip asChild content={text} disabled={!truncated}>
+    <Tooltip asChild content={text} disabled={!truncated} native={nativeTooltip}>
       <Tag ref={ref} className={className} data-text={text} {...rest}>
         {children ?? text}
       </Tag>

@@ -338,7 +338,7 @@ export function WorkspaceReviewPanel({
         >
           <div className="workspace-diff-detail-header" data-wuu-component="workspace-review-content-header">
             {layout === "stack" ? (
-              <Tooltip asChild content={t("workspaceReview.backToList")}><button
+              <button
                 className="icon-button workspace-review-back"
                 data-wuu-action="back"
                 type="button"
@@ -346,7 +346,7 @@ export function WorkspaceReviewPanel({
                 onClick={closeDetail}
               >
                 <ArrowLeft className="icon" />
-              </button></Tooltip>
+              </button>
             ) : null}
             <div className="workspace-review-file-row">
               <WorkspaceReviewFileTitle file={shownFile} />

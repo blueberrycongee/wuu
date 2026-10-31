@@ -867,6 +867,21 @@ describe("ThreadItemView", () => {
       turnStatus: "completed", streaming: false, onEditMessage,
     });
     expect(container?.textContent).toContain("Source task");
+    const source = container!.querySelector<HTMLButtonElement>(".session-message-source")!;
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        source.dispatchEvent(new Event("pointerover", { bubbles: true }));
+        vi.advanceTimersByTime(600);
+      });
+      expect(document.querySelector(".tooltip-layer")).toBeNull();
+      act(() => {
+        source.querySelector("span")!.dispatchEvent(new Event("pointerover", { bubbles: true }));
+        vi.advanceTimersByTime(600);
+      });
+      expect(document.querySelector(".tooltip-layer")).toBeNull();
+    } finally { vi.useRealTimers(); }
+
     expect(container?.textContent).not.toContain("Private delivery instructions");
     expect(container?.textContent).not.toContain("End of update.");
     const toggle = container!.querySelector<HTMLButtonElement>("button[aria-expanded]")!;

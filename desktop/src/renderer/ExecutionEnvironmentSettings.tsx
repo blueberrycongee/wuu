@@ -1,4 +1,3 @@
-import { Tooltip } from "./Tooltip";
 import { useState } from "react";
 import type { ExecutionEnvironmentProfile, ExecutionEnvironmentSettings as EnvironmentSettings, RuntimeGeneralSettingsUpdate } from "../../../packages/protocol/src";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
@@ -83,18 +82,18 @@ export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
       {Object.keys(profiles).length === 0 ? <p className="settings-group-empty">{t("execution.empty")}</p> : null}
       {Object.entries(profiles).map(([id, entry]) => <SettingsRow key={id} title={id} description={`${backendLabel(entry.backend)} · ${entry.workspace || "/workspace"}`}>
         <div className="settings-row-actions">
-          <Tooltip asChild content={t("execution.edit")}><button className="settings-button settings-button-ghost settings-icon-button" type="button" disabled={locked}
+          <button className="settings-button settings-button-ghost settings-icon-button" type="button" disabled={locked}
             aria-label={t("execution.editNamed", { name: id })} onClick={() => edit(id)}>
             <Pencil className="icon" aria-hidden="true" />
-          </button></Tooltip>
-          <Tooltip asChild content={t("execution.remove")}><button className="settings-button settings-button-ghost settings-icon-button" type="button" disabled={locked}
+          </button>
+          <button className="settings-button settings-button-ghost settings-icon-button" type="button" disabled={locked}
             aria-label={t("execution.removeNamed", { name: id })} onClick={() => {
               const next = { ...profiles }; delete next[id];
               void save({ default: value.default === id ? "local" : value.default, profiles: next });
               if (editing === id) setEditing(null);
             }}>
             <Trash2 className="icon" aria-hidden="true" />
-          </button></Tooltip>
+          </button>
         </div>
       </SettingsRow>)}
     </SettingsGroup>
