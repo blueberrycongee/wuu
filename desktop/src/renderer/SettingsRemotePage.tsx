@@ -6,7 +6,7 @@
  * shell wiring (main-process RemoteHostManager over IPC), so the component
  * renders and tests in isolation.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { useI18n } from "./i18n";
 import { showActionErrorToast } from "./Toast";
@@ -56,6 +56,8 @@ export function SettingsRemotePage({
   onRemoveDevice
 }: SettingsRemotePageProps): JSX.Element {
   const { t, formatDate } = useI18n();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   return (
     <div className="settings-remote-page" data-testid="settings-remote-page">
@@ -84,7 +86,7 @@ export function SettingsRemotePage({
             <div className="settings-remote-pairing" data-testid="remote-pair-panel">
               <PairQRCode uri={pairUri} />
               <p className="settings-remote-pair-hint">{t("remote.pairHint")}</p>
-              <button className="settings-button" type="button" data-testid="remote-copy-link" onClick={() => { void Promise.resolve().then(() => navigator.clipboard.writeText(pairUri)).catch(error => showActionErrorToast(error, t("common.copyFailed"))); }}>{t("remote.copyLink")}</button>
+              <button className="settings-button" type="button" data-testid="remote-copy-link" onClick={() => { void Promise.resolve().then(() => navigator.clipboard.writeText(pairUri)).catch(error => { if (mounted.current) showActionErrorToast(error, t("common.copyFailed")); }); }}>{t("remote.copyLink")}</button>
               <button className="settings-button" type="button" disabled={busy} aria-busy={busy} onClick={onOpenPairing}>{t(busy ? "remote.generatingPairQr" : "remote.refreshPairQr")}</button>
             </div>
           ) : (
