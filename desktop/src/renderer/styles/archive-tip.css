@@ -20,6 +20,9 @@
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  /* Avoid fixed-position auto sizing shrinking to the right half of the
+     viewport before translateX centers it. Short notices stay compact. */
+  width: max-content;
   max-width: min(640px, calc(100vw - 48px));
   padding: 10px 12px 10px 14px;
   /* Transient layers share the menu material and shell corner. */

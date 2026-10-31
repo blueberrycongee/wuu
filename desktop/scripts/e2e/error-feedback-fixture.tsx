@@ -37,17 +37,18 @@ fixture.feedback = {
     clearToasts();
     showToast({ message: longError, tone: "error", action: { label: "Try again", onClick: () => {} } });
   },
+  shortNotice: () => showToast({ message: "Saved", tone: "info" }),
   actionFailure: () => showActionErrorToast("Synthetic repeated action failure"),
   render: (scene: string) => {
     clearToasts();
-    root.render(<I18nProvider><WuuUIRoot><main style={{ padding: 32, maxWidth: 900, margin: "auto" }}>
+    root.render(<I18nProvider><WuuUIRoot><div className="settings-scroll" style={{ height: "100%" }}><main style={{ padding: 32, width: "100%", maxWidth: 900, margin: "0 auto", flexShrink: 0 }}>
       <p>Synthetic error feedback acceptance · no live account</p>
       {scene === "settings" ? <SettingsControlsProvider controls={controls}>
         <ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={async () => { throw new Error("The fixture never saves"); }} onClose={() => {}} onConnected={() => {}} />
       </SettingsControlsProvider> : scene === "rich" ? <BrowserControlsProvider service={browser}><ImagePreviewProvider>
         <div id="fixture-prose"><RichContent text="Read [the reference](https://example.invalid/reference) before continuing." /></div>
       </ImagePreviewProvider></BrowserControlsProvider> : null}
-    </main><ToastViewport /></WuuUIRoot></I18nProvider>);
+    </main></div><ToastViewport /></WuuUIRoot></I18nProvider>);
   },
 };
 fixture.feedback.render("notice");

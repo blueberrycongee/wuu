@@ -38,6 +38,9 @@ async function until(check, label) {
 async function target(selector) {
   return until(() => evaluate(selector => {
     const el = document.querySelector(selector); if (!el || el.disabled) return null;
+    // The App uses a settings scrollport, not body scrolling. Bring a control
+    // into view as a user would, then still require native hit testing.
+    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     const r = el.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
     return r.width && r.height && el.contains(document.elementFromPoint(x, y)) ? { x: Math.round(x), y: Math.round(y) } : null;
   }, selector), selector);
@@ -66,11 +69,12 @@ async function run() {
     await evaluate(() => document.fonts.ready);
     const sample = await evaluate(() => {
       const el = document.querySelector('[data-wuu-component="notice"]'), message = el.querySelector('.archive-tip-message');
-      return { viewport: innerWidth, pageWidth: document.documentElement.scrollWidth, notice: el.getBoundingClientRect().toJSON(),
+      return { viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, notice: el.getBoundingClientRect().toJSON(),
         messageOverflow: message.scrollWidth - message.clientWidth, textLength: message.textContent.length,
         controls: [...el.querySelectorAll('button')].map(button => { const r = button.getBoundingClientRect(); return { bounds: r.toJSON(), hit: button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }; }) };
     });
     assert.ok(sample.pageWidth <= sample.viewport && sample.messageOverflow <= 1, "long reason remains readable without horizontal clipping");
+    assert.ok(sample.notice.width >= Math.min(640, sample.viewport - 48) - 1, "long notice uses available width rather than squeezing text into half the viewport");
     assert.ok(sample.controls.every(control => control.hit), "notice controls remain hit-testable");
     report.samples.push({ theme, font, width, ...sample });
     await capture(`notice-${theme}-${font}-${width}`);
@@ -91,7 +95,14 @@ async function run() {
     await click('.archive-tip-dismiss');
     await until(async () => !await present(notice), "action dismissal");
   }
-  report.checks.push("long notices and controls at light 15px/1280 and dark 20px/640", "hover and keyboard focus survive real six-second expiry", "dismissed identical explicit failures remain visible on retry");
+  await evaluate(() => window.feedback.shortNotice());
+  await until(() => present(notice), "short notice");
+  const shortWidth = await evaluate(() => document.querySelector('[data-wuu-component="notice"]').getBoundingClientRect().width);
+  assert.ok(shortWidth < report.samples.at(-1).notice.width / 2, "short notice remains content-sized, not a full-width banner");
+  await capture("notice-short");
+  await click('.archive-tip-dismiss');
+  await until(async () => !await present(notice), "short notice dismissal");
+  report.checks.push("long notices use available width while short notices remain compact", "long notices and controls at light 15px/1280 and dark 20px/640", "hover and keyboard focus survive real six-second expiry", "dismissed identical explicit failures remain visible on retry");
   await evaluate(() => window.feedback.render('settings'));
   await until(() => present('[data-testid="settings-error-retry"]'), "initial settings failure");
   for (let attempt = 1; attempt <= 2; attempt++) {
