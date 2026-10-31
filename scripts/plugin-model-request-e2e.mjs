@@ -174,11 +174,16 @@ try {
     name: "model-fixture", version: "0.1.0", type: "module", scripts: { build: 'node -e ""' },
   }));
   await writeFile(join(pkg, "runtime.mjs"), `
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { runJSONLRuntime, requestModel, requireModelRequestService, reportExecutionUpdate } from "./sdk/index.js";
 runJSONLRuntime({
   initialize() {
-    const failed = existsSync(${JSON.stringify(initializeFailure)});
+    const failurePath = ${JSON.stringify(initializeFailure)};
+    const failure = existsSync(failurePath) ? readFileSync(failurePath, "utf8") : "";
+    // Pass live preflight, then inject a changed environment for the distinct
+    // committed runtime. This must not turn candidate rejection into success.
+    if (failure === "after-preflight") writeFileSync(failurePath, "fail");
+    const failed = failure === "fail";
     appendFileSync(${JSON.stringify(initializeAttempts)}, JSON.stringify({ at: Date.now(), pid: process.pid, failed }) + "\\n");
     if (failed) throw new Error("fixture candidate initialization refused");
     return {
@@ -322,7 +327,7 @@ runJSONLRuntime({
     } while (Date.now() < deadline);
     assert.fail(`execution did not settle in its owning process: ${row.message}`);
   };
-  const publishUpdate = async () => {
+  const publishUpdate = async (activationFailure = false) => {
     const source = join(pkg, "runtime.mjs");
     await writeFile(source, (await readFile(source, "utf8")) + "\n// Same-source lifecycle fixture update.\n");
     const deadline = Date.now() + 20_000;
@@ -334,7 +339,12 @@ runJSONLRuntime({
       });
       attempts.push({ at: new Date().toISOString(), status: update.status, signal: update.signal,
         stdout: update.stdout, stderr: update.stderr, error: update.error?.message });
-      if (update.status === 0) break;
+      if (activationFailure && update.status === 2 && /was published, but host activation is incomplete:/.test(update.stderr)) {
+        assert.match(update.stderr, /fixture candidate initialization refused/);
+        assert.doesNotMatch(update.stderr, /previous generation preserved/);
+        break;
+      }
+      if (update.status === 0) { assert(!activationFailure, "faulted runtime unexpectedly activated"); break; }
       // The watcher may hold a short catalog read lease. Only this exact
       // pre-publication rejection is safe to retry within the original budget.
       const deferred = update.status === 2 && update.stderr.trim() ===
@@ -379,8 +389,8 @@ runJSONLRuntime({
   // fresh requests must not fall back to either old executable. Required
   // composition rejection/backoff is covered by the real-process reload test.
   const heldLifecycle = await lifecycle();
-  await writeFile(initializeFailure, "fail candidate only\n");
-  await publishUpdate();
+  await writeFile(initializeFailure, "after-preflight");
+  await publishUpdate(true);
   const failedPublication = await waitFor("message", transcript, message => message.method === "plugin/inventory/changed"
     && message.params.extension_inventory.some(plugin => plugin.id === item.id
       && plugin.runtime_state === "failed" && plugin.fingerprint !== item.fingerprint), "optional replacement quarantined");

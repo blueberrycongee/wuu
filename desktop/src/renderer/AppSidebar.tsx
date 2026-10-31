@@ -35,6 +35,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -530,7 +531,7 @@ export function AppSidebar({
   // stays unchanged; sidebarWorkspaces is what the sidebar actually shows.
   sidebarWorkspaces: DesktopProject[];
   pendingConversations?: readonly PendingConversation[];
-  draftConversations?: readonly { id: string; title: string; pending: boolean }[];
+  draftConversations?: readonly { id: string; title: string; pending: boolean; entering?: boolean }[];
   onSelectPendingConversation?: (id: string) => void;
   activeWorkspaceID?: string;
   pinnedThreads: ThreadSummary[];
@@ -645,6 +646,12 @@ export function AppSidebar({
   const [collapsedFunctionalGroupIDs, setCollapsedFunctionalGroupIDs] =
     useState<Set<SidebarFunctionalGroupID>>(loadCollapsedSidebarFunctionalGroups);
   const [recentsCollapsed, setRecentsCollapsed] = useState(loadSidebarRecentsCollapsed);
+  // Consume entrance eligibility even when the fold is closed. Its children
+  // can remount later without a new navigation snapshot.
+  const presentedDraftIDs = useRef(new Set<string>());
+  useLayoutEffect(() => {
+    presentedDraftIDs.current = new Set(draftConversations.map(draft => draft.id));
+  });
   const [draggingFunctionalGroupID, setDraggingFunctionalGroupID] =
     useState<SidebarFunctionalGroupID>();
   const [groupContextMenu, setGroupContextMenu] = useState<{
@@ -2227,18 +2234,20 @@ export function AppSidebar({
                   >
                     <div className="sidebar-functional-group-body">
                       {draftConversations.map(draft => (
-                        <div key={draft.id} data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${draft.id === activeSessionTabID ? " active" : ""}`}>
-                          {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
-                          <button
-                            className="thread-row-main"
-                            type="button"
-                            aria-current={draft.id === activeSessionTabID ? "page" : undefined}
-                            aria-busy={draft.pending || undefined}
-                            aria-label={draft.title}
-                            onClick={() => activateNative(() => onSelectPendingConversation?.(draft.id))}
-                          >
-                            <ThreadRowTitle title={draft.title} />
-                          </button>
+                        <div key={draft.id} className="motion-height-reveal sidebar-draft-reveal" data-enter={(draft.entering && !presentedDraftIDs.current.has(draft.id)) || undefined}>
+                          <div data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${draft.id === activeSessionTabID ? " active" : ""}`}>
+                            {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
+                            <button
+                              className="thread-row-main"
+                              type="button"
+                              aria-current={draft.id === activeSessionTabID ? "page" : undefined}
+                              aria-busy={draft.pending || undefined}
+                              aria-label={draft.title}
+                              onClick={() => activateNative(() => onSelectPendingConversation?.(draft.id))}
+                            >
+                              <ThreadRowTitle title={draft.title} />
+                            </button>
+                          </div>
                         </div>
                       ))}
                       <OrganizationThreadList
