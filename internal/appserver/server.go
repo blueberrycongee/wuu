@@ -482,7 +482,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		}
 		s.settleOnBoot(binding)
 	}
-	if s.clientInputReceiptsEnabled() {
+	if s.clientInputReceiptsEnabled(binding) {
 		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope("", "")); err != nil {
 			s.startupErr = err
 			return s
@@ -964,7 +964,8 @@ func (s *Server) Close() {
 		}
 		clientInputOwner := s.clientInputOwner
 		s.clientInputMu.Unlock()
-		if s.clientInputReceiptsEnabled() && clientInputOwner != "" {
+		// An admitted owner still needs cleanup if the next composition omits receipts.
+		if clientInputOwner != "" {
 			scope := s.clientInputScope("", "")
 			scope.LiveOwner = clientInputOwner
 			if binding, err := s.rt.RetainState(); err == nil {
