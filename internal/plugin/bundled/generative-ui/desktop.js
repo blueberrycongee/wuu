@@ -61,7 +61,16 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-form > .plugin-ui-button { justify-self:start; margin-top:var(--genui-space-related); }
 .plugin-genui-form-preview { display:grid; gap:12px; margin-top:12px; justify-items:start; }
 .plugin-genui-form-preview pre { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; margin:0; }
-.plugin-genui summary { cursor:pointer; color:var(--wuu-color-text-muted, currentColor); }
+.plugin-genui summary { display:flex; align-items:baseline; gap:var(--genui-space-related); list-style:none; cursor:pointer; color:var(--wuu-color-text-muted, currentColor); overflow-wrap:anywhere; }
+.plugin-genui summary::marker { content:""; }
+.plugin-genui summary::-webkit-details-marker { display:none; }
+.plugin-genui summary::before { content:""; flex:0 0 1em; width:1em; height:1em; align-self:flex-start; margin-top:0.25em; background:linear-gradient(currentColor,currentColor) center/0.65em 1px no-repeat,linear-gradient(currentColor,currentColor) center/1px 0.65em no-repeat; }
+.plugin-genui details[open] > summary::before { background-size:0.65em 1px,0 0; }
+/* Keep the native select and its menu; the decorative chevron never handles input. */
+.plugin-genui .plugin-ui-field:has(> .plugin-ui-select) > .plugin-ui-select { appearance:none; grid-column:1; grid-row:2; padding-inline-end:2.4em; }
+.plugin-genui .plugin-ui-field:has(> .plugin-ui-select)::after { content:""; pointer-events:none; grid-column:1; grid-row:2; justify-self:end; align-self:center; margin-inline-end:1em; margin-top:-0.25em; width:0.45em; height:0.45em; border-right:1px solid currentColor; border-bottom:1px solid currentColor; transform:rotate(45deg); color:var(--wuu-color-text-muted,currentColor); }
+.plugin-genui .plugin-ui-field:has(> .plugin-ui-select):has(> .plugin-ui-field-description) > .plugin-ui-select,.plugin-genui .plugin-ui-field:has(> .plugin-ui-select):has(> .plugin-ui-field-description)::after { grid-row:3; }
+.plugin-genui .plugin-ui-field:has(> .plugin-ui-select:disabled)::after { opacity:0.52; }
 .plugin-genui details[open] > summary { margin-bottom:var(--genui-space-group); }
 .plugin-genui :focus-visible { outline:2px solid var(--wuu-color-accent, currentColor); outline-offset:3px; }
 @media (max-width:600px) { .plugin-genui th, .plugin-genui td { padding:8px; } }
@@ -167,6 +176,6 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-source svg [data-genui-node] { animation:none; }
 @keyframes genui-appear { from { opacity:0; } to { opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .plugin-genui *, .plugin-genui *::before, .plugin-genui *::after { scroll-behavior:auto; animation:none; transition:none; } }
-@media (forced-colors:active) { .plugin-genui-options-list label[data-selected="true"], .plugin-genui-badge { border-color:Highlight; } .plugin-genui-chart :is(circle,rect,path,polyline) { forced-color-adjust:none; } }
+@media (forced-colors:active) { .plugin-genui .plugin-ui-field:has(> .plugin-ui-select) > .plugin-ui-select { appearance:auto; } .plugin-genui .plugin-ui-field:has(> .plugin-ui-select)::after { display:none; } .plugin-genui summary::before { forced-color-adjust:none; } .plugin-genui-options-list label[data-selected="true"], .plugin-genui-badge { border-color:Highlight; } .plugin-genui-chart :is(circle,rect,path,polyline) { forced-color-adjust:none; } }
 
 `;export{_a as activate,Ze as evaluateExpression,ks as parseSpec,xa as parseToolInput};
