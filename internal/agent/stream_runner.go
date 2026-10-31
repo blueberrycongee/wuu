@@ -1730,6 +1730,7 @@ func (s *streamStep) runReliableStream(
 						ProviderItemProvider: event.ToolCall.ProviderItemProvider,
 						ProviderItemModel:    event.ToolCall.ProviderItemModel,
 						Name:                 event.ToolCall.Name,
+						Arguments:            event.ToolCall.Arguments,
 						Kind:                 event.ToolCall.Kind,
 					})
 					pendingTools[idx] = &toolCall

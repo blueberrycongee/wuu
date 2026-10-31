@@ -369,11 +369,11 @@ async function loadFirstPartyPlugin(
   const pluginRoot = resolve(bundledRoot, pluginId);
   const manifest = JSON.parse(readFileSync(resolve(pluginRoot, "plugin.json"), "utf8")) as FirstPartyManifest;
   const source = readFileSync(resolve(pluginRoot, manifest.desktop.entry), "utf8");
-  if (!source.includes("export async function activate(api)")) {
-    throw new Error(`First-party plugin ${pluginId} does not export activate(api)`);
-  }
-  const executableSource = source.replace(/export (?=(?:async )?function )/g, "");
-  const activate: unknown = Function(`${executableSource}\nreturn activate;`)();
+  // Desktop entries are import-free ESM bundles; load their exports without
+  // depending on declaration names or formatting preserved by the bundler.
+  const { activate }: { activate?: unknown } = await import(
+    /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
+  );
   if (typeof activate !== "function") {
     throw new Error(`First-party plugin ${pluginId} has an invalid activate export`);
   }

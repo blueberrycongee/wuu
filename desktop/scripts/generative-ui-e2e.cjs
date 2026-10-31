@@ -141,6 +141,60 @@ const cases = [
   ['too-many-rows', edit(s => { s.blocks[1].rows = Array(201).fill(['x', 1]); }), false],
   ['byte-budget', edit(s => { s.blocks = Array.from({ length: 16 }, (_, i) => ({ id: `text${i}`, type: 'text', text: '界'.repeat(4000) })); }), false],
 ];
+// Runtime and desktop must reject malformed source controls before publishing
+// an artifact, rather than crashing when React reaches the choice renderer.
+for (const tag of ['Select', 'Radio', 'Segmented']) {
+  for (const [name, options, valid] of [
+    ['missing-options', undefined, false],
+    ['empty-options', [], false],
+    ['duplicate-values', [{ label: 'A', value: 'a' }, { label: 'Again', value: 'a' }], false],
+    ['unmatched-value', [{ label: 'Other', value: 'b' }], false],
+    ['missing-value', [{ label: 'A' }], false],
+    ['valid-options', [{ label: 'A', value: 'a' }, { label: 'Number', value: 1 }, { label: 'Boolean', value: true }], true],
+  ]) cases.push([`v3-${tag}-${name}`, {
+    version: 3, title: 'Source choices', fallback: 'Choose a value locally.',
+    source: `{@body const [choice, setChoice] = DIL.useState('a'); }
+      <${tag} label="Choice" value={choice} onChange={setChoice} ${options === undefined ? '' : `options={${JSON.stringify(options)}}`}/>`,
+  }, valid]);
+}
+cases.push(['v3-expanded-table-budget', {
+  version: 3, title: 'Bounded repeated data', fallback: 'Oversized output stays text-only.',
+  source: `{@body
+    const columns = DIL.range(0, 8).map(i => ({ key: String(i), label: String(i) }));
+    const rows = DIL.range(0, 200).map(i => DIL.range(0, 8).map(j => 'Cell'));
+  } <Stack>{DIL.range(0, 200).map(i => <Table key={i} columns={columns} rows={rows}/>)}</Stack>`,
+}, false]);
+cases.push(['v3-expanded-text-budget', {
+  version: 3, title: 'Bounded repeated text', fallback: 'Oversized output stays text-only.',
+  source: `{@body const paragraph = ${JSON.stringify('x'.repeat(16000))}; }
+    <Stack>{DIL.range(0, 200).map(i => <Text key={i}>{paragraph}</Text>)}</Stack>`,
+}, false]);
+for (const [name, cell, valid] of [['normal', 'Cell', true], ['oversized-cell-text', 'x'.repeat(16000), false]]) {
+  cases.push([`v3-single-table-${name}`, {
+    version: 3, title: 'Bounded table', fallback: 'A normal data table or text fallback.',
+    source: `{@body
+      const cell = ${JSON.stringify(cell)};
+      const columns = DIL.range(0, 8).map(i => ({ key: String(i), label: String(i) }));
+      const rows = DIL.range(0, 200).map(i => DIL.range(0, 8).map(j => cell));
+    } <Table columns={columns} rows={rows}/>`,
+  }, valid]);
+}
+const sourceSemantics = [
+  ['computed-destructuring', `const key = 'value'; const {[key]: result = 0} = { value: 42 }; if (result !== 42) Number('wrong result');`, true],
+  ['reduce-without-initial', `const result = [1, 2, 3].reduce((sum, value) => sum + value); if (result !== 6) Number('wrong result');`, true],
+  ['reduce-explicit-undefined', `const result = [1, 2, 3].reduce((sum, value) => (sum ?? 0) + value, undefined); if (result !== 6) Number('wrong result');`, true],
+  ['reduce-empty-with-initial', `const result = [].reduce((sum, value) => sum + value, 0); if (result !== 0) Number('wrong result');`, true],
+  ['reduce-empty-without-initial', `const result = [].reduce((sum, value) => sum + value);`, false],
+  ['optional-member-chain', `const value = null; const result = value?.nested.value ?? 42; if (result !== 42) Number('wrong result');`, true],
+  ['optional-call-chain', `const value = null; const result = value?.nested(Number('must not evaluate')).deep ?? 42; if (result !== 42) Number('wrong result');`, true],
+  ['optional-present-chain', `const value = { nested: { value: 42 } }; const result = value?.nested.value; if (result !== 42) Number('wrong result');`, true],
+  ['optional-absent-member', `const value = {}; const result = value?.nested.value;`, false],
+  ['optional-parenthesized-boundary', `const value = null; const result = (value?.nested).value;`, false],
+];
+for (const [name, body, valid] of sourceSemantics) cases.push([`v3-${name}`, {
+  version: 3, title: 'Source calculations', fallback: 'A checked local calculation.',
+  source: `{@body ${body} } <Metric label="Result" value={result}/>`,
+}, valid]);
 const results = { sourceSha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex'), runtimeSha256: createHash('sha256').update(fs.readFileSync(runtime)).digest('hex'), cases: [], checks: [], categoryAxes: [] };
 const result = toolCall(spec).result?.result;
 assert.ok(result && !result.is_error, 'Valid tool result');
@@ -584,9 +638,10 @@ const rendererRun = app.whenReady().then(async () => {
   assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="mixedV2"] .plugin-genui-legend button').getAttribute('aria-pressed')`), 'false');
   await click(win, '[data-genui-node="mixedV2"] .plugin-genui-legend button:nth-child(1)');
   await click(win, '[data-genui-node="areaV2"] svg');
+  await evaluate(win, `window.nextNativeArrow = new Promise(resolve => document.addEventListener('keydown', event => resolve({ key: event.key, trusted: event.isTrusted, target: event.target.closest('[data-genui-node]')?.dataset.genuiNode }), { once: true, capture: true })); undefined`);
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
-  assert.ok(await evaluate(win, `window.nativeEvents.some(event=>event.type==='keydown'&&event.key==='ArrowRight')`),'Native accelerator produces the expected DOM arrow key');
+  assert.deepEqual(await evaluate(win, 'window.nextNativeArrow', 'Receive native chart arrow'), { key: 'ArrowRight', trusted: true, target: 'areaV2' }, 'Native accelerator reaches the chart before its result is checked');
   await waitFor(win, `document.querySelector('[data-genui-node="areaV2"] .plugin-genui-chart-caption').textContent.includes('Week')`);
   assert.equal(await evaluate(win, `document.querySelectorAll('[data-genui-node="scatterV2"] svg circle').length`), 3);
   assert.equal(await evaluate(win, `document.querySelectorAll('[data-genui-node="stackedV2"] svg rect').length`), 6);
@@ -596,6 +651,9 @@ const rendererRun = app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector('[data-genui-node="tableV2"] tbody td:nth-child(2)').textContent === '100'`);
   results.checks.push('v2 area/bar/line/scatter/pie/donut, stacked/mixed series, legend toggles, keyboard chart inspection and computed table');
 
+  win.focus();
+  win.webContents.focus();
+  await waitFor(win, 'document.hasFocus()');
   await click(win, '[data-genui-node="noteInput"]');
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
   win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
@@ -782,6 +840,79 @@ const rendererRun = app.whenReady().then(async () => {
     assert.equal(await evaluate(win, `document.querySelectorAll('.plugin-genui-program td').length`),0,'Preflight rejects oversized output before data DOM is constructed');
   }
   results.checks.push('expanded table-cell and aliased collection-result budgets reject oversized runtime output before DOM construction');
+  const sourceProgram = {
+    version: 3, title: 'Source recovery', fallback: 'A local counter starts at zero.',
+    source: `{@body
+      const [count, setCount] = DIL.useState(0);
+      let local = 0;
+      function failCalculation() { setCount(n => n + 1); local = local + 1; Number('invalid'); }
+    }
+    <Stack key="view">
+      <Text key="prose">Explore the local counter.</Text>
+      <Metric key="count" label="Count" value={count}/>
+      <Button key="bad" onClick={failCalculation}>Invalid calculation</Button>
+      <Button key="badView" onClick={() => setCount(100)}>Invalid view</Button>
+      <Button key="good" onClick={() => setCount(n => n + local + 1)}>Add one</Button>
+      <Button key="copy" onClick={() => DIL.copy(String(count))}>Copy count</Button>
+      <Slider key="slider" label="Counter" value={count} onChange={setCount} min={0} max={10}/>
+      <Disclosure key="details" title="Counter details"><Text>Saved local preferences</Text></Disclosure>
+      <svg key="diagram" viewBox="0 0 100 50" label="Counter diagram">
+        <rect x="1" y="1" width="98" height="48" fill="surface" stroke="accent"/>
+        <text x="50" y="30" textAnchor="middle" fill="text">{count}</text>
+      </svg>
+    </Stack>`,
+  };
+  const sourceResult = toolCall(sourceProgram, 'source-recovery').result?.result;
+  assert.ok(sourceResult && !sourceResult.is_error);
+  const sourceArguments = JSON.stringify({ spec: sourceProgram });
+  const firstSourceBoundary = sourceArguments.indexOf('Explore the local counter.') + 'Explore the local'.length;
+  const secondSourceBoundary = sourceArguments.indexOf('Invalid calculation') + 'Invalid calculation'.length;
+  await evaluate(win, `window.probe.item('source-program');window.probe.preview(${JSON.stringify(sourceArguments.slice(0, firstSourceBoundary))})`);
+  await waitFor(win, `document.querySelector('[data-genui-node="root/view/prose"]')?.textContent === 'Explore the local'`);
+  await evaluate(win, `window.originalSourceText=document.querySelector('[data-genui-node="root/view/prose"]')`);
+  await evaluate(win, `window.probe.preview(${JSON.stringify(sourceArguments.slice(0, secondSourceBoundary))})`);
+  await waitFor(win, `document.querySelector('[data-genui-node="root/view/count"] strong')?.textContent === '0'`);
+  assert.equal(await evaluate(win, `window.originalSourceText === document.querySelector('[data-genui-node="root/view/prose"]')`), true);
+  assert.equal(await evaluate(win, `document.querySelector('button[data-genui-node="root/view/bad"]').disabled`), true);
+  await evaluate(win, `window.probe.finish(${JSON.stringify(sourceResult)})`);
+  await waitFor(win, `document.querySelector('.plugin-genui-source')?.getAttribute('aria-busy') === 'false'`);
+  assert.equal(await evaluate(win, `window.originalSourceText === document.querySelector('[data-genui-node="root/view/prose"]')`), true, 'Nested source content retains DOM identity from partial text to final artifact');
+  results.checks.push('v3 nested source text streams before closing JSX, stays read-only, and retains DOM identity through final output');
+  for (const [button, notice] of [['bad', 'Calculation is outside the numeric range'], ['badView', 'Slider value must be within its range']]) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await click(win, `button[data-genui-node="root/view/${button}"]`);
+      await waitFor(win, `document.body.textContent.includes(${JSON.stringify(notice)})`);
+      assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="root/view/count"] strong').textContent`), '0');
+    }
+  }
+  await click(win, 'button[data-genui-node="root/view/good"]');
+  await waitFor(win, `document.querySelector('[data-genui-node="root/view/count"] strong').textContent === '1'`);
+  await click(win, 'button[data-genui-node="root/view/copy"]');
+  await waitFor(win, `document.body.textContent.includes('Copied')`);
+  assert.equal(await clipboard.readText(), '1', 'Rejected interactions cannot leak partial values or local assignments into the next action');
+  await click(win, '[data-genui-node="root/view/details"] > summary');
+  await waitFor(win, 'window.probe.pending === 0');
+  await evaluate(win, 'window.probe.mount(false)');
+  await waitFor(win, `!document.querySelector('.plugin-genui-source')`);
+  await evaluate(win, 'window.probe.mount(true)');
+  await waitFor(win, `document.querySelector('.plugin-genui-source')?.getAttribute('aria-busy') === 'false'`);
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="root/view/count"] strong').textContent`), '1');
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="root/view/details"]').open`), true);
+  results.checks.push('v3 repeated failed calculations and invalid views preserve valid values; trusted copy and combined value/disclosure persistence recover');
+  for (const theme of ['light', 'dark']) for (const size of [15, 20]) for (const width of [1100, 480]) {
+    win.setSize(width, 1200);
+    await evaluate(win, `document.documentElement.dataset.theme=${JSON.stringify(theme)};window.probe.fontSize(${size});window.scrollTo({top:0,behavior:'instant'})`);
+    await settlePaint();
+    const geometry = await evaluate(win, `(() => {
+      const view=document.querySelector('.plugin-genui-source'), diagram=view.querySelector('svg'), box=diagram.getBoundingClientRect();
+      return { overflow:document.documentElement.scrollWidth>innerWidth+1, width:box.width, height:box.height, text:diagram.textContent };
+    })()`);
+    assert.equal(geometry.overflow, false, 'The source view fits the active width and text size');
+    assert.ok(geometry.width > 0 && geometry.height > 0 && geometry.text.includes('1'));
+    fs.writeFileSync(path.join(output, `v3-${theme}-${size}-${width}.png`), (await capturePage(win)).toPNG());
+  }
+
+
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2));
   win.destroy();
   app.quit();
