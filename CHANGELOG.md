@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound macOS Computer Use child enumeration and expose incomplete branches when native reads fail or traversal limits are reached. Partial observations no longer report confirmed removals or establish unique-label activation targets.
+
 - Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
