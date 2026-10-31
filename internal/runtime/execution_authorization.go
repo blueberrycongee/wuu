@@ -41,12 +41,13 @@ func executionAuthorizationProviderFactory() NativeProviderFactory {
 // ExecutionAuthorizationIntent is a request for bounded delegation, not an
 // authority claim. The host resolves scope, provider identity and execution bounds.
 type ExecutionAuthorizationIntent struct {
-	Action    string          `json:"-"`
-	Service   string          `json:"service,omitempty"`
-	Method    string          `json:"method,omitempty"`
-	Params    json.RawMessage `json:"params,omitempty"`
-	Operation string          `json:"operation"`
-	RequestID string          `json:"request_id,omitempty"`
+	Route     *pluginhost.SessionRouteRequest `json:"route,omitempty"`
+	Action    string                          `json:"-"`
+	Service   string                          `json:"service,omitempty"`
+	Method    string                          `json:"method,omitempty"`
+	Params    json.RawMessage                 `json:"params,omitempty"`
+	Operation string                          `json:"operation"`
+	RequestID string                          `json:"request_id,omitempty"`
 	// RunID is the durable business execution target. RequestID identifies only
 	// this issuance attempt; legacy intents without run_id use request_id.
 	RunID            string                   `json:"run_id,omitempty"`
@@ -181,6 +182,15 @@ func (s *Session) resolveExecutionLineage(ctx context.Context, state *State, ite
 	if !found || metadata.Owner != "plugin:"+item.ID || !s.UserBinding().Matches(userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}) {
 		return lineage, serviceError("execution_authorization_required", "task lineage has no matching host-owned session")
 	}
+	if lineage.Route != nil {
+		if err := validateExecutionRouteBinding(lineage.Route); err != nil {
+			return lineage, err
+		}
+		lineage.ContextDigest = executionauth.RequestDigest(struct {
+			Context string                             `json:"context"`
+			Route   *executionauth.SessionRouteBinding `json:"route"`
+		}{lineage.ContextDigest, lineage.Route})
+	}
 	lineage.Authority = actual
 	lineage.ModelProvider, lineage.Model, lineage.PermissionMode, err = s.executionSelection(state, metadata)
 	if err != nil {
@@ -267,6 +277,9 @@ func (s *Session) HandleExecutionAuthorization(ctx context.Context, pluginID str
 	client, err := executionClient(state, ref)
 	if err != nil {
 		return nil, err
+	}
+	if intent.Operation == "route-session" {
+		return s.routeExecutionSession(ctx, state, item, client, intent)
 	}
 	if intent.Operation == "call-service" {
 		if ref == nil || strings.TrimSpace(intent.Service) == "" || strings.TrimSpace(intent.Method) == "" || !json.Valid(intent.Params) {
@@ -394,6 +407,9 @@ func (s *Session) HandleExecutionAuthorization(ctx context.Context, pluginID str
 	}
 	capabilities := make([]executionauth.Capability, 0, len(actions))
 	resources := grantResources(scope)
+	if lineage.Route != nil {
+		resources = append(resources, executionRouteResource(lineage.Route.Locator))
+	}
 	for _, action := range actions {
 		if strings.TrimSpace(action) == "" {
 			return nil, errors.New("empty execution action")

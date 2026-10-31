@@ -85,6 +85,8 @@ func TestResourcePolicyValidatesSelectedExecutionProofWithoutOwner(t *testing.T)
 // This selected task authority is independent of the native grant provider.
 // The gateway observes its business registry; request JSON cannot assert scope.
 type executionLineageFixture struct {
+	run   string
+	route *executionauth.SessionRouteBinding
 	*runtimeServiceConsumer
 	revision int64
 	worker   string
@@ -113,7 +115,7 @@ func (f *executionLineageFixture) InvokeService(_ context.Context, p pluginhost.
 	if input.TaskID != "task-one" {
 		return nil, errors.New("unrecognized task")
 	}
-	out := executionauth.Lineage{TaskID: "task-one", Revision: f.revision, ContextDigest: "requirements-one", SessionID: "main-one"}
+	out := executionauth.Lineage{Route: f.route, TaskID: "task-one", Revision: f.revision, ContextDigest: "requirements-one", SessionID: "main-one"}
 	if wire.Creation != nil {
 		if input.Kind != "exact-run" || input.RequestID != "create-one" || input.Parent == nil {
 			return nil, errors.New("unrecognized pending creation")
@@ -126,11 +128,15 @@ func (f *executionLineageFixture) InvokeService(_ context.Context, p pluginhost.
 		}{out, *wire.Creation})
 	}
 	if input.Kind == "exact-run" {
-		if input.SessionID != f.worker || input.RequestID != "run-one" {
+		run := f.run
+		if run == "" {
+			run = "run-one"
+		}
+		if input.SessionID != f.worker || input.RequestID != run {
 			return nil, errors.New("unrecognized actual run")
 		}
 		out.SessionID = f.worker
-		out.RunID = "run-one"
+		out.RunID = run
 	}
 	if input.Parent != nil {
 		out.ParentTaskID = input.Parent.Scope.TaskID

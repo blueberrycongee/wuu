@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // The public delegation boundary must reject pairing-only authority, prevent
@@ -235,4 +236,56 @@ func (*federationGuardWriter) Write(p []byte) (int, error) { return len(p), nil 
 func (w *federationGuardWriter) WriteAuthorized(p []byte, guard func() error) (int, error) {
 	w.frames <- capturedFrame{payload: append([]byte(nil), p...), guard: guard}
 	return len(p), nil
+}
+
+func TestSessionFederationSharedDiscoveryKeepsResourceFiltering(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	identity, _ := principal.Authenticated(principal.Identity{Kind: "agent", Issuer: "fixture", Tenant: "cloud", Subject: "personal"})
+	ctx := principal.WithContext(context.Background(), identity)
+	archived := time.Now()
+	for _, item := range []session.Session{
+		{ID: "visible", Owner: "user", Visibility: "user"},
+		{ID: "denied", Owner: "user", Visibility: "user"},
+		{ID: "private", Owner: "plugin:another", Visibility: "plugin"},
+		{ID: "archived", Owner: "user", Visibility: "user", ArchivedAt: &archived},
+	} {
+		if _, err := rt.Sessions.CreateInitialized(item, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := access.PolicyFunc(func(_ context.Context, r access.Request) (access.Decision, error) {
+		if r.Owner {
+			t.Fatal("discovery borrowed owner authority")
+		}
+		allowed := r.Action == "session/federation.list"
+		if r.Action == "session/federation.inspect" {
+			allowed = len(r.Resources) == 1 && r.Resources[0].ID == "visible"
+		}
+		return access.Decision{Allow: allowed}, nil
+	})
+	s := New(rt, io.Discard, WithAccessPolicy(policy), WithSessionFederation(SessionFederationConfig{HostID: "registered", Models: map[string][]string{"fake-provider": {"fake-model"}}, ToolAllow: []string{"read"}}))
+	defer s.Close()
+	request := pluginhost.SessionRouteRequest{Version: 1, Operation: "list", OperationID: "list", Locator: pluginhost.SessionLocatorV1{Version: 1, ExecutionHost: "registered"}, Params: json.RawMessage(`{"scope":"shared"}`)}
+	got, err := s.dispatchSessionFederation(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result pluginhost.SessionListResult
+	if err = json.Unmarshal(got.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].SessionID != "visible" {
+		t.Fatalf("unexpected shared discovery: %+v", result)
+	}
+	request.Params = json.RawMessage(`{}`)
+	got, err = s.dispatchSessionFederation(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(got.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 0 {
+		t.Fatalf("default discovery stopped being owned-only: %+v", result)
+	}
 }

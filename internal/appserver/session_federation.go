@@ -467,8 +467,8 @@ func (s *Server) prepareFederationOperation(ctx context.Context, binding *runtim
 		if err := decodeParams(request.Params, &p); err != nil {
 			return nil, err
 		}
-		if p.Scope != "" && p.Scope != pluginhost.SessionListScopeOwned {
-			return nil, errors.New("federation lists only this principal's owned sessions")
+		if p.Scope != "" && p.Scope != pluginhost.SessionListScopeOwned && p.Scope != pluginhost.SessionListScopeShared {
+			return nil, errors.New("federation list scope must be owned or shared")
 		}
 		return func() (any, error) {
 			result, err := s.listPluginSessions(ctx, owner, p)

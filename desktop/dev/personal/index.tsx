@@ -70,6 +70,20 @@ const tasks = [
   {task_id:"dinner",agent_id:"mosaic",title:"周五和朋友吃饭",goal:"在三家安静的餐厅中选一家，确认后再预订。",state:"waiting_user",requirements_revision:1,revision:2,updated_at:now,result:{summary:"找到了三家合适的餐厅，等你选一个更方便的地点。"}},
   {task_id:"reading",agent_id:"mosaic",title:"这个月的阅读清单",goal:"整理最近提到的三本书。",state:"completed",requirements_revision:1,revision:4,updated_at:"2026-10-17T10:00:00Z",result:{summary:"三本书已整理好：先从你最感兴趣的城市生活开始，再读设计和自然。每本都保留了推荐来源。"}},
 ];
+// Existing-session control is synthetic here: no transport, grant or worker runs.
+const existingSessionScenario = new URLSearchParams(location.search).get("existingSession");
+if (existingSessionScenario) {
+  Object.assign(tasks[1], {
+    title: "Review an existing Coding session", goal: "Inspect the existing project context without replacing the session.",
+    state: existingSessionScenario === "unavailable" ? "waiting_external" : "awaiting_review",
+    existing_session: {version:1,execution_host:"registered-coding-host-with-a-long-stable-identity",session_id:"existing-user-session-2f629e5c"},
+    result: undefined,
+    ...(existingSessionScenario === "unavailable" ? {error:"The registered target is unavailable; no replacement was created."} : {
+      worker_result:{request_id:"worker-request",session_id:"existing-user-session-2f629e5c",execution_host:"registered-coding-host-with-a-long-stable-identity",text:"Which branch should I use for the requested follow-up?",received_at:now},
+      progress:"Worker response received; awaiting controller review",
+    }),
+  });
+}
 // Synthetic responsibilities never contact a scheduler or run external work.
 const routineFixtureParams = new URLSearchParams(location.search);
 const routineFixtureFaults = {
