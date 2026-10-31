@@ -44,7 +44,7 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     const lifetime = new AbortController();
     void application.invoke("settings.refresh-engines", {}, { signal: lifetime.signal }).catch(() => { /* The service publishes discovery errors beside the engine controls. */ });
     return () => lifetime.abort();
-  }, [application, settings.open, initialized?.workspace_root]);
+  }, [application, settings.open, initialized?.workspace_root, settings.engineInventoryRevision]);
   async function refreshModelCatalog(): Promise<void> {
     if (!lifetime.active) return;
     setCatalogNotice(undefined);
