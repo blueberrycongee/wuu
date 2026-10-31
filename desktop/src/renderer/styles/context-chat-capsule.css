@@ -6,7 +6,7 @@
 }
 .context-chat-capsule-body { border-radius: 24px; }
 .context-chat-capsule.expanded .context-chat-capsule-body {
-  background: var(--surface-1); box-shadow: 0 2px 7px #00000024;
+  background: var(--surface-1); box-shadow: var(--shadow-composer);
   animation: capsule-unfold 180ms var(--ease-out); transform-origin: right bottom;
 }
 .context-chat-capsule-row { display: flex; align-items: center; justify-content: flex-end; height: 48px; gap: 8px; margin: 0; }
@@ -16,7 +16,7 @@
   width: 48px; height: 48px; border: 0; border-radius: 50%; background: transparent; padding: 0;
 }
 .context-chat-capsule-ball > svg {
-  filter: drop-shadow(0 2px 2px #00000024);
+  filter: drop-shadow(0 1px 2px var(--shadow-color-medium));
   transition: transform 160ms var(--ease-out);
 }
 .context-chat-capsule-ball:hover > svg { transform: rotate(-6deg) scale(1.06); }

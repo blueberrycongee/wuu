@@ -121,42 +121,82 @@
   --ink-overlay-12: rgba(35, 35, 36, 0.12);
   --ink-overlay-18: rgba(35, 35, 36, 0.18);
 
-  /* Light elevation recipes: controls < cards < popovers < modal dialogs.
-     Dark inset recipes live in theme.css.
-     Keep blur and alpha here, not in components. Negative spread confines the
-     ambient shadow; existing surface borders provide the visible edge.
-     Black is independent of text color so custom themes cannot turn shadows
-     into a light glow. Public panel/overlay overrides remain authoritative. */
-  --shadow-color-subtle: rgba(0, 0, 0, 0.04);
-  --shadow-color-medium: rgba(0, 0, 0, 0.08);
-  --shadow-color-strong: rgba(0, 0, 0, 0.12);
-  --shadow-color-heavy: rgba(0, 0, 0, 0.18);
-  --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px var(--shadow-color-medium), 0 3px 6px -3px var(--shadow-color-strong));
-  --shadow-card: var(--wuu-elevation-panel, 0 2px 3px -1px var(--shadow-color-medium), 0 6px 16px -8px var(--shadow-color-strong));
+  /* Elevation follows a soft overhead light: close contact, then progressively
+     wider, fainter layers. Inspired by Beautiful Shadows' layered penumbra:
+     https://github.com/alexwidua/figma-beautiful-shadows
+     Negative spread keeps large surfaces from accumulating a grey halo.
+     Geometry is shared across themes; theme.css adjusts density and inset light.
+     Shadows stay independent of text color. Public overrides include the entire
+     recipe (including inset light), so `none` removes elevation completely. */
+  --shadow-color-subtle: rgba(0, 0, 0, 0.025);
+  --shadow-color-medium: rgba(0, 0, 0, 0.045);
+  --shadow-color-strong: rgba(0, 0, 0, 0.06);
+  --shadow-color-heavy: rgba(0, 0, 0, 0.08);
+  --shadow-surface-edge: inset 0 1px 0 transparent;
+  --shadow-inset: inset 0 0 0 1px transparent;
+  --shadow-soft: var(
+    --wuu-elevation-panel,
+    var(--shadow-surface-edge),
+    0 0.5px 1px var(--shadow-color-medium),
+    0 1px 3px -0.5px var(--shadow-color-subtle)
+  );
+  --shadow-card: var(
+    --wuu-elevation-panel,
+    var(--shadow-surface-edge),
+    0 0.5px 1px var(--shadow-color-medium),
+    0 2px 4px -1px var(--shadow-color-subtle),
+    0 4px 10px -3px var(--shadow-color-subtle)
+  );
   /* Reading surfaces stay closer to the canvas than floating panels. */
   --shadow-message: var(
     --wuu-elevation-panel,
-    0 1px 2px color-mix(in srgb, var(--shadow-color-medium) 75%, transparent),
-    0 2px 4px -2px color-mix(in srgb, var(--shadow-color-strong) 50%, transparent)
+    var(--shadow-surface-edge),
+    0 1px 2px -0.5px var(--shadow-color-subtle)
   );
   --shadow-composer: var(
     --wuu-elevation-panel,
-    0 1.5px 3.5px -0.5px color-mix(in srgb, var(--shadow-color-medium) 80%, transparent),
-    0 6px 22px -8px color-mix(in srgb, var(--shadow-color-strong) 75%, transparent)
+    var(--shadow-surface-edge),
+    0 1px 2px -0.5px var(--shadow-color-medium),
+    0 3px 8px -2px var(--shadow-color-subtle),
+    0 6px 16px -4px var(--shadow-color-subtle)
   );
   --shadow-pop: var(
     --wuu-elevation-overlay,
-    0 8px 24px -6px var(--shadow-color-strong), 0 2px 6px -2px var(--shadow-color-medium)
+    var(--shadow-inset),
+    0 1px 2px -0.5px var(--shadow-color-strong),
+    0 4px 8px -2px var(--shadow-color-medium),
+    0 10px 24px -6px var(--shadow-color-subtle)
   );
   --shadow-modal: var(
     --wuu-elevation-overlay,
-    0 16px 48px -12px var(--shadow-color-heavy), 0 4px 12px -4px var(--shadow-color-medium)
+    var(--shadow-inset),
+    0 1px 3px -0.5px var(--shadow-color-heavy),
+    0 6px 12px -3px var(--shadow-color-strong),
+    0 16px 32px -8px var(--shadow-color-medium),
+    0 24px 56px -12px var(--shadow-color-subtle)
   );
-  /* Attached trays and edge drawers keep their direction without increasing
-     elevation on hover, focus, or expansion. */
-  --shadow-tray: var(--wuu-elevation-panel, 0 -4px 16px -6px var(--shadow-color-medium));
-  --shadow-drawer-left: var(--wuu-elevation-overlay, -6px 0 20px -8px var(--shadow-color-strong));
-  --shadow-drawer-right: var(--wuu-elevation-overlay, 6px 0 20px -8px var(--shadow-color-strong));
+  /* Attached trays and edge drawers cast toward exposed content. Keep their
+     elevation steady on hover, focus, and expansion. */
+  --shadow-tray: var(
+    --wuu-elevation-panel,
+    var(--shadow-surface-edge),
+    0 -1px 3px -1px var(--shadow-color-medium),
+    0 -4px 12px -4px var(--shadow-color-subtle)
+  );
+  --shadow-drawer-left: var(
+    --wuu-elevation-overlay,
+    var(--shadow-inset),
+    -1px 0 3px -1px var(--shadow-color-strong),
+    -4px 0 10px -3px var(--shadow-color-medium),
+    -10px 0 24px -8px var(--shadow-color-subtle)
+  );
+  --shadow-drawer-right: var(
+    --wuu-elevation-overlay,
+    var(--shadow-inset),
+    1px 0 3px -1px var(--shadow-color-strong),
+    4px 0 10px -3px var(--shadow-color-medium),
+    10px 0 24px -8px var(--shadow-color-subtle)
+  );
 
   /* Shared backdrop for standard modal surfaces. Immersive viewers can keep
      their own treatment, but dialogs and command palettes use this one layer. */
