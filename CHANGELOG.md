@@ -182,7 +182,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Allow drag reordering in the sidebar's Recent conversations and retain the custom order across restarts, with new entries appearing first.
+- Allow drag reordering in the sidebar's Recent conversations and retain the custom order across restarts, with new entries appearing first. Keep temporary pin and folder drop targets from moving conversation rows and cancelling native drags.
 
 - Keep composer selection and model refresh behavior with the selected provider, and coordinate composer/preview focus through public surface capabilities rather than default-provider DOM structure.
 

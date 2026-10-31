@@ -1150,11 +1150,11 @@ export function AppSidebar({
   }
   const pinnedRows = pinnedThreads;
   const hasPinnedRows = validPinnedItems.length > 0;
-  // An empty Pinned group has nothing to say until something that can be
-  // pinned is picked up; then it appears as the drop target.
-  const pinnedGroupShown = hasPinnedRows
-    || folderDragThreadID !== undefined
-    || draggingSectionID !== undefined;
+  // Temporary destinations overlay the list: inserting a group here moves
+  // the native drag source while Chromium is capturing it and cancels the drag.
+  const showEmptyPinnedDropTarget = !hasPinnedRows
+    && (folderDragThreadID !== undefined || draggingSectionID !== undefined);
+  const showEmptyFolderDropTarget = visibleFolderSortableIDs.length === 0 && folderDragCanRemove;
   const pinnedHeadingDropTargetID = pinnedItemSortableIDs[0] ?? PINNED_APPEND_DROP_ID;
   const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread));
   const pinnedHasUnread = pinnedRows.some((thread) =>
@@ -1213,9 +1213,9 @@ export function AppSidebar({
   );
   const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
     (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
-      && (id !== "pinned" || pinnedGroupShown)
-      && (id !== "folders" || visibleFolderSortableIDs.length > 0 || folderDragCanRemove),
-  ), [functionalGroupOrder, onCreateProject, pinnedGroupShown, projectIndex, visibleFolderSortableIDs.length, folderDragCanRemove]);
+      && (id !== "pinned" || hasPinnedRows)
+      && (id !== "folders" || visibleFolderSortableIDs.length > 0),
+  ), [functionalGroupOrder, onCreateProject, hasPinnedRows, projectIndex, visibleFolderSortableIDs.length]);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1871,6 +1871,35 @@ export function AppSidebar({
             onDragEnd={handleSidebarDragEnd}
             onDragCancel={handleSidebarDragCancel}
           >
+            {showEmptyPinnedDropTarget || showEmptyFolderDropTarget ? (
+              <div className="sidebar-drag-targets">
+                <div className="sidebar-drag-targets-content">
+                  {showEmptyPinnedDropTarget ? (
+                    <SidebarDragTarget
+                      id={PINNED_APPEND_DROP_ID}
+                      group="pinned"
+                      label={t("sidebar.pinned")}
+                      active={folderDropTargetID === PINNED_SESSION_DROP_TARGET}
+                      containerProps={pinnedSessionDropProps(PINNED_APPEND_DROP_ID, "after")}
+                    />
+                  ) : null}
+                  {showEmptyFolderDropTarget ? (
+                    <SidebarDragTarget
+                      id="folders"
+                      group="folders"
+                      label={t(folderDragThread?.pinned ? "sidebar.unpin" : "sidebar.removeFromFolderDrop")}
+                      active={folderDropTargetID === FOLDER_REMOVE_DROP_TARGET}
+                      containerProps={{
+                        onDragEnter: dragSessionOverFolderRemoval,
+                        onDragOver: dragSessionOverFolderRemoval,
+                        onDragLeave: (event) => leaveSessionFolderTarget(event, FOLDER_REMOVE_DROP_TARGET),
+                        onDrop: dropSessionOutOfFolder,
+                      }}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             <SortableContext
               items={visibleFunctionalGroupOrder}
               strategy={verticalListSortingStrategy}
@@ -1940,25 +1969,22 @@ export function AppSidebar({
                   key={groupID}
                   id={groupID}
                   ariaLabel={t("sidebar.pinned")}
-                  headingClassName={!hasPinnedRows && folderDropTargetID === PINNED_SESSION_DROP_TARGET
-                    ? "drop-active"
-                    : ""}
                   headingProps={{
                     onDragEnter: (event) => dragSessionOverPinned(
                       event,
                       pinnedHeadingDropTargetID,
-                      hasPinnedRows ? "before" : "after",
+                      "before",
                     ),
                     onDragOver: (event) => dragSessionOverPinned(
                       event,
                       pinnedHeadingDropTargetID,
-                      hasPinnedRows ? "before" : "after",
+                      "before",
                     ),
                     onDragLeave: (event) => leavePinnedSessionTarget(event, pinnedHeadingDropTargetID),
                     onDrop: (event) => dropSessionIntoPinned(
                       event,
                       pinnedHeadingDropTargetID,
-                      hasPinnedRows ? "before" : "after",
+                      "before",
                     ),
                   }}
                   headingLabel={t("sidebar.pinned")}
@@ -2029,7 +2055,6 @@ export function AppSidebar({
                     : undefined}
                   headingClassName={`sidebar-folder-heading${folderDragCanRemove ? " remove-drop-available" : ""}${folderDropTargetID === FOLDER_REMOVE_DROP_TARGET ? " drop-active" : ""}`}
                   headingProps={{
-                    "data-empty": visibleFolderSortableIDs.length === 0 || undefined,
                     "data-folder-remove-drop": folderDragCanRemove || undefined,
                     onDragEnter: dragSessionOverFolderRemoval,
                     onDragOver: dragSessionOverFolderRemoval,
@@ -2381,6 +2406,32 @@ export function AppSidebar({
       }}
       onPointerLeave={onPointerLeave}
     >{organizedSidebar}</aside>
+  );
+}
+
+function SidebarDragTarget({
+  id,
+  group,
+  label,
+  active,
+  containerProps,
+}: {
+  id: string;
+  group: "pinned" | "folders";
+  label: string;
+  active: boolean;
+  containerProps: HTMLAttributes<HTMLElement>;
+}): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <section ref={setNodeRef} className="sidebar-functional-group" data-functional-group-id={group}>
+      <div
+        {...containerProps}
+        className={`sidebar-functional-heading sidebar-drag-target${active || isOver ? " drop-active" : ""}`}
+      >
+        <span className="sidebar-functional-heading-label">{label}</span>
+      </div>
+    </section>
   );
 }
 
