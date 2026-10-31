@@ -31,6 +31,7 @@ type runState struct {
 }
 
 func Run(ctx context.Context, opts Options) (runErr error) {
+	var cleanupErr error
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
@@ -56,6 +57,13 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 			}
 		} else if runErr == nil && ctx.Err() != nil {
 			runErr = classifyProtocolOrContextError(ctx, ctx.Err())
+		}
+		if cleanupErr != nil {
+			if runErr == nil {
+				runErr = WithExitCode(ExitProtocol, cleanupErr)
+			} else {
+				runErr = errors.Join(runErr, cleanupErr)
+			}
 		}
 	}()
 
@@ -97,9 +105,14 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		}
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// Use the controller's bounded cleanup policy: cancellation must leave
+		// time for owned turns to persist their terminal result before exit.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownFallbackTimeout)
 		defer cancel()
-		_ = controller.Shutdown(shutdownCtx)
+		if err := controller.Shutdown(shutdownCtx); err != nil {
+			cleanupErr = fmt.Errorf("shutdown exec controller: %w", err)
+			fmt.Fprintln(opts.Stderr, cleanupErr)
+		}
 	}()
 
 	initResult, err := controller.Initialize(ctx)

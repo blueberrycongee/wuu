@@ -31,6 +31,7 @@ type fakeController struct {
 	startedParams   appserver.RunStartParams
 	interruptReason string
 	shutdown        bool
+	shutdownErr     error
 }
 
 type initializeErrorController struct {
@@ -96,7 +97,7 @@ func (f *fakeController) InterruptRun(_ context.Context, _ string, reason string
 
 func (f *fakeController) Shutdown(context.Context) error {
 	f.shutdown = true
-	return nil
+	return f.shutdownErr
 }
 
 // Notifications mirrors the in-process app-server: a turn/started for the
@@ -989,4 +990,50 @@ func writeExecSchema(t *testing.T, content string) string {
 		t.Fatalf("write schema: %v", err)
 	}
 	return path
+}
+
+func TestRunPreservesShutdownFailureAndOriginalExitCode(t *testing.T) {
+	cleanupErr := errors.New("cleanup did not settle")
+	for _, mode := range []string{"completed", "broken-output", "cancelled"} {
+		t.Run(mode, func(t *testing.T) {
+			controller := newFakeController()
+			controller.shutdownErr = cleanupErr
+			var output bytes.Buffer
+			opts := Options{Prompt: "work", Workdir: t.TempDir(), Controller: controller, Stdout: &output, JSON: true}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			wantCode := ExitProtocol
+			switch mode {
+			case "broken-output":
+				opts.Stdout = failingCleanupTestWriter{}
+			case "cancelled":
+				opts.Controller = &cancelOnInitializeController{fakeController: controller, cancel: cancel}
+				wantCode = ExitInterrupted
+			}
+			err := Run(ctx, opts)
+			if !errors.Is(err, cleanupErr) {
+				t.Fatalf("cleanup failure lost: %v", err)
+			}
+			if ExitCode(err) != wantCode {
+				t.Fatalf("exit code = %d, want %d, error %v", ExitCode(err), wantCode, err)
+			}
+			if mode == "broken-output" && !strings.Contains(err.Error(), "broken output") {
+				t.Fatalf("output failure lost: %v", err)
+			}
+		})
+	}
+}
+
+type failingCleanupTestWriter struct{}
+
+func (failingCleanupTestWriter) Write([]byte) (int, error) { return 0, errors.New("broken output") }
+
+type cancelOnInitializeController struct {
+	*fakeController
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnInitializeController) Initialize(context.Context) (appserver.InitializeResult, error) {
+	c.cancel()
+	return c.initResult, nil
 }
