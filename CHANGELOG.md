@@ -182,6 +182,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep composer selection and model refresh behavior with the selected provider, and coordinate composer/preview focus through public surface capabilities rather than default-provider DOM structure.
+
 - Keep unavailable plugin surfaces visible with scoped render retries instead of blank panes or a full application restart; preserve optional wrapper content and diagnostic details.
 - Reject invalid persisted Goal state before committing a plugin replacement, then reload current state at activation so updates made during preparation survive. Discarded candidates leave live goal work untouched, and reload still pauses autonomous goals.
 - Reuse shared inputs, rows and sections in Automation controls, and let Goal controls follow public theme tokens and larger UI text without shrinking action targets.

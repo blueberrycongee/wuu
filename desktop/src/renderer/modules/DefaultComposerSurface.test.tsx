@@ -71,6 +71,37 @@ function setup() {
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  // Composer-owned effects must work without the default shell, respect the
+  // source pane, and stop when this provider is no longer mounted.
+  it.each(["primary", "secondary"] as const)("accepts response selections for its %s source without shell DOM conventions", async pane => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view,
+      conversationWorkspace: { ...view.conversationWorkspace, [pane === "primary" ? "primaryThreadId" : "secondaryThreadId"]: "source-thread" },
+      drafts: { ...view.drafts, split: pane === "secondary", [pane]: view.drafts.primary },
+    }));
+    await fixture.render({ pane });
+    const selection = { id: "quote", text: "Answer", source: { thread_id: "source-thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 6 } };
+    await act(async () => window.dispatchEvent(new CustomEvent("wuu:add-response-selection", { detail: selection })));
+    expect(fixture.calls).toContainEqual({ action: "composer.checkpoint", input: expect.objectContaining({
+      [pane]: expect.objectContaining({ ownerTabId: "draft-one", selections: [selection] }),
+    }) });
+    const count = fixture.calls.length;
+    await act(async () => window.dispatchEvent(new CustomEvent("wuu:add-response-selection", { detail: { ...selection, source: { ...selection.source, thread_id: "other" } } })));
+    expect(fixture.calls).toHaveLength(count);
+  });
+
+  it("refreshes its models on window focus only while mounted and settled", async () => {
+    const fixture = setup();
+    await fixture.render();
+    fixture.calls.length = 0;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(fixture.calls).toContainEqual({ action: "composer.refresh-engine-models", input: expect.objectContaining({ ownerTabId: "draft-one" }) });
+    await act(async () => root.render(<div>Replacement composer</div>));
+    fixture.calls.length = 0;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(fixture.calls).toEqual([]);
+  });
+
   it.each(["steer", "queue"] as const)("retries a %s only when retirement prevented it from starting", async mode => {
     const fixture = setup();
     const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), running: true, turnRunning: true, canSteer: true };
