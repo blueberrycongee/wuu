@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -269,7 +270,7 @@ func runRegisteredPersonalSource(t *testing.T) {
 		}
 		return nil
 	}
-	endpoint := newTestOpenAIEndpoint(t, "registered-model", "registered-title", func(_ context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	endpoint := newTestOpenAIEndpoint(t, "registered-model", "registered-title", func(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
 
 		modelMu.Lock()
 		defer modelMu.Unlock()
@@ -345,6 +346,18 @@ func runRegisteredPersonalSource(t *testing.T) {
 		if !discovered.Load() && strings.Contains(latestUser, "Use my existing Coding workspace") {
 			discovered.Store(true)
 			return invoke("discover-existing", "list_sessions", map[string]any{}), nil
+		}
+		if os.Getenv("WUU_REGISTERED_HOLD_MAIN") == "1" && len(reviewed) == 0 && created.Load() {
+			for {
+				if _, err := os.Stat(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR") + ".release-main"); err == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return providers.ChatResponse{}, ctx.Err()
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
 		}
 		return providers.ChatResponse{Content: "Personal received the existing Coding result"}, nil
 	})

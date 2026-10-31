@@ -80,13 +80,13 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY)('runs a selected nati
  }finally{await pool.shutdown();for(const child of children)child.kill();vi.unstubAllEnvs();if(process.env.WUU_REGISTERED_SESSION_EVIDENCE)await writeFile(process.env.WUU_REGISTERED_SESSION_EVIDENCE,JSON.stringify(evidence,null,2));}
 },180000);
 
-it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','federation','owner-local-ptc'])('runs actual controller review through %s', async (mode) => {
- const ptc=mode==='owner-local-ptc';const routeKind=ptc?'owner-local':mode;const followup=mode==='owner-local';
+it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','federation','owner-local-ptc','owner-local-queued'])('runs actual controller review through %s', async (mode) => {
+ const ptc=mode==='owner-local-ptc';const queued=mode==='owner-local-queued';const routeKind=ptc||queued?'owner-local':mode;const followup=mode==='owner-local';
  const {spawn}=await import('node:child_process');const {mkdtemp,writeFile,mkdir,readFile}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const root=await mkdtemp(join(tmpdir(),'wuu-registered-control-'));const source:RuntimeContext={kind:'user',user_space_id:'local',product_domain:'personal',cwd:join(root,'source')};const target:RuntimeContext={kind:'project',project_id:'target',cwd:join(root,'target')};await mkdir(source.cwd);await mkdir(target.cwd);
  vi.stubEnv('WUU_DESKTOP_CORE',process.env.WUU_REGISTERED_SESSION_TEST_BINARY!);
  let adapter:RegisteredSessionTransport;const events:ServerEvent[]=[];const children:ChildProcessWithoutNullStreams[]=[];
- const pool=new AppServerClientPool(()=>source,()=>source.cwd,event=>{events.push(event);adapter?.handleConnectionEvent(event);if(event.kind==='server-request')void adapter.handleServerRequest(event);},(_command,_args,options)=>{const child=spawn(process.env.WUU_REGISTERED_SESSION_TEST_BINARY!,['-test.run=^TestRegisteredSessionTransportProcess$'],{cwd:options.cwd,env:{...options.env,WUU_REGISTERED_SESSION_ROLE:options.cwd===target.cwd?(routeKind==='owner-local'?'target-owner':'target-delayed-federation'):'personal-source',WUU_REGISTERED_PERSONAL_DESCRIPTOR:join(root,'personal.json'),WUU_REGISTERED_TEST_ROUTE_KIND:routeKind,WUU_REGISTERED_REVIEW_PTC:ptc?'1':'0',WUU_REGISTERED_REVIEW_FOLLOWUP:followup?'1':'0'},stdio:['pipe','pipe','pipe','pipe']}) as unknown as ChildProcessWithoutNullStreams;children.push(child);return child;},()=>({capabilities:{reverse_rpc:{methods:['session/transport.dispatch','session/transport.list-targets','session/transport.release']}}}));
+ const pool=new AppServerClientPool(()=>source,()=>source.cwd,event=>{events.push(event);adapter?.handleConnectionEvent(event);if(event.kind==='server-request')void adapter.handleServerRequest(event);},(_command,_args,options)=>{const child=spawn(process.env.WUU_REGISTERED_SESSION_TEST_BINARY!,['-test.run=^TestRegisteredSessionTransportProcess$'],{cwd:options.cwd,env:{...options.env,WUU_REGISTERED_SESSION_ROLE:options.cwd===target.cwd?(routeKind==='owner-local'?'target-owner':'target-delayed-federation'):'personal-source',WUU_REGISTERED_PERSONAL_DESCRIPTOR:join(root,'personal.json'),WUU_REGISTERED_TEST_ROUTE_KIND:routeKind,WUU_REGISTERED_HOLD_MAIN:queued?'1':'0',WUU_REGISTERED_REVIEW_PTC:ptc?'1':'0',WUU_REGISTERED_REVIEW_FOLLOWUP:followup?'1':'0'},stdio:['pipe','pipe','pipe','pipe']}) as unknown as ChildProcessWithoutNullStreams;children.push(child);return child;},()=>({capabilities:{reverse_rpc:{methods:['session/transport.dispatch','session/transport.list-targets','session/transport.release']}}}));
  adapter=new RegisteredSessionTransport(pool);
 
  const evidence:any={checks:[]};
@@ -118,14 +118,21 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
   expect(task).toBeDefined();expect(task.source.message_binding).toBe('host_turn');expect(task.source.original_text).toBe('Use my existing Coding workspace to read the existing work and return its result here.');
   evidence.checks.push('same Personal conversation invokes actual create_task tool with observed catalog locator and original human request provenance');
   expect(task.execution.existing_session).toMatchObject(locator);evidence.checks.push(`generated Personal task selected exact existing ${routeKind} target`);
-  await vi.waitFor(()=>expect(events.some(event=>event.kind==='notification'&&event.message.method==='turn/completed'&&(event.message.params as any)?.thread_id===agent.main_session_id)).toBe(true),{timeout:10000});
+  if(!queued)await vi.waitFor(()=>expect(events.some(event=>event.kind==='notification'&&event.message.method==='turn/completed'&&(event.message.params as any)?.thread_id===agent.main_session_id)).toBe(true),{timeout:10000});
 
   }
   await pool.requestInContext(target,'fixture/release');
+  if(queued){
+   await vi.waitFor(async()=>{const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.task_id===task.task_id);expect(task.delivery?.kind,JSON.stringify(task)).toBe('review');expect(task.delivery?.status).toBe('submitted');},{timeout:30000,interval:200});
+   expect(events.some(event=>event.kind==='notification'&&event.message.method==='turn/completed'&&(event.message.params as any)?.thread_id===agent.main_session_id)).toBe(false);
+   await writeFile(join(root,'personal.json.release-main'),'allow main completion and queued review admission');
+   evidence.checks.push('review queued behind busy main; admitting send callback returned before main completion and queue drain');
+  }
+
   const run=task.execution.request_id;const rootAuthorization=task.authorization;const revision=task.requirements_revision;
   expect(run).toBeTruthy();
   // Observe only: the real background outbox must wake, decide, and deliver.
-  for(let attempt=0;attempt<600 && !(task.state==='completed'&&task.delivery?.status==='delivered');attempt++){const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.task_id===task.task_id);if(!(task.state==='completed'&&task.delivery?.status==='delivered'))await new Promise(resolve=>setTimeout(resolve,200));}
+  for(let attempt=0;attempt<600 && !(task.state==='completed'&&task.delivery?.status==='delivered');attempt++){const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.task_id===task.task_id);if(task.delivery?.status==='failed')break;if(!(task.state==='completed'&&task.delivery?.status==='delivered'))await new Promise(resolve=>setTimeout(resolve,200));}
   expect(task.state,JSON.stringify(task)).toBe('completed');expect(task.delivery.status).toBe('delivered');
   expect(task.result.origin).toBe('controller_review');expect(task.result.summary).toContain('Controller reviewed');
   expect(task.requirements_revision).toBe(revision);expect(task.authorization).toEqual(rootAuthorization);expect(task.execution.existing_session).toMatchObject(locator);
@@ -141,5 +148,5 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
   expect(replay.task.task_id).toBe(task.task_id);expect(replay.task.execution.request_id).toBe(task.execution.request_id);
   expect(children).toHaveLength(2);evidence.checks.push('same task replay retains run identity without creating target or core');
   evidence.passed=true;
- } finally {await pool.shutdown();for(const child of children)child.kill();vi.unstubAllEnvs();if(process.env.WUU_REGISTERED_SESSION_EVIDENCE)await writeFile(process.env.WUU_REGISTERED_SESSION_EVIDENCE+(ptc?'.personal-ptc.json':routeKind==='owner-local'?'.personal.json':'.personal-federation.json'),JSON.stringify(evidence,null,2));}
+ } finally {await pool.shutdown();for(const child of children)child.kill();vi.unstubAllEnvs();if(process.env.WUU_REGISTERED_SESSION_EVIDENCE)await writeFile(process.env.WUU_REGISTERED_SESSION_EVIDENCE+(queued?'.personal-queued.json':ptc?'.personal-ptc.json':routeKind==='owner-local'?'.personal.json':'.personal-federation.json'),JSON.stringify(evidence,null,2));}
 },180000);

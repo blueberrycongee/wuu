@@ -4592,6 +4592,11 @@ func (s *Server) startThreadUserTurn(ctx context.Context, th *threadState, userM
 // It acquires the cross-process lease and refreshes disk state before running
 // hooks, then keeps ownership through the user append and turn lifecycle.
 func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threadState, userMsg providers.ChatMessage, snapshot turnRuntimeSnapshot, failIfRunning bool, readOnlyPolicy turnReadOnlyPolicy, hooks turnAdmissionHooks) (startedThreadTurn, bool, error) {
+	// Accepted plugin work owns its invocation after the admitting callback
+	// returns. A supplied capture, including a failed one, remains authoritative.
+	if !runtime.HasInvocationState(ctx) && snapshot.PluginTurn != nil && snapshot.PluginTurn.Origin != nil {
+		ctx = runtime.WithInvocationState(ctx, snapshot.PluginTurn.Origin)
+	}
 	if caller, ok := principal.FromContext(ctx); ok {
 		snapshot.AdmissionPrincipal = caller
 		snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)

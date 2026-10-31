@@ -34,3 +34,7 @@ console.log(`Conversational federation evidence: ${evidence}.personal-federation
 const ptc = JSON.parse(readFileSync(evidence + ".personal-ptc.json", "utf8"));
 if (ptc.passed !== true || !ptc.checks.some(check => check.includes("Code Mode") && check.includes("controller decision"))) throw new Error("Actual Code Mode review acceptance did not execute successfully");
 console.log(`Code Mode direct controller review evidence: ${evidence}.personal-ptc.json`);
+
+const queued = JSON.parse(readFileSync(evidence + '.personal-queued.json', 'utf8'));
+if (queued.passed !== true || !queued.checks.some(check => check.includes('review queued behind busy main'))) throw new Error('Queued controller admission acceptance did not execute successfully');
+console.log(`Queued controller invocation evidence: ${evidence}.personal-queued.json`);
