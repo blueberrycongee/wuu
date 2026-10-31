@@ -280,7 +280,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if accessErr != nil {
 			return nil, accessErr
 		}
-		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, params)
+		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, ClientInputReceiptsSelected(s.ownerHost), params)
 		if err != nil {
 			return nil, err
 		}
