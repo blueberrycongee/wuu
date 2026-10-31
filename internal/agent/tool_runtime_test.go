@@ -557,7 +557,7 @@ func (e *parallelLegacyContextTools) LastAdditionalContext() string {
 
 func TestTurnToolRuntimeDoesNotReadSharedLegacyContextConcurrently(t *testing.T) {
 	executor := &parallelLegacyContextTools{delayedConcurrentTools: newDelayedConcurrentTools()}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor})
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Gate: NewToolExecutionGate(2)})
 	defer runtime.Close()
 	_, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{
 		{ID: "call_1", Name: "read_file", Arguments: "{}"},
@@ -565,6 +565,9 @@ func TestTurnToolRuntimeDoesNotReadSharedLegacyContextConcurrently(t *testing.T)
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := strings.Join(executor.completedOrder(), ","); got != "call_2,call_1" {
+		t.Fatalf("test did not simulate concurrent completion: got %s", got)
 	}
 	if executor.reads != 0 || len(runtime.TakeRequestContextSegments()) != 0 {
 		t.Fatal("parallel results acquired context from an unattributed last-result slot")

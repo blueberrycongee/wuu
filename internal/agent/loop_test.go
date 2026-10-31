@@ -236,14 +236,15 @@ func (f *contextLoopTools) Execute(_ context.Context, call providers.ToolCall) (
 func (f *contextLoopTools) LastAdditionalContext() string { return f.last }
 
 type delayedConcurrentTools struct {
-	call2Done chan struct{}
-	closeOnce sync.Once
-	mu        sync.Mutex
-	completed []string
+	call1Started chan struct{}
+	call2Done    chan struct{}
+	closeOnce    sync.Once
+	mu           sync.Mutex
+	completed    []string
 }
 
 func newDelayedConcurrentTools() *delayedConcurrentTools {
-	return &delayedConcurrentTools{call2Done: make(chan struct{})}
+	return &delayedConcurrentTools{call1Started: make(chan struct{}), call2Done: make(chan struct{})}
 }
 
 func (f *delayedConcurrentTools) Definitions() []providers.ToolDefinition {
@@ -257,6 +258,7 @@ func (f *delayedConcurrentTools) ToolMetadata(_ providers.ToolCall) (ToolMetadat
 func (f *delayedConcurrentTools) Execute(_ context.Context, call providers.ToolCall) (string, error) {
 	switch call.ID {
 	case "call_1":
+		close(f.call1Started)
 		select {
 		case <-f.call2Done:
 		case <-time.After(time.Second):
@@ -264,6 +266,12 @@ func (f *delayedConcurrentTools) Execute(_ context.Context, call providers.ToolC
 		}
 		f.recordCompleted(call.ID)
 	case "call_2":
+		// Require overlapping executions, not just a favorable launch order.
+		select {
+		case <-f.call1Started:
+		case <-time.After(time.Second):
+			return "", errors.New("call_2 timed out waiting for call_1 to start")
+		}
 		f.recordCompleted(call.ID)
 		f.closeOnce.Do(func() { close(f.call2Done) })
 	default:
@@ -979,14 +987,17 @@ func TestRunToolLoop_FiltersLegacyHookContextHistory(t *testing.T) {
 }
 
 func TestRunToolLoop_ConcurrentToolCompletionDoesNotReorderProviderMessages(t *testing.T) {
+	tools := newDelayedConcurrentTools()
+	// This fixture requires two admitted leaves; the runtime default is serial.
+	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools, Gate: NewToolExecutionGate(2)})
+	defer runtime.Close()
 	step := &fakeStep{results: []StepResult{
-		{ToolCalls: []providers.ToolCall{
+		{ToolRuntime: runtime, ToolCalls: []providers.ToolCall{
 			{ID: "call_1", Name: "read_file", Arguments: `{}`},
 			{ID: "call_2", Name: "read_file", Arguments: `{}`},
 		}},
 		{Content: "done"},
 	}}
-	tools := newDelayedConcurrentTools()
 
 	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("inspect")}, LoopConfig{
 		Model: "m",
