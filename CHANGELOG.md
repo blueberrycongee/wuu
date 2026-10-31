@@ -170,6 +170,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Give conversation images wider, left-aligned previews with rounded image edges and proportionate widths in horizontal galleries, while preserving reserved row heights across loading, failures, and session switches.
+
 - Reduce repeated history cloning in the default agent loop and JSON processing during Responses WebSocket continuation, preserving context contents, replay checks and provider options.
 
 - Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.

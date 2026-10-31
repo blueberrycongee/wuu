@@ -57,6 +57,8 @@
   --conversation-turn-boundary-gap: var(--section-gap);
   --conversation-turn-item-gap: var(--space-2);
   --conversation-image-gap: var(--space-6);
+  --conversation-image-width: 560px;
+  --conversation-image-radius: var(--radius-sm);
   /* One leading for everything read or typed in a conversation: answers,
      sent queries and every composer draft, including composers outside
      .conversation-pane. A relaxed body line makes mixed CJK, Latin and inline
