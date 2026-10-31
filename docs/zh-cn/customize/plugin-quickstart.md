@@ -39,6 +39,24 @@ wuu plugin dev ./hello.ts
 
 源码变化经过防抖，每两秒核对一次，即使文件监听器出错也会继续核对。`--poll 500ms` 可修改这个必须为正数的间隔；`--watch=false` 发布一次后退出。Ctrl+C 停止监听，已发布的开发 generation 仍然可用。可在 Skills & Plugins 中禁用，或使用命令打印的 ID 执行 `wuu plugin disable <id>`。
 
+### 恢复较早发布的开发 generation
+
+存储归属绑定引入前创建的开发 receipt，仍可能以 `plugin:dev:<id>` 身份读取存储。
+如果已安装插件已完成所有权迁移，旧开发 generation 会报
+`plugin storage transfer conflicts with existing ownership metadata`；单纯重启不会更新 receipt。
+
+确认现有迁移属于已安装插件、开发身份没有独立状态后，使用当前 Wuu CLI、相同的
+`WUU_HOME`，重新发布原来授权的源码：
+
+```bash
+wuu plugin dev --watch=false /path/to/authorized/source
+```
+
+正常发布会校验候选版本并写入签名的存储归属绑定，不会删除所有权元数据，也不会将
+已完成迁移的备份重新覆盖到更新过或已遗忘的记录上。确认插件确实启用后再重试界面。
+如果开发身份已有独立数据，或冲突指向其他所有者，应明确解决归属，不能用这个流程
+合并命名空间。不要通过删除存储文件、fence 或 receipt 来消除错误。
+
 ## 让 Agent 添加工具
 
 在使用 Wuu 引擎的会话中，延迟发现工具 `plugin_manager` 提供限定范围的开发流程：

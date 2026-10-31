@@ -2,7 +2,7 @@ export async function activate(api) {
   if (!api.supportedFeatures?.includes("ui.selected-slot-target.v1")) throw new Error("Automation catalog requires renderer feature ui.selected-slot-target.v1");
   const React = api.react;
   const h = React.createElement;
-  const { Page, Button, TextInput, TextArea, Checkbox, EmptyState } = api.ui;
+  const { Page, Button, TextInput, TextArea, Checkbox, EmptyState, Row, Section } = api.ui;
   const requestScheduler = (method, input, options) => api.invokeService({
     service: "automation.scheduler", method: "request", params: { method, input },
   }, options);
@@ -75,8 +75,8 @@ export async function activate(api) {
       --automation-gap: var(--space-4);
       --automation-inset: var(--space-6);
       height:100%; min-height:0; container-type:inline-size;
-      color:var(--wuu-color-text, var(--ink));
-      font-size:var(--font-ui);
+      color:var(--wuu-color-text, inherit);
+      font-size:var(--wuu-font-size-ui, 1rem);
     }
     .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
     .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; font-size:inherit; }
@@ -86,14 +86,11 @@ export async function activate(api) {
     .plugin-automation-body[data-resizing="true"] { transition:none; }
     .plugin-automation-main { min-width:0; overflow:auto; padding:var(--automation-inset); }
     .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
-    .plugin-automation-toolbar { display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--section-gap); }
+    .plugin-automation-toolbar { align-items:center; gap:var(--space-2); margin-bottom:var(--section-gap); }
     .plugin-automation-toolbar .plugin-automation-create { display:inline-flex; flex:none; align-items:center; gap:var(--space-2); }
     .plugin-automation-create svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-search-height); border:1px solid var(--field-border); border-radius:var(--radius-sm); padding:0 var(--control-padding-inline); color:var(--ink-muted); background:var(--field-bg); transition:background var(--motion-fast) var(--ease-out); }
-    .plugin-automation-search:hover { background:var(--field-hover-bg); }
-    .plugin-automation-search svg { width:var(--icon-size); height:var(--icon-size); flex:none; }
-    .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
-    .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
+    .plugin-automation-search { flex:1; min-width:0; }
+    .plugin-automation-search .plugin-ui-field-label { display:none; }
     .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
     .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
     .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
@@ -116,9 +113,9 @@ export async function activate(api) {
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
     .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:var(--compact-padding-inline); }
     .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:inherit; line-height:1.4; }
-    .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:var(--font-sm); line-height:1.5; }
+    .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:inherit; line-height:1.5; }
     .plugin-automation-item-meta > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--wuu-font-size-ui, 1rem); font-weight:var(--weight-semibold); line-height:1.4; }
     /* This contribution also runs in independent navigation providers. Own its
      * geometry; default-sidebar private variables are not a surface contract. */
     .plugin-automation-sidebar { --automation-sidebar-inset:0.5em; --automation-sidebar-icon:1.1em; display:flex; flex-direction:column; gap:1em; padding-block:1em; color:var(--wuu-color-text, inherit); font-size:var(--wuu-font-size-ui, 1rem); line-height:1.4; }
@@ -141,9 +138,9 @@ export async function activate(api) {
     .plugin-automation-unavailable { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; color:var(--ink-muted); overflow-wrap:anywhere; }
     .plugin-automation-unavailable details { flex-basis:100%; }
     .plugin-automation-unavailable pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
-    .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
+    .plugin-automation-error { color:var(--danger); font-size:inherit; overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
-    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--wuu-font-size-ui, 1rem); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-automation-detail-head > .plugin-automation-enable { flex:none; margin-inline-end:auto; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
     .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration) var(--ease-in), translate var(--environment-panel-exit-duration) var(--ease-in); }
     /* Content enters from the edge the column opens toward and leaves the
@@ -160,7 +157,7 @@ export async function activate(api) {
     .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
     .plugin-automation-body[data-resizing="true"], .plugin-automation-body[data-resizing="true"] * { cursor:col-resize !important; user-select:none; }
     .plugin-automation-detail-head { flex:none; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-field-height); padding:var(--automation-inset) var(--automation-inset) var(--automation-gap); }
-    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:var(--font-sm); }
+    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:inherit; }
     .plugin-automation-detail-status[data-saved="true"] { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--ink-soft); animation:wuu-fade-in var(--motion-base) var(--ease-out) both; }
     .plugin-automation-detail-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation .plugin-automation-detail-close { display:grid; place-items:center; width:var(--control-field-height); padding:0; }
@@ -177,7 +174,7 @@ export async function activate(api) {
      * per decision, rows divided by a soft hairline. */
     .plugin-automation-form-card { display:flex; flex-direction:column; min-width:0; border:1px solid var(--hairline); border-radius:var(--radius-sm); padding-inline:var(--card-padding); }
     .plugin-automation-form-card > .plugin-automation-form-row + .plugin-automation-form-row { border-top:1px solid var(--hairline-soft); }
-    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:calc(var(--control-field-height) + var(--space-3)); font-size:inherit; }
+    .plugin-automation-form-row { align-items:center; justify-content:space-between; gap:var(--space-3); min-height:calc(var(--control-field-height) + var(--space-3)); font-size:inherit; }
     /* A row that a schedule choice reveals drops in under the one above. */
     .plugin-automation-form-row[data-entering="true"] { --enter-y:-4px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
     .plugin-automation-form-row > span:first-child { flex:none; }
@@ -188,8 +185,8 @@ export async function activate(api) {
     .plugin-automation-field[type="time"] { width:8em; font-variant-numeric:tabular-nums; }
     .plugin-automation-field::-webkit-calendar-picker-indicator { display:none; }
     .plugin-automation-form-actions { flex:none; display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); padding:var(--space-3) var(--automation-inset); border-top:1px solid var(--hairline-soft); }
-    .plugin-automation-history { display:grid; gap:var(--space-2); font-size:var(--font-sm); }
-    .plugin-automation-history > .plugin-automation-group-title { margin-bottom:var(--space-1); font-size:var(--font-ui); }
+    .plugin-automation-history { display:grid; gap:var(--space-2); font-size:inherit; }
+    .plugin-automation-history > .plugin-automation-group-title { margin-bottom:var(--space-1); font-size:var(--wuu-font-size-ui, 1rem); }
     .plugin-automation-history-row { display:flex; align-items:center; gap:var(--space-2); color:var(--ink-soft); font-variant-numeric:tabular-nums; }
     .plugin-automation-history-row > span:last-child { color:var(--ink-tertiary); }
     .plugin-automation-history-empty { margin:0; color:var(--ink-tertiary); }
@@ -475,7 +472,7 @@ export async function activate(api) {
   // row already on screen would replay it.
   function FieldRow({ label, entering, children }) {
     const [enter] = React.useState(entering);
-    return h("div", { className: "plugin-automation-form-row", "data-entering": enter },
+    return h(Row, { className: "plugin-automation-form-row", "data-entering": enter },
       ...(label === undefined ? [children] : [h("span", { key: "label" }, label), h("label", { key: "control", className: "plugin-automation-form-row-control" }, children)]));
   }
 
@@ -556,8 +553,7 @@ export async function activate(api) {
               h("div", { className: "plugin-automation-form-identity" },
                 h(TextInput, { className: "plugin-automation-form-name", "aria-label": tr("automation.name"), placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) }),
                 h(TextArea, { className: "plugin-automation-form-prompt", "aria-label": tr("automation.prompt"), required: true, rows: 3, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) })),
-              h("section", { className: "plugin-automation-form-group" },
-                h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.details")),
+              h(Section, { className: "plugin-automation-form-group", title: tr("automation.group.details") },
                 h("div", { className: "plugin-automation-form-card" },
                   h(FieldRow, { label: tr("automation.field.target") }, h(TargetPicker, {
                     tr, threads, disabled: busy || readOnly,
@@ -565,8 +561,7 @@ export async function activate(api) {
                     onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
                   })),
                   draft.mode !== "thread_heartbeat" ? h(FieldRow, { key: "isolation", entering }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
-              h("section", { className: "plugin-automation-form-group" },
-                h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.schedule")),
+              h(Section, { className: "plugin-automation-form-group", title: tr("automation.group.schedule") },
                 h("div", { className: "plugin-automation-form-card" }, h(ScheduleFields, { tr, locale, draft, onChange: setDraft })))),
             localError ? h("div", { className: "plugin-automation-error", role: "alert" }, localError) : null,
             task ? h("section", { className: "plugin-automation-history" },
@@ -836,8 +831,8 @@ export async function activate(api) {
     return h("main", { className: "plugin-automation" }, h(Page, null,
       h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
         h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
-          h("div", { className: "plugin-automation-toolbar" },
-            h("label", { className: "plugin-automation-search" }, h(SearchIcon), h("span", { className: "plugin-automation-sr" }, tr("automation.search")), h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
+          h(Row, { className: "plugin-automation-toolbar" },
+            h("div", { className: "plugin-automation-search" }, h(TextInput, { type: "search", "aria-label": tr("automation.search"), value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
             h("div", { className: "plugin-automation-workspace-picker" }, h(Picker, {
               label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
               placeholder: tr("automation.workspaceNone"),

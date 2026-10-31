@@ -668,7 +668,7 @@ func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, ca
 		if id == pluginID {
 			result, found = outcome, retired
 		} else if retired && diagnostic == nil {
-			h.Add(Failed(id, fmt.Errorf("plugin %q requires retired plugin %q", id, pluginID)))
+			h.Add(Failed(id, errors.Join(fmt.Errorf("plugin %q requires retired plugin %q", id, pluginID), cause)))
 		}
 	}
 	result.Err = cleanupErr
