@@ -74,13 +74,13 @@ var Di = Object.getOwnPropertyDescriptor;
 var Mi = Object.getOwnPropertyNames;
 var Fi = Object.getPrototypeOf;
 var Bi = Object.prototype.hasOwnProperty;
-var Ri = (a, t) => () => (t || a((t = { exports: {} }).exports, t), t.exports);
-var ji = (a, t, e, s) => {
+var ji = (a, t) => () => (t || a((t = { exports: {} }).exports, t), t.exports);
+var Ri = (a, t, e, s) => {
   if (t && typeof t == "object" || typeof t == "function") for (let i of Mi(t)) !Bi.call(a, i) && i !== e && Us(a, i, { get: () => t[i], enumerable: !(s = Di(t, i)) || s.enumerable });
   return a;
 };
-var Ui = (a, t, e) => (e = a != null ? Li(Fi(a)) : {}, ji(t || !a || !a.__esModule ? Us(e, "default", { value: a, enumerable: true }) : e, a));
-var mi = Ri((Pt) => {
+var Ui = (a, t, e) => (e = a != null ? Li(Fi(a)) : {}, Ri(t || !a || !a.__esModule ? Us(e, "default", { value: a, enumerable: true }) : e, a));
+var mi = ji((Pt) => {
   "use strict";
   Object.defineProperty(Pt, "__esModule", { value: true });
   function _i(a, t) {
@@ -395,14 +395,14 @@ var mi = Ri((Pt) => {
   function Te(a, t) {
     return _(a, { beforeExpr: ee, binop: t });
   }
-  var yt = -1, Re = [], gs = [], xs = [], bs = [], Ps = [], Ts = [];
+  var yt = -1, je = [], gs = [], xs = [], bs = [], Ps = [], Ts = [];
   function _(a, t = {}) {
     var e, s, i, r;
-    return ++yt, gs.push(a), xs.push((e = t.binop) != null ? e : -1), bs.push((s = t.beforeExpr) != null ? s : false), Ps.push((i = t.startsExpr) != null ? i : false), Ts.push((r = t.prefix) != null ? r : false), Re.push(new Ft(a, t)), yt;
+    return ++yt, gs.push(a), xs.push((e = t.binop) != null ? e : -1), bs.push((s = t.beforeExpr) != null ? s : false), Ps.push((i = t.startsExpr) != null ? i : false), Ts.push((r = t.prefix) != null ? r : false), je.push(new Ft(a, t)), yt;
   }
   function te(a, t = {}) {
     var e, s, i, r;
-    return ++yt, ys.set(a, yt), gs.push(a), xs.push((e = t.binop) != null ? e : -1), bs.push((s = t.beforeExpr) != null ? s : false), Ps.push((i = t.startsExpr) != null ? i : false), Ts.push((r = t.prefix) != null ? r : false), Re.push(new Ft("name", t)), yt;
+    return ++yt, ys.set(a, yt), gs.push(a), xs.push((e = t.binop) != null ? e : -1), bs.push((s = t.beforeExpr) != null ? s : false), Ps.push((i = t.startsExpr) != null ? i : false), Ts.push((r = t.prefix) != null ? r : false), je.push(new Ft("name", t)), yt;
   }
   var er = { bracketL: _("[", { beforeExpr: ee, startsExpr: L }), bracketHashL: _("#[", { beforeExpr: ee, startsExpr: L }), bracketBarL: _("[|", { beforeExpr: ee, startsExpr: L }), bracketR: _("]"), bracketBarR: _("|]"), braceL: _("{", { beforeExpr: ee, startsExpr: L }), braceBarL: _("{|", { beforeExpr: ee, startsExpr: L }), braceHashL: _("#{", { beforeExpr: ee, startsExpr: L }), braceR: _("}"), braceBarR: _("|}"), parenL: _("(", { beforeExpr: ee, startsExpr: L }), parenR: _(")"), comma: _(",", { beforeExpr: ee }), semi: _(";", { beforeExpr: ee }), colon: _(":", { beforeExpr: ee }), doubleColon: _("::", { beforeExpr: ee }), dot: _("."), question: _("?", { beforeExpr: ee }), questionDot: _("?."), arrow: _("=>", { beforeExpr: ee }), template: _("template"), ellipsis: _("...", { beforeExpr: ee }), backQuote: _("`", { startsExpr: L }), dollarBraceL: _("${", { beforeExpr: ee, startsExpr: L }), templateTail: _("...`", { startsExpr: L }), templateNonTail: _("...${", { beforeExpr: ee, startsExpr: L }), at: _("@"), hash: _("#", { startsExpr: L }), interpreterDirective: _("#!..."), eq: _("=", { beforeExpr: ee, isAssign: pt }), assign: _("_=", { beforeExpr: ee, isAssign: pt }), slashAssign: _("_=", { beforeExpr: ee, isAssign: pt }), xorAssign: _("_=", { beforeExpr: ee, isAssign: pt }), moduloAssign: _("_=", { beforeExpr: ee, isAssign: pt }), incDec: _("++/--", { prefix: _e, postfix: Qi, startsExpr: L }), bang: _("!", { beforeExpr: ee, prefix: _e, startsExpr: L }), tilde: _("~", { beforeExpr: ee, prefix: _e, startsExpr: L }), doubleCaret: _("^^", { startsExpr: L }), doubleAt: _("@@", { startsExpr: L }), pipeline: Te("|>", 0), nullishCoalescing: Te("??", 1), logicalOR: Te("||", 1), logicalAND: Te("&&", 2), bitwiseOR: Te("|", 3), bitwiseXOR: Te("^", 4), bitwiseAND: Te("&", 5), equality: Te("==/!=/===/!==", 6), lt: Te("</>/<=/>=", 7), gt: Te("</>/<=/>=", 7), relational: Te("</>/<=/>=", 7), bitShift: Te("<</>>/>>>", 8), bitShiftL: Te("<</>>/>>>", 8), bitShiftR: Te("<</>>/>>>", 8), plusMin: _("+/-", { beforeExpr: ee, binop: 9, prefix: _e, startsExpr: L }), modulo: _("%", { binop: 10, startsExpr: L }), star: _("*", { binop: 10 }), slash: Te("/", 10), exponent: _("**", { beforeExpr: ee, binop: 11, rightAssociative: true }), _in: re("in", { beforeExpr: ee, binop: 7 }), _instanceof: re("instanceof", { beforeExpr: ee, binop: 7 }), _break: re("break"), _case: re("case", { beforeExpr: ee }), _catch: re("catch"), _continue: re("continue"), _debugger: re("debugger"), _default: re("default", { beforeExpr: ee }), _else: re("else", { beforeExpr: ee }), _finally: re("finally"), _function: re("function", { startsExpr: L }), _if: re("if"), _return: re("return", { beforeExpr: ee }), _switch: re("switch"), _throw: re("throw", { beforeExpr: ee, prefix: _e, startsExpr: L }), _try: re("try"), _var: re("var"), _const: re("const"), _with: re("with"), _new: re("new", { beforeExpr: ee, startsExpr: L }), _this: re("this", { startsExpr: L }), _super: re("super", { startsExpr: L }), _class: re("class", { startsExpr: L }), _extends: re("extends", { beforeExpr: ee }), _export: re("export"), _import: re("import", { startsExpr: L }), _null: re("null", { startsExpr: L }), _true: re("true", { startsExpr: L }), _false: re("false", { startsExpr: L }), _typeof: re("typeof", { beforeExpr: ee, prefix: _e, startsExpr: L }), _void: re("void", { beforeExpr: ee, prefix: _e, startsExpr: L }), _delete: re("delete", { beforeExpr: ee, prefix: _e, startsExpr: L }), _do: re("do", { isLoop: Vt, beforeExpr: ee }), _for: re("for", { isLoop: Vt }), _while: re("while", { isLoop: Vt }), _as: te("as", { startsExpr: L }), _assert: te("assert", { startsExpr: L }), _async: te("async", { startsExpr: L }), _await: te("await", { startsExpr: L }), _defer: te("defer", { startsExpr: L }), _from: te("from", { startsExpr: L }), _get: te("get", { startsExpr: L }), _let: te("let", { startsExpr: L }), _meta: te("meta", { startsExpr: L }), _of: te("of", { startsExpr: L }), _sent: te("sent", { startsExpr: L }), _set: te("set", { startsExpr: L }), _source: te("source", { startsExpr: L }), _static: te("static", { startsExpr: L }), _using: te("using", { startsExpr: L }), _yield: te("yield", { startsExpr: L }), _asserts: te("asserts", { startsExpr: L }), _checks: te("checks", { startsExpr: L }), _exports: te("exports", { startsExpr: L }), _global: te("global", { startsExpr: L }), _implements: te("implements", { startsExpr: L }), _intrinsic: te("intrinsic", { startsExpr: L }), _infer: te("infer", { startsExpr: L }), _is: te("is", { startsExpr: L }), _mixins: te("mixins", { startsExpr: L }), _proto: te("proto", { startsExpr: L }), _require: te("require", { startsExpr: L }), _satisfies: te("satisfies", { startsExpr: L }), _keyof: te("keyof", { startsExpr: L }), _readonly: te("readonly", { startsExpr: L }), _unique: te("unique", { startsExpr: L }), _abstract: te("abstract", { startsExpr: L }), _declare: te("declare", { startsExpr: L }), _enum: te("enum", { startsExpr: L }), _module: te("module", { startsExpr: L }), _namespace: te("namespace", { startsExpr: L }), _interface: te("interface", { startsExpr: L }), _type: te("type", { startsExpr: L }), _opaque: te("opaque", { startsExpr: L }), name: _("name", { startsExpr: L }), placeholder: _("%%", { startsExpr: L }), string: _("string", { startsExpr: L }), num: _("num", { startsExpr: L }), bigint: _("bigint", { startsExpr: L }), decimal: _("decimal", { startsExpr: L }), regexp: _("regexp", { startsExpr: L }), privateName: _("#name", { startsExpr: L }), eof: _("eof"), jsxName: _("jsxName"), jsxText: _("jsxText", { beforeExpr: ee }), jsxTagStart: _("jsxTagStart", { startsExpr: L }), jsxTagEnd: _("jsxTagEnd") };
   function ue(a) {
@@ -463,18 +463,18 @@ var mi = Ri((Pt) => {
     return a >= 24 && a <= 25;
   }
   function Be(a) {
-    return Re[a];
+    return je[a];
   }
-  Re[8].updateContext = (a) => {
+  je[8].updateContext = (a) => {
     a.pop();
   };
-  Re[5].updateContext = Re[7].updateContext = Re[23].updateContext = (a) => {
+  je[5].updateContext = je[7].updateContext = je[23].updateContext = (a) => {
     a.push(le.brace);
   };
-  Re[22].updateContext = (a) => {
+  je[22].updateContext = (a) => {
     a[a.length - 1] === le.template ? a.pop() : a.push(le.template);
   };
-  Re[143].updateContext = (a) => {
+  je[143].updateContext = (a) => {
     a.push(le.j_expr, le.j_oTag);
   };
   var As = "\xAA\xB5\xBA\xC0-\xD6\xD8-\xF6\xF8-\u02C1\u02C6-\u02D1\u02E0-\u02E4\u02EC\u02EE\u0370-\u0374\u0376\u0377\u037A-\u037D\u037F\u0386\u0388-\u038A\u038C\u038E-\u03A1\u03A3-\u03F5\u03F7-\u0481\u048A-\u052F\u0531-\u0556\u0559\u0560-\u0588\u05D0-\u05EA\u05EF-\u05F2\u0620-\u064A\u066E\u066F\u0671-\u06D3\u06D5\u06E5\u06E6\u06EE\u06EF\u06FA-\u06FC\u06FF\u0710\u0712-\u072F\u074D-\u07A5\u07B1\u07CA-\u07EA\u07F4\u07F5\u07FA\u0800-\u0815\u081A\u0824\u0828\u0840-\u0858\u0860-\u086A\u0870-\u0887\u0889-\u088F\u08A0-\u08C9\u0904-\u0939\u093D\u0950\u0958-\u0961\u0971-\u0980\u0985-\u098C\u098F\u0990\u0993-\u09A8\u09AA-\u09B0\u09B2\u09B6-\u09B9\u09BD\u09CE\u09DC\u09DD\u09DF-\u09E1\u09F0\u09F1\u09FC\u0A05-\u0A0A\u0A0F\u0A10\u0A13-\u0A28\u0A2A-\u0A30\u0A32\u0A33\u0A35\u0A36\u0A38\u0A39\u0A59-\u0A5C\u0A5E\u0A72-\u0A74\u0A85-\u0A8D\u0A8F-\u0A91\u0A93-\u0AA8\u0AAA-\u0AB0\u0AB2\u0AB3\u0AB5-\u0AB9\u0ABD\u0AD0\u0AE0\u0AE1\u0AF9\u0B05-\u0B0C\u0B0F\u0B10\u0B13-\u0B28\u0B2A-\u0B30\u0B32\u0B33\u0B35-\u0B39\u0B3D\u0B5C\u0B5D\u0B5F-\u0B61\u0B71\u0B83\u0B85-\u0B8A\u0B8E-\u0B90\u0B92-\u0B95\u0B99\u0B9A\u0B9C\u0B9E\u0B9F\u0BA3\u0BA4\u0BA8-\u0BAA\u0BAE-\u0BB9\u0BD0\u0C05-\u0C0C\u0C0E-\u0C10\u0C12-\u0C28\u0C2A-\u0C39\u0C3D\u0C58-\u0C5A\u0C5C\u0C5D\u0C60\u0C61\u0C80\u0C85-\u0C8C\u0C8E-\u0C90\u0C92-\u0CA8\u0CAA-\u0CB3\u0CB5-\u0CB9\u0CBD\u0CDC-\u0CDE\u0CE0\u0CE1\u0CF1\u0CF2\u0D04-\u0D0C\u0D0E-\u0D10\u0D12-\u0D3A\u0D3D\u0D4E\u0D54-\u0D56\u0D5F-\u0D61\u0D7A-\u0D7F\u0D85-\u0D96\u0D9A-\u0DB1\u0DB3-\u0DBB\u0DBD\u0DC0-\u0DC6\u0E01-\u0E30\u0E32\u0E33\u0E40-\u0E46\u0E81\u0E82\u0E84\u0E86-\u0E8A\u0E8C-\u0EA3\u0EA5\u0EA7-\u0EB0\u0EB2\u0EB3\u0EBD\u0EC0-\u0EC4\u0EC6\u0EDC-\u0EDF\u0F00\u0F40-\u0F47\u0F49-\u0F6C\u0F88-\u0F8C\u1000-\u102A\u103F\u1050-\u1055\u105A-\u105D\u1061\u1065\u1066\u106E-\u1070\u1075-\u1081\u108E\u10A0-\u10C5\u10C7\u10CD\u10D0-\u10FA\u10FC-\u1248\u124A-\u124D\u1250-\u1256\u1258\u125A-\u125D\u1260-\u1288\u128A-\u128D\u1290-\u12B0\u12B2-\u12B5\u12B8-\u12BE\u12C0\u12C2-\u12C5\u12C8-\u12D6\u12D8-\u1310\u1312-\u1315\u1318-\u135A\u1380-\u138F\u13A0-\u13F5\u13F8-\u13FD\u1401-\u166C\u166F-\u167F\u1681-\u169A\u16A0-\u16EA\u16EE-\u16F8\u1700-\u1711\u171F-\u1731\u1740-\u1751\u1760-\u176C\u176E-\u1770\u1780-\u17B3\u17D7\u17DC\u1820-\u1878\u1880-\u18A8\u18AA\u18B0-\u18F5\u1900-\u191E\u1950-\u196D\u1970-\u1974\u1980-\u19AB\u19B0-\u19C9\u1A00-\u1A16\u1A20-\u1A54\u1AA7\u1B05-\u1B33\u1B45-\u1B4C\u1B83-\u1BA0\u1BAE\u1BAF\u1BBA-\u1BE5\u1C00-\u1C23\u1C4D-\u1C4F\u1C5A-\u1C7D\u1C80-\u1C8A\u1C90-\u1CBA\u1CBD-\u1CBF\u1CE9-\u1CEC\u1CEE-\u1CF3\u1CF5\u1CF6\u1CFA\u1D00-\u1DBF\u1E00-\u1F15\u1F18-\u1F1D\u1F20-\u1F45\u1F48-\u1F4D\u1F50-\u1F57\u1F59\u1F5B\u1F5D\u1F5F-\u1F7D\u1F80-\u1FB4\u1FB6-\u1FBC\u1FBE\u1FC2-\u1FC4\u1FC6-\u1FCC\u1FD0-\u1FD3\u1FD6-\u1FDB\u1FE0-\u1FEC\u1FF2-\u1FF4\u1FF6-\u1FFC\u2071\u207F\u2090-\u209C\u2102\u2107\u210A-\u2113\u2115\u2118-\u211D\u2124\u2126\u2128\u212A-\u2139\u213C-\u213F\u2145-\u2149\u214E\u2160-\u2188\u2C00-\u2CE4\u2CEB-\u2CEE\u2CF2\u2CF3\u2D00-\u2D25\u2D27\u2D2D\u2D30-\u2D67\u2D6F\u2D80-\u2D96\u2DA0-\u2DA6\u2DA8-\u2DAE\u2DB0-\u2DB6\u2DB8-\u2DBE\u2DC0-\u2DC6\u2DC8-\u2DCE\u2DD0-\u2DD6\u2DD8-\u2DDE\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303C\u3041-\u3096\u309B-\u309F\u30A1-\u30FA\u30FC-\u30FF\u3105-\u312F\u3131-\u318E\u31A0-\u31BF\u31F0-\u31FF\u3400-\u4DBF\u4E00-\uA48C\uA4D0-\uA4FD\uA500-\uA60C\uA610-\uA61F\uA62A\uA62B\uA640-\uA66E\uA67F-\uA69D\uA6A0-\uA6EF\uA717-\uA71F\uA722-\uA788\uA78B-\uA7DC\uA7F1-\uA801\uA803-\uA805\uA807-\uA80A\uA80C-\uA822\uA840-\uA873\uA882-\uA8B3\uA8F2-\uA8F7\uA8FB\uA8FD\uA8FE\uA90A-\uA925\uA930-\uA946\uA960-\uA97C\uA984-\uA9B2\uA9CF\uA9E0-\uA9E4\uA9E6-\uA9EF\uA9FA-\uA9FE\uAA00-\uAA28\uAA40-\uAA42\uAA44-\uAA4B\uAA60-\uAA76\uAA7A\uAA7E-\uAAAF\uAAB1\uAAB5\uAAB6\uAAB9-\uAABD\uAAC0\uAAC2\uAADB-\uAADD\uAAE0-\uAAEA\uAAF2-\uAAF4\uAB01-\uAB06\uAB09-\uAB0E\uAB11-\uAB16\uAB20-\uAB26\uAB28-\uAB2E\uAB30-\uAB5A\uAB5C-\uAB69\uAB70-\uABE2\uAC00-\uD7A3\uD7B0-\uD7C6\uD7CB-\uD7FB\uF900-\uFA6D\uFA70-\uFAD9\uFB00-\uFB06\uFB13-\uFB17\uFB1D\uFB1F-\uFB28\uFB2A-\uFB36\uFB38-\uFB3C\uFB3E\uFB40\uFB41\uFB43\uFB44\uFB46-\uFBB1\uFBD3-\uFD3D\uFD50-\uFD8F\uFD92-\uFDC7\uFDF0-\uFDFB\uFE70-\uFE74\uFE76-\uFEFC\uFF21-\uFF3A\uFF41-\uFF5A\uFF66-\uFFBE\uFFC2-\uFFC7\uFFCA-\uFFCF\uFFD2-\uFFD7\uFFDA-\uFFDC", si = "\xB7\u0300-\u036F\u0387\u0483-\u0487\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7\u0610-\u061A\u064B-\u0669\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u06F0-\u06F9\u0711\u0730-\u074A\u07A6-\u07B0\u07C0-\u07C9\u07EB-\u07F3\u07FD\u0816-\u0819\u081B-\u0823\u0825-\u0827\u0829-\u082D\u0859-\u085B\u0897-\u089F\u08CA-\u08E1\u08E3-\u0903\u093A-\u093C\u093E-\u094F\u0951-\u0957\u0962\u0963\u0966-\u096F\u0981-\u0983\u09BC\u09BE-\u09C4\u09C7\u09C8\u09CB-\u09CD\u09D7\u09E2\u09E3\u09E6-\u09EF\u09FE\u0A01-\u0A03\u0A3C\u0A3E-\u0A42\u0A47\u0A48\u0A4B-\u0A4D\u0A51\u0A66-\u0A71\u0A75\u0A81-\u0A83\u0ABC\u0ABE-\u0AC5\u0AC7-\u0AC9\u0ACB-\u0ACD\u0AE2\u0AE3\u0AE6-\u0AEF\u0AFA-\u0AFF\u0B01-\u0B03\u0B3C\u0B3E-\u0B44\u0B47\u0B48\u0B4B-\u0B4D\u0B55-\u0B57\u0B62\u0B63\u0B66-\u0B6F\u0B82\u0BBE-\u0BC2\u0BC6-\u0BC8\u0BCA-\u0BCD\u0BD7\u0BE6-\u0BEF\u0C00-\u0C04\u0C3C\u0C3E-\u0C44\u0C46-\u0C48\u0C4A-\u0C4D\u0C55\u0C56\u0C62\u0C63\u0C66-\u0C6F\u0C81-\u0C83\u0CBC\u0CBE-\u0CC4\u0CC6-\u0CC8\u0CCA-\u0CCD\u0CD5\u0CD6\u0CE2\u0CE3\u0CE6-\u0CEF\u0CF3\u0D00-\u0D03\u0D3B\u0D3C\u0D3E-\u0D44\u0D46-\u0D48\u0D4A-\u0D4D\u0D57\u0D62\u0D63\u0D66-\u0D6F\u0D81-\u0D83\u0DCA\u0DCF-\u0DD4\u0DD6\u0DD8-\u0DDF\u0DE6-\u0DEF\u0DF2\u0DF3\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u0E50-\u0E59\u0EB1\u0EB4-\u0EBC\u0EC8-\u0ECE\u0ED0-\u0ED9\u0F18\u0F19\u0F20-\u0F29\u0F35\u0F37\u0F39\u0F3E\u0F3F\u0F71-\u0F84\u0F86\u0F87\u0F8D-\u0F97\u0F99-\u0FBC\u0FC6\u102B-\u103E\u1040-\u1049\u1056-\u1059\u105E-\u1060\u1062-\u1064\u1067-\u106D\u1071-\u1074\u1082-\u108D\u108F-\u109D\u135D-\u135F\u1369-\u1371\u1712-\u1715\u1732-\u1734\u1752\u1753\u1772\u1773\u17B4-\u17D3\u17DD\u17E0-\u17E9\u180B-\u180D\u180F-\u1819\u18A9\u1920-\u192B\u1930-\u193B\u1946-\u194F\u19D0-\u19DA\u1A17-\u1A1B\u1A55-\u1A5E\u1A60-\u1A7C\u1A7F-\u1A89\u1A90-\u1A99\u1AB0-\u1ABD\u1ABF-\u1ADD\u1AE0-\u1AEB\u1B00-\u1B04\u1B34-\u1B44\u1B50-\u1B59\u1B6B-\u1B73\u1B80-\u1B82\u1BA1-\u1BAD\u1BB0-\u1BB9\u1BE6-\u1BF3\u1C24-\u1C37\u1C40-\u1C49\u1C50-\u1C59\u1CD0-\u1CD2\u1CD4-\u1CE8\u1CED\u1CF4\u1CF7-\u1CF9\u1DC0-\u1DFF\u200C\u200D\u203F\u2040\u2054\u20D0-\u20DC\u20E1\u20E5-\u20F0\u2CEF-\u2CF1\u2D7F\u2DE0-\u2DFF\u302A-\u302F\u3099\u309A\u30FB\uA620-\uA629\uA66F\uA674-\uA67D\uA69E\uA69F\uA6F0\uA6F1\uA802\uA806\uA80B\uA823-\uA827\uA82C\uA880\uA881\uA8B4-\uA8C5\uA8D0-\uA8D9\uA8E0-\uA8F1\uA8FF-\uA909\uA926-\uA92D\uA947-\uA953\uA980-\uA983\uA9B3-\uA9C0\uA9D0-\uA9D9\uA9E5\uA9F0-\uA9F9\uAA29-\uAA36\uAA43\uAA4C\uAA4D\uAA50-\uAA59\uAA7B-\uAA7D\uAAB0\uAAB2-\uAAB4\uAAB7\uAAB8\uAABE\uAABF\uAAC1\uAAEB-\uAAEF\uAAF5\uAAF6\uABE3-\uABEA\uABEC\uABED\uABF0-\uABF9\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F\uFE33\uFE34\uFE4D-\uFE4F\uFF10-\uFF19\uFF3F\uFF65", hr = new RegExp("[" + As + "]"), pr = new RegExp("[" + As + si + "]");
@@ -3006,7 +3006,7 @@ var mi = Ri((Pt) => {
     isCertainlyParameterDeclaration() {
       return this.type === 3;
     }
-  }, Rt = class extends rt {
+  }, jt = class extends rt {
     constructor(t) {
       super(t), this.declarationErrors = /* @__PURE__ */ new Map();
     }
@@ -3061,11 +3061,11 @@ var mi = Ri((Pt) => {
   function Br() {
     return new rt(3);
   }
-  function Rr() {
-    return new Rt(1);
-  }
   function jr() {
-    return new Rt(2);
+    return new jt(1);
+  }
+  function Rr() {
+    return new jt(2);
   }
   function hi() {
     return new rt();
@@ -4783,7 +4783,7 @@ var mi = Ri((Pt) => {
       e[m] = u ? "type" : "value", h && this.eatContextual(93) && (e[n] = s ? this.parseIdentifier() : this.parseModuleExportName()), e[n] || (e[n] = this.cloneIdentifier(e[r])), s && this.checkIdentifier(e[n], u ? 4098 : 4096);
     }
     fillOptionalPropertiesForTSESLint(e) {
-      var s, i, r, n, o, l, u, h, c, m, p, A, C, N, S, F, P, T, k, q, R, M, I, z, Q, f, g, y, x, b, D, Y, J, H, G, ie, me, de, W, X, E, O, Z, oe, v, j, U, ne;
+      var s, i, r, n, o, l, u, h, c, m, p, A, C, N, S, F, P, T, k, q, j, M, I, z, Q, f, g, y, x, b, D, Y, J, H, G, ie, me, de, W, X, E, O, Z, oe, v, R, U, ne;
       switch (e.type) {
         case "ExpressionStatement":
           (s = e.directive) != null || (e.directive = void 0);
@@ -4821,7 +4821,7 @@ var mi = Ri((Pt) => {
         case "PropertyDefinition":
         case "TSAbstractAccessorProperty":
         case "AccessorProperty":
-          (T = e.declare) != null || (e.declare = false), (k = e.definite) != null || (e.definite = false), (q = e.readonly) != null || (e.readonly = false), (R = e.typeAnnotation) != null || (e.typeAnnotation = void 0);
+          (T = e.declare) != null || (e.declare = false), (k = e.definite) != null || (e.definite = false), (q = e.readonly) != null || (e.readonly = false), (j = e.typeAnnotation) != null || (e.typeAnnotation = void 0);
         case "TSAbstractMethodDefinition":
         case "MethodDefinition":
           (M = e.accessibility) != null || (e.accessibility = void 0), (I = e.decorators) != null || (e.decorators = []), (z = e.override) != null || (e.override = false), (Q = e.optional) != null || (e.optional = false);
@@ -4857,7 +4857,7 @@ var mi = Ri((Pt) => {
           (oe = e.declare) != null || (e.declare = false), (v = e.global) != null || (e.global = e.kind === "global");
           return;
         case "TSTypeParameter":
-          (j = e.const) != null || (e.const = false), (U = e.in) != null || (e.in = false), (ne = e.out) != null || (e.out = false);
+          (R = e.const) != null || (e.const = false), (U = e.in) != null || (e.in = false), (ne = e.out) != null || (e.out = false);
           return;
       }
     }
@@ -5302,7 +5302,7 @@ var mi = Ri((Pt) => {
       let o = this.startNodeAt(e);
       o.callee = t;
       let { maybeAsyncArrow: l, optionalChainMember: u } = s;
-      l && (this.expressionScope.enter(jr()), n = new st()), u && (o.optional = i), i ? o.arguments = this.parseCallExpressionArguments() : o.arguments = this.parseCallExpressionArguments(t.type !== "Super", o, n);
+      l && (this.expressionScope.enter(Rr()), n = new st()), u && (o.optional = i), i ? o.arguments = this.parseCallExpressionArguments() : o.arguments = this.parseCallExpressionArguments(t.type !== "Super", o, n);
       let h = this.finishCallExpression(o, u);
       return l && this.shouldParseAsyncArrow() && !i ? (s.stop = true, this.checkDestructuringPrivate(n), this.expressionScope.validateAsPattern(), this.expressionScope.exit(), h = this.parseAsyncArrowFromCallExpression(this.startNodeAt(e), h)) : (l && (this.checkExpressionErrors(n, true), this.expressionScope.exit()), this.toReferencedArguments(h)), this.state.maybeInArrowParameters = r, h;
     }
@@ -5528,7 +5528,7 @@ var mi = Ri((Pt) => {
     }
     parseParenAndDistinguishExpression(t) {
       let e = this.state.startLoc, s;
-      this.next(), this.expressionScope.enter(Rr());
+      this.next(), this.expressionScope.enter(jr());
       let i = this.state.maybeInArrowParameters, r = this.state.inFSharpPipelineDirectBody;
       this.state.maybeInArrowParameters = true, this.state.inFSharpPipelineDirectBody = false;
       let n = this.state.startLoc, o = [], l = new st(), u = true, h, c;
@@ -6845,7 +6845,7 @@ var mi = Ri((Pt) => {
     isThisParam(t) {
       return t.type === "Identifier" && t.name === "this";
     }
-  }, jt = class extends ms {
+  }, Rt = class extends ms {
     constructor(t, e, s) {
       let i = Gi(t);
       super(i, e), this.options = i, this.initializeScopes(), this.plugins = s, this.filename = i.sourceFilename, this.startIndex = i.startIndex;
@@ -6897,7 +6897,7 @@ var mi = Ri((Pt) => {
   }
   var sa = ta(er);
   function mt(a, t) {
-    let e = jt, s = /* @__PURE__ */ new Map();
+    let e = Rt, s = /* @__PURE__ */ new Map();
     if (a != null && a.plugins) {
       for (let i of a.plugins) {
         let r, n;
@@ -6913,7 +6913,7 @@ var mi = Ri((Pt) => {
     for (let i of Xr) a.has(i) && t.push(i);
     let e = t.join("|"), s = ei.get(e);
     if (!s) {
-      s = jt;
+      s = Rt;
       for (let i of t) s = fi[i](s);
       ei.set(e, s);
     }
@@ -7183,11 +7183,11 @@ function Ve(a, t = {}, e = {}) {
     } else y.push(I(x, g));
     return y;
   }
-  let R = Symbol();
+  let j = Symbol();
   function M(f, g) {
     p();
     let y = f.type === "OptionalMemberExpression" ? f.object : f.callee, x = ["OptionalMemberExpression", "OptionalCallExpression"].includes(y.type) && !y.extra?.parenthesized ? M(y, g) : I(y, g);
-    return x === R || f.optional && x == null ? R : f.type === "OptionalMemberExpression" ? F(x, f.computed ? I(f.property, g) : f.property.name) : C(x, q(f.arguments, g));
+    return x === j || f.optional && x == null ? j : f.type === "OptionalMemberExpression" ? F(x, f.computed ? I(f.property, g) : f.property.name) : C(x, q(f.arguments, g));
   }
   function I(f, g) {
     p(), K(f, "Missing expression");
@@ -7229,7 +7229,7 @@ function Ve(a, t = {}, e = {}) {
       case "OptionalMemberExpression":
       case "OptionalCallExpression": {
         let x = M(f, g);
-        return x === R ? void 0 : x;
+        return x === j ? void 0 : x;
       }
       case "UnaryExpression": {
         let x = I(f.argument, g);
@@ -7489,31 +7489,31 @@ function qt(a) {
 function _t(a) {
   $t(a), w(!Bs.has(a), "Unsafe identifier");
 }
-function je(a, t = 1, e) {
-  if (e && Rs(e), w(t <= 8, "Value is nested too deeply"), !(a === null || typeof a == "boolean")) {
+function Re(a, t = 1, e) {
+  if (e && js(e), w(t <= 8, "Value is nested too deeply"), !(a === null || typeof a == "boolean")) {
     if (typeof a == "string") return he(a, 4e3, false);
     if (typeof a == "number") return be(a);
     if (Array.isArray(a)) {
-      ce(a, 0, 200), a.forEach((s) => je(s, t + 1, e));
+      ce(a, 0, 200), a.forEach((s) => Re(s, t + 1, e));
       return;
     }
     w(a && typeof a == "object" && Object.getPrototypeOf(a) === Object.prototype, "Invalid JSON value"), w(Object.keys(a).length <= 64, "Too many object fields");
-    for (let [s, i] of Object.entries(a)) qt(s), je(i, t + 1, e);
+    for (let [s, i] of Object.entries(a)) qt(s), Re(i, t + 1, e);
   }
 }
 function Si(a) {
-  w(a === null || ["string", "number", "boolean"].includes(typeof a), "Expected a scalar value"), je(a);
+  w(a === null || ["string", "number", "boolean"].includes(typeof a), "Expected a scalar value"), Re(a);
 }
 function pa(a) {
   se(a, ["version", "title", "fallback", "state", "body"]), he(a.title, 160), he(a.fallback, 8e3), ce(a.state, 0, 32);
   let t = /* @__PURE__ */ new Map();
-  for (let o of a.state) se(o, ["id", "value"]), _t(o.id), je(o.value), w(!t.has(o.id), "Duplicate state identifier"), t.set(o.id, o.value);
+  for (let o of a.state) se(o, ["id", "value"]), _t(o.id), Re(o.value), w(!t.has(o.id), "Duplicate state identifier"), t.set(o.id, o.value);
   w(Ie.encode(JSON.stringify(a.state)).length <= Ce, "State exceeds 16 KiB");
   let e = /* @__PURE__ */ new Set(), s = 0;
   function i(o, l, u = 1) {
     if (w(++s <= Se.expressions && u <= Se.expressionDepth, "Expression budget exceeded"), o === null || typeof o != "object") return Si(o);
     let h = o.op;
-    if (h === "literal") return se(o, ["op", "value"]), je(o.value);
+    if (h === "literal") return se(o, ["op", "value"]), Re(o.value);
     if (h === "state") {
       se(o, ["op", "key"]), w(t.has(o.key), "Unknown state reference");
       return;
@@ -7633,7 +7633,7 @@ function Ni(a, t) {
     w(e >= 1 && s >= 1 && s <= 12 && i >= 1 && i <= r[s - 1], "Date must be a valid calendar date");
   }
 }
-function Rs(a) {
+function js(a) {
   w(--a.operations >= 0, "Local computation limit reached");
 }
 function Et(a, t) {
