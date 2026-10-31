@@ -218,7 +218,7 @@ export async function activate(api) {
     }
   };
   api.registerStyle({ id: "personal", css: `
-    .mosaic { --mosaic-message-accent:#3566f0;position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
+    .mosaic { --mosaic-message-accent:#3566f0;--mosaic-message-tail-space:max(var(--conversation-turn-boundary-gap), calc(var(--font-sm) * 1.3 + 4px));position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
     .mosaic-main { flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
     .mosaic-panel-layer { position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden; }
     .mosaic-panel-layer[data-panel-phase="open"] { overflow:visible; }
@@ -247,8 +247,8 @@ export async function activate(api) {
     .mosaic-replies-close { position:absolute;top:16px;right:16px;z-index:6;display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);box-shadow:0 2px 8px rgb(0 0 0 / .06);color:var(--ink);cursor:pointer; }
     .mosaic-replies-close svg { width:16px;height:16px; }
     .mosaic-replies-close:hover { background:var(--surface-2);color:var(--ink); }
-    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:20px 24px 12px; }
-    .mosaic .mosaic-replies .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding:0;--conversation-flow-bottom-space:0px; }
+    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:20px 24px 0; }
+    .mosaic .mosaic-replies .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding:0 0 var(--mosaic-message-tail-space); }
     .mosaic-replies .plugin-conversation-flow > :first-child { padding-right:36px; }
     .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 24px 16px;box-sizing:border-box; }
     .mosaic-replies .composer-wrap { margin:0;padding:0; }
@@ -362,7 +362,22 @@ export async function activate(api) {
     .mosaic-routine-link { display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);width:100%;margin-top:var(--space-3);font:inherit;color:var(--ink);cursor:pointer;text-align:left; }
     .mosaic-routine-link { padding-block:var(--space-3); }
     .mosaic-routine-link:hover { background:var(--field-hover-bg); }
-    .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;gap:var(--space-2);font-size:12px;color:var(--ink-muted);padding-top:var(--space-1);flex-wrap:wrap; }
+    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:var(--mosaic-message-tail-space); }
+    .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
+    .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
+    .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
+    .mosaic-receipt[data-delivery-status="failed"] { position:absolute;position-anchor:--personal-receipt-bubble;right:calc(anchor(left) + 4px);top:anchor(center);transform:translateY(-50%); }
+    .mosaic-receipt-retry { display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--danger);cursor:pointer; }
+    .mosaic-receipt-retry svg { width:18px;height:18px; }
+    .mosaic-receipt-retry:hover { background:var(--field-hover-bg); }
+    .mosaic-receipt-retry:focus-visible { outline:2px solid var(--danger);outline-offset:2px; }
+    .mosaic-receipt-retry:disabled { cursor:wait;opacity:.6; }
+    .mosaic-receipt[data-transient] { position:absolute;top:100%;right:0;padding-top:2px;line-height:1.3;white-space:nowrap;pointer-events:none;transform:translateX(calc(-1 * var(--bubble-time-progress, 0) * var(--bubble-time-gutter)));transition:transform 300ms cubic-bezier(.19, 1, .22, 1); }
+    .plugin-conversation-message:has(~ .plugin-conversation-message) > .mosaic-receipt[data-transient],
+    .plugin-conversation-message:has(> .bubble-message-body[data-personal-send-source]) > .mosaic-receipt[data-transient] { display:none; }
+    [data-times-dragging="true"] .mosaic-receipt[data-transient] { transition:none; }
+    @media (prefers-reduced-motion: reduce) { .mosaic-receipt[data-transient] { transition:none; } }
+    @container style(--motion-reduced: 1) { .mosaic-receipt[data-transient] { transition:none; } }
     .mosaic-routine-footer { display:flex;justify-content:flex-end;gap:var(--space-2);padding:0 var(--space-5) var(--space-4);flex:none; }
     .mosaic-routine-link.plugin-ui-button { justify-content:flex-start;background:var(--paper);border:1px solid var(--hairline-soft);padding:var(--space-3) var(--card-padding); }
     .mosaic-routine-editor-identity { display:grid;gap:var(--space-4);margin-bottom:var(--space-5); }
@@ -809,6 +824,28 @@ export async function activate(api) {
     const { record, loading, retry } = useReplySource({ reference, records, sessionID, agentID });
     return record ? renderMessage(record, true) : h("p", { className: "mosaic-reply-status", role: "status" }, t(loading ? "replyLoading" : "replyUnavailable"), !loading && retry && h(Button, { onClick: retry }, t("retry")));
   }
+  const receiptDisplayDuration = 5000;
+  function MessageReceipt({ receipt, state, busy, onRetry, locale }) {
+    // Execution outcomes do not change whether the message was delivered/read.
+    // Held inputs need the same single retry affordance as uncertain sends.
+    const failed = ["unknown", "rejected", "held"].includes(state);
+    const read = Boolean(receipt?.read_at), transient = Boolean(receipt) && !failed && state !== "cancelled";
+    // Use durable timestamps so polling, history admission and remounts cannot
+    // restart a normal receipt's display window.
+    const expiresAt = Date.parse(receipt?.read_at || receipt?.accepted_at) + receiptDisplayDuration;
+    const [, redraw] = React.useState(0);
+    React.useEffect(() => {
+      if (!transient || !(expiresAt > Date.now())) return;
+      const timer = setTimeout(() => redraw(value => value + 1), expiresAt - Date.now());
+      return () => clearTimeout(timer);
+    }, [transient, expiresAt]);
+    if (!failed && (!transient || !(expiresAt > Date.now()))) return null;
+    const zh = locale?.startsWith("zh");
+    const retryLabel = zh ? "发送失败，点击重试" : "Send failed. Click to retry";
+    return h("div", { className: "mosaic-receipt", role: "status", "data-transient": transient || undefined, "data-receipt-state": state, "data-delivery-status": failed ? "failed" : read ? "read" : "delivered", "data-receipt-id": receipt?.receipt_id }, failed
+      ? h("button", { type: "button", className: "mosaic-receipt-retry", "data-action": "retry-message", "aria-label": retryLabel, title: retryLabel, disabled: busy, onClick: onRetry }, h("svg", { viewBox: "0 0 20 20", "aria-hidden": true }, h("circle", { cx: 10, cy: 10, r: 9, fill: "currentColor" }), h("path", { d: "M10 5.5v5M10 14h.01", fill: "none", stroke: "var(--paper)", strokeWidth: 1.8, strokeLinecap: "round" })))
+      : h("span", null, read ? zh ? "已读" : "Read" : zh ? "已送达" : "Delivered"));
+  }
   function PersonalHome({ locale, host }) {
     const t = key => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
     const [agent, setAgent] = React.useState(null), [records, setRecords] = React.useState([]), [historyInfo, setHistoryInfo] = React.useState(null);
@@ -828,7 +865,7 @@ export async function activate(api) {
       // Seeing the history row is independent of the execution receipt revision.
       if (previous && detail.inHistory) previous.inHistory = true;
       if (previous?.receipt && previous.receipt.revision > receipt.revision) return true;
-      receiptStates.current.set(receipt.request_id, { ...previous, ...detail, receipt, state: receipt.execution_state });
+      receiptStates.current.set(receipt.request_id, { ...previous, ...detail, receipt, state: receipt.execution_state, retryFiles: undefined, retryInput: undefined });
       if (mounted.current) setDraftVersion(value => value + 1);
       return true;
     };
@@ -843,20 +880,14 @@ export async function activate(api) {
         const status = await call("agents.messages.status", { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id });
         acceptReceipt(status.receipt);
         await loadConversation(currentAgent.current);
-      } catch (cause) { report(cause); }
+      } catch { /* The retry affordance remains available until a receipt confirms success. */ }
       finally { const latest = receiptStates.current.get(receipt.request_id); if (latest) latest.busy = false; if (mounted.current) setDraftVersion(value => value + 1); }
     };
     const receiptFooter = (receipt, fallback) => {
       const entry = (receipt && receiptStates.current.get(receipt.request_id)) || fallback;
       if (!entry && !receipt) return undefined;
       const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
-      const zh = locale?.startsWith("zh");
-      const labels = zh ? { sending: "发送中", unknown: "送达状态待确认", rejected: "发送失败", queued: "已送达", held: "等待继续", running: "已送达", completed: "已送达", failed: "处理失败", interrupted: "处理已停止", cancelled: "已取消", unconfirmed: "处理结果待确认" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered", held: "Awaiting continue", running: "Delivered", completed: "Delivered", failed: "Processing failed", interrupted: "Processing stopped", cancelled: "Cancelled", unconfirmed: "Outcome unconfirmed" };
-      if (!labels[state]) return undefined;
-      const read = Boolean(r?.read_at), deliveryStatus = r ? read ? "read" : "delivered" : undefined;
-      const readLabel = zh ? "已读" : "Read";
-      const label = read && ["queued", "running", "completed"].includes(state) ? readLabel : read && ["failed", "interrupted", "unconfirmed"].includes(state) ? `${readLabel} · ${labels[state]}` : labels[state];
-      return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-delivery-status": deliveryStatus, "data-receipt-id": r?.receipt_id }, h("span", null, label), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "继续" : "Continue"));
+      return h(MessageReceipt, { receipt: r, state, busy: entry?.busy, onRetry: () => retryReceipt(entry || { receipt: r }), locale });
     };
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
     const [nameOpen, setNameOpen] = React.useState(false);
@@ -1030,7 +1061,7 @@ export async function activate(api) {
           if (!receiptStates.current.has(pending.requestID)) receiptStates.current.set(pending.requestID, { ...detail, state: "unknown" });
           const status = await readReceiptStatus(pending.requestID);
           if (!current()) return;
-          if (acceptReceipt(status.receipt, detail) && saved.pending?.requestID === pending.requestID && saved.editVersion === editVersion) updateDraft(draftID, { pending: null, prompt: "", files: [], attachmentsMissing: false, error: "" });
+          if (acceptReceipt(status.receipt, detail) && saved.pending?.requestID === pending.requestID) updateDraft(draftID, { pending: null, ...(saved.editVersion === editVersion && saved.prompt === pending.prompt && (saved.attachmentsMissing || JSON.stringify(saved.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === pending.fileKey) ? { prompt: "", files: [], attachmentsMissing: false } : {}), error: "" });
         }
         let history = latest;
         const recovery = historyRecovery.current;
@@ -1213,11 +1244,11 @@ export async function activate(api) {
       if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
       const stream = streamFor(conversationID), version = stream.version;
       updateDraft(id, { submitting: true, error: "" }); if (id === conversationID) setError("");
-      const detail = { requestID, prompt: text, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id };
-      receiptStates.current.set(requestID, { ...detail, ...receiptStates.current.get(requestID), state: "sending" });
+      const detail = { requestID, prompt: text, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id, retryFiles: sentFiles, retryInput: { ...state.pending } };
+      receiptStates.current.set(requestID, { ...receiptStates.current.get(requestID), ...detail, state: "sending" });
       const recover = async () => { const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: requestID }); return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null; };
       try {
-        let result = state.pending.uncertain ? await recover() : null;
+        let result = state.pending.uncertain ? await recover().catch(() => null) : null;
         if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}), ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
         if (!acceptReceipt(result?.receipt, detail)) {
           result = await recover();
@@ -1234,13 +1265,53 @@ export async function activate(api) {
           const current = draftFor(id); if (current.pending?.requestID === requestID) current.pending.uncertain = true;
           const detailError = cause instanceof Error ? cause.message : String(cause);
           receiptStates.current.set(requestID, { ...detail, state: /request_id_conflict/.test(detailError) ? "rejected" : "unknown" });
-          updateDraft(id, { error: detailError }); if (id === conversationID) report(cause); return;
+          updateDraft(id, { error: "" }); return;
         }
       }
       finally { updateDraft(id, { submitting: false }); }
       // A successful admission is not undone by a failed read. Never turn a
       // history refresh into a retry of the accepted message or its attachments.
       if (mounted.current) await refreshAcceptedSend();
+    };
+    const retryReceipt = async entry => {
+      if (entry.busy) return;
+      if (entry.receipt) { await resumeReceipt(entry); return; }
+      entry.busy = true; setDraftVersion(value => value + 1);
+      const originalID = entry.requestID, originalDraft = draftFor(entry.draftID), originalEditVersion = originalDraft.editVersion;
+      const originalInput = entry.retryInput || (originalDraft.pending?.requestID === originalID ? originalDraft.pending : undefined);
+      const fileKey = originalInput?.fileKey || JSON.stringify(entry.attachments || []);
+      const clearOriginalDraft = () => {
+        if (originalDraft.pending && originalDraft.pending.requestID !== originalID) return;
+        const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === entry.prompt && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
+        updateDraft(entry.draftID, { pending: null, ...(unchanged ? { prompt: "", files: [], attachmentsMissing: false } : {}), error: "" });
+      };
+      const retryID = `${conversationID}:retry:${originalID}`;
+      try {
+        const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: originalID }).catch(() => ({}));
+        if (acceptReceipt(status.receipt, { ...entry, requestID: originalID })) {
+          clearOriginalDraft();
+          if (status.receipt.execution_state === "held") await resumeReceipt({ ...entry, receipt: status.receipt, busy: false });
+          return;
+        }
+        const files = entry.retryFiles || (originalDraft.pending?.requestID === originalID ? originalDraft.files : []);
+        if (JSON.stringify(files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) !== fileKey) {
+          updateDraft(entry.draftID, { attachmentsMissing: true });
+          return;
+        }
+        const pending = { ...originalInput, prompt: entry.prompt, fileKey, relationKey: JSON.stringify(entry.relation), requestID: originalID, uncertain: true };
+        if (entry.state === "rejected") { pending.requestID = crypto.randomUUID(); pending.uncertain = false; }
+        Object.assign(draftFor(retryID), { prompt: entry.prompt, files, replyTarget: entry.relation ? { relation: entry.relation } : undefined, pending, attachmentsMissing: false });
+        if (pending.requestID !== originalID) {
+          receiptStates.current.delete(originalID);
+          if (originalDraft.pending?.requestID === originalID) updateDraft(entry.draftID, { pending: null });
+        }
+        await send(entry.prompt, retryID);
+        // A message retry must never overwrite a newer composer draft.
+        if (receiptStates.current.get(pending.requestID)?.receipt) clearOriginalDraft();
+      } finally {
+        const latest = receiptStates.current.get(originalID); if (latest) latest.busy = false;
+        if (mounted.current) setDraftVersion(value => value + 1);
+      }
     };
     const stopReply = async () => {
       const id = conversationID, pending = draftFor(id), target = pending.stopTarget || activeTurnID;

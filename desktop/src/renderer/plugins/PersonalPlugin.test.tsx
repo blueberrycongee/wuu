@@ -62,7 +62,7 @@ it("preserves unsent text when sending fails and never substitutes a session ID 
   const ui = await mount(async method => { if (method === "agents.send") throw new Error("Host offline"); return {}; });
   await ui.edit("Remember this"); await ui.click('.composer-send-button');
   expect(ui.container.querySelector("textarea")!.value).toBe("Remember this");
-  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("Host offline");
+  expect(ui.container.querySelector('[data-action="retry-message"]')).not.toBeNull();
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ agent_id: "a-main", prompt: "Remember this", request_id: expect.any(String) }) }));
 });
 it("shows a sent reply excerpt on the user message without repeating it on the assistant response", async () => {
@@ -165,7 +165,7 @@ it("does not surface an earlier reply failure in a different target's panel", as
   expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).toBeNull();
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Task draft");
   await ui.click('[data-action="close-replies"]'); await ui.click('[data-action="reply-message"]');
-  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')?.textContent).toContain("Only first reply failed");
+  expect(ui.container.querySelector('.mosaic-replies [data-action="retry-message"]')).not.toBeNull();
 });
 it("shows reply attachment failures only in the captured target, including late read failures", async () => {
   attachmentBrowser();
@@ -1176,7 +1176,7 @@ it("never deletes saved drafts when retention cleanup cannot read storage", asyn
   const restored = await mount(); expect(restored.container.querySelector('textarea')!.value).toBe("Keep this stored draft");
 });
 
-const receiptFixture = (request = "client", overrides: Record<string, unknown> = {}) => ({ request_id: request, host_request_id: `host-${request}`, receipt_id: `receipt-${request}`, client_id: `client-${request}`, queue_id: `queue-${request}`, session_id: main.main_session_id, plugin_id: "personal", receipt_state: "accepted", execution_state: "held", accepted_at: "2026-10-23T08:00:00Z", revision: 2, ...overrides });
+const receiptFixture = (request = "client", overrides: Record<string, unknown> = {}) => ({ request_id: request, host_request_id: `host-${request}`, receipt_id: `receipt-${request}`, client_id: `client-${request}`, queue_id: `queue-${request}`, session_id: main.main_session_id, plugin_id: "personal", receipt_state: "accepted", execution_state: "held", accepted_at: new Date().toISOString(), revision: 2, ...overrides });
 it("keeps acceptance unknown until request status proves durable delivery", async () => {
  let recovered = false;
  const ui = await mount(async (method, input) => {
@@ -1197,16 +1197,16 @@ it("restores Held inputs by exact identity and resumes only on an explicit actio
  const receipt=receiptFixture();let state="held";
  const ui = await mount(async method => {if(method==="agents.messages.resume") {state="running";return {receipt:{...receipt,execution_state:state,revision:3}};}return {};},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:state==="held"?[{receipt,prompt:"Saved input",attachments:[{filename:"note.txt",media_type:"text/plain",sha256:"a".repeat(64)}]}]:[]})});
  expect(ui.container.textContent).toContain("Saved input");expect(ui.container.textContent).toContain("note.txt");
- expect(ui.container.querySelector('[data-receipt-state="held"]')?.textContent).toContain("等待继续");
+ expect(ui.container.querySelector('[data-receipt-state="held"]')).toHaveProperty("dataset.deliveryStatus", "failed");
  expect(ui.container.querySelector('[data-action="cancel-accepted-input"]')).toBeNull();
  expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.send"||r.method==="agents.messages.resume")).toBe(false);
- await ui.click('[data-action="resume-accepted-input"]');
+ await ui.click('[data-action="retry-message"]');
  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"agents.messages.resume",input:expect.objectContaining({receipt_id:receipt.receipt_id,request_id:receipt.request_id}),userInput:{requestId:receipt.request_id,prompt:"",resumeReceiptId:receipt.receipt_id}}));
 });
-it("keeps delivered execution failures distinct and ignores older receipt revisions", async () => {
+it("keeps delivery independent of execution failure and ignores older receipt revisions", async () => {
  const receipt=receiptFixture("same",{receipt_state:"in_history",execution_state:"failed",message_seq:2,hostturn_id:"turn",revision:5,error_stage:"execution"});let older=false;
  const ui=await mount(undefined,main,undefined,{history:async()=>({records:[{seq:2,role:"user",content:"Saved",receipt:older?{...receipt,execution_state:"running",revision:3}:receipt}]})});
- expect(ui.container.querySelector('[data-receipt-state="failed"]')?.textContent).toBe("处理失败");
+ expect(ui.container.querySelector('[data-receipt-state="failed"]')).toHaveProperty("dataset.deliveryStatus", "delivered");
  older=true;await act(async()=>ui.publish());
  expect(ui.container.querySelector('[data-receipt-state="failed"]')).not.toBeNull();
  expect(ui.container.textContent).not.toContain("Seen");
@@ -1217,7 +1217,7 @@ it("reconciles remote cancellation by request without erasing other Held inputs"
  const ui=await mount(async(method,input)=>method==="agents.messages.status"?{receipt:input.request_id==="cancel-me"?{...cancelled,execution_state:"cancelled",revision:3}:kept}:{},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:(remote?[kept]:[cancelled,kept]).map(receipt=>({receipt,prompt:receipt.request_id}))})});
  expect(ui.container.querySelectorAll('[data-receipt-state="held"]')).toHaveLength(2);
  remote=true;await act(async()=>ui.publish());
- await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-cancel-me"]')).toHaveProperty("dataset.receiptState","cancelled"));
+ await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-cancel-me"]')).toBeNull());
  expect(ui.container.querySelector('[data-receipt-id="receipt-keep-me"]')).toHaveProperty("dataset.receiptState","held");
  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"agents.messages.status",input:expect.objectContaining({request_id:"cancel-me"})}));
  expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.messages.resume"||r.method==="agents.send")).toBe(false);
@@ -1234,7 +1234,7 @@ it("converges a peer cancellation without dropping other pending inputs", async 
  const ui=await mount(async(method,input)=>method==="agents.messages.status"?{receipt:input.request_id==="first"?{...first,execution_state:cancelled?"cancelled":"held",revision:cancelled?3:2}:other}:{},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:[...(!cancelled?[{receipt:first,prompt:"Cancelled on peer"}]:[]),{receipt:other,prompt:"Keep this separate"}]})});
  expect(ui.container.querySelectorAll('[data-receipt-state="held"]')).toHaveLength(2);
  cancelled=true;await act(async()=>ui.publish());
- await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-first"]')).toHaveProperty("dataset.receiptState","cancelled"));
+ await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-first"]')).toBeNull());
  expect(ui.container.querySelector('[data-receipt-id="receipt-other"]')).toHaveProperty("dataset.receiptState","held");
  expect(ui.container.textContent).toContain("Keep this separate");
  expect(ui.invoke.mock.calls.filter(([r])=>r.method==="agents.messages.status").map(([r])=>(r.input as any).request_id)).toContain("first");
@@ -1251,11 +1251,11 @@ it("publishes new history and other terminal receipts when one status lookup fai
  refresh=true;await act(async()=>ui.publish());
  expect(ui.container.textContent).toContain("New history must publish");
  expect(ui.container.querySelector('[data-receipt-id="receipt-offline"]')).toHaveProperty("dataset.receiptState","held");
- expect(ui.container.querySelector('[data-receipt-id="receipt-peer"]')).toHaveProperty("dataset.receiptState","cancelled");
+ expect(ui.container.querySelector('[data-receipt-id="receipt-peer"]')).toBeNull();
  expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.send"||r.method==="agents.messages.resume")).toBe(false);
 });
 
-it("keeps reply Sending, unknown and Held actionable without inline cancellation", async () => {
+it("keeps failed reply sends retryable without exposing execution states", async () => {
  let reject!: (reason: Error) => void;const pending=new Promise((_,fail)=>{reject=fail;});
  let first=true,current:any;const records:any[]=[{seq:1,role:"assistant",content:"Discussion one"},{seq:9,role:"assistant",content:"Discussion two"}];
  const ui=await mount(async(method,input)=>{
@@ -1266,7 +1266,7 @@ it("keeps reply Sending, unknown and Held actionable without inline cancellation
   return {};
  },main,records);
  await ui.click('[data-action="reply-message"]');await ui.edit("Only first discussion");await ui.click('.composer-send-button');
- expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="sending"]')).not.toBeNull();
+ expect(ui.container.querySelector('.mosaic-replies [data-delivery-status]')).toBeNull();
  await act(async()=>{reject(new Error("ACK unknown"));await pending.catch(()=>{});});
  expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="unknown"]')).not.toBeNull();
  await ui.click('[data-action="close-replies"]');await ui.remount();
@@ -1277,7 +1277,7 @@ it("keeps reply Sending, unknown and Held actionable without inline cancellation
  await ui.click('.composer-send-button');
  expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="held"]')).not.toBeNull();
  const sends=ui.invoke.mock.calls.filter(([r])=>r.method==="agents.send");expect((sends[1][0].input as any).request_id).toBe((sends[0][0].input as any).request_id);
- await ui.click('.mosaic-replies [data-action="resume-accepted-input"]');
+ await ui.click('.mosaic-replies [data-action="retry-message"]');
  expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="queued"]')?.textContent).toBe("已送达");
  expect(ui.container.querySelector('.mosaic-replies [data-action="cancel-accepted-input"]')).toBeNull();
  expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.messages.cancel")).toBe(false);
@@ -1306,7 +1306,7 @@ it("limits task reply pending receipts to the current task revision and executio
  const panel=ui.container.querySelector('.mosaic-replies')!;
  expect(panel.querySelector('[data-receipt-id="receipt-current"]')).not.toBeNull();
  expect(panel.querySelectorAll('[data-receipt-id]')).toHaveLength(1);
- expect(panel.querySelector('[data-action="resume-accepted-input"]')).not.toBeNull();
+ expect(panel.querySelector('[data-action="retry-message"]')).not.toBeNull();
  expect(panel.querySelector('[data-action="cancel-accepted-input"]')).toBeNull();
 });
 
@@ -1319,7 +1319,7 @@ it("does not let uncertain draft status failure suppress a peer terminal state o
  },main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:refresh?[]:[{receipt:peer,prompt:"Peer pending"}]}),history:async()=>({records:refresh?[{seq:7,role:"assistant",content:"History after draft lookup failed"}]:[]})});
  await ui.edit("Unconfirmed draft");await ui.click('.composer-send-button');refresh=true;await act(async()=>ui.publish());
  expect(ui.container.textContent).toContain("History after draft lookup failed");
- expect(ui.container.querySelector('[data-receipt-id="receipt-peer"]')).toHaveProperty("dataset.receiptState","cancelled");
+ expect(ui.container.querySelector('[data-receipt-id="receipt-peer"]')).toBeNull();
  expect(ui.container.querySelector('textarea')!.value).toBe("Unconfirmed draft");
  expect(ui.container.querySelector('[data-receipt-state="unknown"]')).not.toBeNull();
  expect(ui.invoke.mock.calls.filter(([r])=>r.method==="agents.send")).toHaveLength(1);
@@ -1577,7 +1577,7 @@ it("marks the exact message read only after its context receipt and restores it"
   const receipt = () => phase === "queued" ? base : {
     ...base, receipt_state: "in_history", execution_state: phase === "failed" ? "failed" : "running",
     message_seq: 3, hostturn_id: "turn-1", revision: phase === "running" ? 2 : phase === "read" ? 3 : 4,
-    ...(phase === "read" || phase === "failed" ? { read_at: "2026-10-31T00:00:00Z" } : {}),
+    ...(phase === "read" || phase === "failed" ? { read_at: new Date().toISOString() } : {}),
   };
   const ui = await mount(undefined, main, [], {
     open: async () => ({ agent: main, session: { state: "running" }, pending_inputs: phase === "queued" ? [{ receipt: receipt(), prompt: "One message" }] : [] }),

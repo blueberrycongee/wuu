@@ -140,13 +140,32 @@ type SendScenario = keyof typeof scenarioLabels;
 const requestedScenario = new URLSearchParams(location.search).get("sendScenario") || "default";
 const receiptScenario = {
   mode: (requestedScenario in scenarioLabels ? requestedScenario : "default") as SendScenario,
-  attempts: [] as Array<{request_id:string}>, accepted: 0, hidden: new Set<string>(),
+  attempts: [] as Array<{request_id:string}>, proofs: [] as unknown[], accepted: 0, hidden: new Set<string>(), statusOffline: false,
   release: undefined as (() => void) | undefined,
+  markRead(requestID: string) {
+    const row = receiptRows.get(requestID)!;
+    Object.assign(row.receipt, { read_at: new Date().toISOString(), revision: row.receipt.revision + 1 });
+    host.publishHostEvent({ type: "routine-state-changed" });
+  },
+  reply(requestID: string) {
+    const row = receiptRows.get(requestID)!;
+    histories.mosaic.push({ seq: histories.mosaic.at(-1)!.seq + 1, role: "assistant", content: "合成回复：这条消息已处理。", relation: row.relation });
+    host.publishHostEvent({ type: "routine-state-changed" });
+  },
+  admit(requestID: string) {
+    const row = receiptRows.get(requestID)!;
+    const seq = histories.mosaic.at(-1)!.seq + 1;
+    row.receipt = { ...row.receipt, receipt_state: "in_history", execution_state: "running", message_seq: seq, revision: row.receipt.revision + 1 };
+    histories.mosaic.push({ seq, role: "user", content: row.prompt, receipt: row.receipt, relation: row.relation });
+    host.publishHostEvent({ type: "routine-state-changed" });
+  },
+  refresh() { host.publishHostEvent({ type: "routine-state-changed" }); },
 };
 Object.assign(window, { __receiptScenario: receiptScenario });
 const refreshScenarioControls = () => window.dispatchEvent(new Event("receipt-scenario-change"));
 async function sendReceiptScenario(data:Record<string,any>, userInput?:{attachments?:ReadonlyArray<{filename:string;media_type:string;sha256:string}>}) {
   receiptScenario.attempts.push(structuredClone(data) as {request_id:string});
+  receiptScenario.proofs.push(structuredClone(userInput));
   refreshScenarioControls();
   if (receiptScenario.mode === "reject-before-accept") throw new Error("request_id_conflict: synthetic rejection before acceptance");
   if (receiptScenario.mode === "retry-same-id" && receiptScenario.attempts.length === 1) throw new Error("合成网络故障：送达状态暂时无法确认");
@@ -155,7 +174,7 @@ async function sendReceiptScenario(data:Record<string,any>, userInput?:{attachme
   if (prior) return {receipt:prior.receipt,state:prior.receipt.execution_state};
   const list=histories[data.agent_id], seq=(list.at(-1)?.seq ?? 0)+1;
   const processing=receiptScenario.mode === "processing";
-  const receipt=fixtureReceipt(data.request_id,processing?"running":"queued",processing?seq:undefined);
+  const receipt={...fixtureReceipt(data.request_id,processing?"running":"queued",processing?seq:undefined),accepted_at:new Date().toISOString()};
   receiptRows.set(data.request_id,{receipt,prompt:data.prompt,relation:data.relation,attachments:userInput?.attachments?.map(({filename,media_type,sha256})=>({filename,media_type,sha256}))});
   if(processing) list.push({seq,role:"user",at:now,content:data.prompt,receipt,relation:data.relation});
   receiptScenario.accepted++;
@@ -221,7 +240,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
       agent.name = name; agent.revision++; return { agent: { ...agent } };
     }
     case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"},pending_inputs:[...receiptRows.values()].filter(r=>r.receipt.receipt_state==="accepted"&&r.receipt.execution_state!=="cancelled"&&!receiptScenario.hidden.has(r.receipt.request_id))};
-    case "agents.messages.status": return {receipt:receiptScenario.hidden.has(data.request_id)?undefined:receiptRows.get(data.request_id)?.receipt};
+    case "agents.messages.status": if (receiptScenario.statusOffline) throw new Error("Synthetic status outage"); return {receipt:receiptScenario.hidden.has(data.request_id)?undefined:receiptRows.get(data.request_id)?.receipt};
     case "agents.messages.resume": {const row=receiptRows.get(data.request_id);if(!row||row.receipt.receipt_id!==data.receipt_id||userInput?.resumeReceiptId!==data.receipt_id)throw new Error("Synthetic receipt proof mismatch");row.receipt={...row.receipt,execution_state:"queued",revision:row.receipt.revision+1};return {receipt:row.receipt};}
     case "agents.messages.cancel": {const row=receiptRows.get(data.request_id);if(!row||row.receipt.receipt_id!==data.receipt_id)throw new Error("Synthetic identity mismatch");row.receipt={...row.receipt,execution_state:"cancelled",revision:row.receipt.revision+1};return {cancelled:true};}
     case "agents.history": {
