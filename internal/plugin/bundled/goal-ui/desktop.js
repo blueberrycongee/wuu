@@ -2,7 +2,7 @@ export async function activate(api) {
   if (!api.supportedFeatures?.includes("ui.selected-slot-target.v1")) throw new Error("Goal controls require renderer feature ui.selected-slot-target.v1");
   const React = api.react;
   const h = React.createElement;
-  const { Button, TextArea, ComposerDrawer } = api.ui;
+  const { Button, TextArea, ComposerDrawer, Row } = api.ui;
   const requestGoal = (method, input) => api.invokeService({ service: "goal.control", method: "request", params: { method, input } });
   api.registerLocale({ id: "goal-en", locale: "en-US", entries: {
     "goal.status.active": "Active", "goal.status.paused": "Paused", "goal.status.blocked": "Blocked", "goal.status.complete": "Complete",
@@ -175,7 +175,7 @@ export async function activate(api) {
               }
             },
           }),
-          h("div", { className: "plugin-goal-footer" },
+          h(Row, { className: "plugin-goal-footer" },
             h("span", { className: "plugin-goal-spacer" }),
             h(Button, { variant: "primary", type: "submit", className: "plugin-goal-submit", "aria-label": tr("goal.start"), title: tr("goal.start"), disabled: disabled || !state.loaded || !objective.trim() }, h(ActionIcon, { kind: "send" })),
           ),
@@ -191,26 +191,27 @@ export async function activate(api) {
   api.registerStyle({ id: "goal-controls", css: `
     /* The drawer's tone already marks a blocked goal on its symbol, so the
      * label stays ink; status color on small text would miss contrast. */
-    .plugin-goal-label { flex-shrink:0; font-weight:var(--weight-medium); }
-    .plugin-goal-summary { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-soft); }
-    .plugin-goal-status { flex-shrink:0; color:var(--ink-tertiary); font-variant-numeric:tabular-nums; }
-    .plugin-goal-details { display:grid; gap:var(--space-2); padding:var(--space-1) var(--space-3) var(--space-3); }
-    .plugin-goal-progress { display:grid; gap:var(--space-1); }
+    .plugin-goal { --goal-space:calc(var(--wuu-space-unit, round(nearest, 0.25em, 1px)) * var(--wuu-space-density, 1)); font-size:var(--wuu-font-size-ui, 1rem); }
+    .plugin-goal-label { flex-shrink:0; font-weight:500; }
+    .plugin-goal-summary { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wuu-color-text-muted, inherit); }
+    .plugin-goal-status { flex-shrink:0; color:var(--wuu-color-text-muted, inherit); font-variant-numeric:tabular-nums; }
+    .plugin-goal-details { display:grid; gap:calc(var(--goal-space) * 2); padding:var(--goal-space) calc(var(--goal-space) * 3) calc(var(--goal-space) * 3); }
+    .plugin-goal-progress { display:grid; gap:var(--goal-space); }
     .plugin-goal-objective { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .plugin-goal-usage { margin:0; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
-    .plugin-goal-details form { display:grid; gap:var(--space-2); }
+    .plugin-goal-usage { margin:0; color:var(--wuu-color-text-muted, inherit); font-variant-numeric:tabular-nums; }
+    .plugin-goal-details form { display:grid; gap:calc(var(--goal-space) * 2); }
     .plugin-goal-details .plugin-ui-field-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
-    .plugin-goal .plugin-goal-input { field-sizing:content; min-height:48px; max-height:160px; resize:none; padding:var(--space-2) 0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+    .plugin-goal .plugin-goal-input { field-sizing:content; min-height:3.2em; max-height:10.7em; resize:none; padding:calc(var(--goal-space) * 2) 0; border:0; border-radius:0; background:transparent; box-shadow:none; }
     .plugin-goal .plugin-goal-input:focus-visible { outline:none; box-shadow:none; }
     /* Drawer actions match the host's composer drawer actions; the submit
      * echoes the composer's round send button. */
-    .plugin-goal .plugin-goal-icon-button { display:inline-grid; place-items:center; flex-shrink:0; width:28px; height:28px; min-height:28px; padding:0; border-radius:var(--radius-sm); color:var(--ink-muted); }
-    .plugin-goal .plugin-goal-icon-button:not(:disabled):hover { color:var(--ink); }
-    .plugin-goal .plugin-goal-submit { display:inline-grid; place-items:center; width:28px; height:28px; min-height:28px; padding:0; border-radius:var(--radius-circle); }
-    .plugin-goal-footer { display:flex; align-items:center; gap:var(--space-2); }
+    .plugin-goal .plugin-goal-icon-button { display:inline-grid; place-items:center; flex-shrink:0; width:max(28px, round(nearest, 1.875em, 1px)); height:max(28px, round(nearest, 1.875em, 1px)); min-height:28px; padding:0; border-radius:var(--wuu-radius-control, 0.4em); color:var(--wuu-color-text-muted, inherit); }
+    .plugin-goal .plugin-goal-icon-button:not(:disabled):hover { color:var(--wuu-color-text, inherit); }
+    .plugin-goal .plugin-goal-submit { display:inline-grid; place-items:center; width:max(28px, round(nearest, 1.875em, 1px)); height:max(28px, round(nearest, 1.875em, 1px)); min-height:28px; padding:0; border-radius:50%; }
+    .plugin-goal-footer { align-items:center; gap:calc(var(--goal-space) * 2); }
     .plugin-goal-spacer { flex:1; }
-    .plugin-goal-error { margin:0; padding:var(--space-2) var(--space-3) var(--space-3); color:var(--ink-muted); overflow-wrap:anywhere; }
+    .plugin-goal-error { margin:0; padding:calc(var(--goal-space) * 2) calc(var(--goal-space) * 3) calc(var(--goal-space) * 3); color:var(--wuu-color-text-muted, inherit); overflow-wrap:anywhere; }
     @media (max-width:480px) { .plugin-goal-status { display:none; } }
-    @media (pointer:coarse) { .plugin-goal .plugin-goal-icon-button, .plugin-goal .plugin-goal-submit { width:44px; height:44px; } }
+    @media (pointer:coarse) { .plugin-goal .plugin-goal-icon-button, .plugin-goal .plugin-goal-submit { width:max(44px, 1.875em); height:max(44px, 1.875em); } }
   ` });
 }

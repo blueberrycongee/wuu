@@ -18,6 +18,14 @@ Choose the shipped Personal composition explicitly with `--composition-profile p
 
 Desktop runtime calls may supply `userSpaceId`, `productDomain`, and `compositionProfile`. The source UI retains its original `graph_generation`. Before dispatch, the main process verifies that source identity, initializes the selected target host, and matches the exact plugin ID and fingerprint against its actual inventory. Calls and cancellation retain the target graph and connection captured by that handshake. A different target, failed binding, or removed provider is an error, not permission to replay the call elsewhere. The target independently checks its runtime state, declared service, and resource authorization. UI registration belongs to the source graph; the runtime-only target does not receive synthetic desktop activation reports.
 
+## Input and context receipts
+
+`wuu.client-input-receipts` is an optional host observer selected through the ordinary composition module list or patches. The shipped Personal bundle selects it; a bound Coding host can select it too. A user-space/product-domain binding alone does not enable it. Custom explicit module lists must include it when durable authenticated input receipts are required.
+
+The observer uses the selected `session.domain` provider. Disabling it stops new receipt admission, recovery and history projection; existing persisted records are not deleted. Already admitted work retains its captured composition for settlement. Receipt access still requires the exact host user-space/domain, session ownership and normal resource authorization.
+
+`accepted` and `in_history` do not mean read. The host records `read_at` only when an admitted input's exact client ID and history sequence occur in the assembled agent model context, before downstream model adapters. This is context inclusion, not proof that a model understood the input or a person viewed it. Normal UI and session APIs cannot assert this observation with plugin responses, UI events or supplied receipt fields. Receipt identity, revision and source information remain host-owned within those APIs. Installed extensions and replacement state providers remain trusted code; these receipts are not tamper-proof attestations against a trusted provider.
+
 ## Identity and storage
 
 For local desktop development, run `make dev-personal` (an alias for `make dev`).
