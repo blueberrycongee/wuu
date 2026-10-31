@@ -182,6 +182,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reuse shared inputs, rows and sections in Automation controls, and let Goal controls follow public theme tokens and larger UI text without shrinking action targets.
 - Deduplicate pending advanced-settings commits and keep late save feedback from changing a newer edit or a reopened settings page. Preserve drafts across navigation and whole-settings save refreshes, and allow failed saves to be retried.
 
 - Load MCP settings only while its page is open and discard pending authorization results when leaving the page, preventing a late browser login from opening after navigation.
