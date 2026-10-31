@@ -191,6 +191,8 @@ type ServiceRegistry struct {
 	cleanupOwners        map[string]int
 	preparing            map[string]bool
 	retiringProviders    map[string]bool
+	retirementCleanups   map[string]map[*retirementCleanup]struct{}
+	retirementClosed     bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
 	graphGeneration      string
 	composition          *CompositionSnapshot
@@ -421,6 +423,19 @@ func (r *ServiceRegistry) Activate() {
 // execution contexts are canceled before process shutdown continues.
 func (r *ServiceRegistry) Close(ctx context.Context) {
 	r.mu.Lock()
+	r.retirementClosed = true
+	owners := make(map[string]bool)
+	for owner := range r.retirementCleanups {
+		owners[owner] = true
+	}
+	r.mu.Unlock()
+	for owner := range owners {
+		r.stopProviderAdmission(owner)
+	}
+	for owner := range owners {
+		_ = r.waitRetirementCleanup(owner)
+	}
+	r.mu.Lock()
 	if !r.open {
 		r.mu.Unlock()
 		return
@@ -466,6 +481,8 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 	if pluginID == "" {
 		return
 	}
+	r.stopProviderAdmission(pluginID)
+	_ = r.waitRetirementCleanup(pluginID)
 	r.mu.Lock()
 	var revoked []serviceKey
 	for key, provider := range r.providers {
@@ -497,7 +514,6 @@ func (r *ServiceRegistry) stopProviderAdmission(pluginID string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.retiringProviders == nil {
 		r.retiringProviders = make(map[string]bool)
 	}
@@ -507,6 +523,7 @@ func (r *ServiceRegistry) stopProviderAdmission(pluginID string) {
 			execution.cancel()
 		}
 	}
+	r.mu.Unlock()
 }
 
 func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool {

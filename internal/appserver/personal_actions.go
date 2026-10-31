@@ -36,25 +36,27 @@ import (
 // This adapter covers only the native local file operations below. It neither
 // grants account access nor changes Coding policy, MCP, shell or plugin tools.
 type personalActions struct {
-	server         *Server
-	store          *personalreview.Store
-	engine         *personalreview.Engine
-	mu             sync.Mutex
-	kitsMu         sync.Mutex
-	kits           map[string]*tools.Toolkit
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wake           chan struct{}
-	done           chan struct{}
-	drainMu        sync.Mutex
-	delivered      map[string]bool
-	waitMu         sync.Mutex
-	waiters        map[string]chan struct{}
-	admissionsMu   sync.Mutex
-	admissions     map[personalreview.Key]personalActionAdmission
-	admissionEpoch uint64
-	effectGate     chan struct{}
-	memoryLeases   sync.Map // operation ID -> *personalMemoryLease
+	server          *Server
+	store           *personalreview.Store
+	engine          *personalreview.Engine
+	mu              sync.Mutex
+	fileAdmissionMu sync.Mutex
+	kitsMu          sync.Mutex
+	kits            map[string]*tools.Toolkit
+	effects         map[string]string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wake            chan struct{}
+	done            chan struct{}
+	drainMu         sync.Mutex
+	delivered       map[string]bool
+	waitMu          sync.Mutex
+	waiters         map[string]chan struct{}
+	admissionsMu    sync.Mutex
+	admissions      map[personalreview.Key]personalActionAdmission
+	admissionEpoch  uint64
+	effectGate      chan struct{}
+	memoryLeases    sync.Map // operation ID -> *personalMemoryLease
 }
 
 // Admission provenance is live host state, never a serialized owner claim or a
@@ -68,16 +70,11 @@ type personalActionAdmission struct {
 	state         *runtime.State
 }
 
-func newPersonalActions(s *Server) (*personalActions, error) {
-	state, err := s.rt.RetainState()
-	if err != nil {
-		return nil, err
-	}
-	defer state.Close()
+func newPersonalActionsForState(s *Server, state *runtime.State) (*personalActions, error) {
 	if state.Host == nil {
 		return nil, errors.New("selected Personal review provider is unavailable")
 	}
-	p := &personalActions{server: s, kits: map[string]*tools.Toolkit{}, wake: make(chan struct{}, 1), done: make(chan struct{}), delivered: map[string]bool{}, waiters: map[string]chan struct{}{}, admissions: map[personalreview.Key]personalActionAdmission{}, effectGate: make(chan struct{}, 1)}
+	p := &personalActions{server: s, kits: map[string]*tools.Toolkit{}, effects: map[string]string{}, wake: make(chan struct{}, 1), done: make(chan struct{}), delivered: map[string]bool{}, waiters: map[string]chan struct{}{}, admissions: map[personalreview.Key]personalActionAdmission{}, effectGate: make(chan struct{}, 1)}
 	documents := persistence.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 		// Each operation pins its invocation before entering the ledger. New
 		// requests use the published graph; admitted actions keep their capture.
@@ -137,9 +134,9 @@ func (p *personalActions) start() {
 			case <-p.ctx.Done():
 				return
 			case <-p.wake:
-				_ = p.drain(p.ctx)
+				_ = p.backgroundPass()
 			case <-ticker.C:
-				_ = p.drain(p.ctx)
+				_ = p.backgroundPass()
 			}
 		}
 	}()
@@ -151,16 +148,41 @@ func (p *personalActions) signal() {
 	default:
 	}
 }
-func (p *personalActions) close() error {
+func (p *personalActions) backgroundPass() error {
+	state, err := p.server.rt.RetainState()
+	if err != nil {
+		return err
+	}
+	// Reference disposal can retire this very provider. Only release the guard
+	// after the physical pass, outside the scheduler goroutine it may cancel/drain.
+	defer func() { go func() { _ = state.Close() }() }()
+	if !p.schedulerSelected(state) {
+		return nil
+	}
+	_, err = p.server.invokePersonalCoordination(runtime.WithInvocationState(p.ctx, state), "drain", personalCoordinationRequest{}, nil)
+	return err
+}
+func releasePersonalState(ctx context.Context, state *runtime.State) error {
+	if pluginhost.DeferServiceCompletion(ctx, state.Close) {
+		return nil
+	}
+	return state.Close()
+}
+func (p *personalActions) close(cleanup ...context.Context) error {
+	ctx := context.Background()
+	if len(cleanup) != 0 {
+		ctx = cleanup[0]
+	}
+
 	p.cancel()
 	<-p.done
-	closeErr := p.closeMemoryLeases()
+	closeErr := p.closeMemoryLeases(ctx)
 	p.admissionsMu.Lock()
 	admissions := p.admissions
 	p.admissions = nil
 	p.admissionsMu.Unlock()
 	for _, admission := range admissions {
-		closeErr = errors.Join(closeErr, admission.state.Close())
+		closeErr = errors.Join(closeErr, releasePersonalState(ctx, admission.state))
 	}
 	return errors.Join(closeErr, p.store.Close())
 }
@@ -393,33 +415,7 @@ func (p *personalActions) describe(raw json.RawMessage) (personalreview.Summary,
 	return personalreview.Summary{Title: title, Account: "Personal local files", Target: a.Target, Consequence: effect}, nil
 }
 func (p *personalActions) safeFile(a tools.FileAction) error {
-	root := p.server.rt.RootDir
-	rel, err := filepath.Rel(root, a.Target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errors.New("Personal file action must stay inside its own files workspace")
-	}
-	// Product state and shared Coding settings/credentials are never actionable,
-	// even in an unconfined session or with a misplaced user workspace.
-	protectedRoots := []string{p.stateRoot(), p.server.rt.SessionDir}
-	// The normal files root is deliberately nested under WuuHome. Only this
-	// exact product-owned subtree is exempt; an arbitrary root under shared
-	// application state must not become an approval escape hatch.
-	if p.server.rt.WuuHome != "" && filepath.Clean(root) != filepath.Clean(p.server.rt.UserBinding().Root(p.server.rt.WuuHome)) {
-		protectedRoots = append(protectedRoots, p.server.rt.WuuHome)
-	}
-	for _, protected := range protectedRoots {
-		if protected == "" {
-			continue
-		}
-		relative, err := filepath.Rel(protected, a.Target)
-		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errors.New("Personal file actions cannot change application state or Coding settings")
-		}
-	}
-	if reason := approvefor.HardDenyReason(approvefor.Request{PermissionMode: "standard", Tool: approvefor.Tool{Name: a.Operation}, Arguments: string(a.Arguments), CWD: a.CWD, ReferencedPaths: []string{a.Target}}); reason != "" {
-		return errors.New(reason)
-	}
-	return nil
+	return personalEffectSafeFile(p.server, a)
 }
 func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call providers.ToolCall) (toolresult.Result, error) {
 	state, err := p.retainState(ctx)
@@ -455,15 +451,31 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 			p.waitMu.Unlock()
 		}()
 	}
+	p.fileAdmissionMu.Lock()
+	admitted := false
+	preparedToken := ""
+	defer func() {
+		if !admitted {
+			if preparedToken != "" {
+				p.kitsMu.Lock()
+				delete(p.effects, key.ID)
+				p.kitsMu.Unlock()
+				_ = p.callEffect(context.WithoutCancel(ctx), nil, "release", PersonalEffectReference{EffectID: preparedToken}, nil)
+			}
+			p.fileAdmissionMu.Unlock()
+		}
+	}()
 	r, err := p.engine.GetExecution(ctx, key)
 	if errors.Is(err, personalreview.ErrNotFound) {
-		a, err := kit.PrepareFileAction(ctx, call)
+		prepared, err := p.prepareFileEffect(ctx, kit, call)
+		a := prepared.File
 		if err != nil {
 			return toolresult.Result{}, err
 		}
-		if err = p.safeFile(a); err != nil {
-			return toolresult.Result{}, err
-		}
+		p.kitsMu.Lock()
+		p.effects[key.ID] = prepared.EffectID
+		preparedToken = prepared.EffectID
+		p.kitsMu.Unlock()
 		raw, _ := json.Marshal(a)
 		r, err = p.engine.Propose(ctx, personalreview.Proposal{ID: key.ID, Scope: scope, Operation: call.Name, Arguments: raw})
 		if err != nil {
@@ -486,6 +498,8 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 	if err := p.rememberAdmission(ctx, key, scope.SessionID); err != nil {
 		return toolresult.Result{}, err
 	}
+	admitted = true
+	p.fileAdmissionMu.Unlock()
 	if r.Status == personalreview.Ready || r.Status == personalreview.Approved {
 		r, err = p.engine.Execute(ctx, key)
 		if err != nil {
@@ -552,7 +566,6 @@ func (p *personalActions) toolkit(ctx context.Context, action personalreview.Act
 	if rt.Toolkit == nil {
 		return nil, errors.New("Personal native file tools unavailable")
 	}
-	rt.Toolkit.SetFileActionGate(p.gate)
 	p.kitsMu.Lock()
 	p.kits[id] = rt.Toolkit
 	p.kitsMu.Unlock()
@@ -578,7 +591,7 @@ func (p *personalActions) execute(ctx context.Context, action personalreview.Act
 	if kit == nil {
 		return nil, errors.New("reviewed native runtime is unavailable")
 	}
-	result, err := kit.ExecuteFileAction(ctx, a)
+	result, err := p.executeFileEffect(ctx, action.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -601,6 +614,31 @@ func (p *personalActions) review(ctx context.Context, input personalreview.Revie
 	}
 	if err = kit.ValidateFileAction(ctx, a); err != nil {
 		return approvefor.Decision{Outcome: "deny", Reason: "Frozen file action cannot be validated; no effect was dispatched: " + err.Error()}, nil
+	}
+
+	p.kitsMu.Lock()
+	token := p.effects[input.Action.ID]
+	p.kitsMu.Unlock()
+	if token == "" {
+		prepared, err := p.prepareFileEffect(ctx, kit, providers.ToolCall{ID: a.CallID, Name: a.Operation, Arguments: string(a.Arguments)})
+		if err != nil {
+			return approvefor.Decision{Outcome: "unsure", Reason: "Host file effect unavailable; action not executed"}, nil
+		}
+		frozen, _ := json.Marshal(a)
+		current, _ := json.Marshal(prepared.File)
+		if !bytes.Equal(frozen, current) {
+			_ = p.callEffect(ctx, nil, "release", PersonalEffectReference{EffectID: prepared.EffectID}, nil)
+			return approvefor.Decision{Outcome: "deny", Reason: "Frozen file action changed; no effect dispatched"}, nil
+		}
+		p.kitsMu.Lock()
+		if p.effects[input.Action.ID] == "" {
+			p.effects[input.Action.ID] = prepared.EffectID
+			prepared.EffectID = ""
+		}
+		p.kitsMu.Unlock()
+		if prepared.EffectID != "" {
+			_ = p.callEffect(ctx, nil, "release", PersonalEffectReference{EffectID: prepared.EffectID}, nil)
+		}
 	}
 	if input.Confirmation != nil && input.Confirmation.Choice == personalreview.ApproveOnce && input.Confirmation.Digest == input.Action.Digest && input.Confirmation.OwnerID == input.Action.OwnerID {
 		return approvefor.Decision{Outcome: "allow", Reason: "Authenticated owner confirmed this exact bounded file action"}, nil
@@ -804,8 +842,15 @@ func (p *personalActions) releaseAdmission(key personalreview.Key, epoch uint64)
 	p.admissionsMu.Unlock()
 	p.kitsMu.Lock()
 	delete(p.kits, key.ID)
+	token := p.effects[key.ID]
+	delete(p.effects, key.ID)
 	p.kitsMu.Unlock()
-	return admission.state.Close()
+	ctx := principal.WithContext(runtime.WithInvocationState(context.Background(), admission.state), admission.principal)
+	var releaseErr error
+	if token != "" {
+		releaseErr = p.callEffect(ctx, nil, "release", PersonalEffectReference{EffectID: token}, nil)
+	}
+	return errors.Join(releaseErr, admission.state.Close())
 }
 
 func (p *personalActions) drain(ctx context.Context) error {
@@ -923,8 +968,10 @@ const personalActionsConsumerID = "wuu.personal-actions-consumer"
 
 type personalActionsConsumer struct{ active atomic.Bool }
 
-func NewPersonalActionsConsumer() pluginhost.Client { return &personalActionsConsumer{} }
-func (*personalActionsConsumer) ID() string         { return personalActionsConsumerID }
+func NewPersonalActionsConsumer() pluginhost.Client {
+	return newPersonalCoordinationProvider(runtime.NativeProviderContext{})
+}
+func (*personalActionsConsumer) ID() string { return personalActionsConsumerID }
 func (c *personalActionsConsumer) Status() pluginhost.Status {
 	state := pluginhost.StatePrepared
 	if c.active.Load() {
@@ -934,13 +981,23 @@ func (c *personalActionsConsumer) Status() pluginhost.Status {
 }
 func (*personalActionsConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
 func (*personalActionsConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: "personal.agents", MajorVersion: 1}, {Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: executionauth.ServiceName, MajorVersion: 1}}
+	return []pluginhost.ServiceRequirement{{Name: PersonalEffectService, MajorVersion: 1, Required: true}, {Name: "personal.agents", MajorVersion: 1}, {Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: executionauth.ServiceName, MajorVersion: 1}}
 }
 func (c *personalActionsConsumer) Activate(context.Context) error { c.active.Store(true); return nil }
 func (c *personalActionsConsumer) Close(context.Context) error    { c.active.Store(false); return nil }
 
 func PersonalActionsConsumerFactory() runtime.NativeProviderFactory {
-	return runtime.NativeProviderFactory{ID: personalActionsConsumerID, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
-		return NewPersonalActionsConsumer(), nil
+	return runtime.NativeProviderFactory{ID: personalActionsConsumerID, DefaultEnabled: true, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
+		return newPersonalCoordinationProvider(input), nil
 	}}
+}
+
+// Only the currently selected native coordinator may start autonomous passes.
+// Admitted calls keep their original graph independently of this scheduler gate.
+func (p *personalActions) schedulerSelected(state *runtime.State) bool {
+	if state.Host == nil {
+		return false
+	}
+	id, ok := state.Host.ServiceRegistry().ProviderPluginIDFor(PersonalCoordinationConsumer, PersonalCoordinationService, 1)
+	return ok && id == personalActionsConsumerID
 }

@@ -125,3 +125,21 @@ func fixturePersonalFacts(rt *runtime.Session, providerID string) func(context.C
 		return json.Marshal(personalExecutionFacts{SessionID: input.SessionID, AgentID: metadata.AgentID, MainSessionID: input.SessionID, Active: true})
 	}
 }
+
+func (h *UserHost) actionsForTest(t *testing.T) *personalActions {
+	t.Helper()
+	actions := h.server.personalCoordination.nativeActions()
+	if actions == nil {
+		t.Fatal("native Personal coordinator not selected")
+	}
+	return actions
+}
+
+func (b *personalCoordinatorBridge) nativeActions() *personalActions {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.core == nil {
+		return nil
+	}
+	return b.core.actions
+}
