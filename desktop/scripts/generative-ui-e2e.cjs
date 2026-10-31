@@ -115,7 +115,9 @@ function toolCall(value, index = 1) {
   return messages.find(message => message.id === 'call');
 }
 function edit(change) { const value = structuredClone(spec); change(value); return value; }
+const visualSpec = require('./fixtures/generative-ui-visual.json');
 const cases = [
+  ['source-visual-composition', visualSpec, true],
   ['valid', spec, true],
   ['bar-chart', edit(s => { s.blocks[2].chartType = 'bar'; }), true],
   ['empty-table', edit(s => { s.blocks[1].rows = []; }), true],
@@ -141,6 +143,24 @@ const cases = [
   ['too-many-rows', edit(s => { s.blocks[1].rows = Array(201).fill(['x', 1]); }), false],
   ['byte-budget', edit(s => { s.blocks = Array.from({ length: 16 }, (_, i) => ({ id: `text${i}`, type: 'text', text: '界'.repeat(4000) })); }), false],
 ];
+// Category tones are bounded presentation choices, not arbitrary card styling.
+for (const tone of ['neutral', 'blue', 'teal', 'violet', 'amber', 'rose']) {
+  cases.push([`source-card-${tone}`, {
+    version: 3, title: 'Category tone', fallback: 'A grouped value.',
+    source: `<Card tone="${tone}"><Metric label="Capacity" value={40}/></Card>`,
+  }, true]);
+}
+for (const source of [
+  '<Card tone="red">Unsupported category</Card>',
+  '<Card tone="success">Status is not a category</Card>',
+  '<Card style={{background: "red"}}>No arbitrary styles</Card>',
+  '<Card tone="url(https://example.com)">No external paint</Card>',
+]) cases.push(['source-card-invalid-tone', { version: 3, title: 'Bounded tone', fallback: 'Text fallback.', source }, false]);
+cases.push(['source-category-paint', {
+  version: 3, title: 'Category colors', fallback: 'Category labels and a local diagram.',
+  source: '<Stack><Badge tone="teal">Planning</Badge><svg viewBox="0 0 100 40" label="Planning"><rect width="100" height="40" fill="teal"/><text x="8" y="24" fill="text">Planning</text></svg><Badge tone="success">Saved</Badge></Stack>',
+}, true]);
+
 // Runtime and desktop must reject malformed source controls before publishing
 // an artifact, rather than crashing when React reaches the choice renderer.
 for (const tag of ['Select', 'Radio', 'Segmented']) {
@@ -196,6 +216,9 @@ for (const [name, body, valid] of sourceSemantics) cases.push([`v3-${name}`, {
   source: `{@body ${body} } <Metric label="Result" value={result}/>`,
 }, valid]);
 const results = { sourceSha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex'), runtimeSha256: createHash('sha256').update(fs.readFileSync(runtime)).digest('hex'), cases: [], checks: [], categoryAxes: [] };
+const visualResult = toolCall(visualSpec, 'visual-composition').result?.result;
+assert.ok(visualResult && !visualResult.is_error, 'Visual fixture uses the actual bundled runtime');
+fs.writeFileSync(path.join(output, 'visual-result.json'), JSON.stringify(visualResult, null, 2));
 const result = toolCall(spec).result?.result;
 assert.ok(result && !result.is_error, 'Valid tool result');
 const resource = result.content.find(part => part.type === 'resource');
@@ -271,6 +294,7 @@ window.nativeEvents=[];
 for(const type of ["click","toggle","submit","invalid","keydown","keypress","keyup"]) document.addEventListener(type,event=>{window.nativeEvents.push({type,trusted:event.isTrusted,target:event.target.closest("[data-genui-node]")?.getAttribute("data-genui-node"),tag:event.target.tagName,key:event.key,value:event.target.value,open:event.target.open});if(window.nativeEvents.length>100)window.nativeEvents.shift();},true);
 window.probe = {
  fontSize: applyMessageFlowFontSize,
+ visual() { streamingInput=null; currentResult=${JSON.stringify(visualResult)}; render(); },
  async enable() { await replaceRenderer('e2e'); render(); },
  async replace(generation, failure = false) {
    try { await replaceRenderer(generation, failure); return null; }

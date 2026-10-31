@@ -1,5 +1,5 @@
 const components = {
-  Stack: "gap align", Row: "gap align", Flow: "gap align", Grid: "gap columns", Card: "gap title",
+  Stack: "gap align", Row: "gap align", Flow: "gap align", Grid: "gap columns", Card: "gap title tone",
   Text: "", Caption: "", Heading: "level", Badge: "tone", Divider: "", Metric: "label value detail", Progress: "label value max",
   Button: "label onClick disabled variant", Input: "label value onChange inputType placeholder required disabled invalid", TextArea: "label value onChange placeholder required disabled invalid",
   Slider: "label value onChange min max step disabled", Checkbox: "label checked onChange required disabled", Select: "label value onChange options required disabled", Radio: "label value onChange options disabled", Segmented: "label value onChange options disabled",
@@ -10,7 +10,8 @@ const svgProperties = {
   svg: "viewBox width height label", g: "transform", path: "d pathLength", circle: "cx cy r", ellipse: "cx cy rx ry", rect: "x y width height rx ry", line: "x1 y1 x2 y2", polyline: "points", polygon: "points", text: "x y dx dy textAnchor dominantBaseline fontSize fontWeight", tspan: "x y dx dy textAnchor", title: "", desc: "", defs: "", marker: "markerWidth markerHeight refX refY orient markerUnits viewBox", linearGradient: "x1 y1 x2 y2 gradientUnits gradientTransform", radialGradient: "cx cy r fx fy gradientUnits", stop: "offset stopColor stopOpacity", clipPath: "clipPathUnits",
 };
 const svgCommon = "id fill stroke strokeWidth opacity fillOpacity strokeOpacity strokeDasharray strokeLinecap strokeLinejoin markerEnd markerStart clipPath".split(" ");
-const tones = { accent: "var(--wuu-color-accent,currentColor)", text: "var(--wuu-color-text,currentColor)", muted: "var(--wuu-color-text-muted,currentColor)", surface: "var(--wuu-color-surface-muted,transparent)", border: "var(--genui-border)", success: "var(--wuu-color-success,#137a3d)", warning: "var(--wuu-color-warning,#8a5b10)", danger: "var(--wuu-color-danger,#b42318)", info: "var(--wuu-color-info,#0068da)" };
+const categoryTones = ["blue", "teal", "violet", "amber", "rose"];
+const tones = { ...Object.fromEntries(categoryTones.map(name => [name, `var(--genui-${name})`])), accent: "var(--wuu-color-accent,currentColor)", text: "var(--wuu-color-text,currentColor)", muted: "var(--wuu-color-text-muted,currentColor)", surface: "var(--wuu-color-surface-muted,transparent)", border: "var(--genui-border)", success: "var(--wuu-color-success,#137a3d)", warning: "var(--wuu-color-warning,#8a5b10)", danger: "var(--wuu-color-danger,#b42318)", info: "var(--wuu-color-info,#0068da)" };
 const encoder = new TextEncoder();
 function check(ok, message) { if (!ok) throw new Error(message); }
 function text(value) { check(value == null || ["string", "number", "boolean"].includes(typeof value), "Expected display text"); return value == null ? "" : String(value); }
@@ -76,6 +77,7 @@ export function validateSourceTree(nodes) {
     if (tag === "Input") check(props.inputType === undefined || ["text", "number", "date"].includes(props.inputType), "Invalid input type");
     if (tag === "Button") check(typeof props.onClick === "function", "Button needs onClick");
     if (tag === "Form") check(typeof props.onSubmit === "function", "Form needs onSubmit");
+    if (tag === "Card") check(props.tone === undefined || props.tone === "neutral" || categoryTones.includes(props.tone), "Invalid card tone");
     if (tag === "Badge" && props.tone !== undefined) color(props.tone, "validate");
     if (tag === "Button") check(props.variant === undefined || ["primary", "secondary"].includes(props.variant), "Invalid button variant");
     if (tag === "Slider") check(Number.isFinite(props.min) && Number.isFinite(props.max) && props.max > props.min && (props.step === undefined || Number.isFinite(props.step) && props.step > 0), "Slider requires a valid range");
@@ -165,11 +167,11 @@ export function renderSourceTree(nodes, runtime) {
         if (tag === "svg") { svgProps.className = "plugin-genui-diagram"; svgProps.role = "img"; svgProps["aria-label"] = p.label ?? runtime.title; }
         return h(tag, svgProps, child());
       }
-      if (["Stack", "Row", "Flow", "Grid", "Card"].includes(tag)) return h(tag === "Card" ? ui.Card : "div", { ...props, className: `plugin-genui-layout plugin-genui-${tag.toLowerCase()}`, "data-gap": p.gap ?? "medium", "data-align": p.align ?? "stretch", ...(tag === "Grid" ? { style: { "--genui-columns": p.columns ?? 2 } } : {}) }, p.title ? h("h3", { className: "plugin-genui-card-title" }, p.title) : null, child());
+      if (["Stack", "Row", "Flow", "Grid", "Card"].includes(tag)) return h(tag === "Card" ? ui.Card : "div", { ...props, className: `plugin-genui-layout plugin-genui-${tag.toLowerCase()}`, "data-gap": p.gap ?? "medium", "data-align": p.align ?? "stretch", ...(tag === "Card" ? { "data-tone": p.tone ?? "neutral", style: p.tone && p.tone !== "neutral" ? { "--genui-card-tone": tones[p.tone] } : undefined } : {}), ...(tag === "Grid" ? { style: { "--genui-columns": p.columns ?? 2 } } : {}) }, p.title ? h("h3", { className: "plugin-genui-card-title" }, p.title) : null, child());
       if (["Text", "Caption"].includes(tag)) return h("p", { ...props, className: `plugin-genui-text${tag === "Caption" ? " plugin-genui-muted" : ""}` }, child());
       if (["strong", "em", "code", "br"].includes(tag)) return h(tag, props, tag === "br" ? undefined : child());
       if (tag === "Heading") return h(`h${(p.level ?? 2) + 1}`, { ...props, className: "plugin-genui-heading", "data-level": p.level ?? 2 }, child());
-      if (tag === "Badge") return h("span", { ...props, className: "plugin-genui-badge", style: p.tone ? { color: color(p.tone, runtime.instanceId) } : undefined }, child());
+      if (tag === "Badge") return h("span", { ...props, className: "plugin-genui-badge", style: p.tone ? { "--genui-badge-tone": color(p.tone, runtime.instanceId) } : undefined }, child());
       if (tag === "Divider") return h("hr", { ...props, className: "plugin-genui-divider" });
       if (tag === "Metric") return h("div", { ...props, className: "plugin-genui-metric" }, h("span", { className: "plugin-genui-muted" }, text(p.label)), h("strong", null, text(p.value)), p.detail == null ? null : h("span", { className: "plugin-genui-muted" }, text(p.detail)));
       if (tag === "Progress") return h("label", { ...props, className: "plugin-genui-progress" }, h("span", null, p.label ?? "Progress"), h("progress", { value: p.value, max: p.max ?? 100, "aria-label": p.label ?? "Progress" }), h("span", null, `${Math.round(p.value / (p.max ?? 100) * 100)}%`));

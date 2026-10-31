@@ -74,6 +74,16 @@ gradients and markers. SVG paint accepts semantic colors such as `accent`,
 `muted`, `surface`, `success`, and `danger`. References stay local to the
 view; external images, scripts, arbitrary styles, and foreign HTML are unavailable.
 
+
+Spacing is controlled by the renderer: layouts accept `gap="none|small|medium|large"`,
+not arbitrary margins or padding. Use small gaps for related text, medium for peers,
+and large between sections. Control labels, card insets, and action spacing scale
+with the user's UI font size. `Card` accepts `tone="neutral|blue|teal|violet|amber|rose"`
+(default `neutral`). The five category colors also work in `Badge.tone` and SVG
+paint, sharing the chart palette across light and dark themes. Use tints sparingly
+to express grouping; status colors such as `success`, `warning`, and `danger`
+remain separate and keep their existing meaning.
+
 The plugin parses and interprets a bounded language; it does not run generated
 JavaScript in the desktop realm. There are no imports, DOM APIs, network requests,
 async functions, or unrestricted loops. Limits are 120 KiB of source within

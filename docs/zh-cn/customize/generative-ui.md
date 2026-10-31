@@ -76,6 +76,15 @@
 交互计算失败会保留上次有效值。重新打开同一结果时恢复输入值和组件偏好；
 后续消息仅附带声明值。
 
+
+间距由渲染器控制：布局接受 `gap="none|small|medium|large"`，不能任意设置外边距或内边距。
+紧密相关的文字使用 small，同级内容使用 medium，不同段落组之间使用 large。
+字段标签、卡片内边距和操作间距会跟随用户的 UI 字号缩放。
+`Card` 支持 `tone="neutral|blue|teal|violet|amber|rose"`，默认为 neutral。
+五种类别色也可用于 `Badge.tone` 和 SVG 填充或描边，并与图表共享适配明暗主题的色板。
+仅在分组有实际意义时使用淡色，大多数表面保持中性；success、warning、danger 等状态色
+仍保持独立含义。
+
 ## 历史 v2 协议
 
 `render_ui` 接收 `{ "spec": { "version": 2, "title": "…", "fallback": "…",
