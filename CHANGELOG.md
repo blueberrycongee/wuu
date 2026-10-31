@@ -186,6 +186,7 @@ entries. Earlier GitHub Releases may not have complete change notes.
 
 ### Fixed
 
+- Keep macOS operation previews available when the development renderer server stops, recover capture failures automatically, and bring revisited tool targets to the front of the preview stack.
 - Let Personal history scroll behind the floating avatar and name, with a soft halo limited to their footprint and scrollable clearance for the first message.
 
 - Keep composer selection and model refresh behavior with the selected provider, and coordinate composer/preview focus through public surface capabilities rather than default-provider DOM structure.

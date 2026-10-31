@@ -65,37 +65,23 @@ describe("CUA native picture-in-picture", () => {
     );
     coordinator.setActiveThread("thread-1");
     coordinator.update(activity({ execution_id: "turn-1" }));
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    for (let attempt = 1; attempt <= 6; attempt++) {
       fail("Screen Recording permission required");
-      vi.advanceTimersByTime(frameStreamRetryDelay(attempt));
+      fail("Duplicate failure from the same capture");
+      vi.advanceTimersByTime(frameStreamRetryDelay(attempt) - 1);
+      expect(retarget).toHaveBeenCalledTimes(attempt - 1);
+      vi.advanceTimersByTime(1);
+      expect(retarget).toHaveBeenCalledTimes(attempt);
     }
-    expect(retarget).toHaveBeenCalledTimes(3);
     coordinator.update(activity({ execution_id: "turn-1", updated_at: "2026-07-10T10:00:02Z" }));
     vi.advanceTimersByTime(60_000);
-    expect(retarget).toHaveBeenCalledTimes(3);
+    expect(retarget).toHaveBeenCalledTimes(6);
 
-    coordinator.showForThread("thread-1");
-    expect(retarget).toHaveBeenCalledTimes(4);
-    fail("Permission still required");
-    coordinator.update(activity({ execution_id: "turn-2", updated_at: "2026-07-10T10:00:03Z" }));
-    expect(retarget).toHaveBeenCalledTimes(5);
-    vi.advanceTimersByTime(60_000);
-    expect(retarget).toHaveBeenCalledTimes(5);
-    for (let attempt = 1; attempt <= 4; attempt++) {
-      fail("Permission still required");
-      vi.advanceTimersByTime(frameStreamRetryDelay(attempt));
-    }
-    expect(retarget).toHaveBeenCalledTimes(8);
-
-    coordinator.showForThread("thread-1");
-    const failFirst = fail;
-    failFirst("Retry while another conversation is in view");
-    // Another thread's task gets a card of its own instead of the retrying one.
+    fail("Retry while another conversation is in view");
     coordinator.setActiveThread("thread-2");
     coordinator.update(activity({ thread_id: "thread-2", execution_id: "other-turn", target: "other-app" }));
-    expect(retarget).toHaveBeenCalledTimes(9);
-    vi.advanceTimersByTime(frameStreamRetryDelay(1));
-    expect(retarget).toHaveBeenCalledTimes(10);
+    vi.advanceTimersByTime(frameStreamRetryDelay(6));
+    expect(retarget).toHaveBeenCalledTimes(7);
     void coordinator.shutdown();
   });
 

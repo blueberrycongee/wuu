@@ -1,5 +1,6 @@
 import type { Rectangle } from "electron";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import nativePreviewPage from "../../native-preview.html?asset";
 import type { ActivitySession } from "../shared/protocol";
 import { ActivityPiPSurface, type ActivityPiPSurfaceDeps } from "./activityPiPWindow";
 import { pipContainRect, type ActivityPiPContent, type ActivityPiPContentContext } from "./activityPiPContent";
@@ -189,9 +190,8 @@ export function createObservationPiPFactory(deps: {
       return helper ? new NativePiPContent(next, context, {
         helper, isPackaged: deps.isPackaged,
         preload: fileURLToPath(new URL("../preload/nativePreview.cjs", import.meta.url)),
-        pageURL: !deps.isPackaged && process.env.ELECTRON_RENDERER_URL
-          ? new URL("native-preview.html", process.env.ELECTRON_RENDERER_URL).href
-          : new URL("../renderer/native-preview.html", import.meta.url).href,
+        // Capture must work even after the development renderer server exits.
+        pageURL: pathToFileURL(nativePreviewPage).href,
       }) : undefined;
     },
   });

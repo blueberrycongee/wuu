@@ -12,6 +12,8 @@ async function main() {
     entryPoints: [path.join(__dirname, 'activity-preview-e2e-entry.ts')],
     outfile: output, bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['electron'],
     plugins: [{ name: 'svg', setup(build) {
+        build.onResolve({ filter: /\?asset$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -6)), namespace: 'asset' }));
+        build.onLoad({ filter: /.*/, namespace: 'asset' }, args => ({ contents: `export default ${JSON.stringify(args.path)}`, loader: 'js' }));
       build.onResolve({ filter: /\.svg\?raw$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'svg' }));
       build.onLoad({ filter: /.*/, namespace: 'svg' }, args => ({ contents: fs.readFileSync(args.path, 'utf8'), loader: 'text' }));
     } }],
@@ -21,12 +23,7 @@ async function main() {
     outfile: path.join(path.dirname(output), 'nativePreview.cjs'), bundle: true,
     platform: 'node', format: 'cjs', external: ['electron'],
   });
-  await require('esbuild').build({
-    entryPoints: [path.join(desktop, 'src/nativePreview.ts')],
-    outfile: path.join(path.dirname(output), 'nativePreview.js'), bundle: true, platform: 'browser', format: 'esm',
-  });
-  fs.writeFileSync(path.join(path.dirname(output), 'native-preview.html'),
-    fs.readFileSync(path.join(desktop, 'native-preview.html'), 'utf8').replace('/src/nativePreview.ts', './nativePreview.js'));
+  fs.copyFileSync(path.join(desktop, 'native-preview.html'), path.join(path.dirname(output), 'native-preview.html'));
   if (process.env.WUU_ACTIVITY_PREVIEW_BUILD_ONLY === '1') return;
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-activity-preview-'));
   try {
