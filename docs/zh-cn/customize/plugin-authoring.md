@@ -235,6 +235,8 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 
 `initialize` 只声明契约。Lifecycle v2 在全部声明绑定后增加独立的 `prepare` 请求。请将持久状态的读取和验证从 `initialize` 移到 `prepare`，使用配套 SDK 重新构建；手写适配器需返回 `lifecycle_version: 2`。旧生命周期适配器会在提交前被拒绝。provider 先于消费者准备；准备阶段只能调用已声明且标记 `preparation: true` 的方法，嵌套调用也遵守此约束。该标记承诺不进行持久化写入或产生外部效果；省略时仅可在激活后调用。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
 
+准备阶段可以验证持久状态，但旧代在激活前仍可能修改它。不要直接以准备时的快照作为激活写入的依据：应重新读取并验证当前状态，或按提供者实际的交接契约验证版本。丢弃候选不得写入持久状态或取消运行中旧代的工作。这不要求所有后端都使用 compare-and-swap，单纯重读也不能隔离并发写入者。
+
 请求关闭或连接结束时，`lifecycle.signal` 会中止。激活后启动的后台工作应
 使用此信号，并在 shutdown 中停止定时器。清理仍可使用不绑定执行作用域的
 生命周期 host 保存状态或释放资源，不应依赖已经中止的信号完成清理。
@@ -324,7 +326,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.artifact.import` | 将文件或字节导入为会话产物 |
 | `host.user-question.ask` | 执行期间提出结构化问题 |
 
-大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。
+大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。 返回结果描述最终完成的比较：`swapped: false` 返回当前值，`swapped: true` 返回替换后的值（删除后为 `null`）。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 

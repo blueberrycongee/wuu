@@ -280,7 +280,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if accessErr != nil {
 			return nil, accessErr
 		}
-		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, params)
+		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, ClientInputReceiptsSelected(s.ownerHost), params)
 		if err != nil {
 			return nil, err
 		}
@@ -953,6 +953,8 @@ func (s *pluginHostServices) storageCompareExchange(ctx context.Context, params 
 	}
 	result := pluginhost.StorageCompareExchangeResult{}
 	_, err = s.settingsClient.UpdateState(ctx, s.storageSubject(), scope, func(values map[string]string) error {
+		// A settings conflict discards this attempt and repeats the callback.
+		result = pluginhost.StorageCompareExchangeResult{}
 		current, exists := values[params.Key]
 		matches := params.Expected != nil && exists && current == *params.Expected
 		if params.Expected == nil {
