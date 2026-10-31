@@ -65,7 +65,7 @@ func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.P
 			if !trusted(source) || !trusted(target) {
 				return nil, fmt.Errorf("storage transfer %q requires independently trusted packages", declaration.ID)
 			}
-			if source.SubjectID == target.SubjectID {
+			if source.StorageSubject() == target.StorageSubject() {
 				return nil, fmt.Errorf("storage transfer %q has identical owners", declaration.ID)
 			}
 			matching := false
@@ -80,7 +80,7 @@ func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.P
 			if !matching {
 				return nil, fmt.Errorf("storage transfer %q lacks reciprocal source declaration", declaration.ID)
 			}
-			result = append(result, pluginStorageTransfer{targetID: target.ID, transfer: pluginsettings.StateTransfer{ID: declaration.ID, SourceSubjectID: source.SubjectID, TargetSubjectID: target.SubjectID, KeyPrefix: declaration.KeyPrefix, Scope: pluginsettings.ScopeUser}})
+			result = append(result, pluginStorageTransfer{targetID: target.ID, transfer: pluginsettings.StateTransfer{ID: declaration.ID, SourceSubjectID: source.StorageSubject(), TargetSubjectID: target.StorageSubject(), KeyPrefix: declaration.KeyPrefix, Scope: pluginsettings.ScopeUser}})
 		}
 	}
 	return result, nil

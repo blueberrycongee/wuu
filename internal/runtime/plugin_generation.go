@@ -1659,6 +1659,7 @@ func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Pl
 			return fail(fmt.Errorf("plugin %q changed while its execution package was being snapshotted", item.ID))
 		}
 		copied.AuthorizedDev = item.AuthorizedDev
+		copied.StorageSubjectID = item.StorageSubjectID
 		copied.EffectivePermissions = append([]string(nil), item.EffectivePermissions...)
 		result[i] = copied
 	}

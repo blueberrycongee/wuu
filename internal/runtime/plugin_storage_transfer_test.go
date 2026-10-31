@@ -33,6 +33,20 @@ func TestStorageTransferPlanTrustReciprocityAndScope(t *testing.T) {
 	if plan[0].transfer.SourceSubjectID != source.SubjectID {
 		t.Fatalf("wrong source subject: %+v", plan)
 	}
+	dev := target
+	dev.Official, dev.AuthorizedDev = false, true
+	dev.SubjectID, dev.StorageSubjectID = "plugin:dev:receiver", target.SubjectID
+	devPlan, err := resolveStorageTransfers(cfg, []pluginpkg.Plugin{source, dev}, []pluginpkg.Plugin{dev}, binding)
+	if err != nil || len(devPlan) != 1 || devPlan[0].transfer != plan[0].transfer {
+		t.Fatalf("development override changed an existing transfer: %+v %v", devPlan, err)
+	}
+	home := t.TempDir()
+	if err := pluginsettings.MoveStatePrefix(home, "", plan[0].transfer); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginsettings.MoveStatePrefix(home, "", devPlan[0].transfer); err != nil {
+		t.Fatalf("development activation conflicts with committed ownership: %v", err)
+	}
 	if got, err := resolveStorageTransfers(cfg, []pluginpkg.Plugin{source, target}, []pluginpkg.Plugin{target}, userspace.Binding{}); err != nil || len(got) != 0 {
 		t.Fatalf("cross domain transfer: %+v %v", got, err)
 	}
