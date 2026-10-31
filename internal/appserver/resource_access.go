@@ -472,6 +472,12 @@ func (s *Server) authorizeOutbound(ctx context.Context, value any) (any, func() 
 		}
 		action = "event:" + envelope.Method
 	case Request:
+		if guard, ok := s.authorizeDesktopSessionDelivery(ctx, envelope); ok {
+			if guard() != nil {
+				return nil, nil, false
+			}
+			return value, guard, true
+		}
 		var err error
 		resources, err = notificationResources(envelope.Params)
 		if err != nil {

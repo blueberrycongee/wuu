@@ -360,6 +360,9 @@ func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, creden
 		registrar = registrars[0]
 	}
 	if r.userHost != nil {
+		if trustedLocal {
+			return r.userHost.ServeTrustedLocal(ctx, in, out)
+		}
 		return r.userHost.Serve(ctx, in, out, registrar)
 	}
 	options := []appserver.ServerOption{appserver.WithRuntimeBindings(r.bindings)}

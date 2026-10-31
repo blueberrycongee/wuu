@@ -3,7 +3,8 @@ import type { HostServiceContracts, RuntimeHost, ServiceDescriptor } from "./ind
 export const SESSION_TRANSPORT_SERVICE = "session.transport";
 export const SESSION_TRANSPORT_DESCRIPTOR: ServiceDescriptor = {
   name: SESSION_TRANSPORT_SERVICE, version: "1.0.0",
-  methods: [{ name: "dispatch", input_schema: "session.transport.dispatch.input.v1", output_schema: "session.transport.dispatch.output.v1" }],
+  methods: [{ name: "dispatch", input_schema: "session.transport.dispatch.input.v1", output_schema: "session.transport.dispatch.output.v1" },
+    { name: "list-targets", input_schema: "session.transport.targets.input.v1", output_schema: "session.transport.targets.output.v1" }],
 };
 
 /** Execution routing is independent of storage and presentation. The latter two
@@ -137,4 +138,11 @@ export function remoteSessionTransport(
       }
     },
   };
+}
+
+/** Discovery is filtered by each registered receiver policy; it grants no control. */
+export interface RegisteredSessionTargetsV1 {
+  version: 1;
+  targets: { locator: SessionLocatorV1; title?: string }[];
+  unavailable: { execution_host?: string; reason: string }[];
 }

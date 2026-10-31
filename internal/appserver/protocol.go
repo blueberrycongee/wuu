@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"time"
 
@@ -305,6 +306,7 @@ type UserHostIsolationSummary struct {
 }
 
 type InitializeResult struct {
+	SessionFederation   *pluginhost.SessionLocatorV1               `json:"session_federation,omitempty"`
 	UserHostIsolation   *UserHostIsolationSummary                  `json:"user_host_isolation,omitempty"`
 	UserSpaceID         string                                     `json:"user_space_id,omitempty"`
 	ProductDomain       string                                     `json:"product_domain,omitempty"`

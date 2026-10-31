@@ -1,6 +1,6 @@
 import type { AppServerResponse, RuntimeContext, ServerEvent } from "../shared/protocol";
 import type { TrustedTransportPeer, TrustedTransportPrincipal } from "../../../packages/protocol/src/trusted-transport";
-import type { AppServerClientPool, OwnedAppServerOperation } from "./appServerClients";
+import type { AppServerClientPool, BoundAppServerRequest, OwnedAppServerOperation } from "./appServerClients";
 
 export type TransportPrincipal = TrustedTransportPrincipal;
 export type TrustedRemotePeer = TrustedTransportPeer;
@@ -43,6 +43,15 @@ export async function requestTrustedRemote(
   const call = typeof session === "string" && session
     ? pool.bindSessionRequest(context, session, { localOnly: true })
     : pool.bindContextRequest(context, { localOnly: true });
+  return requestTrustedRemoteOnConnection(pool, call, peer, method, params, reply);
+}
+
+/** Reuse an already captured receiver generation without resolving a new core. */
+export async function requestTrustedRemoteOnConnection(
+  pool: AppServerClientPool, call: BoundAppServerRequest, peer: TrustedRemotePeer,
+  method: string, params: unknown, reply?: (response: ScopedRemoteResponse) => void,
+  own?: (release: () => Promise<void>, forget: () => void) => void,
+): Promise<ScopedRemoteResponse> {
   let operation: OwnedAppServerOperation<Frame>;
   const ownership:ReceiptOwnership={release:async()=>{await operation.release();},forget:()=>{queueMicrotask(()=>operation.forget());}};
   const unwrap = (frame: Frame): ScopedRemoteResponse => {
@@ -55,7 +64,8 @@ export async function requestTrustedRemote(
     if (response.error) return;
     reply?.(unwrap(response.result as Frame));
   });
-  try { return unwrap(await operation.result); } catch(error) { operation.forget(); throw error; }
+  own?.(() => ownership.release(), () => operation.forget());
+  try { return unwrap(await operation.result); } catch(error) { if (!own) operation.forget(); throw error; }
 }
 
 /** Capture the emitting process now, before any async delivery queue yields. */

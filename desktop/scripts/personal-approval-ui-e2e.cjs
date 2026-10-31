@@ -128,6 +128,29 @@ async function capture(name) {
   await open();await page.locator('[data-review-open-settings]').click();await wait('[data-review-variant="settings"]');await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();await capture('settings-manual-default');
   const toggle=page.locator('[data-personal-action-review] [role="switch"]');assert.equal(await toggle.getAttribute('aria-checked'),'false');await toggle.click();await page.waitForFunction(()=>document.querySelector('[data-personal-action-review] [role="switch"]')?.getAttribute('aria-checked')==='true');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.settings').length),1);await capture('settings-opted-in');report.cases.push('AutoReview defaults off; explicit version-bound opt-in saves once without changing Coding');
+  for (const [name,scenario,extra,viewport] of [
+    ['existing-session-review-wide','review',{}, {width:1100,height:950}],
+    ['existing-session-review-narrow','review',{theme:'dark',font:'20'}, {width:430,height:1100}],
+    ['existing-session-unavailable','unavailable',{}, {width:1100,height:950}],
+  ]) {
+    await open('unavailable',{existingSession:scenario,...extra},viewport);
+    const trigger=page.locator('[data-action="toggle-personal-panel"]');
+    if(await trigger.getAttribute('aria-expanded')==='false')await trigger.click();
+    await page.locator('[data-task-id="dinner"]').click();await wait('[data-task-detail="dinner"]');
+    const detail=page.locator('[data-task-detail="dinner"]');
+    assert((await detail.textContent()).includes('registered-coding-host-with-a-long-stable-identity'));
+    assert((await detail.textContent()).includes('existing-user-session-2f629e5c'));
+    if(scenario==='review') {
+      assert((await detail.textContent()).includes('Which branch should I use'));
+      assert.equal(await detail.getAttribute('data-task-state'),'awaiting_review');
+      assert.equal(await detail.locator('[data-worker-result]').count(),1);
+    } else assert((await detail.textContent()).includes('no replacement was created'));
+    await capture(name);
+    await page.locator('[data-action="close-detail"]').click();
+    await page.locator('[data-task-id="dinner"]').click();await wait('[data-task-detail="dinner"]');
+    assert((await page.locator('[data-task-detail="dinner"]').textContent()).includes('existing-user-session-2f629e5c'));
+    report.cases.push(`${name}: exact target, truthful worker/question or unavailable state, reopen preserves target`);
+  }
   assert.deepEqual(report.errors,[]);report.status='passed';
 })().catch(async error=>{
   report.status='failed';report.error=String(error.stack||error);process.exitCode=1;

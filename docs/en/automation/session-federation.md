@@ -103,6 +103,60 @@ descriptor (defaulting to its host ID), not a client-selected store or migration
 instruction. `display_host` is presentation metadata. A host-qualified session
 identity is the pair `(execution_host, session_id)`, never just `session_id`.
 
+## Personal tasks in an existing session
+
+The host grant gateway advertises `host_features: ["session-route.v1"]` from `executionGrants(host).describe()`. An absent feature means this routing operation is unavailable on an older host; ordinary Personal tasks remain supported and no replacement worker is created.
+
+Personal's `list_sessions` tool asks the selected transport for available registered
+sessions and unavailable hosts. Discovery is not a control grant. Select the exact
+host-qualified session when names are ambiguous. `create_task` accepts an
+`existing_session` locator; `resume_task` and `update_task` retain that target and
+start a new queued request. They do not steer an unrelated active turn, fork the
+session, or create a replacement when its host disappears.
+
+The source grant remains anchored to Personal's own controller conversation.
+Its selected task authority reports the existing locator and permitted operations;
+the host binds those facts into the grant digest and exact `session-route`
+resource. `executionGrants(host).route(reference, request)` permits only that
+run's send, inspect, and exact cancel. A locator or prompt claiming approval is
+not authority. The receiver separately authenticates the caller and applies its
+resource policy and execution ceiling. Neither session ownership nor parentage
+changes. Provider/model configuration is not part of this operation.
+
+The desktop Personal profile selects `wuu.desktop-session-transport`. It uses
+already-registered live receiver connections and their advertised nonsecret
+federation identity, never a newly spawned replacement or a cross-runtime
+`local` alias. Discovery is filtered by receiver resource policy. The bridge
+forwards a nonowner principal with live source validation; it does not forward
+ambient desktop ownership. Unsupported, ambiguous, or unconfigured receivers
+remain unavailable. This first adapter covers registered desktop local-core
+connections; it does not silently upgrade an undelegated remote connection.
+
+This foundation requires an available selected transport and an explicitly
+authorized federation receiver. Registering a desktop connection alone does not
+enable delegation or grant control. An unconfigured or offline target remains
+unavailable; Personal does not enable federation, acquire credentials, or promote
+a paired connection's owner authority. Default owner-approved target enrollment
+is a separate integration, not implied by this API.
+
+Personal stores the target and request identity with its existing task record.
+A lost response is reconciled by inspecting that request, not by creating another
+worker. Cancellation targets only the matching queue/turn, not the entire session.
+A wait timeout or detached display alone does not cancel work. Closing the trusted source desktop pipe or process is different: its receiver peer is revoked, while durable task/request records remain for honest reconciliation. The transport does not silently rebind the run to another desktop connection. Worker terminal
+output returns to Personal as a **worker response**, not independent verification
+of its claims. The matter remains awaiting review, including when the response is a question; detailed history stays in the original session. Late results from
+stopped or superseded runs do not revive the task.
+
+
+The main controller can use `accept_task_result` after reviewing the exact worker
+request and current task revision. It records its assessment and evidence without
+rewriting the raw response or granting further execution permission. Acceptance
+is a controller decision, not independent verification. Feedback notices remain
+tools-disabled; delivery of a notice is not an automatic orchestration turn.
+An expired or revoked source grant reports that authorization is required; it is
+not silently replaced by owner authority. The original target UI remains the
+place to stop work when no valid delegated cleanup grant is available.
+
 ## Retry and recovery
 
 Keep operation IDs stable across transport retries. The receiver writes an
@@ -150,3 +204,9 @@ endpoint, the existing encrypted relay connection, and a synthetic model. It
 checks local defaults, remote creation, narrowed permissions, idempotent retries,
 disconnect/reconnect, final output, exact cancellation, and revocation. It does
 not validate physical-machine networking, installed engines, or GUI rendering.
+
+Existing-target delegation is text-only. The controller goal is labeled separately from the authenticated original user message, when one is bound to the task; routine or controller-origin tasks do not invent a human original. An attached original request leaves a revisable task with an explicit unavailable explanation before any worker send. Files are not copied between hosts and source paths are never converted into receiver-local paths. Handle required files at the target, then revise the task to continue without attachment transfer.
+
+### Registered desktop bridge acceptance
+
+Run `node scripts/registered-session-transport-e2e.mjs` with the repository Go and Node toolchains and installed desktop dependencies. It builds real source/receiver app-server test processes and exercises the actual registered desktop pool, exact existing-session send/replay, terminal result, and receiver policy revocation. A second journey loads the generated Personal plugin in the actual trusted-local UserHost and exercises its task lineage, grant issuance/restoration, existing-target dispatch, worker-result reconciliation, and stable task replay. The receiver policy and model are fixtures; this verifies the configured production path, not default owner-approved enrollment or external account/physical-machine deployment.
