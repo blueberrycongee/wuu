@@ -25,6 +25,8 @@ const startupEntryNs = process.hrtime.bigint();
 // WUU_STARTUP_PREPARE_ONLY=1 prepares modern pinned data without importing the app.
 // WUU_SWITCH_SUBSCRIPTION_TURNS=30000 adds ~2 GiB of unrelated subscription
 // history, two built-in services, and cross-project new-draft regression checks.
+// WUU_SWITCH_ROOT_STRESS=1 measures a new-draft switch with hundreds of
+// migrated sessions and thousands of historical workspace roots.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -65,6 +67,7 @@ const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
+const rootStress = process.env.WUU_SWITCH_ROOT_STRESS === '1';
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
 const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
@@ -206,6 +209,18 @@ for (let index = 0; index < sidebarThreads; index++) {
     ...(startupOnly ? { permission_mode: 'standard' } : {}),
   }, history: [] });
 }
+if (rootStress) {
+  for (let index = 0; index < 522; index++) {
+    const project = projects[index < 467 ? 2 : 0];
+    const archived = index < 21 || (index >= 467 && index < 496);
+    seeds.push({ session: {
+      id: `root-stress-thread-${index}`, title: `Root stress session ${index}`,
+      cwd: project.path, workspace_id: project.id, provider: 'fixture', model: 'fixture',
+      permission_mode: 'standard', created_at: stamp, updated_at: stamp,
+      ...(archived ? { archived_at: stamp } : {}),
+    }, history: [] });
+  }
+}
 if (presentationMode) {
   Object.assign(seeds[0].history.at(-2), { origin: 'host', presentation_kind: 'session_message', related_session_id: 'switch-related', name: 'Related conversation' });
   seeds.push({ session: { ...seeds[0].session, id: 'switch-related', title: 'Related conversation' },
@@ -261,6 +276,8 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   const delayInitialization = measuring && channel === 'wuu:initialize' && initDelayMs > 0;
   try {
     const result = await listener(...args);
+    timing.outcome = 'ok';
+    if (Array.isArray(result?.threads)) timing.resultCount = result.threads.length;
     if (startupProbe && channel === 'wuu:initialize') startupProbe.initialized(result);
     if (subscriptionRead) {
       timing.historyResponseMs = +(performance.now() - start).toFixed(1);
@@ -273,6 +290,9 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
       await archiveGate;
     }
     return result;
+  } catch (error) {
+    timing.outcome = 'error';
+    throw error;
   } finally {
     timing.ms = +(performance.now() - start).toFixed(1);
   }
@@ -286,7 +306,7 @@ const evaluate = async (win, fn, arg) => {
   if (result.error) throw new Error(result.error);
   return result.value;
 };
-async function waitFor(win, fn, arg, timeout = 30000) {
+async function waitFor(win, fn, arg, timeout = rootStress ? 90000 : 30000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
     if (await evaluate(win, fn, arg)) return;
@@ -337,7 +357,7 @@ const results = [];
 const subscriptionResults = [];
 let startup;
 async function checkSubscriptionNavigation(win) {
-  if (!subscriptionTurns) return;
+  if (!subscriptionTurns && !rootStress) return;
   async function newDraft(index, scenario) {
     await showSessionSidebar(win);
     const point = await evaluate(win, async index => {
@@ -358,8 +378,9 @@ async function checkSubscriptionNavigation(win) {
     await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
     await waitFor(win, index => {
       const input = document.querySelector('.composer textarea');
-      const workspace = document.querySelector('.composer-workspace-bar');
-      return workspace?.textContent.includes(`Switch project ${index}`) && input && !input.disabled && !input.readOnly && !input.closest('[inert]') && !document.querySelector('.cached-conversation-pane[data-active="true"]') && document.activeElement === input;
+      const workspace = document.querySelector('.composer-workspace-bar, .composer-workspace-rail');
+      const label = workspace?.querySelector('button[aria-label]')?.getAttribute('aria-label') || workspace?.textContent;
+      return label?.includes(`Switch project ${index}`) && input && !input.disabled && !input.readOnly && !input.closest('[inert]') && !document.querySelector('.cached-conversation-pane[data-active="true"]') && document.activeElement === input;
     }, index);
     win.webContents.insertText('subscription navigation probe');
     await waitFor(win, () => {
@@ -381,6 +402,7 @@ async function checkSubscriptionNavigation(win) {
     await clearDraft(win, 'subscription navigation probe');
   }
   await newDraft(2, 'first-project-visit-new-draft');
+  if (rootStress) return;
   let release;
   subscriptionGate = new Promise(resolve => { release = resolve; });
   await evaluate(win, () => {
@@ -905,7 +927,7 @@ app.on('browser-window-created', (_event, win) => {
   main ||= win; if (win === main) startupProbe?.observeWindow(win);
 
 });
-const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, startupOnly ? 30000 : 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
+const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, startupOnly ? 30000 : rootStress ? 300000 : 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
 const launchStart = performance.now();
 startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); return import(pathToFileURL(mainBundle).href); }).then(async () => {
   while (!main) await delay(25);
@@ -943,6 +965,25 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   while (timings.some(t => t.ms === null)) {
     assert.ok(Date.now() < startupDeadline, 'Startup IPC did not settle');
     await delay(25);
+  }
+  if (rootStress) {
+    const root = path.join(home, 'workspaces');
+    for (let index = 0; index < 3274; index++) {
+      const workspace = path.join(root, `historical-${String(index).padStart(4, '0')}`);
+      fs.mkdirSync(workspace, { recursive: true });
+      if (index < 69) fs.mkdirSync(path.join(workspace, 'sessions'));
+      if (index < 4) fs.mkdirSync(path.join(workspace, 'worktrees'));
+    }
+    await checkSubscriptionNavigation(main);
+    fs.writeFileSync(path.join(output, 'workspace-root-results.json'), JSON.stringify({
+      scope: 'Synthetic migrated sessions and historical workspace roots; Linux/Xvfb; native click to an editable new draft.',
+      sourceCommit: process.env.WUU_SWITCH_SOURCE_COMMIT, historicalWorkspaceRoots: 3274,
+      targetSessionCount: 467, otherSessionCount: 55, archivedSessionCount: 50,
+      coreSha256: createHash('sha256').update(fs.readFileSync(process.env.WUU_DESKTOP_CORE)).digest('hex'),
+      samples: subscriptionResults,
+    }, null, 2));
+    fs.writeFileSync(path.join(output, 'workspace-root-final.png'), (await main.webContents.capturePage()).toPNG());
+    clearTimeout(timeout); app.quit(); return;
   }
   if (presentationMode) {
     const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
