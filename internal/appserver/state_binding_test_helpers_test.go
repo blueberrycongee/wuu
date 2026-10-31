@@ -80,7 +80,7 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 			}
 		}
 	}
-	clients := []pluginhost.Client{access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, consumer, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
+	clients := []pluginhost.Client{runtime.NewClientInputReceiptsConsumer(), access.NewService(access.NativeModule, access.OwnerOnly{}), &embeddedAccessConsumer{}, promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, consumer, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
 	// User-host fixtures may bind their user space after runtime construction.
 	// Select their review ledger through the same declared consumer as production.

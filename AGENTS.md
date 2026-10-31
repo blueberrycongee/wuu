@@ -69,6 +69,8 @@ machine-specific setup in user-level configuration.
   Use conventional commit messages; follow [CONTRIBUTING.md](CONTRIBUTING.md) for
   contribution workflow and the [development guide](docs/en/project/development.md)
   for build and test commands.
+- Use [change-validation](.agents/skills/change-validation/SKILL.md) to choose
+  proportionate local checks and CI coverage; do not turn small edits into release gates.
 - Run checks appropriate to the change before declaring it complete. Distinguish
   tests and builds from rendered UI, simulator, real-device, and production checks.
 - Prefer end-to-end tests as the primary testing mechanism. Use them to verify
