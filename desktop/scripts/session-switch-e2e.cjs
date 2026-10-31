@@ -31,6 +31,7 @@ const startupEntryNs = process.hrtime.bigint();
 // against the same migrated-session and historical-root fixture.
 // WUU_SWITCH_MISSING_WORKSPACE=1 removes a synthetic destination directory
 // after its history appears, then measures recovery from a native row click.
+// WUU_STARTUP_MISSING_WORKSPACE=1 starts with a missing selected workspace.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -74,6 +75,7 @@ const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
 const rootThreadStress = process.env.WUU_SWITCH_ROOT_THREAD_STRESS === '1';
 const rootStress = process.env.WUU_SWITCH_ROOT_STRESS === '1' || rootThreadStress;
 const missingWorkspace = process.env.WUU_SWITCH_MISSING_WORKSPACE === '1';
+const startupMissingWorkspace = process.env.WUU_STARTUP_MISSING_WORKSPACE === '1';
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
 const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
@@ -81,6 +83,7 @@ const presentationMode = process.env.WUU_SWITCH_PRESENTATION === '1';
 if (presentationMode) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sameWorkspace, false, 'Presentation acceptance is a separate product workload');
 if (sameWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sidebarThreads > 0, false, 'Same-workspace switching is a separate diagnostic workload');
 if (missingWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || rootStress || subscriptionTurns > 0 || sameWorkspace, false, 'Missing-workspace recovery is a separate workload');
+if (startupMissingWorkspace) assert.equal(startupOnly || missingWorkspace || pacedStream || streamOnly || rootStress || subscriptionTurns > 0 || sameWorkspace, false, 'Unavailable-workspace startup is a separate workload');
 if (streamOnly) {
   assert.ok(pacedStream, 'Stream-only mode requires paced streaming');
   assert.equal(subscriptionTurns, 0, 'Stream-only mode excludes subscription diagnostics');
@@ -264,6 +267,7 @@ if (prepareOnly) {
   console.log('PREPARED_STARTUP', fixture);
   process.exit(0);
 }
+if (startupMissingWorkspace) fs.renameSync(projects[selectedIndex].path, `${projects[selectedIndex].path}-unavailable`);
 startupProbe?.mark('fixture-ready');
 const timings = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
@@ -994,7 +998,7 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     await waitFor(main, () => location.protocol === 'file:' && document.readyState !== 'loading');
     await startupProbe.verifyDisplay(main, evaluate);
   }
-  await waitFor(main, () => !!document.querySelector('.composer textarea'));
+  await waitFor(main, () => !!document.querySelector('.composer textarea'), undefined, startupMissingWorkspace ? 12000 : undefined);
   startupProbe?.mark('composer-dom-observed');
   if (!startupOnly) { main.show(); main.focus(); }
   await evaluate(main, enabled => { window.__switchTrace = enabled; }, traceEnabled);
@@ -1006,6 +1010,26 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
   console.log('FIXTURE', fixture);
+  if (startupMissingWorkspace) {
+    await waitFor(main, () => document.querySelector('[role="alert"]')?.textContent.includes('project-0'));
+    const initial = await evaluate(main, async () => ({
+      notice: document.querySelector('[role="alert"]')?.textContent,
+      workspace: await window.wuu.listProjects(),
+      editable: !document.querySelector('.composer textarea').disabled,
+    }));
+    assert.equal(initial.workspace.active_context.kind, 'no_project');
+    assert.equal(initial.workspace.projects.find(project => project.id === 'project-0').missing, true);
+    assert.equal(initial.editable, true);
+    fs.writeFileSync(path.join(output, 'startup-missing-workspace.png'), (await main.webContents.capturePage()).toPNG());
+    await showSessionSidebar(main);
+    await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) group.querySelector('button[aria-expanded="false"]')?.click(); });
+    await switchTo(main, 2, 'startup-unavailable-switch');
+    const after = await evaluate(main, () => window.wuu.listProjects());
+    assert.equal(after.active_project_id, 'project-2');
+    assert.equal(after.projects.find(project => project.id === 'project-0').missing, true);
+    fs.writeFileSync(path.join(output, 'startup-missing-workspace-results.json'), JSON.stringify({ initial, after, switch: results.at(-1) }, null, 2));
+    clearTimeout(timeout); app.quit(); return;
+  }
   // A fresh profile may land in a draft. Select the source before measuring switches.
   if (!startupOnly) await switchTo(main, selectedIndex, 'setup');
   await waitFor(main, index => !!document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-${index}"]`), selectedIndex);

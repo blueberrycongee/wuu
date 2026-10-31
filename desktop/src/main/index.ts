@@ -1784,6 +1784,10 @@ app.whenReady().then(async () => {
     }
     return result;
   });
+  ipcMain.handle("wuu:project-recover-unavailable", (event) => {
+    if (windowRegistry.runtimeContextForWindow(event.sender.id)) return undefined;
+    return projectManager.recoverUnavailableProject();
+  });
   ipcMain.handle(
     "wuu:project-select",
     (_event, projectIDToSelect: string) => {

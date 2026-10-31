@@ -2352,6 +2352,7 @@ export const enUS = {
   "runtime.configureCredentials": "Configure model credentials in Settings",
   "runtime.historyRestoreSkipped": "Opened a new conversation because the previous conversation could not be restored: {error}",
   "runtime.workspaceUnavailable": "The current workspace directory is unavailable. Restore or relocate the workspace.",
+  "runtime.startupWorkspaceFallback": "Workspace “{name}” is unavailable. Switched to Conversations. Restore or relocate the folder.",
   "greeting.workspaceFallback": "this workspace",
   "greeting.workspace.morning": "Good morning. What would you like to tackle first in {workspace}?",
   "greeting.wuu.morning": "Good morning. What would you like to tackle first?",

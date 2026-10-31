@@ -2349,6 +2349,7 @@ export const zhCN = {
   "runtime.configureCredentials": "请在设置中配置模型凭据",
   "runtime.historyRestoreSkipped": "上次会话无法恢复，已打开新对话：{error}",
   "runtime.workspaceUnavailable": "当前工作区目录不可用，请恢复或重新定位该工作区。",
+  "runtime.startupWorkspaceFallback": "工作区“{name}”不可用，已切换至“对话”。请恢复目录或重新定位。",
   "greeting.workspaceFallback": "这个工作区",
   "greeting.workspace.morning": "早上好，今天想在 {workspace} 里先搞定什么？",
   "greeting.wuu.morning": "早上好，今天想先搞定什么？",
