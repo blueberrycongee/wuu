@@ -69,6 +69,8 @@ machine-specific setup in user-level configuration.
   Use conventional commit messages; follow [CONTRIBUTING.md](CONTRIBUTING.md) for
   contribution workflow and the [development guide](docs/en/project/development.md)
   for build and test commands.
+- Use [change-validation](.agents/skills/change-validation/SKILL.md) to choose
+  proportionate local checks and CI coverage; do not turn small edits into release gates.
 - Run checks appropriate to the change before declaring it complete. Distinguish
   tests and builds from rendered UI, simulator, real-device, and production checks.
 - Prefer end-to-end tests as the primary testing mechanism. Use them to verify
@@ -196,6 +198,11 @@ machine-specific setup in user-level configuration.
 - Fix domain-specific failures in the plugin and shared lifecycle or contract
   failures in the host. Isolate temporary compatibility workarounds and document
   their removal conditions.
+- For plugin design, implementation, debugging, or review, consult
+  [wuu-plugin-development](.agents/skills/wuu-plugin-development/SKILL.md) and its
+  linked [plugin development practices](docs/en/customize/plugin-development-practices.md)
+  when they are accessible in the current workspace.
+  The practices are advisory; existing public API and protocol requirements still apply.
 - Treat reference implementations as prior art, not specifications. Verify their
   assumptions, invariants, costs, and failure conditions before borrowing a design.
   Preserve licenses and attribution; do not expose private reference paths or

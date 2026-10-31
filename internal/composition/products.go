@@ -56,7 +56,7 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 	// Personal is an explicitly selected product, not an identity-triggered
 	// prompt override. Ordinary bindings and patches can replace its policy.
 	bundles["wuu.personal"] = Bundle{Patches: []Patch{{
-		Modules:  map[string]bool{"personal": true, "personal-calendar": true, "automation": true, "wuu.personal-actions-consumer": true, "wuu.personal-client": true, "wuu.personal-effects": true, "wuu.personal-accounts": true, "wuu.personal-account-client": true, "wuu.resource-access": true, "wuu.resource-policy.default": true, "wuu.execution-access": true, "wuu.execution-authorization.default": true, "wuu.prompt.default": false},
+		Modules:  map[string]bool{"wuu.client-input-receipts": true, "personal": true, "personal-calendar": true, "automation": true, "wuu.personal-actions-consumer": true, "wuu.personal-client": true, "wuu.personal-effects": true, "wuu.personal-accounts": true, "wuu.personal-account-client": true, "wuu.resource-access": true, "wuu.resource-policy.default": true, "wuu.execution-access": true, "wuu.execution-authorization.default": true, "wuu.prompt.default": false},
 		Services: []Binding{{Service: "agent.prompt", Major: 1, Provider: "personal"}},
 	}}}
 	profiles["personal"] = Profile{Bundles: []string{"wuu.base", "wuu.desktop", "wuu.personal"}}

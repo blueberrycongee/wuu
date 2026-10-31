@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node ../scripts/build-bundled-plugins.mjs",
     "build:check": "node ../scripts/build-bundled-plugins.mjs --check",
-    "test": "node --test automation/test/schedule.test.mjs automation/test/lifecycle.test.mjs automation/test/user-routines.test.mjs automation-client/test/selected-provider.test.mjs personal/src/personal-records.test.mjs personal/src/personal-runtime.test.mjs personal/src/connectors.test.mjs dream/src/personal-dream.test.mjs personal-calendar/test/*.test.mjs",
+    "test": "node --test goal/test/lifecycle.test.mjs automation/test/schedule.test.mjs automation/test/lifecycle.test.mjs automation/test/user-routines.test.mjs automation-client/test/selected-provider.test.mjs personal/src/personal-records.test.mjs personal/src/personal-runtime.test.mjs personal/src/connectors.test.mjs dream/src/personal-dream.test.mjs personal-calendar/test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

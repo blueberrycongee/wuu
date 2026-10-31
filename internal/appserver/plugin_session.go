@@ -469,8 +469,8 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
-	if s.clientInputReceiptsEnabled() {
-		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+	if s.clientInputReceiptsEnabled(binding) {
+		if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return result, false, err
 		}
 		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID)); err != nil {
@@ -482,7 +482,7 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 				return result, false, err
 			}
 			if found && (params.TurnID == "" || params.TurnID == row.Receipt.HostTurnID) {
-				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+				if err := s.validateClientInputSpace(binding, row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 					return result, false, err
 				}
 				result.Receipt = &row.Receipt
@@ -500,7 +500,7 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 			}
 			for _, row := range rows {
 				if row.Receipt.PluginID == pluginID && row.Receipt.ReceiptState == "accepted" && row.Receipt.ExecutionState != "cancelled" {
-					if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+					if err := s.validateClientInputSpace(binding, row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 						return result, false, err
 					}
 					view, err := acceptedInputView(row)
@@ -818,8 +818,8 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 		}
 	}
 	if queueID != "" {
-		if s.clientInputReceiptsEnabled() {
-			if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+		if s.clientInputReceiptsEnabled(binding) {
+			if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 				return pluginhost.SessionCancelResult{}, err
 			}
 			rows, err := binding.Sessions.ListUnsettledClientInputs(s.clientInputScope(sessionID, pluginID))
@@ -833,7 +833,7 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 				if row.Receipt.ReceiptState != "accepted" || row.Receipt.ExecutionState == "cancelled" {
 					return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID}, nil
 				}
-				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+				if err := s.validateClientInputSpace(binding, row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 					return pluginhost.SessionCancelResult{}, err
 				}
 				if _, err := binding.Sessions.ChangeClientInput(row, "cancelled", "", nil, nil, nil); err != nil {
@@ -1008,9 +1008,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
-	durableClient := s.clientInputReceiptsEnabled() && params.UserInputRequestID != "" && th.PersistHistory && params.IfRunning == pluginhost.SessionIfRunningQueue
+	durableClient := s.clientInputReceiptsEnabled(binding) && params.UserInputRequestID != "" && th.PersistHistory && params.IfRunning == pluginhost.SessionIfRunningQueue
 	if durableClient {
-		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+		if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
 		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID)); err != nil {
