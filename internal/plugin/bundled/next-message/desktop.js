@@ -239,6 +239,17 @@ export async function activate(api) {
     "nextMessage.save": "保存更改", "nextMessage.saved": "已保存",
   } });
   api.registerStyle({ id: "next-message-settings", css: `
+    .plugin-next-message .plugin-ui-field:has(> select) { position:relative; }
+    .plugin-next-message .plugin-ui-field > select { appearance:none; padding-inline-end:calc(var(--control-padding-inline) + var(--icon-size) + var(--space-2)); }
+    .plugin-next-message .plugin-ui-field:has(> select)::after { content:""; grid-column:2; grid-row:1; align-self:center; justify-self:end; margin-inline-end:var(--control-padding-inline); width:0.4em; height:0.4em; border-right:1.5px solid var(--ink-soft); border-bottom:1.5px solid var(--ink-soft); transform:translateY(-0.15em) rotate(45deg); pointer-events:none; }
+    @container settings-page (max-width:32em) {
+      .settings-page .plugin-next-message .plugin-ui-field > select.plugin-ui-input { grid-column:1; grid-row:2; }
+      .plugin-next-message .plugin-ui-field:has(> select)::after { grid-column:1; grid-row:2; }
+    }
+    @media (forced-colors:active) {
+      .plugin-next-message .plugin-ui-field > select { appearance:auto; padding-inline-end:var(--control-padding-inline); }
+      .plugin-next-message .plugin-ui-field:has(> select)::after { display:none; }
+    }
     .plugin-next-message .plugin-next-message-actions { justify-content:flex-end; margin-top:var(--space-1); }
     .plugin-next-message .plugin-next-message-model-help,
     .plugin-next-message .plugin-next-message-data-summary { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.5; }

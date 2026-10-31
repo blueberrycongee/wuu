@@ -36,8 +36,8 @@ export async function activate(api) {
     .plugin-memory-overview li { color:var(--ink); font-size:var(--font-ui); line-height:1.55; }
     .plugin-memory-overview li::marker { color:var(--ink-muted); }
     .plugin-memory-overview code { font-family:var(--wuu-font-family-mono, ui-monospace, monospace); font-size:0.92em; }
-    .plugin-memory-overview-actions { justify-content:flex-start; }
-    .plugin-memory-overview-actions .plugin-ui-button { margin-inline-start:calc(var(--control-padding-inline) * -1); }
+    .plugin-memory-section-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-2); }
+    .plugin-memory-section-heading .plugin-ui-button { margin-inline-end:calc(var(--control-padding-inline) * -1); }
 
     .plugin-memory-skeleton { display:flex; flex-direction:column; gap:var(--space-3); padding:var(--space-1) 0; --pulse-opacity:0.55; animation:wuu-pulse 2.4s ease-in-out infinite; }
     .plugin-memory-skeleton-bar { height:10px; border-radius:var(--radius-xs); background:var(--surface-2); }
@@ -55,10 +55,13 @@ export async function activate(api) {
     .plugin-memory-changes summary { cursor:pointer; }
     .plugin-memory-changes ul { margin:var(--space-1) 0 0; padding-left:1.25em; }
     .plugin-memory-changes code { font-size:var(--font-sm); }
-    .plugin-memory-composer { flex-direction:column; align-items:stretch; gap:var(--space-2); }
+    .plugin-memory-composer { flex-direction:column; align-items:stretch; gap:var(--space-2); padding:var(--space-3); border:1px solid var(--field-border); border-radius:var(--radius-sm); background:var(--field-bg); }
+    html[data-focus-modality="keyboard"] .plugin-memory-composer:has(textarea:focus-visible) { outline:2px solid var(--focus-ring); outline-offset:2px; }
     .plugin-memory-composer .plugin-ui-field { flex:1; min-width:0; }
     .plugin-memory-composer .plugin-ui-field-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
-    .plugin-memory-composer textarea { min-height:96px; max-height:200px; }
+    .plugin-memory-composer textarea { min-height:96px; max-height:200px; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; outline:none; }
+    html[data-focus-modality="keyboard"] .plugin-memory-composer textarea:focus-visible { outline:none; }
+    .plugin-memory-composer .plugin-ui-textarea:not(:disabled):hover { background:transparent; }
     .plugin-memory-composer .plugin-ui-button { flex:none; align-self:flex-end; }
 
     .plugin-memory-files { display:flex; flex-direction:column; padding:0 var(--card-padding); }
@@ -181,11 +184,12 @@ export async function activate(api) {
     if (raw.index_raw) files.push({ name: "MEMORY.md", content: raw.index_raw });
     files.push(...raw.files);
     return h(Page, { className: "plugin-memory" }, h(Stack, { gap: "large" },
-      h(Section, { title: tr("memory.overview") },
-        busy && !overview ? h(OverviewSkeleton) : h(OverviewProse, { text: overview || tr("memory.empty") }),
-        h(Row, { className: "plugin-memory-overview-actions" },
+      h(Section, null,
+        h("header", { className: "plugin-ui-section-header plugin-memory-section-heading" },
+          h("h2", null, tr("memory.overview")),
           h(Button, { variant: "ghost", disabled: busy, onClick: () => { void refreshRaw(); void refreshOverview(); } },
-            tr(busy ? "memory.refreshing" : "memory.refresh")))),
+            tr(busy ? "memory.refreshing" : "memory.refresh"))),
+        busy && !overview ? h(OverviewSkeleton) : h(OverviewProse, { text: overview || tr("memory.empty") })),
       h(Section, { title: tr("memory.chat") }, h(Stack, null,
         messages.length || chatBusy ? h("div", { className: "plugin-memory-chat-log" },
           messages.map((entry, index) => h("div", { key: index, className: `plugin-memory-chat-entry ${entry.role}` },

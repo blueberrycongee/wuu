@@ -32,11 +32,11 @@ export async function activate(api) {
     .plugin-subagent-aliases { min-width:0; }
     .plugin-subagent-alias { min-width:0; border-bottom:1px solid var(--hairline-soft); }
     .plugin-subagent-alias:last-child { border-bottom:0; }
-    .plugin-subagent-fields { display:flex; min-width:0; flex-direction:column; }
+    .plugin-subagent-fields { display:flex; min-width:0; flex-direction:column; gap:0; }
     .plugin-subagent-fields .plugin-ui-field-label { font-weight:var(--weight-regular); }
-    .plugin-subagent-options { margin-top:var(--space-3); color:var(--ink-soft); font-size:var(--font-sm); }
-    .plugin-subagent-options summary { cursor:pointer; margin-bottom:var(--space-3); }
-    .plugin-subagent-alias-footer { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:var(--space-3); padding-bottom:var(--space-3); }
+    .plugin-subagent-options { margin:0; color:var(--ink-soft); font-size:var(--font-sm); }
+    .plugin-subagent-options summary { cursor:pointer; min-height:var(--control-field-height); display:flex; align-items:center; }
+    .plugin-subagent-alias-footer { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:var(--space-1) var(--space-3); padding:var(--space-2) 0; }
     .plugin-subagent-options[open] { flex-basis:100%; min-width:0; }
     .plugin-subagent-options[open] + .plugin-ui-button { margin-left:auto; }
     .plugin-subagent-actions { justify-content:flex-end; align-items:center; gap:var(--space-2); }
@@ -156,7 +156,7 @@ export async function activate(api) {
             h("div", { className: "plugin-subagent-fields" }, field(row, "name", "research"), field(row, "provider"), field(row, "model")),
             h("div", { className: "plugin-subagent-alias-footer" },
               h("details", { className: "plugin-subagent-options" }, h("summary", null, tr("subagent.aliases.advanced")),
-                h(Stack, null, field(row, "effort"), field(row, "variant"))),
+                h(Stack, { className: "plugin-subagent-fields" }, field(row, "effort"), field(row, "variant"))),
               h(Button, { variant: "ghost", disabled: busy, onClick: () => { setRows((current) => current.filter((item) => item.id !== row.id)); setSaved(false); } }, tr("subagent.aliases.remove"))))))
           : h(EmptyState, { title: tr("subagent.aliases.empty") }),
         h(Row, { className: "plugin-subagent-actions" },
