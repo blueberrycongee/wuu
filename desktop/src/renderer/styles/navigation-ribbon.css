@@ -4,11 +4,7 @@
 :root {
   /* One clean reading sheet contains navigation, conversation and workspace. */
   --workbench-canvas-bg: var(--paper);
-  --workbench-frame-shadow: var(
-    --wuu-elevation-panel,
-    0 3px 8px -3px color-mix(in srgb, var(--shadow-color-medium) 55%, transparent),
-    0 8px 20px -10px var(--shadow-color-medium)
-  );
+  --workbench-frame-shadow: var(--shadow-card);
   --web-workspace-address-height: max(var(--control-size-toolbar), calc(var(--font-ui) * 1.4 + var(--space-1) * 2));
   /* The browser and native ribbon meet at one header boundary. Reserve the
      mascot's compact-rail footprint here too, so the page cannot start above
@@ -323,9 +319,7 @@
   border-radius: 22%;
   /* Give the opaque mark a readable edge and a little lift off the rail. */
   border: 1px solid var(--hairline);
-  box-shadow:
-    0 1px 2px var(--shadow-color-medium),
-    0 5px 12px -6px var(--shadow-color-strong);
+  box-shadow: var(--shadow-soft);
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar {
