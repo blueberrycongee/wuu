@@ -6,36 +6,53 @@ The [release workflow](../../../.github/workflows/release.yml) publishes the mac
 
 `VERSION` is the product version source. Prepare a release in a clean checkout with the required [development tools](development.md):
 
-1. Add the user-visible changes to `CHANGELOG.md` under `[Unreleased]`.
-2. Run `make release-prepare` for the next UTC CalVer, or set an explicit version with `make release-prepare RELEASE_VERSION=2026.9.3`. Review the generated changes to `VERSION`, the desktop manifest and lockfile, native iOS/Android metadata, and the dated changelog section. Then condense the dated section into the published release-note format below.
+1. Choose the UTC CalVer (`node scripts/release-version.mjs next` prints today's available version). Collect changes from the previous release tag to the intended release source commit, then write and review `docs/releases/<version>.md` using the format below. Ordinary PRs describe changes and migration requirements in their PR descriptions; they do not edit release-note files.
+2. Run `make release-prepare RELEASE_VERSION=<version>` with that same version. The command requires a nonempty notes file before updating `VERSION`, the desktop manifest and lockfile, and native iOS/Android metadata. Review these changes together with the notes. Omitting `RELEASE_VERSION` selects the next UTC CalVer.
 3. Run `make ci release-check` on macOS and complete the relevant app-level acceptance. Commit the reviewed release change and land it on `main` through the normal review process.
 4. From that clean release checkout, run `make tag-release`. It validates the version and release notes, creates an annotated tag, and prints the exact push command. Push that tag when publication is authorized.
 
 ### Release-note format
 
-The dated changelog section becomes the GitHub Release notes verbatim, so keep it short. `[Unreleased]` can stay detailed while work lands; `release-prepare` moves it into the dated section, where it is replaced with:
+Each `docs/releases/<version>.md` contains the release body without a version heading. The `notes` command adds `# wuu v<version>`; the release workflow appends installation and signing information. Keep the body short:
 
 ```markdown
-## [2026.9.29] - 2026-09-29
-
-### Contributors
+## Contributors
 
 @maintainer, @contributor
 
-### Highlights
+## Highlights
 
 - One line per user-visible theme, at most about six bullets.
 ```
 
-List the GitHub logins of authors of PRs merged since the previous tag (`gh pr list --state merged --search "merged:>=<previous tag date>"`), maintainer first. Group changes by user-visible theme instead of listing commits, name the most important fixes in one bullet, and omit test, CI, and refactor-only work. Leave out features hidden from production builds.
+Add a separate `## Compatibility and migration` section whenever users or extension authors must act. Identify removed contracts, replacements, affected versions, migration steps, and recovery limits; do not omit these to meet the highlights limit.
 
-`make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching changelog section. A successful local build does not bypass these checks.
+Collect candidate material using explicit Git refs, not merge dates. For example, replace the base tag below with the previous release for the intended channel:
+
+```bash
+git fetch origin main --tags
+release_base=v2026.10.19
+release_version="$(node scripts/release-version.mjs next)"
+release_source="$(git rev-parse HEAD)"
+git log --first-parent --format='%h %s' "${release_base}..${release_source}"
+gh api 'repos/{owner}/{repo}/releases/generate-notes' \
+  -f tag_name="v${release_version}" \
+  -f previous_tag_name="$release_base" \
+  -f target_commitish="$release_source" \
+  --jq .body > /tmp/wuu-release-candidates.md
+```
+
+The API generates candidate text without publishing a release. Review the included PR descriptions and direct commits, then write the final notes file. List contributing GitHub logins, maintainer first. Group changes by user-visible theme, name the important fixes, and omit test, CI, refactor-only work and features hidden from production builds. If the release source changes before tagging, review the additional commits and update the notes.
+
+`CHANGELOG.md` is frozen. Its existing `[Unreleased]` entries remain available as transition material for the next release; they are not proof that a feature ships. Historical dated sections stay intact. New releases use only their per-version notes file. The current `2026.10.19` notes have been copied to the new location so current-version checks continue to work; older tags retain their original scripts and changelog.
+
+Run `node scripts/release-version.mjs notes <version>` to inspect the exact version heading and reviewed body consumed by publication. `make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching notes file. A successful local build does not bypass these checks.
 
 ## Product versions and compatibility
 
 Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
 
-Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. Preparing a final release from its matching prerelease carries forward the candidate's notes together with new unreleased notes.
+Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. When promoting a prerelease, copy its reviewed notes to the final version's file and incorporate changes since the candidate before running `release-prepare`. The command never creates, merges, or rewrites notes automatically; it requires the exact target version's file.
 
 CalVer describes release recency, not Extension API, service, remote protocol, or storage compatibility. Review those contracts and migration requirements separately. Calendar tags are also not Go module major versions: the supported source installation command for the CLI is `make install` from a checkout, not a release-tagged `go install ...@latest` promise.
 

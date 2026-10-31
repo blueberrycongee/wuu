@@ -1,10 +1,12 @@
 # Changelog
 
-This file starts the maintained release record. Earlier GitHub Releases may not
-have complete change notes.
+This file is a frozen historical record. Ordinary PRs describe changes in their
+PR descriptions; maintainers prepare per-version notes in `docs/releases/` only
+when releasing. See [the release guide](docs/en/project/release.md).
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versioning rules are documented in [the release guide](docs/en/project/release.md).
+The existing `[Unreleased]` entries below are retained as transition material for
+the next release, not as a list of verified shipped features. Do not append new
+entries. Earlier GitHub Releases may not have complete change notes.
 
 ## [Unreleased]
 
