@@ -182,6 +182,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Avoid a spurious inference-journal cleanup failure when a turn is canceled before its first durable model operation is prepared.
 - Bound macOS Computer Use child enumeration and expose incomplete branches when native reads fail or traversal limits are reached. Partial observations no longer report confirmed removals or establish unique-label activation targets.
 - Keep Personal replies in a compact bottom sheet with reversible opening and closing motion, a plain close action outside the scrolling content, and focus restoration after dismissal. Preserve reply drafts and honor reduced-motion preferences.
 - Show Personal desktop send failures consistently as a red outlined retry icon to the right of the message bubble in both main conversations and replies, with reserved space to prevent clipping.
