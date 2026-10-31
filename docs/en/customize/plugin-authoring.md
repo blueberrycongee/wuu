@@ -969,3 +969,29 @@ operation), include `personal.agents` in its SDK `concurrentServices`: the host 
 read these facts before completing the original call. Do not queue that read
 behind the invocation waiting for the host. Keep mutations synchronized through
 storage and the inspection contract rather than serializing the entire service.
+
+### Personal account provider lifecycle
+
+Calendar and connector operations use the selected `personal.accounts@1` service.
+The Personal bundle selects `wuu.personal-account-client` and the native
+`wuu.personal-accounts` provider; a composition can bind the client to another
+provider or disable the native module without an implicit fallback.
+
+Its `call` method accepts `{operation, input, session_id?}` using the calendar and
+connector operation names of `host.personal`. The host resolves the execution
+session, checks resource policy, and requires live owner admission for account
+controls before calling the selected service. A serialized session ID is not
+permission. Results are `{value}` or `{calendar_error: {code,
+persistence_failed?}}` / `{connector_error: {code}}`; transport and admission
+failures remain service errors. Credentials and authorization URLs are not
+returned through this contract.
+
+Native embeddings configure `RuntimeBindings.SetPersonalAccountsFactory` before
+creating the runtime. The factory creates fresh account resources only on the
+first call to that selected generation. It must not return a broker already owned
+by another generation. The provider declares its credential dependency and owns
+its OAuth attempts and cleanup. Accepted calls retain their exact graph until
+completion; closing an old generation cannot close the new generation's broker.
+`NewUserHost` with runtime bindings does not accept preconstructed account brokers.
+The review/memory coordinator and native file-review gate are separate from this
+account service.
