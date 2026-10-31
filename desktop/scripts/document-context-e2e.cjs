@@ -120,7 +120,7 @@ async function activateSplit(id) {
       // measured then may hit the divider instead of the intended editor.
       await new Promise((resolve, reject) => {
         let frame, previous, settledFrames = 0;
-        const timeout = setTimeout(() => {
+        const timer = setTimeout(() => {
           cancelAnimationFrame(frame);
           reject(new Error('Split composer geometry did not settle'));
         }, timeout);
@@ -139,7 +139,7 @@ async function activateSplit(id) {
           element = input;
           previous = bounds;
           if (settledFrames >= 2) {
-            clearTimeout(timeout);
+            clearTimeout(timer);
             return resolve();
           }
           frame = requestAnimationFrame(check);
