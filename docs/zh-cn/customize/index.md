@@ -18,7 +18,7 @@
 
 需要模型可调用的工具或运行时行为，从 [agent 插件快速开始](plugin-quickstart.md)入手；需要界面贡献，从[桌面插件快速开始](desktop-plugin-quickstart.md)入手。[桌面扩展指南](desktop-plugins.md)说明可用的界面边界，[实用示例](plugin-recipes.md)展示具体做法。
 
-[编写参考](plugin-authoring.md)提供包字段和 API，[系统架构](plugin-system.md)说明加载、生命周期和兼容性边界。编写本地扩展前，不必先读完整份架构参考。
+[插件开发实践](plugin-development-practices.md)提供组合、运行和验证插件的建议。[编写参考](plugin-authoring.md)提供包字段和 API，[系统架构](plugin-system.md)说明加载、生命周期和兼容性边界。编写本地扩展前，不必先读完整份架构参考。
 
 ## 理解信任范围
 

@@ -89,6 +89,7 @@ const server = http.createServer((req, res) => {
 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let main, threadID, selectionDiagnostics, selectionInput, selectionTrace, phase = 'startup';
+const splitActivationEvidence = [];
 app.on('browser-window-created', (_event, win) => { main ||= win; });
 const evaluate = (fn, arg) => main.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
 async function waitFor(fn, arg, timeout = 30000) {
@@ -110,23 +111,91 @@ async function activateSplit(id) {
     return element && !element.disabled && !element.readOnly && !element.closest('[inert]')
       && element.getClientRects().length > 0;
   }, selector);
-  const point = await evaluate(selector => {
-    const element = document.querySelector(selector);
-    element.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-    const rect = element.getBoundingClientRect();
-    const point = { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-    if (!element.contains(document.elementFromPoint(point.x, point.y))) throw new Error(`Occluded ${selector}`);
-    return point;
-  }, selector);
-  main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
-  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
-  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
-  await waitFor(id => {
-    const pane = document.querySelector(`.conversation-split-pane[data-thread-id="${id}"]`);
-    const input = pane?.querySelector('.composer textarea');
-    return pane?.classList.contains('active') && input && !input.disabled && !input.readOnly
-      && document.activeElement === input;
-  }, id);
+  const deadline = Date.now() + 30000;
+  try {
+    const point = await evaluate(async ({ selector, timeout }) => {
+      let element = document.querySelector(selector);
+      element.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      // Sidebar/split layout can still move after both panes mount. A point
+      // measured then may hit the divider instead of the intended editor.
+      await new Promise((resolve, reject) => {
+        let frame, previous, settledFrames = 0;
+        const timer = setTimeout(() => {
+          cancelAnimationFrame(frame);
+          reject(new Error('Split composer geometry did not settle'));
+        }, timeout);
+        const check = () => {
+          const input = document.querySelector(selector);
+          const rect = input?.getBoundingClientRect();
+          const bounds = rect && [rect.x, rect.y, rect.width, rect.height].join(',');
+          const moving = document.getAnimations().some(animation =>
+            (animation.pending || animation.playState === 'running')
+            && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+            && animation.effect?.target instanceof Element
+            && animation.effect.target.contains(input));
+          const ready = input && !input.disabled && !input.readOnly
+            && !input.closest('[inert], [hidden]') && rect.width > 0 && rect.height > 0;
+          settledFrames = ready && !moving && input === element && bounds === previous ? settledFrames + 1 : 0;
+          element = input;
+          previous = bounds;
+          if (settledFrames >= 2) {
+            clearTimeout(timer);
+            return resolve();
+          }
+          frame = requestAnimationFrame(check);
+        };
+        frame = requestAnimationFrame(check);
+      });
+      const rect = element.getBoundingClientRect();
+      const point = { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      const describe = node => node instanceof Element ? {
+        tag: node.tagName, className: typeof node.className === 'string' ? node.className : '',
+        threadId: node.closest('[data-thread-id]')?.getAttribute('data-thread-id'),
+        component: node.getAttribute('data-wuu-component'),
+      } : null;
+      const records = [];
+      const record = (stage, event) => {
+        if (records.length >= 20 && event) return;
+        const input = document.querySelector(selector), pane = input?.closest('.conversation-split-pane');
+        records.push({ stage, time: performance.now(), eventTarget: describe(event?.target),
+          eventPoint: event && 'clientX' in event ? { x: event.clientX, y: event.clientY } : undefined,
+          defaultPrevented: event?.defaultPrevented, activeElement: describe(document.activeElement),
+          documentFocused: document.hasFocus(), intendedThreadId: pane?.dataset.threadId,
+          activeThreadId: document.querySelector('.conversation-split-pane.active')?.getAttribute('data-thread-id'),
+          sameInput: input === element, originalConnected: element.isConnected,
+          inputFocused: document.activeElement === input, disabled: input?.disabled, readOnly: input?.readOnly,
+          blockedBy: describe(input?.closest('[inert], [hidden], [aria-hidden="true"]')),
+          bounds: input?.getBoundingClientRect().toJSON(), point, hit: describe(document.elementFromPoint(point.x, point.y)),
+        });
+      };
+      // Preserve evidence of the native event target, not just the eventual pane.
+      // Activation can succeed even when a moving textarea misses the click.
+      const types = ['pointerdown', 'mousedown', 'mouseup', 'click', 'focusin', 'focusout'];
+      const observe = event => record(event.type, event);
+      types.forEach(type => document.addEventListener(type, observe));
+      window.__splitActivationProbe = () => {
+        record('settled');
+        types.forEach(type => document.removeEventListener(type, observe));
+        delete window.__splitActivationProbe;
+        return records;
+      };
+      record('before-input');
+      if (!element.contains(document.elementFromPoint(point.x, point.y))) throw new Error(`Occluded ${selector}`);
+      return point;
+    }, { selector, timeout: Math.max(1, deadline - Date.now()) });
+    main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+    main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+    main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+    await waitFor(id => {
+      const pane = document.querySelector(`.conversation-split-pane[data-thread-id="${id}"]`);
+      const input = pane?.querySelector('.composer textarea');
+      return pane?.classList.contains('active') && input && !input.disabled && !input.readOnly
+        && document.activeElement === input;
+    }, id, Math.max(1, deadline - Date.now()));
+  } finally {
+    splitActivationEvidence.push({ id, windowFocused: main.isFocused(), webContentsFocused: main.webContents.isFocused(),
+      records: await evaluate(() => window.__splitActivationProbe?.()) });
+  }
 }
 async function nativeText(selector, text) {
   await focusWindow();
@@ -262,7 +331,7 @@ function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, phase, checks, errors, screenshots,
     boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. The initial PDF selection uses native mouse drag and Quote clicks; later ranges are programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
     core: process.env.WUU_DESKTOP_CORE, buildDir, annotationAcceptance, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
-    originalSHA, requests: requests.length, resizeEvidence, selectionInput, selectionDiagnostics, selectionTrace }, null, 2));
+    originalSHA, requests: requests.length, resizeEvidence, selectionInput, selectionDiagnostics, selectionTrace, splitActivationEvidence }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
 }
 const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, annotationAcceptance ? 420000 : 180000);

@@ -8,7 +8,7 @@ import {
 
 export type PooledAppServerClient = Pick<AppServerClient,
   "workdir" | "workspaceId" | "userBinding" | "start" | "bindRequest" | "bindCleanup" | "request" | "respond" | "reject" |
-  "dispose" | "touch" | "lastUsed" | "isBusy" | "knownThreadCwds" | "runningThreadIDsList" | "runningThreadCwds">;
+  "dispose" | "touch" | "lastUsed" | "isBusy" | "ownerLocalSessionLocator" | "federationLocator" | "knownThreadCwds" | "runningThreadIDsList" | "runningThreadCwds">;
 
 const SAFE_REVERSE_METHODS = new Set([
   "approval/request", "user-input/request", "item/commandExecution/requestApproval",
@@ -22,6 +22,8 @@ type UserBinding = Readonly<{ userSpaceId: string; productDomain: string; compos
 class UserHostBindingError extends AppServerResponseError {}
 
 export class RemoteAppServerClient implements PooledAppServerClient {
+  ownerLocalSessionLocator(): undefined { return undefined; }
+  federationLocator(): undefined { return undefined; }
   readonly userBinding?: UserBinding;
   private verifiedUserRPC?: SessionRPC;
   private readonly rejectedUserRPCs = new WeakSet<SessionRPC>();
@@ -187,7 +189,7 @@ export class RemoteAppServerClient implements PooledAppServerClient {
         onResponse?.({ id: "remote-response", result });
       });
     } catch (error) {
-      if (record(error) && error.kind === "app-server-response" && typeof error.message === "string") throw new AppServerResponseError(error.message);
+      if (record(error) && error.kind === "app-server-response" && typeof error.message === "string") throw new AppServerResponseError(error.message, typeof error.code === "string" ? error.code : undefined);
       if (error instanceof SessionOutcomeUnknownError || error instanceof UserHostBindingError) throw error;
       throw new SessionOutcomeUnknownError("the connection ended before a response was confirmed");
     }

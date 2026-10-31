@@ -114,6 +114,7 @@ test-plugin-compatibility:
 test-plugins: build-plugins
 	npm --prefix plugins test
 	node scripts/bundled-plugins-e2e.mjs
+	node scripts/plugin-dev-ownership-e2e.mjs
 	node scripts/next-message-desktop-e2e.mjs
 
 build-plugins:

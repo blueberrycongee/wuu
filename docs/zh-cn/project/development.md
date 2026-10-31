@@ -151,6 +151,8 @@ worker 与页面渲染，以及 Mermaid。证据目录保存归档哈希、日�
 
 ### 实时活动预览验收
 
+macOS 预览画布是随主进程构建的本地资源，解码器随沙箱 preload 发布，不依赖 `ELECTRON_RENDERER_URL`。工具再次访问已确定的目标时，会把对应卡片提到最前。活动仍可产生画面时，采集故障会按设有间隔上限的退避自动重试，界面显示连接状态，无需手动重试。不可用的画面会隐藏，直到新画面到达。
+
 安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查同一会话的独立目标、最多 5 张可见卡片及候补补位、提到最前、会话可见性、对话框遮挡、单张隐藏与重新打开、多个保留目标的原生控制状态更新、旧回调拒绝、画面确认、捕获错误恢复和关闭清理。结果、传输日志、出现动画帧采样、堆叠几何信息和截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。macOS 还会保存浅色默认字号和深色大字号布局的堆叠合成截图。无图形会话的 Linux 自动使用软件渲染和合成显示器。
 
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
@@ -383,6 +385,24 @@ DNS/TLS 与 HTTP 时间、HTTP 暴露 Content-Length 时的请求体大小、连
 时间，失败和未执行回合按完整期限计入。基线为标签 `baseline` 的未压缩 SSE，按负载和
 回合匹配，全部通过正确性检查后才输出指数。高于 100 表示该样本更快；同时检查成功样本
 的 P50/P90、完成时间及失败。小样本不能证明尾延迟或整体产品分数。
+
+用 `-loop-workload short|long|tools|many-tools` 通过默认 driver 运行精确短回答、
+128 行长输出，或 8/64 次依赖前一步结果的合成工具调用。每次工具结果才会揭示下一次
+调用需要的 token。例如：
+
+```sh
+go run ./scripts/provider-latency-e2e -provider openai-codex \
+  -model gpt-6.1-terra -reuse-codex-credentials -transport auto \
+  -loop-workload many-tools -records 320 -repeats 4 -timeout 600s \
+  -label candidate > .tmp/provider-latency/loop-candidate.jsonl
+```
+
+`-model` 只覆盖当前进程的模型。`-reuse-codex-credentials` 为循环负载显式选择本机
+只读 Codex CLI 凭证源。这些负载固定 low 推理档位，关闭自动压缩，不包含运行时持久存储。
+报告记录请求准备完成与模型完成的时间、服务商续接状态、内存分配、工具定义读取次数和
+重试次数。恢复产生额外提交时，即使任务正确完成，严格的 `passed` 检查仍为失败；应保留
+该样本及其全部耗时。传输评分脚本不为 `loop_sample` 记录评分，应按负载、历史规模和
+传输方式比较完整任务，并记录同时运行多个版本时的并发度。
 
 用 `-list-providers` 列出已配置的名称和模型，不输出凭证。测试命令调度时，
 对已配置的 DeepSeek 或 Codex 增加 `-shell-workload -repeats 3 -timeout 120s`。

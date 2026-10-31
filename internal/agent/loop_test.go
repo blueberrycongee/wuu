@@ -987,6 +987,7 @@ func TestRunToolLoop_ConcurrentToolCompletionDoesNotReorderProviderMessages(t *t
 		{Content: "done"},
 	}}
 	tools := newDelayedConcurrentTools()
+	step.results[0].ToolRuntime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools, Gate: NewToolExecutionGate(2)})
 
 	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("inspect")}, LoopConfig{
 		Model: "m",

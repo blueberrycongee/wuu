@@ -6,6 +6,15 @@ import {
   type ThreadSummary,
 } from "./AppState";
 import { readFocusModality } from "./FocusModality";
+import {
+  moveThreadInOrder,
+  persistThreadOrder,
+  reconcileThreadOrder,
+  storedThreadOrder,
+  type ThreadDropPosition,
+} from "./SidebarThreadOrder";
+
+const RECENT_THREAD_ORDER_ID = "__wuu_recent_threads__";
 
 const RECENT_THREAD_LIMIT = 50;
 // Assign priority when a conversation enters this mounted sidebar. Live status
@@ -23,7 +32,12 @@ export function useSidebarConversationActivity(
   activeThreadID: string | undefined,
   pendingThreadID: string | undefined,
   lastViewedTurnByThreadID: Readonly<Record<string, string>>,
-): { threads: ThreadSummary[]; interactionProps: ComponentPropsWithRef<"div"> } {
+): {
+  threads: ThreadSummary[];
+  interactionProps: ComponentPropsWithRef<"div">;
+  onReorder: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
+} {
+  const [threadOrder, setThreadOrder] = useState(() => storedThreadOrder(RECENT_THREAD_ORDER_ID));
   const committedActivity = useRef(new Map<string, RecentActivity>());
   const activity = useMemo(() => {
     const rows = new Map<string, RecentActivity>();
@@ -51,7 +65,10 @@ export function useSidebarConversationActivity(
   }, [activeThreadID, lastViewedTurnByThreadID, pendingThreadID, threads]);
   // An abandoned render must not assign a conversation's initial position.
   useLayoutEffect(() => { committedActivity.current = activity.rows; }, [activity]);
-  const ordered = activity.ordered;
+  const ordered = useMemo(() => {
+    const byID = new Map(activity.ordered.map((thread) => [thread.id, thread]));
+    return reconcileThreadOrder(activity.ordered, threadOrder).map((id) => byID.get(id)!);
+  }, [activity, threadOrder]);
   const [heldOrder, setHeldOrder] = useState<ThreadSummary[]>();
   const interaction = useRef({ pointer: false, keyboard: false, dragging: false });
   const listRef = useRef<HTMLDivElement>(null);
@@ -91,6 +108,16 @@ export function useSidebarConversationActivity(
 
   return {
     threads: visibleThreads,
+    onReorder: (activeThreadID, overThreadID, position) => {
+      const current = visibleThreads.map((thread) => thread.id);
+      const next = moveThreadInOrder(current, activeThreadID, overThreadID, position);
+      if (next === current) return;
+      setThreadOrder(next);
+      persistThreadOrder(RECENT_THREAD_ORDER_ID, next);
+      // A deliberate drop must take effect even while the pointer holds the list.
+      const byID = new Map(visibleThreads.map((thread) => [thread.id, thread]));
+      setHeldOrder((held) => held ? next.map((id) => byID.get(id)!) : undefined);
+    },
     interactionProps: {
       ref: listRef,
       onPointerEnter: (event) => {

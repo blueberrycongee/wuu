@@ -235,6 +235,8 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 
 `initialize` 只声明契约。Lifecycle v2 在全部声明绑定后增加独立的 `prepare` 请求。请将持久状态的读取和验证从 `initialize` 移到 `prepare`，使用配套 SDK 重新构建；手写适配器需返回 `lifecycle_version: 2`。旧生命周期适配器会在提交前被拒绝。provider 先于消费者准备；准备阶段只能调用已声明且标记 `preparation: true` 的方法，嵌套调用也遵守此约束。该标记承诺不进行持久化写入或产生外部效果；省略时仅可在激活后调用。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
 
+准备阶段可以验证持久状态，但旧代在激活前仍可能修改它。不要直接以准备时的快照作为激活写入的依据：应重新读取并验证当前状态，或按提供者实际的交接契约验证版本。丢弃候选不得写入持久状态或取消运行中旧代的工作。这不要求所有后端都使用 compare-and-swap，单纯重读也不能隔离并发写入者。
+
 请求关闭或连接结束时，`lifecycle.signal` 会中止。激活后启动的后台工作应
 使用此信号，并在 shutdown 中停止定时器。清理仍可使用不绑定执行作用域的
 生命周期 host 保存状态或释放资源，不应依赖已经中止的信号完成清理。
@@ -324,11 +326,23 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.artifact.import` | 将文件或字节导入为会话产物 |
 | `host.user-question.ask` | 执行期间提出结构化问题 |
 
-大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。
+大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。 返回结果描述最终完成的比较：`swapped: false` 返回当前值，`swapped: true` 返回替换后的值（删除后为 `null`）。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 
-`host.session.send` 支持可选的 `disable_tools: true`，仅对本轮禁用所有工具。宿主移除模型可见的工具并拒绝工具执行，包括 code-mode 分发；不会影响后续轮次，也不会授予权限。省略或设为 false 时保持普通行为。禁用工具的轮次不能使用 `if_running: "steer"` 或外部代理引擎，不支持的请求会在接纳前被拒绝。暂不支持按轮次配置通用工具允许／拒绝列表。
+`host.session.list` 的 owned 结果，以及调用插件所拥有会话的 `host.session.inspect` 结果，在可用时包含 `creation_request_id`。该字段是原始 `host.session.create` 请求 ID，在首个轮次开始前也可返回，因此插件能发现已被接纳但响应丢失的创建请求。shared 列表和对其他所有者会话的检查不返回此字段。它仅用于请求关联，不授予会话控制权限。
+
+对于 `host.session.send`，`session_send_unavailable` 表示宿主没有发送处理器，
+本次调用未被分派。服务恢复后，显式重试可以释放这条未被接受的请求身份。
+该错误码仅保留给此边界：已调用的处理器返回同码（包括嵌套调用返回）时，
+外层发送会改报 `host_error`。通用的 `service_unavailable`、其他错误和超时
+均不能证明未被接纳；应保留请求身份并核对回执，再决定是否替换。
+
+`host.session.send` 支持可选的 `disable_tools: true`，仅对本轮禁用所有工具。宿主移除模型可见的工具并拒绝工具执行，包括 code-mode 分发；不会影响后续轮次，也不会授予权限。省略或设为 false 时保持普通行为。禁用工具的轮次不能使用 `if_running: "steer"` 或外部代理引擎，不支持的请求会在接纳前被拒绝。`tool_policy: { allow?: string[], deny?: string[] }` 可为一个独立轮次添加仅收窄权限的工具策略。省略 `allow` 时保留原有工具范围并扣除 `deny`；显式 `allow: []` 禁止全部工具。宿主取该策略与会话既有限制的交集，同时检查实际执行及动态发现的工具，并在成功、失败或中断后恢复原有工具范围；不会修改持久会话设置。依赖此契约前应检查 `session-turn-tool-policy.v1` 宿主能力。
+
+带有 `tool_policy` 的轮次是独立执行边界：不能插入其他轮次，传入的插件消息或完成通知会单独排队。对于尚未接纳的人类 `turn/steer` 输入，宿主返回 `isolated_turn_requires_queue`；桌面客户端仅对此明确拒绝，在同一已捕获连接上使用原始输入和相同 client ID 排队。其他错误或结果不确定时不得按此方式重试。已保留的输入必须使用原有恢复流程。用户仍可中断轮次。允许 `run_code` 时，其内嵌目录及搜索/描述文本仍可能列出被轮次策略排除的工具，但实际嵌套调用仍会受校验。若审查轮次不应展示无关绑定，应仅允许直接工具。工具名称只限制工具范围，不授予任务权限：接收插件仍须校验确切任务、执行请求、版本和工具参数。
+
+声明依赖 `agent.tools@1` 的插件，可调用 `toolService(host).resolveOwn({ tool_id: "local_tool_id" })` 查询自身工具当前的公开名称，无须猜测前缀或冲突哈希。这是可从后台回调调用的只读查询，不会初始化工具后端。原生提供方使用注册表认证的调用插件身份及所捕获 generation 的声明；调用方不能指定其他插件。结果为 `{found:false}` 或 `{found:true,name,direct_only?}`。每次使用前都应重新查询。结果只证明声明身份，**不**授予权限，也不保证目标会话暴露该工具：须另行检查确切已接纳模型请求的工具范围。选中提供方缺失或不支持查询时应保持只读，不能回退到原生提供方。执行方法仍保留原有更严格的作用域要求。
 
 `host.session.history.read` 只读返回物理审计记录，包括隐藏的模型上下文和工具记录。记录带有可选的 `hidden`、`read_only` 和 `origin` 元数据；省略的布尔标志视为 false，旧记录省略的来源视为空字符串。仅凭 `user` 角色不能认定内容由用户输入。构建对话视图时应保留并使用这些字段：排除隐藏记录，只有非只读且来源为 `user` 或空字符串的用户角色记录才作为真实用户输入。不要按文字特征判断来源，也不要删改真实输入中的相似文字。对话筛选不删除审计记录，也不改变提供方上下文。
 
@@ -339,6 +353,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 已完成的轮次可以没有 `final_output`：提供商正常结束不要求对外回复或调用确认工具。这只表示本轮执行结束，不证明用户目标已经达成；接收方仍须检查结果和证据，连接失败和异常终止仍会报错。
 
 Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到后续轮次，空闲会话仍会被自动唤醒。返回 `running` 和 `steered: true` 时，输入可能尚未被消费，不代表已持久送达。Peers 会保留待送达状态，直到持久记录确认送达；重启丢失的输入使用同一请求 ID 重试。
+
+Subagent 和 Peers 在信息可用时，用宿主提供的会话、工具、调用 ID、回合 ID 与步骤索引共同标识工具调用；传输执行 ID 不决定重试身份。缺少回合和步骤元数据的调用保留原有映射。已持久化的请求继续使用其保存的 ID 恢复，不推断过去未保存的回合或步骤身份。Peers 原有的内容去重与不确定发送匹配仍是独立策略。
 
 #### 会话实时进度
 
@@ -610,9 +626,11 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 ## Agent 管理的开发
 
-内置延迟发现工具 `plugin_manager` 支持 `status`、`apply`、`enable` 和 `disable`。`apply` 接受工作区内的 TypeScript 文件或开发包目录，通过宿主选定的 CLI 桥接执行一次发布。不接受任意命令，也不允许调用者指定 Wuu 主目录。验证或导入源码前必须获得宿主代码执行授权，这与写入源文件的权限不同。完整流程见 [Agent 操作步骤](plugin-quickstart.md#让-agent-添加工具)。
+内置延迟发现工具 `plugin_manager` 支持 `status`、`apply`、`enable`、`disable` 和 `reload`。`apply` 接受工作区内的 TypeScript 文件或开发包目录，通过宿主选定的 CLI 桥接执行一次发布。不接受任意命令，也不允许调用者指定 Wuu 主目录。验证或导入源码前必须获得宿主代码执行授权，这与写入源文件的权限不同。完整流程见 [Agent 操作步骤](plugin-quickstart.md#让-agent-添加工具)。
 
 状态结果包含 `plugins` 列表。比较 `published_fingerprint` 与 `current_conversation_fingerprint`，并检查 `adoption_pending`、`desired_enabled`、`trusted` 和 `current_conversation_runtime_state`；存在运行时诊断时由 `error` 返回。这些字段说明发布、策略和当前会话的绑定，不证明某个工具执行成功或桌面视图已渲染。
+
+独立的 `hosts` 列表查询各个活跃 app-server，包括独立的用户、产品宿主。每项包含宿主绑定、generation、执行身份、存储身份、指纹、运行状态和错误。`wuu plugin hosts [id]` 提供同样的观测。空列表表示没有兼容宿主报告状态，不能据此判断激活成功。`wuu plugin reload <id>`（或 `plugin_manager` 的 `reload` 操作）重新构建宿主 generation，用于恢复已修复但仍处于失败状态的运行时。重试客户端请求不会重新加载运行时。
 
 普通更新保留当前轮次及其未完成工作者或受管进程的原工具与提示词 generation。这些工作结束后，在下一次空闲轮次边界发现并调用更新后的工具。禁用或移除提交成功后，则无需等待空闲轮次，直接撤销各个仍被引用 generation 中的插件。发布不等于实际调用工具或检查界面，也不会自行安排后续轮次。
 
@@ -623,6 +641,10 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 `wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 在实际宿主中声明契约；随后由 `prepare` 通过所选服务验证状态。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
 
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
+
+获得授权的开发覆盖保留已安装的主目录级插件的存储身份，同时仍使用 `plugin:dev:<id>` 执行身份和开发权限。签名 generation 回执固定这一绑定，后续发布沿用。旧回执缺少绑定时，在下次发布时建立；独立开发插件保留自身存储身份。覆盖代码不会重放或改写数据所有权迁移。
+
+替换已发布包前，`dev` 要求所有已登记的活跃宿主使用各自的所选提供者与配置准备候选版本。预检拒绝时保留已发布包和运行中的 generation。发布后，结果包含各宿主实际观测到的激活状态；激活失败会明确说明发布已经提交。修复后重新发布或显式重新加载，无需删除所有权元数据。旧核心宿主需使用兼容核心重启后才能参与此流程。
 
 用 `validate` 检查包结构，`test` 检查可执行初始化和协商描述，再通过真实会话或界面验证行为。`pack` 生成本地 zip，不会上传到 registry。分发前应检查压缩包内容：准备阶段排除 `.git` 和 `node_modules`，不会排除所有可能包含私人数据的本地文件。
 
@@ -645,7 +667,7 @@ install CLI 会确认信任并启用包。同一已记录来源的更新继承�
 声明参与包指纹计算，不提供跨插件存储 RPC 权限。
 
 导入插件应在正式激活回调中读取迁入前缀，不应在初始化阶段缓存其内容。
-预检不修改存储。启动或更新被接受后，宿主先验证整个目标文档，再持久化源前缀隔离，
+预检不修改存储。所选设置提供者在准备阶段检查所有权、目标冲突和配额，检查失败会在提交前拒绝候选版本。启动或更新被接受后，宿主再次验证整个目标文档，再持久化源前缀隔离，
 然后原子保存原始值和导入回执。键冲突或存储配额超限会阻止迁移，不覆盖目标数据。
 迁移失败会阻止导入插件运行；未完成迁移在下次接受激活时恢复。完成回执可防止目标
 删除数据后再次导入。合并后的目标仍遵守原有的单插件条目数和字节配额。
@@ -715,3 +737,77 @@ registry 请求不占用串行 RPC 分派循环，无关发送和读取无需等
 下载；RPC 下载继承请求 context，连接对应的 server 关闭时会取消并等待其退出。
 没有独立的包下载取消 RPC。
 官方和社区 npm 包都走这些公开契约，安装不会授予内置包特权。
+
+### Personal 执行事实
+
+替代 `personal.agents@1` 的 provider 实现 `observe-execution`，输入为
+`{session_id}`，返回 SDK 的 `PersonalExecutionFacts`。provider 负责解析自己的
+agent、任务、需求版本、run、活动/取消状态、所属 routine 和准确的原始用户消息来源。
+宿主独立验证 session 所有权、真实历史、选中的 generation 和执行授权。业务事实本身
+不授予执行权限。
+
+使用现有 Personal review/memory coordinator 时，应将这些持久化事实存放在 provider
+自己的**用户域 host storage** 中；键和值的格式由 provider 决定。执行副作用时，
+coordinator 保留选中的 provider，并对该不透明存储、session 和 review 状态持有
+持久化 inspection。一次事实读取不是事务或执行保护。替代存储后端必须保持 host
+storage 的 inspection 契约；内存缓存不能成为事实读取的独立权威。
+
+`legacy-memory` 返回待迁入选中 memory journal 的旧记录 ID 到序列化值的映射；没有
+旧数据则返回空对象。coordinator 不再解释其他插件的私有存储键。两个方法都不修改
+状态、不恢复任务。provider 被禁用或不可用时，不得偷偷回退到内置实现。
+
+若同一 runtime 还会调用 `host.personal`（例如 memory 操作），应将
+`personal.agents` 加入 SDK 的 `concurrentServices`：宿主可能在完成原调用前回读
+这些事实，不能把回读排在正在等待宿主的调用之后。通过存储与 inspection 契约同步
+状态修改，而不是串行阻塞整个服务。
+
+### Personal 账户 provider 生命周期
+
+日历与连接器操作通过选中的 `personal.accounts@1` 服务执行。Personal bundle
+选择 `wuu.personal-account-client` 和原生 `wuu.personal-accounts` provider；
+composition 可以将客户端绑定到其他 provider，或禁用原生模块，不会隐式回退。
+
+`call` 方法接收 `{operation, input, session_id?}`，操作名沿用 `host.personal`
+的日历与连接器操作。宿主先解析执行会话、检查资源策略，并为账户控制操作验证
+仍然有效的所有者准入，再调用选中的服务。序列化的会话 ID 本身不授予权限。
+返回值为 `{value}`、`{calendar_error: {code, persistence_failed?}}` 或
+`{connector_error: {code}}`；传输与准入失败仍使用服务错误。该契约不返回凭据
+或授权 URL。
+
+原生嵌入方在创建 runtime 前配置 `RuntimeBindings.SetPersonalAccountsFactory`。
+只有对应代的 provider 首次收到调用时，工厂才创建全新的账户资源，不能返回已由
+其他代持有的 broker。provider 声明凭据依赖，拥有自己的 OAuth 尝试和清理职责。
+已接受的调用保留原服务图直到完成；旧代清理不会关闭新代 broker。使用 runtime
+bindings 的 `NewUserHost` 不接收预先构造的账户 broker。审批／记忆协调器与原生
+文件审批入口仍是独立于该账户服务的部分。
+
+### Personal 协调器与宿主副作用机制
+
+`personal.coordination@1` 是可替换的审核、记忆、文件及连接器策略服务。
+Personal 组合选择 `wuu.personal-client`、原生协调器
+`wuu.personal-actions-consumer` 和宿主机制 `wuu.personal-effects`。
+替换绑定或禁用协调器不会创建原生回退；Go 宿主仍负责入口身份验证、
+会话解析和资源边界检查。
+
+协调器请求为 `{operation?, input?, session_id?, call?, scopes?}`。
+`call` 承载现有 `review.*` / `memory.*` 操作；`file-gate` 接收工具调用并返回
+工具结果；`scope` / `cancel` 支持精确会话与任务取消；`inspection` 处理经所有者
+认证的审核策略、设置和会话恢复，并与正在进行的 Personal 副作用串行；`initialize` / `drain` 用于生命周期及调度。
+`connector-snapshot` 的 `input` 为 `{actor}`，返回 `{authority}`；
+`connector-commit` 的 `input` 为 `{actor, expected, effect_id}`。
+actor 沿用 `{ProductDomain, UserSpaceID, SessionID}`。原生协调器必须在持久化
+权限检查的临界区内执行副作用，不能把布尔授权响应当作实际提交。
+
+替代实现声明 `host.personal-effects@1`：`prepare-file` 接收工具调用，返回
+`{effect_id, file}` 冻结动作；`execute` 接收 `{effect_id}`，返回 `{tool_result}`，
+每个句柄至多执行一次；`release` 接收 `{effect_id}`，可重复调用且声明为清理方法。
+只有当前选中的协调器可调用。跨进程回调使用执行 ID 继承宿主来源，不接受序列化
+State、工具箱或所有者声明作为权限。
+
+延迟文件句柄可跨越初始回调，保留原始服务图及工具箱；后续所有者确认不会把旧动作
+改绑到新一代。句柄不是持久化审批记录：冷启动恢复需要新认证及冻结动作重新验证，
+不确定结果不能自动重放。连接器句柄限于同步 broker 回调，回调结束即释放。
+兼容原生代际通过引用计数共享待处理状态，旧代清理不能关闭新代已借用的协调器。
+禁用或崩溃先封闭入口，再取消并排空副作用；宿主关闭也释放待处理资源。
+原生机制使用 `ServiceRegistry.RegisterRetirementCleanup` 建立物理清理屏障，
+仅把可能重新进入关闭流程的最终图引用释放交给 `DeferServiceCompletion`，不增加策略权限。

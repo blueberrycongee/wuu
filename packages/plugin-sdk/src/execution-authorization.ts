@@ -1,6 +1,7 @@
 import type { RuntimeHost, RuntimeHostCallOptions, HostServiceContracts, ServiceDescriptor, ServiceRequirement } from './index.js';
 import type { PrincipalIdentity } from './identity.js';
 import type { ResourceReference } from './resource-policy.js';
+import type { SessionLocatorV1, SessionRouteRequest, SessionRouteResult } from './session-transport.js';
 
 /** Opaque provider-owned reference, not a serialized principal or bearer grant.
  * Persist only this reference; validation always uses the selected authority. */
@@ -73,6 +74,10 @@ export interface ExecutionAuthorizationRevoke {
 }
 export interface ExecutionAuthorizationRevocation { readonly revoked: boolean; }
 export interface ExecutionAuthorizationPolicy {
+  /** Added by the host grant gateway, not provider authorization. Missing means
+   * unsupported; session-route.v1 enables exact existing-session routing;
+   * session-turn-tool-policy.v1 enables isolated per-turn tool attenuation. */
+  readonly host_features?: readonly string[];
   readonly default_lifetime_seconds: number;
   readonly max_lifetime_seconds: number;
   readonly authority_kinds: readonly string[];
@@ -256,7 +261,14 @@ export interface ExecutionLineageRequest {
 /** Business facts observed from the selected authority. The host independently
  * verifies session ownership and fills selected authority/model/permission/depth
  * before attesting lineage; providers cannot claim those host-owned facts. */
+export interface ExecutionSessionRouteBinding {
+  readonly locator: SessionLocatorV1;
+  readonly operations: readonly ('send' | 'inspect' | 'cancel')[];
+}
 export interface ExecutionLineageObservation {
+  /** Exact existing target; the host binds it to the grant and resource policy.
+   * session_id remains the caller-owned controller, not the target session. */
+  readonly route?: ExecutionSessionRouteBinding;
   readonly creation?: Omit<HostServiceContracts['host.session.create']['params'], 'execution_authorization'>;
   readonly parent_task_id: string;
   readonly parent_revision: number;
@@ -280,6 +292,9 @@ export function executionGrants(host: RuntimeHost) {
   }) as Promise<T>;
   return {
     describe: () => call<ExecutionAuthorizationPolicy>('describe', {}),
+    /** Route only this grant's existing target and run. Never creates a worker
+     * or lends the source reference to a transport provider. */
+    route: (reference: ExecutionAuthorizationReference, route: SessionRouteRequest) => call<SessionRouteResult>('route-session', {reference, route}),
     /** Revalidate an exact-run grant before routing through this consumer's
      * declared selected service. The reference is not lent to the provider. */
     callService: <T = unknown>(input: {reference: ExecutionAuthorizationReference; service: string; method: string; params: unknown}) => call<T>('call-service', input),

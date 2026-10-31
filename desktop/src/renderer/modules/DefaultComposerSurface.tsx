@@ -4,7 +4,7 @@ import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
 import { focusComposerTextarea } from "../ComposerFocus";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
-import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { UIRegisterFocusTargetV1, ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
 import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
@@ -20,9 +20,8 @@ import { showApplicationActionError } from "../ApplicationActionError";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { useI18n } from "../i18n";
 import { threadContinuationTarget } from "../TurnContinuation";
-import { TopNotice } from "../TopNotice";
-import { UILayerPortal } from "../ui/layers/UILayerHost";
-import { CircleAlert } from "../WuuIcons";
+import { ScopedToast } from "../Toast";
+import { DraftRecoveryNotice } from "../DraftRecoveryNotice";
 
 export interface DefaultComposerLayout {
   side?: { readonly parentThreadId: string };
@@ -31,6 +30,7 @@ export interface DefaultComposerLayout {
   ownerTabId?: string;
   visible?: boolean;
   containerRef?: Ref<HTMLElement>;
+  registerFocusTarget?: UIRegisterFocusTargetV1;
   runtimeControlsTarget?: HTMLElement | null;
 }
 
@@ -63,7 +63,7 @@ function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, var
   </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
-function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
+function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, registerFocusTarget, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
   const presentNavigation = usePresentedNavigation();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
@@ -110,8 +110,39 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   };
   const [filter, setFilter] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => registerFocusTarget?.({
+    focus: options => {
+      const snapshot = application.getSnapshot();
+      const input = contentRef.current?.querySelector("textarea");
+      if (!visible || snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId || !input || input.disabled) return false;
+      input.focus(options);
+      return true;
+    },
+    contains: element => contentRef.current?.contains(element) ?? false,
+  }), [application, ownerTabId, pane, registerFocusTarget, visible]);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
   const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
+  useEffect(() => {
+    let active = true;
+    const addSelection = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      const snapshot = application.getSnapshot();
+      const threadId = pane === "primary" ? snapshot.conversationWorkspace.primaryThreadId : snapshot.conversationWorkspace.secondaryThreadId;
+      const draft = snapshot.drafts[pane];
+      if (snapshot.tabs.pending || !threadId || threadId !== selection.source.thread_id
+        || draft.ownerTabId !== ownerTabId
+        || snapshot.conversationWorkspace.threads.find(thread => thread.id === threadId)?.read_only) return;
+      void controls.setSelections([...draft.selections, selection]).then(() => {
+        const current = application.getSnapshot();
+        const currentThread = pane === "primary" ? current.conversationWorkspace.primaryThreadId : current.conversationWorkspace.secondaryThreadId;
+        if (active && !current.tabs.pending && current.drafts[pane].ownerTabId === ownerTabId && currentThread === threadId) {
+          focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null);
+        }
+      }).catch(reportPresentedNavigationError);
+    };
+    window.addEventListener("wuu:add-response-selection", addSelection);
+    return () => { active = false; window.removeEventListener("wuu:add-response-selection", addSelection); };
+  }, [application, controls, ownerTabId, pane]);
   const pendingText = useRef<{ owner: string; text: string } | undefined>(undefined);
   const [deferredSubmission, setDeferredSubmission] = useState<{
     application: ApplicationServiceV1; owner: string; mode: "queue" | "steer";
@@ -159,7 +190,20 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       .then(accepted => { if (!accepted) showApplicationActionError(new Error(t("composer.sendFailedDraftRetained"))); })
       .catch(showApplicationActionError);
   }, [application, deferredSubmission, pane, t, textOwner, view]);
-  useEffect(() => { run(controls.refreshEngines()); }, [controls, run, liveRuntime?.engineSelectionPending]);
+  useEffect(() => {
+    if (switching) return;
+    const cancellation = new AbortController();
+    const refresh = () => {
+      const snapshot = application.getSnapshot();
+      if (snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId) return;
+      void application.invoke("composer.refresh-engine-models", { ownerTabId }, { signal: cancellation.signal }).catch(error => {
+        if (!cancellation.signal.aborted) reportPresentedNavigationError(error);
+      });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => { cancellation.abort(); window.removeEventListener("focus", refresh); };
+  }, [application, ownerTabId, pane, switching, liveRuntime?.engineSelectionPending]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
   const draft = view.drafts[pane];
   if (!runtime || !tab || draft.ownerTabId !== ownerTabId) return null;
@@ -218,10 +262,15 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     onCancel={() => application.invoke("question.cancel", { requestId: offer.request_id })}
     onHold={() => application.invoke("question.hold", { requestId: offer.request_id })}
     onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null); }} /> : undefined;
+  const failedDraftTabID = view.submission.failedDraftTabIds.find(id => view.tabs.items.some(tab => tab.id === id));
+  const recoveryNotice = visible && !switching && view.tabs.activePane === pane && failedDraftTabID ?
+    <DraftRecoveryNotice interrupted={view.drafts.recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)} onOpen={() => {
+      void presentNavigation(() => application.invoke("tab.select", { tabId: failedDraftTabID })).catch(reportPresentedNavigationError);
+    }} /> : null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} hidden={!visible} inert={!visible} style={{ display: visible ? "contents" : "none" }}>
     <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
       queuedCount={queued(pending?.queued).length} pendingCount={queued(pending?.queued).length + queued(pending?.guides).length}
-      variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
+      variant={variant} mainConversation containerRef={containerRef} topAccessory={question} statusAccessory={recoveryNotice}
       runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
@@ -305,11 +354,9 @@ function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, vi
     else if (newFailure) setAnnouncedID(operationID);
   }, [ownerTabId, operationID, sourceOwnerTabId, visible]);
   if (!visible || observed.current.ownerTabId !== ownerTabId || !operationID || announcedID !== operationID) return null;
-  return <UILayerPortal layer="notice"><TopNotice key={operationID}
-    message={t("composer.sendFailedDraftRetained")} icon={CircleAlert} isError
-    action={{ label: t("appState.retryAction"), onClick: () => { setAnnouncedID(undefined); onRetry(); } }}
-    dismissAriaLabel={t("common.closeNotice")} onDismiss={() => setAnnouncedID(undefined)} />
-  </UILayerPortal>;
+  return <ScopedToast message={t("composer.sendFailedDraftRetained")} tone="error" dedupeKey={`submission:${ownerTabId}:${operationID}`}
+    action={{ label: t("appState.retryAction"), onClick: () => { setAnnouncedID(undefined); onRetry(); } }} />;
+
 }
 
 export function activatePresentation(api: ApplicationPresentationAPI): void {

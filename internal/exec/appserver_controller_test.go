@@ -2,8 +2,14 @@ package exec
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -237,5 +243,69 @@ func TestApplyConfigOverridesExplicitVariantWinsOverEffort(t *testing.T) {
 	}
 	if cfg.Agent.Variant != "high" {
 		t.Fatalf("Variant = %q, want high", cfg.Agent.Variant)
+	}
+}
+
+func TestLocalControllerRetainsCleanupTransportAfterExecutionCancellation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("WUU_HOME", filepath.Join(root, "state"))
+	started := make(chan struct{})
+	var once sync.Once
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		once.Do(func() { close(started) })
+		<-r.Context().Done()
+	}))
+	defer endpoint.Close()
+	path := filepath.Join(root, "config.json")
+	if err := writeMinimalConfig(path, endpoint.URL+"/v1"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := Options{Workdir: root, ConfigPath: path, NoTools: true, Prompt: "work"}
+	controller, err := NewLocalAppServerController(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Shutdown(context.Background())
+	go func() {
+		for range controller.Notifications() {
+		}
+	}()
+	thread, err := controller.StartThread(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := controller.StartRun(ctx, runStartParams(opts, thread.ID, TurnInput{Prompt: "work"}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider not started")
+	}
+	cancel()
+	cleanup, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCleanup()
+	if _, err := controller.InterruptRun(cleanup, run.ID, "interrupted"); err != nil {
+		t.Fatalf("execution cancellation destroyed cleanup transport: %v", err)
+	}
+	if err := controller.Shutdown(cleanup); err != nil {
+		t.Fatalf("shutdown after explicit interrupt: %v", err)
+	}
+}
+
+func TestLocalControllerCancelledStartupDoesNotOpenTransport(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	controller, err := NewLocalAppServerController(ctx, Options{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	if controller != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled startup: controller=%v err=%v", controller, err)
 	}
 }

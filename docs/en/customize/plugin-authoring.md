@@ -265,6 +265,8 @@ capabilities remain supported; service declarations retain the SDK's v3 selectio
 
 `initialize` only declares contracts. Lifecycle v2 requires a separate `prepare` request after all declarations are bound. Move persisted-state reads and validation from `initialize` into `prepare`, rebuild with the matching SDK, and return `lifecycle_version: 2` in hand-written adapters. An adapter using an older lifecycle is rejected before commit. Providers prepare before consumers; only declared methods marked `preparation: true` may be called during preparation, including nested calls. Marking a method promises no durable writes or external effects. Omitted flags mean active-only methods. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
 
+Preparation can validate persisted state, but the old generation can still change it before activation. Do not use that preparation snapshot as the basis of activation writes: reread and validate the current state, or verify its version under the provider’s actual handoff contract. Discarding a candidate must not write persisted state or cancel the live generation’s work. This does not require every backend to use compare-and-swap, and rereading alone does not fence concurrent writers.
+
 `lifecycle.signal` aborts when shutdown is requested or the transport closes.
 Use it for activation-owned background work and stop timers in shutdown. Cleanup
 may still use the unscoped lifecycle host to persist state or release resources;
@@ -371,11 +373,25 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.artifact.import` | Import a file or bytes as a thread-owned artifact |
 | `host.user-question.ask` | Ask a structured question during an execution |
 
-Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON.
+Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON. The result describes the completed comparison: `swapped: false` returns the current value, while `swapped: true` returns the replacement value (`null` after deletion).
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
-`host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. General per-turn allow/deny policies are not supported.
+Owned `host.session.list` results and `host.session.inspect` for a session owned by the calling plugin include `creation_request_id` when available. It is the original `host.session.create` request ID, including before the first turn starts, so a plugin can discover an accepted creation whose response was lost. Shared lists and inspection of another owner’s session omit it. This is correlation metadata, not authority to control the session.
+
+For `host.session.send`, `session_send_unavailable` means the host had no send
+handler and did not dispatch this call. After the service recovers, an explicit
+retry may release that unaccepted request identity. This code is reserved for
+that boundary: if an invoked handler returns it, including from a nested call,
+the outer send reports `host_error` instead. Generic `service_unavailable`, other
+errors, and timeouts do not prove non-admission; retain the request identity and
+reconcile its receipt before replacing it.
+
+`host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. `tool_policy: { allow?: string[], deny?: string[] }` adds an attenuation-only policy for one isolated turn. Omitted `allow` retains the ordinary surface minus `deny`; explicit `allow: []` denies every tool. The host intersects this policy with existing session restrictions, checks actual and discovered tool execution, and restores the ordinary surface after success, failure or interruption. It never changes persistent session settings. Check the `session-turn-tool-policy.v1` host feature before relying on this contract.
+
+A turn carrying `tool_policy` is a separate execution boundary: it cannot steer another turn, and incoming plugin or completion input is queued separately. Human `turn/steer` receives `isolated_turn_requires_queue` only when the input has not been admitted; the Desktop queues the same original input and client ID on the same captured connection for that exact refusal. Other errors and uncertain responses are not retried this way. Already-held input must use its existing resume flow. Owner interruption remains available. When allowing `run_code`, its embedded catalog and search/describe text can still describe tools excluded by the turn policy; actual nested calls remain checked. Use a direct-tool-only allowlist for a review that must not advertise unrelated bindings. Tool names restrict the surface, not task authority: the receiving plugin must still validate the exact task, run, revision and tool arguments.
+
+Plugins requiring `agent.tools@1` can use `toolService(host).resolveOwn({ tool_id: "local_tool_id" })` to resolve their own current public tool name without guessing prefixes or collision hashes. This read-only lookup is usable from a background callback and does not initialize a tool backend. The native provider uses the registry-authenticated caller and its captured generation's declaration; callers cannot select another plugin. The result is `{found:false}` or `{found:true,name,direct_only?}`. Re-resolve before each use. This is declaration identity, **not** permission or proof that a target session exposes the tool: check the exact admitted model-request surface separately. Missing/unsupported selected providers must keep the operation read-only; never substitute the native provider. Execution methods retain their existing stricter scope requirements.
 
 `host.session.history.read` is a read-only view of physical audit records, including hidden model context and tool records. Records carry optional `hidden`, `read_only`, and `origin` metadata; omitted flags are false and omitted origin is empty for legacy records. A `user` role alone does not establish human authorship. Retain these fields when building a conversation projection: exclude hidden records, and treat user-role records as human input only when they are not read-only and their origin is `user` or empty. Do not classify messages by their wording or strip matching text from genuine input. Projection does not delete audit records or alter provider context.
 
@@ -386,6 +402,8 @@ For session creation, provide a stable `request_id`, `visibility=user|plugin`, a
 A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
 
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
+
+Subagent and Peers qualify tool-call identities with the host-supplied session, tool, call ID, turn ID and step index when available; transport execution IDs do not define retries. Calls without turn and step metadata retain their legacy mapping. Persisted requests continue recovery using their stored IDs; missing historical turn/step identity is not inferred. Peers' existing content-duplicate and uncertain-send matching remain separate policies.
 
 #### Live session progress
 
@@ -804,9 +822,11 @@ The `security.authorize` service may further restrict an operation, but cannot r
 
 ## Agent-managed development
 
-The built-in deferred `plugin_manager` tool accepts `status`, `apply`, `enable`, and `disable`. `apply` takes a workspace-local TypeScript file or development package directory and performs a one-shot publish through a host-selected CLI bridge. It accepts neither arbitrary commands nor a caller-selected Wuu home. Source execution requires host-code authorization before validation/import, separately from permission to write the source file. See the [agent workflow](plugin-quickstart.md#let-the-agent-add-a-tool).
+The built-in deferred `plugin_manager` tool accepts `status`, `apply`, `enable`, `disable`, and `reload`. `apply` takes a workspace-local TypeScript file or development package directory and performs a one-shot publish through a host-selected CLI bridge. It accepts neither arbitrary commands nor a caller-selected Wuu home. Source execution requires host-code authorization before validation/import, separately from permission to write the source file. See the [agent workflow](plugin-quickstart.md#let-the-agent-add-a-tool).
 
 Status returns a `plugins` list. Compare `published_fingerprint` with `current_conversation_fingerprint` and inspect `adoption_pending`, `desired_enabled`, `trusted`, and `current_conversation_runtime_state`. An `error` reports runtime diagnostics when present. These fields report publication, policy, and this conversation's bindings; they do not prove a particular tool succeeded or a desktop view rendered.
+
+The separate `hosts` list queries live app-server hosts, including independent user/product hosts. Each entry reports its binding, generation, executable and storage identities, fingerprint, runtime state, and error. `wuu plugin hosts [id]` exposes the same observations. An empty list means no compatible host reported; it is not activation evidence. `wuu plugin reload <id>` (or `plugin_manager` action `reload`) rebuilds host generations to recover a repaired failed runtime. A client request retry does not reload the runtime.
 
 An ordinary update leaves the current turn and its outstanding workers or managed processes on their tool and prompt generation. Discover and invoke updated tools at the next idle turn boundary after that work settles. A committed disable or removal instead revokes the plugin across retained generations without waiting for an idle turn. Publication is not a tool invocation or a rendered UI check, and it does not schedule a continuation by itself.
 
@@ -817,6 +837,10 @@ Local UI control is an exception to ordinary generation retention. Updating an o
 `wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` declares contracts in the actual host; `prepare` then validates state through the selected services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
 
 `wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
+
+An authorized development override keeps the installed home-wide package’s storage identity while retaining its `plugin:dev:<id>` executable identity and development permissions. The signed generation receipt pins this binding across subsequent publications. Existing receipts without a binding acquire it on the next publication; a standalone development package keeps its own storage identity. Overriding code does not replay or rewrite ownership transfers.
+
+Before replacing the published package, `dev` asks every registered live host to prepare the candidate with that host’s selected providers and configuration. Rejection preserves the published package and running generation. After publication, results include each host’s observed activation state; an activation failure reports that publication already committed. Repair and republish, or explicitly reload, without deleting ownership metadata. Hosts running an older core must be restarted with a compatible core to participate.
 
 For monorepo packages, `package.json` may declare additional build inputs with `"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`. Paths are relative to the package directory; sibling files and directories are supported. Wuu watches and fingerprints those inputs as well as the package, so edits rebuild and publish without restarting. Absolute paths, package ancestors, symlinked inputs, and more than 64 additional inputs are rejected. Keep generated files out of the list; `.git`, `node_modules`, and `dist` descendants remain ignored. This metadata affects development watching only, not runtime permissions.
 
@@ -843,8 +867,9 @@ are fingerprinted package inputs, not cross-plugin storage RPC permissions.
 
 Importers must defer reading the imported prefix until their effectful activation
 callback, not cache its contents during initialization. Preparation does not mutate
-storage. At accepted startup or generation activation,
-the host validates the complete target document before fencing the source prefix,
+storage. The selected settings provider checks ownership, target conflicts, and
+quotas during preparation; a failed check rejects the candidate before commit.
+At accepted startup or generation activation, the host rechecks the complete target document before fencing the source prefix,
 then atomically persists the raw copied values and an import receipt. Conflicts or
 storage quota overflow fail closed without overwriting target state. Transfer
 failures block the importing runtime. Pending transfers recover on the next
@@ -933,3 +958,101 @@ context and are canceled and drained when the connection's server closes.
 There is no separate package-download cancel RPC. Official and community npm
 packages go through these same public contracts; installation does not grant
 bundled-package privileges.
+
+### Personal execution facts
+
+A replacement `personal.agents@1` provider exposes `observe-execution` with
+`{session_id}` and returns `PersonalExecutionFacts` from the SDK. It resolves its
+own agent, task, requirement revision, run, active/cancelled state, owning routine,
+and exact original human source. The host independently checks session ownership,
+source history, the selected generation and execution grant. These facts do not
+grant permission to execute an action.
+
+For the existing Personal review/memory coordinator, store these durable facts in
+the provider's **user-scoped host storage**, in any key/value format. During an
+effect the coordinator retains the selected provider and holds that storage's
+opaque durable inspection, along with session and review guards. A standalone
+observation is not a transaction or an execution fence. An alternative storage
+backend must preserve the host storage inspection contract; an in-memory cache
+must not become an independent authority for these observations.
+
+`legacy-memory` returns a map of legacy record IDs to their serialized values for
+migration into the selected memory journal, or an empty object if none exist.
+The coordinator never interprets another plugin's private storage keys. Neither
+method writes state or restarts a task. A disabled or unavailable provider must
+not be replaced with a hidden bundled fallback.
+
+If the same runtime also calls back into `host.personal` (for example from a memory
+operation), include `personal.agents` in its SDK `concurrentServices`: the host may
+read these facts before completing the original call. Do not queue that read
+behind the invocation waiting for the host. Keep mutations synchronized through
+storage and the inspection contract rather than serializing the entire service.
+
+### Personal account provider lifecycle
+
+Calendar and connector operations use the selected `personal.accounts@1` service.
+The Personal bundle selects `wuu.personal-account-client` and the native
+`wuu.personal-accounts` provider; a composition can bind the client to another
+provider or disable the native module without an implicit fallback.
+
+Its `call` method accepts `{operation, input, session_id?}` using the calendar and
+connector operation names of `host.personal`. The host resolves the execution
+session, checks resource policy, and requires live owner admission for account
+controls before calling the selected service. A serialized session ID is not
+permission. Results are `{value}` or `{calendar_error: {code,
+persistence_failed?}}` / `{connector_error: {code}}`; transport and admission
+failures remain service errors. Credentials and authorization URLs are not
+returned through this contract.
+
+Native embeddings configure `RuntimeBindings.SetPersonalAccountsFactory` before
+creating the runtime. The factory creates fresh account resources only on the
+first call to that selected generation. It must not return a broker already owned
+by another generation. The provider declares its credential dependency and owns
+its OAuth attempts and cleanup. Accepted calls retain their exact graph until
+completion; closing an old generation cannot close the new generation's broker.
+`NewUserHost` with runtime bindings does not accept preconstructed account brokers.
+The review/memory coordinator and native file-review gate are separate from this
+account service.
+
+### Personal coordination and host effects
+
+`personal.coordination@1` is the replaceable review/memory/file/connector policy
+service. The Personal bundle selects `wuu.personal-client`, the native
+`wuu.personal-actions-consumer` coordinator, and `wuu.personal-effects` host
+mechanisms. Binding the client to another provider or disabling the coordinator
+never constructs a native fallback. The Go host still authenticates ingress,
+resolves sessions and enforces resource boundaries.
+
+Coordinator requests are `{operation?, input?, session_id?, call?, scopes?}`.
+`call` handles `review.*` and `memory.*` with the existing operation input/result;
+`file-gate` receives a tool call and returns a tool result; `scope` and `cancel`
+support exact session/task cancellation; `inspection` handles owner-admitted
+review-policy/settings/session recovery, serialized with live Personal effects. `initialize` and `drain` are lifecycle/scheduler methods.
+Connector methods use `input`: `connector-snapshot` accepts `{actor}` and returns
+`{authority}`, while `connector-commit` accepts `{actor, expected, effect_id}`.
+The actor is the existing `{ProductDomain, UserSpaceID, SessionID}` wire shape.
+The native coordinator executes the effect *inside* its durable authority
+inspections; a boolean authorization response is not an effect commit.
+
+A replacement declares `host.personal-effects@1`. Its public methods are:
+
+- `prepare-file`: a tool call -> `{effect_id, file}` containing the frozen action.
+- `execute`: `{effect_id}` -> `{tool_result}`; each handle executes at most once.
+- `release`: `{effect_id}` -> `{}`; a declared cleanup method, safe to repeat.
+
+Only the selected coordinator can use these mechanisms. Process callbacks carry
+host provenance through their execution ID, not serialized State/toolkit or owner
+claims. Deferred file handles survive the originating callback and retain the
+original graph and toolkit; later authenticated owner admission does not retarget
+them. They are process-local capabilities, not durable approval receipts. A cold
+restart requires new admission and revalidation of the persisted frozen action;
+uncertain outcomes are never automatically replayed. Connector handles are
+synchronous and expire when the broker callback finishes.
+
+Compatible native generations share pending coordination state with counted
+ownership. Old-generation disposal cannot close a core borrowed by its successor.
+Explicit disable/crash seals admission, cancels and drains owned effects before
+provider disposal; host close also releases pending resources. Native mechanisms
+use `ServiceRegistry.RegisterRetirementCleanup` for this physical cleanup barrier
+and `DeferServiceCompletion` only for final graph-reference releases, which may
+reenter shutdown. These are lifecycle mechanisms, not extra policy authority.

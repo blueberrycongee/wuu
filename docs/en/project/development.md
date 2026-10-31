@@ -379,6 +379,8 @@ suggestion quality or provider billing.
 
 ### Live activity preview acceptance
 
+The macOS preview canvas is a local main-process build asset; its decoder ships in the sandbox preload. It does not depend on `ELECTRON_RENDERER_URL`. A resolved tool target brings its existing card to the front when revisited. Capture failures retry with capped backoff while the activity remains live, and show a connecting state without requiring a manual retry. Unavailable frames are hidden until fresh pixels arrive.
+
 Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame host subprocess using JSONL commands and binary AVC session output. It verifies independent targets in one session, the five-card visible limit and overflow replacement, promotion, session visibility, dialog suppression, individual dismissal and reopening, native authority updates across retained targets, stale callbacks, frame acknowledgement, capture-error recovery, and teardown. Results, transport logs, appearance frame samples, stack geometry and screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. macOS also records composed stack screenshots in light/default-text and dark/large-text layouts. Headless Linux uses software rendering and a synthetic display automatically.
 
 Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs` to check real Go execution ownership and Chromium input. Stop must interrupt the current run; a later user instruction must work with new authority while old execution IDs remain rejected. The fixture also covers browser task isolation, retained pages, takeover during pending input, and cleanup. Evidence is written under `desktop/out/browser-task-ownership/`.
@@ -536,6 +538,27 @@ is uncompressed SSE with label `baseline`, matched by workload and turn; it must
 pass its correctness gate before an index is emitted. Higher than 100 means
 faster for that sample. Also inspect successful P50/P90, completion and failures;
 a small sample does not establish tail latency or a general product score.
+
+Use `-loop-workload short|long|tools|many-tools` for the default driver with an
+exact short answer, 128 output lines, or 8/64 dependent synthetic tool calls.
+Each tool result reveals the token required by the next call. For example:
+
+```sh
+go run ./scripts/provider-latency-e2e -provider openai-codex \
+  -model gpt-6.1-terra -reuse-codex-credentials -transport auto \
+  -loop-workload many-tools -records 320 -repeats 4 -timeout 600s \
+  -label candidate > .tmp/provider-latency/loop-candidate.jsonl
+```
+
+`-model` overrides the model in this process. `-reuse-codex-credentials` explicitly
+selects the native, read-only Codex CLI credential source for loop workloads.
+These workloads use low reasoning effort, disable automatic compaction, and
+exclude durable runtime storage. They report request-ready/model-done timestamps,
+provider replay state, allocations, tool-definition reads and retry counts. A
+recovered extra submission fails the strict `passed` check even if the task
+finishes correctly; retain that sample and its elapsed time. The transport scorer
+does not score `loop_sample` records. Compare complete tasks by workload,
+history size and transport, and record concurrency when running variants together.
 
 Use `-list-providers` to list configured names and models without credentials.
 For command scheduling, add `-shell-workload -repeats 3 -timeout 120s` with either

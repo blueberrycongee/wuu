@@ -3,7 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ScopedToast,
   clearToasts,
+  dismissToast,
+  showActionErrorToast,
   showErrorToast,
   showToast,
   ToastViewport,
@@ -92,6 +95,27 @@ describe("ToastViewport", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(error.message);
   });
 
+  it("does not hide an explicit failure when its rejection has no message", () => {
+    act(() => { showActionErrorToast(undefined); });
+    expect(container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  });
+
+  it("coalesces a failure already waiting in the queue and returns its dismissible handle", () => {
+    let first: number | undefined;
+    let duplicate: number | undefined;
+    act(() => {
+      showErrorToast("active failure");
+      first = showErrorToast("queued failure");
+      duplicate = showErrorToast("queued failure");
+    });
+    expect(duplicate).toBe(first);
+    act(() => {
+      dismissToast(duplicate!);
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("queues distinct notices and suppresses repeated failures", () => {
     act(() => {
       showErrorToast("first failure");
@@ -109,5 +133,30 @@ describe("ToastViewport", () => {
       vi.advanceTimersByTime(6_000);
     });
     expect(container.querySelector(".archive-tip")).toBeNull();
+  });
+});
+
+
+describe("owned notices share the shell queue", () => {
+  it("serializes surface feedback with global feedback and removes retired queued actions", () => {
+    act(() => { showToast({ message: "Global action" }); });
+    act(() => root!.render(<WuuUIRoot><ToastViewport /><ScopedToast message="Surface action" dedupeKey="surface-action" /></WuuUIRoot>));
+    expect(container.querySelectorAll('[data-wuu-component="notice"]')).toHaveLength(1);
+    expect(container.textContent).toContain("Global action");
+    expect(container.textContent).not.toContain("Surface action");
+    act(() => root!.render(<WuuUIRoot><ToastViewport /></WuuUIRoot>));
+    const current = showToast({message:"Global action"})!;
+    act(() => dismissToast(current));
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+  });
+  it("keeps the live notice when React rehearses effect cleanup", () => {
+    act(() => root!.render(<React.StrictMode><WuuUIRoot><ToastViewport /><ScopedToast message="Live failure" dedupeKey="strict-owner" /></WuuUIRoot></React.StrictMode>));
+    expect(container.querySelectorAll('[data-wuu-component="notice"]')).toHaveLength(1);
+    expect(container.textContent).toContain("Live failure");
+  });
+  it("does not restart an owned notice for callback-only rerenders", () => {
+    const render = () => act(() => root!.render(<WuuUIRoot><ToastViewport /><ScopedToast message="Retry send" dedupeKey="owned-retry" action={{label:"Retry",onClick:()=>{}}} /></WuuUIRoot>));
+    render(); const notice=container.querySelector('[data-wuu-component="notice"]'); render();
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBe(notice);
   });
 });

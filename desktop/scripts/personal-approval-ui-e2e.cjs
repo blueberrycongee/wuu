@@ -40,12 +40,16 @@ async function capture(name) {
     const conversation=document.querySelector('.mosaic-main > .plugin-conversation');
     if(!conversation?.checkVisibility())return null;
     const rect=selector=>conversation.querySelector(selector).getBoundingClientRect().toJSON();
-    return {header:rect('.plugin-conversation-titlebar'),identity:rect('.mosaic-identity'),viewport:rect('.plugin-conversation-scroll'),scrollTop:conversation.querySelector('.plugin-conversation-scroll').scrollTop};
+    const identity=rect('.mosaic-identity'),viewport=rect('.plugin-conversation-scroll');
+    const sideHits=[(viewport.left+identity.left)/2,(identity.right+viewport.right)/2].map(x=>Boolean(document.elementFromPoint(x,(identity.top+identity.bottom)/2)?.closest('.plugin-conversation-scroll')));
+    return {header:rect('.plugin-conversation-titlebar'),identity,viewport,sideHits,firstMessage:conversation.querySelector('.plugin-conversation-message')?.getBoundingClientRect().toJSON(),scrollTop:conversation.querySelector('.plugin-conversation-scroll').scrollTop};
   });
   if(identity){
     report.identity_checks.push({name,...identity});
     assert(identity.identity.top>=identity.header.top-1 && identity.identity.bottom<=identity.header.bottom+1,`${name}: identity escapes its header footprint`);
-    assert(identity.header.bottom<=identity.viewport.top+1,`${name}: identity header covers the scrolling reading area`);
+    assert(identity.viewport.top<=identity.identity.top && identity.viewport.bottom>identity.identity.bottom,`${name}: history must scroll behind the floating identity`);
+    assert(identity.sideHits.every(Boolean),`${name}: identity blocks reading-area input outside its footprint`);
+    if(identity.scrollTop===0 && identity.firstMessage) assert(identity.firstMessage.top>=identity.identity.bottom,`${name}: the first message cannot be scrolled clear of the identity`);
   }
   assert(geometry.scrollWidth<=geometry.width+1, `${name}: page horizontal overflow`);
   for(const control of geometry.controls) assert(control.left>=-1 && control.right<=geometry.width+1,`${name}: clipped review control ${control.text}`);
@@ -93,7 +97,7 @@ async function capture(name) {
     assert.equal(await composer.inputValue(),draft,`${name}: profile interaction replaced the draft`);
     assert(Math.abs(await viewport.evaluate(node=>node.scrollTop)-readingPosition)<=1,`${name}: profile interaction moved the reading position`);
     await capture(`${name}-profile-return`);
-    report.cases.push(`${name}: real wheel scrolling keeps identity outside the reading viewport; profile/Escape preserves draft, reading position and focus`);
+    report.cases.push(`${name}: real wheel scrolling passes beneath the floating identity; profile/Escape preserves draft, reading position and focus`);
   }
   // Real pointer input catches an invisible navigation drawer over the card;
   // DOM dispatch would approve successfully even when the owner cannot click.
@@ -124,6 +128,29 @@ async function capture(name) {
   await open();await page.locator('[data-review-open-settings]').click();await wait('[data-review-variant="settings"]');await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();await capture('settings-manual-default');
   const toggle=page.locator('[data-personal-action-review] [role="switch"]');assert.equal(await toggle.getAttribute('aria-checked'),'false');await toggle.click();await page.waitForFunction(()=>document.querySelector('[data-personal-action-review] [role="switch"]')?.getAttribute('aria-checked')==='true');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.settings').length),1);await capture('settings-opted-in');report.cases.push('AutoReview defaults off; explicit version-bound opt-in saves once without changing Coding');
+  for (const [name,scenario,extra,viewport] of [
+    ['existing-session-review-wide','review',{}, {width:1100,height:950}],
+    ['existing-session-review-narrow','review',{theme:'dark',font:'20'}, {width:430,height:1100}],
+    ['existing-session-unavailable','unavailable',{}, {width:1100,height:950}],
+  ]) {
+    await open('unavailable',{existingSession:scenario,...extra},viewport);
+    const trigger=page.locator('[data-action="toggle-personal-panel"]');
+    if(await trigger.getAttribute('aria-expanded')==='false')await trigger.click();
+    await page.locator('[data-task-id="dinner"]').click();await wait('[data-task-detail="dinner"]');
+    const detail=page.locator('[data-task-detail="dinner"]');
+    assert((await detail.textContent()).includes('registered-coding-host-with-a-long-stable-identity'));
+    assert((await detail.textContent()).includes('existing-user-session-2f629e5c'));
+    if(scenario==='review') {
+      assert((await detail.textContent()).includes('Which branch should I use'));
+      assert.equal(await detail.getAttribute('data-task-state'),'awaiting_review');
+      assert.equal(await detail.locator('[data-worker-result]').count(),1);
+    } else assert((await detail.textContent()).includes('no replacement was created'));
+    await capture(name);
+    await page.locator('[data-action="close-detail"]').click();
+    await page.locator('[data-task-id="dinner"]').click();await wait('[data-task-detail="dinner"]');
+    assert((await page.locator('[data-task-detail="dinner"]').textContent()).includes('existing-user-session-2f629e5c'));
+    report.cases.push(`${name}: exact target, truthful worker/question or unavailable state, reopen preserves target`);
+  }
   assert.deepEqual(report.errors,[]);report.status='passed';
 })().catch(async error=>{
   report.status='failed';report.error=String(error.stack||error);process.exitCode=1;

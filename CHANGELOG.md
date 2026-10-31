@@ -1,19 +1,18 @@
 # Changelog
 
-This file starts the maintained release record. Earlier GitHub Releases may not
-have complete change notes.
+This file is a frozen historical record. Ordinary PRs describe changes in their
+PR descriptions; maintainers prepare per-version notes in `docs/releases/` only
+when releasing. See [the release guide](docs/en/project/release.md).
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versioning rules are documented in [the release guide](docs/en/project/release.md).
+The existing `[Unreleased]` entries below are retained as transition material for
+the next release, not as a list of verified shipped features. Do not append new
+entries. Earlier GitHub Releases may not have complete change notes.
 
 ## [Unreleased]
 
 ### Added
 
-- Generate interactive views from version 3 source with state declarations, functions,
-  JSX components and themed SVG diagrams. Preview nested content as it arrives,
-  preserve component identity on completion, and restore local values and view
-  preferences. Retain historical version 1/2 rendering and reduce redundant framing.
+- Made authenticated input/context receipts an explicitly selected `wuu.client-input-receipts` host capability, available to bound Coding compositions as well as the default Personal composition.
 
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
@@ -175,6 +174,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Give conversation images wider, left-aligned previews with rounded image edges and proportionate widths in horizontal galleries, while preserving reserved row heights across loading, failures, and session switches.
+
+- Reduce repeated history cloning in the default agent loop and JSON processing during Responses WebSocket continuation, preserving context contents, replay checks and provider options.
+
 - Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.
 
 - Render Markdown conversation attachments with the shared document reading presentation while keeping HTML and other executable text inert.
@@ -182,6 +185,38 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
 
 ### Fixed
+
+- Keep macOS operation previews available when the development renderer server stops, recover capture failures automatically, and bring revisited tool targets to the front of the preview stack.
+- Let Personal history scroll behind the floating avatar and name, with a soft halo limited to their footprint and scrollable clearance for the first message.
+
+- Keep composer selection and model refresh behavior with the selected provider, and coordinate composer/preview focus through public surface capabilities rather than default-provider DOM structure.
+
+- Keep unavailable plugin surfaces visible with scoped render retries instead of blank panes or a full application restart; preserve optional wrapper content and diagnostic details.
+- Reject invalid persisted Goal state before committing a plugin replacement, then reload current state at activation so updates made during preparation survive. Discarded candidates leave live goal work untouched, and reload still pauses autonomous goals.
+- Reuse shared inputs, rows and sections in Automation controls, and let Goal controls follow public theme tokens and larger UI text without shrinking action targets.
+- Deduplicate pending advanced-settings commits and keep late save feedback from changing a newer edit or a reopened settings page. Preserve drafts across navigation and whole-settings save refreshes, and allow failed saves to be retried.
+
+- Load MCP settings only while its page is open and discard pending authorization results when leaving the page, preventing a late browser login from opening after navigation.
+- Avoid a spurious inference-journal cleanup failure when a turn is canceled before its first durable model operation is prepared.
+- Bound macOS Computer Use child enumeration and expose incomplete branches when native reads fail or traversal limits are reached. Partial observations no longer report confirmed removals or establish unique-label activation targets.
+- Keep Personal replies in a compact bottom sheet with reversible opening and closing motion, a plain close action outside the scrolling content, and focus restoration after dismissal. Preserve reply drafts and honor reduced-motion preferences.
+- Show Personal desktop send failures consistently as a red outlined retry icon to the right of the message bubble in both main conversations and replies, with reserved space to prevent clipping.
+
+- Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
+
+- Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
+
+- Bound GIF normalization before bitmap allocation: reject animated GIFs without decoding every frame and reject GIF canvases above 40 million pixels. Original-byte passthrough remains unchanged.
+
+- Wait for worker ownership bookkeeping to finish after execution locks are released before reporting that workers have drained.
+
+- Let app-server shutdown proceed when queued worker launch is stalled, while retaining its state until queued cancellation and worker ownership have settled.
+
+- Show complete font names in the appearance settings and widen their menus.
+
+- Keep desktop error notices readable during pointer and keyboard interaction, report failed link and command actions without inserting errors into message prose, and preserve working browser pages when opening externally fails.
+- Add in-place retry and expandable diagnostics for account, model and engine loading failures while preserving connection form input.
+- Preserve installed plugin data ownership across authorized development overrides. Validate storage transfers through each live host’s selected provider before publication, report independent host activation failures, and add explicit runtime reload recovery.
 
 - Connect Personal local file writes/edits to durable owner approval cards and opt-in AutoReview, retaining original tool results, revision-bound recovery and fail-closed cancellation. Other write surfaces and account grants remain outside this first adapter.
 
@@ -288,7 +323,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Animate desktop message sends from the composer into the conversation with a narrowing bubble and a small spring rebound, preserving text wrapping, acknowledgement continuity and reduced-motion preferences.
+- Animate Personal Agent sends from the composer into the conversation with a narrowing bubble and a quick ease-out, preserving text wrapping, acknowledgement continuity and reduced-motion preferences. Restore the ordinary Chat send presentation.
 
 - Restore bounded automatic recovery when a model stream disconnects after partial output, while retaining checkpoint and tool replay safety.
 

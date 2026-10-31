@@ -275,6 +275,7 @@ async function run() {
   main.setSize(1280, 1000);
   await waitFor(main, () => document.querySelector('.composer textarea'));
   assert.equal(requests.length, 0, 'Ordinary navigation must not request quotas.');
+  await waitFor(main, () => document.querySelector('.sidebar-account-trigger'));
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
@@ -502,7 +503,8 @@ run().then(() => {
   app.quit();
 }).catch(async error => {
   console.error(error);
-  if (main) await capture(main, 'failure.png');
+  try { if (main) await capture(main, 'failure.png', true); }
+  catch (captureError) { console.error('Could not capture failure:', captureError); }
   cleanup();
   app.exit(1);
 });

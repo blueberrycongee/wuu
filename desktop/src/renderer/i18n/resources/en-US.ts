@@ -1,6 +1,13 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "settings.errorRetry": "Try again",
+  "settings.accountsLoadFailed": "Could not load your accounts. Try again.",
+  "settings.modelsLoadFailed": "Could not load models. Check the connection and try again.",
+  "settings.connectionSaveFailed": "Could not save this connection. Your entries are still here; try connecting again.",
+  "settings.operationFailed": "Could not complete this change. Check the details and try again.",
+  "settings.enginesLoadFailed": "Could not load agents. Try again.",
+
   "conversationAttachment.readFailed": "Could not read the verified attachment. Please retry.",
   "conversationAttachment.open": "Open {name}",
   "conversationAttachment.download": "Download",
@@ -747,6 +754,7 @@ export const enUS = {
   "plugins.activationReportUnavailable": "Plugin status could not be reported.",
   "plugins.applicationUnavailable": "The application could not be loaded.",
   "plugins.connectionUnavailable": "The connection could not be restored. Reconnect to retry.",
+  "plugins.retrySurface": "Try again",
   "plugins.surfaceUnavailable": "A plugin view could not be displayed. Check its details in Settings.",
   "plugins.viewUnavailable": "This plugin view is unavailable.",
   "common.loading": "Loading",
@@ -852,6 +860,7 @@ export const enUS = {
   "remote.refreshPairQr": "Generate a new code",
   "remote.generatingPairQr": "Generating QR code…",
   "remote.access": "Phone access",
+  "remote.readFailed": "Could not read phone access settings. Try again to see the current status.",
   "remote.allowAccess": "Allow phone access",
   "remote.configureRelayFirst": "Configure a relay address first",
   "remote.enableAccess": "Enable phone access",
@@ -2352,6 +2361,7 @@ export const enUS = {
   "runtime.configureCredentials": "Configure model credentials in Settings",
   "runtime.historyRestoreSkipped": "Opened a new conversation because the previous conversation could not be restored: {error}",
   "runtime.workspaceUnavailable": "The current workspace directory is unavailable. Restore or relocate the workspace.",
+  "runtime.startupWorkspaceFallback": "Workspace “{name}” is unavailable. Switched to Conversations. Restore or relocate the folder.",
   "greeting.workspaceFallback": "this workspace",
   "greeting.workspace.morning": "Good morning. What would you like to tackle first in {workspace}?",
   "greeting.wuu.morning": "Good morning. What would you like to tackle first?",

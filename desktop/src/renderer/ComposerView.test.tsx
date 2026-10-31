@@ -11,6 +11,12 @@ import {
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
+import { ComposerServicesProvider, type ComposerServices } from "./ComposerServicesContext";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
+import { createUIComposition } from "./plugins/ApplicationShell";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { clearToasts, ToastViewport } from "./Toast";
+import type { ComposerSlashCommand } from "./ComposerSlashCommands";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { initialState, reduceServerEvent, type AppState } from "./AppState";
 import { ConversationSplitPane } from "./ConversationSplitPane";
@@ -43,6 +49,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  clearToasts();
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -162,6 +169,8 @@ function renderComposer(props: {
   inlineCompletionWorkspace?: RuntimeContext;
   setPrompt?: (value: string) => void;
   pluginHost?: PluginHost;
+  slashCommandsOverride?: ComposerSlashCommand[];
+  services?: ComposerServices;
   onSelectPermissionMode?: (mode: PermissionMode, approveForMe?: boolean) => void;
   tokensPerSecond?: number;
   tokenSpeedSampledAt?: number;
@@ -175,10 +184,12 @@ function renderComposer(props: {
     models: [],
   };
   const onSelectPermissionMode = props.onSelectPermissionMode ?? vi.fn();
+  const withServices = (children: React.ReactNode) => props.services ? <ComposerServicesProvider value={props.services}>{children}</ComposerServicesProvider> : children;
   act(() => {
     root ??= createRoot(container);
-    root.render(
+    root.render(withServices(
       <ImagePreviewProvider>
+        <ToastViewport />
         <Suspense fallback={<div data-testid="composer-suspended" />}>
           <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
           <Composer
@@ -189,6 +200,7 @@ function renderComposer(props: {
             prompt={props.prompt ?? ""}
             setPrompt={props.setPrompt ?? (() => {})}
             pluginHost={props.pluginHost}
+            slashCommandsOverride={props.slashCommandsOverride}
           files={[]}
           images={[]}
           queuedMessages={props.queuedMessages ?? []}
@@ -260,7 +272,7 @@ function renderComposer(props: {
           </WorkbenchConnectionContext.Provider>
         </Suspense>
       </ImagePreviewProvider>,
-    );
+    ));
   });
   return { onSelectPermissionMode };
 }
@@ -4101,4 +4113,63 @@ it("retains a draft while public admission is pending and allows retry after rej
   expect(onSend).toHaveBeenCalledTimes(2);
   await act(async () => { settle(true); });
   expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
+});
+
+
+it.each(["sync", "async"])("reports %s plugin command failures and allows retry", async (mode) => {
+  clearToasts();
+  const host = new PluginHost({ react: React });
+  const execute = vi.fn().mockImplementationOnce(() => {
+    if (mode === "sync") throw new Error("Command rejected");
+    return Promise.reject(new Error("Command rejected"));
+  });
+  await host.activateGeneration({ pluginId: "test-command", generation: "one", register(api) {
+    api.registerCommand({ id: "run", title: "Run", execute });
+  } });
+  const props = { prompt: "/run", pluginHost: host, slashCommandsOverride: [{
+    id: "plugin:test-command:run", name: "run", title: "Run", description: "", tag: "Plugin",
+    kind: "action", action: "plugin", pluginId: "test-command", pluginCommandId: "run",
+  } as ComposerSlashCommand] };
+  renderComposer(props);
+  const submit = () => container.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await act(async () => { submit(); });
+  expect(execute).toHaveBeenCalledOnce();
+  expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+  act(() => clearToasts());
+  renderComposer({ ...props, prompt: "" });
+  renderComposer(props);
+  await act(async () => { submit(); });
+  expect(execute).toHaveBeenCalledTimes(2);
+  expect(document.body.querySelector('[role="alert"]')).toBeNull();
+  act(() => host.unload("test-command"));
+});
+
+
+it.each([false, true])("keeps command failure feedback scoped to its authority when changedSession=%s", async (changedSession) => {
+  const controller = new ApplicationController();
+  const host = new PluginHost({ react: React, application: controller });
+  let application!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "composer-owner", generation: "one", register(api) { application = api.application; } });
+  let reject!: (error: Error) => void;
+  const execute = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+  const services: ComposerServices = {
+    slots: createUIComposition(host), ownerTabId: "tab-one", presentation: { ...application.composerPresentation, executeCommand: execute },
+    view: application.composerPresentation.getSnapshot("tab-one"), catalog: application.catalog, settingsControls: application.settingsControls,
+  };
+  const props = { prompt: "/run", pluginHost: host, services, queryHistorySessionID: "thread-one", slashCommandsOverride: [{
+    id: "plugin:test-command:run", name: "run", title: "Run", description: "", tag: "Plugin",
+    kind: "action", action: "plugin", pluginId: "test-command", pluginCommandId: "run",
+  } as ComposerSlashCommand] };
+  try {
+    renderComposer(props);
+    await act(async () => { container.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+    expect(execute).toHaveBeenCalledOnce();
+    renderComposer({ ...props, queryHistorySessionID: changedSession ? "thread-two" : "thread-one",
+      services: { ...services, view: { ...services.view, status: "running", running: true } } });
+    await act(async () => reject(new Error("Command rejected after a presentation refresh")));
+    if (changedSession) expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    else expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+  } finally {
+    act(() => host.unload("composer-owner"));
+  }
 });

@@ -27,8 +27,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-const personalMemoryPrefix = "personal.records.v1."
-
 var personalMemoryID = regexp.MustCompile(`^mem_[a-f0-9]{64}$`)
 var personalMemorySourceRef = regexp.MustCompile(`^personal-message:([^:]+):([1-9][0-9]*)$`)
 
@@ -91,7 +89,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 	}
 	defer state.Close()
 	ctx = runtime.WithInvocationState(ctx, state)
-	selected, services, err := p.selectedTaskProvider(state)
+	selected, _, err := p.selectedTaskProvider(state)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +99,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 			return nil, err
 		}
 		docs := p.memoryDocuments(state)
-		records, err := personalmemory.NewJournal(docs, p.server.rt.UserBinding().UserSpaceID, selected.SubjectID).Records(ctx)
+		records, err := personalmemory.NewJournal(docs, p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject()).Records(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +111,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 		if err = decodePersonalAction(raw, &input); err != nil {
 			return nil, err
 		}
-		op, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.SubjectID).Operation(ctx, input.ID)
+		op, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject()).Operation(ctx, input.ID)
 		if errors.Is(err, personalmemory.ErrNotFound) {
 			return json.RawMessage("null"), nil
 		}
@@ -133,7 +131,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 			}
 		}
 		if op.State == "committed" {
-			records, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.SubjectID).Records(ctx)
+			records, err := personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject()).Records(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -149,11 +147,7 @@ func (p *personalActions) callMemory(ctx context.Context, operation string, raw 
 		if err = decodePersonalAction(raw, &input); err != nil {
 			return nil, err
 		}
-		doc, err := services.Settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
-		if err != nil {
-			return nil, err
-		}
-		actor, err := p.memoryActor(ctx, state, selected, doc, sessionID)
+		actor, err := p.memoryActor(ctx, state, selected, sessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +175,7 @@ func (p *personalActions) memoryDocuments(state *runtime.State) *persistence.Cli
 		return result, nil
 	})
 }
-func (p *personalActions) memoryActor(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, doc pluginsettings.StateDocument, sessionID string) (memoryActor, error) {
+func (p *personalActions) memoryActor(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, sessionID string) (memoryActor, error) {
 	var actor memoryActor
 	metadata, found, err := state.Sessions.WithContext(ctx).Find(sessionID)
 	if err != nil {
@@ -190,18 +184,15 @@ func (p *personalActions) memoryActor(ctx context.Context, state *runtime.State,
 	if !found || metadata.Owner != "plugin:"+selected.ID || metadata.Visibility != "plugin" || metadata.ProductDomain != "personal" || metadata.UserSpaceID != p.server.rt.UserBinding().UserSpaceID || metadata.ArchivedAt != nil {
 		return actor, errors.New("memory session is outside selected Personal identity")
 	}
-	prefix := "personal.v1." + personalHash([]byte(metadata.UserSpaceID))[:28] + "."
-	var agent struct {
-		AgentID string `json:"agent_id"`
-		Space   string `json:"user_space_id"`
-		Main    string `json:"main_session_id"`
-		Status  string `json:"status"`
+	facts, err := p.executionFacts(ctx, state, sessionID)
+	if err != nil {
+		return actor, err
 	}
-	if json.Unmarshal([]byte(doc.Values[prefix+"agent."+metadata.AgentID]), &agent) != nil || agent.AgentID != metadata.AgentID || agent.Space != metadata.UserSpaceID || agent.Status != "active" || agent.Main == "" {
+	if facts.AgentID != metadata.AgentID || !facts.Active || facts.MainSessionID == "" {
 		return actor, errors.New("memory requires the active bound Personal agent")
 	}
-	actor.AgentID, actor.MainSessionID, actor.Main = agent.AgentID, agent.Main, agent.Main == sessionID
-	authority, err := p.authority(ctx, state, selected, sessionID, "", doc)
+	actor.AgentID, actor.MainSessionID, actor.Main = facts.AgentID, facts.MainSessionID, facts.MainSessionID == sessionID
+	authority, err := p.authorityWithFacts(ctx, state, selected, sessionID, "", &facts)
 	if err != nil {
 		return actor, err
 	}
@@ -288,12 +279,16 @@ type personalMemoryLease struct {
 	operation personalmemory.Operation
 }
 
-func (l *personalMemoryLease) close() error {
+func (l *personalMemoryLease) close(cleanup ...context.Context) error {
+	ctx := context.Background()
+	if len(cleanup) != 0 {
+		ctx = cleanup[0]
+	}
 	var err error
 	for i := len(l.scopes) - 1; i >= 0; i-- {
 		err = errors.Join(err, l.scopes[i].Close())
 	}
-	return errors.Join(err, l.state.Close())
+	return errors.Join(err, releasePersonalState(ctx, l.state))
 }
 func (p *personalActions) openMemoryLease(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin) (*personalMemoryLease, error) {
 	held := state.Retain()
@@ -330,7 +325,7 @@ func (p *personalActions) openMemoryLease(ctx context.Context, state *runtime.St
 	if err != nil {
 		return fail(err)
 	}
-	l.journal = personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.SubjectID)
+	l.journal = personalmemory.NewJournal(p.memoryDocuments(state), p.server.rt.UserBinding().UserSpaceID, selected.StorageSubject())
 	if _, available := state.Host.ServiceRegistry().ProviderPluginIDFor(personalActionsConsumerID, executionauth.ServiceName, 1); !available {
 		l.ctx = ctx
 		return l, nil
@@ -432,11 +427,7 @@ func (p *personalActions) commitMemory(ctx context.Context, state *runtime.State
 	if err != nil {
 		return nil, err
 	}
-	doc, err := l.settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
-	if err != nil {
-		return nil, err
-	}
-	actor, err := p.memoryActor(ctx, state, selected, doc, sessionID)
+	actor, err := p.memoryActor(ctx, state, selected, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -480,18 +471,17 @@ func (p *personalActions) commitMemory(ctx context.Context, state *runtime.State
 		}
 		return nil, personalmemory.ErrAborted
 	}
-	taskRequest := pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: selected.SubjectID, Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}
+	taskRequest := pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: selected.StorageSubject(), Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}
 	var outcome personalmemory.Operation
 	runErr := func() error {
-		guard, err := l.settings.AcquireInspection(ctx, taskRequest)
+		_, err := l.settings.AcquireInspection(ctx, taskRequest)
 		if err != nil {
 			return err
 		}
-		doc = guard.Document
 		if _, err = l.sessions.AcquireInspection(ctx, op.SessionGuardID); err != nil {
 			return err
 		}
-		current, err := p.memoryActor(ctx, state, selected, doc, sessionID)
+		current, err := p.memoryActor(ctx, state, selected, sessionID)
 		if err != nil {
 			return err
 		}
@@ -534,11 +524,9 @@ func (p *personalActions) commitMemory(ctx context.Context, state *runtime.State
 				return err
 			}
 		}
-		legacy := map[string]string{}
-		for key, value := range doc.Values {
-			if strings.HasPrefix(key, personalMemoryPrefix) {
-				legacy[strings.TrimPrefix(key, personalMemoryPrefix)] = value
-			}
+		legacy, err := p.legacyMemory(ctx, state)
+		if err != nil {
+			return err
 		}
 		outcome, err = l.journal.Publish(ctx, op.ID, op.Digest, legacy, func(operation personalmemory.Operation, records map[string]string) error {
 			return validateMemoryRecord(operation, records, current.Main, p.server.rt.UserBinding().UserSpaceID)
@@ -603,7 +591,7 @@ func (l *personalMemoryLease) release(ctx context.Context) error {
 	}
 	// Release-before-acquire tombstones prevent delayed acquisitions after a
 	// rejected or lost request. None of these cleanup calls admits another write.
-	err = errors.Join(err, l.sessions.ReleaseInspection(ctx, op.SessionGuardID), l.settings.ReleaseInspection(ctx, pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: l.selected.SubjectID, Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}))
+	err = errors.Join(err, l.sessions.ReleaseInspection(ctx, op.SessionGuardID), l.settings.ReleaseInspection(ctx, pluginsettings.InspectionRequest{ReadRequest: pluginsettings.ReadRequest{Subject: l.selected.StorageSubject(), Scope: pluginsettings.ScopeUser}, ID: op.TaskGuardID}))
 	return err
 }
 
@@ -616,14 +604,27 @@ func (p *personalActions) retainMemoryLease(l *personalMemoryLease) {
 }
 func (p *personalActions) handoffMemoryLease(l *personalMemoryLease) {
 	p.effectGate <- struct{}{}
-	defer func() { <-p.effectGate }()
+	release := false
 	if current, ok := p.memoryLeases.Load(l.operation.ID); ok && current == l {
 		p.memoryLeases.Delete(l.operation.ID)
-		_ = l.close()
+		for i := len(l.scopes) - 1; i >= 0; i-- {
+			_ = l.scopes[i].Close()
+		}
+		release = true
+	}
+	<-p.effectGate
+	// This asynchronous callback has no outer invocation guard. Releasing its
+	// final graph reference can reenter core shutdown and acquire effectGate.
+	if release {
+		_ = l.state.Close()
 	}
 }
 
-func (p *personalActions) closeMemoryLeases() error {
+func (p *personalActions) closeMemoryLeases(cleanup ...context.Context) error {
+	cleanupCtx := context.Background()
+	if len(cleanup) != 0 {
+		cleanupCtx = cleanup[0]
+	}
 	// close cancels admission first. Drain active publication/reconciliation
 	// before handing unresolved durable guards to restart recovery.
 	p.effectGate <- struct{}{}
@@ -642,7 +643,7 @@ func (p *personalActions) closeMemoryLeases() error {
 		// No writer remains in this host; durable guards are NOT released on
 		// uncertainty and the persisted intent remains discoverable on restart.
 		p.memoryLeases.Delete(key)
-		result = errors.Join(result, err, l.close())
+		result = errors.Join(result, err, l.close(cleanupCtx))
 		return true
 	})
 	return result

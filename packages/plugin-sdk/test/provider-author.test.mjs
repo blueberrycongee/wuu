@@ -51,7 +51,7 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     send({id:'run',method:'service.invoke',params:{admission,storage_stewardship:stewardship,service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload,artifact_thread:artifactThread}}});
     const seen=[];
     let credential=null;
-    let configReads=0, transferCount=0, grantIssues=0;
+    let configReads=0, transferCount=0, transferCheckCount=0, grantIssues=0;
     let issuedGrant;
     let result;
     for (;;) {
@@ -99,6 +99,11 @@ test('packed provider clients preserve wire values and callback scope', {timeout
         if (method === 'acquire-inspection' || method === 'release-inspection') {
           assert.deepEqual(params,{id:'guard-two',subject:'author',scope:'user'});
           reply=method==='acquire-inspection'?{id:params.id,document:{schema_version:1,plugin_id:'author',values:{'record':'opaque'}},revision:'revision'}:{};
+        } else if (method === 'check-transfer-state') {
+          transferCheckCount++;
+          assert.equal(transferCount, 0, 'preparation must precede ownership mutation');
+          assert.deepEqual(params, {id:'move-1',source_subject_id:'old-owner',target_subject_id:'author',key_prefix:'records.',scope:'user'});
+          reply={};
         } else if (method === 'transfer-state') {
           transferCount++;
           assert.deepEqual(params, { id: ['move-1', 'unsupported', 'uncertain'][transferCount - 1], source_subject_id: 'old-owner', target_subject_id: 'author', key_prefix: 'records.', scope: 'user' });
@@ -195,6 +200,8 @@ test('packed provider clients preserve wire values and callback scope', {timeout
       else assert.fail(`unexpected service ${service}/${method}`);
       send({id:message.id,result:reply});
     }
+    assert.deepEqual(result.executionFacts,{session_id:'packed-session',agent_id:'packed-agent',main_session_id:'packed-session',active:true});
+    assert.deepEqual(result.authorityMethods.map(method => method.name),['observe-execution','legacy-memory']);
     assert.deepEqual(result.effectFence,{id:'effect-one',decision:{outcome:'deny',reason:'bounded policy'}});
     assert.deepEqual(result.stewardship,stewardship);
     assert.equal(result.grantPolicy.default_lifetime_seconds,3600);
@@ -217,6 +224,7 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.equal(result.changed.source,null);
     assert.equal(result.changed.committed,true);
     assert.equal(result.changed.activation_error,'project_overlay_invalid');
+    assert.equal(transferCheckCount, 1);
     assert.equal(transferCount, 3, 'failed or uncertain transfers must not retry');
     assert.equal(result.transferUnsupported, 'method_not_found');
     assert.equal(result.transferUncertain, 'service_unavailable');

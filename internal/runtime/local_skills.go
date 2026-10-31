@@ -26,6 +26,12 @@ func (s *Session) bindLocalSkillRefresh(kit *tools.Toolkit, root string, generat
 	if generation != nil {
 		plugins, cfg = generation.pluginSkills, generation.settings.Skills
 	}
+	// The initial catalog for the session root was discovered using RootDir.
+	// Preserve that spelling when a toolkit resolves an equivalent symlink, so
+	// refreshing does not report a location-only change in the first step.
+	if sameRuntimeRoot(root, s.RootDir) {
+		root = s.RootDir
+	}
 	kit.SetSkillRefresh(localSkillLoader(root, s.HomeDir, s.WuuHome, plugins, cfg))
 }
 

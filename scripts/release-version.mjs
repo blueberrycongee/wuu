@@ -27,7 +27,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
         prepare(rawVersion);
         break;
       case "notes":
-        process.stdout.write(`${releaseNotes(requireSemver(rawVersion))}\n`);
+        process.stdout.write(`${releaseNotes(requireCalver(rawVersion))}\n`);
         break;
       default:
         fail("usage: release-version.mjs check [v<version>] | sync | next | prepare [version] | notes <version>");
@@ -66,30 +66,24 @@ function prepare(rawNextVersion) {
   const version = requireCalver(rawNextVersion || nextVersion(current, now));
   if (compareVersions(version, current) <= 0) fail(`new version ${version} must be greater than current version ${current}`);
 
-  const changelog = read("CHANGELOG.md");
-  const unreleased = findSection(changelog, "Unreleased");
-  if (findSection(changelog, version)) fail(`CHANGELOG.md already contains ${version}`);
-  const candidate = current.includes("-") && version === current.split("-")[0]
-    ? findSection(changelog, current)
-    : null;
-  const body = [candidate?.body, unreleased?.body].filter(Boolean).join("\n\n");
-  if (!body) fail("CHANGELOG.md [Unreleased] is empty; document user-visible changes first");
-
-  const released = `## [Unreleased]\n\n## [${version}] - ${now.toISOString().slice(0, 10)}\n\n${body}\n\n`;
+  releaseNotes(version);
   const files = versionFiles(version);
   files.set("VERSION", `${version}\n`);
-  const unreleasedStart = unreleased?.start ?? changelog.length;
-  const unreleasedEnd = unreleased?.end ?? changelog.length;
-  files.set("CHANGELOG.md", changelog.slice(0, unreleasedStart) + released + changelog.slice(unreleasedEnd));
   writeFiles(files);
   console.log(`prepared release ${version}`);
 }
 
 function releaseNotes(version) {
-  const changelog = read("CHANGELOG.md");
-  const section = findSection(changelog, version);
-  if (!section || !section.body) fail(`CHANGELOG.md section for ${version} is empty or missing`);
-  return `# wuu v${version}\n\n${section.body}`;
+  const path = `docs/releases/${version}.md`;
+  let body;
+  try {
+    body = read(path).trim();
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    fail(`release notes missing: ${path}; write and review the notes before preparing a release`);
+  }
+  if (!body) fail(`release notes are empty: ${path}`);
+  return `# wuu v${version}\n\n${body}`;
 }
 
 function versionFiles(version) {
@@ -171,19 +165,6 @@ function compareVersions(left, right) {
   if (!a[4]) return 1;
   if (!b[4]) return -1;
   return a[4].localeCompare(b[4], "en", { numeric: true });
-}
-
-function findSection(changelog, version) {
-  const headings = [...changelog.matchAll(/^## \[([^\]]+)\][^\n]*\n/gm)];
-  const index = headings.findIndex((heading) => heading[1] === version);
-  if (index < 0) return null;
-  const heading = headings[index];
-  const end = headings[index + 1]?.index ?? changelog.length;
-  return {
-    start: heading.index,
-    end,
-    body: changelog.slice(heading.index + heading[0].length, end).trim(),
-  };
 }
 
 function read(path) {

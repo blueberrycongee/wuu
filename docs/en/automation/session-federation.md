@@ -103,6 +103,91 @@ descriptor (defaulting to its host ID), not a client-selected store or migration
 instruction. `display_host` is presentation metadata. A host-qualified session
 identity is the pair `(execution_host, session_id)`, never just `session_id`.
 
+## Personal tasks in an existing session
+
+The host grant gateway advertises `host_features: ["session-route.v1"]` from `executionGrants(host).describe()`. An absent feature means this routing operation is unavailable on an older host; ordinary Personal tasks remain supported and no replacement worker is created.
+
+Personal's `list_sessions` tool asks the selected transport for available registered
+sessions and unavailable hosts. Discovery is not a control grant. Select the exact
+host-qualified session when names are ambiguous. `create_task` accepts an
+`existing_session` locator; `resume_task` and `update_task` retain that target and
+start a new queued request. They do not steer an unrelated active turn, fork the
+session, or create a replacement when its host disappears.
+
+The source grant remains anchored to Personal's own controller conversation.
+Its selected task authority reports the existing locator and permitted operations;
+the host binds those facts into the grant digest and exact `session-route`
+resource. `executionGrants(host).route(reference, request)` permits only that
+run's send, inspect, and exact cancel. A locator or prompt claiming approval is
+not authority. The receiver separately authenticates the caller and applies its
+resource policy and execution ceiling. Neither session ownership nor parentage
+changes. Provider/model configuration is not part of this operation.
+
+The desktop Personal profile selects `wuu.desktop-session-transport`. It uses
+already-registered live receiver connections and their advertised nonsecret
+transport identity, never a newly spawned replacement or a cross-runtime
+`local` alias. Discovery is filtered by receiver resource policy. The bridge
+carries a live source-validation proof, never a caller-asserted owner privilege.
+The federation path remains nonowner; owner-local checks the genuine receiver
+connection instead. Unsupported, ambiguous, or unconfigured receivers
+remain unavailable. The adapter covers registered desktop local-core connections; it does not
+silently upgrade an undelegated remote connection.
+
+The registered catalog distinguishes two explicit paths with optional
+`route_kind` metadata (omission means legacy `federation`):
+
+- `owner-local`: an already-registered local Coding runtime, reached through its
+  genuine trusted desktop owner connection. This path does not require federation
+  configuration or a second receiver-grant store. The source task still needs its
+  exact existing-target authorization; the receiver uses a fixed nonhuman actor,
+  preserves ownership/parentage, and rechecks live source validity at execution.
+- `federation`: the separately advertised federation identity and receiver resource
+  policy. Registration alone does not grant delegated federation access.
+
+Each path has a distinct stable opaque host identity. Copy the catalog locator;
+do not add `route_kind` to a dispatch request or reinterpret an old federation
+locator as owner-local. A denial, timeout, or unavailable connection never triggers
+fallback to the other path. Ambiguous names require target selection, not guessing.
+Personal does not enable federation, acquire credentials, or forward an owner bit
+from a caller-supplied envelope. Remote and untrusted connections do not acquire
+the owner-local path.
+
+Personal stores the target and request identity with its existing task record.
+A lost response is reconciled by inspecting that request, not by creating another
+worker. Cancellation targets only the matching queue/turn, not the entire session.
+A wait timeout or detached display alone does not cancel work. Closing the trusted source desktop pipe or process is different: its receiver peer is revoked, while durable task/request records remain for honest reconciliation. The transport does not silently rebind the run to another desktop connection. Worker terminal
+output returns to Personal as a **worker response**, not independent verification
+of its claims. The matter remains awaiting review, including when the response is a question; detailed history stays in the original session. Late results from
+stopped or superseded runs do not revive the task.
+
+
+The main controller can use `accept_task_result` after reviewing the exact worker
+request and current task revision. It records its assessment and evidence without
+rewriting the raw response or granting further execution permission. Acceptance
+is a controller decision, not independent verification.
+
+When the host advertises `session-turn-tool-policy.v1` and the selected
+`agent.tools/resolve-own` provider can establish the current direct-only decision
+binding, Personal sends an isolated controller review through the same task
+outbox. The actual model request must expose exactly that decision tool, not a
+Code Mode wrapper or unrelated tools. The host-attested review session/turn/request
+must match the persisted task revision and worker request; worker text cannot
+select another task or grant permission. The tool records a decision intent only.
+After a completed review turn, reconciliation applies it once: accept the response,
+ask the user, or continue the same target with a new request under the same task
+revision and existing root grant. Prior worker output and continuation decisions
+remain attributed to their original execution.
+
+Ordinary human input queues rather than being mixed into this isolated review;
+owner interruption is still available. Interrupted, stopped, revoked or stale
+reviews cannot apply their intents later. Normal tool policy returns after the
+turn. Missing host support or selected binding retains the tools-disabled notice;
+a missing effective decision surface leaves the response awaiting review rather
+than enabling broader tools or retrying indefinitely.
+An expired or revoked source grant reports that authorization is required; it is
+not silently replaced by owner authority. The original target UI remains the
+place to stop work when no valid delegated cleanup grant is available.
+
 ## Retry and recovery
 
 Keep operation IDs stable across transport retries. The receiver writes an
@@ -150,3 +235,9 @@ endpoint, the existing encrypted relay connection, and a synthetic model. It
 checks local defaults, remote creation, narrowed permissions, idempotent retries,
 disconnect/reconnect, final output, exact cancellation, and revocation. It does
 not validate physical-machine networking, installed engines, or GUI rendering.
+
+Existing-target delegation is text-only. The controller goal is labeled separately from the authenticated original user message, when one is bound to the task; routine or controller-origin tasks do not invent a human original. An attached original request leaves a revisable task with an explicit unavailable explanation before any worker send. Files are not copied between hosts and source paths are never converted into receiver-local paths. Handle required files at the target, then revise the task to continue without attachment transfer.
+
+### Registered desktop bridge acceptance
+
+Run `node scripts/registered-session-transport-e2e.mjs` with the repository Go and Node toolchains and installed desktop dependencies. It builds real source/receiver app-server test processes and exercises the actual registered desktop pool, exact existing-session send/replay, terminal result, and receiver policy revocation. A second journey loads the generated Personal plugin in the actual trusted-local UserHost. Its main model turn calls `list_sessions`, selects the uniquely named catalog target, and calls `create_task` with that returned locator. Both owner-local and federation journeys hold the target response until the originating main turn has completed, then verify task lineage, grant issuance/restoration, worker-result reconciliation, original user provenance, and stable replay. That Coding receiver uses the default owner-only policy with federation disabled; no custom receiver authorization setup is needed. The separate federation test retains an explicit receiver-policy fixture. Both use a synthetic model; neither establishes external account/physical-machine deployment or independent verification of worker claims. The controller journeys then use the real background recovery interval, without injected reconciliation or decision calls: owner-local continues once under the same task root/revision and accepts the next response; federation accepts its response. Both verify final main-conversation delivery and ordinary tools on a subsequent human turn. A separate startup-Code-Mode case creates the task through the genuine owner client API and proves that the actual review model sees only the resolved direct decision tool, then restores the ordinary Code Mode surface. It does not execute the Code Mode subprocess or claim conversational task creation in that case. A busy-main variant keeps the original main turn open until the review is durably queued, then ends that turn and verifies the retained invocation authority admits the queued review; a failed supplied capture is never replaced. The existing public-provider CI job runs this required fixture and uploads its reports.

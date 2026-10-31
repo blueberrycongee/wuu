@@ -1,5 +1,4 @@
 import * as Toast from "../Toast";
-import { translateCurrent } from "../i18n";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -109,7 +108,8 @@ describe("UI contribution lifecycle", () => {
       expect(container.querySelector("span")?.textContent).toBe("Still available");
       expect(container.querySelector('[role="alert"]')).toBeNull();
       expect(container.textContent).not.toContain("view failed");
-      expect(notice).toHaveBeenCalledWith(translateCurrent("plugins.surfaceUnavailable"), "", "plugin-surface:broken-view:one");
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(notice).not.toHaveBeenCalled();
       expect(host.getGenerationDiagnostics("broken-view", "one")).toEqual([
         expect.objectContaining({
           kind: "render",

@@ -22,14 +22,16 @@ var errWorkerExecutionBusy = errors.New("worker execution is owned by another ap
 // processes. The lock sidecar is never removed, so all contenders continue to
 // lock the same inode; process exit releases the operating-system lock.
 type workerExecutionLease struct {
-	mu       sync.Mutex
-	file     *os.File
-	released chan struct{}
-	once     sync.Once
+	mu               sync.Mutex
+	file             *os.File
+	released         chan struct{}
+	once             sync.Once
+	ownerRemoved     chan struct{}
+	ownerRemovedOnce sync.Once
 }
 
 func newWorkerExecutionLease(file *os.File) *workerExecutionLease {
-	return &workerExecutionLease{file: file, released: make(chan struct{})}
+	return &workerExecutionLease{file: file, released: make(chan struct{}), ownerRemoved: make(chan struct{})}
 }
 
 func tryAcquireWorkerExecutionLease(rootDir, workerID string) (*workerExecutionLease, bool, error) {
@@ -141,6 +143,9 @@ func (c *AgentControl) releaseWorkerExecution(workerID string) {
 	if c.workerLeases[workerID] == lease {
 		delete(c.workerLeases, workerID)
 	}
+	if lease != nil {
+		lease.ownerRemovedOnce.Do(func() { close(lease.ownerRemoved) })
+	}
 	c.workerLeaseMu.Unlock()
 }
 
@@ -214,7 +219,9 @@ func (c *AgentControl) WaitOwnedWorkerExecutions(ctx context.Context) error {
 	c.workerLeaseMu.Lock()
 	signals := make([]<-chan struct{}, 0, len(c.workerLeases))
 	for _, lease := range c.workerLeases {
-		signals = append(signals, lease.releasedSignal())
+		if lease != nil {
+			signals = append(signals, lease.ownerRemoved)
+		}
 	}
 	c.workerLeaseMu.Unlock()
 	for _, released := range signals {

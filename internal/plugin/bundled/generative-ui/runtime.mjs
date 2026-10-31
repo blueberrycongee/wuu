@@ -117,8 +117,8 @@ var fi = Bi((Pt) => {
       let u = new SyntaxError();
       return u.code = t, u.reasonCode = e, u.loc = o, u.pos = o.index, u.syntaxPlugin = s, i && (u.missingPlugin = l.missingPlugin), $s(u, "clone", function(c = {}) {
         var m;
-        let { line: p, column: A, index: C } = (m = c.loc) != null ? m : o;
-        return n(new De(p, A, C), Object.assign({}, l, c.details));
+        let { line: p, column: A, index: I } = (m = c.loc) != null ? m : o;
+        return n(new De(p, A, I), Object.assign({}, l, c.details));
       }), $s(u, "details", l), Object.defineProperty(u, "message", { configurable: true, get() {
         let h = `${a(l)} (${o.line}:${o.column})`;
         return this.message = h, h;
@@ -655,7 +655,7 @@ var fi = Bi((Pt) => {
     for (let i = 0; i < a.length; i++) (t(a[i], i, a) ? e : s).push(a[i]);
     return [e, s];
   }
-  var Sr = /\*?\s*@((?:no)?flow)\b/, Ir = (a) => class extends a {
+  var Sr = /\*?\s*@((?:no)?flow)\b/, Cr = (a) => class extends a {
     constructor(...e) {
       super(...e), this.flowPragma = void 0;
     }
@@ -876,7 +876,7 @@ var fi = Bi((Pt) => {
       l.callProperties = [], l.properties = [], l.indexers = [], l.internalSlots = [];
       let u, h, c = false;
       for (s && this.match(6) ? (this.expect(6), u = 9, h = true) : (this.expect(5), u = 8, h = false), l.exact = h; !this.match(u); ) {
-        let p = false, A = null, C = null, N = this.startNode();
+        let p = false, A = null, I = null, N = this.startNode();
         if (r && this.isContextual(118)) {
           let F = this.lookahead();
           F.type !== 14 && F.type !== 17 && (this.next(), A = this.state.startLoc, e = false);
@@ -895,9 +895,9 @@ var fi = Bi((Pt) => {
             ei(T.type) && (F = this.state.value, this.next());
           }
           let P = this.flowParseObjectTypeProperty(N, p, A, S, F, i, n ?? !h);
-          P === null ? (c = true, C = this.state.lastTokStartLoc) : l.properties.push(P);
+          P === null ? (c = true, I = this.state.lastTokStartLoc) : l.properties.push(P);
         }
-        this.flowObjectTypeSemicolon(), C && !this.match(8) && !this.match(9) && this.raise(V.UnexpectedExplicitInexactInObject, C);
+        this.flowObjectTypeSemicolon(), I && !this.match(8) && !this.match(9) && this.raise(V.UnexpectedExplicitInexactInObject, I);
       }
       this.expect(u), i && (l.inexact = c);
       let m = this.finishNode(l, "ObjectTypeAnnotation");
@@ -1421,8 +1421,8 @@ var fi = Bi((Pt) => {
             return this.resetStartLocationFromNode(N, u), N;
           });
           (p = A.extra) != null && p.parenthesized && m();
-          let C = this.maybeUnwrapTypeCastExpression(A);
-          return C.type !== "ArrowFunctionExpression" && m(), C.typeParameters = u, this.resetStartLocationFromNode(C, u), A;
+          let I = this.maybeUnwrapTypeCastExpression(A);
+          return I.type !== "ArrowFunctionExpression" && m(), I.typeParameters = u, this.resetStartLocationFromNode(I, u), A;
         }, r), c = null;
         if (h.node && this.maybeUnwrapTypeCastExpression(h.node).type === "ArrowFunctionExpression") {
           if (!h.error && !h.aborted) return h.node.async && this.raise(V.UnexpectedTypeParameterBeforeAsyncArrowFunction, u), h.node;
@@ -1694,7 +1694,7 @@ var fi = Bi((Pt) => {
     maybeUnwrapTypeCastExpression(e) {
       return e.type === "TypeCastExpression" ? e.expression : e;
     }
-  }, Cr = { __proto__: null, quot: '"', amp: "&", apos: "'", lt: "<", gt: ">", nbsp: "\xA0", iexcl: "\xA1", cent: "\xA2", pound: "\xA3", curren: "\xA4", yen: "\xA5", brvbar: "\xA6", sect: "\xA7", uml: "\xA8", copy: "\xA9", ordf: "\xAA", laquo: "\xAB", not: "\xAC", shy: "\xAD", reg: "\xAE", macr: "\xAF", deg: "\xB0", plusmn: "\xB1", sup2: "\xB2", sup3: "\xB3", acute: "\xB4", micro: "\xB5", para: "\xB6", middot: "\xB7", cedil: "\xB8", sup1: "\xB9", ordm: "\xBA", raquo: "\xBB", frac14: "\xBC", frac12: "\xBD", frac34: "\xBE", iquest: "\xBF", Agrave: "\xC0", Aacute: "\xC1", Acirc: "\xC2", Atilde: "\xC3", Auml: "\xC4", Aring: "\xC5", AElig: "\xC6", Ccedil: "\xC7", Egrave: "\xC8", Eacute: "\xC9", Ecirc: "\xCA", Euml: "\xCB", Igrave: "\xCC", Iacute: "\xCD", Icirc: "\xCE", Iuml: "\xCF", ETH: "\xD0", Ntilde: "\xD1", Ograve: "\xD2", Oacute: "\xD3", Ocirc: "\xD4", Otilde: "\xD5", Ouml: "\xD6", times: "\xD7", Oslash: "\xD8", Ugrave: "\xD9", Uacute: "\xDA", Ucirc: "\xDB", Uuml: "\xDC", Yacute: "\xDD", THORN: "\xDE", szlig: "\xDF", agrave: "\xE0", aacute: "\xE1", acirc: "\xE2", atilde: "\xE3", auml: "\xE4", aring: "\xE5", aelig: "\xE6", ccedil: "\xE7", egrave: "\xE8", eacute: "\xE9", ecirc: "\xEA", euml: "\xEB", igrave: "\xEC", iacute: "\xED", icirc: "\xEE", iuml: "\xEF", eth: "\xF0", ntilde: "\xF1", ograve: "\xF2", oacute: "\xF3", ocirc: "\xF4", otilde: "\xF5", ouml: "\xF6", divide: "\xF7", oslash: "\xF8", ugrave: "\xF9", uacute: "\xFA", ucirc: "\xFB", uuml: "\xFC", yacute: "\xFD", thorn: "\xFE", yuml: "\xFF", OElig: "\u0152", oelig: "\u0153", Scaron: "\u0160", scaron: "\u0161", Yuml: "\u0178", fnof: "\u0192", circ: "\u02C6", tilde: "\u02DC", Alpha: "\u0391", Beta: "\u0392", Gamma: "\u0393", Delta: "\u0394", Epsilon: "\u0395", Zeta: "\u0396", Eta: "\u0397", Theta: "\u0398", Iota: "\u0399", Kappa: "\u039A", Lambda: "\u039B", Mu: "\u039C", Nu: "\u039D", Xi: "\u039E", Omicron: "\u039F", Pi: "\u03A0", Rho: "\u03A1", Sigma: "\u03A3", Tau: "\u03A4", Upsilon: "\u03A5", Phi: "\u03A6", Chi: "\u03A7", Psi: "\u03A8", Omega: "\u03A9", alpha: "\u03B1", beta: "\u03B2", gamma: "\u03B3", delta: "\u03B4", epsilon: "\u03B5", zeta: "\u03B6", eta: "\u03B7", theta: "\u03B8", iota: "\u03B9", kappa: "\u03BA", lambda: "\u03BB", mu: "\u03BC", nu: "\u03BD", xi: "\u03BE", omicron: "\u03BF", pi: "\u03C0", rho: "\u03C1", sigmaf: "\u03C2", sigma: "\u03C3", tau: "\u03C4", upsilon: "\u03C5", phi: "\u03C6", chi: "\u03C7", psi: "\u03C8", omega: "\u03C9", thetasym: "\u03D1", upsih: "\u03D2", piv: "\u03D6", ensp: "\u2002", emsp: "\u2003", thinsp: "\u2009", zwnj: "\u200C", zwj: "\u200D", lrm: "\u200E", rlm: "\u200F", ndash: "\u2013", mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019", sbquo: "\u201A", ldquo: "\u201C", rdquo: "\u201D", bdquo: "\u201E", dagger: "\u2020", Dagger: "\u2021", bull: "\u2022", hellip: "\u2026", permil: "\u2030", prime: "\u2032", Prime: "\u2033", lsaquo: "\u2039", rsaquo: "\u203A", oline: "\u203E", frasl: "\u2044", euro: "\u20AC", image: "\u2111", weierp: "\u2118", real: "\u211C", trade: "\u2122", alefsym: "\u2135", larr: "\u2190", uarr: "\u2191", rarr: "\u2192", darr: "\u2193", harr: "\u2194", crarr: "\u21B5", lArr: "\u21D0", uArr: "\u21D1", rArr: "\u21D2", dArr: "\u21D3", hArr: "\u21D4", forall: "\u2200", part: "\u2202", exist: "\u2203", empty: "\u2205", nabla: "\u2207", isin: "\u2208", notin: "\u2209", ni: "\u220B", prod: "\u220F", sum: "\u2211", minus: "\u2212", lowast: "\u2217", radic: "\u221A", prop: "\u221D", infin: "\u221E", ang: "\u2220", and: "\u2227", or: "\u2228", cap: "\u2229", cup: "\u222A", int: "\u222B", there4: "\u2234", sim: "\u223C", cong: "\u2245", asymp: "\u2248", ne: "\u2260", equiv: "\u2261", le: "\u2264", ge: "\u2265", sub: "\u2282", sup: "\u2283", nsub: "\u2284", sube: "\u2286", supe: "\u2287", oplus: "\u2295", otimes: "\u2297", perp: "\u22A5", sdot: "\u22C5", lceil: "\u2308", rceil: "\u2309", lfloor: "\u230A", rfloor: "\u230B", lang: "\u2329", rang: "\u232A", loz: "\u25CA", spades: "\u2660", clubs: "\u2663", hearts: "\u2665", diams: "\u2666" }, vr = /\r\n|[\r\n\u2028\u2029]/, kt = new RegExp(vr.source, "g");
+  }, Ir = { __proto__: null, quot: '"', amp: "&", apos: "'", lt: "<", gt: ">", nbsp: "\xA0", iexcl: "\xA1", cent: "\xA2", pound: "\xA3", curren: "\xA4", yen: "\xA5", brvbar: "\xA6", sect: "\xA7", uml: "\xA8", copy: "\xA9", ordf: "\xAA", laquo: "\xAB", not: "\xAC", shy: "\xAD", reg: "\xAE", macr: "\xAF", deg: "\xB0", plusmn: "\xB1", sup2: "\xB2", sup3: "\xB3", acute: "\xB4", micro: "\xB5", para: "\xB6", middot: "\xB7", cedil: "\xB8", sup1: "\xB9", ordm: "\xBA", raquo: "\xBB", frac14: "\xBC", frac12: "\xBD", frac34: "\xBE", iquest: "\xBF", Agrave: "\xC0", Aacute: "\xC1", Acirc: "\xC2", Atilde: "\xC3", Auml: "\xC4", Aring: "\xC5", AElig: "\xC6", Ccedil: "\xC7", Egrave: "\xC8", Eacute: "\xC9", Ecirc: "\xCA", Euml: "\xCB", Igrave: "\xCC", Iacute: "\xCD", Icirc: "\xCE", Iuml: "\xCF", ETH: "\xD0", Ntilde: "\xD1", Ograve: "\xD2", Oacute: "\xD3", Ocirc: "\xD4", Otilde: "\xD5", Ouml: "\xD6", times: "\xD7", Oslash: "\xD8", Ugrave: "\xD9", Uacute: "\xDA", Ucirc: "\xDB", Uuml: "\xDC", Yacute: "\xDD", THORN: "\xDE", szlig: "\xDF", agrave: "\xE0", aacute: "\xE1", acirc: "\xE2", atilde: "\xE3", auml: "\xE4", aring: "\xE5", aelig: "\xE6", ccedil: "\xE7", egrave: "\xE8", eacute: "\xE9", ecirc: "\xEA", euml: "\xEB", igrave: "\xEC", iacute: "\xED", icirc: "\xEE", iuml: "\xEF", eth: "\xF0", ntilde: "\xF1", ograve: "\xF2", oacute: "\xF3", ocirc: "\xF4", otilde: "\xF5", ouml: "\xF6", divide: "\xF7", oslash: "\xF8", ugrave: "\xF9", uacute: "\xFA", ucirc: "\xFB", uuml: "\xFC", yacute: "\xFD", thorn: "\xFE", yuml: "\xFF", OElig: "\u0152", oelig: "\u0153", Scaron: "\u0160", scaron: "\u0161", Yuml: "\u0178", fnof: "\u0192", circ: "\u02C6", tilde: "\u02DC", Alpha: "\u0391", Beta: "\u0392", Gamma: "\u0393", Delta: "\u0394", Epsilon: "\u0395", Zeta: "\u0396", Eta: "\u0397", Theta: "\u0398", Iota: "\u0399", Kappa: "\u039A", Lambda: "\u039B", Mu: "\u039C", Nu: "\u039D", Xi: "\u039E", Omicron: "\u039F", Pi: "\u03A0", Rho: "\u03A1", Sigma: "\u03A3", Tau: "\u03A4", Upsilon: "\u03A5", Phi: "\u03A6", Chi: "\u03A7", Psi: "\u03A8", Omega: "\u03A9", alpha: "\u03B1", beta: "\u03B2", gamma: "\u03B3", delta: "\u03B4", epsilon: "\u03B5", zeta: "\u03B6", eta: "\u03B7", theta: "\u03B8", iota: "\u03B9", kappa: "\u03BA", lambda: "\u03BB", mu: "\u03BC", nu: "\u03BD", xi: "\u03BE", omicron: "\u03BF", pi: "\u03C0", rho: "\u03C1", sigmaf: "\u03C2", sigma: "\u03C3", tau: "\u03C4", upsilon: "\u03C5", phi: "\u03C6", chi: "\u03C7", psi: "\u03C8", omega: "\u03C9", thetasym: "\u03D1", upsih: "\u03D2", piv: "\u03D6", ensp: "\u2002", emsp: "\u2003", thinsp: "\u2009", zwnj: "\u200C", zwj: "\u200D", lrm: "\u200E", rlm: "\u200F", ndash: "\u2013", mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019", sbquo: "\u201A", ldquo: "\u201C", rdquo: "\u201D", bdquo: "\u201E", dagger: "\u2020", Dagger: "\u2021", bull: "\u2022", hellip: "\u2026", permil: "\u2030", prime: "\u2032", Prime: "\u2033", lsaquo: "\u2039", rsaquo: "\u203A", oline: "\u203E", frasl: "\u2044", euro: "\u20AC", image: "\u2111", weierp: "\u2118", real: "\u211C", trade: "\u2122", alefsym: "\u2135", larr: "\u2190", uarr: "\u2191", rarr: "\u2192", darr: "\u2193", harr: "\u2194", crarr: "\u21B5", lArr: "\u21D0", uArr: "\u21D1", rArr: "\u21D2", dArr: "\u21D3", hArr: "\u21D4", forall: "\u2200", part: "\u2202", exist: "\u2203", empty: "\u2205", nabla: "\u2207", isin: "\u2208", notin: "\u2209", ni: "\u220B", prod: "\u220F", sum: "\u2211", minus: "\u2212", lowast: "\u2217", radic: "\u221A", prop: "\u221D", infin: "\u221E", ang: "\u2220", and: "\u2227", or: "\u2228", cap: "\u2229", cup: "\u222A", int: "\u222B", there4: "\u2234", sim: "\u223C", cong: "\u2245", asymp: "\u2248", ne: "\u2260", equiv: "\u2261", le: "\u2264", ge: "\u2265", sub: "\u2282", sup: "\u2283", nsub: "\u2284", sube: "\u2286", supe: "\u2287", oplus: "\u2295", otimes: "\u2297", perp: "\u22A5", sdot: "\u22C5", lceil: "\u2308", rceil: "\u2309", lfloor: "\u230A", rfloor: "\u230B", lang: "\u2329", rang: "\u232A", loz: "\u25CA", spades: "\u2660", clubs: "\u2663", hearts: "\u2665", diams: "\u2666" }, vr = /\r\n|[\r\n\u2028\u2029]/, kt = new RegExp(vr.source, "g");
   function tt(a) {
     switch (a) {
       case 10:
@@ -1802,7 +1802,7 @@ var fi = Bi((Pt) => {
         let s = 0, i = false;
         for (; s++ < 10 && this.state.pos < this.length && !(i = this.codePointAtPos(this.state.pos) === 59); ) ++this.state.pos;
         if (i) {
-          let r = this.input.slice(e, this.state.pos), n = Cr[r];
+          let r = this.input.slice(e, this.state.pos), n = Ir[r];
           if (++this.state.pos, n) return n;
         }
       }
@@ -2360,7 +2360,7 @@ var fi = Bi((Pt) => {
   }
   function li(a, t, e, s, i, r, n, o, l, u) {
     let h = t, c = i === 16 ? Hs.hex : Hs.decBinOct, m = i === 16 ? Ot.hex : i === 10 ? Ot.dec : i === 8 ? Ot.oct : Ot.bin, p = false, A = 0;
-    for (let C = 0, N = r ?? 1 / 0; C < N; ++C) {
+    for (let I = 0, N = r ?? 1 / 0; I < N; ++I) {
       let S = a.charCodeAt(t), F;
       if (S === 95 && o !== "bail") {
         let P = a.charCodeAt(t - 1), T = a.charCodeAt(t + 1);
@@ -3454,9 +3454,9 @@ var fi = Bi((Pt) => {
       }
       let p, A;
       typeof m == "string" ? (p = m, A = u === "ParenthesizedExpression") : [p, A] = m;
-      let C = u === "ArrayPattern" || u === "ObjectPattern" ? { type: u } : e, N = t[p];
-      if (Array.isArray(N)) for (let S of N) S && this.checkLVal(S, C, s, i, r, A, true);
-      else N && this.checkLVal(N, C, s, i, r, A, o);
+      let I = u === "ArrayPattern" || u === "ObjectPattern" ? { type: u } : e, N = t[p];
+      if (Array.isArray(N)) for (let S of N) S && this.checkLVal(S, I, s, i, r, A, true);
+      else N && this.checkLVal(N, I, s, i, r, A, o);
     }
     checkIdentifier(t, e, s = false) {
       this.state.strict && (s ? ni(t.name, this.inModule) : ai(t.name)) && (e === 64 ? this.raise(d.StrictEvalArguments, t, { referenceName: t.name }) : this.raise(d.StrictEvalArgumentsBinding, t, { bindingName: t.name })), e & 8192 && t.name === "let" && this.raise(d.LetInLexicalBinding, t), e & 64 || this.declareNameFromIdentifier(t, e);
@@ -4532,16 +4532,16 @@ var fi = Bi((Pt) => {
       let u, h, c;
       if (this.hasPlugin("jsx") && (this.match(143) || this.match(47))) {
         if (u = this.state.clone(), h = this.tryParse(() => super.parseMaybeAssign(e, s), u), !h.error) return h.node;
-        let { context: A } = this.state, C = A[A.length - 1];
-        (C === le.j_oTag || C === le.j_expr) && A.pop();
+        let { context: A } = this.state, I = A[A.length - 1];
+        (I === le.j_oTag || I === le.j_expr) && A.pop();
       }
       if (!((i = h) != null && i.error) && !this.match(47)) return super.parseMaybeAssign(e, s);
       (!u || u === this.state) && (u = this.state.clone());
       let m, p = this.tryParse((A) => {
-        var C, N;
+        var I, N;
         m = this.tsParseTypeParameters(this.tsParseConstModifier);
         let S = super.parseMaybeAssign(e, s);
-        return (S.type !== "ArrowFunctionExpression" || (C = S.extra) != null && C.parenthesized) && A(), ((N = m) == null ? void 0 : N.params.length) !== 0 && this.resetStartLocationFromNode(S, m), S.typeParameters = m, S;
+        return (S.type !== "ArrowFunctionExpression" || (I = S.extra) != null && I.parenthesized) && A(), ((N = m) == null ? void 0 : N.params.length) !== 0 && this.resetStartLocationFromNode(S, m), S.typeParameters = m, S;
       }, u);
       if (!p.error && !p.aborted) return m && this.reportReservedArrowTypeParam(m), p.node;
       if (!h && (Ws(!this.hasPlugin("jsx")), c = this.tryParse(() => super.parseMaybeAssign(e, s), u), !c.error)) return c.node;
@@ -4783,7 +4783,7 @@ var fi = Bi((Pt) => {
       e[m] = u ? "type" : "value", h && this.eatContextual(93) && (e[n] = s ? this.parseIdentifier() : this.parseModuleExportName()), e[n] || (e[n] = this.cloneIdentifier(e[r])), s && this.checkIdentifier(e[n], u ? 4098 : 4096);
     }
     fillOptionalPropertiesForTSESLint(e) {
-      var s, i, r, n, o, l, u, h, c, m, p, A, C, N, S, F, P, T, k, q, R, D, v, z, Q, f, g, y, x, b, M, Y, J, H, G, ie, me, de, W, X, E, O, Z, oe, I, j, U, ne;
+      var s, i, r, n, o, l, u, h, c, m, p, A, I, N, S, F, P, T, k, q, R, M, v, z, Q, f, g, y, x, b, D, Y, J, H, G, ie, me, de, W, X, E, O, Z, oe, C, j, U, ne;
       switch (e.type) {
         case "ExpressionStatement":
           (s = e.directive) != null || (e.directive = void 0);
@@ -4809,7 +4809,7 @@ var fi = Bi((Pt) => {
           (m = e.declare) != null || (e.declare = false), (p = e.returnType) != null || (e.returnType = void 0), (A = e.typeParameters) != null || (e.typeParameters = void 0);
           return;
         case "Property":
-          (C = e.optional) != null || (e.optional = false);
+          (I = e.optional) != null || (e.optional = false);
           return;
         case "TSMethodSignature":
         case "TSPropertySignature":
@@ -4824,12 +4824,12 @@ var fi = Bi((Pt) => {
           (T = e.declare) != null || (e.declare = false), (k = e.definite) != null || (e.definite = false), (q = e.readonly) != null || (e.readonly = false), (R = e.typeAnnotation) != null || (e.typeAnnotation = void 0);
         case "TSAbstractMethodDefinition":
         case "MethodDefinition":
-          (D = e.accessibility) != null || (e.accessibility = void 0), (v = e.decorators) != null || (e.decorators = []), (z = e.override) != null || (e.override = false), (Q = e.optional) != null || (e.optional = false);
+          (M = e.accessibility) != null || (e.accessibility = void 0), (v = e.decorators) != null || (e.decorators = []), (z = e.override) != null || (e.override = false), (Q = e.optional) != null || (e.optional = false);
           return;
         case "ClassExpression":
           (f = e.id) != null || (e.id = null);
         case "ClassDeclaration":
-          (g = e.abstract) != null || (e.abstract = false), (y = e.declare) != null || (e.declare = false), (x = e.decorators) != null || (e.decorators = []), (b = e.implements) != null || (e.implements = []), (M = e.superTypeArguments) != null || (e.superTypeArguments = void 0), (Y = e.typeParameters) != null || (e.typeParameters = void 0);
+          (g = e.abstract) != null || (e.abstract = false), (y = e.declare) != null || (e.declare = false), (x = e.decorators) != null || (e.decorators = []), (b = e.implements) != null || (e.implements = []), (D = e.superTypeArguments) != null || (e.superTypeArguments = void 0), (Y = e.typeParameters) != null || (e.typeParameters = void 0);
           return;
         case "TSTypeAliasDeclaration":
         case "VariableDeclaration":
@@ -4854,7 +4854,7 @@ var fi = Bi((Pt) => {
           (O = e.optional) != null || (e.optional = false), (Z = e.readonly) != null || (e.readonly = void 0);
           return;
         case "TSModuleDeclaration":
-          (oe = e.declare) != null || (e.declare = false), (I = e.global) != null || (e.global = e.kind === "global");
+          (oe = e.declare) != null || (e.declare = false), (C = e.global) != null || (e.global = e.kind === "global");
           return;
         case "TSTypeParameter":
           (j = e.const) != null || (e.const = false), (U = e.in) != null || (e.in = false), (ne = e.out) != null || (e.out = false);
@@ -5086,7 +5086,7 @@ var fi = Bi((Pt) => {
     if (a.has("optionalChainingAssign") && a.get("optionalChainingAssign").version !== "2023-07") throw new Error("The 'optionalChainingAssign' plugin requires a 'version' option, representing the last proposal update. Currently, the only supported value is '2023-07'.");
     if (a.has("discardBinding") && a.get("discardBinding").syntaxType !== "void") throw new Error("The 'discardBinding' plugin requires a 'syntaxType' option. Currently the only supported value is 'void'.");
   }
-  var di = { estree: Yi, jsx: Er, flow: Ir, typescript: $r, v8intrinsic: Hr, placeholders: Jr }, Wr = Object.keys(di), fs = class extends ds {
+  var di = { estree: Yi, jsx: Er, flow: Cr, typescript: $r, v8intrinsic: Hr, placeholders: Jr }, Wr = Object.keys(di), fs = class extends ds {
     checkProto(t, e, s, i) {
       if (t.type === "SpreadElement" || this.isObjectMethod(t) || t.computed || t.shorthand) return s;
       let r = t.key;
@@ -6010,8 +6010,8 @@ var fi = Bi((Pt) => {
         if (Bt(r)) {
           let { loc: n, start: o, value: l, end: u } = i, h = o + 1, c = we(n.start, 1), m;
           t.charCodeAt(o - e) === 96 ? m = new ke({ type: Be(22), value: "`", start: o, end: h, startLoc: n.start, endLoc: c }) : m = new ke({ type: Be(8), value: "}", start: o, end: h, startLoc: n.start, endLoc: c });
-          let p, A, C, N;
-          r === 24 ? (A = u - 1, C = we(n.end, -1), p = l === null ? null : l.slice(1, -1), N = new ke({ type: Be(22), value: "`", start: A, end: u, startLoc: C, endLoc: n.end })) : (A = u - 2, C = we(n.end, -2), p = l === null ? null : l.slice(1, -2), N = new ke({ type: Be(23), value: "${", start: A, end: u, startLoc: C, endLoc: n.end })), a.splice(s, 1, m, new ke({ type: Be(20), value: p, start: h, end: A, startLoc: c, endLoc: C }), N), s += 2;
+          let p, A, I, N;
+          r === 24 ? (A = u - 1, I = we(n.end, -1), p = l === null ? null : l.slice(1, -1), N = new ke({ type: Be(22), value: "`", start: A, end: u, startLoc: I, endLoc: n.end })) : (A = u - 2, I = we(n.end, -2), p = l === null ? null : l.slice(1, -2), N = new ke({ type: Be(23), value: "${", start: A, end: u, startLoc: I, endLoc: n.end })), a.splice(s, 1, m, new ke({ type: Be(20), value: p, start: h, end: A, startLoc: c, endLoc: I }), N), s += 2;
           continue;
         }
         i.type = Be(r);
@@ -6471,15 +6471,15 @@ var fi = Bi((Pt) => {
         this.isNonstaticConstructor(r) && this.raise(d.ConstructorIsGenerator, r.key), this.pushClassMethod(t, r, true, false, false, false);
         return;
       }
-      let m = !this.state.containsEsc && ue(this.state.type), p = this.parseClassElementName(e), A = m ? p.name : null, C = this.isPrivateName(p), N = this.state.startLoc;
+      let m = !this.state.containsEsc && ue(this.state.type), p = this.parseClassElementName(e), A = m ? p.name : null, I = this.isPrivateName(p), N = this.state.startLoc;
       if (this.parsePostMemberNameModifiers(c), this.isClassMethod()) {
-        if (h.kind = "method", C) {
+        if (h.kind = "method", I) {
           this.pushClassPrivateMethod(t, n, false, false);
           return;
         }
         let S = this.isNonstaticConstructor(r), F = false;
         S && (r.kind = "constructor", s.hadConstructor && !this.hasPlugin("typescript") && this.raise(d.DuplicateConstructor, p), S && this.hasPlugin("typescript") && e.override && this.raise(d.OverrideOnConstructor, p), s.hadConstructor = true, F = s.hadSuperClass), this.pushClassMethod(t, r, false, false, S, F);
-      } else if (this.isClassProperty()) C ? this.pushClassPrivateProperty(t, l) : this.pushClassProperty(t, o);
+      } else if (this.isClassProperty()) I ? this.pushClassPrivateProperty(t, l) : this.pushClassProperty(t, o);
       else if (A === "async" && !this.isLineTerminator()) {
         this.resetPreviousNodeTrailingComments(p);
         let S = this.eat(55);
@@ -6494,7 +6494,7 @@ var fi = Bi((Pt) => {
         this.expectPlugin("decoratorAutoAccessors"), this.resetPreviousNodeTrailingComments(p);
         let S = this.match(139);
         this.parseClassElementName(o), this.pushClassAccessorProperty(t, u, S);
-      } else this.isLineTerminator() ? C ? this.pushClassPrivateProperty(t, l) : this.pushClassProperty(t, o) : this.unexpected();
+      } else this.isLineTerminator() ? I ? this.pushClassPrivateProperty(t, l) : this.pushClassProperty(t, o) : this.unexpected();
     }
     parseClassElementName(t) {
       let { type: e, value: s } = this.state;
@@ -6926,7 +6926,7 @@ var fi = Bi((Pt) => {
 var Tt = ji(fi(), 1);
 var ia = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
 var ra = new Set("File Program VariableDeclaration VariableDeclarator Identifier ArrayPattern ObjectPattern ObjectProperty RestElement AssignmentPattern FunctionDeclaration BlockStatement ReturnStatement IfStatement ExpressionStatement EmptyStatement ArrowFunctionExpression FunctionExpression NumericLiteral StringLiteral BooleanLiteral NullLiteral ArrayExpression ObjectExpression SpreadElement UnaryExpression BinaryExpression LogicalExpression ConditionalExpression MemberExpression OptionalMemberExpression CallExpression OptionalCallExpression TemplateLiteral TemplateElement AssignmentExpression JSXElement JSXFragment JSXOpeningElement JSXClosingElement JSXOpeningFragment JSXClosingFragment JSXIdentifier JSXAttribute JSXExpressionContainer JSXEmptyExpression JSXText".split(" "));
-var Is = { sourceType: "module", plugins: ["jsx"] };
+var Cs = { sourceType: "module", plugins: ["jsx"] };
 var mi = new TextEncoder();
 function K(a, t) {
   if (!a) throw new Error(t);
@@ -6950,7 +6950,7 @@ function nt(a) {
   }
   return e(a, 0), K(mi.encode(JSON.stringify(a)).length <= 16384, "State exceeds 16 KiB"), a;
 }
-function Cs(a, t) {
+function Is(a, t) {
   let e = 1, s = "", i = "";
   for (let r = t + 1; r < a.length; r++) {
     let n = a[r], o = a[r + 1];
@@ -6979,7 +6979,7 @@ function aa(a) {
   let t = [], e = 0;
   for (let s = 0; s < a.length; ) {
     if (a[s] === "{") {
-      let u = Cs(a, s);
+      let u = Is(a, s);
       if (u < 0) break;
       s = u, e = s;
       continue;
@@ -7000,7 +7000,7 @@ function aa(a) {
         continue;
       }
       if (u === "{") {
-        let h = Cs(a, s);
+        let h = Is(a, s);
         if (h < 0) break;
         s = h - 1;
         continue;
@@ -7020,9 +7020,9 @@ function ot(a, t = false) {
   K(typeof a == "string" && mi.encode(a).length <= 120 * 1024, "Source exceeds 120 KiB");
   let e = "", s = a.trimStart();
   if (s.startsWith("{@body")) {
-    let l = Cs(s, 0), u = (h) => {
+    let l = Is(s, 0), u = (h) => {
       try {
-        return (0, Tt.parse)("{" + s.slice(6, h), Is), true;
+        return (0, Tt.parse)("{" + s.slice(6, h), Cs), true;
       } catch {
         return false;
       }
@@ -7039,7 +7039,7 @@ function ot(a, t = false) {
     K(l > 0, "Close a valid {@body ...} declaration block"), e = s.slice(6, l - 1), s = s.slice(l);
   }
   t && (s = aa(s));
-  let i = (0, Tt.parse)(e, Is).program.body, r = (0, Tt.parseExpression)(`<>${s}</>`, Is), n = 0;
+  let i = (0, Tt.parse)(e, Cs).program.body, r = (0, Tt.parseExpression)(`<>${s}</>`, Cs), n = 0;
   function o(l, u = 0) {
     if (!(!l || typeof l != "object")) {
       if (Array.isArray(l)) {
@@ -7082,7 +7082,7 @@ function Ve(a, t = {}, e = {}) {
   function A(f) {
     return r.add(f), f;
   }
-  function C(f, g) {
+  function I(f, g) {
     p(), K(r.has(f), "This value is not callable"), K(++o <= 48, "Function nesting limit reached");
     try {
       return ye(f(...g));
@@ -7103,8 +7103,8 @@ function Ve(a, t = {}, e = {}) {
       return;
     }
     if (f.type === "ArrayPattern") {
-      K(Array.isArray(g), "Expected an array to unpack"), f.elements.forEach((b, M) => {
-        b && S(b, g[M], y, x);
+      K(Array.isArray(g), "Expected an array to unpack"), f.elements.forEach((b, D) => {
+        b && S(b, g[D], y, x);
       });
       return;
     }
@@ -7118,8 +7118,8 @@ function Ve(a, t = {}, e = {}) {
     if (g = Xe(g), K(f != null, `Cannot read ${g} from an empty value`), Array.isArray(f)) {
       if (g === "length") return f.length;
       if (/^(0|[1-9]\d*)$/.test(g)) return f[Number(g)];
-      if (["map", "filter", "find", "some", "every"].includes(g)) return A((y) => f[g]((x, b) => C(y, [x, b])));
-      if (g === "reduce") return A((y, ...x) => f.reduce((b, M, Y) => C(y, [b, M, Y]), ...x));
+      if (["map", "filter", "find", "some", "every"].includes(g)) return A((y) => f[g]((x, b) => I(y, [x, b])));
+      if (g === "reduce") return A((y, ...x) => f.reduce((b, D, Y) => I(y, [b, D, Y]), ...x));
       if (g === "join") return A((y = ",") => (f.forEach(Me), ye(f.join(Me(y)))));
       if (["slice", "includes", "indexOf"].includes(g)) return A((...y) => ye(f[g](...y.map(Me))));
     }
@@ -7134,7 +7134,7 @@ function Ve(a, t = {}, e = {}) {
   P.PI = Math.PI, P.E = Math.E, m.set("Math", P), m.set("undefined", void 0), m.set("Number", A((f) => ye(Number(Me(f))))), m.set("String", A((f) => ye(String(Me(f))))), m.set("Boolean", A((f) => !!f)), m.set("DIL", Object.assign(/* @__PURE__ */ Object.create(null), { range: A((f, g, y = 1) => {
     K([f, g, y].every(Number.isFinite) && y !== 0, "Invalid range");
     let x = Math.max(0, Math.ceil((g - f) / y));
-    return K(x <= 200, "Range supports at most 200 items"), Array.from({ length: x }, (b, M) => f + M * y);
+    return K(x <= 200, "Range supports at most 200 items"), Array.from({ length: x }, (b, D) => f + D * y);
   }), format: A((f, g = "number", y = "USD") => (K(typeof f == "number" && ["number", "percent", "currency"].includes(g), "Invalid format"), new Intl.NumberFormat(void 0, { ...g === "number" ? {} : { style: g }, ...g === "currency" ? { currency: y } : {}, maximumFractionDigits: 2 }).format(f))), sendMessage: A((f) => {
     K(l && typeof f == "string" && f.trim() && f.length <= 4e3, "Send a nonempty message from a button or form"), e.effect?.("sendMessage", f);
   }), copy: A((f) => {
@@ -7143,22 +7143,22 @@ function Ve(a, t = {}, e = {}) {
   function T(f, g) {
     return A((...y) => {
       let x = new c(g);
-      return f.params.forEach((b, M) => S(b, y[M], x)), f.body.type === "BlockStatement" ? k(f.body.body, x)?.value : v(f.body, x);
+      return f.params.forEach((b, D) => S(b, y[D], x)), f.body.type === "BlockStatement" ? k(f.body.body, x)?.value : v(f.body, x);
     });
   }
   function k(f, g, y = false) {
     for (let x of f) x.type === "FunctionDeclaration" && g.set(x.id.name, T(x, g));
     for (let x of f) if (p(), x.type === "VariableDeclaration") for (let b of x.declarations) {
-      let M = b.init;
-      if (M?.type === "CallExpression" && M.callee.type === "MemberExpression" && M.callee.object.name === "DIL" && M.callee.property.name === "useState" && !M.callee.computed) {
-        K(y && b.id.type === "ArrayPattern" && b.id.elements.length === 2 && b.id.elements.every((ie) => ie?.type === "Identifier") && M.arguments.length === 1, "Use const [value, setValue] = DIL.useState(initial) in the body");
+      let D = b.init;
+      if (D?.type === "CallExpression" && D.callee.type === "MemberExpression" && D.callee.object.name === "DIL" && D.callee.property.name === "useState" && !D.callee.computed) {
+        K(y && b.id.type === "ArrayPattern" && b.id.elements.length === 2 && b.id.elements.every((ie) => ie?.type === "Identifier") && D.arguments.length === 1, "Use const [value, setValue] = DIL.useState(initial) in the body");
         let [J, H] = b.id.elements.map((ie) => ie.name);
         K(!Object.hasOwn(s, J), "Duplicate state name");
-        let G = v(M.arguments[0], g);
+        let G = v(D.arguments[0], g);
         i[J] = G, s[J] = Object.hasOwn(t, J) ? t[J] : G, g.set(J, s[J]), g.set(H, A((ie) => {
-          K(l, "State can only change during an interaction"), s[J] = typeof ie == "function" ? C(ie, [s[J]]) : ie;
+          K(l, "State can only change during an interaction"), s[J] = typeof ie == "function" ? I(ie, [s[J]]) : ie;
         }));
-      } else S(b.id, M ? v(M, g) : void 0, g, x.kind !== "const");
+      } else S(b.id, D ? v(D, g) : void 0, g, x.kind !== "const");
     }
     else {
       if (x.type === "FunctionDeclaration") continue;
@@ -7166,8 +7166,8 @@ function Ve(a, t = {}, e = {}) {
       if (x.type === "IfStatement") {
         let b = v(x.test, g) ? x.consequent : x.alternate;
         if (b) {
-          let M = k(b.type === "BlockStatement" ? b.body : [b], new c(g));
-          if (M) return M;
+          let D = k(b.type === "BlockStatement" ? b.body : [b], new c(g));
+          if (D) return D;
         }
       } else if (x.type === "BlockStatement") {
         let b = k(x.body, new c(g));
@@ -7184,10 +7184,10 @@ function Ve(a, t = {}, e = {}) {
     return y;
   }
   let R = Symbol();
-  function D(f, g) {
+  function M(f, g) {
     p();
-    let y = f.type === "OptionalMemberExpression" ? f.object : f.callee, x = ["OptionalMemberExpression", "OptionalCallExpression"].includes(y.type) && !y.extra?.parenthesized ? D(y, g) : v(y, g);
-    return x === R || f.optional && x == null ? R : f.type === "OptionalMemberExpression" ? F(x, f.computed ? v(f.property, g) : f.property.name) : C(x, q(f.arguments, g));
+    let y = f.type === "OptionalMemberExpression" ? f.object : f.callee, x = ["OptionalMemberExpression", "OptionalCallExpression"].includes(y.type) && !y.extra?.parenthesized ? M(y, g) : v(y, g);
+    return x === R || f.optional && x == null ? R : f.type === "OptionalMemberExpression" ? F(x, f.computed ? v(f.property, g) : f.property.name) : I(x, q(f.arguments, g));
   }
   function v(f, g) {
     p(), K(f, "Missing expression");
@@ -7216,7 +7216,7 @@ function Ve(a, t = {}, e = {}) {
         for (let x of f.properties) if (x.type === "SpreadElement") {
           let b = v(x.argument, g);
           K(b && typeof b == "object" && !Array.isArray(b), "Spread expects an object");
-          for (let [M, Y] of Object.entries(b)) y[Xe(M)] = Y;
+          for (let [D, Y] of Object.entries(b)) y[Xe(D)] = Y;
         } else y[Xe(x.computed ? v(x.key, g) : x.key.name ?? x.key.value)] = v(x.value, g);
         return y;
       case "ArrowFunctionExpression":
@@ -7225,10 +7225,10 @@ function Ve(a, t = {}, e = {}) {
       case "MemberExpression":
         return F(v(f.object, g), f.computed ? v(f.property, g) : f.property.name);
       case "CallExpression":
-        return C(v(f.callee, g), q(f.arguments, g));
+        return I(v(f.callee, g), q(f.arguments, g));
       case "OptionalMemberExpression":
       case "OptionalCallExpression": {
-        let x = D(f, g);
+        let x = M(f, g);
         return x === R ? void 0 : x;
       }
       case "UnaryExpression": {
@@ -7296,12 +7296,12 @@ function Ve(a, t = {}, e = {}) {
           let H = Xe(J.name.name);
           K(!Object.hasOwn(b, H), "Duplicate component property"), b[H] = J.value === null ? true : J.value.type === "JSXExpressionContainer" ? v(J.value.expression, g) : J.value.value;
         }
-        let M = f.children.flatMap((J) => z(J, g)), Y = g.get(x);
+        let D = f.children.flatMap((J) => z(J, g)), Y = g.get(x);
         if (Y) {
-          let J = C(Y, [{ ...b, children: M }]);
+          let J = I(Y, [{ ...b, children: D }]);
           return { tag: "Fragment", props: b.key === void 0 ? {} : { key: b.key }, children: [J], address: f.start };
         }
-        return { tag: x, props: b, children: M, address: f.start };
+        return { tag: x, props: b, children: D, address: f.start };
       }
       default:
         throw new Error(`Unsupported expression: ${f.type}`);
@@ -7318,7 +7318,7 @@ function Ve(a, t = {}, e = {}) {
     let y = { ...s };
     n = 3e4, u = 0, l = true, h = /* @__PURE__ */ new Map();
     try {
-      return C(f, g), nt(s), { ...s };
+      return I(f, g), nt(s), { ...s };
     } finally {
       Object.assign(s, y);
       for (let [x, b] of h) x.value = b;
@@ -7354,11 +7354,11 @@ function Ye(a) {
   }
   function o(u) {
     let h = /* @__PURE__ */ new Set(), c = 0, m = 0;
-    function p(A, C) {
-      $(C <= 32, "Rendered view is too deep");
+    function p(A, I) {
+      $(I <= 32, "Rendered view is too deep");
       for (let N of A) {
         if ($(++c <= 2048, "Rendered view is too large"), Array.isArray(N)) {
-          p(N, C + 1);
+          p(N, I + 1);
           continue;
         }
         let S = m++;
@@ -7381,8 +7381,8 @@ function Ye(a) {
     }
     let { tag: m, props: p, children: A } = u;
     $(Object.hasOwn(xi, m) || Object.hasOwn(Ge, m), `Unknown component: ${m}`), $(p && typeof p == "object" && Array.isArray(A), "Invalid component result"), $(!Object.hasOwn(Ge, m) || m === "svg" || c, "SVG elements belong inside svg"), $(!c || m === "Fragment" || Object.hasOwn(Ge, m), "Use SVG elements inside svg");
-    let C = ["key", ...Object.hasOwn(Ge, m) ? [...na, ...Ge[m].split(" ")] : xi[m].split(" ")];
-    for (let [N, S] of Object.entries(p)) $(C.includes(N), `Unknown ${m} property: ${N}`), N.startsWith("on") ? $(typeof S == "function", `${N} expects a function`) : ["options", "rows", "columns", "points", "series"].includes(N) && m !== "Grid" ? $(Array.isArray(S), `${N} expects an array`) : ($(S == null || ["string", "number", "boolean"].includes(typeof S), `Invalid ${N} value`), n(S));
+    let I = ["key", ...Object.hasOwn(Ge, m) ? [...na, ...Ge[m].split(" ")] : xi[m].split(" ")];
+    for (let [N, S] of Object.entries(p)) $(I.includes(N), `Unknown ${m} property: ${N}`), N.startsWith("on") ? $(typeof S == "function", `${N} expects a function`) : ["options", "rows", "columns", "points", "series"].includes(N) && m !== "Grid" ? $(Array.isArray(S), `${N} expects an array`) : ($(S == null || ["string", "number", "boolean"].includes(typeof S), `Invalid ${N} value`), n(S));
     r(4 + (p.options?.length ?? 0) * 3);
     for (let N of ["disabled", "required", "invalid", "checked", "open", "stacked"]) p[N] !== void 0 && $(typeof p[N] == "boolean", `${N} expects a boolean`);
     if (m === "Slider" && $(typeof p.value == "number" && p.value >= p.min && p.value <= p.max, "Slider value must be within its range"), m === "Input" && p.inputType === "number" && $(typeof p.value == "number" && Number.isFinite(p.value), "Number input needs a finite number"), m === "Input" && p.inputType === "date" && p.value !== "" && $(typeof p.value == "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.value) && !p.value.startsWith("0000") && Number.isFinite(Date.parse(p.value)) && new Date(p.value).toISOString().slice(0, 10) === p.value, "Date input needs a valid YYYY-MM-DD date"), p.key !== void 0 && $(typeof p.key == "string" && p.key.trim() && p.key.length <= 80 || typeof p.key == "number" && Number.isFinite(p.key), "Keys must be short nonempty text or finite numbers"), p.gap !== void 0 && $(["none", "small", "medium", "large"].includes(p.gap), "Invalid layout gap"), p.align !== void 0 && $(["start", "center", "end", "stretch"].includes(p.align), "Invalid alignment"), m === "Grid" && $(p.columns === void 0 || Number.isInteger(p.columns) && p.columns >= 1 && p.columns <= 4, "Grid supports 1\u20134 columns"), m === "Heading" && $(p.level === void 0 || [1, 2, 3].includes(p.level), "Heading level must be 1\u20133"), m === "Input" && $(p.inputType === void 0 || ["text", "number", "date"].includes(p.inputType), "Invalid input type"), m === "Button" && $(typeof p.onClick == "function", "Button needs onClick"), m === "Form" && $(typeof p.onSubmit == "function", "Form needs onSubmit"), m === "Badge" && p.tone !== void 0 && Ut(p.tone, "validate"), m === "Button" && $(p.variant === void 0 || ["primary", "secondary"].includes(p.variant), "Invalid button variant"), m === "Slider" && $(Number.isFinite(p.min) && Number.isFinite(p.max) && p.max > p.min && (p.step === void 0 || Number.isFinite(p.step) && p.step > 0), "Slider requires a valid range"), m === "Progress" && $(Number.isFinite(p.value) && p.value >= 0 && p.value <= (p.max ?? 100) && (p.max ?? 100) > 0, "Invalid progress range"), ["Input", "TextArea", "Slider", "Checkbox", "Select", "Radio", "Segmented"].includes(m) && ($(typeof p.label == "string" && p.label.trim(), `${m} needs an accessible label`), $(typeof p.onChange == "function", `${m} needs onChange`), m === "Checkbox" ? $(typeof p.checked == "boolean", "Checkbox expects checked") : $(["string", "number", "boolean"].includes(typeof p.value), `${m} needs a controlled value`)), ["Select", "Radio", "Segmented"].includes(m)) {
@@ -7418,7 +7418,7 @@ function Ye(a) {
   return l(a), a;
 }
 var Ns = 128 * 1024;
-var Ce = 16 * 1024;
+var Ie = 16 * 1024;
 var ca = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
 var ve = new TextEncoder();
 function w(a, t) {
@@ -7445,7 +7445,7 @@ function Ms(a) {
 function ze(a) {
   w(new Set(a).size === a.length, "Duplicate identifier");
 }
-function Ci(a, t) {
+function Ii(a, t) {
   a.kind === "text" ? he(t, 500, false) : a.kind === "number" ? be(t) : a.kind === "checkbox" ? w(typeof t == "boolean", "Invalid checkbox value") : w(a.options.includes(t), "Invalid selection");
 }
 function Es(a) {
@@ -7472,7 +7472,7 @@ function Es(a) {
       break;
     case "form":
       se(e, ["id", "type", "title", "fields"], ["id", "type", "fields"]), ce(e.fields, 1, 12), ze(e.fields.map((s) => s?.id));
-      for (let s of e.fields) se(s, ["id", "label", "kind", "options", "initial"], ["id", "label", "kind"]), $t(s.id), he(s.label, 80), w(["text", "number", "select", "checkbox"].includes(s.kind), "Unsupported field kind"), s.kind === "select" ? (ce(s.options, 1, 20), s.options.forEach((i) => he(i, 80)), ze(s.options)) : w(s.options === void 0, "Options require a select field"), s.initial !== void 0 && Ci(s, s.initial);
+      for (let s of e.fields) se(s, ["id", "label", "kind", "options", "initial"], ["id", "label", "kind"]), $t(s.id), he(s.label, 80), w(["text", "number", "select", "checkbox"].includes(s.kind), "Unsupported field kind"), s.kind === "select" ? (ce(s.options, 1, 20), s.options.forEach((i) => he(i, 80)), ze(s.options)) : w(s.options === void 0, "Options require a select field"), s.initial !== void 0 && Ii(s, s.initial);
       break;
     default:
       throw new Error("Unsupported UI block");
@@ -7507,7 +7507,7 @@ function ha(a) {
   se(a, ["version", "title", "fallback", "state", "body"]), he(a.title, 160), he(a.fallback, 8e3), ce(a.state, 0, 32);
   let t = /* @__PURE__ */ new Map();
   for (let o of a.state) se(o, ["id", "value"]), _t(o.id), je(o.value), w(!t.has(o.id), "Duplicate state identifier"), t.set(o.id, o.value);
-  w(ve.encode(JSON.stringify(a.state)).length <= Ce, "State exceeds 16 KiB");
+  w(ve.encode(JSON.stringify(a.state)).length <= Ie, "State exceeds 16 KiB");
   let e = /* @__PURE__ */ new Set(), s = 0;
   function i(o, l, u = 1) {
     if (w(++s <= Se.expressions && u <= Se.expressionDepth, "Expression budget exceeded"), o === null || typeof o != "object") return Ai(o);
@@ -7539,8 +7539,8 @@ function ha(a) {
     ce(o, h ? 1 : 0, 64), w(o.length === 0 || u <= Se.depth, "UI is nested too deeply");
     for (let c of o) {
       w(c && typeof c == "object", "Invalid node"), _t(c.id), w(!e.has(c.id) && e.size < Se.nodes, "Duplicate node or node budget exceeded"), e.add(c.id);
-      let m = (C, N = C) => se(c, ["id", "type", ...C], ["id", "type", ...N]), p = (C) => {
-        Object.hasOwn(c, C) && i(c[C], l);
+      let m = (I, N = I) => se(c, ["id", "type", ...I], ["id", "type", ...N]), p = (I) => {
+        Object.hasOwn(c, I) && i(c[I], l);
       }, A = () => w(t.has(c.state), "Unknown state binding");
       switch (c.type) {
         case "stack":
@@ -7548,8 +7548,8 @@ function ha(a) {
         case "flow":
         case "grid":
         case "card": {
-          let C = c.type === "grid" ? ["columns"] : c.type === "card" ? ["title"] : ["align"];
-          m(["children", "gap", ...C], ["children"]), c.gap !== void 0 && w(["none", "small", "medium", "large"].includes(c.gap), "Invalid layout gap"), c.align !== void 0 && w(["start", "center", "end", "stretch"].includes(c.align), "Invalid layout alignment"), c.columns !== void 0 && w(Number.isInteger(c.columns) && c.columns >= 1 && c.columns <= 4, "Invalid grid columns"), p("title"), n(c.children, l, u + 1);
+          let I = c.type === "grid" ? ["columns"] : c.type === "card" ? ["title"] : ["align"];
+          m(["children", "gap", ...I], ["children"]), c.gap !== void 0 && w(["none", "small", "medium", "large"].includes(c.gap), "Invalid layout gap"), c.align !== void 0 && w(["start", "center", "end", "stretch"].includes(c.align), "Invalid layout alignment"), c.columns !== void 0 && w(Number.isInteger(c.columns) && c.columns >= 1 && c.columns <= 4, "Invalid grid columns"), p("title"), n(c.children, l, u + 1);
           break;
         }
         case "text":
@@ -7591,8 +7591,8 @@ function ha(a) {
         case "select":
         case "radio":
         case "segmented": {
-          let C = c.type === "input" ? ["inputType", "placeholder"] : c.type === "textarea" ? ["placeholder"] : c.type === "slider" ? ["min", "max", "step"] : ["select", "radio", "segmented"].includes(c.type) ? ["options"] : [], N = c.type === "slider" ? ["min", "max"] : ["select", "radio", "segmented"].includes(c.type) ? ["options"] : [];
-          if (m(["label", "state", "onChange", "required", "disabled", "invalid", ...C], ["label", "state", ...N]), A(), p("label"), p("disabled"), p("invalid"), c.required !== void 0 && w(typeof c.required == "boolean", "Invalid required flag"), c.inputType !== void 0 && w(["text", "number", "date"].includes(c.inputType), "Unsupported input type"), c.placeholder !== void 0 && he(c.placeholder, 500, false), c.type === "slider" && (be(c.min), be(c.max), w(c.min < c.max, "Invalid slider range"), c.step !== void 0 && (be(c.step), w(c.step > 0, "Invalid slider step"))), c.options !== void 0) {
+          let I = c.type === "input" ? ["inputType", "placeholder"] : c.type === "textarea" ? ["placeholder"] : c.type === "slider" ? ["min", "max", "step"] : ["select", "radio", "segmented"].includes(c.type) ? ["options"] : [], N = c.type === "slider" ? ["min", "max"] : ["select", "radio", "segmented"].includes(c.type) ? ["options"] : [];
+          if (m(["label", "state", "onChange", "required", "disabled", "invalid", ...I], ["label", "state", ...N]), A(), p("label"), p("disabled"), p("invalid"), c.required !== void 0 && w(typeof c.required == "boolean", "Invalid required flag"), c.inputType !== void 0 && w(["text", "number", "date"].includes(c.inputType), "Unsupported input type"), c.placeholder !== void 0 && he(c.placeholder, 500, false), c.type === "slider" && (be(c.min), be(c.max), w(c.min < c.max, "Invalid slider range"), c.step !== void 0 && (be(c.step), w(c.step > 0, "Invalid slider step"))), c.options !== void 0) {
             ce(c.options, 1, 20);
             for (let S of c.options) se(S, ["label", "value"]), he(S.label, 80), Ai(S.value);
             ze(c.options.map((S) => JSON.stringify(S.value)));
@@ -7601,16 +7601,16 @@ function ha(a) {
           break;
         }
         case "table":
-          m(["columns", "rows", "title"], ["columns", "rows"]), p("title"), p("rows"), ce(c.columns, 1, 8), ze(c.columns.map((C) => C?.key));
-          for (let C of c.columns) se(C, ["key", "label"]), _t(C.key), he(C.label, 80);
+          m(["columns", "rows", "title"], ["columns", "rows"]), p("title"), p("rows"), ce(c.columns, 1, 8), ze(c.columns.map((I) => I?.key));
+          for (let I of c.columns) se(I, ["key", "label"]), _t(I.key), he(I.label, 80);
           Pa(c);
           break;
         case "chart": {
           m(["chartType", "points", "series", "stacked", "title", "xLabel", "yLabel"], ["chartType"]), w(["bar", "line", "area", "scatter", "pie", "donut"].includes(c.chartType), "Unsupported chart type"), w(c.points !== void 0 != (c.series !== void 0), "Chart requires points or series"), p("points"), p("title");
-          for (let C of ["xLabel", "yLabel"]) c[C] !== void 0 && he(c[C], 80);
+          for (let I of ["xLabel", "yLabel"]) c[I] !== void 0 && he(c[I], 80);
           if (c.stacked !== void 0 && w(typeof c.stacked == "boolean" && ["bar", "area"].includes(c.chartType), "Stacking requires bar or area charts"), c.series !== void 0) {
-            w(!["pie", "donut"].includes(c.chartType), "Circular charts require points"), ce(c.series, 1, 8), ze(c.series.map((C) => C?.id));
-            for (let C of c.series) se(C, ["id", "label", "points", "chartType"], ["id", "label", "points"]), _t(C.id), he(C.label, 80), i(C.points, l), C.chartType !== void 0 && w(["bar", "line", "area", "scatter"].includes(C.chartType), "Unsupported series type"), c.stacked && w(["bar", "area"].includes(C.chartType ?? c.chartType), "Stacking requires bar or area series");
+            w(!["pie", "donut"].includes(c.chartType), "Circular charts require points"), ce(c.series, 1, 8), ze(c.series.map((I) => I?.id));
+            for (let I of c.series) se(I, ["id", "label", "points", "chartType"], ["id", "label", "points"]), _t(I.id), he(I.label, 80), i(I.points, l), I.chartType !== void 0 && w(["bar", "line", "area", "scatter"].includes(I.chartType), "Unsupported series type"), c.stacked && w(["bar", "area"].includes(I.chartType ?? c.chartType), "Stacking requires bar or area series");
           }
           Ta(c);
           break;
@@ -7891,7 +7891,7 @@ function descriptor(name, methods, preparation = []) {
 }
 var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
-var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "check-transfer-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state", "check-transfer-state"]);
 var ARTIFACT_STORE_DESCRIPTOR = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
   version: "1.2.0"
@@ -7936,7 +7936,7 @@ var TOOL_SERVICE = "agent.tools";
 var TOOL_SERVICE_DESCRIPTOR = {
   name: TOOL_SERVICE,
   version: "1.0.0",
-  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
+  methods: ["list", "resolve", "resolve-own", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
     name,
     input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
     output_schema: `${TOOL_SERVICE}.${name}.output.v1`
@@ -7973,6 +7973,7 @@ var sessionDomainArity = {
   "ChangeClientInput": [6, 1],
   "AppendAcceptedClientHistoryRecord": [6, 1],
   "SettleClientInputExecution": [5, 0],
+  "MarkClientInputsRead": [2, 0],
   "ListClientInputRecoveryCandidates": [1, 1],
   "RecoverClientInput": [2, 0],
   "ClientInputHistoryReceipts": [1, 1],

@@ -12,6 +12,7 @@ import type { HostApplicationService } from "../plugins/HostApplicationService";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate as activateComposer } from "./DefaultComposerSurface";
 import { DefaultComposerSurface, type DefaultComposerLayout } from "./DefaultComposerSurface";
+import { clearToasts, ToastViewport } from "../Toast";
 import { WuuUIRoot } from "../ui/layers/UILayerHost";
 import { initialState, cloneSessionTabDraft, emptyComposerDraft, type AppState } from "../AppState";
 import { ApplicationComposerRuntime } from "../plugins/ApplicationComposerRuntime";
@@ -24,7 +25,7 @@ import type { EngineListResult, InitializeResult, ThreadStartParams, WuuDesktopA
 
 let root: Root;
 let container: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
+afterEach(() => { act(() => clearToasts()); act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
 function setup() {
   const base = createPreviewApplication();
   const source = "draft-one";
@@ -67,10 +68,41 @@ function setup() {
   } as ApplicationServiceV1;
 
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  const render = async (layout: DefaultComposerLayout = {}, selected = application) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={selected} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
+  const render = async (layout: DefaultComposerLayout = {}, selected = application) => { await act(async () => root.render(<WuuUIRoot><ToastViewport /><DefaultComposerSurface application={selected} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  // Composer-owned effects must work without the default shell, respect the
+  // source pane, and stop when this provider is no longer mounted.
+  it.each(["primary", "secondary"] as const)("accepts response selections for its %s source without shell DOM conventions", async pane => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view,
+      conversationWorkspace: { ...view.conversationWorkspace, [pane === "primary" ? "primaryThreadId" : "secondaryThreadId"]: "source-thread" },
+      drafts: { ...view.drafts, split: pane === "secondary", [pane]: view.drafts.primary },
+    }));
+    await fixture.render({ pane });
+    const selection = { id: "quote", text: "Answer", source: { thread_id: "source-thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 6 } };
+    await act(async () => window.dispatchEvent(new CustomEvent("wuu:add-response-selection", { detail: selection })));
+    expect(fixture.calls).toContainEqual({ action: "composer.checkpoint", input: expect.objectContaining({
+      [pane]: expect.objectContaining({ ownerTabId: "draft-one", selections: [selection] }),
+    }) });
+    const count = fixture.calls.length;
+    await act(async () => window.dispatchEvent(new CustomEvent("wuu:add-response-selection", { detail: { ...selection, source: { ...selection.source, thread_id: "other" } } })));
+    expect(fixture.calls).toHaveLength(count);
+  });
+
+  it("refreshes its models on window focus only while mounted and settled", async () => {
+    const fixture = setup();
+    await fixture.render();
+    fixture.calls.length = 0;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(fixture.calls).toContainEqual({ action: "composer.refresh-engine-models", input: expect.objectContaining({ ownerTabId: "draft-one" }) });
+    await act(async () => root.render(<div>Replacement composer</div>));
+    fixture.calls.length = 0;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(fixture.calls).toEqual([]);
+  });
+
   it.each(["steer", "queue"] as const)("retries a %s only when retirement prevented it from starting", async mode => {
     const fixture = setup();
     const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), running: true, turnRunning: true, canSteer: true };
@@ -175,7 +207,7 @@ describe("selected public composer continuity", () => {
   });
 
   it("announces a failed send once, retains input, and clears its notice when retry starts", async () => {
-    const toast = vi.spyOn(Notices, "showErrorToast");
+    const toast = vi.spyOn(Notices, "showActionErrorToast");
     const fixture = setup();
     const operation = { operationID: "send-one", messageID: "send-one", ownerTabId: "draft-one", mode: "send" as const, phase: "sending" as const, draftPending: true };
     await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "Retained draft" } }, submission: { ...view.submission, operations: [operation] } }));
@@ -265,6 +297,21 @@ describe("selected public composer continuity", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("keeps recovered drafts beside the composer without offering destructive notice dismissal", async () => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view, submission: { ...view.submission, failedDraftTabIds: ["draft-one"] } }));
+    await fixture.render();
+    const recovery = container.querySelector('[data-wuu-component="draft-recovery"]');
+    expect(recovery).not.toBeNull();
+    expect(container.querySelector<HTMLElement>(".composer")?.hidden).toBe(false);
+    expect(container.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    const actions = recovery!.querySelectorAll<HTMLButtonElement>("button");
+    expect(actions).toHaveLength(1);
+    await act(async () => actions[0].click());
+    expect(fixture.calls).toContainEqual({action:"tab.select",input:{tabId:"draft-one"}});
+    expect(fixture.calls.some((call: any) => call.action === "tab.close")).toBe(false);
+  });
+
   it("does not duplicate the separate recovered-draft notice", async () => {
     const fixture = setup();
     await fixture.update(view => ({ ...view, submission: { ...view.submission,
@@ -346,7 +393,8 @@ describe("selected public composer continuity", () => {
     await act(async () => host.unload("alternative"));
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.querySelector("[role=alert]")).toBeNull();
-    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternative:one");
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(notice).not.toHaveBeenCalled();
     await act(async () => root.render(null));
     host.unload("side-extension"); host.unload("composer"); host.unload("wuu.default-preview");
   });
@@ -396,7 +444,7 @@ describe("selected public composer continuity", () => {
 
 
 it("does not toast a retired composer refresh after switching to the replacement owner", async () => {
-  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const notice = vi.spyOn(Notices, "showActionErrorToast").mockImplementation(() => undefined);
   const fixture = setup();
   let reject!: (error: unknown) => void;
   const invoke = fixture.application.invoke;

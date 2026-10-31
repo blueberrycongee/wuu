@@ -107,6 +107,7 @@ type InferenceWorkflow struct {
 	mu          sync.Mutex
 	spend       *WorkflowBudget
 	terminal    bool
+	prepared    bool // A successful journal preparation created the durable workflow.
 	terminalErr error
 	outcome     InferenceTerminalOutcome
 }
@@ -246,7 +247,7 @@ func completeInferenceWorkflow(ctx context.Context, workflow *InferenceWorkflow,
 	}
 	workflow.terminal = true
 	workflow.outcome = outcome
-	if journal == nil || workflow.spend.Snapshot().Operations == 0 {
+	if journal == nil || !workflow.prepared {
 		return nil
 	}
 	err := journal.CompleteWorkflow(ctx, InferenceWorkflowTerminalRecord{

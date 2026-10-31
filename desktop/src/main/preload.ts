@@ -189,6 +189,7 @@ const api: WuuDesktopApi = {
   importWorkspaces: (paths) => ipcRenderer.invoke("wuu:onboarding-import-workspaces", paths),
   platform: desktopPlatform,
   listProjects: () => ipcRenderer.invoke("wuu:project-list"),
+  recoverUnavailableProject: () => ipcRenderer.invoke("wuu:project-recover-unavailable"),
   createBlankProject: () => ipcRenderer.invoke("wuu:project-create-blank"),
   chooseProjectFolder: () => ipcRenderer.invoke("wuu:project-choose-folder"),
   selectProject: (projectId: string) =>

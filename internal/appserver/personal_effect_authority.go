@@ -34,7 +34,7 @@ func inspectionServiceCall(host *pluginhost.Host, scope *pluginhost.ServiceScope
 // No runtime/global catalog mutex spans provider RPC. The ordinary service
 // execution scopes cancel on retirement and remain retained through physical
 // cleanup. Durable provider guards serialize task, session and policy writers.
-func (p *personalActions) withTaskInspection(ctx context.Context, use func(context.Context, *runtime.State, pluginpkg.Plugin, pluginsettings.StateDocument) error) (err error) {
+func (p *personalActions) withTaskInspection(ctx context.Context, use func(context.Context, *runtime.State, pluginpkg.Plugin) error) (err error) {
 	select {
 	case p.effectGate <- struct{}{}:
 		defer func() { <-p.effectGate }()
@@ -67,7 +67,7 @@ func (p *personalActions) withTaskInspection(ctx context.Context, use func(conte
 	}
 	defer func() { err = errors.Join(err, settingsScope.Close()) }()
 	settings := pluginsettings.NewClient(inspectionServiceCall(state.Host, settingsScope, runtime.StateServicesConsumer, pluginsettings.ServiceName))
-	return settings.WithStateInspection(settingsScope.Context, selected.SubjectID, pluginsettings.ScopeUser, func(doc pluginsettings.StateDocument) (err error) {
+	return settings.WithStateInspection(settingsScope.Context, selected.StorageSubject(), pluginsettings.ScopeUser, func(_ pluginsettings.StateDocument) (err error) {
 		sessionScope, err := state.Host.OpenServiceScope(settingsScope.Context, runtime.SessionStateConsumer, session.ServiceName)
 		if err != nil {
 			return err
@@ -95,7 +95,7 @@ func (p *personalActions) withTaskInspection(ctx context.Context, use func(conte
 				if err := effectCtx.Err(); err != nil {
 					return err
 				}
-				return use(effectCtx, state, selected, doc)
+				return use(effectCtx, state, selected)
 			})
 		})
 	})
@@ -105,8 +105,8 @@ func (p *personalActions) withExecutionAuthority(ctx context.Context, scope pers
 	if err := p.server.authorizePersonalOperation(ctx, "review.execution.status", scope.SessionID); err != nil {
 		return err
 	}
-	return p.withTaskInspection(ctx, func(effectCtx context.Context, state *runtime.State, selected pluginpkg.Plugin, doc pluginsettings.StateDocument) error {
-		authority, err := p.authority(effectCtx, state, selected, scope.SessionID, scope.TaskID, doc)
+	return p.withTaskInspection(ctx, func(effectCtx context.Context, state *runtime.State, selected pluginpkg.Plugin) error {
+		authority, err := p.authority(effectCtx, state, selected, scope.SessionID, scope.TaskID)
 		if err != nil {
 			return err
 		}
@@ -124,8 +124,8 @@ func (p *personalActions) withConnectorAuthorization(ctx context.Context, actor 
 	if err := p.server.authorizePersonalOperation(ctx, "connectors.call", actor.SessionID); err != nil {
 		return err
 	}
-	return p.withTaskInspection(ctx, func(effectCtx context.Context, state *runtime.State, selected pluginpkg.Plugin, doc pluginsettings.StateDocument) error {
-		current, err := p.connectorAuthorityForState(effectCtx, state, selected, actor, doc)
+	return p.withTaskInspection(ctx, func(effectCtx context.Context, state *runtime.State, selected pluginpkg.Plugin) error {
+		current, err := p.connectorAuthorityForState(effectCtx, state, selected, actor)
 		if err != nil {
 			return err
 		}

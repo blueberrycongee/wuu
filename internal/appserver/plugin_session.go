@@ -295,7 +295,11 @@ func (s *Server) listPluginSessions(ctx context.Context, pluginID string, params
 			state = pluginhost.TurnLifecycleQueued
 		}
 		s.queuedTurnMu.Unlock()
-		result.Sessions = append(result.Sessions, pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)})
+		summary := pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)}
+		if scope == pluginhost.SessionListScopeOwned {
+			summary.CreationRequestID = item.CreationRequestID
+		}
+		result.Sessions = append(result.Sessions, summary)
 	}
 	return result, nil
 }
@@ -469,8 +473,11 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
-	if s.clientInputReceiptsEnabled() {
-		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+	if metadata.Owner == "plugin:"+strings.TrimSpace(pluginID) {
+		result.Session.CreationRequestID = metadata.CreationRequestID
+	}
+	if s.clientInputReceiptsEnabled(binding) {
+		if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return result, false, err
 		}
 		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID)); err != nil {
@@ -482,7 +489,7 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 				return result, false, err
 			}
 			if found && (params.TurnID == "" || params.TurnID == row.Receipt.HostTurnID) {
-				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+				if err := s.validateClientInputSpace(binding, row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 					return result, false, err
 				}
 				result.Receipt = &row.Receipt
@@ -500,7 +507,7 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 			}
 			for _, row := range rows {
 				if row.Receipt.PluginID == pluginID && row.Receipt.ReceiptState == "accepted" && row.Receipt.ExecutionState != "cancelled" {
-					if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+					if err := s.validateClientInputSpace(binding, row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 						return result, false, err
 					}
 					view, err := acceptedInputView(row)
@@ -780,8 +787,12 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			return pluginhost.SessionCancelResult{}, err
 		}
 		turnID, queueID = params.TurnID, params.QueueID
-		if s.personalActions != nil {
-			reviewScope, scopeErr := s.personalActions.scope(ctx, sessionID)
+		if s.personalCoordinationAvailable(binding) {
+			rawScope, scopeErr := s.invokePersonalCoordination(ctx, "scope", personalCoordinationRequest{SessionID: sessionID}, nil)
+			var reviewScope personalreview.Scope
+			if scopeErr == nil {
+				scopeErr = json.Unmarshal(rawScope, &reviewScope)
+			}
 			if scopeErr == nil && reviewScope.TaskID == scope.TaskID && reviewScope.RequirementsRevision == scope.Revision {
 				cancelReviews = true
 				reviewScopes = []personalreview.Scope{reviewScope}
@@ -808,15 +819,14 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 			}
 		}
 	}
-	if cancelReviews && s.personalActions != nil && metadata.Owner == "plugin:"+pluginID {
-		if err := s.personalActions.engine.CancelExecution(ctx, s.rt.UserBinding().UserSpaceID, sessionID, reviewScopes...); err != nil {
+	if cancelReviews && s.personalCoordinationAvailable(binding) && metadata.Owner == "plugin:"+pluginID {
+		if _, err := s.invokePersonalCoordination(ctx, "cancel", personalCoordinationRequest{SessionID: sessionID, Scopes: reviewScopes}, nil); err != nil {
 			return pluginhost.SessionCancelResult{}, err
 		}
-		s.personalActions.signal()
 	}
 	if queueID != "" {
-		if s.clientInputReceiptsEnabled() {
-			if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+		if s.clientInputReceiptsEnabled(binding) {
+			if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 				return pluginhost.SessionCancelResult{}, err
 			}
 			rows, err := binding.Sessions.ListUnsettledClientInputs(s.clientInputScope(sessionID, pluginID))
@@ -830,7 +840,7 @@ func (s *Server) cancelPluginSession(ctx context.Context, pluginID string, param
 				if row.Receipt.ReceiptState != "accepted" || row.Receipt.ExecutionState == "cancelled" {
 					return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID}, nil
 				}
-				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+				if err := s.validateClientInputSpace(binding, row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
 					return pluginhost.SessionCancelResult{}, err
 				}
 				if _, err := binding.Sessions.ChangeClientInput(row, "cancelled", "", nil, nil, nil); err != nil {
@@ -934,7 +944,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	var clientAttachments []runtime.ClientInputAttachment
 	if params.ResumeReceiptID != "" {
-		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools {
+		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools || params.ToolPolicy != nil {
 			return pluginhost.SessionSendResult{}, errors.New("resume must reference only the immutable accepted input")
 		}
 		if err := runtime.AuthorizeClientInputResume(ctx, pluginID, params.UserInputRequestID, params.ResumeReceiptID, params.SessionID, params.RequestID); err != nil {
@@ -959,8 +969,23 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if params.IfRunning != pluginhost.SessionIfRunningQueue && params.IfRunning != pluginhost.SessionIfRunningSteer {
 		return pluginhost.SessionSendResult{}, errors.New("if_running must be queue or steer")
 	}
-	if params.DisableTools && params.IfRunning == pluginhost.SessionIfRunningSteer {
-		return pluginhost.SessionSendResult{}, errors.New("disable_tools cannot be used when if_running is steer")
+	if params.ToolPolicy != nil {
+		emptyAllow := params.ToolPolicy.Allow != nil && len(params.ToolPolicy.Allow) == 0
+		policy, err := normalizeSessionToolPolicy(pluginhost.SessionToolPolicy(*params.ToolPolicy))
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		// Preserve explicit deny-all through JSON snapshots, whose empty Allow
+		// is otherwise omitted and has legacy session-policy semantics.
+		if emptyAllow {
+			policy.Allow = nil
+			policy.Deny = append(policy.Deny, "*")
+		}
+		turnPolicy := pluginhost.SessionTurnToolPolicy(policy)
+		params.ToolPolicy = &turnPolicy
+	}
+	if (params.DisableTools || params.ToolPolicy != nil) && params.IfRunning == pluginhost.SessionIfRunningSteer {
+		return pluginhost.SessionSendResult{}, fmt.Errorf("%s cannot be used when if_running is steer", turnToolRestrictionName(params.DisableTools))
 	}
 	if params.IfRunning == pluginhost.SessionIfRunningSteer && len(params.Input.ContextBlocks) > 0 {
 		return pluginhost.SessionSendResult{}, errors.New("context_blocks cannot be used when if_running is steer")
@@ -978,8 +1003,8 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if err := s.requireUserSessionBinding(metadata); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	if params.DisableTools && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
-		return pluginhost.SessionSendResult{}, errors.New("the selected agent engine cannot enforce disable_tools")
+	if (params.DisableTools || params.ToolPolicy != nil) && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+		return pluginhost.SessionSendResult{}, fmt.Errorf("the selected agent engine cannot enforce %s", turnToolRestrictionName(params.DisableTools))
 	}
 	owner := "plugin:" + pluginID
 	processDelivery := pluginhost.HasProcessSessionDelivery(ctx, params.SessionID)
@@ -1005,9 +1030,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
-	durableClient := s.clientInputReceiptsEnabled() && params.UserInputRequestID != "" && th.PersistHistory && params.IfRunning == pluginhost.SessionIfRunningQueue
+	durableClient := s.clientInputReceiptsEnabled(binding) && params.UserInputRequestID != "" && th.PersistHistory && params.IfRunning == pluginhost.SessionIfRunningQueue
 	if durableClient {
-		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+		if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
 		if err := binding.Sessions.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID)); err != nil {
@@ -1160,6 +1185,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 	snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
 	snapshot.DisableTools = params.DisableTools
+	snapshot.ToolPolicy = params.ToolPolicy
 	snapshot.RequestContext = requestContext
 	snapshot.Control = control
 	origin, err := invocation.RetainExecution()
@@ -1265,6 +1291,9 @@ func pluginSessionSource(owner string, params pluginhost.SessionCreateParams) st
 
 func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost.SessionToolPolicy, error) {
 	normalize := func(kind string, names []string) ([]string, error) {
+		if names == nil {
+			return nil, nil
+		}
 		seen := make(map[string]struct{}, len(names))
 		out := make([]string, 0, len(names))
 		for _, name := range names {
@@ -1404,4 +1433,13 @@ func (s *Server) restoreUserSessionAuthorization(ctx context.Context, pluginID s
 		resources = append(resources, access.Resource{Kind: "session", ID: strings.TrimSpace(sessionID)})
 	}
 	return s.rt.RestoreExecutionAuthorization(ctx, pluginID, *reference, strings.TrimSpace(sessionID), "user/session/"+operation, resources...)
+}
+
+// Keep the established disable_tools refusal stable: callers distinguish this
+// definite pre-admission rejection from uncertain service transport failures.
+func turnToolRestrictionName(disableTools bool) string {
+	if disableTools {
+		return "disable_tools"
+	}
+	return "tool_policy"
 }

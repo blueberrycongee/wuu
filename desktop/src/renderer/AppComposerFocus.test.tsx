@@ -1,3 +1,4 @@
+import { ToastViewport, clearToasts } from "./Toast";
 import * as composerMessages from "./ComposerMessages";
 import * as React from "react";
 import { act, useEffect, useState, type ComponentProps } from "react";
@@ -47,6 +48,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
             props.mainConversation ? variant : undefined
           }
         >
+          {props.statusAccessory}
           {props.continuation && <button aria-label="continue-probe" onClick={() => props.continuation?.continue()}>continue</button>}
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           <button aria-label="select-wuu-engine-probe" onClick={() => props.onSelectEngine?.("wuu")}>Wuu</button>
@@ -281,6 +283,9 @@ function installWuuApi(
         features: { project_agent: options.projectAgentEnabled === true },
       }),
     ),
+    listEngines: vi.fn().mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
+    getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
+    listAllThreads: vi.fn().mockResolvedValue({ threads: [] }),
     listThreads: vi.fn().mockImplementation(() =>
       Promise.resolve({
         threads:
@@ -366,7 +371,7 @@ async function renderApp(
   installWuuApi({ withThread, ...options });
   await act(async () => {
     root = createRoot(container);
-    root.render(await createDefaultApplicationTestView());
+    root.render(<>{await createDefaultApplicationTestView()}<ToastViewport /></>);
   });
   await flushAsync();
   if (withThread) {
@@ -489,7 +494,7 @@ describe("main composer focus continuity", () => {
     window.sessionStorage.clear();
   });
 
-  afterEach(() => {
+  afterEach(() => { act(() => clearToasts());
     act(() => root?.unmount());
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWindowWidth });
     root = null;
@@ -497,6 +502,47 @@ describe("main composer focus continuity", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.restoreAllMocks();
+  });
+
+  it("retains editable split input focus across pane activation and public focus requests", async () => {
+    await renderApp(true);
+    const controller = applicationState.getDesktopApplication();
+    const related = newThread();
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread: related });
+    await act(async () => controller.invoke("conversation.open-split", { threadId: related.id }));
+    await flushAsync();
+    const inputFor = (id: string) => container.querySelector<HTMLTextAreaElement>(
+      `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`,
+    )!;
+    const primary = inputFor(persistedThread().id);
+    const secondary = inputFor(related.id);
+    expect(primary).not.toBeNull();
+    expect(secondary).not.toBeNull();
+    for (const [pane, input, id] of [
+      ["secondary", secondary, related.id], ["primary", primary, persistedThread().id],
+    ] as const) {
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      });
+      await flushAsync();
+      expect(controller.getSnapshot().conversationWorkspace.activePane).toBe(pane);
+      expect(inputFor(id)).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(input.disabled).toBe(false);
+      expect(input.readOnly).toBe(false);
+      expect(input.closest("[inert], [hidden]")).toBeNull();
+      expect(document.activeElement).toBe(input);
+      const trigger = document.createElement("button");
+      container.append(trigger);
+      trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", {
+        tabId: controller.getSnapshot().tabs.activeTabId,
+      }));
+      await flushAsync();
+      expect(document.activeElement).toBe(input);
+      trigger.remove();
+    }
   });
 
   it("rebinds global focus, settings and resize listeners without replacing the shell", async () => {
@@ -939,7 +985,7 @@ describe("main composer focus continuity", () => {
     window.wuu.listEngines = vi.fn().mockRejectedValue(new Error("engine discovery unavailable"));
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(<>{await createDefaultApplicationTestView()}<ToastViewport /></>);
     });
     await flushAsync();
     expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("true");
@@ -952,6 +998,33 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
       engine: "wuu", provider: "fake", model: "fake-model",
     }), { kind: "no_project", cwd: scratchCwd });
+  });
+
+  it("focuses a replacement composer through its public slot contract without default DOM", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+    await host.activateGeneration({ pluginId: "shell", generation: "fixture", register: activateDefaultShell });
+    await host.activateGeneration({ pluginId: "alternate", generation: "fixture", register: api => {
+      api.registerUIContribution({ id: "composer", target: "wuu.default-shell/application.composer", render: ({ context }) => {
+        const ref = React.useRef<HTMLInputElement>(null);
+        const register = context.registerFocusTarget as undefined | ((target: { focus(options?: FocusOptions): boolean; contains(element: Element): boolean }) => () => void);
+        React.useLayoutEffect(() => register?.({ focus: options => { ref.current?.focus(options); return !!ref.current; }, contains: element => ref.current === element }), [register]);
+        return <input ref={ref} aria-label="Alternate composer" />;
+      } });
+    } });
+    try {
+      await act(async () => { root = createRoot(container); root.render(<ApplicationShellOutlet host={host}
+        binding={{ pluginId: "shell", generation: "fixture", id: "ui.shell" }}
+        surfaceBindings={{ ...defaultSurfaceBindings, "ui.composer": { pluginId: "alternate", generation: "fixture", id: "composer" } }} />); });
+      await flushAsync();
+      const trigger = document.createElement("button"); container.append(trigger); trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", { tabId: controller.getSnapshot().tabs.activeTabId }));
+      await flushAsync();
+      expect(document.activeElement).toBe(container.querySelector('[aria-label="Alternate composer"]'));
+    } finally { await act(async () => root?.unmount()); root = null; for (const id of ["alternate", "shell", ...Object.values(defaultSurfaceBindings).map(binding => binding.pluginId)]) host.unload(id); }
   });
 
   it("honors a public composer focus request for the current draft", async () => {
@@ -986,7 +1059,7 @@ describe("main composer focus continuity", () => {
     }));
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(<>{await createDefaultApplicationTestView()}<ToastViewport /></>);
     });
     await flushAsync();
 
@@ -1302,9 +1375,9 @@ describe("main composer focus continuity", () => {
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
     expect(mainComposer("dock").value).toBe(cleared ? "first retained" : "second retained");
-    const notices = document.querySelectorAll('[role="alert"][data-wuu-component="notice"]');
+    const notices = document.querySelectorAll(cleared ? '[role="alert"][data-wuu-component="notice"]' : '[data-wuu-component="draft-recovery"]');
     expect(notices).toHaveLength(1);
-    const actions = [...notices[0].querySelectorAll<HTMLButtonElement>(".archive-tip-action")];
+    const actions = [...notices[0].querySelectorAll<HTMLButtonElement>(cleared ? ".archive-tip-action" : "button")];
     expect(actions).toHaveLength(1);
     const recovery = actions.find(button => button.textContent?.trim() === translateCurrent("composer.openFailedDraft"));
     const retry = actions.find(button => button.textContent?.trim() === translateCurrent("appState.retryAction"));
@@ -1367,7 +1440,7 @@ describe("main composer focus continuity", () => {
     expect(mainComposer("dock").value).toBe(newerDraft || "query that fails before thread start");
     expect(container.querySelector(".turn-process-title")).toBeNull();
     if (newerDraft) {
-      const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+      const recovery = document.querySelector<HTMLButtonElement>('[data-wuu-component="draft-recovery"] button');
       expect(recovery).not.toBeNull();
       await act(async () => { recovery!.click(); });
       expect(mainComposer("dock").value).toBe("query that fails before thread start");

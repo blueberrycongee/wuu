@@ -287,6 +287,18 @@ jobs:
 
       # Independent suites continue after a peer fails so one broken boundary
       # does not hide the others. Every failed step still fails this job.
+      - name: Verify registered existing-session controller loop
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        env:
+          WUU_REGISTERED_SESSION_EVIDENCE: ${{ github.workspace }}/.tmp/e2e/architecture-conformance/registered-session.json
+        run: |
+          set -o pipefail
+          # Builds the native fixture binary and requires real-core reports;
+          # unlike ordinary Vitest, this cannot silently skip the journey.
+          node scripts/registered-session-transport-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/registered-session.log
+
       - name: Verify independent state authority
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
         timeout-minutes: 8
@@ -493,6 +505,7 @@ jobs:
             .tmp/e2e/architecture-conformance/*.txt
             .tmp/e2e/architecture-conformance/*.sha256
             .tmp/e2e/architecture-conformance/*.log
+            .tmp/e2e/architecture-conformance/registered-session*.json
             .tmp/e2e/plugin-failure-isolation/run-*/result.json
             .tmp/e2e/provider-authority/run-*/environment.json
             .tmp/e2e/provider-authority/run-*/verification.log
@@ -563,7 +576,8 @@ jobs:
     name: Go check
     runs-on: ubuntu-latest
     needs: [changes, go-validation, go-race, project-agent-check, architecture-conformance]
-    if: always()
+    # Evaluate failed dependencies, but let superseded workflow runs cancel.
+    if: ${{ !cancelled() }}
     steps:
       - name: Require selected Go suites
         env:
@@ -1656,6 +1670,20 @@ jobs:
           git rev-parse HEAD > "$WUU_TITLEBAR_OUTPUT/source-commit.txt"
           set -o pipefail
           desktop/node_modules/.bin/electron desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+      - name: Exercise error feedback production components
+        id: error-feedback-components
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ERROR_FEEDBACK_OUTPUT: ${{ runner.temp }}/wuu-macos-error-feedback
+        # Synthetic services and actual renderer components, not full-App or
+        # physical-display acceptance. No core or account is required.
+        run: |
+          mkdir -p "$WUU_ERROR_FEEDBACK_OUTPUT"
+          git rev-parse HEAD > "$WUU_ERROR_FEEDBACK_OUTPUT/source-commit.txt"
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/error-feedback-e2e.cjs 2>&1 | tee "$WUU_ERROR_FEEDBACK_OUTPUT/run.log"
       - name: Exercise sandboxed native Settings overlay
         timeout-minutes: 3
         shell: bash
@@ -1744,6 +1772,14 @@ jobs:
             desktop/out/personal-desktop-acceptance/approval/*.png
           if-no-files-found: warn
           retention-days: 14
+      - name: Upload hosted macOS error feedback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-feedback-hosted-macos-evidence
+          path: ${{ runner.temp }}/wuu-macos-error-feedback/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload hosted macOS Settings overlay evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -1768,7 +1804,8 @@ jobs:
   desktop-check:
     name: Desktop check
     needs: [changes, desktop-suite]
-    if: always()
+    # Evaluate failed dependencies, but let superseded workflow runs cancel.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected Desktop suite
@@ -2105,7 +2142,8 @@ jobs:
     name: CI check
     runs-on: ubuntu-latest
     needs: [changes, repository-check, go-check, desktop-check, desktop-macos-controls, clients-check, macos-check, linux-check, windows-check]
-    if: always()
+    # Evaluate failed dependencies, but let superseded workflow runs cancel.
+    if: ${{ !cancelled() }}
     steps:
       - name: Require successful selection and all selected jobs
         env:

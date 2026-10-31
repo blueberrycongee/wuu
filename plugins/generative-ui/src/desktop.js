@@ -675,7 +675,7 @@ export async function activate(api) {
           key: valid.spec.version === 3 ? `${identity}:source` : `${identity}:${preview ? "preview" : metadata.artifactId + ":" + valid.raw}`, spec: valid.spec, raw: valid.raw, metadata, host, preview: preview || !parsed.spec, stopped: interrupted || (!preview && !parsed.spec),
         }),
         interrupted || (!preview && parsed.error) ? h("p", { role: "status", className: "plugin-genui-notice" }, interrupted ? "Generation stopped. This incomplete preview is read-only." : `The final view could not be validated. ${parsed.error}`) : null)
-      : preview ? h("section", { className: "plugin-genui", "data-wuu-component": "generated-ui", "data-genui-preview": "true", "aria-busy": !interrupted }, h("p", { className: "plugin-genui-muted", role: "status" }, interrupted ? "Generation stopped before a complete preview was available." : "Building interactive view…"))
+      : preview ? h("section", { className: "plugin-genui", "data-wuu-component": "generated-ui", "data-genui-preview": "true", "aria-busy": !interrupted }, interrupted ? h("p", { className: "plugin-genui-muted", role: "status" }, "Generation stopped before a complete preview was available.") : null)
         : h("div", null, h(ui.ErrorState, { title: "Interactive preview unavailable", description: parsed.error }), typeof content?.fallbackText === "string" ? h("p", { className: "plugin-genui-text" }, content.fallbackText) : null);
   }
 
@@ -796,11 +796,10 @@ export async function activate(api) {
     }
     catch (caught) { error = caught.message; }
     return h("section", { ref: surface, className: "plugin-genui plugin-genui-program", "data-wuu-component": "generated-ui", "data-genui-preview": String(Boolean(preview)), "aria-label": spec.title, "aria-busy": !stopped && Boolean(preview || !ready || pending) },
-      h("header", { className: "plugin-genui-header" }, h("h2", null, spec.title), h("span", { className: "plugin-genui-muted" }, stopped ? "Incomplete preview" : preview ? "Building preview…" : "Interactive")),
+      h("header", { className: "plugin-genui-header" }, h("h2", null, spec.title)),
       error ? h(ui.ErrorState, { title: "This view could not be calculated", description: error }) : tree,
       notice ? h("p", { role: "status", className: "plugin-genui-notice" }, notice) : null,
       !preview && hasContinuation(spec.body) && !canSend ? h("p", { className: "plugin-genui-muted" }, metadata.interaction?.disabledReason || "Conversation actions are unavailable in this view.") : null,
-      h("details", { className: "plugin-genui-summary" }, h("summary", null, "Text summary"), h("p", { className: "plugin-genui-text" }, spec.fallback)),
     );
   }
 
@@ -1056,7 +1055,7 @@ export async function activate(api) {
       });
     }
     return h("section", { className: "plugin-genui", "data-wuu-component": "generated-ui", "data-genui-preview": String(Boolean(preview)), "aria-label": spec.title, "aria-busy": !stopped && (preview || !ready) },
-      h("header", { className: "plugin-genui-header" }, h("h2", null, spec.title), h("span", { className: "plugin-genui-muted" }, stopped ? "Incomplete preview" : preview ? "Building preview…" : "Experimental")),
+      h("header", { className: "plugin-genui-header" }, h("h2", null, spec.title)),
       notice ? h("p", { role: "status", className: "plugin-genui-muted" }, notice) : null,
       h("fieldset", { disabled: preview || !ready, className: "plugin-genui-blocks" }, spec.blocks.map(block => {
         const props = { key: block.id, block, value: values[block.id], change: value => change(block.id, value) };
@@ -1064,7 +1063,6 @@ export async function activate(api) {
           : block.type === "table" ? h(TableBlock, props)
             : block.type === "chart" ? h(ChartBlock, props) : h(FormBlock, props);
       })),
-      h("details", { className: "plugin-genui-summary" }, h("summary", null, "Text summary"), h("p", { className: "plugin-genui-text" }, spec.fallback)),
     );
   }
 

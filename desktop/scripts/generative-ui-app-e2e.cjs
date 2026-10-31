@@ -116,19 +116,18 @@ const server = http.createServer((req, res) => {
         assert.equal(uiTools.length, 1, 'User enablement exposes exactly one render_ui tool');
         if (!emittedTool) {
           emittedTool = true;
-          const independent = { version: 2, title: 'Independent streamed widget', fallback: 'A separate UI stream.', state: [], body: [{ id: 'independent', type: 'text', text: 'Independent stream content' }] };
+          const independent = { version: 3, title: 'Independent streamed widget', fallback: 'A separate UI stream.', source: '<Stack key="layout"><Text key="independent">Independent stream content</Text><Text>Complete nested view</Text></Stack>' };
           const argumentsByIndex = [spec, independent].map(value => JSON.stringify({ spec: value }));
           const firstBoundary = argumentsByIndex[0].indexOf(JSON.stringify(spec.blocks[0])) + JSON.stringify(spec.blocks[0]).length;
           const secondBoundary = argumentsByIndex[0].indexOf(JSON.stringify(spec.blocks[1])) + JSON.stringify(spec.blocks[1]).length;
-          const independentBoundary = argumentsByIndex[1].length - 3;
+          const independentBoundary = argumentsByIndex[1].indexOf('Independent stream content') + 'Independent stream'.length;
           const append = (index, arguments) => res.write(delta({ tool_calls: [{ index, function: { arguments } }] }));
-          // Both calls start before either receives arguments. This catches
-          // providers or host layers that append deltas to the latest call.
-          res.write(delta({ role: 'assistant', tool_calls: argumentsByIndex.map((_, index) => ({ index, id: `genui-app-call-${index}`, type: 'function', function: { name: uiTools[0], arguments: '' } })) }));
+          // The second call starts with an argument prefix. Later deltas must
+          // retain that prefix and remain isolated from the first call.
+          res.write(delta({ role: 'assistant', tool_calls: argumentsByIndex.map((_, index) => ({ index, id: `genui-app-call-${index}`, type: 'function', function: { name: uiTools[0], arguments: index === 1 ? argumentsByIndex[1].slice(0, independentBoundary) : '' } })) }));
           liveStream = {
             first() {
               append(0, argumentsByIndex[0].slice(0, firstBoundary));
-              append(1, argumentsByIndex[1].slice(0, independentBoundary));
             },
             second() { append(0, argumentsByIndex[0].slice(firstBoundary, secondBoundary)); },
             finish() {
@@ -380,13 +379,14 @@ async function run() {
   await beginTurn('GENUI_ENABLED');
   await until(() => liveStream, 'held-open interleaved provider stream');
   liveStream.first();
-  await wait(() => document.querySelector('[data-genui-block="teams"]') && document.querySelector('[data-genui-node="independent"]'));
+  await wait(() => document.querySelector('[data-genui-block="teams"]') && document.querySelector('[data-genui-node="root/layout/independent"]'));
   assert.equal(liveStream.finished, false, 'Both widgets are rendered while the provider response is still open');
   assert.ok(await evaluate(() => {
     const table = document.querySelector('[data-genui-block="teams"]');
-    const other = document.querySelector('[data-genui-node="independent"]');
+    const other = document.querySelector('[data-genui-node="root/layout/independent"]');
     window.__genuiStreamRoot = table.closest('[data-wuu-component="generated-ui"]');
-    return table.textContent.includes('Engineering') && other.textContent.includes('Independent stream content')
+    window.__genuiSourceText = other;
+    return table.textContent.includes('Engineering') && other.textContent === 'Independent stream'
       && !document.querySelector('[data-genui-block="progress"]')
       && [...document.querySelectorAll('[data-wuu-component="generated-ui"] input, [data-wuu-component="generated-ui"] button, [data-wuu-component="generated-ui"] select')].every(node => node.matches(':disabled'));
   }), 'Complete atomic prefixes have isolated contents and disabled controls');
@@ -414,7 +414,9 @@ async function run() {
       });
   }), 'Production category labels align with their bar centers');
   pass('real model tool call reaches bundled TypeScript runtime, persisted message flow, MIME registry and production renderer');
-  pass('two interleaved model argument streams render atomic prefixes before tool completion', { streamEvidence });
+  assert.ok(await evaluate(() => window.__genuiSourceText === document.querySelector('[data-genui-node="root/layout/independent"]')
+    && window.__genuiSourceText.textContent === 'Independent stream content'), 'Nested source text retains its DOM identity from a partial string through the completed tool result');
+  pass('interleaved legacy and source argument streams render before tool completion, retaining nested source identity', { streamEvidence });
   await capture('03-app-interactive.png', '.plugin-genui-header');
   stopStreamRecording();
   await type('[data-genui-block="teams"] input', 'Engineering');

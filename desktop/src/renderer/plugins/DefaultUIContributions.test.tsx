@@ -1,5 +1,4 @@
 import * as Toast from "../Toast";
-import { translateCurrent } from "../i18n";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -319,7 +318,8 @@ describe("provider-owned contributions in declared public slots", () => {
       expect(element.textContent).toContain("Inspector content"); expect(element.textContent).not.toContain("Hidden content");
       expect(element.querySelector('[role="alert"]')).toBeNull();
       expect(element.textContent).not.toContain("inspector failed");
-      expect(notice).toHaveBeenCalledWith(translateCurrent("plugins.surfaceUnavailable"), "", "plugin-surface:extension:same");
+      expect(element.querySelector('[role="status"]')).not.toBeNull();
+      expect(notice).not.toHaveBeenCalled();
       expect(host.getGenerationDiagnostics("extension", "same")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "render", message: expect.stringContaining("inspector failed") })]));
       await captured.invoke("settings.open", {});
       const old = captured;
@@ -329,6 +329,24 @@ describe("provider-owned contributions in declared public slots", () => {
       await act(async () => { host.unload("extension"); });
       expect(element.textContent).toBe("Native content"); expect(cleanup).toHaveBeenCalledTimes(2);
     } finally { silence.mockRestore(); }
+  });
+
+  it("keeps a failed active view visible and retries without substituting native content", async () => {
+    const { host, register, mount } = await fixture("workspace.view", { pluginId: "extension", generation: "same", viewTypeId: "notes", tabId: "view-tab" });
+    let broken = true;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await register(api => api.registerViewType({ id: "notes", title: "Notes", render: () => {
+      if (broken) throw new Error("private view details");
+      return <span>Recovered notes</span>;
+    } }));
+    mount();
+    expect(element.querySelector('[role="status"]')).not.toBeNull();
+    expect(element.textContent).not.toContain("Native content");
+    expect(element.textContent).not.toContain("private view details");
+    broken = false;
+    await act(async () => element.querySelector('button')!.click());
+    expect(element.textContent).toBe("Recovered notes");
+    expect(host.getGenerationDiagnostics("extension", "same").some(item => item.kind === "render")).toBe(true);
   });
 
   it("renders only the selected generation's workspace view and its title commands", async () => {
