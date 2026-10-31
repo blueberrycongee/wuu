@@ -120,6 +120,7 @@ func (s *Server) handleTrustedTransport(ctx context.Context, req Request) error 
 	if err != nil {
 		return deny(err)
 	}
+	originalContext := ctx
 	ctx = principal.WithContext(ctx, identity)
 	if req.Method == "transport/event" {
 		notification := Notification{Method: input.Method, Params: input.Params}
@@ -150,6 +151,10 @@ func (s *Server) handleTrustedTransport(ctx context.Context, req Request) error 
 	}
 	s.trustedTransport.pending[string(req.ID)] = input.PeerID
 	s.trustedTransport.mu.Unlock()
+	if input.Method == ownerLocalSessionMethod {
+		return s.handleOwnerLocalSession(originalContext, identity, Request{ID: req.ID, Method: ownerLocalSessionMethod, Params: input.Params})
+	}
+
 	nested, err := json.Marshal(Request{ID: req.ID, Method: input.Method, Params: input.Params})
 	if err != nil {
 		return deny(err)

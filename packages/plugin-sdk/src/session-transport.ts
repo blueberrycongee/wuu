@@ -143,6 +143,12 @@ export function remoteSessionTransport(
 /** Discovery is filtered by each registered receiver policy; it grants no control. */
 export interface RegisteredSessionTargetsV1 {
   version: 1;
-  targets: { locator: SessionLocatorV1; title?: string }[];
+  targets: {
+    locator: SessionLocatorV1;
+    title?: string;
+    /** Descriptive admission path. Omission means legacy federation. The
+     * registered host identity selects the path, never a caller's mode claim. */
+    route_kind?: "owner-local" | "federation";
+  }[];
   unavailable: { execution_host?: string; reason: string }[];
 }

@@ -71,29 +71,48 @@ func TestRegisteredSessionTransportProcess(t *testing.T) {
 	if role == "source" {
 		additional = []pluginhost.Client{p, registeredTransportConsumer{}}
 	}
-	rt := newTestRuntime(t, &fakeClient{response: providers.ChatResponse{Content: "existing Coding result"}}, additional...)
+	targetGate := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseTarget := func() { releaseOnce.Do(func() { close(targetGate) }) }
+	model := &fakeClient{response: providers.ChatResponse{Content: "existing Coding result"}}
+	if role == "target-owner" || role == "target-delayed-federation" {
+		model.onChat = func(call int, _ providers.ChatRequest) {
+			if call == 1 {
+				<-targetGate
+			}
+		}
+	}
+	rt := newTestRuntime(t, model, additional...)
 	identity := principal.Identity{Kind: "agent", Issuer: "fixture", Tenant: "registered", Subject: "personal-controller"}
 	var revoked atomic.Bool
 	caller, _ := principal.AuthenticatedWithValidity(identity, func() bool { return !revoked.Load() })
 	policy := access.PolicyFunc(func(_ context.Context, r access.Request) (access.Decision, error) {
 		return access.Decision{Allow: r.Owner || (!revoked.Load() && (r.Principal == identity || r.Principal == principal.LocalOwner().Identity()) && strings.HasPrefix(r.Action, "session/federation."))}, nil
 	})
-	var options = []ServerOption{WithTrustedLocalTransport(), WithAccessPolicy(policy)}
-	if role == "target" {
+	var options = []ServerOption{WithTrustedLocalTransport()}
+	if role != "target-owner" {
+		options = append(options, WithAccessPolicy(policy))
+	}
+	if role == "target" || role == "target-delayed-federation" {
 		options = append(options, WithSessionFederation(SessionFederationConfig{HostID: "registered-coding", Models: map[string][]string{"fake-provider": {"fake-model"}}, ToolAllow: []string{"read"}}))
 	}
 	s := New(rt, os.Stdout, options...)
 	bridge.bind(s)
-	defer s.Close()
+	defer func() { releaseTarget(); s.Close() }()
 	defer p.Close(context.Background())
 	var existing string
-	if role == "target" {
+	if strings.HasPrefix(role, "target") {
 		binding, err := rt.RetainState()
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer binding.Close()
-		created, err := s.createPluginSession(runtime.WithInvocationState(principal.WithContext(context.Background(), principal.LocalOwner()), binding), "fixture-coding-owner", pluginhost.SessionCreateParams{RequestID: "seed-existing", Visibility: "user", ContextSource: "fresh", Provider: "fake-provider", Model: "fake-model", PermissionMode: "read_only", ToolPolicy: &pluginhost.SessionToolPolicy{Allow: []string{"read"}}})
+		create := pluginhost.SessionCreateParams{RequestID: "seed-existing", Name: "Existing Coding workspace", Visibility: "user", ContextSource: "fresh", Provider: "fake-provider", Model: "fake-model", PermissionMode: "standard"}
+		if role == "target" || role == "target-delayed-federation" {
+			create.PermissionMode = "read_only"
+			create.ToolPolicy = &pluginhost.SessionToolPolicy{Allow: []string{"read"}}
+		}
+		created, err := s.createPluginSession(runtime.WithInvocationState(principal.WithContext(context.Background(), principal.LocalOwner()), binding), "fixture-coding-owner", create)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,10 +128,13 @@ func TestRegisteredSessionTransportProcess(t *testing.T) {
 		switch req.Method {
 		case "fixture/existing":
 			_ = s.writeResponse(req.ID, map[string]string{"session_id": existing}, nil)
+		case "fixture/release":
+			releaseTarget()
+			_ = s.writeResponse(req.ID, map[string]bool{"released": true}, nil)
 		case "fixture/revoke":
 			revoked.Store(true)
 			_ = s.writeResponse(req.ID, map[string]bool{"revoked": true}, nil)
-		case "fixture/route":
+		case "fixture/route", "fixture/catalog":
 			calls.Add(1)
 			go func(req Request) {
 				defer calls.Done()
@@ -124,7 +146,12 @@ func TestRegisteredSessionTransportProcess(t *testing.T) {
 				defer binding.Close()
 				ctx := runtime.WithInvocationState(principal.WithContext(context.Background(), caller), binding)
 				ctx = access.WithDelegation(ctx, access.Delegation{Provider: "fixture", Grant: "explicit-existing-run", Scope: json.RawMessage(`{}`)})
-				result, callErr := binding.Host.CallService(ctx, "registered-transport-fixture", pluginhost.SessionTransportService, "dispatch", req.Params)
+				method := "dispatch"
+				if req.Method == "fixture/catalog" {
+					method = "list-targets"
+					req.Params = json.RawMessage(`{}`)
+				}
+				result, callErr := binding.Host.CallService(ctx, "registered-transport-fixture", pluginhost.SessionTransportService, method, req.Params)
 				if callErr != nil {
 					_ = s.writeResponse(req.ID, nil, callErr)
 				} else {
@@ -203,7 +230,79 @@ func runRegisteredPersonalSource(t *testing.T) {
 		t.Setenv(key, filepath.Join(home, key))
 	}
 	t.Setenv("WUU_HOME", filepath.Join(home, "wuu"))
-	endpoint := newTestOpenAIEndpoint(t, "registered-model", "registered-title", func(_ context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
+	var discovered, created atomic.Bool
+	var catalogValue func(any) map[string]any
+	catalogValue = func(value any) map[string]any {
+		if text, ok := value.(string); ok {
+			var decoded any
+			if json.Unmarshal([]byte(text), &decoded) == nil {
+				return catalogValue(decoded)
+			}
+			return nil
+		}
+		switch item := value.(type) {
+		case map[string]any:
+			if _, ok := item["targets"].([]any); ok {
+				return item
+			}
+			for _, entry := range item {
+				if result := catalogValue(entry); result != nil {
+					return result
+				}
+			}
+		case []any:
+			for _, entry := range item {
+				if result := catalogValue(entry); result != nil {
+					return result
+				}
+			}
+		}
+		return nil
+	}
+	endpoint := newTestOpenAIEndpoint(t, "registered-model", "registered-title", func(_ context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+		var observedCatalog map[string]any
+		for _, message := range request.Messages {
+			if message.Role == "tool" && strings.Contains(message.Content, `"actual-personal-task"`) && strings.Contains(message.Content, `"task_id"`) {
+				if err := os.WriteFile(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR")+".created", []byte(message.Content), 0600); err != nil {
+					return providers.ChatResponse{}, err
+				}
+			}
+			if message.Role == "tool" && strings.Contains(message.Content, `"targets"`) {
+				if err := os.WriteFile(os.Getenv("WUU_REGISTERED_PERSONAL_DESCRIPTOR")+".catalog", []byte(message.Content), 0600); err != nil {
+					return providers.ChatResponse{}, err
+				}
+				observedCatalog = catalogValue(message.Content)
+			}
+		}
+		if observedCatalog != nil && !created.Load() {
+			var selected map[string]any
+			for _, value := range observedCatalog["targets"].([]any) {
+				entry, _ := value.(map[string]any)
+				if entry["route_kind"] == os.Getenv("WUU_REGISTERED_TEST_ROUTE_KIND") && entry["title"] == "Existing Coding workspace" {
+					if selected != nil {
+						return providers.ChatResponse{}, errors.New("ambiguous Coding workspace")
+					}
+					selected = entry
+				}
+			}
+			if selected != nil {
+				for _, tool := range request.Tools {
+					if strings.Contains(tool.Name, "create_task") {
+						args, _ := json.Marshal(map[string]any{"request_id": "actual-personal-task", "title": "Use existing Coding session", "goal": "Read existing work and report the result", "existing_session": selected["locator"]})
+						created.Store(true)
+						return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "delegate-existing", Name: tool.Name, Arguments: string(args)}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
+					}
+				}
+			}
+		}
+		if !discovered.Load() {
+			for _, tool := range request.Tools {
+				if strings.Contains(tool.Name, "list_sessions") {
+					discovered.Store(true)
+					return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "discover-existing", Name: tool.Name, Arguments: `{}`}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
+				}
+			}
+		}
 		return providers.ChatResponse{Content: "Personal received the existing Coding result"}, nil
 	})
 	cfg := config.Config{DefaultProvider: "registered-model", Agent: config.AgentConfig{ToolLoading: config.ToolLoadingFlat}, Providers: map[string]config.ProviderConfig{"registered-model": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "synthetic-unused", Model: "fake-model"}}}

@@ -26,3 +26,7 @@ console.log(`Registered transport acceptance evidence: ${evidence}`);
 const personal = JSON.parse(readFileSync(evidence + '.personal.json', 'utf8'));
 if (personal.passed !== true || personal.checks.length < 4) throw new Error('Generated Personal acceptance did not execute successfully');
 console.log(`Generated Personal acceptance evidence: ${evidence}.personal.json`);
+
+const federationPersonal = JSON.parse(readFileSync(evidence + '.personal-federation.json', 'utf8'));
+if (federationPersonal.passed !== true || federationPersonal.checks.length < 6) throw new Error('Conversational federation acceptance did not execute successfully');
+console.log(`Conversational federation evidence: ${evidence}.personal-federation.json`);

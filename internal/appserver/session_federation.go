@@ -206,6 +206,25 @@ func (s *Server) dispatchSessionFederation(ctx context.Context, request pluginho
 	if err != nil {
 		return empty, err
 	}
+	return s.executeSessionRouteOperation(ctx, binding, federationReceiptNamespace, f.config.HostID, f.config.StorageHost, owner, request, f.operations, execute, func() error {
+		if err := s.AuthorizeDelegatedResource(ctx, "session/federation."+request.Operation, resource); err != nil {
+			return err
+		}
+		current, err := s.currentSessionFederation()
+		if err != nil {
+			return err
+		}
+		if current == nil || federationDigest(current.config) != federationDigest(f.config) {
+			return errors.New("session federation configuration changed before execution")
+		}
+		return nil
+	})
+}
+
+// Shared durable admission fences transport-specific policies without conflating
+// their identities or receipt namespaces. Reads remain live observations.
+func (s *Server) executeSessionRouteOperation(ctx context.Context, binding *runtime.State, namespace, hostID, storageHost, owner string, request pluginhost.SessionRouteRequest, operations *federationOperations, execute func() (any, error), recheck func() error) (pluginhost.SessionRouteResult, error) {
+	empty := pluginhost.SessionRouteResult{}
 	// Reads are live and never reuse a stale observation receipt.
 	if request.Operation == "inspect" || request.Operation == "list" {
 		result, err := execute()
@@ -214,19 +233,19 @@ func (s *Server) dispatchSessionFederation(ctx context.Context, request pluginho
 		}
 		raw, err := json.Marshal(result)
 		locator := request.Locator
-		locator.StorageHost = f.config.StorageHost
+		locator.StorageHost = storageHost
 		return pluginhost.SessionRouteResult{Version: 1, OperationID: request.OperationID, Locator: locator, Status: "completed", Result: raw}, err
 	}
-	key := federationDigest([]string{f.config.HostID, owner, request.OperationID})
+	key := federationDigest([]string{hostID, owner, request.OperationID})
 	intent := request
 	intent.Locator.DisplayHost = ""
-	intent.Locator.StorageHost = f.config.StorageHost
+	intent.Locator.StorageHost = storageHost
 	signature := federationDigest(intent)
 	var receipt federationReceipt
 	admitted := false
-	err = persistence.Update(ctx, binding.Documents, func(tx *persistence.Tx) error {
+	err := persistence.Update(ctx, binding.Documents, func(tx *persistence.Tx) error {
 		admitted = false
-		found, err := tx.Get(federationReceiptNamespace, key, &receipt)
+		found, err := tx.Get(namespace, key, &receipt)
 		if err != nil {
 			return err
 		}
@@ -238,37 +257,32 @@ func (s *Server) dispatchSessionFederation(ctx context.Context, request pluginho
 		}
 		receipt = federationReceipt{Signature: signature, Result: pluginhost.SessionRouteResult{Version: 1, OperationID: request.OperationID, Locator: intent.Locator, Status: "unknown"}}
 		admitted = true
-		return tx.Put(federationReceiptNamespace, key, receipt)
+		return tx.Put(namespace, key, receipt)
 	})
 	if err != nil {
 		return empty, err
 	}
 	if !admitted {
-		f.operations.mu.Lock()
-		active := f.operations.active[key]
-		f.operations.mu.Unlock()
+		operations.mu.Lock()
+		active := operations.active[key]
+		operations.mu.Unlock()
 		if active && receipt.Result.Status == "unknown" {
 			receipt.Result.Status = "pending"
 		}
 		receipt.Result.Locator.DisplayHost = request.Locator.DisplayHost
 		return receipt.Result, nil
 	}
-	f.operations.mu.Lock()
-	f.operations.active[key] = true
-	f.operations.mu.Unlock()
-	defer func() { f.operations.mu.Lock(); delete(f.operations.active, key); f.operations.mu.Unlock() }()
+	operations.mu.Lock()
+	if operations.active == nil {
+		operations.active = make(map[string]bool)
+	}
+	operations.active[key] = true
+	operations.mu.Unlock()
+	defer func() { operations.mu.Lock(); delete(operations.active, key); operations.mu.Unlock() }()
 	// Admission can block on a remote store. Recheck current authority after
 	// that durability barrier and before starting any session side effect.
 	var value any
-	actionErr := s.AuthorizeDelegatedResource(ctx, "session/federation."+request.Operation, resource)
-	if actionErr == nil {
-		current, currentErr := s.currentSessionFederation()
-		if currentErr != nil {
-			actionErr = currentErr
-		} else if current == nil || federationDigest(current.config) != federationDigest(f.config) {
-			actionErr = errors.New("session federation configuration changed before execution")
-		}
-	}
+	actionErr := recheck()
 	notExecuted := actionErr != nil
 	if actionErr == nil {
 		value, actionErr = execute()
@@ -292,21 +306,21 @@ func (s *Server) dispatchSessionFederation(ctx context.Context, request pluginho
 			receipt.Result.Locator.SessionID = created.SessionID
 		}
 	}
-	receipt.Result.Locator.StorageHost = f.config.StorageHost
+	receipt.Result.Locator.StorageHost = storageHost
 	// Cancellation during response delivery does not erase an admitted operation.
 	// A failed final commit leaves unknown; no automatic repetition of the effect.
 	receiptCtx, cancelReceipt := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancelReceipt()
 	err = persistence.Update(receiptCtx, binding.Documents, func(tx *persistence.Tx) error {
 		var current federationReceipt
-		found, err := tx.Get(federationReceiptNamespace, key, &current)
+		found, err := tx.Get(namespace, key, &current)
 		if err != nil {
 			return err
 		}
 		if !found || current.Signature != signature {
 			return errors.New("federation operation receipt changed")
 		}
-		return tx.Put(federationReceiptNamespace, key, receipt)
+		return tx.Put(namespace, key, receipt)
 	})
 	if err != nil {
 		return pluginhost.SessionRouteResult{Version: 1, OperationID: request.OperationID, Locator: request.Locator, Status: "unknown", Error: &pluginhost.SessionRouteError{Code: "session_receipt_unconfirmed", Message: "operation may have completed; inspect the session before issuing new work"}}, nil

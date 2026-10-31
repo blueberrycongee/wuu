@@ -185,13 +185,16 @@ export class AppServerClientPool {
 
   /** Snapshot only currently registered local receivers; never start a replacement
    * core to satisfy a control request after registration or connection changes. */
-  registeredSessionReceivers(): { locator?: SessionLocatorV1; request: BoundAppServerRequest }[] {
-    const receivers: { locator?: SessionLocatorV1; request: BoundAppServerRequest }[] = [];
+  registeredSessionReceivers(): { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation" }[] {
+    const receivers: { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation" }[] = [];
     for (const client of this.clients.values()) {
       if (!this.isSelectedClient(client) || this.clientRoutes.get(client)?.route.kind !== "local") continue;
       let request=this.receiverBindings.get(client);
       if(!request){request=this.bindClientRequest(client,{localOnly:true});this.receiverBindings.set(client,request);}
-      receivers.push({locator:client.federationLocator(),request});
+      const ownerLocal = client.ownerLocalSessionLocator();
+      const federation = client.federationLocator();
+      if (ownerLocal) receivers.push({locator:ownerLocal, request, routeKind:"owner-local"});
+      if (federation || !ownerLocal) receivers.push({locator:federation,request,routeKind:"federation"});
     }
     return receivers;
   }
@@ -686,6 +689,8 @@ export class AppServerClient {
   private pending = new Map<string, PendingRequest>();
   private threadCwdsByID = new Map<string, string>();
   private federation?: SessionLocatorV1;
+  private ownerLocal?: SessionLocatorV1;
+  ownerLocalSessionLocator(): SessionLocatorV1 | undefined { return this.child && this.ownerLocal ? {...this.ownerLocal} : undefined; }
   federationLocator(): SessionLocatorV1 | undefined { return this.child && this.federation ? { ...this.federation } : undefined; }
   // Only live execution identities are retained; completion/exit removes them.
   private runningTurnIDs = new Map<string, string | undefined>();
@@ -1100,6 +1105,7 @@ export class AppServerClient {
     this.pending.clear();
     this.threadCwdsByID.clear();
     this.federation = undefined;
+    this.ownerLocal = undefined;
     this.runningTurnIDs.clear();
     this.queuedTurnKeys.clear();
 
@@ -1211,6 +1217,9 @@ export class AppServerClient {
     this.pending.delete(key);
     if (pending.method === "initialize" && !response.error) {
       const result = isRecord(response.result) ? response.result : undefined;
+      const local = isRecord(result?.owner_local_session_control) ? result.owner_local_session_control : undefined;
+      this.ownerLocal = local?.version === 1 && typeof local.execution_host === "string" && local.execution_host.startsWith("desktop-local:") && local.storage_host === local.execution_host
+        ? {version:1,execution_host:local.execution_host,storage_host:local.execution_host} : undefined;
       const locator = isRecord(result?.session_federation) ? result.session_federation : undefined;
       this.federation = locator?.version === 1 && typeof locator.execution_host === "string" && locator.execution_host !== "local"
         ? { version: 1, execution_host: locator.execution_host, ...(typeof locator.storage_host === "string" ? { storage_host: locator.storage_host } : {}) } : undefined;

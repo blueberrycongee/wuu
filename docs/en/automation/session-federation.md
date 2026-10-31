@@ -125,19 +125,32 @@ changes. Provider/model configuration is not part of this operation.
 
 The desktop Personal profile selects `wuu.desktop-session-transport`. It uses
 already-registered live receiver connections and their advertised nonsecret
-federation identity, never a newly spawned replacement or a cross-runtime
+transport identity, never a newly spawned replacement or a cross-runtime
 `local` alias. Discovery is filtered by receiver resource policy. The bridge
-forwards a nonowner principal with live source validation; it does not forward
-ambient desktop ownership. Unsupported, ambiguous, or unconfigured receivers
-remain unavailable. This first adapter covers registered desktop local-core
-connections; it does not silently upgrade an undelegated remote connection.
+carries a live source-validation proof, never a caller-asserted owner privilege.
+The federation path remains nonowner; owner-local checks the genuine receiver
+connection instead. Unsupported, ambiguous, or unconfigured receivers
+remain unavailable. The adapter covers registered desktop local-core connections; it does not
+silently upgrade an undelegated remote connection.
 
-This foundation requires an available selected transport and an explicitly
-authorized federation receiver. Registering a desktop connection alone does not
-enable delegation or grant control. An unconfigured or offline target remains
-unavailable; Personal does not enable federation, acquire credentials, or promote
-a paired connection's owner authority. Default owner-approved target enrollment
-is a separate integration, not implied by this API.
+The registered catalog distinguishes two explicit paths with optional
+`route_kind` metadata (omission means legacy `federation`):
+
+- `owner-local`: an already-registered local Coding runtime, reached through its
+  genuine trusted desktop owner connection. This path does not require federation
+  configuration or a second receiver-grant store. The source task still needs its
+  exact existing-target authorization; the receiver uses a fixed nonhuman actor,
+  preserves ownership/parentage, and rechecks live source validity at execution.
+- `federation`: the separately advertised federation identity and receiver resource
+  policy. Registration alone does not grant delegated federation access.
+
+Each path has a distinct stable opaque host identity. Copy the catalog locator;
+do not add `route_kind` to a dispatch request or reinterpret an old federation
+locator as owner-local. A denial, timeout, or unavailable connection never triggers
+fallback to the other path. Ambiguous names require target selection, not guessing.
+Personal does not enable federation, acquire credentials, or forward an owner bit
+from a caller-supplied envelope. Remote and untrusted connections do not acquire
+the owner-local path.
 
 Personal stores the target and request identity with its existing task record.
 A lost response is reconciled by inspecting that request, not by creating another
@@ -209,4 +222,4 @@ Existing-target delegation is text-only. The controller goal is labeled separate
 
 ### Registered desktop bridge acceptance
 
-Run `node scripts/registered-session-transport-e2e.mjs` with the repository Go and Node toolchains and installed desktop dependencies. It builds real source/receiver app-server test processes and exercises the actual registered desktop pool, exact existing-session send/replay, terminal result, and receiver policy revocation. A second journey loads the generated Personal plugin in the actual trusted-local UserHost and exercises its task lineage, grant issuance/restoration, existing-target dispatch, worker-result reconciliation, and stable task replay. The receiver policy and model are fixtures; this verifies the configured production path, not default owner-approved enrollment or external account/physical-machine deployment.
+Run `node scripts/registered-session-transport-e2e.mjs` with the repository Go and Node toolchains and installed desktop dependencies. It builds real source/receiver app-server test processes and exercises the actual registered desktop pool, exact existing-session send/replay, terminal result, and receiver policy revocation. A second journey loads the generated Personal plugin in the actual trusted-local UserHost. Its main model turn calls `list_sessions`, selects the uniquely named catalog target, and calls `create_task` with that returned locator. Both owner-local and federation journeys hold the target response until the originating main turn has completed, then verify task lineage, grant issuance/restoration, worker-result reconciliation, original user provenance, and stable replay. That Coding receiver uses the default owner-only policy with federation disabled; no custom receiver authorization setup is needed. The separate federation test retains an explicit receiver-policy fixture. Both use a synthetic model; neither establishes external account/physical-machine deployment or automatic controller wake after the worker response.
