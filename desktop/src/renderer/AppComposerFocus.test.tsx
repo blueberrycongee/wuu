@@ -499,6 +499,47 @@ describe("main composer focus continuity", () => {
     vi.restoreAllMocks();
   });
 
+  it("retains editable split input focus across pane activation and public focus requests", async () => {
+    await renderApp(true);
+    const controller = applicationState.getDesktopApplication();
+    const related = newThread();
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread: related });
+    await act(async () => controller.invoke("conversation.open-split", { threadId: related.id }));
+    await flushAsync();
+    const inputFor = (id: string) => container.querySelector<HTMLTextAreaElement>(
+      `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`,
+    )!;
+    const primary = inputFor(persistedThread().id);
+    const secondary = inputFor(related.id);
+    expect(primary).not.toBeNull();
+    expect(secondary).not.toBeNull();
+    for (const [pane, input, id] of [
+      ["secondary", secondary, related.id], ["primary", primary, persistedThread().id],
+    ] as const) {
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      });
+      await flushAsync();
+      expect(controller.getSnapshot().conversationWorkspace.activePane).toBe(pane);
+      expect(inputFor(id)).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(input.disabled).toBe(false);
+      expect(input.readOnly).toBe(false);
+      expect(input.closest("[inert], [hidden]")).toBeNull();
+      expect(document.activeElement).toBe(input);
+      const trigger = document.createElement("button");
+      container.append(trigger);
+      trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", {
+        tabId: controller.getSnapshot().tabs.activeTabId,
+      }));
+      await flushAsync();
+      expect(document.activeElement).toBe(input);
+      trigger.remove();
+    }
+  });
+
   it("rebinds global focus, settings and resize listeners without replacing the shell", async () => {
     installWuuApi();
     const controller = new applicationState.ApplicationController();
