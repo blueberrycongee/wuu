@@ -208,11 +208,14 @@ func TestAuthenticatedClientDuplicateIDRejectsChangedPayload(t *testing.T) {
 }
 
 func TestAuthenticatedClientReceiptResumeAndCancel(t *testing.T) {
-	for _, action := range []string{"resume", "attachment", "cancel", "takeover", "wrong_owner", "wrong_space", "resume_without_receipt"} {
+	for _, action := range []string{"resume", "attachment", "cancel", "takeover", "wrong_owner", "wrong_space", "resume_without_receipt", "coding"} {
 		t.Run(action, func(t *testing.T) {
 			client := &fakeClient{response: providersResponse("done")}
 			rt := newTestRuntime(t, client)
 			rt.UserSpaceID, rt.ProductDomain = "local", "personal"
+			if action == "coding" {
+				rt.ProductDomain = "coding"
+			}
 			rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
 			attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "fixture"})
 			srv := New(rt, &lockedBuffer{})
@@ -234,7 +237,7 @@ func TestAuthenticatedClientReceiptResumeAndCancel(t *testing.T) {
 			}
 			ctx := runtime.WithClientUserInput(context.Background(), "fixture", proof)
 			ack, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, ctx), "fixture", params)
-			if err != nil || ack.Receipt == nil || ack.Receipt.AcceptedAt == "" {
+			if err != nil || ack.Receipt == nil || ack.Receipt.AcceptedAt == "" || ack.Receipt.ReadAt != "" {
 				t.Fatalf("durable ACK: %+v %v", ack, err)
 			}
 			th.mu.Lock()
@@ -245,7 +248,7 @@ func TestAuthenticatedClientReceiptResumeAndCancel(t *testing.T) {
 			srv = New(rt, out)
 			t.Cleanup(srv.Close)
 			inspected, err := srv.inspectPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", pluginhost.SessionInspectParams{SessionID: th.ID, RequestID: "host"})
-			if err != nil || inspected.Receipt == nil || inspected.Receipt.ExecutionState != "held" {
+			if err != nil || inspected.Receipt == nil || inspected.Receipt.ExecutionState != "held" || inspected.Receipt.ReadAt != "" {
 				t.Fatalf("held: %+v %v", inspected, err)
 			}
 			retry, err := srv.sendPluginSession(pluginInvocationContext(t, srv.rt, runtime.WithClientUserInput(context.Background(), "fixture", proof)), "fixture", params)
@@ -326,7 +329,7 @@ func TestAuthenticatedClientReceiptResumeAndCancel(t *testing.T) {
 			}
 			waitForTurnCompletedForThread(t, out, th.ID)
 			final, err := srv.inspectPluginSession(pluginInvocationContext(t, srv.rt, context.Background()), "fixture", pluginhost.SessionInspectParams{SessionID: th.ID, RequestID: "host"})
-			if err != nil || final.Receipt == nil || final.Receipt.MessageSeq == 0 || final.Receipt.HostTurnID == "" || final.Receipt.ReceiptID != ack.Receipt.ReceiptID {
+			if err != nil || final.Receipt == nil || final.Receipt.ReadAt == "" || final.Receipt.MessageSeq == 0 || final.Receipt.HostTurnID == "" || final.Receipt.ReceiptID != ack.Receipt.ReceiptID {
 				t.Fatalf("admitted identity: %+v %v", final, err)
 			}
 			assertFakeClientRequestCount(t, client, 1)

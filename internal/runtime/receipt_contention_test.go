@@ -70,3 +70,38 @@ func TestConcurrentCompletedModelReceiptsSettleWithinOwnerDeadline(t *testing.T)
 	close(ready)
 	wg.Wait()
 }
+
+// Selecting the observer uses the real composition graph and session authority,
+// not a product-domain switch or an implicit storage implementation.
+func TestClientInputReceiptCompositionSelection(t *testing.T) {
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprint(selected), func(t *testing.T) {
+			modules := []string{sessionStateConsumer, persistence.SQLiteModule, "wuu.session.default"}
+			if selected {
+				modules = append(modules, ClientInputReceiptsConsumer)
+			}
+			state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			if ClientInputReceiptsSelected(state.Host) != selected {
+				t.Fatal("composition selection was not retained")
+			}
+			if selected {
+				dependencies := state.Host.Dependencies()[ClientInputReceiptsConsumer]
+				if len(dependencies) != 1 || dependencies[0].Provider != sessionStateConsumer {
+					t.Fatalf("observer bypassed captured session authority: %+v", dependencies)
+				}
+			}
+		})
+	}
+	modules := []string{ClientInputReceiptsConsumer}
+	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if state != nil {
+		_ = state.Close()
+	}
+	if err == nil {
+		t.Fatal("selected observer silently substituted a missing session provider")
+	}
+}
