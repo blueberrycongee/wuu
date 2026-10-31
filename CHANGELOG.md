@@ -181,6 +181,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Load MCP settings only while its page is open and discard pending authorization results when leaving the page, preventing a late browser login from opening after navigation.
+- Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
 
