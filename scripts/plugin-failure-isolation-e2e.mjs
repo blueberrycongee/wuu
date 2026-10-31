@@ -82,19 +82,31 @@ export default {
   }
 } satisfies RuntimePlugin;\n`;
 }
-async function publish(mode, path = source) {
+async function publish(mode, path = source, rejected = false) {
   await writeFile(path, plugin(mode));
-  await publishPath(mode, path);
+  return publishPath(mode, path, rejected);
 }
-async function publishPath(mode, path) {
+async function publishPath(mode, path, rejected = false) {
   const deadline = Date.now() + 20000;
   for (;;) {
-    const execution = spawnSync(binary, ["plugin", "dev", "--watch=false", path], {
-      cwd: scratch, env, encoding: "utf8", timeout: Math.max(1, deadline - Date.now()),
+    const execution = await new Promise((resolve, reject) => {
+      const command = spawn(binary, ["plugin", "dev", "--watch=false", path], {
+        cwd: scratch, env, timeout: Math.max(1, deadline - Date.now()), stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "", stderr = "";
+      command.stdout.setEncoding("utf8").on("data", data => { stdout += data; });
+      command.stderr.setEncoding("utf8").on("data", data => { stderr += data; });
+      command.once("error", reject);
+      command.once("close", (status, signal) => resolve({ status, signal, stdout, stderr }));
     });
     publications.push({ mode, path, at: new Date().toISOString(), status: execution.status,
       signal: execution.signal, stdout: execution.stdout, stderr: execution.stderr, error: execution.error?.message });
-    if (execution.status === 0) return;
+    if (rejected && execution.status === 2 && /rejected candidate; previous generation preserved:/.test(execution.stderr)) {
+      assert.match(execution.stderr, /protocol_version.*(?:2|3)/);
+      assert.doesNotMatch(execution.stdout, /published generation/);
+      return;
+    }
+    if (execution.status === 0) { assert(!rejected, "invalid live candidate was accepted"); return; }
     // A short watcher lease may reject publication before any generation is
     // changed. Retry only that exact contract, preserving the same input bytes;
     // all preparation/runtime failures and unknown outcomes remain failures.
@@ -112,7 +124,7 @@ async function publishRaw(id, mode, requires = []) {
   await writeFile(join(path, "plugin.json"), JSON.stringify({ id, name: id, schema_version: 1, requires,
     runtime: { protocol: "wuu-plugin-v1", command: process.execPath, args: ["runtime.mjs"], timeout: mode === "prepare-barrier" ? 30 : 1 } }));
   await writeFile(join(path, "runtime.mjs"), `import { createInterface } from "node:readline";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const mode = ${JSON.stringify(mode)}, control = ${JSON.stringify(join(scratch, id + ".crash"))};
 const emit = value => process.stdout.write(JSON.stringify(value) + "\\n");
 createInterface({ input: process.stdin }).on("line", line => {
@@ -126,8 +138,8 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (request.method === "prepare" && mode === "prepare-failure") { emit({ id: request.id, error: { code: "fixture_prepare", message: "optional preparation failed" } }); return; }
   if (request.method === "prepare" && mode === "prepare-hang") return;
   if (request.method === "prepare" && mode === "prepare-barrier") {
-    writeFileSync(control + ".entered", "held");
-    const timer = setInterval(() => { if (existsSync(control + ".release")) { clearInterval(timer); emit({ id: request.id, result: {} }); } }, 20);
+    writeFileSync(control + ".entered", String(process.pid));
+    const timer = setInterval(() => { if (existsSync(control + ".release") && ["released", String(process.pid)].includes(readFileSync(control + ".release", "utf8"))) { clearInterval(timer); emit({ id: request.id, result: {} }); } }, 20);
     return;
   }
   if (request.method === "activate" && mode === "crash") setInterval(() => { if (existsSync(control)) process.exit(23); }, 20);
@@ -137,6 +149,22 @@ createInterface({ input: process.stdin }).on("line", line => {
 });\n`);
   await publishPath(mode, path);
   return path;
+}
+async function startHost() {
+  child = spawn(binary, ["app-server", "--workdir", scratch, "--config", config], { env, stdio: ["pipe", "pipe", "pipe"] });
+  child.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
+  createInterface({ input: child.stdout }).on("line", line => { const message = JSON.parse(line); transcript.push(message); events.emit("message", message); });
+  return rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
+}
+async function stopHost() {
+  const exited = once(child, "exit"); child.stdin.end(); await exited;
+}
+async function publishOffline(publish) {
+  // Simulate a package installed while no host can preflight it. Live candidate
+  // rejection is checked separately; startup must still isolate stored failures.
+  await stopHost();
+  await publish();
+  return startHost();
 }
 const provider = createServer(async (request, response) => {
   let bytes = ""; for await (const part of request) bytes += part;
@@ -152,10 +180,8 @@ const provider = createServer(async (request, response) => {
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
 try {
   await writeFile(config, JSON.stringify({ default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}/v1`, api_key: "synthetic", model: "fixture" } }, ptc: { enabled: false }, skills: { enabled: false } }));
-  child = spawn(binary, ["app-server", "--workdir", scratch, "--config", config], { env, stdio: ["pipe", "pipe", "pipe"] });
-  child.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
-  createInterface({ input: child.stdout }).on("line", line => { const message = JSON.parse(line); transcript.push(message); events.emit("message", message); });
-  await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation" } });
+  await publish("invalid");
+  await startHost();
   const { thread } = await rpc("thread/start");
   const send = async prompt => {
     const response = await settledSend(thread.id, prompt);
@@ -166,10 +192,12 @@ try {
   checks.push("existing conversation sends and completes before publication");
   const accepted = (await send("held accepted turn")).turn;
   if (!held) await waitFor("held", [], () => true, "model accepted held request");
-  await publish("invalid");
+  const beforeRejection = await rpc("plugin/registry/introspect");
+  await publish("invalid", source, true);
+  assert.deepEqual(await rpc("plugin/registry/introspect"), beforeRejection, "rejected candidate changed the live graph");
   held(); held = null;
   await completed(accepted);
-  checks.push("accepted turn completes using retained generation across invalid publication");
+  checks.push("accepted turn completes using retained generation across rejected invalid publication");
   if (expectBlocked) {
     const blocked = await settledSend(thread.id, "must not be globally blocked");
     assert(blocked.error); assert.match(JSON.stringify(blocked.error), /protocol v1 cannot declare capabilities or host services|explicit protocol_version|protocol_version.*(?:2|3)/);
@@ -191,7 +219,7 @@ try {
     await completed((await send("no backoff gate")).turn);
     assert.equal((await readFile(probe, "utf8")).trim().split("\n").map(JSON.parse).filter(row => row.phase === "initialize").length, attempts);
     checks.push("quarantined startup failure does not rebuild before each turn");
-    await publish("throw", join(scratch, "throwing-observer.ts"));
+    await publishOffline(() => publish("throw", join(scratch, "throwing-observer.ts")));
     const thrown = await rpc("extension/catalog/refresh");
     assert.match(JSON.stringify(thrown.extension_inventory), /synthetic initialize failure/);
     await completed((await send("unrelated initialize throw")).turn);
@@ -205,16 +233,19 @@ try {
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     checks.push("publishing repaired source activates observer and preserves send");
-    await publish("invalid");
+    const beforeReplacement = await rpc("plugin/registry/introspect");
+    await publish("invalid", source, true);
+    assert.deepEqual(await rpc("plugin/registry/introspect"), beforeReplacement, "rejected replacement changed the live graph");
+    await publishOffline(() => publish("invalid"));
     const rejectedReplacement = await rpc("extension/catalog/refresh");
     assert.match(JSON.stringify(rejectedReplacement.extension_inventory), /protocol v1 cannot declare capabilities or host services|explicit protocol_version|protocol_version.*(?:2|3)/);
     await completed((await send("failed optional replacement remains isolated")).turn);
-    checks.push("bad optional replacement is quarantined with diagnostics without blocking unrelated send");
+    checks.push("offline bad optional replacement is quarantined with diagnostics without blocking unrelated send");
     await publish("valid");
     await rpc("extension/catalog/refresh");
     await completed((await send("repaired active replacement")).turn);
-    checks.push("repairing failed active replacement unblocks admission");
-    await publishRaw("raw-invalid-observer", "invalid");
+    checks.push("repairing stored failed replacement preserves admission");
+    await publishOffline(() => publishRaw("raw-invalid-observer", "invalid"));
     await completed((await send("raw invalid handshake")).turn);
     let catalog = await inventoryWith("raw-invalid-observer", "failed");
     assert.match(JSON.stringify(catalog.extension_inventory.find(item => item.name === "raw-invalid-observer")), /protocol v1 cannot declare capabilities or host services|explicit protocol_version|protocol_version.*(?:2|3)/);
@@ -246,19 +277,37 @@ try {
     catalog = await inventoryWith("crash-dependent", "active");
     assert.equal(catalog.extension_inventory.find(item => item.name === "crash-dependent").runtime_state, "active");
     checks.push("changed provider source automatically restores its unchanged required consumer");
-    await publishRaw("additive-held", "prepare-barrier");
-    const enteredDeadline = Date.now() + 10000;
-    while (!(await readFile(join(scratch, "additive-held.crash.entered"), "utf8").catch(() => ""))) {
-      assert(Date.now() < enteredDeadline, "additive candidate never entered real prepare barrier");
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
+    let publicationSettled = false;
+    const publication = publishRaw("additive-held", "prepare-barrier")
+      .then(() => ({}), error => ({ error }))
+      .finally(() => { publicationSettled = true; });
+    // Observe both distinct processes: live-host preflight must drain first,
+    // then the actual additive generation prepares without fencing old work.
+    const enteredPath = join(scratch, "additive-held.crash.entered");
+    const releasePath = join(scratch, "additive-held.crash.release");
+    const waitForProcess = async previous => {
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        const pid = await readFile(enteredPath, "utf8").catch(() => "");
+        if (pid && pid !== previous) return pid;
+        assert(Date.now() < deadline, "additive candidate never entered its distinct prepare process");
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    };
+    const preflightPID = await waitForProcess("");
+    await writeFile(releasePath, preflightPID);
+    const runtimePID = await waitForProcess(preflightPID);
     await completed((await send("completes while optional preparation remains held")).turn);
     assert(!(await readFile(probe, "utf8")).split("\n").filter(Boolean).map(JSON.parse).some(row => row.raw === "additive-held" && row.method === "activate"));
-    await writeFile(join(scratch, "additive-held.crash.release"), "release only after turn completed\n");
+    assert.notEqual(runtimePID, preflightPID);
+    assert.equal(publicationSettled, false, "publication completed before runtime preparation was released");
+    await writeFile(releasePath, "released");
+    const published = await publication;
+    if (published.error) throw published.error;
     await inventoryWith("additive-held", "active");
     checks.push("new send completes while real additive plugin prepare is held; activation follows explicit barrier release");
     for (const mode of ["hang", "prepare-failure", "prepare-hang"]) {
-      await publishRaw("optional-" + mode, mode);
+      await publishOffline(() => publishRaw("optional-" + mode, mode));
       const started = performance.now();
       await completed((await send("unrelated send after " + mode)).turn);
       const elapsed = performance.now() - started;
@@ -273,11 +322,8 @@ try {
     await rpc("extension/package/update", { id: disabled.id, fingerprint: disabled.fingerprint, action: "disable" });
     await completed((await send("send after disabling quarantined addon")).turn);
     checks.push("explicit disable removes a quarantined addon and conversation remains usable");
-    const exited = once(child, "exit"); child.stdin.end(); await exited;
-    child = spawn(binary, ["app-server", "--workdir", scratch, "--config", config], { env, stdio: ["pipe", "pipe", "pipe"] });
-    child.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
-    createInterface({ input: child.stdout }).on("line", line => { const message = JSON.parse(line); transcript.push(message); events.emit("message", message); });
-    const restarted = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "plugin-failure-isolation-restarted" } });
+    await stopHost();
+    const restarted = await startHost();
     assert.equal(restarted.status, "ready");
     await completed((await send("persisted conversation after restart with broken addons")).turn);
     checks.push("fresh core startup isolates broken optional addons and resumes persisted conversation");
