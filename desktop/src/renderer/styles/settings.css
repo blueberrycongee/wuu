@@ -820,6 +820,21 @@
   box-shadow: none;
 }
 
+/* Settings selectors sit on the page surface; text inputs keep their field fill. */
+.settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input) {
+  background-color: transparent;
+}
+.settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input):hover:not(:disabled),
+.settings-page .select-menu-trigger[aria-expanded="true"] {
+  background-color: var(--field-hover-bg);
+}
+@media (forced-colors: active) {
+  .settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input) {
+    background-color: Canvas;
+    border-color: ButtonBorder;
+  }
+}
+
 .settings-row-control-value {
   display: flex;
   align-items: center;
