@@ -859,6 +859,7 @@ export const enUS = {
   "remote.refreshPairQr": "Generate a new code",
   "remote.generatingPairQr": "Generating QR code…",
   "remote.access": "Phone access",
+  "remote.readFailed": "Could not read phone access settings. Try again to see the current status.",
   "remote.allowAccess": "Allow phone access",
   "remote.configureRelayFirst": "Configure a relay address first",
   "remote.enableAccess": "Enable phone access",

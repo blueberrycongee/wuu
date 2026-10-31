@@ -856,6 +856,7 @@ export const zhCN = {
   "remote.refreshPairQr": "重新生成二维码",
   "remote.generatingPairQr": "正在生成二维码…",
   "remote.access": "手机访问",
+  "remote.readFailed": "暂时无法读取手机访问设置。请重试以查看当前状态。",
   "remote.allowAccess": "允许手机访问",
   "remote.configureRelayFirst": "先配置中继地址",
   "remote.enableAccess": "开启手机访问",

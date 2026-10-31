@@ -57,7 +57,6 @@ import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
   InitializeResult,
-  RemoteControlSnapshot,
   RuntimeConnectionUpdate,
   SettingsUsageDay,
   SettingsUsageResponse
@@ -87,7 +86,7 @@ import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { ModelServicesPage } from "./ModelServicesPage";
-import { SettingsRemotePage } from "./SettingsRemotePage";
+import { SettingsRemotePageContainer } from "./SettingsRemotePageContainer";
 import { ContentThemeControl, ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
@@ -2253,68 +2252,6 @@ function formatBuildDate(iso: string): string {
 /** Data wiring for the remote-control page: pulls the snapshot from the
  *  main-process RemoteHostManager, re-pulls on every remote event (pairing
  *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
-function SettingsRemotePageContainer(): JSX.Element {
-  const controls = useSettingsControls();
-  const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(null);
-  const [actionError, setActionError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const authority = useMemo(() => ({ active: true }), [controls]);
-
-  useEffect(() => {
-    let cancelled = false;
-    authority.active = true;
-    setBusy(false);
-    setActionError("");
-    const refresh = () => {
-      controls
-        .getRemoteControlSnapshot()
-        .then((snap) => {
-          if (!cancelled) {
-            setSnapshot(snap);
-            if (snap.pair_uri) setActionError("");
-          }
-        })
-        .catch(() => {});
-    };
-    refresh();
-    const off = controls.subscribeRemote(() => refresh());
-    return () => {
-      cancelled = true;
-      authority.active = false;
-      off();
-    };
-  }, [controls, authority]);
-
-  const run = (action: () => Promise<RemoteControlSnapshot>) => {
-    if (!authority.active) return;
-    setBusy(true);
-    setActionError("");
-    Promise.resolve().then(action)
-      .then((next) => { if (authority.active) setSnapshot(next); })
-      .catch((err: unknown) => {
-        if (authority.active && !isPluginLifecycleCancellation(err)) {
-          setActionError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => { if (authority.active) setBusy(false); });
-  };
-
-  return (
-    <SettingsRemotePage
-      status={snapshot?.status ?? null}
-      statusError={actionError || snapshot?.status_error || ""}
-      hostRunning={snapshot?.host_running ?? false}
-      hostEnabled={snapshot?.host_enabled ?? snapshot?.host_running ?? false}
-      pairUri={snapshot?.pair_uri ?? null}
-      webUrl={snapshot?.web_url ?? null}
-      busy={busy}
-      onToggleHost={(enabled) => run(() => controls.setRemoteHostEnabled(enabled))}
-      onOpenPairing={() => run(() => controls.startRemotePairing())}
-      onRemoveDevice={(device) => run(() => controls.removeRemoteDevice(device.fingerprint))}
-    />
-  );
-}
-
 function availableSettingsPage(page:SettingsPage|undefined, browserAllowed:boolean, capabilities:import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1):SettingsPage {
  const next=page??"providers";
  if(next==="subscriptions"||next==="agents"||next==="remote"&&!capabilities.remote||next==="browser"&&(!browserAllowed||!capabilities.browser))return "providers";

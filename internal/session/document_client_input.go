@@ -32,11 +32,11 @@ func clientInputDocumentKey(sessionID, clientID string) string {
 
 func clientInputScopeMatchesDocument(tx *persistence.Tx, scope ClientInputScope, row clientInputDocument) (bool, error) {
 	r := row.Receipt
-	if r.UserSpaceID != scope.Binding.UserSpaceID || r.ProductDomain != "personal" || scope.SessionID != "" && r.SessionID != scope.SessionID || scope.PluginID != "" && r.PluginID != scope.PluginID || scope.LiveOwner != "" && row.LiveOwner != scope.LiveOwner {
+	if r.UserSpaceID != scope.Binding.UserSpaceID || r.ProductDomain != scope.Binding.ProductDomain || scope.SessionID != "" && r.SessionID != scope.SessionID || scope.PluginID != "" && r.PluginID != scope.PluginID || scope.LiveOwner != "" && row.LiveOwner != scope.LiveOwner {
 		return false, nil
 	}
 	sess, found, err := getSessionDocument(tx, r.SessionID)
-	return found && sess.UserSpaceID == scope.Binding.UserSpaceID && sess.ProductDomain == "personal", err
+	return found && sess.UserSpaceID == scope.Binding.UserSpaceID && sess.ProductDomain == scope.Binding.ProductDomain, err
 }
 
 func loadClientInputPayloadDocument(tx *persistence.Tx, row clientInputDocument) (AcceptedClientInput, error) {
@@ -128,8 +128,8 @@ func (s *documentStore) ListUnsettledClientInputs(scope ClientInputScope) ([]Acc
 
 func validateClientInputBindingDocument(tx *persistence.Tx, r AcceptedClientInput) error {
 	binding := userspace.Binding{UserSpaceID: r.Receipt.UserSpaceID, ProductDomain: r.Receipt.ProductDomain}
-	if binding.Validate() != nil || !binding.IsUser() || binding.ProductDomain != "personal" {
-		return errors.New("accepted input requires Personal binding")
+	if binding.Validate() != nil || !binding.IsUser() {
+		return errors.New("accepted input requires a valid user binding")
 	}
 	sess, err := requireSessionDocument(tx, r.Receipt.SessionID)
 	if err != nil {
@@ -331,7 +331,7 @@ func validateAcceptedClientInputDocument(tx *persistence.Tx, id string, rec Hist
 	if err != nil {
 		return err
 	}
-	if sess.UserSpaceID == "" || sess.ProductDomain != "personal" {
+	if sess.UserSpaceID == "" {
 		if rec.AcceptedClientInput != nil {
 			return ErrClientInputSettled
 		}
