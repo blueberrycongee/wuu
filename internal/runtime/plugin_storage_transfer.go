@@ -19,8 +19,7 @@ type pluginStorageTransfer struct {
 	transfer pluginsettings.StateTransfer
 }
 
-// Resolve declarations without reading or mutating storage: candidate preparation
-// must not fence the currently published owner before its policy is committed.
+// Resolve declarations before read-only provider validation during preparation.
 func resolveStorageTransfers(cfg config.Config, discovered, active []pluginpkg.Plugin, binding userspace.Binding) ([]pluginStorageTransfer, error) {
 	if err := binding.Validate(); err != nil {
 		return nil, err
@@ -129,4 +128,15 @@ func (c *storageTransferConsumer) Activate(ctx context.Context) error {
 		}
 	}
 	return c.runtimeServiceConsumer.Activate(ctx)
+}
+
+func (c *storageTransferConsumer) Prepare(ctx context.Context) error {
+	for _, status := range c.host.Statuses() {
+		if status.ID == c.transfer.targetID && status.State == pluginhost.StatePrepared && c.host.DependencyFailures()[c.transfer.targetID] == nil {
+			if err := c.settings.CheckStateTransfer(ctx, c.transfer.transfer); err != nil {
+				return fmt.Errorf("plugin %q storage transfer %q preflight: %w", c.transfer.targetID, c.transfer.transfer.ID, err)
+			}
+		}
+	}
+	return nil
 }
