@@ -370,6 +370,11 @@ function SettingsViewContent({
   // initialized state syncs in and after every successful commit. Blurring
   // an untouched field is a no-op instead of a redundant IPC round-trip.
   const advancedCommittedRef = useRef<Record<string, string>>({});
+  const advancedDraftEditsRef = useRef(new Map<AdvancedField, string>());
+  useLayoutEffect(() => {
+    advancedDraftEditsRef.current.clear();
+  }, [initialized?.provider, initialized?.model]);
+
   // Drafts survive navigation, but pending feedback belongs to the page and
   // controls that initiated the save. Each field's latest request owns its result.
   const advancedOwner = useMemo(() => ({
@@ -431,11 +436,19 @@ function SettingsViewContent({
       providerContextWindow: formatOptionalNumberDraft(advanced?.provider_context_window),
       maxContextTokens: formatOptionalNumberDraft(advanced?.max_context_tokens),
     };
-    setAutoCompactDraft(!(advanced?.disable_auto_compact ?? false));
-    setCompactThresholdDraft(synced.compactThreshold);
-    setCompactKeepRecentDraft(synced.compactKeepRecent);
-    setProviderContextWindowDraft(synced.providerContextWindow);
-    setMaxContextTokensDraft(synced.maxContextTokens);
+    // A save refreshes the whole settings snapshot, not just its own field.
+    // Keep newer local edits until that snapshot acknowledges their value.
+    const reconcileDraft = (field: AdvancedField, persisted: string): string => {
+      const edited = advancedDraftEditsRef.current.get(field);
+      if (edited !== undefined && edited !== persisted) return edited;
+      advancedDraftEditsRef.current.delete(field);
+      return persisted;
+    };
+    setAutoCompactDraft(reconcileDraft("autoCompact", String(!(advanced?.disable_auto_compact ?? false))) === "true");
+    setCompactThresholdDraft(reconcileDraft("compactThreshold", synced.compactThreshold));
+    setCompactKeepRecentDraft(reconcileDraft("compactKeepRecent", synced.compactKeepRecent));
+    setProviderContextWindowDraft(reconcileDraft("providerContextWindow", synced.providerContextWindow));
+    setMaxContextTokensDraft(reconcileDraft("maxContextTokens", synced.maxContextTokens));
     advancedCommittedRef.current = synced;
     setAdvancedError(null);
   }, [initialized?.advanced_settings, initialized?.provider, initialized?.model]);
@@ -483,11 +496,13 @@ function SettingsViewContent({
     const next = !autoCompactDraft;
     const request = { draft: String(next) };
     advancedOwner.requests.set("autoCompact", request);
+    advancedDraftEditsRef.current.set("autoCompact", String(next));
     setAutoCompactDraft(next);
     setAdvancedError(null);
     const ownsResult = () => advancedOwner.active && advancedOwner.requests.get("autoCompact") === request;
     void onAdvancedSave({ disable_auto_compact: !next }).catch((saveError: unknown) => {
       if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
+        advancedDraftEditsRef.current.set("autoCompact", String(!next));
         setAutoCompactDraft(!next);
         setAdvancedError({ field: "autoCompact", message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
       }
@@ -868,10 +883,10 @@ function SettingsViewContent({
                   maxContextTokens={maxContextTokensDraft}
                   error={advancedError}
                   onAutoCompactToggle={toggleAutoCompact}
-                  onCompactThresholdChange={setCompactThresholdDraft}
-                  onCompactKeepRecentChange={setCompactKeepRecentDraft}
-                  onProviderContextWindowChange={setProviderContextWindowDraft}
-                  onMaxContextTokensChange={setMaxContextTokensDraft}
+                  onCompactThresholdChange={(value) => { advancedDraftEditsRef.current.set("compactThreshold", value); setCompactThresholdDraft(value); }}
+                  onCompactKeepRecentChange={(value) => { advancedDraftEditsRef.current.set("compactKeepRecent", value); setCompactKeepRecentDraft(value); }}
+                  onProviderContextWindowChange={(value) => { advancedDraftEditsRef.current.set("providerContextWindow", value); setProviderContextWindowDraft(value); }}
+                  onMaxContextTokensChange={(value) => { advancedDraftEditsRef.current.set("maxContextTokens", value); setMaxContextTokensDraft(value); }}
                   onCommitField={commitAdvancedField}
                   onGeneralSave={onGeneralSave}
                   onAdvancedSave={onAdvancedSave}

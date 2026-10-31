@@ -1153,6 +1153,43 @@ describe("SettingsView model services", () => {
 });
 
 describe("SettingsView advanced settings", () => {
+  it("preserves a newer uncommitted numeric draft when a saved response refreshes settings", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let complete!: () => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { complete = done; })).mockResolvedValue(undefined);
+    const initialized = baseInitialized();
+    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, "50"); });
+    act(() => { input.blur(); });
+    act(() => { input.focus(); setInputValue(input, "60"); });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false, compact_threshold_pct: 0.5, compact_keep_recent_tokens: 12345 } } });
+    await act(async () => { complete(); });
+    expect(input.value).toBe("60");
+    expect(container.querySelectorAll<HTMLInputElement>(".settings-input-num")[1].value).toBe("12345");
+    await act(async () => { input.blur(); });
+    expect(onAdvancedSave).toHaveBeenLastCalledWith({ compact_threshold_pct: 0.6 });
+    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves the newer auto-compaction choice when an earlier save refreshes settings", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let complete!: () => void;
+    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { complete = done; })).mockResolvedValue(undefined);
+    const initialized = baseInitialized();
+    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: true } } });
+    await act(async () => { complete(); });
+    expect(container.querySelector(".settings-switch")!.getAttribute("aria-checked")).toBe("true");
+  });
+
+
   it.each(["page", "newer toggle"] as const)("retires auto-compaction rollback after a %s", async (replacement) => {
     installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
     const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
