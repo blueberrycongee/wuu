@@ -111,10 +111,41 @@ async function activateSplit(id) {
     return element && !element.disabled && !element.readOnly && !element.closest('[inert]')
       && element.getClientRects().length > 0;
   }, selector);
+  const deadline = Date.now() + 30000;
   try {
-    const point = await evaluate(selector => {
-      const element = document.querySelector(selector);
+    const point = await evaluate(async ({ selector, timeout }) => {
+      let element = document.querySelector(selector);
       element.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      // Sidebar/split layout can still move after both panes mount. A point
+      // measured then may hit the divider instead of the intended editor.
+      await new Promise((resolve, reject) => {
+        let frame, previous, settledFrames = 0;
+        const timeout = setTimeout(() => {
+          cancelAnimationFrame(frame);
+          reject(new Error('Split composer geometry did not settle'));
+        }, timeout);
+        const check = () => {
+          const input = document.querySelector(selector);
+          const rect = input?.getBoundingClientRect();
+          const bounds = rect && [rect.x, rect.y, rect.width, rect.height].join(',');
+          const moving = document.getAnimations().some(animation =>
+            (animation.pending || animation.playState === 'running')
+            && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+            && animation.effect?.target instanceof Element
+            && animation.effect.target.contains(input));
+          const ready = input && !input.disabled && !input.readOnly
+            && !input.closest('[inert], [hidden]') && rect.width > 0 && rect.height > 0;
+          settledFrames = ready && !moving && input === element && bounds === previous ? settledFrames + 1 : 0;
+          element = input;
+          previous = bounds;
+          if (settledFrames >= 2) {
+            clearTimeout(timeout);
+            return resolve();
+          }
+          frame = requestAnimationFrame(check);
+        };
+        frame = requestAnimationFrame(check);
+      });
       const rect = element.getBoundingClientRect();
       const point = { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
       const describe = node => node instanceof Element ? {
@@ -151,7 +182,7 @@ async function activateSplit(id) {
       record('before-input');
       if (!element.contains(document.elementFromPoint(point.x, point.y))) throw new Error(`Occluded ${selector}`);
       return point;
-    }, selector);
+    }, { selector, timeout: Math.max(1, deadline - Date.now()) });
     main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
     main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
     main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
@@ -160,7 +191,7 @@ async function activateSplit(id) {
       const input = pane?.querySelector('.composer textarea');
       return pane?.classList.contains('active') && input && !input.disabled && !input.readOnly
         && document.activeElement === input;
-    }, id);
+    }, id, Math.max(1, deadline - Date.now()));
   } finally {
     splitActivationEvidence.push({ id, windowFocused: main.isFocused(), webContentsFocused: main.webContents.isFocused(),
       records: await evaluate(() => window.__splitActivationProbe?.()) });
