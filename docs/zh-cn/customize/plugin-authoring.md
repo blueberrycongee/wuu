@@ -326,7 +326,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.artifact.import` | 将文件或字节导入为会话产物 |
 | `host.user-question.ask` | 执行期间提出结构化问题 |
 
-大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。
+大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。 返回结果描述最终完成的比较：`swapped: false` 返回当前值，`swapped: true` 返回替换后的值（删除后为 `null`）。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 

@@ -373,7 +373,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.artifact.import` | Import a file or bytes as a thread-owned artifact |
 | `host.user-question.ask` | Ask a structured question during an execution |
 
-Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON.
+Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON. The result describes the completed comparison: `swapped: false` returns the current value, while `swapped: true` returns the replacement value (`null` after deletion).
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
