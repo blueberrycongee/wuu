@@ -196,6 +196,11 @@ machine-specific setup in user-level configuration.
 - Fix domain-specific failures in the plugin and shared lifecycle or contract
   failures in the host. Isolate temporary compatibility workarounds and document
   their removal conditions.
+- For plugin design, implementation, debugging, or review, consult
+  [wuu-plugin-development](.agents/skills/wuu-plugin-development/SKILL.md) and its
+  linked [plugin development practices](docs/en/customize/plugin-development-practices.md)
+  when they are accessible in the current workspace.
+  The practices are advisory; existing public API and protocol requirements still apply.
 - Treat reference implementations as prior art, not specifications. Verify their
   assumptions, invariants, costs, and failure conditions before borrowing a design.
   Preserve licenses and attribution; do not expose private reference paths or
