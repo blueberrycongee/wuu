@@ -45,7 +45,9 @@ func TestPersonalAccountGenerationDrainsBeforeClosingOnlyItsResources(t *testing
 	go func() { _, err := old.InvokeService(ctx, call); result <- err }()
 	<-entered
 	closing := make(chan error, 1)
-	go func() { closing <- old.Close(context.Background()) }()
+	closingContext, cancelClose := context.WithCancel(context.Background())
+	cancelClose()
+	go func() { closing <- old.Close(closingContext) }()
 	<-old.stopping
 	if first.closed.Load() != 0 {
 		t.Fatal("closed accepted operation's broker")

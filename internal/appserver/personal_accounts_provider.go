@@ -88,7 +88,10 @@ func (p *personalAccountsProvider) Activate(ctx context.Context) error {
 	p.active = true
 	return nil
 }
-func (p *personalAccountsProvider) Close(ctx context.Context) error {
+
+// Close is the dependency-release barrier. The host may stop observing its
+// shutdown deadline, but credentials must outlive every broker cleanup callback.
+func (p *personalAccountsProvider) Close(_ context.Context) error {
 	p.mu.Lock()
 	if !p.closed {
 		p.closed = true
@@ -104,12 +107,8 @@ func (p *personalAccountsProvider) Close(ctx context.Context) error {
 	}
 	done := p.done
 	p.mu.Unlock()
-	select {
-	case <-done:
-		return p.closeErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	<-done
+	return p.closeErr
 }
 func (p *personalAccountsProvider) InvokeService(ctx context.Context, call pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
