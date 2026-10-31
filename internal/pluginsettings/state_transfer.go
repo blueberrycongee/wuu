@@ -241,7 +241,7 @@ func matchStateTransfer(record stateRecord, transfer StateTransfer) (bool, error
 			if previous == transfer {
 				matched = true
 			} else if stateTransfersConflict(previous, transfer) {
-				return false, errors.New("plugin storage transfer conflicts with existing ownership metadata")
+				return false, fmt.Errorf("plugin storage transfer conflicts with existing ownership metadata: transfer %q (%s -> %s, prefix %q) cannot replace transfer %q (%s -> %s, prefix %q); existing data and ownership are unchanged; restore the previous storage identities before retrying", transfer.ID, transfer.SourceSubjectID, transfer.TargetSubjectID, transfer.KeyPrefix, previous.ID, previous.SourceSubjectID, previous.TargetSubjectID, previous.KeyPrefix)
 			}
 		}
 	}

@@ -26,9 +26,8 @@ func TestPersonalMemoryBoundSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.sourceSeq = seq
-	prefix := "personal.v1." + personalHash([]byte(f.rt.UserSpaceID))[:28] + "."
 	_, err = pluginsettings.UpdateState(f.rt.DataRoot, f.rt.RootDir, "plugin:bundled:personal", pluginsettings.ScopeUser, func(v map[string]string) error {
-		v[prefix+"agent.main"] = fmt.Sprintf(`{"agent_id":"main","user_space_id":%q,"main_session_id":%q,"status":"active"}`, f.rt.UserSpaceID, f.id)
+		v["fixture.facts."+f.id] = fmt.Sprintf(`{"session_id":%q,"agent_id":"main","main_session_id":%q,"active":true}`, f.id, f.id)
 		return nil
 	})
 	if err != nil {
@@ -55,9 +54,8 @@ func TestPersonalMemoryBoundSource(t *testing.T) {
 // retries use its exact durable request rather than reconstructing timestamps.
 func TestPersonalMemoryCommitAndReplay(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
-	prefix := "personal.v1." + personalHash([]byte(f.rt.UserSpaceID))[:28] + "."
 	_, err := pluginsettings.UpdateState(f.rt.DataRoot, f.rt.RootDir, "plugin:bundled:personal", pluginsettings.ScopeUser, func(v map[string]string) error {
-		v[prefix+"agent.main"] = fmt.Sprintf(`{"agent_id":"main","user_space_id":%q,"main_session_id":%q,"status":"active"}`, f.rt.UserSpaceID, f.id)
+		v["fixture.facts."+f.id] = fmt.Sprintf(`{"session_id":%q,"agent_id":"main","main_session_id":%q,"active":true}`, f.id, f.id)
 		return nil
 	})
 	if err != nil {

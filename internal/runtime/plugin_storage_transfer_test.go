@@ -3,13 +3,15 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
+	"testing"
+
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/userspace"
-	"testing"
 )
 
 func TestStorageTransferPlanTrustReciprocityAndScope(t *testing.T) {
@@ -193,5 +195,100 @@ func TestStorageTransferPreparationRejectsChangedOwner(t *testing.T) {
 	doc, err := pluginsettings.ReadState(home, "", "plugin:bundled:target", move.Scope)
 	if err != nil || doc.Values["records.one"] != "original" || client.activateCall != 0 {
 		t.Fatalf("preparation changed live state: %+v %v", doc, err)
+	}
+}
+
+// A historical owner conflict must not make unrelated product capabilities
+// unavailable at cold start; live replacement still preserves the old graph.
+func TestStorageTransferStartupRecoveryPreservesOwnership(t *testing.T) {
+	for _, mode := range []string{"initial conflict", "completed retry", "live conflict", "explicit conflict"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			binding := userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}
+			stateRoot := binding.State(home)
+			move := pluginsettings.StateTransfer{ID: "records-v1", SourceSubjectID: "plugin:bundled:source", TargetSubjectID: "plugin:bundled:target", Scope: pluginsettings.ScopeUser, KeyPrefix: "records."}
+			if _, err := pluginsettings.UpdateState(stateRoot, "", move.SourceSubjectID, move.Scope, func(values map[string]string) error { values["records.one"] = "original"; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			if err := pluginsettings.MoveStatePrefix(stateRoot, "", move); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pluginsettings.UpdateState(stateRoot, "", move.TargetSubjectID, move.Scope, func(values map[string]string) error { values["records.one"] = "updated by current owner"; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			originalOwner := move.TargetSubjectID
+			if mode != "completed retry" {
+				move.TargetSubjectID = "plugin:dev:target"
+			}
+			target := &preparedGenerationClient{generationClient: &generationClient{id: "target"}}
+			healthy := &preparedGenerationClient{generationClient: &generationClient{id: "healthy"}}
+			clients := map[string]pluginhost.Client{"target": target, "healthy": healthy}
+			items := []pluginpkg.Plugin{
+				{Manifest: pluginpkg.Manifest{ID: "target", Runtime: &pluginpkg.RuntimeSpec{Command: "fixture"}}, SubjectID: move.TargetSubjectID},
+				{Manifest: pluginpkg.Manifest{ID: "healthy", Runtime: &pluginpkg.RuntimeSpec{Command: "fixture"}}, SubjectID: "plugin:bundled:healthy"},
+			}
+			var required map[string]bool
+			if mode == "live conflict" {
+				required = map[string]bool{}
+			}
+			if mode == "explicit conflict" {
+				required = map[string]bool{"target": true}
+			}
+			host, _, err := buildPluginHostForBinding(context.Background(), items, t.TempDir(), "workspace", home, t.TempDir(), required,
+				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					return clients[cfg.ID], nil
+				},
+				nil, nil, nil, false, "", binding, []pluginStorageTransfer{{targetID: "target", transfer: move}})
+			if mode == "live conflict" || mode == "explicit conflict" {
+				if err == nil {
+					host.Close(context.Background())
+					t.Fatal("conflicting replacement was admitted")
+				}
+				if target.activateCall != 0 || healthy.activateCall != 0 {
+					t.Fatal("rejected graph activated")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("cold start rejected independent capabilities: %v", err)
+				}
+				defer host.Close(context.Background())
+				_ = host.Activate(context.Background())
+				if healthy.activateCall != 1 {
+					t.Fatal("unrelated plugin did not activate")
+				}
+				if mode == "completed retry" {
+					if target.activateCall != 1 {
+						t.Fatal("matching completed migration did not activate")
+					}
+				} else {
+					if target.activateCall != 0 {
+						t.Fatal("conflicting importer activated")
+					}
+					diagnosed := false
+					for _, status := range host.Statuses() {
+						if status.ID == "target" && status.State == pluginhost.StateFailed && strings.Contains(status.Error, "ownership") {
+							diagnosed = true
+						}
+					}
+					if !diagnosed {
+						t.Fatalf("importer conflict hidden: %+v", host.Statuses())
+					}
+				}
+			}
+			owner, err := pluginsettings.ReadState(stateRoot, "", originalOwner, move.Scope)
+			if err != nil || owner.Values["records.one"] != "updated by current owner" {
+				t.Fatalf("existing owner data changed: %+v %v", owner, err)
+			}
+			source, err := pluginsettings.ReadState(stateRoot, "", move.SourceSubjectID, move.Scope)
+			if err != nil || len(source.Values) != 0 {
+				t.Fatalf("source fence lost: %+v %v", source, err)
+			}
+			if mode != "completed retry" {
+				replacement, err := pluginsettings.ReadState(stateRoot, "", move.TargetSubjectID, move.Scope)
+				if err != nil || len(replacement.Values) != 0 {
+					t.Fatalf("conflicting importer took ownership: %+v %v", replacement, err)
+				}
+			}
+		})
 	}
 }

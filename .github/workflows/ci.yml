@@ -563,7 +563,8 @@ jobs:
     name: Go check
     runs-on: ubuntu-latest
     needs: [changes, go-validation, go-race, project-agent-check, architecture-conformance]
-    if: always()
+    # Evaluate failed dependencies, but let superseded workflow runs cancel.
+    if: ${{ !cancelled() }}
     steps:
       - name: Require selected Go suites
         env:
@@ -1790,7 +1791,8 @@ jobs:
   desktop-check:
     name: Desktop check
     needs: [changes, desktop-suite]
-    if: always()
+    # Evaluate failed dependencies, but let superseded workflow runs cancel.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected Desktop suite
@@ -2127,7 +2129,8 @@ jobs:
     name: CI check
     runs-on: ubuntu-latest
     needs: [changes, repository-check, go-check, desktop-check, desktop-macos-controls, clients-check, macos-check, linux-check, windows-check]
-    if: always()
+    # Evaluate failed dependencies, but let superseded workflow runs cancel.
+    if: ${{ !cancelled() }}
     steps:
       - name: Require successful selection and all selected jobs
         env:

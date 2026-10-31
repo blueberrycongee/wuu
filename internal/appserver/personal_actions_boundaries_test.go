@@ -46,6 +46,10 @@ type personalBoundaryFixture struct {
 }
 
 func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...func(*persistence.Service) pluginhost.Client) *personalBoundaryFixture {
+	return newPersonalBoundaryFixtureWithProvider(t, client, "personal", documents...)
+}
+
+func newPersonalBoundaryFixtureWithProvider(t *testing.T, client *fakeClient, providerID string, documents ...func(*persistence.Service) pluginhost.Client) *personalBoundaryFixture {
 	t.Helper()
 	if client == nil {
 		client = &fakeClient{response: providersResponse(`{"outcome":"allow","reason":"synthetic exact requested note"}`)}
@@ -62,7 +66,7 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...f
 		t.Fatal(err)
 	}
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
-	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "personal"}, SubjectID: "plugin:bundled:personal"}}
+	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: providerID}, SubjectID: "plugin:bundled:" + providerID}}
 	provider := attachPersonalBoundaryGeneration(t, rt, documents...)
 	var err error
 	rt.Toolkit, err = tools.New(rt.RootDir)
@@ -70,7 +74,7 @@ func newPersonalBoundaryFixture(t *testing.T, client *fakeClient, documents ...f
 		t.Fatal(err)
 	}
 	f := &personalBoundaryFixture{t: t, rt: rt, client: client, provider: provider, id: "boundary-main"}
-	_, err = rt.Sessions.CreateInitialized(session.Session{ID: f.id, UserSpaceID: rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my requested note to note.txt with exactly the text saved once."}})
+	_, err = rt.Sessions.CreateInitialized(session.Session{ID: f.id, UserSpaceID: rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:" + providerID, Visibility: "plugin", AgentID: "main", CWD: rt.RootDir}, []session.HistoryRecord{{Role: "user", Origin: "user", Content: "Save my requested note to note.txt with exactly the text saved once."}})
 	if err != nil {
 		t.Fatal(err)
 	}
