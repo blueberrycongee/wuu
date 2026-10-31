@@ -36,12 +36,12 @@ func (t *PluginManagerTool) Classify(raw string) ToolClassification {
 	return ToolClassification{Risk: ToolRiskHigh, Reason: "changes trusted host plugin code or activation outside the workspace sandbox"}
 }
 func (t *PluginManagerTool) Definition() providers.ToolDefinition {
-	description := "Manage Wuu plugins in this conversation. Author a TypeScript file with write_file, then apply its workspace path to publish a trusted development generation. apply may execute source code and package build scripts on the host; a confined session requires configured Approve for me authorization. status reports published and current-conversation generations separately. New tools become available at the next idle turn boundary, not midway through this turn. enable/disable address an existing plugin ID; enable never grants missing trust. This does not grant general access to WUU_HOME."
+	description := "Manage Wuu plugins in this conversation. Author a TypeScript file with write_file, then apply its workspace path to publish a trusted development generation. apply may execute source code and package build scripts on the host; a confined session requires configured Approve for me authorization. status reports published and current-conversation generations separately, plus the actual state of each live local host. reload explicitly retries host preparation and activation after a failure. New tools become available at the next idle turn boundary, not midway through this turn. enable/disable address an existing plugin ID; enable never grants missing trust. This does not grant general access to WUU_HOME."
 	if cliidentity.Executable() != "" {
 		description += ` For authoring where bash (Git Bash on Windows) provides WUU_CLI_EXECUTABLE, use "$WUU_CLI_EXECUTABLE" plugin create <name> for a package or "$WUU_CLI_EXECUTABLE" plugin describe --types-dir <new-directory> for matching SDK types and a new CLI composition snapshot, not this conversation's pinned generation. The hint identifies the CLI on the execution machine, not necessarily this conversation's host; hosts without an authoring CLI omit it. PATH is unchanged: do not select an older wuu or guess an installed app path.`
 	}
 	return providers.ToolDefinition{Name: t.Name(), Description: description, InputSchema: map[string]any{
-		"type": "object", "properties": map[string]any{"action": map[string]any{"type": "string", "enum": []string{"status", "apply", "enable", "disable"}}, "path": map[string]any{"type": "string", "description": "Workspace-local TypeScript file or plugin directory for apply."}, "id": map[string]any{"type": "string", "description": "Exact plugin ID, required for enable/disable and optional for status."}}, "required": []string{"action"}, "additionalProperties": false}}
+		"type": "object", "properties": map[string]any{"action": map[string]any{"type": "string", "enum": []string{"status", "apply", "enable", "disable", "reload"}}, "path": map[string]any{"type": "string", "description": "Workspace-local TypeScript file or plugin directory for apply."}, "id": map[string]any{"type": "string", "description": "Exact plugin ID, required for enable/disable/reload and optional for status."}}, "required": []string{"action"}, "additionalProperties": false}}
 }
 func (t *PluginManagerTool) Execute(ctx context.Context, raw string) (string, error) {
 	var args PluginManagementRequest
@@ -86,7 +86,7 @@ func (t *PluginManagerTool) Execute(ctx context.Context, raw string) (string, er
 			return "", fmt.Errorf("apply requires a regular TypeScript .ts file or plugin directory")
 		}
 		args.Path = path
-	case "enable", "disable":
+	case "enable", "disable", "reload":
 		if args.ID == "" || args.Path != "" {
 			return "", fmt.Errorf("%s requires id and does not accept path", args.Action)
 		}

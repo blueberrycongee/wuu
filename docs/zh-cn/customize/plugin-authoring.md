@@ -610,9 +610,11 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 ## Agent 管理的开发
 
-内置延迟发现工具 `plugin_manager` 支持 `status`、`apply`、`enable` 和 `disable`。`apply` 接受工作区内的 TypeScript 文件或开发包目录，通过宿主选定的 CLI 桥接执行一次发布。不接受任意命令，也不允许调用者指定 Wuu 主目录。验证或导入源码前必须获得宿主代码执行授权，这与写入源文件的权限不同。完整流程见 [Agent 操作步骤](plugin-quickstart.md#让-agent-添加工具)。
+内置延迟发现工具 `plugin_manager` 支持 `status`、`apply`、`enable`、`disable` 和 `reload`。`apply` 接受工作区内的 TypeScript 文件或开发包目录，通过宿主选定的 CLI 桥接执行一次发布。不接受任意命令，也不允许调用者指定 Wuu 主目录。验证或导入源码前必须获得宿主代码执行授权，这与写入源文件的权限不同。完整流程见 [Agent 操作步骤](plugin-quickstart.md#让-agent-添加工具)。
 
 状态结果包含 `plugins` 列表。比较 `published_fingerprint` 与 `current_conversation_fingerprint`，并检查 `adoption_pending`、`desired_enabled`、`trusted` 和 `current_conversation_runtime_state`；存在运行时诊断时由 `error` 返回。这些字段说明发布、策略和当前会话的绑定，不证明某个工具执行成功或桌面视图已渲染。
+
+独立的 `hosts` 列表查询各个活跃 app-server，包括独立的用户、产品宿主。每项包含宿主绑定、generation、执行身份、存储身份、指纹、运行状态和错误。`wuu plugin hosts [id]` 提供同样的观测。空列表表示没有兼容宿主报告状态，不能据此判断激活成功。`wuu plugin reload <id>`（或 `plugin_manager` 的 `reload` 操作）重新构建宿主 generation，用于恢复已修复但仍处于失败状态的运行时。重试客户端请求不会重新加载运行时。
 
 普通更新保留当前轮次及其未完成工作者或受管进程的原工具与提示词 generation。这些工作结束后，在下一次空闲轮次边界发现并调用更新后的工具。禁用或移除提交成功后，则无需等待空闲轮次，直接撤销各个仍被引用 generation 中的插件。发布不等于实际调用工具或检查界面，也不会自行安排后续轮次。
 
@@ -623,6 +625,10 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 `wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 在实际宿主中声明契约；随后由 `prepare` 通过所选服务验证状态。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
 
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
+
+获得授权的开发覆盖保留已安装的主目录级插件的存储身份，同时仍使用 `plugin:dev:<id>` 执行身份和开发权限。签名 generation 回执固定这一绑定，后续发布沿用。旧回执缺少绑定时，在下次发布时建立；独立开发插件保留自身存储身份。覆盖代码不会重放或改写数据所有权迁移。
+
+替换已发布包前，`dev` 要求所有已登记的活跃宿主使用各自的所选提供者与配置准备候选版本。预检拒绝时保留已发布包和运行中的 generation。发布后，结果包含各宿主实际观测到的激活状态；激活失败会明确说明发布已经提交。修复后重新发布或显式重新加载，无需删除所有权元数据。旧核心宿主需使用兼容核心重启后才能参与此流程。
 
 用 `validate` 检查包结构，`test` 检查可执行初始化和协商描述，再通过真实会话或界面验证行为。`pack` 生成本地 zip，不会上传到 registry。分发前应检查压缩包内容：准备阶段排除 `.git` 和 `node_modules`，不会排除所有可能包含私人数据的本地文件。
 
@@ -645,7 +651,7 @@ install CLI 会确认信任并启用包。同一已记录来源的更新继承�
 声明参与包指纹计算，不提供跨插件存储 RPC 权限。
 
 导入插件应在正式激活回调中读取迁入前缀，不应在初始化阶段缓存其内容。
-预检不修改存储。启动或更新被接受后，宿主先验证整个目标文档，再持久化源前缀隔离，
+预检不修改存储。所选设置提供者在准备阶段检查所有权、目标冲突和配额，检查失败会在提交前拒绝候选版本。启动或更新被接受后，宿主再次验证整个目标文档，再持久化源前缀隔离，
 然后原子保存原始值和导入回执。键冲突或存储配额超限会阻止迁移，不覆盖目标数据。
 迁移失败会阻止导入插件运行；未完成迁移在下次接受激活时恢复。完成回执可防止目标
 删除数据后再次导入。合并后的目标仍遵守原有的单插件条目数和字节配额。

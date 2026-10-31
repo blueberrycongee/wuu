@@ -1,11 +1,11 @@
-/** Durable acceptance and execution are independent; no field means Seen. */
+/** Durable acceptance and execution are independent; read_at records inclusion in an agent model context. */
 export interface ClientInputReceipt {
  request_id: string; receipt_id: string; host_request_id: string; client_id: string; queue_id: string; session_id: string;
  user_space_id?: string; product_domain?: string; agent_id?: string; plugin_id: string; owner?: string;
  message_seq?: number; hostturn_id?: string;
  receipt_state: "accepted" | "in_history";
  execution_state: "queued" | "held" | "running" | "completed" | "failed" | "interrupted" | "cancelled" | "unconfirmed";
- accepted_at: string; revision: number; error_stage?: string; error?: string;
+ accepted_at: string; read_at?: string; revision: number; error_stage?: string; error?: string;
 }
 export interface AcceptedClientInputView {
  receipt: ClientInputReceipt; prompt: string; relation?: MessageRelation; attachments?: SessionInputAttachment[];

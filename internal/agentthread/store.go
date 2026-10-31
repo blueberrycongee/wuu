@@ -18,13 +18,14 @@ import (
 )
 
 type Store struct {
-	legacyDirs    []string
-	documents     persistence.Documents
-	documentKey   string
-	image         *persistence.DocumentImage
-	operationTime time.Time
-	dir           string
-	mu            sync.Mutex
+	legacyDirs         []string
+	legacyDirsResolver func() ([]string, error)
+	documents          persistence.Documents
+	documentKey        string
+	image              *persistence.DocumentImage
+	operationTime      time.Time
+	dir                string
+	mu                 sync.Mutex
 }
 
 func NewStore(dir string) *Store {

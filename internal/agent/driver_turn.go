@@ -258,6 +258,12 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if err := ctx.Err(); err != nil {
 		return round, err
 	}
+	if g.runner.OnModelContext != nil {
+		g.runner.OnModelContext(ctx, request.Messages)
+		if err := ctx.Err(); err != nil {
+			return round, err
+		}
+	}
 	modelRunner := g.modelRunner()
 	selectedModel := modelRunner.Model
 	if request.Model != modelRunner.requestModel() {

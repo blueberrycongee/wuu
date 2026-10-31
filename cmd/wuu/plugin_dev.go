@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/plugincontrol"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprogram"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -351,9 +352,10 @@ func resolvePluginPackageManager(root, declared, override string) (string, error
 }
 
 type pluginDiagnostic struct {
-	Level   string `json:"level"`
-	Check   string `json:"check"`
-	Message string `json:"message"`
+	Level   string                   `json:"level"`
+	Check   string                   `json:"check"`
+	Message string                   `json:"message"`
+	Hosts   []plugincontrol.Response `json:"hosts,omitempty"`
 }
 
 type pluginTestOutput struct {
@@ -728,6 +730,19 @@ func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager stri
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: errDevGenerationBusy.Error()}, fmt.Errorf("dev generation refresh deferred; previous generation preserved: %w", errDevGenerationBusy)
 	}
 	defer lease.Release()
+	hosts, err := plugincontrol.List(wuuHome)
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.hosts"}, err
+	}
+	request := plugincontrol.Request{Operation: "prepare", PluginID: manifest.ID, Fingerprint: manifest.Fingerprint, ManifestPath: manifest.ManifestPath, SourceDirectory: authorization.Directory}
+	for _, host := range hosts {
+		response, err := plugincontrol.Call(ctx, host, request)
+		if err != nil {
+			response.Host = host.Host
+			response.Error = err.Error()
+			return pluginDiagnostic{Level: "fail", Check: "dev.preflight", Hosts: []plugincontrol.Response{response}}, fmt.Errorf("host %s (%s) rejected candidate; previous generation preserved: %w", host.Host.ID, host.Host.ProductDomain, err)
+		}
+	}
 	published, err := pluginpkg.PublishDevGeneration(wuuHome, dir, prepared, authorization)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.refresh", Message: err.Error()}, fmt.Errorf("dev generation refresh failed; previous generation preserved: %w", err)
@@ -739,7 +754,30 @@ func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager stri
 	if err := lease.Release(); err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation"}, fmt.Errorf("dev package published but catalog lease release failed: %w", err)
 	}
-	return pluginDiagnostic{Level: "pass", Check: "dev.refresh", Message: fmt.Sprintf("published generation %s at epoch %d from %s", published.Fingerprint, epoch, published.Root)}, nil
+	diagnostic := pluginDiagnostic{Level: "pass", Check: "dev.refresh", Message: fmt.Sprintf("published generation %s at epoch %d from %s", published.Fingerprint, epoch, published.Root)}
+	var activationErr error
+	for _, host := range hosts {
+		response, err := plugincontrol.Call(ctx, host, plugincontrol.Request{Operation: "observe", PluginID: published.ID, Fingerprint: published.Fingerprint})
+		if err != nil {
+			response.Host = host.Host
+			response.Error = err.Error()
+		}
+		if err == nil {
+			err = response.ActivationError(published.ID, published.Fingerprint)
+		}
+		if err != nil {
+			activationErr = errors.Join(activationErr, fmt.Errorf("host %s (%s): %w", host.Host.ID, host.Host.ProductDomain, err))
+		}
+		diagnostic.Hosts = append(diagnostic.Hosts, response)
+	}
+	if activationErr != nil {
+		diagnostic.Level = "fail"
+		return diagnostic, fmt.Errorf("generation %s was published, but host activation is incomplete: %w", published.Fingerprint, activationErr)
+	}
+	if len(hosts) == 0 {
+		diagnostic.Message += "; no compatible live hosts reported activation"
+	}
+	return diagnostic, nil
 }
 
 func preparePluginSource(source string) (string, func(), error) {

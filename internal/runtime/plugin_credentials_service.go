@@ -33,7 +33,7 @@ func (s *pluginHostServices) credentialRequest(ctx context.Context, raw json.Raw
 	if definition.Type != pluginpkg.SettingTypeSecret {
 		return nil, serviceError("credential_not_owned", "credential must name this plugin's declared secret setting")
 	}
-	binding, err := plugincredentials.BindingFor(s.wuuHome, s.projectRoot, s.subjectID, key, definition.CredentialOrigins)
+	binding, err := plugincredentials.BindingFor(s.wuuHome, s.projectRoot, s.storageSubject(), key, definition.CredentialOrigins)
 	if err != nil {
 		return nil, serviceError("credential_unavailable", err.Error())
 	}

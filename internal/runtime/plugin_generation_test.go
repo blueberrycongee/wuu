@@ -1132,6 +1132,9 @@ func TestMutableGenerationOwnsLazyAssetsAndPreservesProvenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			item.AuthorizedDev = source == "dev"
+			if item.AuthorizedDev {
+				item.StorageSubjectID = "plugin:bundled:snapshot-dev"
+			}
 			cfg := config.Config{Extensions: &extensions.Settings{}}
 			if source == "user" {
 				if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: extensions.GrantScopeUser, Permissions: item.EffectivePermissions}); err != nil {
@@ -1153,7 +1156,7 @@ func TestMutableGenerationOwnsLazyAssetsAndPreservesProvenance(t *testing.T) {
 				t.Fatalf("active: %+v", generation.active)
 			}
 			snap := generation.active[0]
-			if snap.Root == root || snap.SubjectID != item.SubjectID || snap.Fingerprint != item.Fingerprint || snap.AuthorizedDev != item.AuthorizedDev {
+			if snap.Root == root || snap.SubjectID != item.SubjectID || snap.StorageSubject() != item.StorageSubject() || snap.Fingerprint != item.Fingerprint || snap.AuthorizedDev != item.AuthorizedDev {
 				t.Fatalf("snapshot identity: %+v", snap)
 			}
 			if generation.plugins[0].Root != root {
