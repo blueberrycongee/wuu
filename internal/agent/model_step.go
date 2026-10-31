@@ -190,6 +190,7 @@ func cloneRunnerModelConfiguration(r *StreamRunner) *StreamRunner {
 		DriverBindingStore:          r.DriverBindingStore,
 		DriverCheckpointStore:       r.DriverCheckpointStore,
 		ModelInputReceiptStore:      r.ModelInputReceiptStore,
+		OnModelContext:              r.OnModelContext,
 		RequestContextStore:         r.RequestContextStore,
 	}
 }

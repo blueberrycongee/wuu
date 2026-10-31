@@ -89,6 +89,45 @@ func TestDocumentStoreMigrationAndClaimOwnership(t *testing.T) {
 	}
 }
 
+func TestDocumentStoreResolvesLegacyPathsOnlyForUnmigratedData(t *testing.T) {
+	docs, err := persistence.Open(context.Background(), filepath.Join(t.TempDir(), "documents"), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docs.Close()
+	legacyDir := t.TempDir()
+	if err := NewStore(legacyDir).UpsertThread(Metadata{ID: "legacy-child", Path: "/root/child"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewDocumentStore(docs, "already-migrated").UpsertThread(Metadata{ID: "current-child", Path: "/root/current"}); err != nil {
+		t.Fatal(err)
+	}
+	lookupErr := errors.New("legacy roots unavailable")
+	lookup := func() ([]string, error) { return nil, lookupErr }
+	current := NewDocumentStoreWithLegacyResolver(docs, "already-migrated", lookup)
+	threads, err := current.ListThreads()
+	if err != nil || len(threads) != 1 || threads[0].ID != "current-child" {
+		t.Fatalf("migrated data depended on unavailable legacy roots: %+v %v", threads, err)
+	}
+	unmigrated := NewDocumentStoreWithLegacyResolver(docs, "unmigrated", lookup)
+	if _, err := unmigrated.ListThreads(); !errors.Is(err, lookupErr) {
+		t.Fatalf("legacy lookup failure was not reported: %v", err)
+	}
+	unmigrated = NewDocumentStoreWithLegacyResolver(docs, "unmigrated", func() ([]string, error) {
+		return []string{legacyDir}, nil
+	})
+	threads, err = unmigrated.ListThreads()
+	if err != nil || len(threads) != 1 || threads[0].ID != "legacy-child" {
+		t.Fatalf("retry did not import legacy data: %+v %v", threads, err)
+	}
+	if err := docs.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewDocumentStoreWithLegacyResolver(docs, "closed-provider", lookup).ListThreads(); !errors.Is(err, persistence.ErrClosed) {
+		t.Fatalf("provider failure fell back to legacy roots: %v", err)
+	}
+}
+
 type lostCommitResponse struct {
 	persistence.Documents
 	fail    bool

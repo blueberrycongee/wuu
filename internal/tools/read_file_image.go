@@ -18,7 +18,7 @@ import (
 // bitmap. The output must also fit the shared inline tool-result contract.
 const (
 	maxReadImageBytes  = 20 * 1024 * 1024
-	maxReadImagePixels = 40_000_000
+	maxReadImagePixels = imageproc.MaxDecodedPixels
 )
 
 func readFileImage(ctx context.Context, file *os.File, path string, size int64) (toolresult.Result, error) {

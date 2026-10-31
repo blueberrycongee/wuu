@@ -2254,15 +2254,19 @@ func (s *Server) reconcilePersistedTerminalAgentThreads(
 	if s == nil || store == nil || strings.TrimSpace(rootThreadID) == "" {
 		return threads, nil
 	}
-	stateDirs, err := s.threadArtifactStateDirs(rootThreadID)
-	if err != nil {
-		return nil, err
-	}
+	var stateDirs []string
 	for index := range threads {
 		meta := threads[index]
 		if meta.Source.Kind != agentthread.SourceThreadSpawn ||
 			!isRunningAgentStatus(string(meta.Status)) {
 			continue
+		}
+		if stateDirs == nil {
+			var err error
+			stateDirs, err = s.threadArtifactStateDirs(rootThreadID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		active := false
 		paths := make([]string, 0, len(stateDirs))
@@ -2518,15 +2522,17 @@ func (s *Server) agentThreadStore(binding *runtime.State, threadID string) (*age
 	if s == nil || s.rt == nil || strings.TrimSpace(threadID) == "" {
 		return nil, nil
 	}
-	stateDirs, err := s.threadArtifactStateDirs(threadID)
-	if err != nil {
-		return nil, err
-	}
-	dirs := make([]string, 0, len(stateDirs))
-	for _, stateDir := range stateDirs {
-		dirs = append(dirs, filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
-	}
-	return agentthread.NewDocumentStore(binding.Documents, threadID, dirs...), nil
+	return agentthread.NewDocumentStoreWithLegacyResolver(binding.Documents, threadID, func() ([]string, error) {
+		stateDirs, err := s.threadArtifactStateDirs(threadID)
+		if err != nil {
+			return nil, err
+		}
+		dirs := make([]string, 0, len(stateDirs))
+		for _, stateDir := range stateDirs {
+			dirs = append(dirs, filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
+		}
+		return dirs, nil
+	}), nil
 }
 
 func (s *Server) workspaceStateDir() (string, error) {

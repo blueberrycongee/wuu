@@ -1,5 +1,6 @@
 // Motionbook's dot-send study: https://github.com/blueberrycongee/motionbook/tree/main/examples/chatgpt-dot-send
-const travelMS = 600;
+const travelMS = 360;
+const travelCurve = "cubic-bezier(.33,1,.68,1)";
 const shapeMS = 190;
 const shapeCurve = "cubic-bezier(.73,.42,.54,1)";
 const reduced = () => document.documentElement.dataset.appearanceMotion === "reduce"
@@ -66,28 +67,15 @@ export function useSendMotion(React, rootRef) {
       return previous && { x: previous.left - position.left, y: previous.top - position.top };
     };
     place();
-    // Distance-dependent damping keeps the spring's rebound near three pixels.
-    const log = -Math.log(Math.min(3 / Math.max(3.01, Math.hypot(x, y)), .99));
-    const damping = log / Math.hypot(Math.PI, log), omega = Math.sqrt(140);
-    const frequency = omega * Math.sqrt(1 - damping * damping);
-    const spring = ms => 1 - Math.exp(-damping * omega * ms / 1000)
-      * (Math.cos(frequency * ms / 1000) + damping * omega / frequency * Math.sin(frequency * ms / 1000));
-    let naturalMS = 0;
-    while (naturalMS < 2000) {
-      naturalMS += 50;
-      if (Math.abs(1 - spring(naturalMS)) * 100 <= .5
-        && Math.abs(spring(naturalMS + 1) - spring(naturalMS)) * 100000 <= 15) break;
-    }
     const tracks = [];
     const play = (target, frames, options) => {
       const track = target.animate(frames, options);
       if (document.timeline.currentTime !== null) track.startTime = document.timeline.currentTime;
       tracks.push(track); return track;
     };
-    let travel = play(overlay, Array.from({ length: 61 }, (_, index) => {
-      const remaining = index === 60 ? 0 : 1 - spring(naturalMS * index / 60);
-      return { offset: index / 60, translate: `${x * remaining}px ${y * remaining}px` };
-    }), { duration: travelMS, easing: "linear" });
+    let travel = play(overlay, [
+      { translate: `${x}px ${y}px` }, { translate: "0px 0px" },
+    ], { duration: travelMS, easing: travelCurve });
     const size = Math.min(1, Math.max(width, height) / 360);
     overlay.style.transformOrigin = "right top";
     const compression = play(overlay, [
@@ -128,7 +116,7 @@ export function useSendMotion(React, rootRef) {
         const remaining = Math.max(1, travelMS - Number(compression.currentTime));
         const paused = travel.playState === "paused";
         travel.cancel();
-        travel = play(overlay, [{ translate: `${(current[0] || 0) + delta.x}px ${(current[1] || 0) + delta.y}px` }, { translate: "0px 0px" }], { duration: remaining, easing: "cubic-bezier(.19,1,.22,1)" });
+        travel = play(overlay, [{ translate: `${(current[0] || 0) + delta.x}px ${(current[1] || 0) + delta.y}px` }, { translate: "0px 0px" }], { duration: remaining, easing: travelCurve });
         if (paused) travel.pause();
         travel.addEventListener("finish", stop, { once: true });
       }

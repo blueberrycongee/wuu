@@ -107,6 +107,7 @@ function buildActions({
     closeWorkspaceMenus,
     beginViewSwitch: vi.fn(() => 1),
     finishViewSwitch: vi.fn(() => true),
+    isCurrentViewSwitchRequest: vi.fn(() => true),
     cancelViewSwitch: vi.fn(),
     loadRuntime,
   });
