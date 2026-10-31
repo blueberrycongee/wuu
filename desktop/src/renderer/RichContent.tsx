@@ -1,3 +1,4 @@
+import { useConversationRenderActive } from "./ConversationRenderActivity";
 import { showActionErrorToast } from "./Toast";
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { useOptionalPreviewContent } from "./PreviewContentContext";
@@ -639,11 +640,12 @@ function RichFileLink({
   const { t } = useI18n();
   const preview = useOptionalPreviewContent();
   const reference = formatWorkspaceFileTarget(target);
+  const active = useConversationRenderActive();
   const lifetime = useRef(0);
   useEffect(() => {
     lifetime.current++;
     return () => { lifetime.current++; };
-  }, [preview, cwd, reference]);
+  }, [preview, cwd, reference, active]);
   const openFile = (): void => {
     if (!preview || !cwd) { showActionErrorToast(t("workspace.files.openFailed")); return; }
     const owner = lifetime.current;
@@ -747,11 +749,12 @@ function RichWebLink({
   const { t } = useI18n();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const browser = useBrowserControls();
+  const active = useConversationRenderActive();
   const lifetime = useRef(0);
   useEffect(() => {
     lifetime.current++;
     return () => { lifetime.current++; };
-  }, [browser, href]);
+  }, [browser, href, active]);
   const open = (external: boolean, modifiers?: ReturnType<typeof workspaceBrowserClickModifiers>): void => {
     if (!browser) { showActionErrorToast(t("workspace.browser.previewUnavailable")); return; }
     const owner = lifetime.current;

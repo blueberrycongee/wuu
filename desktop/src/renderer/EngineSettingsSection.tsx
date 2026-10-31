@@ -86,19 +86,12 @@ export function EngineSettingsSection({
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
   const [pathDrafts, setPathDrafts] = useState<Record<string, string>>({});
   const [accountSnapshots, setAccountSnapshots] = useState<Record<string, EngineInfo>>({});
   const engines = useMemo(() => result?.engines ?? [], [result]);
   const binarySettings = externalSettings(result);
   const selected = engines.find(engine => engine.id === selectedEngineID && engine.id !== BUILTIN_ENGINE);
-
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    setError("");
-    try { await onRefresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setRefreshing(false); }
-  }, [onRefresh]);
 
   const save = useCallback(async (params: EngineUpdateParams) => {
     setBusy(true);
@@ -138,15 +131,32 @@ export function EngineSettingsSection({
       : quotaFor(engine)?.status === "sign_in" ? t("settings.subscriptionSignIn")
       : engine.error || engine.models_error ? t("settings.subscriptionCatalogFailed") : t("settings.engineReady");
   const close = () => { setError(""); onCloseEngine(); };
+
+
+  const selectedSettings = selected ? binarySettings[selected.id] : undefined;
+  const accountKey = selected ? `${selected.id}:${selectedSettings?.binary_path ?? ""}` : "";
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setError("");
+    setRefreshError("");
+    try {
+      const loaded = await onRefresh();
+      const observed = loaded?.engines.find(engine => engine.id === selectedEngineID);
+      if (observed) setAccountSnapshots(current => ({
+        ...current,
+        // A catalog retry supersedes the account observation's model errors,
+        // while quota omitted by a lightweight refresh remains available.
+        [accountKey]: { ...observed, quota: observed.quota ?? (current[accountKey]?.binary_path === observed.binary_path ? current[accountKey]?.quota : undefined) },
+      }));
+    } catch (e) { setRefreshError(e instanceof Error ? e.message : String(e)); }
+    finally { setRefreshing(false); }
+  }, [onRefresh, selectedEngineID, accountKey]);
   const refreshButton = <Tooltip asChild content={t("settings.engineRefresh")}><button
     className="settings-button settings-button-ghost settings-icon-button"
     type="button" disabled={busy || refreshing} aria-busy={refreshing}
     aria-label={t("settings.engineRefresh")}
     data-testid="settings-engine-refresh" onClick={() => void refresh()}
   ><RefreshCw className={`icon${refreshing ? " settings-spin" : ""}`} aria-hidden="true" /></button></Tooltip>;
-
-  const selectedSettings = selected ? binarySettings[selected.id] : undefined;
-  const accountKey = selected ? `${selected.id}:${selectedSettings?.binary_path ?? ""}` : "";
   const snapshot = selected ? accountSnapshot(selected) : undefined;
 
   const observedEngine = selected ? { ...selected, ...(snapshot && enabled(selected) ? snapshot : {}), enabled: selected.enabled, quota: quotaFor(selected) } : undefined;
@@ -215,7 +225,7 @@ export function EngineSettingsSection({
           </button> : null}
         </SettingsRow> : null}
       </SettingsGroup>
-      {error || loadError ? <SettingsFailure message={t(error ? "settings.operationFailed" : "settings.enginesLoadFailed")} diagnostic={error || loadError}
+      {error || refreshError || loadError ? <SettingsFailure message={t(error ? "settings.operationFailed" : "settings.enginesLoadFailed")} diagnostic={error || refreshError || loadError}
         onRetry={error ? undefined : () => void refresh()} retrying={busy || refreshing} /> : null}
       {selected.binary_ok && selected.error ? <p className="settings-engine-reason">{selected.error}</p> : null}
     </SettingsSection>
@@ -266,10 +276,10 @@ export function EngineSettingsSection({
   return <>
     {!embedded ? <SettingsPageHeader title={t("settings.agents")} /> : null}
     <SettingsSection title={t("provider.connectionEngines")} actions={embedded ? undefined : refreshButton} testID="settings-engine-connections">
-      {error || loadError ? <SettingsFailure message={t(error ? "settings.operationFailed" : "settings.enginesLoadFailed")} diagnostic={error || loadError}
+      {error || refreshError || loadError ? <SettingsFailure message={t(error ? "settings.operationFailed" : "settings.enginesLoadFailed")} diagnostic={error || refreshError || loadError}
         onRetry={error ? undefined : () => void refresh()} retrying={busy || refreshing} /> : null}
       <SettingsGroup>
-        {result === undefined ? (loadError ? null : <div className="settings-engine-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
+        {result === undefined ? (loadError || refreshError ? null : <div className="settings-engine-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
           <div className="settings-engine-row" aria-hidden="true"><span className="settings-engine-skeleton-line settings-engine-skeleton-title" /></div>
         </div>) : visible.length ? <div className="connection-summary-list" role="list" aria-label={t("provider.connectionEngines")}>
           {visible.map(engine => {

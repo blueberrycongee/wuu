@@ -463,11 +463,12 @@ export function Composer({
     commitPrompt(value);
   }
   const services = useComposerServices();
+  const commandScopeKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
   const commandLifetime = useRef(0);
   useEffect(() => {
     commandLifetime.current++;
     return () => { commandLifetime.current++; };
-  }, [services, pluginHost, queryHistorySessionID]);
+  }, [services?.presentation, services?.ownerTabId, pluginHost, queryHistorySessionID, commandScopeKey]);
   const catalog = services?.catalog;
   const statusText = composerStatusText(status);
   const className = `composer-wrap ${

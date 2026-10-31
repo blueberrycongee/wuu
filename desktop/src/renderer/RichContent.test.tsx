@@ -10,6 +10,7 @@ import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { PreviewContentProvider } from "./PreviewContentContext";
 import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
 import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { ToastViewport, clearToasts } from "./Toast";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 
@@ -722,4 +723,23 @@ it("reports failed web navigation without inserting diagnostic text into prose",
   await act(async () => link.click());
   expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
   expect(link.closest("p")?.textContent).toBe("web");
+});
+
+
+it.each(["file", "web"])("does not publish a late %s link failure from a hidden cached conversation", async (kind) => {
+  let reject!: (error: Error) => void;
+  const open = kind === "file" ? openFileMock : openExternalMock;
+  open.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+  const content = <RichContent cwd="/repo" linkPolicy={kind === "web" ? "external-only" : undefined}
+    text={kind === "file" ? "[source](src/main.ts)" : "[web](https://example.com)"} />;
+  const pane = (active: boolean) => <ConversationRenderActivityProvider active={active}>
+    <div aria-hidden={!active || undefined} inert={!active || undefined}>{content}</div>
+  </ConversationRenderActivityProvider>;
+  render(pane(true));
+  const link = container.querySelector<HTMLElement>(kind === "file" ? ".rich-file-link" : ".rich-web-link")!;
+  await act(async () => link.click());
+  render(pane(false));
+  expect(link.isConnected).toBe(true);
+  await act(async () => reject(new Error("Navigation failed in a cached conversation")));
+  expect(document.body.querySelector('[role="alert"]')).toBeNull();
 });
