@@ -232,11 +232,11 @@ app.whenReady().then(async () => {
     await type("Newer typed question");
     assert.ok(!JSON.stringify(await stored()).includes("Reference marker"));
     const resolve = pendingSubmission; pendingSubmission = undefined; resolve("Synthetic quoted-input rejection");
-    await until(() => Boolean(document.querySelector(".archive-tip-action")));
+    await until(() => Boolean(document.querySelector('[data-main-conversation-composer] [data-wuu-component="draft-recovery"] button')));
     const rejected = JSON.stringify(await stored());
     assert.ok(!rejected.includes("Reference marker") && !rejected.includes("private-selection.md"));
     await reload(); assert.equal(await input(), "Newer typed question");
-    await click(".archive-tip-action");
+    await click('[data-main-conversation-composer] [data-wuu-component="draft-recovery"] button');
     await until(() => document.querySelector("[data-main-conversation-composer] textarea").value === "Typed question without its quoted file");
     await type(""); await select("Primary recovery conversation");
     assert.equal(await evaluate(() => document.querySelectorAll(".composer-file-selection-card").length), 0);
@@ -316,7 +316,7 @@ app.whenReady().then(async () => {
     await waitMain(() => pendingSubmission, "secondary submission reached bridge");
     await fillSecondary("Newer secondary workspace text");
     const resolve = pendingSubmission; pendingSubmission = undefined; resolve("Synthetic secondary rejection");
-    await until(() => Boolean(document.querySelector(".archive-tip-action")));
+    await until(() => Boolean(document.querySelector('[data-main-conversation-composer] [data-wuu-component="draft-recovery"] button')));
     const drafts = (await stored()).drafts;
     assert.equal(drafts.find(draft => draft.prompt === "Failed secondary workspace text").context.cwd, otherThreadCwd);
     assert.equal(drafts.find(draft => draft.prompt === "Newer secondary workspace text").context.cwd, otherThreadCwd);
@@ -366,10 +366,10 @@ app.whenReady().then(async () => {
     await waitMain(() => pendingCreation, "thread creation paused");
     await type("Newer input during creation");
     const resolve = pendingCreation; pendingCreation = undefined; holdCreation = false; resolve("Synthetic creation rejection");
-    await until(() => Boolean(document.querySelector(".archive-tip-action")));
+    await until(() => Boolean(document.querySelector('[data-main-conversation-composer] [data-wuu-component="draft-recovery"] button')));
     await reload(); assert.equal(await input(), "Newer input during creation");
     assert.ok((await stored()).drafts.some(draft => draft.prompt === "Creation will fail"));
-    await click(".archive-tip-action");
+    await click('[data-main-conversation-composer] [data-wuu-component="draft-recovery"] button');
     await until(() => document.querySelector("[data-main-conversation-composer] textarea").value === "Creation will fail");
     await type("");
   });

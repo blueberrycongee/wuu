@@ -91,6 +91,7 @@ const server = http.createServer((req, res) => {
 function finishProvider() { for (const [delta, finish_reason] of [[{ content: 'The first message was received once.' }, null], [{}, 'stop']]) providerResponse.write(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta, finish_reason }] })}\n\n`); providerResponse.end('data: [DONE]\n\n'); }
 function enter() { for (const type of ['keyDown', 'char', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: type === 'char' ? '\r' : 'Return' }); }
 const composer = '[data-main-conversation-composer] textarea:not(.composer-response-selection-comment)';
+const draftRecoveryAction = '[data-main-conversation-composer] [data-wuu-component="draft-recovery"] button';
 async function nativeTarget(selector) {
   // Focus and startup layout can move the composer after its first render.
   // Observe a stable, editable hit target before sending the single native click.
@@ -233,7 +234,11 @@ async function run() {
     assert.equal(snapshot.thread.turns.flatMap(turn => turn.items).filter(item => item.type === 'user_message' && item.text === prompt).length, 1, 'one durable backend user message');
     report.checks.push('Exactly one thread/start, one turn/start, and one durable user message');
   } else {
-    if (newer) await until(() => evaluate(() => Boolean(document.querySelector('.turn[data-turn-status="failed"]')) && Boolean(document.querySelector('[role="alert"] .archive-tip-action'))), 'failed message and recovery action are visible');
+    if (newer) {
+      await until(() => evaluate(() => [...document.querySelectorAll('.turn[data-turn-status="failed"]')].some(turn =>
+        turn.getBoundingClientRect().height > 0 && !turn.closest('[inert], [aria-hidden="true"]'))), 'failed message remains visible');
+      await nativeTarget(draftRecoveryAction);
+    }
     else await until(() => evaluate(() => !document.querySelector('[data-main-conversation-composer] [data-wuu-state="submitting"]')), 'rejection releases the pending input');
     await phase('rejected-recoverable');
     assert.equal(report.requests.filter(row => row.stream).length, 0, 'rejected admission never reaches a model');
@@ -277,11 +282,9 @@ async function run() {
     report.checks.push('Retained attachment name, icon and remove control fit the visible tray without horizontal clipping');
   }
   if (order === 'rejected' && newer) {
-    const point = await until(() => evaluate(() => {
-      const button = document.querySelector('[role="alert"] .archive-tip-action');
-      if (!button) return;
-      const r = button.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-    }), 'failed original has a visible recovery action');
+    // Recovery is durable composer state, not a transient root error banner.
+    // Use the same stable, hit-testable native target contract as composer input.
+    const point = await nativeTarget(draftRecoveryAction);
     for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, ...point });
     await until(() => evaluate(({ selector, prompt }) => document.querySelector(selector)?.value === prompt, { selector: composer, prompt }), 'native recovery restores the original failed draft');
     assert.equal(report.ipc.filter(row => row.channel === 'wuu:turn-start').length, 1, 'recovering a rejected draft does not silently resubmit it');
