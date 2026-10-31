@@ -904,7 +904,7 @@ function blankGoal(id, threadID, status, now) {
   return { id, thread_id: threadID, objective: "", status, tokens_used: 0, time_used_seconds: 0, created_at: zeroTime, updated_at: now, active_since: zeroTime };
 }
 function createGoalPlugin() {
-  let host, goals = {}, stopped = false;
+  let host, goals = {}, stopped = false, activated = false;
   let queue = Promise.resolve();
   function locked(fn) {
     const next = queue.then(fn);
@@ -1056,6 +1056,7 @@ ${String(saveError)}`);
       host = runtimeHost;
       goals = {};
       stopped = false;
+      activated = false;
       return {
         provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
@@ -1072,7 +1073,7 @@ ${String(saveError)}`);
         required_services: ["host.storage.get", "host.storage.set", "host.session.send", "host.session.cancel", "host.session.inspect"].map(requireKernelService)
       };
     },
-    activate() {
+    prepare() {
       return locked(async () => {
         const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
         if (result.value !== null) {
@@ -1115,6 +1116,11 @@ ${String(saveError)}`);
             throw new Error(`load goals: ${String(error)}`);
           }
         }
+      });
+    },
+    activate() {
+      return locked(async () => {
+        activated = true;
         for (const [id, existing] of Object.entries(goals)) {
           if (existing.status === "active" || existing.status === "budget_limited") await save(host, id, { ...existing, status: "paused", updated_at: (/* @__PURE__ */ new Date()).toISOString() });
         }
@@ -1123,6 +1129,7 @@ ${String(saveError)}`);
     shutdown() {
       return locked(async () => {
         stopped = true;
+        if (!activated) return;
         const errors = [];
         for (const [id, existing] of Object.entries(goals)) {
           const goal = structuredClone(existing);

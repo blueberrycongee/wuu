@@ -180,6 +180,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reject invalid persisted Goal state before committing a plugin replacement; discarded candidates leave live goal work untouched, and reload still pauses autonomous goals.
+
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
 
 - Bound GIF normalization before bitmap allocation: reject animated GIFs without decoding every frame and reject GIF canvases above 40 million pixels. Original-byte passthrough remains unchanged.

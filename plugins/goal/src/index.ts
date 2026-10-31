@@ -50,7 +50,7 @@ function blankGoal(id: string, threadID: string, status: string, now: string): G
 }
 
 export function createGoalPlugin(): RuntimePlugin {
-  let host: RuntimeHost, goals: Record<string, Goal> = {}, stopped = false;
+  let host: RuntimeHost, goals: Record<string, Goal> = {}, stopped = false, activated = false;
   let queue: Promise<unknown> = Promise.resolve();
   function locked<T>(fn: () => T | Promise<T>): Promise<T> {
     const next = queue.then(fn);
@@ -181,7 +181,7 @@ export function createGoalPlugin(): RuntimePlugin {
 
   return {
     initialize(_params, runtimeHost) {
-      host = runtimeHost; goals = {}; stopped = false;
+      host = runtimeHost; goals = {}; stopped = false; activated = false;
       return {
         provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
@@ -197,7 +197,7 @@ export function createGoalPlugin(): RuntimePlugin {
         required_services: (["host.storage.get", "host.storage.set", "host.session.send", "host.session.cancel", "host.session.inspect"] as const).map(requireKernelService),
       };
     },
-    activate() { return locked(async () => {
+    prepare() { return locked(async () => {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value !== null) {
         try {
@@ -233,6 +233,9 @@ export function createGoalPlugin(): RuntimePlugin {
           }
         } catch (error) { throw new Error(`load goals: ${String(error)}`); }
       }
+    }); },
+    activate() { return locked(async () => {
+      activated = true;
       // Reload never silently restarts autonomous work. Keep pending identities
       // until explicit resume can reconcile the host's accepted turn.
       for (const [id, existing] of Object.entries(goals)) {
@@ -241,6 +244,8 @@ export function createGoalPlugin(): RuntimePlugin {
     }); },
     shutdown() { return locked(async () => {
       stopped = true;
+      // Discarding a prepared candidate must not mutate the live generation.
+      if (!activated) return;
       const errors: unknown[] = [];
       for (const [id, existing] of Object.entries(goals)) {
         const goal = structuredClone(existing);
