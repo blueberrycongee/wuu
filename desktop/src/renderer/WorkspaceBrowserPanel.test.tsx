@@ -443,3 +443,25 @@ it("retries the requested address after an initial navigation rejects", async ()
   expect(browserCommand.mock.calls[1][0]).toMatchObject({ command: "navigate", url: "http://localhost:4567" });
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
+
+
+it("retains the failed address through native loading and failed-load snapshots", async () => {
+  let reject!: (error: Error) => void;
+  browserCommand.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+  await act(async () => { render({}); });
+  const input = container.querySelector<HTMLInputElement>("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "http://localhost:9876");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  const oldSurface = { workdir: "/repo", tabID: "user:thread-1", url: "about:blank", title: "", canGoBack: false, canGoForward: false };
+  act(() => surfaceHandlers.at(-1)!({ ...oldSurface, loading: true }));
+  act(() => surfaceHandlers.at(-1)!({ ...oldSurface, loading: false, error: "ERR_CONNECTION_REFUSED" }));
+  await act(async () => reject(new Error("ERR_CONNECTION_REFUSED")));
+  act(() => surfaceHandlers.at(-1)!({ ...oldSurface, loading: false, error: "ERR_CONNECTION_REFUSED" }));
+  await act(async () => container.querySelector<HTMLButtonElement>(".workspace-browser-retry")!.click());
+  expect(browserCommand).toHaveBeenCalledTimes(2);
+  expect(browserCommand.mock.calls[1][0]).toMatchObject({ command: "navigate", url: "http://localhost:9876" });
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});

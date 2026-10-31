@@ -15,7 +15,7 @@ it("rejects a host without selected-slot targeting before registering presentati
   await expect(activate({} as PluginGenerationApi)).rejects.toThrow("ui.selected-slot-target.v1");
 });
 afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()); Toast.clearToasts(); vi.restoreAllMocks(); vi.useRealTimers(); });
-async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readError?: () => string | undefined; workspaceError?: () => string | undefined; mutate?: (input: any) => Promise<unknown> } = {}) {
+async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readError?: () => string | undefined; workspaceError?: () => string | undefined; listWorkspaces?: () => Promise<any>; mutate?: (input: any) => Promise<unknown> } = {}) {
   vi.useFakeTimers();
   const notices = vi.spyOn(Toast, "showToast");
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input, workspaceId }) => {
@@ -30,7 +30,7 @@ async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readErr
     const { method, input } = request.input as { method: string; input?: unknown };
     return invoke({ ...request, method, input });
   },
-    listWorkspaces: async () => { const error = options.workspaceError?.(); if (error) throw new Error(error); return { activeWorkspaceId: "wuu", workspaces: [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }] }; },
+    listWorkspaces: async () => { if (options.listWorkspaces) return options.listWorkspaces(); const error = options.workspaceError?.(); if (error) throw new Error(error); return { activeWorkspaceId: "wuu", workspaces: [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }] }; },
     listThreads: async () => [{ id: "chat", title: "Existing investigation", pinned: true }],
   });
   await host.activateGeneration({ pluginId: "automation-ui", generation: "one", graphGeneration: "selected-graph", register: activate });
@@ -257,4 +257,27 @@ it("keeps workspace discovery failure recoverable rather than presenting an empt
   await act(async () => ui.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
   expect(ui.container.querySelector('[role="alert"]')).toBeNull();
   expect(ui.container.querySelector(".plugin-automation-list")?.textContent).toContain("Review");
+});
+
+it.each(["failure", "success"])("ignores an older workspace retry %s after a newer retry restores the catalog", async outcome => {
+  const pending: Array<{ resolve: (value: unknown) => void; reject: (reason: Error) => void }> = [];
+  let calls = 0;
+  const ui = await mount({ listWorkspaces: () => {
+    if (++calls === 1) return Promise.reject(new Error("offline"));
+    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  } });
+  const retry = ui.container.querySelector<HTMLButtonElement>('[role="alert"] button')!;
+  await act(async () => { retry.click(); retry.click(); });
+  expect(pending).toHaveLength(2);
+  expect(retry.disabled).toBe(true);
+  const workspaces = [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }];
+  await act(async () => pending[1].resolve({ activeWorkspaceId: "other", workspaces }));
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-workspace-picker")?.textContent).toContain("Other");
+  await act(async () => {
+    if (outcome === "failure") pending[0].reject(new Error("old workspace failure"));
+    else pending[0].resolve({ activeWorkspaceId: "wuu", workspaces });
+  });
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-workspace-picker")?.textContent).toContain("Other");
 });

@@ -147,7 +147,9 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
 
   const applySurface = useCallback((snapshot: BrowserSurfaceSnapshot) => {
     setCurrentURL(snapshot.url);
-    setPendingURL(undefined);
+    // Loading/failure events can still carry the previous page URL. Retain the
+    // requested address until a successful surface is available for recovery.
+    if (!snapshot.loading && !snapshot.error) setPendingURL(undefined);
     setCanGoBack(snapshot.canGoBack);
     setCanGoForward(snapshot.canGoForward);
     if (snapshot.error) {
@@ -237,6 +239,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
       if (current === leaseRef.current && snapshot) applySurface(snapshot);
     } catch (cause) {
       if (current !== leaseRef.current) return;
+      if (command === "navigate") setPendingURL(url);
       setStatus("error"); setErrorMessage(toastErrorMessage(cause, t("workspace.browser.cannotOpen")));
     }
   }, [activity, applySurface, t, threadID]);

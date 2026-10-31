@@ -691,6 +691,8 @@ export async function activate(api) {
     const [refreshError, setRefreshError] = React.useState("");
     const [busy, setBusy] = React.useState(false);
     const [workspaceError, setWorkspaceError] = React.useState("");
+    const [loadingWorkspaces, setLoadingWorkspaces] = React.useState(false);
+    const workspaceRequest = React.useRef(0);
     const activeView = React.useRef(true);
     const notice = React.useRef(null);
     React.useEffect(() => {
@@ -715,15 +717,19 @@ export async function activate(api) {
       } catch (reason) { if (current === epoch.current) setRefreshError(String(reason)); }
     }, []);
     const loadWorkspaces = React.useCallback(async () => {
+      const request = ++workspaceRequest.current;
+      setLoadingWorkspaces(true);
       try {
         const snapshot = await api.listWorkspaces();
-        if (!activeView.current || api.signal.aborted) return;
+        if (!activeView.current || api.signal.aborted || request !== workspaceRequest.current) return;
         const items = (snapshot?.workspaces || []).filter((item) => item.available !== false && item.id);
         setWorkspaces(items);
         setWorkspaceID(items.find((item) => item.id === snapshot.activeWorkspaceId)?.id || items[0]?.id || "");
         setWorkspaceError("");
       } catch (reason) {
-        if (activeView.current && !api.signal.aborted) setWorkspaceError(String(reason?.message || reason));
+        if (activeView.current && !api.signal.aborted && request === workspaceRequest.current) setWorkspaceError(String(reason?.message || reason));
+      } finally {
+        if (activeView.current && !api.signal.aborted && request === workspaceRequest.current) setLoadingWorkspaces(false);
       }
     }, []);
     React.useEffect(() => {
@@ -841,7 +847,7 @@ export async function activate(api) {
             h(Button, { className: "plugin-automation-create", disabled: busy || !workspace || !loaded || !!refreshError, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
           refreshError || workspaceError ? h("div", { className: "plugin-automation-unavailable", role: "alert" },
             h("span", null, tr(workspaceError ? "automation.workspacesFailed" : "automation.refreshFailed")),
-            h(Button, { variant: "ghost", onClick: () => workspaceError ? void loadWorkspaces() : void refresh(workspaceID) }, tr("automation.retry")),
+            h(Button, { variant: "ghost", disabled: loadingWorkspaces, onClick: () => workspaceError ? void loadWorkspaces() : void refresh(workspaceID) }, tr("automation.retry")),
             workspaceError ? h("details", null, h("summary", null, tr("automation.details")), h("pre", null, workspaceError)) : null) : null,
           workspaceError ? null : !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))

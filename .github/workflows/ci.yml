@@ -1656,6 +1656,20 @@ jobs:
           git rev-parse HEAD > "$WUU_TITLEBAR_OUTPUT/source-commit.txt"
           set -o pipefail
           desktop/node_modules/.bin/electron desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+      - name: Exercise error feedback production components
+        id: error-feedback-components
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ERROR_FEEDBACK_OUTPUT: ${{ runner.temp }}/wuu-macos-error-feedback
+        # Synthetic services and actual renderer components, not full-App or
+        # physical-display acceptance. No core or account is required.
+        run: |
+          mkdir -p "$WUU_ERROR_FEEDBACK_OUTPUT"
+          git rev-parse HEAD > "$WUU_ERROR_FEEDBACK_OUTPUT/source-commit.txt"
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/error-feedback-e2e.cjs 2>&1 | tee "$WUU_ERROR_FEEDBACK_OUTPUT/run.log"
       - name: Exercise sandboxed native Settings overlay
         timeout-minutes: 3
         shell: bash
@@ -1742,6 +1756,14 @@ jobs:
             desktop/out/personal-desktop-acceptance/settings/*.txt
             desktop/out/personal-desktop-acceptance/approval/*.json
             desktop/out/personal-desktop-acceptance/approval/*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload hosted macOS error feedback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-feedback-hosted-macos-evidence
+          path: ${{ runner.temp }}/wuu-macos-error-feedback/
           if-no-files-found: warn
           retention-days: 14
       - name: Upload hosted macOS Settings overlay evidence
