@@ -17,9 +17,9 @@ function fixture(value = JSON.stringify({ thread: goal }), handler) {
   const calls = [];
   const host = { async call(method, params) {
     calls.push({ method, params });
-    if (method === "host.storage.get") return { value };
     const result = await handler?.(method, params);
     if (result !== undefined) return result;
+    if (method === "host.storage.get") return { value };
     if (method === "host.storage.set") { value = params.value; return {}; }
     if (method === "host.session.inspect") return { turn: { state: "running", turn_id: "turn" } };
     if (method === "host.session.cancel") return { cancelled: true };
@@ -72,4 +72,64 @@ test("shutdown surfaces storage failure instead of claiming a persisted stop", a
   fail = true;
   await assert.rejects(f.plugin.shutdown(), /storage unavailable/);
   assert.deepEqual(f.state().thread.pending, goal.pending);
+});
+
+// The host keeps the previous generation available while a candidate prepares.
+// Both instances use the same durable workspace key, not separate snapshots.
+test("activation loads goals changed by the live generation after preparation", async () => {
+  const live = fixture("{}", method => method === "host.session.send" ? { turn_id: "new-turn", queue_id: "new-queue" } : undefined);
+  await live.plugin.prepare();
+  await live.plugin.activate();
+  const tool = (tool_id, thread_id, args) => live.plugin.executeTool({ tool_id, thread_id, arguments: args }, live.host);
+  await tool("create_goal", "thread", { objective: "Original work" });
+  const candidate = createGoalPlugin();
+  candidate.initialize({}, live.host);
+  await candidate.prepare();
+  const discarded = createGoalPlugin();
+  discarded.initialize({}, live.host);
+  await discarded.prepare();
+  await tool("update_goal", "thread", { status: "complete" });
+  await live.plugin.invokeService({ service: "goal.control", method: "request", params: {
+    method: "create_goal", input: { thread_id: "added", objective: "New work" },
+  } }, live.host);
+  const latest = live.state();
+  const effects = live.calls.length;
+  await discarded.shutdown();
+  assert.equal(live.calls.length, effects);
+  assert.deepEqual(live.state(), latest);
+  await candidate.activate();
+  assert.deepEqual(live.state().thread, latest.thread);
+  assert.deepEqual(live.state().added.pending, latest.added.pending);
+  assert.equal(live.state().added.objective, "New work");
+  assert.equal(live.state().added.status, "paused");
+  const result = await candidate.invokeService({ service: "goal.control", method: "request", params: {
+    method: "get_goal", input: { thread_id: "added" },
+  } }, live.host);
+  assert.equal(result.goal.objective, "New work");
+  assert.equal(live.calls.filter(call => call.method === "host.session.send").length, 1);
+});
+
+test("activation rejects state corrupted after preparation without writing cached goals", async () => {
+  const f = fixture();
+  await f.plugin.prepare();
+  await f.host.call("host.storage.set", { value: "{broken" });
+  const effects = f.calls.length;
+  await assert.rejects(f.plugin.activate(), /load goals/);
+  await f.plugin.shutdown();
+  assert.deepEqual(f.calls.slice(effects).map(call => call.method), ["host.storage.get"]);
+});
+
+test("activation honors cleared storage instead of reviving the prepared snapshot", async () => {
+  let cleared = false;
+  const f = fixture(undefined, method => cleared && method === "host.storage.get" ? { value: null } : undefined);
+  await f.plugin.prepare();
+  cleared = true;
+  const effects = f.calls.length;
+  await f.plugin.activate();
+  const result = await f.plugin.invokeService({ service: "goal.control", method: "request", params: {
+    method: "get_goal", input: { thread_id: "thread" },
+  } }, f.host);
+  assert.equal(result.goal, null);
+  await f.plugin.shutdown();
+  assert.deepEqual(f.calls.slice(effects).map(call => call.method), ["host.storage.get"]);
 });
