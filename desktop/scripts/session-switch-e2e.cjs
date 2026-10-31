@@ -27,6 +27,8 @@ const startupEntryNs = process.hrtime.bigint();
 // history, two built-in services, and cross-project new-draft regression checks.
 // WUU_SWITCH_ROOT_STRESS=1 measures a new-draft switch with hundreds of
 // migrated sessions and thousands of historical workspace roots.
+// WUU_SWITCH_MISSING_WORKSPACE=1 removes a synthetic destination directory
+// after its history appears, then measures recovery from a native row click.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -68,12 +70,14 @@ const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
 const rootStress = process.env.WUU_SWITCH_ROOT_STRESS === '1';
+const missingWorkspace = process.env.WUU_SWITCH_MISSING_WORKSPACE === '1';
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
 const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
 const presentationMode = process.env.WUU_SWITCH_PRESENTATION === '1';
 if (presentationMode) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sameWorkspace, false, 'Presentation acceptance is a separate product workload');
 if (sameWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sidebarThreads > 0, false, 'Same-workspace switching is a separate diagnostic workload');
+if (missingWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || rootStress || subscriptionTurns > 0 || sameWorkspace, false, 'Missing-workspace recovery is a separate workload');
 if (streamOnly) {
   assert.ok(pacedStream, 'Stream-only mode requires paced streaming');
   assert.equal(subscriptionTurns, 0, 'Stream-only mode excludes subscription diagnostics');
@@ -270,6 +274,7 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   const start = performance.now();
   // Insert at invocation, not completion, so overlapping RPCs keep attribution.
   const timing = { channel, startedAt: start, ...(startupProbe ? { launchMs: startupProbe.launchMs() } : {}), ms: null };
+  if (missingWorkspace && channel === 'wuu:project-select') timing.projectId = args[1];
   timings.push(timing);
   const subscriptionRead = channel === 'wuu:engines-list' && args[1]?.include_quota === true;
   if (subscriptionRead) subscriptionEntered = true;
@@ -277,6 +282,7 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   try {
     const result = await listener(...args);
     timing.outcome = 'ok';
+    if (missingWorkspace && channel === 'wuu:project-select') timing.runtimeIssue = result?.runtime_issue?.code;
     if (Array.isArray(result?.threads)) timing.resultCount = result.threads.length;
     if (startupProbe && channel === 'wuu:initialize') startupProbe.initialized(result);
     if (subscriptionRead) {
@@ -445,6 +451,55 @@ async function showSessionSidebar(win) {
   await evaluate(win, () => {
     document.querySelector('.conversation-pane [data-wuu-component="sidebar-toggle"][aria-pressed="false"]')?.click();
   });
+}
+async function checkMissingWorkspace(win) {
+  await showSessionSidebar(win);
+  await waitFor(win, () => !![...document.querySelectorAll('.project-group[data-section-id="project-2"] .thread-row')]
+    .find(row => row.textContent.includes('Switch session 2')));
+  const point = await evaluate(win, async () => {
+    const row = [...document.querySelectorAll('.project-group[data-section-id="project-2"] .thread-row')]
+      .find(item => item.textContent.includes('Switch session 2'));
+    const button = row.querySelector('.thread-row-main');
+    button.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const rect = button.getBoundingClientRect();
+    return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+  });
+  await evaluate(win, () => document.querySelector('.composer textarea').focus());
+  win.webContents.insertText('preserve unavailable workspace draft');
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value === 'preserve unavailable workspace draft');
+  fs.renameSync(projects[2].path, `${projects[2].path}-unavailable`);
+  const offset = timings.length, start = performance.now();
+  const debug = win.webContents.debugger;
+  await debug.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
+  await debug.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
+  let failure;
+  try {
+    await waitFor(win, () => {
+      const input = document.querySelector('.composer textarea');
+      return !!document.querySelector('[role="alert"]') && input && !input.disabled && !input.readOnly
+        && !!document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]');
+    }, undefined, 8000);
+  } catch (error) { failure = error; }
+  const readyMs = +(performance.now() - start).toFixed(1);
+  const view = await evaluate(win, async () => ({
+    selectedProjectId: (await window.wuu.listProjects()).active_context?.project_id,
+    inputDisabled: document.querySelector('.composer textarea')?.disabled,
+    draft: document.querySelector('.composer textarea')?.value,
+    sourceVisible: !!document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]'),
+    switching: !!document.querySelector('.view-switch-loading, .view-switch-loading-conversation'),
+    notice: document.querySelector('[role="alert"]')?.textContent,
+  }));
+  const result = { scenario: 'missing-workspace-history-click', readyMs, timedOut: !!failure, view,
+    rpc: timings.slice(offset).map(t => ({ ...t, startMs: +(t.startedAt - start).toFixed(1) })) };
+  fs.writeFileSync(path.join(output, 'missing-workspace-results.json'), JSON.stringify(result, null, 2));
+  fs.writeFileSync(path.join(output, 'missing-workspace.png'), (await win.webContents.capturePage()).toPNG());
+  console.log('MISSING_WORKSPACE', JSON.stringify(result));
+  if (failure) throw failure;
+  assert.equal(view.selectedProjectId, 'project-0');
+  assert.equal(view.draft, 'preserve unavailable workspace draft');
+  assert.match(view.notice, /project-2/);
+  assert.equal(view.switching, false);
 }
 let providerServer;
 let providerResponse;
@@ -965,6 +1020,10 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   while (timings.some(t => t.ms === null)) {
     assert.ok(Date.now() < startupDeadline, 'Startup IPC did not settle');
     await delay(25);
+  }
+  if (missingWorkspace) {
+    await checkMissingWorkspace(main);
+    clearTimeout(timeout); app.quit(); return;
   }
   if (rootStress) {
     const root = path.join(home, 'workspaces');
