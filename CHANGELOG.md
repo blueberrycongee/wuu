@@ -181,6 +181,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Reject invalid persisted Goal state before committing a plugin replacement; discarded candidates leave live goal work untouched, and reload still pauses autonomous goals.
+- Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.
 
