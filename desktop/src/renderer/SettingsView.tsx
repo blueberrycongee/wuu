@@ -440,7 +440,12 @@ function SettingsViewContent({
     // Keep newer local edits until that snapshot acknowledges their value.
     const reconcileDraft = (field: AdvancedField, persisted: string): string => {
       const edited = advancedDraftEditsRef.current.get(field);
-      if (edited !== undefined && edited !== persisted) return edited;
+      const acknowledged = field === "autoCompact"
+        ? edited === persisted
+        : field === "compactThreshold"
+          ? Number(edited) / 100 === (advanced?.compact_threshold_pct ?? 0)
+          : Number(edited) === Number(persisted);
+      if (edited !== undefined && !acknowledged) return edited;
       advancedDraftEditsRef.current.delete(field);
       return persisted;
     };

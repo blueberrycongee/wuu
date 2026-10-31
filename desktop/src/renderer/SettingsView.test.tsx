@@ -1153,6 +1153,22 @@ describe("SettingsView model services", () => {
 });
 
 describe("SettingsView advanced settings", () => {
+  it.each(["50.0", "050", "50.5"])("acknowledges saved numeric draft %s and accepts later authoritative updates", async (draft) => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
+    const settings = { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false };
+    const initialized = baseInitialized({ advanced_settings: settings });
+    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
+    renderSettings(props);
+    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
+    act(() => { input.focus(); setInputValue(input, draft); });
+    await act(async () => { input.blur(); });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { ...settings, compact_threshold_pct: Number(draft) / 100 } } });
+    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { ...settings, compact_threshold_pct: 0.7 } } });
+    expect(input.value).toBe("70");
+  });
+
   it("preserves a newer uncommitted numeric draft when a saved response refreshes settings", async () => {
     installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
     const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
