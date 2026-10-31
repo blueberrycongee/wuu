@@ -1602,6 +1602,8 @@ export interface HostServiceContracts {
     result: {
       sessions: Array<{
         session_id: string;
+        /** Present only in owned discovery; correlates an idempotent session.create. */
+        creation_request_id?: string;
         user_space_id?: string;
         product_domain?: "personal" | "coding";
         agent_id?: string;
@@ -1642,6 +1644,8 @@ export interface HostServiceContracts {
       pending_inputs?: AcceptedClientInputView[];
       session: {
         session_id: string;
+        /** Present only when the calling plugin owns this session. */
+        creation_request_id?: string;
         user_space_id?: string;
         product_domain?: "personal" | "coding";
         agent_id?: string;

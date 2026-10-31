@@ -966,7 +966,8 @@ var PeersPlugin = class {
     if (!target) throw new Error(`no active user-visible peer session in this workspace has id ${JSON.stringify(args.target_session_id.trim())}`);
     if (target.session_id === sourceID) throw new Error("a session cannot send a peer request to itself");
     const now = (/* @__PURE__ */ new Date()).toISOString();
-    let requestID = call.call_id ? digest(`${sourceID}\0${call.call_id}`) : randomBytes(12).toString("hex");
+    const callIdentity = call.turn_id || call.step_index !== void 0 ? JSON.stringify([call.tool_id, sourceID, call.call_id, call.turn_id ?? null, call.step_index ?? null]) : `${sourceID}\0${call.call_id}`;
+    let requestID = call.call_id ? digest(callIdentity) : randomBytes(12).toString("hex");
     const messageDigest = digest(message);
     const record = {
       id: requestID,

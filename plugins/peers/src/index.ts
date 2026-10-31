@@ -151,7 +151,13 @@ class PeersPlugin implements RuntimePlugin {
     if (!target) throw new Error(`no active user-visible peer session in this workspace has id ${JSON.stringify(args.target_session_id.trim())}`);
     if (target.session_id === sourceID) throw new Error("a session cannot send a peer request to itself");
     const now = new Date().toISOString();
-    let requestID = call.call_id ? digest(`${sourceID}\0${call.call_id}`) : randomBytes(12).toString("hex");
+    // Provider call IDs may repeat in later turns or model steps. Execution IDs
+    // identify transport attempts, not the logical invocation being retried.
+    // Context-free callers retain their existing request mapping.
+    const callIdentity = call.turn_id || call.step_index !== undefined
+      ? JSON.stringify([call.tool_id, sourceID, call.call_id, call.turn_id ?? null, call.step_index ?? null])
+      : `${sourceID}\0${call.call_id}`;
+    let requestID = call.call_id ? digest(callIdentity) : randomBytes(12).toString("hex");
     const messageDigest = digest(message);
     const record: RequestRecord = {
       id: requestID, source_session_id: sourceID, target_session_id: target.session_id,
