@@ -52,7 +52,7 @@ func (s *Server) ensureClientInputOwner(binding *runtime.State) (string, error) 
 }
 
 func (s *Server) loadHeldClientInputs(binding *runtime.State, threadID string) ([]queuedTurn, error) {
-	if !s.clientInputReceiptsEnabled() {
+	if !s.clientInputReceiptsEnabled(binding) {
 		return nil, nil
 	}
 	rows, err := binding.Sessions.ListUnsettledClientInputs(s.clientInputScope(threadID, ""))
@@ -232,7 +232,7 @@ func (s *Server) materializeAcceptedClientInput(binding *runtime.State, entry *q
 		return err
 	}
 	r := entry.clientInput.Receipt
-	if err := s.validateClientInputSpace(r.UserSpaceID, r.ProductDomain); err != nil {
+	if err := s.validateClientInputSpace(binding, r.UserSpaceID, r.ProductDomain); err != nil {
 		return err
 	}
 	if !found || metadata.Owner != r.Owner || metadata.UserSpaceID != r.UserSpaceID || metadata.ProductDomain != r.ProductDomain || metadata.AgentID != r.AgentID || metadata.ArchivedAt != nil {
@@ -313,19 +313,19 @@ func acceptedInputView(row session.AcceptedClientInput) (*pluginhost.SessionAcce
 	return result, nil
 }
 
-func (s *Server) validateClientInputSpace(space, domain string) error {
-	if !s.clientInputReceiptsEnabled() || !s.rt.UserBinding().Matches(userspace.Binding{UserSpaceID: space, ProductDomain: domain}) {
+func (s *Server) validateClientInputSpace(binding *runtime.State, space, domain string) error {
+	if !s.clientInputReceiptsEnabled(binding) || !s.rt.UserBinding().Matches(userspace.Binding{UserSpaceID: space, ProductDomain: domain}) {
 		return errors.New("accepted input is outside this host user space")
 	}
 	return nil
 }
 
-func (s *Server) clientInputReceiptsEnabled() bool {
+func (s *Server) clientInputReceiptsEnabled(binding *runtime.State) bool {
 	if s.rt == nil || s.rt.SessionDir == "" {
 		return false
 	}
 	b := s.rt.UserBinding()
-	return b.IsUser() && b.ProductDomain == "personal" && b.Validate() == nil
+	return b.IsUser() && b.Validate() == nil && runtime.ClientInputReceiptsSelected(binding.Host)
 }
 
 func (s *Server) clientInputScope(sessionID, pluginID string) session.ClientInputScope {
