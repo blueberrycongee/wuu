@@ -1254,7 +1254,7 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui .plugin-ui-field:has(> .plugin-ui-select):has(> .plugin-ui-field-description) > .plugin-ui-select,.plugin-genui .plugin-ui-field:has(> .plugin-ui-select):has(> .plugin-ui-field-description)::after { grid-row:3; }
 .plugin-genui .plugin-ui-field:has(> .plugin-ui-select:disabled)::after { opacity:0.52; }
 .plugin-genui details[open] > summary { margin-bottom:var(--genui-space-group); }
-.plugin-genui :focus-visible { outline:2px solid var(--wuu-color-accent, currentColor); outline-offset:3px; }
+.plugin-genui :focus-visible { outline:2px solid var(--wuu-color-focus,var(--wuu-color-info,#0068da)); outline-offset:2px; }
 @media (max-width:600px) { .plugin-genui th, .plugin-genui td { padding:8px; } }
 .plugin-genui-surface { container-type:inline-size; min-width:0; font-size:var(--wuu-font-size-ui,var(--font-ui,14px)); }
 /* Category colors do not carry success, warning, or error semantics. */
@@ -1269,8 +1269,11 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-program :is(button,input,textarea,select) { font:inherit; }
 .plugin-genui-program :is(.plugin-ui-field,.plugin-ui-section,.plugin-ui-card) { min-width:0; }
 .plugin-genui-program :is(.plugin-ui-field-label,.plugin-ui-section-header h2) { font-size:inherit; overflow-wrap:anywhere; }
-.plugin-genui-program .plugin-ui-button { white-space:normal; overflow-wrap:anywhere; height:auto; min-height:2.4em; padding:0.4em 0.85em; }
-.plugin-genui-program :is(.plugin-ui-input,.plugin-ui-textarea) { width:100%; min-width:0; box-sizing:border-box; }
+.plugin-genui-program .plugin-ui-button { white-space:normal; overflow-wrap:anywhere; height:auto; }
+.plugin-genui-program :is(.plugin-ui-input,.plugin-ui-textarea) { width:100%; min-width:0; box-sizing:border-box; border-color:var(--wuu-color-border-subtle,var(--genui-border)); }
+.plugin-genui-program .plugin-ui-select { cursor:pointer; }
+.plugin-genui-program .plugin-ui-select:disabled { cursor:default; }
+.plugin-genui-program .plugin-ui-select:hover:not(:disabled) { border-color:var(--wuu-color-border-strong,var(--genui-border)); }
 .plugin-genui-program-body,.plugin-genui-data-fieldset { min-width:0; border:0; padding:0; margin:0; }
 .plugin-genui-program-body { display:grid; gap:var(--genui-space-section); }
 .plugin-genui-layout { --genui-gap:var(--genui-space-group); min-width:0; gap:var(--genui-gap); }
@@ -1309,10 +1312,16 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-progress { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0.4em 1em; align-items:center; }
 .plugin-genui-progress > span:first-child { grid-column:1/-1; overflow-wrap:anywhere; }
 .plugin-genui-progress progress { width:100%; min-width:0; height:0.65em; border:0; accent-color:var(--wuu-color-accent); }
-.plugin-genui-progress progress::-webkit-progress-bar { border-radius:1em; background:var(--wuu-color-surface-muted,var(--surface-2,color-mix(in srgb,currentColor 14%,transparent))); }
-.plugin-genui-progress progress::-webkit-progress-value { border-radius:1em; background:var(--wuu-color-accent,var(--ink-strong,currentColor)); }
+.plugin-genui-progress progress::-webkit-progress-bar { border-radius:1em; background:var(--wuu-color-surface-muted,color-mix(in srgb,currentColor 14%,transparent)); }
+.plugin-genui-progress progress::-webkit-progress-value { border-radius:1em; background:var(--wuu-color-accent,var(--wuu-color-text,currentColor)); }
 .plugin-genui-slider { gap:0.4em; }
-.plugin-genui-slider input { width:100%; min-width:0; margin:0; min-height:2em; accent-color:var(--wuu-color-accent); }
+/* The native range keeps keyboard/value behavior and the host's quiet field rhythm. */
+.plugin-genui-slider input { appearance:none; width:100%; min-width:0; margin:0; padding:0; min-height:2.4em; background:transparent; cursor:pointer; accent-color:var(--wuu-color-accent,var(--wuu-color-text,currentColor)); }
+.plugin-genui-slider input::-webkit-slider-runnable-track { height:3px; border-radius:var(--wuu-radius-inner,3px); background:color-mix(in srgb,var(--wuu-color-text,currentColor) 12%,transparent); }
+.plugin-genui-slider input::-moz-range-track { height:3px; border:0; border-radius:var(--wuu-radius-inner,3px); background:color-mix(in srgb,var(--wuu-color-text,currentColor) 12%,transparent); }
+.plugin-genui-slider input::-webkit-slider-thumb { appearance:none; width:14px; height:14px; margin-top:-5.5px; border:0; border-radius:50%; background:var(--wuu-color-accent,var(--wuu-color-text,currentColor)); }
+.plugin-genui-slider input::-moz-range-thumb { width:14px; height:14px; border:0; border-radius:50%; background:var(--wuu-color-accent,var(--wuu-color-text,currentColor)); }
+.plugin-genui-slider input:disabled { cursor:default; opacity:0.52; }
 .plugin-genui-slider-label,.plugin-genui-slider-bounds { display:flex; justify-content:space-between; gap:1em; overflow-wrap:anywhere; }
 .plugin-genui-slider output { font-variant-numeric:tabular-nums; }
 .plugin-genui-options { padding:0; margin:0; border:0; min-width:0; }
@@ -1320,7 +1329,7 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-options-list { display:flex; flex-wrap:wrap; gap:0.5em; }
 .plugin-genui-options-list label { display:flex; align-items:center; gap:0.45em; min-height:2.4em; padding:0.2em 0.65em; border:1px solid var(--genui-border); border-radius:var(--wuu-radius-control,8px); cursor:pointer; overflow-wrap:anywhere; }
 .plugin-genui-options-list input { flex:none; accent-color:var(--wuu-color-accent); }
-.plugin-genui-options-list label:has(:focus-visible) { outline:2px solid var(--wuu-color-focus,var(--focus-ring,currentColor)); outline-offset:2px; }
+.plugin-genui-options-list label:has(:focus-visible) { outline:2px solid var(--wuu-color-focus,var(--wuu-color-info,#0068da)); outline-offset:2px; }
 .plugin-genui-options-list label[data-selected="true"] { background:var(--wuu-color-surface-muted); border-color:var(--wuu-color-accent); }
 .plugin-genui-options:disabled label { cursor:default; opacity:0.65; }
 .plugin-genui-segmented .plugin-genui-options-list { gap:0.25em; padding:0.25em; width:fit-content; max-width:100%; background:var(--wuu-color-surface-muted); border-radius:var(--wuu-radius-control,8px); }
@@ -1358,6 +1367,11 @@ line.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-source svg [data-genui-node] { animation:none; }
 @keyframes genui-appear { from { opacity:0; } to { opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .plugin-genui *, .plugin-genui *::before, .plugin-genui *::after { scroll-behavior:auto; animation:none; transition:none; } }
-@media (forced-colors:active) { .plugin-genui .plugin-ui-field:has(> .plugin-ui-select) > .plugin-ui-select { appearance:auto; } .plugin-genui .plugin-ui-field:has(> .plugin-ui-select)::after { display:none; } .plugin-genui summary::before { forced-color-adjust:none; } .plugin-genui-options-list label[data-selected="true"], .plugin-genui-badge { border-color:Highlight; } .plugin-genui-chart :is(circle,rect,path,polyline) { forced-color-adjust:none; } }
+@media (forced-colors:active) {
+.plugin-genui-slider input::-webkit-slider-runnable-track { forced-color-adjust:none; background:CanvasText; }
+.plugin-genui-slider input::-moz-range-track { forced-color-adjust:none; background:CanvasText; }
+.plugin-genui-slider input::-webkit-slider-thumb { forced-color-adjust:none; background:Highlight; }
+.plugin-genui-slider input::-moz-range-thumb { forced-color-adjust:none; background:Highlight; }
+.plugin-genui .plugin-ui-field:has(> .plugin-ui-select) > .plugin-ui-select { appearance:auto; } .plugin-genui .plugin-ui-field:has(> .plugin-ui-select)::after { display:none; } .plugin-genui summary::before { forced-color-adjust:none; } .plugin-genui-options-list label[data-selected="true"], .plugin-genui-badge { border-color:Highlight; } .plugin-genui-chart :is(circle,rect,path,polyline) { forced-color-adjust:none; } }
 
 `;
