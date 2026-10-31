@@ -120,10 +120,11 @@ const receiptRows = new Map<string, {receipt: ClientInputReceipt; prompt:string;
 const fixtureReceipt = (request:string,state:ClientInputReceipt["execution_state"],seq?:number):ClientInputReceipt => ({request_id:request,receipt_id:`receipt-${request}`,host_request_id:`host-${request}`,client_id:`client-${request}`,queue_id:`queue-${request}`,session_id:"synthetic-main",plugin_id:"personal",owner:"plugin:personal",user_space_id:"local",product_domain:"personal",agent_id:"mosaic",receipt_state:seq?"in_history":"accepted",execution_state:state,accepted_at:now,revision:seq?4:2,...(seq?{message_seq:seq,hostturn_id:`turn-${request}`}:{})});
 if(new URLSearchParams(location.search).has("receipts")) {
  histories.mosaic = [
- {seq:1,role:"user",content:"这条已收到，处理已经完成。",receipt:fixtureReceipt("done","completed",1)},
+ {seq:1,role:"user",content:"这条消息已经进入助理的上下文。",receipt:{...fixtureReceipt("done","completed",1),read_at:now}},
  {seq:2,role:"assistant",content:"好的，已经整理完成。"},
  {seq:3,role:"user",content:"这条已收到，但处理遇到了错误。",receipt:fixtureReceipt("failed","failed",3)},
- {seq:4,role:"user",content:"宿主重启前已开始处理；结果未知，不会自动重放。",receipt:fixtureReceipt("unknown","unconfirmed",4)}
+ {seq:4,role:"user",content:"宿主重启前已开始处理；结果未知，不会自动重放。",receipt:fixtureReceipt("unknown","unconfirmed",4)},
+ {seq:5,role:"user",content:"这条消息已送达，正在等待进入上下文。",receipt:fixtureReceipt("waiting","running",5)}
  ];
  receiptRows.set("held",{receipt:fixtureReceipt("held","held"),prompt:"附件已经保存在宿主，等我明确继续。",attachments:[{filename:"合成附件.txt",media_type:"text/plain",sha256:"a".repeat(64)}]});
 }

@@ -1570,3 +1570,29 @@ it("freezes current GenUI input for ordinary chat before autosync finishes and a
   expect(retry).toEqual(sent);
   await act(async () => finish({ ...snapshot, surface: { ...snapshot.surface, state: sent.genui_context[0].state, revision: 1 }, acceptedRevision: 1 }));
 });
+
+it("marks the exact message read only after its context receipt and restores it", async () => {
+  let phase: "queued" | "running" | "read" | "failed" = "queued";
+  const base = receiptFixture("context-proof", { execution_state: "queued", revision: 1 });
+  const receipt = () => phase === "queued" ? base : {
+    ...base, receipt_state: "in_history", execution_state: phase === "failed" ? "failed" : "running",
+    message_seq: 3, hostturn_id: "turn-1", revision: phase === "running" ? 2 : phase === "read" ? 3 : 4,
+    ...(phase === "read" || phase === "failed" ? { read_at: "2026-10-31T00:00:00Z" } : {}),
+  };
+  const ui = await mount(undefined, main, [], {
+    open: async () => ({ agent: main, session: { state: "running" }, pending_inputs: phase === "queued" ? [{ receipt: receipt(), prompt: "One message" }] : [] }),
+    history: async () => ({ records: phase === "queued" ? [] : [{ seq: 3, role: "user", content: "One message", receipt: receipt() }] }),
+  });
+  const status = () => ui.container.querySelector<HTMLElement>('[data-receipt-id="receipt-context-proof"]');
+  expect(status()?.dataset.deliveryStatus).toBe("delivered");
+  phase = "running"; await act(async () => ui.publish());
+  await vi.waitFor(() => expect(status()?.dataset.receiptState).toBe("running"));
+  expect(status()?.dataset.deliveryStatus).toBe("delivered");
+  phase = "read"; await act(async () => ui.publish());
+  await vi.waitFor(() => expect(status()?.dataset.deliveryStatus).toBe("read"));
+  phase = "failed"; await act(async () => ui.publish());
+  await vi.waitFor(() => expect(status()?.dataset.receiptState).toBe("failed"));
+  expect(status()?.dataset.deliveryStatus).toBe("read");
+  await ui.remount();
+  expect(status()?.dataset.deliveryStatus).toBe("read");
+});

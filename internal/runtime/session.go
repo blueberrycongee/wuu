@@ -1749,6 +1749,27 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.BeginModelReceipts = beginModelReceipts
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
+	binding := s.UserBinding()
+	if binding.IsUser() && binding.ProductDomain == "personal" {
+		prior := runner.OnModelContext
+		runner.OnModelContext = func(ctx context.Context, messages []providers.ChatMessage) {
+			if prior != nil {
+				prior(ctx, messages)
+			}
+			refs := make([]session.ClientInputContextRef, 0)
+			for _, message := range messages {
+				if message.Role == "user" && message.ClientID != "" && message.Seq > 0 {
+					refs = append(refs, session.ClientInputContextRef{ClientID: message.ClientID, MessageSeq: message.Seq})
+				}
+			}
+			if len(refs) == 0 {
+				return
+			}
+			if err := s.Sessions.WithContext(ctx).MarkClientInputsRead(session.ClientInputScope{Binding: binding, SessionID: id}, refs); err != nil {
+				providers.DebugLogf("record model context read: %v", err)
+			}
+		}
+	}
 	runner.AcquireLoopDriver = s.driverResolver(generation)
 	runner.RequestContextStore = sessionRequestContextStore{sessions: s.Sessions, sessionID: id}
 	runner.CompactionNoteStore = sessionCompactionNoteStore{sessions: s.Sessions, sessionID: id}
@@ -2031,6 +2052,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		DriverBindingStore:          base.DriverBindingStore,
 		DriverCheckpointStore:       base.DriverCheckpointStore,
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
+		OnModelContext:              base.OnModelContext,
 		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
 		SelectedPolicy:              base.SelectedPolicy,

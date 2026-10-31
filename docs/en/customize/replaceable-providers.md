@@ -366,14 +366,18 @@ Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispa
 
 The additive receipt methods (`AcceptClientInput`, `ReadClientInput`,
 `ChangeClientInput`, `AppendAcceptedClientHistoryRecord`,
-`SettleClientInputExecution` and the scoped list/recovery methods) use the same
-selected `session.domain` authority. `SessionDomainAcceptedClientInput` retains
-Go field casing and base64 byte slices, including the distinction between `null`
-and empty bytes. Receipt acceptance, execution state and durable history admission
-are separate facts; none implies that a model saw or read the message. The host
-supplies `SessionDomainClientInputScope` from its immutable binding. Recovery
-reconciles receipt state without replaying tools or external effects. Unsupported
-methods fail explicitly; consumers never reopen a native receipt store.
+`SettleClientInputExecution`, `MarkClientInputsRead`, and the scoped list and
+recovery methods) use the selected `session.domain` authority.
+`SessionDomainAcceptedClientInput` retains Go field casing and base64 byte slices,
+including the distinction between `null` and empty bytes. Acceptance, execution,
+and history admission do not establish that an input was read. The host calls
+`MarkClientInputsRead` when an input's client ID and history sequence occur in an
+assembled agent model context. The provider records the first `read_at` and keeps
+it across retries and restarts. The timestamp does not prove that a model provider
+received the request or produced a response. The host supplies
+`SessionDomainClientInputScope` from its immutable binding. Recovery reconciles
+receipt state without replaying tools or external effects. An unsupported read
+marker leaves the input delivered and does not block the model request.
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 

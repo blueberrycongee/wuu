@@ -2581,7 +2581,10 @@ ${personalReviewStyles}
         const zh = locale?.startsWith("zh");
         const labels2 = zh ? { sending: "\u53D1\u9001\u4E2D", unknown: "\u9001\u8FBE\u72B6\u6001\u5F85\u786E\u8BA4", rejected: "\u53D1\u9001\u5931\u8D25", queued: "\u5DF2\u9001\u8FBE", held: "\u7B49\u5F85\u7EE7\u7EED", running: "\u5DF2\u9001\u8FBE", completed: "\u5DF2\u9001\u8FBE", failed: "\u5904\u7406\u5931\u8D25", interrupted: "\u5904\u7406\u5DF2\u505C\u6B62", cancelled: "\u5DF2\u53D6\u6D88", unconfirmed: "\u5904\u7406\u7ED3\u679C\u5F85\u786E\u8BA4" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered", held: "Awaiting continue", running: "Delivered", completed: "Delivered", failed: "Processing failed", interrupted: "Processing stopped", cancelled: "Cancelled", unconfirmed: "Outcome unconfirmed" };
         if (!labels2[state]) return void 0;
-        return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels2[state]), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "\u7EE7\u7EED" : "Continue"));
+        const read = Boolean(r?.read_at), deliveryStatus = r ? read ? "read" : "delivered" : void 0;
+        const readLabel = zh ? "\u5DF2\u8BFB" : "Read";
+        const label = read && ["queued", "running", "completed"].includes(state) ? readLabel : read && ["failed", "interrupted", "unconfirmed"].includes(state) ? `${readLabel} \xB7 ${labels2[state]}` : labels2[state];
+        return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-delivery-status": deliveryStatus, "data-receipt-id": r?.receipt_id }, h("span", null, label), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "\u7EE7\u7EED" : "Continue"));
       };
       const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
       const [nameOpen, setNameOpen] = React.useState(false);

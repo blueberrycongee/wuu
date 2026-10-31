@@ -853,7 +853,10 @@ export async function activate(api) {
       const zh = locale?.startsWith("zh");
       const labels = zh ? { sending: "发送中", unknown: "送达状态待确认", rejected: "发送失败", queued: "已送达", held: "等待继续", running: "已送达", completed: "已送达", failed: "处理失败", interrupted: "处理已停止", cancelled: "已取消", unconfirmed: "处理结果待确认" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered", held: "Awaiting continue", running: "Delivered", completed: "Delivered", failed: "Processing failed", interrupted: "Processing stopped", cancelled: "Cancelled", unconfirmed: "Outcome unconfirmed" };
       if (!labels[state]) return undefined;
-      return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels[state]), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "继续" : "Continue"));
+      const read = Boolean(r?.read_at), deliveryStatus = r ? read ? "read" : "delivered" : undefined;
+      const readLabel = zh ? "已读" : "Read";
+      const label = read && ["queued", "running", "completed"].includes(state) ? readLabel : read && ["failed", "interrupted", "unconfirmed"].includes(state) ? `${readLabel} · ${labels[state]}` : labels[state];
+      return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-delivery-status": deliveryStatus, "data-receipt-id": r?.receipt_id }, h("span", null, label), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "继续" : "Continue"));
     };
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
     const [nameOpen, setNameOpen] = React.useState(false);
