@@ -1,4 +1,5 @@
 import {
+  type PersonalExecutionFacts, PERSONAL_AUTHORITY_METHODS,
   type RuntimePlugin, credentialStore, configurationStore, pluginSettingsStore,
   artifactStore, dataIndex, queryData, authorize, acquireAuthorization, releaseAuthorization, authorizationServiceDescriptor, managedSessions, projectCoordination,
   CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR, PROCESS_SANDBOX_SERVICE_DESCRIPTOR, type ProcessSandboxRequest, type ProcessSandboxResult,
@@ -154,6 +155,7 @@ export default {
     }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
     const admission = await projectCoordination(host).admission();
-    return {effectFence,stewardship:params.storage_stewardship,grantPolicy:policy,serviceAdmission:params.admission,inspection,settingsInspection,granted,checked,revoked,grantUncertain,protectedPathsEnforced,absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,transferUnsupported,transferUncertain,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    const executionFacts: PersonalExecutionFacts = {session_id:'packed-session',agent_id:'packed-agent',main_session_id:'packed-session',active:true};
+    return {executionFacts,authorityMethods:PERSONAL_AUTHORITY_METHODS,effectFence,stewardship:params.storage_stewardship,grantPolicy:policy,serviceAdmission:params.admission,inspection,settingsInspection,granted,checked,revoked,grantUncertain,protectedPathsEnforced,absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,transferUnsupported,transferUncertain,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;

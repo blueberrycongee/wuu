@@ -119,6 +119,32 @@ async function run() {
   assert.equal(await present('.settings-failure'), false);
   await capture('settings-recovered');
   report.checks.push("actual connection dialog failure → retry → failure → retry → success, diagnostic disclosure and no submission");
+  for (const [theme, font, width] of [["light", 15, 1280], ["dark", 20, 640]]) {
+    win.setContentSize(width, 900);
+    await evaluate(({theme, font}) => { window.feedback.render("notice"); window.feedback.applyAppearance(theme, font); window.feedback.remoteFailure(true); }, {theme, font});
+    await until(async () => !await present('[data-testid="settings-remote-page"]'), "remote unmount before new sample");
+    await evaluate(() => window.feedback.render("remote"));
+    await until(() => present('[data-testid="settings-error-retry"]'), "remote initial failure");
+    assert.equal(await present('[role="switch"]'), false, "unknown state never claims access is disabled");
+    assert.equal(await present('[data-testid="settings-remote-page"]'), false, "unknown state never claims an empty devices list");
+    await target('[data-testid="settings-error-retry"]');
+    await capture(`remote-initial-failure-${theme}-${font}-${width}`);
+    await evaluate(() => window.feedback.remoteFailure(false));
+    await click('[data-testid="settings-error-retry"]');
+    await until(() => present('[role="switch"][aria-checked="true"]'), "remote recovered enabled state");
+    assert.ok(await evaluate(() => document.querySelector('[data-testid="settings-remote-page"]').textContent.includes("Retained phone")));
+    await evaluate(() => window.feedback.remoteFailure(true, true));
+    await until(() => present('[data-testid="settings-error-retry"]'), "cached refresh failure");
+    assert.ok(await present('[role="switch"][aria-checked="true"]'), "refresh failure retains access state");
+    assert.ok(await evaluate(() => document.querySelector('[data-testid="settings-remote-page"]').textContent.includes("Retained phone")), "refresh failure retains devices");
+    await target('[data-testid="settings-error-retry"]');
+    await capture(`remote-cached-failure-${theme}-${font}-${width}`);
+    await evaluate(() => window.feedback.remoteFailure(false));
+    await click('[data-testid="settings-error-retry"]');
+    await until(async () => !await present('[data-testid="settings-error-retry"]'), "remote refresh recovery");
+    await capture(`remote-recovered-${theme}-${font}-${width}`);
+  }
+  report.checks.push("remote first-read failure shows Retry rather than disabled access or empty devices; cached refresh failure preserves access and devices; retry recovers at light 15px/1280 and dark 20px/640");
   await evaluate(() => window.feedback.render('rich'));
   await until(() => present('#fixture-prose a'), "rich link");
   const prose = await evaluate(() => document.querySelector('#fixture-prose').textContent);

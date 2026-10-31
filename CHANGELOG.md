@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Made authenticated input/context receipts an explicitly selected `wuu.client-input-receipts` host capability, available to bound Coding compositions as well as the default Personal composition.
+
 - Add an installable Token Speed example with a fixed-width right-rail readout, compact units and smooth, reduced-motion-aware number transitions. Expose the preview provider's `workspace.rail` slot for compact controls and meters.
 
 - Add scoped Personal Gmail, Notion, Drive, GitHub, Calendar and work-chat adapters with host-only credentials, explicit OAuth entry points, exact-action confirmation, durable unknown-outcome receipts and bounded output/artifacts. Work-resource reads can be explicitly authorized in connection settings. Provider application setup and real-account acceptance remain separate requirements.
@@ -181,6 +183,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Keep unavailable plugin surfaces visible with scoped render retries instead of blank panes or a full application restart; preserve optional wrapper content and diagnostic details.
+- Reject invalid persisted Goal state before committing a plugin replacement, then reload current state at activation so updates made during preparation survive. Discarded candidates leave live goal work untouched, and reload still pauses autonomous goals.
+- Reuse shared inputs, rows and sections in Automation controls, and let Goal controls follow public theme tokens and larger UI text without shrinking action targets.
+- Deduplicate pending advanced-settings commits and keep late save feedback from changing a newer edit or a reopened settings page. Preserve drafts across navigation and whole-settings save refreshes, and allow failed saves to be retried.
+
+- Load MCP settings only while its page is open and discard pending authorization results when leaving the page, preventing a late browser login from opening after navigation.
+- Avoid a spurious inference-journal cleanup failure when a turn is canceled before its first durable model operation is prepared.
+- Bound macOS Computer Use child enumeration and expose incomplete branches when native reads fail or traversal limits are reached. Partial observations no longer report confirmed removals or establish unique-label activation targets.
+- Keep Personal replies in a compact bottom sheet with reversible opening and closing motion, a plain close action outside the scrolling content, and focus restoration after dismissal. Preserve reply drafts and honor reduced-motion preferences.
+- Show Personal desktop send failures consistently as a red outlined retry icon to the right of the message bubble in both main conversations and replies, with reserved space to prevent clipping.
+
 - Wait for asynchronous plugin preparation and activation before confirming development publication, avoiding premature missing-plugin errors from live hosts.
 
 - Keep worker skill catalogs stable when the same workspace is accessed through an equivalent symbolic-link path.

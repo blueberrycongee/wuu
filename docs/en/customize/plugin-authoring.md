@@ -265,6 +265,8 @@ capabilities remain supported; service declarations retain the SDK's v3 selectio
 
 `initialize` only declares contracts. Lifecycle v2 requires a separate `prepare` request after all declarations are bound. Move persisted-state reads and validation from `initialize` into `prepare`, rebuild with the matching SDK, and return `lifecycle_version: 2` in hand-written adapters. An adapter using an older lifecycle is rejected before commit. Providers prepare before consumers; only declared methods marked `preparation: true` may be called during preparation, including nested calls. Marking a method promises no durable writes or external effects. Omitted flags mean active-only methods. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
 
+Preparation can validate persisted state, but the old generation can still change it before activation. Do not use that preparation snapshot as the basis of activation writes: reread and validate the current state, or verify its version under the provider’s actual handoff contract. Discarding a candidate must not write persisted state or cancel the live generation’s work. This does not require every backend to use compare-and-swap, and rereading alone does not fence concurrent writers.
+
 `lifecycle.signal` aborts when shutdown is requested or the transport closes.
 Use it for activation-owned background work and stop timers in shutdown. Cleanup
 may still use the unscoped lifecycle host to persist state or release resources;
@@ -371,7 +373,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.artifact.import` | Import a file or bytes as a thread-owned artifact |
 | `host.user-question.ask` | Ask a structured question during an execution |
 
-Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON.
+Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON. The result describes the completed comparison: `swapped: false` returns the current value, while `swapped: true` returns the replacement value (`null` after deletion).
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
@@ -940,3 +942,58 @@ context and are canceled and drained when the connection's server closes.
 There is no separate package-download cancel RPC. Official and community npm
 packages go through these same public contracts; installation does not grant
 bundled-package privileges.
+
+### Personal execution facts
+
+A replacement `personal.agents@1` provider exposes `observe-execution` with
+`{session_id}` and returns `PersonalExecutionFacts` from the SDK. It resolves its
+own agent, task, requirement revision, run, active/cancelled state, owning routine,
+and exact original human source. The host independently checks session ownership,
+source history, the selected generation and execution grant. These facts do not
+grant permission to execute an action.
+
+For the existing Personal review/memory coordinator, store these durable facts in
+the provider's **user-scoped host storage**, in any key/value format. During an
+effect the coordinator retains the selected provider and holds that storage's
+opaque durable inspection, along with session and review guards. A standalone
+observation is not a transaction or an execution fence. An alternative storage
+backend must preserve the host storage inspection contract; an in-memory cache
+must not become an independent authority for these observations.
+
+`legacy-memory` returns a map of legacy record IDs to their serialized values for
+migration into the selected memory journal, or an empty object if none exist.
+The coordinator never interprets another plugin's private storage keys. Neither
+method writes state or restarts a task. A disabled or unavailable provider must
+not be replaced with a hidden bundled fallback.
+
+If the same runtime also calls back into `host.personal` (for example from a memory
+operation), include `personal.agents` in its SDK `concurrentServices`: the host may
+read these facts before completing the original call. Do not queue that read
+behind the invocation waiting for the host. Keep mutations synchronized through
+storage and the inspection contract rather than serializing the entire service.
+
+### Personal account provider lifecycle
+
+Calendar and connector operations use the selected `personal.accounts@1` service.
+The Personal bundle selects `wuu.personal-account-client` and the native
+`wuu.personal-accounts` provider; a composition can bind the client to another
+provider or disable the native module without an implicit fallback.
+
+Its `call` method accepts `{operation, input, session_id?}` using the calendar and
+connector operation names of `host.personal`. The host resolves the execution
+session, checks resource policy, and requires live owner admission for account
+controls before calling the selected service. A serialized session ID is not
+permission. Results are `{value}` or `{calendar_error: {code,
+persistence_failed?}}` / `{connector_error: {code}}`; transport and admission
+failures remain service errors. Credentials and authorization URLs are not
+returned through this contract.
+
+Native embeddings configure `RuntimeBindings.SetPersonalAccountsFactory` before
+creating the runtime. The factory creates fresh account resources only on the
+first call to that selected generation. It must not return a broker already owned
+by another generation. The provider declares its credential dependency and owns
+its OAuth attempts and cleanup. Accepted calls retain their exact graph until
+completion; closing an old generation cannot close the new generation's broker.
+`NewUserHost` with runtime bindings does not accept preconstructed account brokers.
+The review/memory coordinator and native file-review gate are separate from this
+account service.
