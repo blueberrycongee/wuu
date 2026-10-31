@@ -377,6 +377,8 @@ Most kernel services use method `call`. Storage is not a transaction across keys
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
+Owned `host.session.list` results and `host.session.inspect` for a session owned by the calling plugin include `creation_request_id` when available. It is the original `host.session.create` request ID, including before the first turn starts, so a plugin can discover an accepted creation whose response was lost. Shared lists and inspection of another owner’s session omit it. This is correlation metadata, not authority to control the session.
+
 For `host.session.send`, `session_send_unavailable` means the host had no send
 handler and did not dispatch this call. After the service recovers, an explicit
 retry may release that unaccepted request identity. This code is reserved for
@@ -398,6 +400,8 @@ A turn carrying `tool_policy` is a separate execution boundary: it cannot steer 
 A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
 
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
+
+Subagent and Peers qualify tool-call identities with the host-supplied session, tool, call ID, turn ID and step index when available; transport execution IDs do not define retries. Calls without turn and step metadata retain their legacy mapping. Persisted requests continue recovery using their stored IDs; missing historical turn/step identity is not inferred. Peers' existing content-duplicate and uncertain-send matching remain separate policies.
 
 #### Live session progress
 

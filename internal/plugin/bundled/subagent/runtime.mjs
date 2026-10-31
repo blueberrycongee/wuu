@@ -2,6 +2,7 @@
 
 // plugins/subagent/src/index.ts
 import { createHash, randomBytes } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 // packages/plugin-sdk/src/execution-backend.ts
 var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -865,6 +866,9 @@ var interruptCapability = "agent.turn.interrupted";
 var taskIndexKey = "tasks.v2";
 var maxTaskRecords = 128;
 var foregroundAwaitBudgetMS = 10 * 60 * 1e3;
+var maintenanceIntervalMS = 1e4;
+var maintenanceTimeoutMS = 3e4;
+var deliveryClaimLeaseMS = 3e4;
 var stringField = (description) => ({ type: "string", description });
 var objectSchema = (properties, ...required) => ({ type: "object", properties, required });
 var textResult = (value) => ({ result: { content: [{ type: "text", text: JSON.stringify(value) }] } });
@@ -872,6 +876,8 @@ var terminalState = (state) => ["completed", "failed", "interrupted", "discarded
 var SubagentPlugin = class {
   concurrentCapabilities = [promptCapability, clientCapability];
   indexQueue = Promise.resolve();
+  stop = new AbortController();
+  maintenance;
   transitionQueue = Promise.resolve();
   initialize() {
     const services = [
@@ -881,7 +887,7 @@ var SubagentPlugin = class {
       "host.session.cancel",
       "host.session.inspect",
       "host.storage.get",
-      "host.storage.set",
+      "host.storage.compare_exchange",
       "host.storage.keys",
       "host.storage.delete"
     ];
@@ -931,6 +937,37 @@ var SubagentPlugin = class {
       required_services: services.map(requireKernelService)
     };
   }
+  async activate(host, lifecycle) {
+    const signal = AbortSignal.any([lifecycle.signal, this.stop.signal]);
+    try {
+      await this.reconcileRequests(host);
+    } catch {
+    }
+    this.maintenance = (async () => {
+      while (!signal.aborted) {
+        try {
+          await delay(maintenanceIntervalMS, void 0, { signal });
+        } catch {
+          break;
+        }
+        const runSignal = AbortSignal.any([signal, AbortSignal.timeout(maintenanceTimeoutMS)]);
+        const scoped = {
+          supports: (method) => host.supports(method),
+          call: (method, params, options) => host.call(method, params, {
+            signal: AbortSignal.any([runSignal, ...options?.signal ? [options.signal] : []])
+          })
+        };
+        try {
+          await this.reconcileRequests(scoped);
+        } catch {
+        }
+      }
+    })();
+  }
+  async shutdown() {
+    this.stop.abort();
+    await this.maintenance;
+  }
   async executeTool(call, host, execution) {
     switch (call.tool_id) {
       case "spawn_agent":
@@ -951,7 +988,7 @@ var SubagentPlugin = class {
     const parentSessionID = call.session_id;
     const background = args.run_in_background ?? true;
     const name = args.name?.trim() || deriveTaskName(args.description);
-    const requestID = randomBytes(12).toString("hex");
+    const requestID = toolRequestID(call);
     let context = "fresh";
     switch (args.context?.trim() ?? "") {
       case "":
@@ -966,7 +1003,7 @@ var SubagentPlugin = class {
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
     const { record, sent } = await this.withTransition(execution, async () => {
-      const record2 = await this.createTask(host, {
+      const params = {
         request_id: `create-${requestID}`,
         name,
         visibility: "plugin",
@@ -975,29 +1012,48 @@ var SubagentPlugin = class {
         workspace,
         model_alias: args.model?.trim(),
         instructions: workerInstructions(args.subagent_type?.trim())
-      }, {
-        session_id: "",
-        parent_session_id: parentSessionID,
-        parent_turn_id: call.turn_id,
-        name,
-        request_id: `turn-${requestID}`,
-        state: "created"
+      };
+      const digest = hash(JSON.stringify({ params, prompt: args.prompt.trim() }));
+      const beforeReservation = (await this.readIndex(host)).index;
+      if (beforeReservation.records.length >= maxTaskRecords) {
+        const { sessions } = await host.call("host.session.list", { scope: "owned" });
+        const owned = new Set(sessions.map((session) => session.session_id));
+        const missing = new Set(beforeReservation.records.filter((record3) => record3.session_id && !owned.has(record3.session_id)).map((record3) => record3.session_id));
+        await this.updateIndex(host, (index) => {
+          for (const record3 of index.records) {
+            if (!missing.has(record3.session_id)) continue;
+            record3.state = "discarded";
+            record3.cancelled = true;
+            record3.suppress_completion = true;
+            record3.cancel_pending = false;
+            record3.admitting = false;
+          }
+        });
+      }
+      const record2 = await this.updateIndex(host, (index) => {
+        const prior = index.records.find((record3) => record3.creation?.request_id === params.request_id);
+        if (prior) {
+          if (prior.creation.digest !== digest) throw new Error("subagent tool call identity was reused with different input");
+          return prior;
+        }
+        trimIndex(index, maxTaskRecords - 1);
+        const reserved = {
+          session_id: "",
+          parent_session_id: parentSessionID,
+          parent_turn_id: call.turn_id,
+          name,
+          request_id: `turn-${requestID}`,
+          state: "created",
+          creation: { request_id: params.request_id, digest, params, prompt: args.prompt.trim() }
+        };
+        index.records.push(reserved);
+        return reserved;
       });
-      const sent2 = await host.call("host.session.send", {
-        request_id: record2.request_id,
-        session_id: record2.session_id,
-        input: { prompt: args.prompt.trim() },
-        presentation: { kind: "query_bubble", text: `\u5B50\u4EFB\u52A1 ${name} \u5DF2\u5F00\u59CB`, name },
-        cause: "subagent.task"
-      });
-      record2.state = sent2.state;
-      record2.turn_id = sent2.turn_id;
-      record2.queue_id = sent2.queue_id;
-      await this.saveRecord(host, record2);
-      return { record: record2, sent: sent2 };
+      const current = await this.resumeTask(host, record2);
+      return { record: current, sent: { state: current.state } };
     });
     const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
-    if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
+    if (background || record.suppress_completion) return textResult({ ...identity, state: sent.state, backgrounded: true });
     const inspected = await host.call("host.session.inspect", {
       session_id: record.session_id,
       request_id: record.request_id,
@@ -1014,13 +1070,12 @@ var SubagentPlugin = class {
     }
     const completed = inspected.turn;
     await this.withTransition(execution, async () => {
-      const current = await this.loadRecord(host, "session_id", record.session_id);
-      if (!current || current.request_id !== record.request_id) return;
-      current.state = completed.state;
-      current.turn_id = completed.turn_id;
-      current.queue_id = completed.queue_id;
-      current.suppress_completion = true;
-      await this.saveRecord(host, current);
+      await this.changeRecord(host, taskKey(record), record.request_id, (current) => {
+        current.state = completed.state;
+        current.turn_id = completed.turn_id;
+        current.queue_id = completed.queue_id;
+        current.suppress_completion = true;
+      });
     });
     return textResult({
       ...identity,
@@ -1032,36 +1087,50 @@ var SubagentPlugin = class {
   }
   async sendMessage(host, call) {
     const args = call.arguments;
+    if (!args.message?.trim()) throw new Error("send_message requires a message");
     const record = await this.resolveTask(host, call.session_id ?? "", args.target);
-    const previousRequestID = record.request_id;
-    record.request_id = `turn-${randomBytes(12).toString("hex")}`;
-    record.parent_session_id = call.session_id ?? "";
-    record.parent_turn_id = call.turn_id;
-    record.suppress_completion = false;
-    record.state = "created";
-    await this.saveRecord(host, record);
-    const sent = await host.call("host.session.send", {
-      request_id: record.request_id,
-      session_id: record.session_id,
-      input: { prompt: args.message?.trim() ?? "" },
-      presentation: { kind: "query_bubble", text: "\u7236\u4EFB\u52A1\u5DF2\u66F4\u65B0\u8981\u6C42", name: record.name },
-      cause: "subagent.followup",
-      if_running: "steer"
+    const id = `turn-${toolRequestID(call)}`;
+    const digest = hash(JSON.stringify({ target: record.session_id, message: args.message.trim() }));
+    const next = await this.changeRecord(host, taskKey(record), void 0, (current2) => {
+      const prior = current2.followup_calls?.find((call2) => call2.id === id);
+      if (prior) {
+        if (prior.digest !== digest) throw new Error("subagent tool call identity was reused with different input");
+        return;
+      }
+      if ((current2.followup_calls?.length ?? 0) >= maxTaskRecords) throw new Error("subagent follow-up receipt capacity reached; start a new bounded task");
+      if (!current2.session_id || current2.admitting || current2.cancel_pending || current2.continuation) throw new Error("subagent admission or cancellation is pending; retry after it settles");
+      archiveCompletion(current2);
+      current2.followup_calls = [...current2.followup_calls ?? [], { id, digest }];
+      current2.followup = { id, digest, previous_request_id: current2.request_id, prompt: args.message.trim() };
+      current2.request_id = id;
+      current2.parent_session_id = call.session_id ?? "";
+      current2.parent_turn_id = call.turn_id;
+      current2.suppress_completion = false;
+      current2.cancelled = false;
+      current2.completion = void 0;
+      current2.state = "created";
+      current2.turn_id = void 0;
+      current2.queue_id = void 0;
     });
-    if (sent.steered) record.request_id = previousRequestID;
-    record.state = sent.state;
-    record.turn_id = sent.turn_id;
-    record.queue_id = sent.queue_id;
-    await this.saveRecord(host, record);
-    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
+    if (!next) throw new Error("subagent task is no longer retained");
+    if (next.followup?.id !== id) {
+      const inspected = await host.call("host.session.inspect", { session_id: next.session_id, request_id: id, wait: "none" });
+      return textResult({ session_id: next.session_id, state: inspected.turn?.state ?? next.state, steered: next.followup_calls?.find((call2) => call2.id === id)?.steered ?? false });
+    }
+    const current = await this.resumeTask(host, next);
+    return textResult({ session_id: current.session_id, state: current.state, steered: current.followup?.steered ?? false });
   }
   async closeAgent(host, call) {
     const { target } = call.arguments;
     const record = await this.resolveTask(host, call.session_id ?? "", target);
-    record.suppress_completion = true;
-    await this.saveRecord(host, record);
-    const result = await host.call("host.session.cancel", { session_id: record.session_id, turn_id: record.turn_id, queue_id: record.queue_id });
-    return textResult({ session_id: result.session_id, cancelled: result.cancelled });
+    const cancelled = await this.dismiss(host, record);
+    const superseded = !cancelled || cancelled.request_id !== record.request_id || !cancelledTask(cancelled);
+    return textResult({
+      session_id: cancelled?.session_id ?? record.session_id,
+      cancelled: !superseded && !cancelled?.cancel_pending,
+      cancel_pending: !superseded && !!cancelled?.cancel_pending,
+      ...superseded ? { superseded: true } : {}
+    });
   }
   async invokeCapability(call, host) {
     switch (call.capability) {
@@ -1084,84 +1153,257 @@ var SubagentPlugin = class {
     return { output: {} };
   }
   async onLifecycle(host, input) {
+    const { index } = await this.readIndex(host);
+    const delivery = index.records.find((record2) => completions(record2).some((completion) => (completion.parent_session_id ?? record2.parent_session_id) === input.thread_id && completion.request_id === input.request_id));
+    if (delivery) {
+      await this.changeCompletion(host, taskKey(delivery), input.request_id, (completion) => {
+        if (input.state === "running" || terminalState(input.state) && !(input.state === "discarded" && input.retryable)) completion.delivered = true;
+        if (input.state === "discarded" && input.retryable) completion.claimed_at = void 0;
+      });
+      if (input.state === "discarded" && input.retryable) {
+        await this.deliverCompletion(host, delivery, input.request_id);
+        return;
+      }
+    }
     if (!terminalState(input.state)) return;
-    let record = await this.loadRecord(host, "request_id", input.request_id);
+    if (index.records.some((record2) => record2.session_id === input.thread_id && record2.continuation?.previous_request_id === input.request_id)) throw new Error("subagent continuation admission is pending; retry terminal delivery");
+    let record = index.records.find((record2) => record2.session_id === input.thread_id && record2.request_id === input.request_id);
     if (!record) {
+      const historical = index.records.find((value) => value.session_id === input.thread_id && value.pending_completions?.some((completion) => completion.source_request_id === input.request_id));
+      if (historical) {
+        await this.deliverCompletion(host, historical, historical.pending_completions.find((completion) => completion.source_request_id === input.request_id).request_id);
+        return;
+      }
       await this.reconcileOwnedSessions(host);
-      record = await this.loadRecord(host, "request_id", input.request_id);
+      record = (await this.readIndex(host)).index.records.find((record2) => record2.session_id === input.thread_id && record2.request_id === input.request_id);
     }
     if (!record) return;
-    record.state = input.state;
-    await this.saveRecord(host, record);
-    if (record.suppress_completion) return this.deleteRecord(host, record.session_id);
-    const output = input.final_output?.trim() || input.error?.trim() || "\u5B50\u4EFB\u52A1\u5DF2\u7ED3\u675F\uFF0C\u4F46\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\u7ED3\u679C\u3002";
-    const deliveryID = `deliver-${createHash("sha256").update(`subagent.completion\0${input.request_id.trim()}`).digest("hex").slice(0, 24)}`;
-    const parentID = record.parent_session_id.trim();
-    const parent = parentID ? await this.loadRecord(host, "session_id", parentID) : void 0;
-    const continuation = parent?.parent_session_id?.trim() ? {
-      session_id: parentID,
-      parent_session_id: parent.parent_session_id,
-      name: parent.name,
-      request_id: deliveryID,
-      state: "created"
-    } : void 0;
-    if (continuation) await this.saveRecord(host, continuation);
-    let sent;
+    const current = await this.changeRecord(host, taskKey(record), input.request_id, (current2) => {
+      current2.state = input.state;
+      if (!current2.suppress_completion && !current2.completion) current2.completion = {
+        request_id: `deliver-${hash(`subagent.completion\0${input.thread_id}\0${input.request_id.trim()}`).slice(0, 24)}`,
+        source_request_id: current2.request_id,
+        state: input.state,
+        parent_session_id: current2.parent_session_id,
+        parent_turn_id: current2.parent_turn_id
+      };
+    });
+    if (current) await this.deliverCompletion(host, current);
+  }
+  async deliverCompletion(host, record, deliveryID = record.completion?.request_id) {
+    if (!deliveryID) return;
+    const claimedAt = Date.now();
+    const claimed = await this.updateIndex(host, (index) => {
+      const current2 = index.records.find((item) => taskKey(item) === taskKey(record));
+      if (!current2 || cancelledTask(current2)) return;
+      const completion2 = completions(current2).find((value) => value.request_id === deliveryID);
+      if (!completion2 || completion2.delivered || current2.completion === completion2 && current2.suppress_completion) return;
+      if (completion2.claimed_at && claimedAt - completion2.claimed_at < deliveryClaimLeaseMS) return;
+      completion2.claimed_at = claimedAt;
+      return { record: current2, completion: completion2 };
+    });
+    if (!claimed) return;
+    const { record: current, completion } = claimed;
+    const parentID = completion.parent_session_id ?? current.parent_session_id;
     try {
-      sent = await host.call("host.session.send", {
-        request_id: deliveryID,
-        session_id: record.parent_session_id,
-        reply_to_turn_id: record.parent_turn_id,
-        input: { prompt: `\u5B50\u4EFB\u52A1 ${record.name} \u5DF2${lifecycleLabel(input.state)}\u3002\u8BF7\u68C0\u67E5\u5E76\u6574\u5408\u4EE5\u4E0B\u4EA4\u63A5\u7ED3\u679C\uFF1A
-
-${output}` },
-        presentation: { kind: "query_bubble", text: `\u5B50\u4EFB\u52A1 ${record.name} \u5DF2\u66F4\u65B0`, name: record.name, related_session_id: record.session_id },
+      const inspected = await host.call("host.session.inspect", { session_id: parentID, request_id: completion.request_id, wait: "none" });
+      if (inspected.turn && terminalState(inspected.turn.state) && !(inspected.turn.state === "discarded" && inspected.turn.retryable)) {
+        await this.changeCompletion(host, taskKey(current), deliveryID, (value) => {
+          value.delivered = true;
+        });
+        return;
+      }
+      if (inspected.turn && ["queued", "running"].includes(inspected.turn.state)) return;
+      const latest = await this.loadTask(host, taskKey(current));
+      if (!latest || cancelledTask(latest) || !completions(latest).some((value) => value.request_id === deliveryID && !value.delivered)) return;
+      const parent = await this.loadRecord(host, "session_id", parentID);
+      if (parent && cancelledTask(parent)) return;
+      const source = { session_id: current.session_id, request_id: completion.source_request_id ?? current.request_id, name: current.name, state: completion.state ?? current.state };
+      const output = completion.output ?? await this.completionOutput(host, source.session_id, source.request_id);
+      const params = {
+        request_id: completion.request_id,
+        session_id: parentID,
+        reply_to_turn_id: completion.source_request_id ? completion.parent_turn_id : current.parent_turn_id,
+        input: { prompt: completionPrompt(source.name, source.state, output) },
+        presentation: { kind: "query_bubble", text: `\u5B50\u4EFB\u52A1 ${current.name} \u5DF2\u66F4\u65B0`, name: current.name, related_session_id: current.session_id },
         cause: "subagent.completion",
         if_running: "steer"
+      };
+      let continuation;
+      if (parent?.parent_session_id) {
+        continuation = await this.changeRecord(host, taskKey(parent), parent.request_id, (value) => {
+          if (cancelledTask(value)) return;
+          if (value.continuation && value.continuation.params.request_id !== completion.request_id) throw new Error("parent continuation admission is pending; retry child feedback");
+          if (!value.continuation) {
+            archiveCompletion(value);
+            value.continuation = {
+              previous_request_id: value.request_id,
+              previous_state: value.state,
+              params: completion.output === void 0 ? { ...params, input: { prompt: "" } } : params,
+              ...completion.output === void 0 ? { source } : {}
+            };
+          }
+          value.request_id = completion.request_id;
+          value.suppress_completion = false;
+          value.state = "created";
+        });
+        if (!continuation || cancelledTask(continuation)) return;
+      }
+      const sent = await host.call("host.session.send", params);
+      if (continuation) await this.settleSend(host, continuation, sent);
+      if (sent.state === "running" && !sent.steered || terminalState(sent.state)) {
+        await this.changeCompletion(host, taskKey(current), deliveryID, (value) => {
+          value.delivered = true;
+        });
+      }
+    } finally {
+      await this.changeCompletion(host, taskKey(current), deliveryID, (value) => {
+        if (value.claimed_at === claimedAt) value.claimed_at = void 0;
       });
-    } catch (error) {
-      if (continuation && parent) {
-        try {
-          await this.saveRecord(host, parent);
-        } catch (restoreError) {
-          throw new AggregateError([error, restoreError], `${String(error)}; restoring parent task: ${String(restoreError)}`);
-        }
-      }
-      throw error;
     }
-    if (continuation && parent) {
-      if (sent.steered) await this.saveRecord(host, parent);
-      else {
-        continuation.state = sent.state;
-        await this.saveRecord(host, continuation);
-      }
-    }
-    await this.deleteRecord(host, record.session_id);
+  }
+  async completionOutput(host, sessionID, requestID) {
+    const { turn } = await host.call("host.session.inspect", { session_id: sessionID, request_id: requestID, wait: "none" });
+    if (!turn || !terminalState(turn.state)) throw new Error("subagent terminal receipt is unavailable; retry feedback delivery");
+    return turn.final_output?.trim() || turn.error?.trim() || "\u5B50\u4EFB\u52A1\u5DF2\u7ED3\u675F\uFF0C\u4F46\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\u7ED3\u679C\u3002";
+  }
+  changeCompletion(host, key, deliveryID, mutate) {
+    return this.changeRecord(host, key, void 0, (current) => {
+      const completion = completions(current).find((value) => value.request_id === deliveryID);
+      if (completion) mutate(completion);
+      current.pending_completions = current.pending_completions?.filter((value) => !value.delivered);
+    });
   }
   async onInterrupted(host, input) {
     if (!input.thread_id?.trim() || !input.turn_id?.trim()) return;
-    const listed = await host.call("host.session.list", { parent_session_id: input.thread_id });
-    for (const child of listed.sessions ?? []) {
-      const record = await this.loadRecord(host, "session_id", child.session_id);
-      if (!record || record.parent_turn_id?.trim() !== input.turn_id.trim()) continue;
-      record.suppress_completion = true;
-      await this.saveRecord(host, record);
-      const result = await host.call("host.session.cancel", { session_id: record.session_id, turn_id: record.turn_id, queue_id: record.queue_id });
-      if (result.cancelled) {
-        record.state = "interrupted";
-        await this.saveRecord(host, record);
+    const { index } = await this.readIndex(host);
+    for (const record of index.records) {
+      if (record.parent_session_id === input.thread_id && record.parent_turn_id === input.turn_id) await this.dismiss(host, record);
+    }
+  }
+  async dismiss(host, record) {
+    const current = await this.changeRecord(host, taskKey(record), record.request_id, (current2) => {
+      current2.suppress_completion = true;
+      current2.cancelled = true;
+      current2.cancel_pending = true;
+      current2.state = "interrupted";
+    });
+    return current ? this.cancelTask(host, current) : void 0;
+  }
+  async cancelTask(host, record) {
+    let current = await this.loadTask(host, taskKey(record));
+    if (!current?.cancel_pending) return current ?? record;
+    if (!current.session_id && current.creation?.started) {
+      const { sessions } = await host.call("host.session.list", { scope: "owned" });
+      const found = sessions.find((session) => session.creation_request_id === current.creation.request_id);
+      if (!found) return current;
+      current = await this.changeRecord(host, taskKey(current), current.request_id, (value) => {
+        value.session_id = found.session_id;
+      }) ?? current;
+    }
+    if (current.session_id) {
+      try {
+        const inspected = await host.call("host.session.inspect", { session_id: current.session_id, request_id: current.request_id, wait: "none" });
+        if (inspected.turn && !terminalState(inspected.turn.state)) {
+          if (!inspected.turn.turn_id && !inspected.turn.queue_id) return current;
+          const result = await host.call("host.session.cancel", {
+            session_id: current.session_id,
+            turn_id: inspected.turn.turn_id,
+            queue_id: inspected.turn.queue_id
+          });
+          if (!result.cancelled) return current;
+        } else if (!inspected.turn && current.admitting) return current;
+      } catch {
+        return current;
       }
     }
+    return await this.changeRecord(host, taskKey(current), current.request_id, (value) => {
+      value.cancel_pending = false;
+      value.admitting = false;
+    }) ?? current;
+  }
+  async resumeTask(host, record) {
+    let current = await this.loadTask(host, taskKey(record));
+    if (!current) throw new Error("subagent task is no longer retained");
+    if (current.suppress_completion) return this.cancelTask(host, current);
+    if (!current.session_id && current.creation) {
+      current = await this.changeRecord(host, taskKey(current), current.request_id, (value) => {
+        if (!value.suppress_completion) value.creation.started = true;
+      });
+      if (!current) throw new Error("subagent request was replaced");
+      if (current.suppress_completion) return this.cancelTask(host, current);
+      const created = await host.call("host.session.create", current.creation.params);
+      current = await this.changeRecord(host, taskKey(current), current.request_id, (value) => {
+        value.session_id = created.session_id;
+      });
+      if (!current) throw new Error("subagent request was replaced");
+    }
+    if (current.suppress_completion) return this.cancelTask(host, current);
+    if (current.state !== "created" || !current.continuation && current.followup?.settled) return current;
+    current = await this.changeRecord(host, taskKey(current), current.request_id, (value) => {
+      if (!value.suppress_completion) value.admitting = true;
+    });
+    if (!current) throw new Error("subagent request was replaced");
+    if (current.suppress_completion) return this.cancelTask(host, current);
+    let continuationParams = current.continuation?.params;
+    if (current.continuation?.source) {
+      const source = current.continuation.source;
+      const output = await this.completionOutput(host, source.session_id, source.request_id);
+      continuationParams = { ...current.continuation.params, input: { prompt: completionPrompt(source.name, source.state, output) } };
+    }
+    const sent = await host.call("host.session.send", continuationParams ?? {
+      request_id: current.request_id,
+      session_id: current.session_id,
+      input: { prompt: current.followup?.prompt ?? current.creation.prompt },
+      presentation: { kind: "query_bubble", text: current.followup ? "\u7236\u4EFB\u52A1\u5DF2\u66F4\u65B0\u8981\u6C42" : `\u5B50\u4EFB\u52A1 ${current.name} \u5DF2\u5F00\u59CB`, name: current.name },
+      cause: current.followup ? "subagent.followup" : "subagent.task",
+      ...current.followup ? { if_running: "steer" } : {}
+    });
+    current = await this.settleSend(host, current, sent);
+    if (!current) throw new Error("subagent request was replaced");
+    if (current.suppress_completion) return this.cancelTask(host, current);
+    return current;
+  }
+  settleSend(host, record, sent) {
+    return this.updateIndex(host, (index) => {
+      const current = index.records.find((value) => taskKey(value) === taskKey(record));
+      if (!current) return;
+      if (current.request_id !== record.request_id) return current.followup?.id === record.request_id && current.followup.settled ? current : void 0;
+      current.admitting = false;
+      if (!current.continuation && !sent.steered) {
+        if (current.followup) current.followup.prompt = "";
+        else if (current.creation) current.creation.prompt = "";
+      }
+      current.turn_id = sent.turn_id;
+      current.queue_id = sent.queue_id;
+      if (!current.suppress_completion && current.state === "created") current.state = sent.state;
+      if (current.continuation) {
+        if (sent.steered) {
+          current.request_id = current.continuation.previous_request_id;
+          if (!current.suppress_completion) current.state = current.continuation.previous_state;
+        }
+        current.continuation = void 0;
+      } else if (current.followup) {
+        current.followup.settled = true;
+        current.followup.steered = sent.steered ?? false;
+        const call = current.followup_calls?.find((call2) => call2.id === current.followup.id);
+        if (call) call.steered = sent.steered ?? false;
+        if (sent.steered) current.request_id = current.followup.previous_request_id;
+      }
+      return current;
+    });
   }
   async resolveTask(host, parentID, target) {
     target = target?.trim() ?? "";
+    const { index } = await this.readIndex(host);
+    const records = index.records.filter((record) => record.parent_session_id === parentID.trim() && (record.session_id === target || record.name === target));
+    if (records.length > 1) throw new Error(`task name ${JSON.stringify(target)} is ambiguous; use the session id`);
+    if (records.length === 1) return records[0];
     const listed = await host.call("host.session.list", { parent_session_id: parentID.trim() });
-    const matches = (listed.sessions ?? []).filter((item) => item.session_id === target || item.name === target);
+    const matches = listed.sessions.filter((item) => item.session_id === target || item.name === target);
     if (matches.length > 1) throw new Error(`task name ${JSON.stringify(target)} is ambiguous; use the session id`);
+    if (!matches[0]) throw new Error(`child session ${JSON.stringify(target)} not found`);
     const match = matches[0];
-    if (!match) throw new Error(`child session ${JSON.stringify(target)} not found`);
-    const record = await this.loadRecord(host, "session_id", match.session_id);
-    if (record) return record;
     const inspected = await host.call("host.session.inspect", { session_id: match.session_id, wait: "none" });
     const recovered = {
       session_id: match.session_id,
@@ -1172,27 +1414,62 @@ ${output}` },
       queue_id: inspected.turn?.queue_id,
       state: inspected.turn?.state ?? match.state
     };
-    if (recovered.request_id.trim()) await this.saveRecord(host, recovered);
+    await this.updateIndex(host, (index2) => {
+      if (!index2.records.some((record) => record.session_id === recovered.session_id)) index2.records.push(recovered);
+      trimIndex(index2, maxTaskRecords);
+    });
     return recovered;
   }
   async reconcileOwnedSessions(host) {
     const listed = await host.call("host.session.list", { scope: "owned" });
-    for (const child of listed.sessions ?? []) {
+    for (const child of listed.sessions) {
       if (await this.loadRecord(host, "session_id", child.session_id)) continue;
       const { turn } = await host.call("host.session.inspect", { session_id: child.session_id, wait: "none" });
       if (!turn || terminalState(turn.state) || !turn.request_id?.trim()) continue;
-      await this.saveRecord(host, {
-        session_id: child.session_id,
-        parent_session_id: child.parent_session_id ?? "",
-        name: child.name ?? "",
-        request_id: turn.request_id,
-        turn_id: turn.turn_id,
-        queue_id: turn.queue_id,
-        state: turn.state
+      await this.updateIndex(host, (index) => {
+        if (!index.records.some((record) => record.session_id === child.session_id)) index.records.push({
+          session_id: child.session_id,
+          parent_session_id: child.parent_session_id ?? "",
+          name: child.name ?? "",
+          request_id: turn.request_id,
+          turn_id: turn.turn_id,
+          queue_id: turn.queue_id,
+          state: turn.state
+        });
+        trimIndex(index, maxTaskRecords);
       });
     }
   }
-  // Serialize state transitions, leaving foreground waits outside the lock.
+  async reconcileRequests(host) {
+    const { index } = await this.readIndex(host);
+    for (const record of index.records) {
+      try {
+        if (record.cancel_pending) {
+          await this.cancelTask(host, record);
+          continue;
+        }
+        if (cancelledTask(record)) continue;
+        for (const completion of completions(record)) {
+          if (!completion.delivered) {
+            try {
+              await this.deliverCompletion(host, record, completion.request_id);
+            } catch {
+            }
+          }
+        }
+        if (record.suppress_completion) continue;
+        if (record.state === "created" && (record.creation || record.followup || record.continuation)) {
+          await this.resumeTask(host, record);
+          continue;
+        }
+        if (!record.session_id || record.completion) continue;
+        const { turn } = await host.call("host.session.inspect", { session_id: record.session_id, request_id: record.request_id, wait: "none" });
+        if (turn && terminalState(turn.state)) await this.onLifecycle(host, { ...turn, request_id: record.request_id, thread_id: record.session_id });
+      } catch {
+      }
+    }
+  }
+  // Local ordering complements CAS; it is not the cross-generation authority.
   withTransition(execution, operation) {
     const next = this.transitionQueue.then(() => {
       execution.signal.throwIfAborted();
@@ -1201,92 +1478,86 @@ ${output}` },
     this.transitionQueue = next.catch(() => void 0);
     return next;
   }
-  withIndex(operation) {
-    const next = this.indexQueue.then(operation);
+  updateIndex(host, mutate) {
+    const next = this.indexQueue.then(async () => {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const { index, value } = await this.readIndex(host);
+        const result = mutate(index);
+        const swapped = await host.call("host.storage.compare_exchange", { scope: "workspace", key: taskIndexKey, expected: value, value: JSON.stringify(index) });
+        if (swapped.swapped) return result;
+      }
+      throw new Error("subagent task state changed too frequently; retry");
+    });
     this.indexQueue = next.catch(() => void 0);
     return next;
   }
-  createTask(host, params, record) {
-    return this.withIndex(async () => {
-      const index = await this.readIndex(host);
-      if (index.records.length >= maxTaskRecords) await this.refreshIndex(host, index);
-      trimIndex(index, maxTaskRecords - 1);
-      const created = await host.call("host.session.create", params);
-      record.session_id = created.session_id;
-      index.records.push(record);
-      await this.writeIndex(host, index);
+  changeRecord(host, key, requestID, mutate) {
+    return this.updateIndex(host, (index) => {
+      const record = index.records.find((record2) => taskKey(record2) === key && (requestID === void 0 || record2.request_id === requestID));
+      if (record) mutate(record);
       return record;
     });
   }
-  async refreshIndex(host, index) {
-    const listed = await host.call("host.session.list", { scope: "owned" });
-    const owned = new Set((listed.sessions ?? []).map((child) => child.session_id));
-    const kept = [];
-    for (const record of index.records) {
-      if (record.state !== "created" && !terminalState(record.state)) {
-        if (!owned.has(record.session_id)) continue;
-        const inspected = await host.call("host.session.inspect", { session_id: record.session_id, request_id: record.request_id, wait: "none" });
-        if (inspected.turn) record.state = inspected.turn.state;
-        else if (terminalState(inspected.session.state)) continue;
-      }
-      kept.push(record);
-    }
-    index.records = kept;
+  async loadTask(host, key) {
+    return (await this.readIndex(host)).index.records.find((record) => taskKey(record) === key);
   }
-  saveRecord(host, record) {
-    return this.withIndex(async () => {
-      const index = await this.readIndex(host);
-      index.records = index.records.filter((existing) => existing.session_id !== record.session_id && (!record.request_id || existing.request_id !== record.request_id));
-      index.records.push(record);
-      trimIndex(index, maxTaskRecords);
-      await this.writeIndex(host, index);
-    });
-  }
-  loadRecord(host, key, value) {
-    return this.withIndex(async () => (await this.readIndex(host)).records.find((record) => record[key] === value.trim()));
-  }
-  deleteRecord(host, sessionID) {
-    return this.withIndex(async () => {
-      const index = await this.readIndex(host);
-      index.records = index.records.filter((record) => record.session_id !== sessionID.trim());
-      await this.writeIndex(host, index);
-    });
+  async loadRecord(host, key, value) {
+    return (await this.readIndex(host)).index.records.find((record) => record[key] === value.trim());
   }
   async readIndex(host) {
     const result = await host.call("host.storage.get", { scope: "workspace", key: taskIndexKey });
-    if (result.value !== null) {
-      const index2 = JSON.parse(result.value);
-      return { records: index2.records ?? [] };
-    }
+    if (result.value !== null) return { index: JSON.parse(result.value), value: result.value };
     const { keys } = await host.call("host.storage.keys", { scope: "workspace" });
     const records = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const key of keys ?? []) {
+    for (const key of keys) {
       if (!key.startsWith("session.")) continue;
-      const { value } = await host.call("host.storage.get", { scope: "workspace", key });
-      if (value === null) continue;
-      const record = JSON.parse(value);
-      if (!seen.has(record.session_id)) {
-        seen.add(record.session_id);
-        records.push(record);
-      }
+      const { value: value2 } = await host.call("host.storage.get", { scope: "workspace", key });
+      if (value2 === null) continue;
+      const record = JSON.parse(value2);
+      if (!records.some((existing) => existing.session_id === record.session_id)) records.push(record);
     }
     const index = { records: records.slice(-maxTaskRecords) };
-    await this.writeIndex(host, index);
-    for (const key of keys ?? []) {
-      if (key.startsWith("session.") || key.startsWith("request.")) await host.call("host.storage.delete", { scope: "workspace", key });
-    }
-    return index;
-  }
-  async writeIndex(host, index) {
-    await host.call("host.storage.set", { scope: "workspace", key: taskIndexKey, value: JSON.stringify(index) });
+    const value = JSON.stringify(index);
+    const swapped = await host.call("host.storage.compare_exchange", { scope: "workspace", key: taskIndexKey, expected: null, value });
+    if (!swapped.swapped) return this.readIndex(host);
+    for (const key of keys) if (key.startsWith("session.") || key.startsWith("request.")) await host.call("host.storage.delete", { scope: "workspace", key });
+    return { index, value };
   }
 };
+var hash = (value) => createHash("sha256").update(value).digest("hex");
+var taskKey = (record) => record.creation?.request_id ?? record.session_id;
+var cancelledTask = (record) => record.cancelled === true || record.suppress_completion === true && record.state === "interrupted";
+function toolRequestID(call) {
+  if (!call.call_id) return randomBytes(12).toString("hex");
+  const identity = call.turn_id || call.step_index !== void 0 ? JSON.stringify([call.tool_id, call.session_id, call.call_id, call.turn_id ?? null, call.step_index ?? null]) : `${call.tool_id}\0${call.session_id}\0${call.call_id}`;
+  return hash(identity).slice(0, 32);
+}
+function completionPrompt(name, state, output) {
+  return `\u5B50\u4EFB\u52A1 ${name} \u5DF2${lifecycleLabel(state)}\u3002\u8BF7\u68C0\u67E5\u5E76\u6574\u5408\u4EE5\u4E0B\u4EA4\u63A5\u7ED3\u679C\uFF1A
+
+${output}`;
+}
+function completions(record) {
+  return [...record.pending_completions ?? [], ...record.completion ? [record.completion] : []];
+}
+function archiveCompletion(record) {
+  const pending = (record.pending_completions ?? []).filter((completion) => !completion.delivered);
+  if (record.completion && !record.completion.delivered) pending.push({
+    ...record.completion,
+    source_request_id: record.completion.source_request_id ?? record.request_id,
+    state: record.completion.state ?? record.state,
+    parent_session_id: record.completion.parent_session_id ?? record.parent_session_id,
+    parent_turn_id: record.completion.parent_turn_id ?? record.parent_turn_id
+  });
+  if (pending.length >= maxTaskRecords) throw new Error("subagent feedback receipt capacity reached; wait for pending delivery before starting more work");
+  record.pending_completions = pending;
+  record.completion = void 0;
+}
 function trimIndex(index, limit) {
   let excess = index.records.length - limit;
   if (excess <= 0) return;
   index.records = index.records.filter((record) => {
-    if (excess > 0 && terminalState(record.state)) {
+    if (excess > 0 && terminalState(record.state) && (cancelledTask(record) && !record.cancel_pending || !record.pending_completions?.length && (record.completion?.delivered || record.suppress_completion && !record.cancel_pending)) && !index.records.some((child) => child.parent_session_id === record.session_id && !child.completion?.delivered && !child.suppress_completion)) {
       excess -= 1;
       return false;
     }

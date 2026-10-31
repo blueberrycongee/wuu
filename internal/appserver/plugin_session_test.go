@@ -1454,3 +1454,81 @@ func TestDelegatedChildResolvedModelPreservesParentOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestPluginSessionCreationIdentityIsOwnedDiscoveryMetadata(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done")})
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	ctx := pluginInvocationContext(t, rt, context.Background())
+	for _, visibility := range []string{pluginhost.SessionVisibilityPlugin, pluginhost.SessionVisibilityUser} {
+		t.Run(visibility, func(t *testing.T) {
+			requestID := "creation-" + visibility
+			created, err := rt.PluginSessionRouter.Create(ctx, "subagent", pluginhost.SessionCreateParams{
+				RequestID: requestID, Name: "Recover creation", Visibility: visibility, ContextSource: pluginhost.SessionContextFresh,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Discovery must work before a first turn exists, after the create response was lost.
+			listed, err := rt.PluginSessionRouter.List(ctx, "subagent", pluginhost.SessionListParams{Scope: pluginhost.SessionListScopeOwned})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *pluginhost.SessionSummary
+			for i := range listed.Sessions {
+				if listed.Sessions[i].SessionID == created.SessionID {
+					found = &listed.Sessions[i]
+				}
+			}
+			if found == nil {
+				t.Fatal("created session missing from owned discovery")
+			}
+			assertCreationIdentity := func(value any, expected string) {
+				t.Helper()
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(raw, &fields); err != nil {
+					t.Fatal(err)
+				}
+				actual, present := fields["creation_request_id"]
+				if expected == "" {
+					if present {
+						t.Fatalf("creation identity leaked: %s", raw)
+					}
+				} else if actual != expected {
+					t.Fatalf("creation identity = %v, want %q: %s", actual, expected, raw)
+				}
+			}
+			assertCreationIdentity(found, requestID)
+			inspected, err := rt.PluginSessionRouter.Inspect(ctx, "subagent", pluginhost.SessionInspectParams{SessionID: created.SessionID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCreationIdentity(inspected.Session, requestID)
+			if inspected.Turn != nil {
+				t.Fatalf("new session unexpectedly has a turn: %+v", inspected.Turn)
+			}
+			if visibility != pluginhost.SessionVisibilityUser {
+				return
+			}
+			for _, caller := range []string{"subagent", "other"} {
+				shared, err := rt.PluginSessionRouter.List(ctx, caller, pluginhost.SessionListParams{Scope: pluginhost.SessionListScopeShared})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range shared.Sessions {
+					assertCreationIdentity(item, "")
+				}
+			}
+			borrowed, err := rt.PluginSessionRouter.Inspect(ctx, "other", pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: "own-correlated-request"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCreationIdentity(borrowed.Session, "")
+		})
+	}
+}
