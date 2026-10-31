@@ -3,6 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { PluginHost } from "./PluginHost";
 describe("public settings control boundary", () => {
+  it("keeps quota reads available with an older app server", async () => {
+    const expected = { engines: [] };
+    const listEngines = vi.fn().mockRejectedValueOnce(new Error('invalid params: json: unknown field "include_activity"')).mockResolvedValue(expected);
+    window.wuu = { listEngines } as unknown as typeof window.wuu;
+    const controls = createApplicationSettingsControls();
+    const context = { kind: "project" as const, project_id: "fixture", cwd: "/fixture" };
+    await expect(controls.listEngines({ include_quota: true, include_activity: false }, context)).resolves.toEqual(expected);
+    expect(listEngines).toHaveBeenNthCalledWith(1, { include_quota: true, include_activity: false }, context);
+    expect(listEngines).toHaveBeenNthCalledWith(2, { include_quota: true }, context);
+
+    const failure = new Error("quota service unavailable");
+    listEngines.mockReset().mockRejectedValue(failure);
+    await expect(controls.listEngines({ include_quota: true, include_activity: false }, context)).rejects.toBe(failure);
+    expect(listEngines).toHaveBeenCalledOnce();
+  });
+
   it("reports unsupported browser operations without a fallback", async () => {
     window.wuu = {} as typeof window.wuu;
     const controls = createApplicationSettingsControls();
