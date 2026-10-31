@@ -3,6 +3,7 @@ import {
   type LanguagePreference,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { SelectMenu } from "./SelectMenu";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
 const LANGUAGE_LABEL_KEYS = {
@@ -18,13 +19,15 @@ export function LanguagePreferenceControl(): JSX.Element {
     label: t(LANGUAGE_LABEL_KEYS[value]),
   }));
   return (
-    <div className="theme-segmented settings-language-options" role="group" aria-label={t("settings.languageGroup")}>
-      {options.map((option) => (
-        <button key={option.value} type="button" aria-pressed={preference === option.value}
-          data-testid={`settings-language-${option.value}`} onClick={() => setPreference(option.value)}>
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <SelectMenu
+      className="settings-language-select"
+      triggerClassName="settings-language-trigger"
+      ariaLabel={t("settings.languageGroup")}
+      dataTestid="settings-language-select"
+      value={preference}
+      options={options}
+      align="right"
+      onChange={(value) => setPreference(value as LanguagePreference)}
+    />
   );
 }

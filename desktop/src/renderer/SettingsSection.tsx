@@ -6,9 +6,8 @@ import { isTouchWebShell } from "./ComposerFocus";
 // bordered groups of rows. Page components render their own header so page
 // actions (add, refresh) sit beside the title instead of on a row.
 
-/** The settings window's titlebar slot. Inside it a page's title follows the
- * "Settings /" crumb and its actions sit at the strip's trailing edge, so the
- * page itself opens on its content. */
+/** Touch settings keep their compact title and actions in the window strip.
+ * Desktop pages use the full header aligned with their content column. */
 export const SettingsTitlebarSlot = createContext<HTMLElement | null>(null);
 
 export function SettingsPageHeader({
@@ -22,7 +21,7 @@ export function SettingsPageHeader({
 }): JSX.Element {
   const slot = useContext(SettingsTitlebarSlot);
   const showDescription = Boolean(description) && !isTouchWebShell();
-  if (slot) {
+  if (slot && isTouchWebShell()) {
     return (
       <>
         {createPortal(

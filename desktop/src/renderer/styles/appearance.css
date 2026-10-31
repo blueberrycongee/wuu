@@ -134,17 +134,36 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .rich-code-header {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
 }
-/* Font-only and font/size rows share the same control column. */
-.settings-row-control:has(.appearance-font-picker) {
-  width: var(--settings-control-width);
+/* Keep each use's font and size together, with visible labels at every width. */
+.settings-row-control:has(.appearance-font-controls) {
+  width: min(100%, 26em);
   max-width: 100%;
 }
-.appearance-font-picker { flex: 1; min-width: 0; }
+.appearance-font-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6em;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+}
+.appearance-font-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.appearance-font-field-label { color: var(--ink-tertiary); font-size: var(--font-sm); }
+.appearance-font-picker { min-width: 0; }
+.appearance-font-size-field .settings-input-num { width: 100%; }
+.appearance-font-size-inherited {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-field-height);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
 @container settings-page (max-width: 32em) {
-  .settings-row-control:has(.appearance-font-picker) { width: 100%; }
+  .settings-row-control:has(.appearance-font-controls) { width: 100%; }
+}
+@container settings-page (max-width: 20em) {
+  .appearance-font-controls { grid-template-columns: minmax(0, 1fr); }
 }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
-.appearance-font-picker .select-menu-value,
 .appearance-font-menu .select-menu-item-label {
   white-space: normal;
   overflow-wrap: anywhere;

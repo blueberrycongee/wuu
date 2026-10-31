@@ -3,13 +3,14 @@
 
 :root {
   --settings-canvas: var(--surface-1);
-  --settings-card: var(--theme-override-color-surface, var(--gray-0));
-  /* A group is a sheet lifted off the canvas: a large corner, a faint edge
-   * and a soft shadow, so grouping reads without a gray frame. */
+  --settings-card: var(--surface-raised);
+  /* In-flow groups use a shared surface and divider hierarchy. Elevation
+   * belongs to controls and overlays, not every block of settings. */
   --settings-group-radius: var(--radius-md);
-  --settings-group-shadow: var(--shadow-card);
+  --settings-group-shadow: none;
   /* Row breathing room; empty lines and list rows share it. */
-  --settings-row-pad-block: var(--space-4);
+  --settings-row-pad-block: var(--space-3);
+  --settings-number-control-width: 9.5em;
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -352,6 +353,7 @@
   container-name: settings-page;
   container-type: inline-size;
   --settings-column-width: calc(var(--font-ui) * 50);
+  --settings-title-size: round(nearest, calc(var(--font-ui) * 1.6), 1px);
   /* Every picker and text field on a page shares one width, so trailing
    * controls start on one edge down a group instead of following their
    * current value's length. */
@@ -369,11 +371,11 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-/* --- Page title ----------------------------------------------------------
- * The page title sits in the window strip, set like the conversation
- * title, with page actions at its trailing edge. The page opens on its
- * scope line or first group instead of repeating its name in large type.
- * ------------------------------------------------------------------------- */
+.settings-page:has(> .settings-page-header) {
+  padding-top: var(--space-4);
+}
+
+/* Touch shells keep their compact title in the native navigation strip. */
 
 .settings-titlebar {
   gap: var(--space-2);
@@ -407,17 +409,22 @@
   -webkit-app-region: no-drag;
 }
 
-/* --- Page header ----------------------------------------------------------
- * Outside the settings window (a page rendered alone), the title, its scope
- * line and page actions form a header at the top of the page.
- * ------------------------------------------------------------------------- */
+/* Desktop page titles lead the content column; section labels stay quieter. */
 
 .settings-page-header {
-  --settings-title-line: calc(var(--font-heading) * 1.3);
+  --settings-title-line: calc(var(--settings-title-size, var(--font-heading)) * 1.3);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: var(--space-2) var(--space-6);
+}
+
+/* Let the page title lead the inset section column without shifting content.
+ * Compensating bottom padding preserves the first section's vertical position. */
+.settings-page .settings-page-header {
+  margin-inline-start: calc(var(--space-4) * -1);
+  margin-block-start: calc(var(--space-2) * -1);
+  padding-block-end: var(--space-2);
 }
 
 .settings-page-heading {
@@ -429,7 +436,7 @@
 .settings-page-title {
   margin: 0;
   color: var(--ink-strong);
-  font-size: var(--font-heading);
+  font-size: var(--settings-title-size, var(--font-heading));
   font-weight: var(--weight-semibold);
   letter-spacing: -0.01em;
   line-height: 1.3;
@@ -450,14 +457,19 @@
   font-size: 0.9em;
 }
 
-/* Controls are taller than the title line; centering them on it keeps the
- * description directly under the title. */
+/* Let the title row contain the taller control rather than overflowing the
+ * header with negative margins. Descriptions stay below that first row. */
+.settings-page-header:has(> .settings-page-actions) .settings-page-title {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-field-height);
+}
+
 .settings-page-actions {
   display: flex;
   min-height: var(--settings-title-line);
   align-items: center;
   gap: var(--space-2);
-  margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
 }
 
 @container settings-page (max-width: 32em) {
@@ -467,26 +479,29 @@
 
   .settings-page-actions {
     flex-wrap: wrap;
-    margin-block: 0;
   }
 
   /* One icon action stays beside the title instead of taking a line. */
   .settings-page-header:has(> .settings-page-actions > .settings-icon-button:only-child) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-
-  .settings-page-actions:has(> .settings-icon-button:only-child) {
-    margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
-  }
 }
 
-.settings-language-options {
-  flex-wrap: wrap;
+.settings-language-select .settings-language-trigger {
+  justify-content: flex-end;
+  gap: var(--space-2);
+  width: auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-weight: var(--weight-regular);
 }
 
-.settings-language-options button {
-  flex: 1 0 auto;
-  white-space: nowrap;
+.settings-language-select .settings-language-trigger:hover,
+.settings-language-select .settings-language-trigger[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--field-hover-bg);
+  box-shadow: none;
 }
 
 /* --- Section --------------------------------------------------------------
@@ -573,6 +588,11 @@
   max-width: 100%;
 }
 
+/* This choice is a compact trailing label, not a full-width text field. */
+.settings-row-control > .select-menu.settings-language-select {
+  width: auto;
+}
+
 /* Notes below a group: font loading, save failures, list errors. */
 .settings-section-note {
   margin: 0;
@@ -581,8 +601,49 @@
   line-height: 1.5;
 }
 
+/* Disclosures use the same trailing plus/minus throughout Settings. Keep
+ * native details semantics, including keyboard activation and open state. */
+.settings-page details > summary {
+  list-style: none;
+}
+
+.settings-page details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-page details > summary:not(.settings-button) {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  margin-inline-start: 0;
+  padding-inline-end: calc(var(--icon-size-sm) + var(--space-3));
+  cursor: pointer;
+}
+
+.settings-page details > summary:not(.settings-button)::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 0;
+  top: 50%;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  transform: translateY(-50%);
+  color: var(--ink-soft);
+  background: linear-gradient(currentColor, currentColor) center / 100% 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 1.5px 100% no-repeat;
+  pointer-events: none;
+}
+
+.settings-page details[open] > summary:not(.settings-button)::after {
+  background-size: 100% 1.5px, 1.5px 0;
+}
+
+.settings-page details > summary > .settings-disclosure-chevron {
+  display: none;
+}
+
 /* --- Group ----------------------------------------------------------------
- * One lifted sheet per group; rows inside are separated by the softer
+ * One surface per group; rows inside are separated by the softer
  * hairline and never carry their own frames.
  * ------------------------------------------------------------------------- */
 
@@ -759,6 +820,21 @@
   box-shadow: none;
 }
 
+/* Settings selectors sit on the page surface; text inputs keep their field fill. */
+.settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input) {
+  background-color: transparent;
+}
+.settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input):hover:not(:disabled),
+.settings-page .select-menu-trigger[aria-expanded="true"] {
+  background-color: var(--field-hover-bg);
+}
+@media (forced-colors: active) {
+  .settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input) {
+    background-color: Canvas;
+    border-color: ButtonBorder;
+  }
+}
+
 .settings-row-control-value {
   display: flex;
   align-items: center;
@@ -829,7 +905,7 @@
  * text, so the default and its unit still fit at large sizes. */
 .settings-input-num {
   flex: 0 0 auto;
-  width: 9.5em;
+  width: var(--settings-number-control-width);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
