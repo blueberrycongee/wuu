@@ -90,6 +90,10 @@ func (b *Broker) clientConfig(ctx context.Context, provider string) (OAuthClient
 	return c, nil
 }
 func (b *Broker) Start(ctx context.Context, a Actor, r ConnectRequest) (AuthorizationAttempt, error) {
+	if !b.beginOAuth() {
+		return AuthorizationAttempt{}, fault("connector_closed")
+	}
+	defer b.oauthWork.Done()
 	if !filepath.IsAbs(b.stateDir) {
 		return AuthorizationAttempt{}, fault("activation_record_unavailable")
 	}
@@ -199,7 +203,8 @@ func (b *Broker) Start(ctx context.Context, a Actor, r ConnectRequest) (Authoriz
 	b.attempts[p.view.ID] = p
 	if listener != nil {
 		p.server = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { b.oauthCallback(p, w, req) }), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
-		go func() { _ = p.server.Serve(listener) }()
+		b.oauthWork.Add(1)
+		go func() { defer b.oauthWork.Done(); _ = p.server.Serve(listener) }()
 	} else {
 		p.stopTransport, e = b.httpsCallbacks.Register(attemptCtx, redirect, func(raw string) error {
 			incoming, err := url.Parse(raw)
@@ -224,7 +229,11 @@ func (b *Broker) Start(ctx context.Context, a Actor, r ConnectRequest) (Authoriz
 			return AuthorizationAttempt{}, fault("https_callback_transport_unavailable")
 		}
 	}
+	// Start itself remains counted until all child work has been registered.
+	// Close therefore cannot observe zero between cancellation and registration.
+	b.oauthWork.Add(1)
 	go func() {
+		defer b.oauthWork.Done()
 		<-attemptCtx.Done()
 		if p.server != nil {
 			_ = p.server.Close()
@@ -278,6 +287,11 @@ func (b *Broker) Cancel(a Actor, id string) error {
 	return nil
 }
 func (b *Broker) oauthCallback(p *oauthPending, w http.ResponseWriter, r *http.Request) {
+	if !b.beginOAuth() {
+		http.Error(w, "Authorization closed", http.StatusGone)
+		return
+	}
+	defer b.oauthWork.Done()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")

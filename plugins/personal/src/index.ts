@@ -1,4 +1,4 @@
-import { personalMemory } from "@wuu/plugin-sdk";
+import { personalMemory, PERSONAL_AUTHORITY_METHODS, type PersonalExecutionFacts } from "@wuu/plugin-sdk";
 import { isDeepStrictEqual } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TASK_EXECUTION_ACTIONS, FEEDBACK_ACTIONS, SESSION_DELIVERY_ACTIONS, issueAuthorization, authorizationExpiry, authorizationRequired, authorizationError, authorizationCurrent, sameAuthorization, type PersonalAuthorization, type PersonalAuthorizationIntent } from "./grants.js";
@@ -159,7 +159,7 @@ export class PersonalPlugin implements RuntimePlugin {
     return {
       protocol_version: 3 as const,
       required_services: [requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
-      provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [{name:"resolve-lineage",input_schema:"execution.lineage.resolve.input.v1",output_schema:"execution.lineage.resolve.output.v1"}, ...methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
+      provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [...PERSONAL_AUTHORITY_METHODS, {name:"resolve-lineage",input_schema:"execution.lineage.resolve.input.v1",output_schema:"execution.lineage.resolve.output.v1"}, ...methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
         { id: "agent.system_prompt.section", kind: "transform" as const, version: 1 },
         { id: clientCapability, kind: "decision" as const, version: 1 },
@@ -1375,8 +1375,36 @@ export class PersonalPlugin implements RuntimePlugin {
     }
     if (call.service === "automation.trigger" && call.method === "fire") return this.routines.fire(object(call.params));
     if (call.service !== service) throw new Error("unknown service");
+    if (call.method === "observe-execution") return this.observeExecution(text(object(call.params), "session_id", true));
+    if (call.method === "legacy-memory") {
+      const prefix = "personal.records.v1.";
+      const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
+      const records: Record<string, string> = {};
+      for (const key of keys.filter(key => key.startsWith(prefix))) {
+        const { value } = await this.host.call("host.storage.get", { scope: "user", key });
+        if (value !== null) records[key.slice(prefix.length)] = value;
+      }
+      return records;
+    }
     if (call.method === "resolve-lineage") return this.resolveLineage(call.params as ExecutionLineageRequest);
     return this.request(call.method.replaceAll("-", "_"), object(call.params), executionHost, execution);
+  }
+  private async observeExecution(sessionID: string): Promise<PersonalExecutionFacts> {
+    const tasks = (await this.list<PersonalTask>("task")).filter(task => task.user_space_id === this.space && task.execution.session_id === sessionID);
+    if (tasks.length > 1) throw new Error("ambiguous Personal execution ownership");
+    const task = tasks[0];
+    const agents = await this.list<NamedAgent>("agent");
+    const agent = agents.find(agent => agent.user_space_id === this.space && (task ? agent.agent_id === task.agent_id : agent.main_session_id === sessionID));
+    if (!agent) throw new Error("Personal execution has no owning agent");
+    const facts: PersonalExecutionFacts = { session_id: sessionID, agent_id: agent.agent_id, main_session_id: agent.main_session_id, active: agent.status === "active" };
+    if (task) facts.task = {
+      id: task.task_id, revision: task.requirements_revision, run_id: task.execution.request_id,
+      active: !task.cancel_requested && task.requirements_revision > 0 && task.execution.requirements_revision === task.requirements_revision && !terminalTask(task) && await this.routines.canExecute(task),
+      goal: task.goal, source_session_id: task.source.session_id,
+      source_message_seq: task.source.message_binding === "host_turn" && task.requirements_revision === 1 ? task.source.message_seq ?? 0 : 0,
+      routine_id: task.routine_id, routine_revision: task.routine_revision,
+    };
+    return facts;
   }
   private async resolveLineage(input: ExecutionLineageRequest): Promise<ExecutionLineageObservation> {
     if (!input || !["exact-run","task-lineage"].includes(input.kind) || !input.task_id || input.session_id !== undefined && typeof input.session_id !== "string" || input.kind === "exact-run" && !input.request_id) throw new Error("invalid lineage request");

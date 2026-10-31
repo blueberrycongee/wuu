@@ -167,7 +167,9 @@ func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
 			runtime := &ThreadRuntime{PluginHost: host, StreamRunner: &agent.StreamRunner{Tools: executor}, processScopeConfig: processConfig}
 			runtime.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: "unconfined"}, false, nil)
 			if mode == "remote-timeout" {
-				provider.command = "printf external-host-process; read value"
+				// Block before producing output: a timeout may precede the shell
+				// being scheduled, so output is not a prerequisite for termination.
+				provider.command = "read value && printf external-host-process"
 				provider.timeoutMS = 30
 			}
 			turn := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "thread", ExecutionID: "turn"})
@@ -181,7 +183,14 @@ func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || !strings.Contains(result.TextProjection(), "external-host-process") {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "remote-timeout" {
+				if output := result.TextProjection(); output != "" {
+					t.Fatalf("timed-out command passed its input barrier: %q", output)
+				}
+			} else if !strings.Contains(result.TextProjection(), "external-host-process") {
 				t.Fatalf("actual process output: %+v %v", result, err)
 			}
 			started, err := manager.Get(service.processes[provider.processID].processID)
@@ -202,7 +211,7 @@ func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
 				t.Fatalf("environment metadata points to wrong filesystem: %+v", provider.environment)
 			}
 			if mode == "remote-timeout" {
-				input, _ := json.Marshal(map[string]any{"process_id": provider.processID, "offset_bytes": len("external-host-process"), "wait_ms": 1000})
+				input, _ := json.Marshal(map[string]any{"process_id": provider.processID, "offset_bytes": 0, "wait_ms": 1000})
 				raw, serviceErr := host.CallService(turn, provider.ID(), "host.process", "read", input)
 				if serviceErr != nil {
 					t.Fatal(serviceErr)

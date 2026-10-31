@@ -108,8 +108,8 @@ it("uses the selected composer for both split owners and removes it when disable
     expect(container.querySelector('[data-selected-composer="first"]')).toBeNull();
     await act(async () => host.unload("replacement"));
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:replacement:test");
-    expect(container.textContent).not.toContain(String(notice.mock.calls.at(-1)![0]));
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(notice).not.toHaveBeenCalled();
     expect(container.querySelector('[data-selected-composer]')).toBeNull();
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.textContent).toContain("Answer one");

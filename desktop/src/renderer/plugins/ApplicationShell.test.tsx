@@ -77,7 +77,9 @@ describe("application shell assembly", () => {
     try {
       await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "owner", generation: "one", id: "shell" }}
         surfaceBindings={{ "ui.surface": { pluginId: "owner", generation: "one", id: "surface" } }} />));
-      expect(container.textContent).toBe("Unaffected UI");
+      expect(container.textContent).toContain("Unaffected UI");
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("No implicit fallback");
       expect(host.getGenerationDiagnostics("one", "one").some(item => item.message.includes("UI slot conflict"))).toBe(true);
       expect(host.getGenerationDiagnostics("two", "one").some(item => item.message.includes("UI slot conflict"))).toBe(true);
       await act(async () => host.disable("two"));
@@ -258,6 +260,41 @@ describe("application shell assembly", () => {
       await act(async () => { host.unload("content"); host.unload("frame"); });
       expect(container.textContent).toBe("native");
     } finally { act(() => root.unmount()); host.unload("shell"); host.unload("content"); host.unload("frame"); logging.mockRestore(); }
+  });
+
+  // A failed selected surface remains visible, retries locally, and never chooses
+  // the slot fallback or remounts unrelated shell state.
+  it("recovers a selected surface without remounting its shell", async () => {
+    const { host } = fixture();
+    let broken = true;
+    const shellMount = vi.fn();
+    await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "body", cardinality: "one", service: "ui.body" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => {
+        React.useEffect(shellMount, []);
+        return <main><span>Still usable</span><slots.Slot name="shell/body" fallback={<span>Forbidden fallback</span>} /></main>;
+      } });
+    } });
+    await host.activateGeneration({ pluginId: "body", generation: "one", register: api => {
+      api.registerUIContribution({ id: "content", target: "shell/body", render: () => {
+        if (broken) throw new Error("private render details");
+        return <span>Recovered content</span>;
+      } });
+    } });
+    const container = document.createElement("div"), root = createRoot(container);
+    const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "one", id: "shell" }}
+        surfaceBindings={{ "ui.body": { pluginId: "body", generation: "one", id: "content" } }} />));
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("private render details");
+      expect(container.textContent).not.toContain("Forbidden fallback");
+      broken = false;
+      await act(async () => container.querySelector('button')!.click());
+      expect(container.textContent).toBe("Still usableRecovered content");
+      expect(shellMount).toHaveBeenCalledOnce();
+      expect(host.getGenerationDiagnostics("body", "one").some(item => item.kind === "render")).toBe(true);
+    } finally { act(() => root.unmount()); host.unload("body"); host.unload("shell"); logging.mockRestore(); }
   });
 
   it("rejects wrappers for graph-selected surfaces without displacing the active contribution", async () => {
@@ -470,7 +507,7 @@ describe("application shell assembly", () => {
     render("default");
     expect(container.textContent).toBe("default navigation");
     act(() => host.unload("default"));
-    expect(container.textContent).toBe("");
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
     expect(container.textContent).not.toContain("Implicit default");
     act(() => host.unload("shell"));
     expect(container.textContent).toContain(translateCurrent("plugins.applicationUnavailable"));

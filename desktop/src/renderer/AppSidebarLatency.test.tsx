@@ -54,6 +54,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 
 let container: HTMLDivElement;
@@ -198,9 +199,10 @@ describe("sidebar click latency", () => {
   it("does not re-render the conversation turn list on a sidebar-only click", async () => {
     installWuuApi();
 
+    const application = new ApplicationController();
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createDefaultApplicationTestView(application));
     });
     await flushAsync();
 
@@ -218,6 +220,18 @@ describe("sidebar click latency", () => {
     ).not.toBeNull();
     expect(turnListProbe.renders).toBeGreaterThan(0);
 
+    // Mounting history is not the end of navigation: layout restoration and
+    // the selected composer's model refresh commit on subsequent animation frames.
+    // Measure sidebar work only after that presentation has actually settled.
+    const readyDeadline = Date.now() + 1_000;
+    while (application.getSnapshot().tabs.pending || container.querySelector(".is-reveal-snap")) {
+      await act(async () => {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      });
+      if (Date.now() >= readyDeadline) break;
+    }
+    expect(application.getSnapshot().tabs.pending).toBeUndefined();
+    expect(container.querySelector(".is-reveal-snap")).toBeNull();
     const baseline = turnListProbe.renders;
 
     // A pure sidebar interaction: collapse + expand the scratch section.
@@ -227,18 +241,22 @@ describe("sidebar click latency", () => {
       'section[data-section-id="__wuu_scratch__"] .sidebar-section-row',
     );
     expect(scratchHeader).not.toBeNull();
+    expect(scratchHeader?.getAttribute("aria-expanded")).toBe("true");
     await act(async () => {
       scratchHeader?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsync();
+    expect(scratchHeader?.getAttribute("aria-expanded")).toBe("false");
+    expect(turnListProbe.renders).toBe(baseline);
     await act(async () => {
       scratchHeader?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsync();
 
+    expect(scratchHeader?.getAttribute("aria-expanded")).toBe("true");
+
     // The memoized conversation pane should not re-render from a sidebar-only
-    // state change. Allow a single async flush render; the original regression
-    // cascaded into many extra renders here.
-    expect(turnListProbe.renders).toBeLessThanOrEqual(baseline + 1);
+    // state change once the selected conversation is ready.
+    expect(turnListProbe.renders).toBe(baseline);
   });
 });
