@@ -35,6 +35,8 @@ export interface ApplicationSettingsViewV1 {
   readonly configuration?: ApplicationSettingsConfigurationV1;
   readonly engineInventory?: SettingsReadonly<ApplicationSettingsEngineListResultV1>;
   readonly engineInventoryError: string;
+  /** Changes when the runtime context owning engine inventory changes. */
+  readonly engineInventoryRevision?: number;
   readonly runningProviderNames: readonly string[];
   readonly archivedThreads: readonly ApplicationArchivedThreadV1[];
   readonly runtimeSwitchPending: boolean;

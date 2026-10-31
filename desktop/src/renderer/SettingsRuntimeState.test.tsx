@@ -19,6 +19,8 @@ import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 import { DefaultSettingsSurface } from "./modules/DefaultSettingsSurface";
 import { SettingsShellRenderer } from "./ConversationShellRenderers";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
+import { initialState } from "./AppState";
+import type { EngineListResult } from "../shared/protocol";
 
 vi.mock("./ConversationShellRenderers", () => ({ SettingsShellRenderer: vi.fn(() => null) }));
 
@@ -326,4 +328,38 @@ it.each([true, false])("keeps catalog retirement quiet without hiding genuine er
   visibility.mockClear();
   await act(async () => { await vi.mocked(SettingsShellRenderer).mock.calls.at(-1)![0].onRefreshModelCatalog(); });
   expect(visibility.mock.calls.some(([visible]) => visible)).toBe(!retired);
+});
+
+it("reloads engine inventory when its owning context changes while settings remain open", async () => {
+  const reads = Array.from({ length: 4 }, () => deferred<EngineListResult>());
+  const listEngines = vi.fn().mockImplementation(() => reads[listEngines.mock.calls.length - 1].promise);
+  installWuuStub({ listEngines });
+  const controller = new ApplicationController({ ...initialState,
+    activeContext: { kind: "project", project_id: "one", cwd: "/one" },
+    initialized: { protocol_version: "test", workspace_root: "/one", provider: "fixture", model: "fixture", extension_inventory: [] },
+  });
+  controller.setSettings(true);
+  const scoped = await createScopedTestApplication(controller);
+  generationCleanups.push(scoped.dispose);
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  await act(async () => root.render(<WuuUIRoot><DefaultSettingsSurface {...settingsLayout(vi.fn())} application={scoped.application} /></WuuUIRoot>));
+  expect(listEngines).toHaveBeenCalledTimes(1);
+
+  await act(async () => controller.updateState(state => ({ ...state, initialized: { ...state.initialized!, extension_inventory: [] } })));
+  expect(listEngines).toHaveBeenCalledTimes(2);
+  await act(async () => reads[0].resolve({ engines: [{ id: "old", enabled: true, binary_ok: true }] }));
+  expect(controller.getSnapshot().settings.engineInventory).toBeUndefined();
+  await act(async () => reads[1].resolve({ engines: [{ id: "current", enabled: true, binary_ok: true }] }));
+  expect(controller.getSnapshot().settings.engineInventory?.engines[0].id).toBe("current");
+
+  await act(async () => controller.updateState(state => ({ ...state, runtimeConnectionGeneration: 1 })));
+  expect(listEngines).toHaveBeenCalledTimes(3);
+  await act(async () => reads[2].resolve({ engines: [{ id: "reconnected", enabled: true, binary_ok: true }] }));
+  expect(controller.getSnapshot().settings.engineInventory?.engines[0].id).toBe("reconnected");
+
+  await act(async () => controller.updateState(state => ({ ...state, activeContext: { kind: "project", project_id: "one", cwd: "/other" } })));
+  expect(listEngines).toHaveBeenCalledTimes(4);
+  await act(async () => reads[3].resolve({ engines: [{ id: "other", enabled: true, binary_ok: true }] }));
+  expect(controller.getSnapshot().settings.engineInventory?.engines[0].id).toBe("other");
 });

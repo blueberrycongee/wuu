@@ -292,6 +292,8 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 - `balances` 保留币种及十进制字符串 `amount`，不合并不同币种或账号；可选 `reset_credits` 表示上游重置次数。
 - `error_code` 为安全的失败类别，不包含上游原始响应。
 
+只需要当前账号额度时，可同时设置 `include_activity: false`，跳过本地历史统计。省略该参数时仍按原有行为返回历史统计。
+
 已接入原生 ChatGPT/Codex、Grok Build 订阅、Anthropic OAuth、Kimi Code 和智谱/Z.ai 套餐周期，以及 DeepSeek/OpenRouter 预付余额。外部 Codex 通过 CLI 账号请求读取；外部 Claude Code 和 Grok 使用自己的本机登录。macOS 默认 Claude 登录可读取钥匙串，但自定义凭据目录不会借用默认账号。浏览器 SuperGrok、任意兼容端点和没有适配器的 Agent 暂不支持。
 
 缺失百分比表示未知，不是零或无限；上游可用 100% 或更大数值表示耗尽。ACP 上下文占用和本地 token 不能推导账号额度，过期快照也不能在重置时间自行补满。暂时读取失败且仍能确认账号时，保留该凭据来源的最后成功快照为 `stale`，不改成功读取时间或到期时间；认证被拒绝时丢弃该账号的缓存额度。快照跨服务重启保留，更换凭据不会继承另一个账号的数据。所有来源的采集共用八秒期限。额度查询不发起推理，不更改模型选择、工作区默认值或路由策略。

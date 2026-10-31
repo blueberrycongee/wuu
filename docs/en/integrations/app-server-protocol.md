@@ -472,6 +472,10 @@ and supported installed agents, and returns configured services in
   must remain separate. Optional `reset_credits` reports upstream reset credits.
 - `error_code`: safe failure category, not a raw upstream response.
 
+Set `include_activity` to `false` with `include_quota` to skip local history
+statistics when only the current account allowance is needed. Omitting it keeps
+the existing history-inclusive response.
+
 Adapters cover native ChatGPT/Codex and Grok Build subscriptions, Anthropic OAuth,
 Kimi Code and Zhipu/Z.ai plan windows, and DeepSeek/OpenRouter prepaid balances.
 External Codex uses its CLI account request; external Claude Code and Grok read

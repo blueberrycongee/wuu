@@ -752,7 +752,7 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, engineInventory: inventory, initialPage: "providers", locale: "en-US" });
     await flush();
     expect(api.listEngines).toHaveBeenCalledTimes(1);
-    expect(api.listEngines).toHaveBeenCalledWith({ include_quota: true });
+    expect(api.listEngines).toHaveBeenCalledWith({ include_quota: true, include_activity: false });
     const provider = document.querySelector('[data-provider="openai-codex"]')!;
     expect(provider.querySelector("meter")?.value).toBe(75);
     const engine = document.querySelector('[data-testid="settings-engine-codex-status"]')!;
