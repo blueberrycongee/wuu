@@ -159,6 +159,10 @@ func TestOwnerLocalQueueRevocationAndExactCancellation(t *testing.T) {
 	if err != nil || third.Error != nil {
 		t.Fatalf("third queue: %+v %v", third, err)
 	}
+	var thirdQueued pluginhost.SessionSendResult
+	if err := json.Unmarshal(third.Result, &thirdQueued); err != nil || thirdQueued.State != "queued" || thirdQueued.QueueID == "" {
+		t.Fatalf("third must be queued behind the held first model call: %s (%v)", third.Result, err)
+	}
 	revoked.Store(true)
 	once.Do(func() { close(release) })
 	waitForTurnCompletedForThread(t, out, "busy")
