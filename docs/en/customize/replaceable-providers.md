@@ -635,8 +635,13 @@ prevents a retry from overwriting later target updates or deletions. After an
 uncertain result, reconcile or explicitly retry the identical transfer; the SDK
 never retries automatically or emulates a move with reads and writes. Unsupported
 providers return an explicit method error, with no native storage fallback. The
-full `PLUGIN_SETTINGS_STORE_DESCRIPTOR` includes this method; a provider that
-cannot implement it must omit it from its advertised methods.
+full `PLUGIN_SETTINGS_STORE_DESCRIPTOR` includes this method and the read-only
+`check-transfer-state` preparation method, exposed by `checkStateTransfer(transfer)`.
+The check applies the same ownership, conflict, and quota rules without writing
+data, receipts, or source fences. The effectful transfer rechecks these rules; a
+successful preflight does not reserve ownership. Providers unable to implement a
+method must omit it. Transfer-dependent candidates require both methods and fail
+explicitly when the selected provider cannot preflight them.
 
 Configuration revisions and settings revisions are opaque strings, distinct from document-store revision numbers. Neither service offers the document store's transaction receipt protocol. Retry only a definite compare-and-exchange conflict after rereading; reconcile an unavailable/canceled write before attempting another write. Do not log credential bytes, raw configuration or secret-bearing effective configuration.
 

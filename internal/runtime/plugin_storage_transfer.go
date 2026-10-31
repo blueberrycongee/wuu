@@ -132,7 +132,9 @@ func (c *storageTransferConsumer) Activate(ctx context.Context) error {
 
 func (c *storageTransferConsumer) Prepare(ctx context.Context) error {
 	for _, status := range c.host.Statuses() {
-		if status.ID == c.transfer.targetID && status.State == pluginhost.StatePrepared && c.host.DependencyFailures()[c.transfer.targetID] == nil {
+		// This dependency prepares before its importer. Process runtimes are
+		// initialized at this point and become prepared only after this check.
+		if status.ID == c.transfer.targetID && (status.State == pluginhost.StateInitialized || status.State == pluginhost.StatePrepared) && c.host.DependencyFailures()[c.transfer.targetID] == nil {
 			if err := c.settings.CheckStateTransfer(ctx, c.transfer.transfer); err != nil {
 				return fmt.Errorf("plugin %q storage transfer %q preflight: %w", c.transfer.targetID, c.transfer.transfer.ID, err)
 			}

@@ -24,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/plugincontrol"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -361,6 +362,7 @@ type Server struct {
 	bootOwner                    bool
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
+	pluginControl                *plugincontrol.Registration
 
 	controlLocksMu sync.Mutex
 	controlLocks   map[string]*sessionControlLock
@@ -542,6 +544,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
+	s.startPluginControl()
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
 
@@ -824,6 +827,7 @@ func (s *Server) Close() {
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.pluginControl.Close()
 		if s.packageDownloadCancel != nil {
 			s.packageDownloadCancel()
 		}
