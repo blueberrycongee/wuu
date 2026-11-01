@@ -167,7 +167,7 @@ func (s *Session) bindSelectedEngine(ctx context.Context, rt *ThreadRuntime, bin
 	generation.retain()
 	gateway := &engineSessionGateway{owner: owner, binding: binding, runtime: rt}
 	token, remove := generation.engineGateways.register(gateway)
-	input := pluginprotocol.EngineBinding{ThreadID: binding.ThreadID, RootDir: binding.RootDir, Model: binding.Model, Effort: binding.Effort, Speed: binding.Speed, ModelOptions: binding.ModelOptions, PermissionMode: binding.PermissionMode, Instructions: binding.Instructions, ExternalRef: binding.ExternalRef, GatewayID: token}
+	input := pluginprotocol.EngineBinding{ThreadID: binding.ThreadID, RootDir: binding.RootDir, AdditionalDirectories: binding.AdditionalDirectories, Model: binding.Model, Effort: binding.Effort, Speed: binding.Speed, ModelOptions: binding.ModelOptions, PermissionMode: binding.PermissionMode, Instructions: binding.Instructions, ExternalRef: binding.ExternalRef, GatewayID: token}
 	for _, server := range binding.MCPServers {
 		input.MCPServers = append(input.MCPServers, pluginprotocol.EngineMCPServer{Name: server.Name, URL: server.URL})
 	}

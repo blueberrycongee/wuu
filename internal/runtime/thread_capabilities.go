@@ -14,7 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-// NewThreadCapabilityRuntime binds host browser and CUA capabilities to an
+// NewThreadCapabilityRuntime binds workspace discovery, browser and CUA capabilities to an
 // external-engine conversation. It does not resolve model providers, initialize
 // native workers, or create a StreamRunner. The caller releases the returned
 // PluginGeneration with the conversation's ordinary runtime lifecycle.
@@ -125,7 +125,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	kit.SetBrowserTabs(browserTabs)
 	kit.SetImageInputSupported(true)
 	kit.SetAgentIdentity(id, agentthread.RootPath)
-	kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), artifactDir))
+	configureToolkitWorkspaceScope(kit, wuuHome, s.UserBinding(), artifactDir)
 	if dispatcher != nil {
 		kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, _ tools.ToolInfo, call providers.ToolCall) error {
 			_, err := dispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{

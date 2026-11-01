@@ -46,6 +46,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 type queuedTurn struct {
@@ -2865,6 +2866,14 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if instructionsErr == nil && found {
 		sessionInstructions, instructionsErr = ProjectInstructions(s.projectServiceContext(ctx, binding), binding.Host, metadata)
 	}
+	var additionalDirectories []string
+	if turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+		catalog := turnKit.RegisteredWorkspaces()
+		additionalDirectories = workspaces.Roots(catalog)
+		if guidance := workspaces.Instructions(catalog); guidance != "" {
+			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
+		}
+	}
 	capabilityErr := instructionsErr
 	// A restricted turn must not initialize an external bridge before its
 	// admitted engine has proved that it can enforce the restriction.
@@ -2899,16 +2908,17 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		engine = agentengine.FailedSession(capabilityErr)
 	} else {
 		engine = s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
-			ThreadID:       th.ID,
-			RootDir:        firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
-			Model:          th.Model,
-			Effort:         th.ModelEffort,
-			Speed:          th.Speed,
-			ModelOptions:   th.ModelOptions,
-			PermissionMode: turnRuntime.permissions().Mode,
-			Instructions:   sessionInstructions,
-			MCPServers:     mcpServers,
-			ExternalRef:    th.EngineRef,
+			ThreadID:              th.ID,
+			RootDir:               firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
+			AdditionalDirectories: additionalDirectories,
+			Model:                 th.Model,
+			Effort:                th.ModelEffort,
+			Speed:                 th.Speed,
+			ModelOptions:          th.ModelOptions,
+			PermissionMode:        turnRuntime.permissions().Mode,
+			Instructions:          sessionInstructions,
+			MCPServers:            mcpServers,
+			ExternalRef:           th.EngineRef,
 			PersistRef: func(ref string) error {
 				return s.persistThreadEngineRef(binding, th.ID, ref)
 			},

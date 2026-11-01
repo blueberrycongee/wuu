@@ -760,7 +760,7 @@ func NewSession(opts Options) (*Session, error) {
 			kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 			kit.SetActivityRegistry(activityRegistry)
 			bindToolkitHooks(kit, hookDispatcher)
-			kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, binding))
+			configureToolkitWorkspaceScope(kit, wuuHome, binding)
 			toolkit = kit
 			if !binding.IsUser() {
 				connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
@@ -1499,7 +1499,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			// Rebase the file-scope whitelist on the thread root (the clone
 			// inherited the parent session's roots): thread root + registered
 			// workspaces + temp + artifact extras.
-			kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), fileScopeExtras...))
+			configureToolkitWorkspaceScope(kit, wuuHome, s.UserBinding(), fileScopeExtras...)
 			if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
 				return err
 			}
@@ -3137,7 +3137,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) (string,
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		s.Toolkit.ConfigurePTC(s.CodeMode, cfg.PTC)
-		s.Toolkit.SetFileScopeRoots(runtimeFileScopeRoots(s.Toolkit.RootDir(), s.WuuHome, s.UserBinding()))
+		configureToolkitWorkspaceScope(s.Toolkit, s.WuuHome, s.UserBinding())
 	}
 	apiModel := s.Model
 	if s.StreamRunner != nil && strings.TrimSpace(s.StreamRunner.APIModel) != "" {

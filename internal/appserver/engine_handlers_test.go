@@ -358,6 +358,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 	t.Run("cancellation receipt", func(t *testing.T) { testCodexCancellationReceipt(t, binary) })
 	t.Run("warm host ownership", func(t *testing.T) { testCodexWarmHostOwnership(t, binary) })
 	t.Run("workspace fidelity", func(t *testing.T) { testCodexWorkspaceFidelity(t, binary) })
+	t.Run("registered projects from scratch", func(t *testing.T) { testCodexRegisteredProjects(t, binary) })
 	t.Run("concurrent host replacement", func(t *testing.T) { testCodexConcurrentHostReplacement(t, binary) })
 	t.Run("concurrent discovery refresh", func(t *testing.T) { testCodexConcurrentDiscoveryRefresh(t, binary) })
 	lifecycle := filepath.Join(root, "lifecycle.jsonl")

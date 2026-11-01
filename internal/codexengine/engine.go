@@ -85,36 +85,38 @@ func (e *Engine) Resume(ctx context.Context, req agentengine.ResumeRequest) (age
 // an empty ref means the first turn creates the codex thread lazily.
 func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.ThreadBinding) (agentengine.Session, error) {
 	return e.newSession(ctx, sessionOptions{
-		threadID:       binding.ThreadID,
-		rootDir:        binding.RootDir,
-		model:          binding.Model,
-		effort:         ReasoningEffort(binding.Effort),
-		speed:          binding.Speed,
-		permissionMode: binding.PermissionMode,
-		instructions:   binding.Instructions,
-		mcpServers:     binding.MCPServers,
-		externalRef:    binding.ExternalRef,
-		persistRef:     binding.PersistRef,
-		persistTurnRef: binding.PersistTurnRef,
-		approval:       binding.RequestApproval,
-		userInput:      binding.RequestUserInput,
+		threadID:              binding.ThreadID,
+		rootDir:               binding.RootDir,
+		additionalDirectories: append([]string(nil), binding.AdditionalDirectories...),
+		model:                 binding.Model,
+		effort:                ReasoningEffort(binding.Effort),
+		speed:                 binding.Speed,
+		permissionMode:        binding.PermissionMode,
+		instructions:          binding.Instructions,
+		mcpServers:            binding.MCPServers,
+		externalRef:           binding.ExternalRef,
+		persistRef:            binding.PersistRef,
+		persistTurnRef:        binding.PersistTurnRef,
+		approval:              binding.RequestApproval,
+		userInput:             binding.RequestUserInput,
 	})
 }
 
 type sessionOptions struct {
-	threadID       string
-	rootDir        string
-	model          string
-	effort         ReasoningEffort
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
-	externalRef    string
-	persistRef     func(string) error
-	persistTurnRef func(string, bool) error
-	approval       agentengine.ApprovalHandler
-	userInput      agentengine.UserInputHandler
+	threadID              string
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                ReasoningEffort
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
+	externalRef           string
+	persistRef            func(string) error
+	persistTurnRef        func(string, bool) error
+	approval              agentengine.ApprovalHandler
+	userInput             agentengine.UserInputHandler
 }
 
 func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengine.Session, error) {
@@ -134,22 +136,23 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		userInput = e.RequestUserInput
 	}
 	return &Session{
-		client:         client,
-		release:        release,
-		threadID:       opts.threadID,
-		rootDir:        opts.rootDir,
-		model:          opts.model,
-		effort:         opts.effort,
-		speed:          opts.speed,
-		permissionMode: opts.permissionMode,
-		instructions:   opts.instructions,
-		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
-		ref:            opts.externalRef,
-		persist:        opts.persistRef,
-		persistTurnRef: opts.persistTurnRef,
-		approval:       approval,
-		steerReady:     make(chan struct{}),
-		userInput:      userInput,
+		client:                client,
+		release:               release,
+		threadID:              opts.threadID,
+		rootDir:               opts.rootDir,
+		additionalDirectories: opts.additionalDirectories,
+		model:                 opts.model,
+		effort:                opts.effort,
+		speed:                 opts.speed,
+		permissionMode:        opts.permissionMode,
+		instructions:          opts.instructions,
+		mcpServers:            append([]agentengine.MCPServer(nil), opts.mcpServers...),
+		ref:                   opts.externalRef,
+		persist:               opts.persistRef,
+		persistTurnRef:        opts.persistTurnRef,
+		approval:              approval,
+		steerReady:            make(chan struct{}),
+		userInput:             userInput,
 	}, nil
 }
 
@@ -161,14 +164,15 @@ type Session struct {
 	client  *Client
 	release func()
 
-	threadID       string
-	rootDir        string
-	model          string
-	effort         ReasoningEffort
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
+	threadID              string
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                ReasoningEffort
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
 
 	mu                   sync.Mutex
 	ref                  string
@@ -680,7 +684,7 @@ func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartR
 	var resp TurnStartResponse
 	_, approval, sandboxPolicy := codexPermissionSettings(s.permissionMode)
 	if sandboxPolicy.Type == SandboxPolicyWorkspaceWrite && strings.TrimSpace(s.rootDir) != "" {
-		sandboxPolicy.WritableRoots = []string{s.rootDir}
+		sandboxPolicy.WritableRoots = append([]string{s.rootDir}, s.additionalDirectories...)
 	}
 	// Loaded native threads can ignore resume overrides. Set CWD together
 	// with the sandbox so its implicit writable CWD cannot remain on the old
