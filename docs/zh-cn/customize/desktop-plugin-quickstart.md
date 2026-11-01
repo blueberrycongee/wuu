@@ -1,6 +1,6 @@
 # 桌面插件快速上手
 
-本教程在输入框工具栏中添加一个小开关，演示组件本地状态和宿主 UI 注册。它不会改变模型行为，也不会保存设置。你可以直接将它作为单个 `.ts` 文件运行或安装（需要 Node.js 22.7+，无需 `plugin.json` 或构建步骤），也可以创建完整的插件包目录。
+本教程在输入框工具栏中添加一个小开关，演示组件本地状态和宿主 UI 注册。它不会改变模型行为，也不会保存设置。你可以直接将它作为单个 `.ts` 文件运行或安装（需要 Node.js 22.13+，无需 `plugin.json` 或构建步骤），也可以创建完整的插件包目录。
 
 ## 方式 A：直接运行或安装单个 `.ts` 文件
 
@@ -12,7 +12,7 @@ wuu plugin dev ./toolbar-demo.ts
 wuu plugin install ./toolbar-demo.ts
 ```
 
-Wuu 会自动擦除 TypeScript 类型，将 `@wuu/plugin-sdk` 运行时导入内联为自包含的浏览器模块，并自动合成 manifest。如果同一个 `.ts` 文件同时包含 `export default { initialize() ... }`，Wuu 会从这一个文件同时激活后端运行时与桌面 UI。注册视图、presenter、设置项或主题时，也可以按需导出 `export const manifest = { contributes: { ... } }`。
+Wuu 会自动擦除 TypeScript 类型，将 `@wuu/plugin-sdk` 运行时导入内联为单个自包含的浏览器模块（不使用 `data:` 导入，也不放宽桌面内容安全策略），并自动合成 manifest。如果同一个 `.ts` 文件同时包含 `export default { initialize() ... }`，Wuu 会从这一个文件同时激活后端运行时与桌面 UI。注册视图、presenter、设置项或主题时，也可以按需导出 `export const manifest = { contributes: { ... } }`。
 
 ## 方式 B：创建插件包目录
 

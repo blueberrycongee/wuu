@@ -1,6 +1,6 @@
 # Agent plugin quickstart
 
-Start with one TypeScript file and a Wuu CLI. Node.js 22.7 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching official TypeScript SDK; no checkout, npm install, manifest, or build command is needed.
+Start with one TypeScript file and a Wuu CLI. Node.js 22.13 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching official TypeScript SDK; no checkout, npm install, manifest, or build command is needed.
 
 ## Run one file
 

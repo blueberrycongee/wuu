@@ -1,6 +1,6 @@
 # Agent 插件快速上手
 
-从一个 TypeScript 文件和 Wuu CLI 开始。此路径需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本。Wuu 提供匹配的官方 TypeScript SDK，不需要源码检出、npm 安装、manifest 或构建命令。
+从一个 TypeScript 文件和 Wuu CLI 开始。此路径需要支持 `--experimental-transform-types` 的 Node.js 22.13 或更高版本。Wuu 提供匹配的官方 TypeScript SDK，不需要源码检出、npm 安装、manifest 或构建命令。
 
 ## 运行一个文件
 

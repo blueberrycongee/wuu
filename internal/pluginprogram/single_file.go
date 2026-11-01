@@ -16,4 +16,3 @@ func SingleFileID(source string) string {
 func PrepareSingleFile(ctx context.Context, source string) (string, func(), error) {
 	return pluginpkg.PrepareSingleFile(ctx, source)
 }
-

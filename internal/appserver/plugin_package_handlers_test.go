@@ -1236,4 +1236,3 @@ export function activate(api: PluginGenerationApi) {
 		t.Fatalf("desktop module v2 source = %q", desktopV2.Source)
 	}
 }
-

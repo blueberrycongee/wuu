@@ -1,6 +1,6 @@
 # Desktop plugin quickstart
 
-This tutorial adds a small toggle to the composer toolbar. It demonstrates local component state and host UI registration; it does not change model behavior or save a setting. You can run or install it directly as a single `.ts` file (with Node.js 22.7+ and no `plugin.json` or build step), or scaffold a full package directory.
+This tutorial adds a small toggle to the composer toolbar. It demonstrates local component state and host UI registration; it does not change model behavior or save a setting. You can run or install it directly as a single `.ts` file (with Node.js 22.13+ and no `plugin.json` or build step), or scaffold a full package directory.
 
 ## Option A: Run or install one `.ts` file directly
 
@@ -12,7 +12,7 @@ wuu plugin dev ./toolbar-demo.ts
 wuu plugin install ./toolbar-demo.ts
 ```
 
-Wuu strips TypeScript types, bundles any `@wuu/plugin-sdk` runtime imports into a self-contained browser module, and synthesizes the manifest automatically. If your single-file plugin also declares `export default { initialize() ... }`, Wuu activates both the runtime backend and the desktop UI from that single `.ts` file. You can also export an optional `export const manifest = { contributes: { ... } }` object when registering views, presenters, settings, or themes.
+Wuu strips TypeScript types, bundles any `@wuu/plugin-sdk` runtime imports into a single self-contained browser module (without `data:` imports or changes to the desktop Content Security Policy), and synthesizes the manifest automatically. If your single-file plugin also declares `export default { initialize() ... }`, Wuu activates both the runtime backend and the desktop UI from that single `.ts` file. You can also export an optional `export const manifest = { contributes: { ... } }` object when registering views, presenters, settings, or themes.
 
 ## Option B: Create a package directory
 

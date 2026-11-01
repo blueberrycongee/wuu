@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	pluginsdk "github.com/blueberrycongee/wuu/packages/plugin-sdk"
+	"github.com/evanw/esbuild/pkg/api"
 )
 
 func SingleFileID(source string) string {
@@ -104,7 +105,30 @@ func PrepareSingleFile(ctx context.Context, source string) (string, func(), erro
 	command.Env = runtime.Env
 	command.Dir = root
 	if output, err := command.CombinedOutput(); err != nil {
-		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, strings.ReplaceAll(strings.TrimSpace(string(output)), filepath.Join(root, "extension.ts"), abs)))
+		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.13+ required): %w: %s", err, strings.ReplaceAll(strings.TrimSpace(string(output)), filepath.Join(root, "extension.ts"), abs)))
+	}
+	manifestBytes, err := os.ReadFile(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		return fail(err)
+	}
+	var generated struct {
+		Runtime json.RawMessage `json:"runtime"`
+		Desktop json.RawMessage `json:"desktop"`
+	}
+	if err := json.Unmarshal(manifestBytes, &generated); err != nil {
+		return fail(err)
+	}
+	if len(generated.Desktop) != 0 {
+		if err := bundleSingleFileDesktop(ctx, root); err != nil {
+			return fail(err)
+		}
+	}
+	if len(generated.Runtime) == 0 {
+		for _, name := range []string{"sdk", "loader.mjs", "resolve.mjs"} {
+			if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+				return fail(err)
+			}
+		}
 	}
 	if _, err := InspectPackage(root); err != nil {
 		return fail(err)
@@ -112,9 +136,88 @@ func PrepareSingleFile(ctx context.Context, source string) (string, func(), erro
 	return root, cleanup, nil
 }
 
+// Bundle with a JavaScript parser rather than rewriting import-looking text.
+// The renderer admits only self and wuu-plugin: scripts, so dependencies must
+// be in this module, not data: imports or a relaxed shell CSP.
+func bundleSingleFileDesktop(ctx context.Context, root string) error {
+	entry := filepath.Join(root, "desktop.mjs")
+	source, err := os.ReadFile(entry)
+	if err != nil {
+		return err
+	}
+	builtinsPath := filepath.Join(root, "desktop-builtins.json")
+	encoded, err := os.ReadFile(builtinsPath)
+	if err != nil {
+		return err
+	}
+	var names []string
+	if err := json.Unmarshal(encoded, &names); err != nil {
+		return err
+	}
+	builtins := make(map[string]bool, len(names)*2)
+	for _, name := range names {
+		builtins[name] = true
+		builtins["node:"+name] = true
+	}
+	result := api.Build(api.BuildOptions{
+		Stdin:  &api.StdinOptions{Contents: string(source), Sourcefile: "extension.ts", Loader: api.LoaderJS},
+		Bundle: true, Format: api.FormatESModule, Platform: api.PlatformBrowser, Target: api.ES2022,
+		LogLevel: api.LogLevelSilent,
+		Plugins: []api.Plugin{{Name: "single-file-imports", Setup: func(build api.PluginBuild) {
+			build.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+				if args.Path == "@wuu/plugin-sdk" {
+					return api.OnResolveResult{Path: "index.ts", Namespace: "wuu-sdk"}, nil
+				}
+				if args.Namespace == "wuu-sdk" && strings.HasPrefix(args.Path, "./") && strings.HasSuffix(args.Path, ".js") {
+					return api.OnResolveResult{Path: strings.TrimSuffix(strings.TrimPrefix(args.Path, "./"), ".js") + ".ts", Namespace: "wuu-sdk"}, nil
+				}
+				if builtins[args.Path] || strings.HasPrefix(args.Path, "node:") {
+					return api.OnResolveResult{Path: args.Path, Namespace: "node-stub"}, nil
+				}
+				return api.OnResolveResult{}, fmt.Errorf("single-file plugins may import Node builtins and @wuu/plugin-sdk only; use a plugin directory for other dependencies: %s", args.Path)
+			})
+			build.OnLoad(api.OnLoadOptions{Filter: ".*", Namespace: "wuu-sdk"}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
+				data, err := pluginsdk.Sources.ReadFile("src/" + args.Path)
+				contents := string(data)
+				return api.OnLoadResult{Contents: &contents, Loader: api.LoaderTS}, err
+			})
+			build.OnLoad(api.OnLoadOptions{Filter: ".*", Namespace: "node-stub"}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
+				message, _ := json.Marshal("Node builtin \"" + args.Path + "\" is only available in the plugin runtime, not in the desktop renderer")
+				runtime := pluginhost.RuntimeCommand("node", []string{"--input-type=module", "-e", "console.log(JSON.stringify(Object.keys(await import(process.argv[1]))))", args.Path}, nil)
+				command := exec.CommandContext(ctx, runtime.Path, runtime.Args[1:]...)
+				command.Env = runtime.Env
+				output, err := command.Output()
+				if err != nil {
+					return api.OnLoadResult{}, fmt.Errorf("inspect Node builtin %q: %w", args.Path, err)
+				}
+				var exports []string
+				if err := json.Unmarshal(output, &exports); err != nil {
+					return api.OnLoadResult{}, err
+				}
+				contents := "const fail = () => { throw new Error(" + string(message) + "); };\n" +
+					"const stub = new Proxy(fail, { get: (_, key) => key === 'then' ? undefined : stub, apply: () => fail(), construct: () => fail() });\n" +
+					"export default stub;\n"
+				for _, name := range exports {
+					if name != "default" {
+						quoted, _ := json.Marshal(name)
+						contents += "export { stub as " + string(quoted) + " };\n"
+					}
+				}
+				return api.OnLoadResult{Contents: &contents, Loader: api.LoaderJS}, nil
+			})
+		}}},
+	})
+	if len(result.Errors) != 0 {
+		return fmt.Errorf("bundle single-file desktop plugin: %s", strings.Join(api.FormatMessages(result.Errors, api.FormatMessagesOptions{Kind: api.ErrorMessage}), "\n"))
+	}
+	if err := os.WriteFile(entry, result.OutputFiles[0].Contents, 0o600); err != nil {
+		return err
+	}
+	return os.Remove(builtinsPath)
+}
+
 const singleFileRuntimeLoader = `import fs from "node:fs";
-import path from "node:path";
-import { isBuiltin, register, stripTypeScriptTypes } from "node:module";
+import { builtinModules, register, stripTypeScriptTypes } from "node:module";
 
 register("./resolve.mjs", import.meta.url);
 const { runJSONLRuntime } = await import("./sdk/index.ts");
@@ -177,52 +280,9 @@ if (process.argv.includes("--validate")) {
   }
 
   if (hasDesktop) {
-    const sdkCache = new Map();
-    const buildSDKDataURL = (file = "index.ts") => {
-      if (sdkCache.has(file)) return sdkCache.get(file);
-      const src = fs.readFileSync(path.join("./sdk", file), "utf8");
-      let js = stripTypeScriptTypes(src, { mode: "transform" });
-      js = js.replace(/(from\s+["'])\.\/([^"']+)\.js(["'])/g, (_, pre, rel, post) => {
-        return pre + buildSDKDataURL(rel + ".ts") + post;
-      });
-      const url = "data:text/javascript;base64," + Buffer.from(js).toString("base64");
-      sdkCache.set(file, url);
-      return url;
-    };
-
-    const buildBuiltinStubDataURL = async (specifier) => {
-      const target = specifier.startsWith("node:") ? specifier : "node:" + specifier;
-      const builtin = await import(target);
-      const names = Object.keys(builtin).filter((name) => name !== "default" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name));
-      const message = 'Node builtin "' + specifier + '" is only available in the plugin runtime, not in the desktop renderer';
-      const lines = [
-        "const fail = () => { throw new Error(" + JSON.stringify(message) + "); };",
-        "const stub = new Proxy(fail, { get: () => stub, apply: () => fail(), construct: () => fail() });",
-        "export default stub;",
-        ...names.map((name) => "export const " + name + " = stub;"),
-      ];
-      return "data:text/javascript;base64," + Buffer.from(lines.join("\n")).toString("base64");
-    };
-
     const tsSource = fs.readFileSync("./extension.ts", "utf8");
-    let desktopJS = stripTypeScriptTypes(tsSource, { mode: "transform" });
-    const specifiers = new Set();
-    for (const match of desktopJS.matchAll(/(?:from|import)\s*["']([^"']+)["']/g)) {
-      specifiers.add(match[1]);
-    }
-    const replacements = new Map();
-    for (const specifier of specifiers) {
-      if (specifier === "@wuu/plugin-sdk") {
-        replacements.set(specifier, buildSDKDataURL("index.ts"));
-      } else if (isBuiltin(specifier)) {
-        replacements.set(specifier, await buildBuiltinStubDataURL(specifier));
-      }
-    }
-    desktopJS = desktopJS.replace(/((?:from|import)\s*["'])([^"']+)(["'])/g, (full, pre, specifier, post) => {
-      const replacement = replacements.get(specifier);
-      return replacement ? pre + replacement + post : full;
-    });
-    fs.writeFileSync("./desktop.mjs", desktopJS, { mode: 0o600 });
+    fs.writeFileSync("./desktop.mjs", stripTypeScriptTypes(tsSource, { mode: "transform" }), { mode: 0o600 });
+    fs.writeFileSync("./desktop-builtins.json", JSON.stringify(builtinModules), { mode: 0o600 });
     baseManifest.desktop = {
       ...(typeof baseManifest.desktop === "object" && baseManifest.desktop !== null ? baseManifest.desktop : {}),
       entry: "desktop.mjs",
@@ -230,11 +290,6 @@ if (process.argv.includes("--validate")) {
   }
 
   fs.writeFileSync("./plugin.json", JSON.stringify(baseManifest), { mode: 0o600 });
-  if (!runtimePlugin) {
-    fs.rmSync("./sdk", { recursive: true, force: true });
-    fs.rmSync("./loader.mjs", { force: true });
-    fs.rmSync("./resolve.mjs", { force: true });
-  }
 } else {
   if (!runtimePlugin) {
     throw new TypeError("A Wuu TypeScript runtime plugin must default-export a RuntimePlugin with initialize().");

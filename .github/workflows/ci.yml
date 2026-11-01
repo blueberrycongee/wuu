@@ -103,6 +103,21 @@ jobs:
       - name: Test
         run: make test-go test-plugins
 
+      - name: Guard single-file plugins under desktop CSP
+        run: |
+          export CHROMIUM_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          test -n "$CHROMIUM_BIN"
+          set -o pipefail
+          go test ./internal/plugin -run '^TestPrepareSingleFileDesktopAndFullStack$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/single-file-plugin-csp.log"
+
+      - name: Upload single-file plugin CSP evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-file-plugin-csp-evidence
+          path: ${{ runner.temp }}/single-file-plugin-csp.log
+          if-no-files-found: ignore
+
       - name: Guard retained historical plugin packages against current host
         timeout-minutes: 4
         env:

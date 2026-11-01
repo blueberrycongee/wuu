@@ -28,8 +28,10 @@ export const manifest = {
   description: "Single-file desktop UI plugin",
 };
 
-export function activate(api: PluginGenerationApi): string {
-  return "activated:" + api.pluginId + ":" + KERNEL_SERVICE_METHOD;
+export async function activate(api: PluginGenerationApi): Promise<string> {
+  const { KERNEL_SERVICE_METHOD: dynamicMethod } = await import("@wuu/plugin-sdk");
+  const text = "from 'node:fs'";
+  return "activated:" + api.pluginId + ":" + KERNEL_SERVICE_METHOD + ":" + dynamicMethod + ":" + text;
 }
 `
 		if err := os.WriteFile(source, []byte(code), 0o600); err != nil {
@@ -57,11 +59,11 @@ export function activate(api: PluginGenerationApi): string {
 
 		eval := exec.Command("node", "--input-type=module", "-e", `
 import { activate } from "./desktop.mjs";
-console.log(activate({ pluginId: "user:demo" }));
+console.log(await activate({ pluginId: "user:demo" }));
 `)
 		eval.Dir = prepared
 		output, err := eval.CombinedOutput()
-		if err != nil || !strings.Contains(string(output), "activated:user:demo:call") {
+		if err != nil || !strings.Contains(string(output), "activated:user:demo:call:call:from 'node:fs'") {
 			t.Fatalf("desktop.mjs execution = %q, %v", output, err)
 		}
 	})
@@ -172,14 +174,23 @@ try {
 		if err != nil || !strings.Contains(string(output), "ui-ready:user:fullstack:call") || !strings.Contains(string(output), "Node builtin \"node:fs\" is only available in the plugin runtime") {
 			t.Fatalf("desktop.mjs fullstack execution = %q, %v", output, err)
 		}
+
+		if os.Getenv("CHROMIUM_BIN") != "" {
+			probe := exec.Command("node", "../../desktop/scripts/single-file-plugin-csp.cjs", filepath.Join(prepared, "desktop.mjs"))
+			output, err := probe.CombinedOutput()
+			if err != nil {
+				t.Fatalf("desktop renderer CSP: %s: %v", output, err)
+			}
+			t.Logf("desktop renderer CSP: %s", output)
+		}
 	})
 
 	t.Run("rejects invalid single-file exports and manifest overrides", func(t *testing.T) {
 		for name, content := range map[string]string{
-			"empty module":      `export const x = 1;`,
-			"non-object manifest": `export const manifest = "bad"; export function activate() {}`,
-			"id override":       `export const manifest = { id: "custom-id" }; export function activate() {}`,
-			"runtime override":  `export const manifest = { runtime: { protocol: "wuu-plugin-v1", command: "node" } }; export function activate() {}`,
+			"empty module":           `export const x = 1;`,
+			"non-object manifest":    `export const manifest = "bad"; export function activate() {}`,
+			"id override":            `export const manifest = { id: "custom-id" }; export function activate() {}`,
+			"runtime override":       `export const manifest = { runtime: { protocol: "wuu-plugin-v1", command: "node" } }; export function activate() {}`,
 			"desktop entry override": `export const manifest = { desktop: { entry: "other.js" } }; export function activate() {}`,
 		} {
 			source := filepath.Join(t.TempDir(), "invalid.ts")
