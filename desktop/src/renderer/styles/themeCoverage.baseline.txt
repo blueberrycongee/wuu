@@ -74,13 +74,17 @@ scrollbars.css @supports not (scrollbar-color: auto) background-color --scrollba
 scrollbars.css @supports not (scrollbar-color: auto) background --scrollbar-track-bg
 scrollbars.css @supports not (scrollbar-color: auto) background --scrollbar-track-bg
 select-menu.css .minute-clock-hand-tip box-shadow --ink-overlay-18
+settings.css .settings-archive-group-count background --ink-overlay-6
 settings.css .settings-button-danger background --danger-soft
 settings.css .settings-button-danger:hover:not(:disabled) background --danger-border
 settings.css .settings-button-ghost:hover:not(:disabled) background --ink-overlay-6
 settings.css .settings-button-primary background --gray-900
 settings.css .settings-button-primary:hover:not(:disabled) background --gray-900
 settings.css .settings-engine-row-toggle:hover > .settings-engine-expand background --ink-overlay-6
+settings.css .settings-nav-item:hover background --ink-overlay-4
 settings.css .settings-remote-qr background --settings-remote-qr-quiet-zone
+settings.css .settings-search input background --ink-overlay-4
+settings.css .settings-search input:hover background --ink-overlay-6
 settings.css .settings-shell background --sidebar-material-fill
 settings.css .settings-skill-usage-bar span background --settings-heatmap-level-3
 settings.css .settings-theme-preview-window-dark background --settings-preview-dark-canvas
@@ -134,7 +138,7 @@ sidebar.css .thread-row:hover::before background --sidebar-session-status-bg
 sidebar.css .thread-row.active::before background --sidebar-session-status-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before background --sidebar-resizer-hover-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before box-shadow --sidebar-resizer-hover-ring
-system-permissions.css .system-permission-row[data-permission="screen"] .system-permission-symbol background --danger-soft
+theme.css .theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) box-shadow --shadow-color-subtle
 turns.css .artifact-preview-frame, .artifact-preview-body > .workspace-file-pdf-preview background --artifact-preview-frame-bg
 turns.css .artifact-preview-overlay background --artifact-preview-overlay-bg
 turns.css .artifact-preview-shell border --artifact-preview-shell-border

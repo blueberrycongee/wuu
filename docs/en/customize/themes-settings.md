@@ -4,7 +4,9 @@ Use **Settings → Appearance** to choose a theme and adjust reading preferences
 
 ## Choose a theme
 
-**System** follows the operating system; **Light** and **Dark** keep a fixed appearance. **Content theme** selects an enabled plugin theme for the current appearance. Light and dark choices are saved separately. Choose **Default** to remove the current mode's plugin overrides.
+**System** follows the operating system; **Light** and **Dark** keep a fixed appearance. **Color palette** offers **Default**, **Linear**, **Codex**, **Absolutely**, **GitHub**, **Notion**, **One**, and themes from enabled plugins. Palettes coordinate the conversation background, filled user messages, text, inputs and accents while assistant responses keep their open layout.
+
+Changes apply immediately. Light and dark choices are saved separately, including when following the system. Choose **Default** to restore the current mode's neutral colors without changing the other mode or your shell skin.
 
 Disabling or removing a plugin also removes its contributed themes. If a theme makes the interface difficult to use, return to a built-in theme or disable the plugin through plugin management.
 
