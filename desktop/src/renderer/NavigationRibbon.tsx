@@ -185,7 +185,6 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
           </a>
         </Tooltip>
       </HoverRevealScopeContext.Provider>
-      {import.meta.env.DEV && <span className="sidebar-ribbon-dev-label" title="Development build">DEV</span>}
       <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
         accessibility={{ screenReaderInstructions: { draggable: t("ribbon.reorderHint") } }}
         onDragStart={() => setDragging(true)}
