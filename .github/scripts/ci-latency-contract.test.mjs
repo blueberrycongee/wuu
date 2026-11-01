@@ -19,15 +19,28 @@ test('race lanes retain the complete admission, runtime and supporting package g
 });
 
 test('shared Desktop outputs are same-run artifacts and verified against the checkout', () => {
-  const build = workflow.split('\n  desktop-build:\n')[1].split('\n  desktop-suite:\n')[0];
+  const build = workflow.split('\n  repository-check:\n')[1].split('\n  go-validation:\n')[0];
   const consumers = workflow.split('\n  desktop-suite:\n')[1].split('\n  desktop-macos-controls:\n')[0];
+  // This producer must start without the selector's extra queue hop, while
+  // retaining identical immutable comparison refs and fail-closed consumers.
+  assert.doesNotMatch(build.split('    steps:')[0], /needs:/);
+  assert(build.indexOf('make repository-check') < build.indexOf('id: select-build'));
+  const selection = workflow.split('      - name: Select jobs from the complete change\n')[1].split('\n  repository-check:')[0];
+  const repeated = build.split('      - name: Select shared Desktop build from the complete change\n')[1].split('      - uses: actions/setup-node@v4')[0];
+  assert.equal(repeated.replace('id: select-build', 'id: select').trim(), selection.trim());
+  const required = `steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'`;
+  const heavySteps = build.split('id: select-build')[1].split(/\n      - /).slice(1);
+  assert.equal(heavySteps.length, 5);
+  for (const step of heavySteps) assert(step.includes(`if: ${required}`), step);
+  assert.match(consumers, /needs\.repository-check\.result == 'success'/);
+  assert.doesNotMatch(consumers, /needs\.repository-check\.result == 'skipped'/);
   assert.match(build, /git rev-parse HEAD > .*source-commit.txt/);
   assert.match(build, /go build .*wuu-session-switch-core/);
   assert.match(build, /electron-vite build/);
   assert.match(build, /go build -o .*wuu-session-fixture \.\/scripts\/session-fixture/);
   assert.match(build, /sha256sum .*wuu-session-fixture/);
   assert.match(consumers, /WUU_SESSION_FIXTURE_BINARY:/);
-  assert.match(consumers, /needs: \[changes, desktop-build\]/);
+  assert.match(consumers, /needs: \[changes, repository-check\]/);
   assert.match(consumers, /actions\/download-artifact@v4/);
   assert.match(consumers, /source-commit.txt\)" = "\$\(git rev-parse HEAD\)"/);
   assert.match(consumers, /sha256sum --check .*bundle.sha256/);

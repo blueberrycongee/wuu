@@ -726,7 +726,7 @@ iOS 的核心集成、模拟器构建和设备构建在三个独立任务中运�
 
 [Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
-[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 始终执行轻量仓库元数据检查。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
+[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 始终先执行仓库元数据检查；选中非单元 Desktop 套件时，同一 runner 随后生成校验源码提交和文件哈希的只读 renderer/core 构建产物，避免独立构建任务再次排队。纯文档或仅单元测试改动不安装构建依赖。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
 
 Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
@@ -734,7 +734,7 @@ Go 验证拆分为静态及跨平台检查、其他 Go 包、插件验收，以�
 
 公开 provider 验收分为独立的 controller、authority 和 cooperation 三组。每组构建被测版本，保留原有边界断言及证据，并检查自己的报告。所有 Go 矩阵组使用 `fail-fast: false`，汇总结果仍进入 `Go check`。拆分会增加 runner 需求，因此判断总耗时改善时必须同时检查排队与执行时间。
 
-Desktop 验证拆为七个独立 Linux 任务并行运行：单元测试、类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；会话生命周期；外壳、引导与设置。每组使用独立构建、Electron 配置、Xvfb 显示器和证据上传。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
+Desktop 验证拆为八个独立 Linux 任务并行运行：两个单元测试分片，包含类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；会话生命周期；外壳、引导与设置。非单元组校验并复用同次运行的构建产物；各条验收旅程保留独立 Electron 配置、Xvfb 显示器和证据上传。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
 
 仅修改[分组映射](../../../.github/scripts/desktop-ci-suites.json)中独立 E2E 入口时，CI 运行所属组的并集，不触发无关 Clients/native 检查。共享 helper、preload、fixture、产品代码、样式、依赖、CI 配置和未知路径仍保守回退全部组，避免根据组件文件名猜测完整依赖关系。原有测试命令、断言、场景矩阵和证据上传均保留；手动运行执行全部组。扩展映射前应确认入口不是共享 helper。使用 `node --test .github/scripts/select-ci.test.mjs` 通过临时 Git 改动验证范围选择，包括删除文件和混合范围。
 

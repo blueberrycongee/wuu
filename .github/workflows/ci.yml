@@ -62,6 +62,78 @@ jobs:
       - name: Check repository metadata
         run: make repository-check
 
+      # Reuse this already allocated runner instead of queueing another producer
+      # after changes. Selection uses the same immutable base/head as changes.
+      - name: Select shared Desktop build from the complete change
+        id: select-build
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD: ${{ github.sha }}
+        run: |
+          # Selection compares two trees, not history. Fetch the exact base even
+          # when a push spans several commits; failures must not skip checks.
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+            git fetch --no-tags --depth=1 origin "$CI_BASE"
+          fi
+          node .github/scripts/select-ci.mjs
+
+      - uses: actions/setup-node@v4
+        if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+      - name: Install build dependencies
+        if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'
+        run: |
+          npm ci --prefix desktop --ignore-scripts &
+          desktop_pid=$!
+          npm ci --prefix clients/core &
+          core_pid=$!
+          status=0
+          wait "$desktop_pid" || status=1
+          wait "$core_pid" || status=1
+          exit "$status"
+      - uses: actions/setup-go@v5
+        if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]' && (contains(steps.select-build.outputs.desktop_suites, 'corpus') || contains(steps.select-build.outputs.desktop_suites, 'session'))
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build this run's renderer and core once
+        if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'
+        run: |
+          mkdir -p .tmp/desktop-ci-build
+          git rev-parse HEAD > .tmp/desktop-ci-build/source-commit.txt
+          (cd desktop && NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096" node_modules/.bin/electron-vite build) &
+          renderer_pid=$!
+          (
+            if [[ '${{ steps.select-build.outputs.desktop_suites }}' == *corpus* || '${{ steps.select-build.outputs.desktop_suites }}' == *session* ]]; then
+              fixture_version="$(make -s print-version)"
+              go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/desktop-ci-build/wuu-session-switch-core ./cmd/wuu
+              go build -o .tmp/desktop-ci-build/wuu-session-fixture ./scripts/session-fixture
+            fi
+          ) &
+          core_pid=$!
+          status=0
+          wait "$renderer_pid" || status=1
+          wait "$core_pid" || status=1
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > .tmp/desktop-ci-build/bundle.sha256
+          if [ -f .tmp/desktop-ci-build/wuu-session-switch-core ]; then
+            sha256sum .tmp/desktop-ci-build/wuu-session-switch-core >> .tmp/desktop-ci-build/bundle.sha256
+            sha256sum .tmp/desktop-ci-build/wuu-session-fixture >> .tmp/desktop-ci-build/bundle.sha256
+          fi
+          tar -cf "$RUNNER_TEMP/desktop-ci-build.tar" desktop/out .tmp/desktop-ci-build
+      - uses: actions/upload-artifact@v4
+        if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'
+        with:
+          name: desktop-ci-build
+          path: ${{ runner.temp }}/desktop-ci-build.tar
+          compression-level: 0
+          retention-days: 1
+
   go-validation:
     name: Go validation / ${{ matrix.suite }}${{ matrix.shard }}
     needs: changes
@@ -664,71 +736,10 @@ jobs:
             test "$ARCHITECTURE_RESULT" = skipped
           fi
 
-  desktop-build:
-    name: Desktop / shared immutable build
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true' && needs.changes.outputs.desktop_suites != '["unit","unit-extra"]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: |
-            desktop/package-lock.json
-            clients/core/package-lock.json
-      - name: Install build dependencies
-        run: |
-          npm ci --prefix desktop --ignore-scripts &
-          desktop_pid=$!
-          npm ci --prefix clients/core &
-          core_pid=$!
-          status=0
-          wait "$desktop_pid" || status=1
-          wait "$core_pid" || status=1
-          exit "$status"
-      - uses: actions/setup-go@v5
-        if: contains(needs.changes.outputs.desktop_suites, 'corpus') || contains(needs.changes.outputs.desktop_suites, 'session')
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-      - name: Build this run's renderer and core once
-        run: |
-          mkdir -p .tmp/desktop-ci-build
-          git rev-parse HEAD > .tmp/desktop-ci-build/source-commit.txt
-          (cd desktop && NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=1536" node_modules/.bin/electron-vite build) &
-          renderer_pid=$!
-          (
-            if [[ '${{ needs.changes.outputs.desktop_suites }}' == *corpus* || '${{ needs.changes.outputs.desktop_suites }}' == *session* ]]; then
-              fixture_version="$(make -s print-version)"
-              go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/desktop-ci-build/wuu-session-switch-core ./cmd/wuu
-              go build -o .tmp/desktop-ci-build/wuu-session-fixture ./scripts/session-fixture
-            fi
-          ) &
-          core_pid=$!
-          status=0
-          wait "$renderer_pid" || status=1
-          wait "$core_pid" || status=1
-          if [ "$status" -ne 0 ]; then exit "$status"; fi
-          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > .tmp/desktop-ci-build/bundle.sha256
-          if [ -f .tmp/desktop-ci-build/wuu-session-switch-core ]; then
-            sha256sum .tmp/desktop-ci-build/wuu-session-switch-core >> .tmp/desktop-ci-build/bundle.sha256
-            sha256sum .tmp/desktop-ci-build/wuu-session-fixture >> .tmp/desktop-ci-build/bundle.sha256
-          fi
-          tar -cf "$RUNNER_TEMP/desktop-ci-build.tar" desktop/out .tmp/desktop-ci-build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-ci-build
-          path: ${{ runner.temp }}/desktop-ci-build.tar
-          compression-level: 0
-          retention-days: 1
-
-
   desktop-suite:
     name: Desktop / ${{ matrix.suite }}
-    needs: [changes, desktop-build]
-    if: ${{ !cancelled() && needs.changes.outputs.desktop == 'true' && (needs.desktop-build.result == 'success' || needs.desktop-build.result == 'skipped') }}
+    needs: [changes, repository-check]
+    if: ${{ !cancelled() && needs.changes.outputs.desktop == 'true' && needs.repository-check.result == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

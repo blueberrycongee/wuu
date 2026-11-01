@@ -2,10 +2,10 @@ const { spawn: nodeSpawn } = require('node:child_process');
 const { resolve } = require('node:path');
 
 function scriptsForPlatform(platform) {
-  // Core/plugins, mobile web, and Electron have disjoint outputs. Start core
-  // and web first, then let Electron use the first free slot instead of waiting
-  // for web; helper compilation and downloads fill the remaining slot.
-  if (platform === 'darwin') return ['build:core', 'build:web', 'build:renderer', 'build:cua-mac', 'build:app-context-mac', 'build:speech-mac', 'build:ripgrep'];
+  // Hosted ARM macOS measurements showed two Vite graphs contending despite
+  // bounded heaps. Keep its web/renderer build serial while overlapping core.
+  if (platform === 'darwin') return ['build:core', 'build', 'build:cua-mac', 'build:app-context-mac', 'build:speech-mac', 'build:ripgrep'];
+  // Linux benefits from disjoint web/renderer outputs in the two-worker pool.
   if (platform === 'linux') return ['build:core', 'build:web', 'build:renderer', 'build:cua-linux', 'build:ripgrep'];
   throw new Error(`Unsupported package build platform: ${platform}`);
 }
@@ -18,10 +18,10 @@ async function runBuilds(scripts, { spawn = nodeSpawn, cwd = resolve(__dirname, 
       const script = scripts[next++];
       try {
         await new Promise((resolveBuild, rejectBuild) => {
-          // Two Vite graphs otherwise grow to their default heap limits together.
-          // Bound only these build workers; preserve other caller Node options.
+          // Keep each of the two Vite workers within the existing 4 GiB build
+          // budget; 1536 MiB is insufficient for the full renderer graph.
           const env = ['build:web', 'build:renderer'].includes(script)
-            ? { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=1536`.trim() }
+            ? { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=4096`.trim() }
             : process.env;
           const child = spawn('npm', ['run', script], { cwd, env, stdio: 'inherit' });
           child.once('error', error => rejectBuild(new Error(`${script}: ${error.message}`)));

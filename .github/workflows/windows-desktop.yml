@@ -73,21 +73,19 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: npm ci
-
-      - name: Install bundled plugin dependencies
-        working-directory: desktop
-        run: npm ci --prefix ../plugins
-
-      - name: Install core client dependencies
-        working-directory: desktop
-        run: npm ci --prefix ../clients/core
-
-      - name: Install mobile web dependencies
-        working-directory: desktop
-        run: npm ci --prefix ../clients/mobile-web
+      - name: Install locked workspace dependencies
+        shell: bash
+        run: |
+          pids=()
+          for workspace in desktop plugins clients/core clients/mobile-web; do
+            npm ci --prefix "$workspace" &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          exit "$status"
 
       - name: Verify Electron runtime
         working-directory: desktop
@@ -109,9 +107,9 @@ jobs:
         shell: bash
         run: |
           node --test scripts/fetch-ripgrep.test.cjs
-          (npm run build:core:win && npm run build:ripgrep:win) &
+          (npm run build:core:win && npm run build:renderer) &
           core_pid=$!
-          npm run build &
+          (npm run build:web && npm run build:ripgrep:win) &
           presentation_pid=$!
           core_result=0
           presentation_result=0

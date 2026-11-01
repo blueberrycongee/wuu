@@ -64,8 +64,8 @@ async function run() {
       callback({ cancel: true });
     });
     await win.loadFile(renderer);
-    await waitFor(() => Boolean(document.querySelector(".sidebar-session-row .thread-row-main")), "fixture session in navigation");
-    await click(".sidebar-session-row .thread-row-main");
+    await waitFor(() => Boolean(document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main")), "fixture session in navigation");
+    await click(".sidebar-session-row:not([data-draft-id]) .thread-row-main");
     await waitFor(() => Boolean(document.querySelector(".conversation-pane .turn")), "active fixture session");
     await evaluate(({ theme, size }) => {
       document.documentElement.dataset.theme = theme;

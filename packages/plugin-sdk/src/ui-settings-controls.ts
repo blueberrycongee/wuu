@@ -92,7 +92,7 @@ export interface ApplicationSettingsControlsV1 {
   currentAppliedTheme(): "light" | "dark";
   observeAppliedTheme(listener: (theme: "light" | "dark") => void): () => void;
   observeContentThemeSelection(listener: () => void): () => void;
-  availableExtensionThemes(inventory: readonly import("./application-settings.js").ApplicationSettingsExtensionInventoryRecordV1[] | undefined): { key: string; legacyKeys: string[]; name: string; base: "light" | "dark" }[];
+  availableExtensionThemes(inventory: readonly import("./application-settings.js").ApplicationSettingsExtensionInventoryRecordV1[] | undefined): { key: string; legacyKeys: string[]; name: string; base: "light" | "dark"; preview?: { canvas: string; ink: string; accent: string } }[];
   selectedExtensionThemeKey(mode: "light" | "dark"): string;
   selectExtensionTheme(mode: "light" | "dark", key: string): void;
 

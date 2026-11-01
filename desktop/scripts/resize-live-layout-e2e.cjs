@@ -484,8 +484,8 @@ app.whenReady().then(async () => {
   ipcMain.on("test:browser-bounds", (_event, payload) => browserBounds.push(payload.rect));
   ipcMain.on("test:pip-host", () => {});
   await win.loadFile(renderer);
-  await until(() => document.querySelector(".thread-row-main"));
-  await evaluate(() => document.querySelector(".thread-row-main").click());
+  await until(() => document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main"));
+  await evaluate(() => document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main").click());
   await until(() => document.querySelector(".turn"));
   await settle();
   const resources = await evaluate(() => performance.getEntriesByType("resource").map(entry => entry.name).filter(name => name.startsWith("file:") && /\.(?:js|css)$/.test(name)));
