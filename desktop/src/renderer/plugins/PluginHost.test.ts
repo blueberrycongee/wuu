@@ -1052,3 +1052,23 @@ it("fences a rejected application action after its consumer scope retires", asyn
   reject(new DOMException("signal is aborted without reason", "AbortError"));
   expect(await result).toMatchObject({ code: "WUU_PLUGIN_SCOPE_RETIRED" });
 });
+
+it.each(["resolve", "reject"])("fences a runtime %s after authoritative graph handoff before renderer cleanup", async outcome => {
+  let resolve!: (value: unknown) => void, reject!: (reason: unknown) => void;
+  const invoke = vi.fn(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+  const host = new PluginHost({ react: React, invokeRuntime: invoke });
+  let api!: PluginGenerationApi;
+  await host.activateGeneration({ pluginId: "scope", generation: "same-code", graphGeneration: "old-graph", register(value) { api = value; } });
+  const result = api.invokeRuntime("read").catch(error => error);
+  // synchronize publishes the committed inventory before awaiting application
+  // preparation and retiring the renderer's previous consumers.
+  host.setInventoryGraphs([{ id: "scope", graph_generation: "new-graph" }] as never);
+  expect(api.signal.aborted).toBe(false);
+  if (outcome === "resolve") resolve({ stale: true });
+  else reject(new Error("plugin graph generation is no longer active"));
+  expect(await result).toMatchObject({ code: "WUU_PLUGIN_SCOPE_RETIRED" });
+  expect(host.getGenerationDiagnostics("scope", "same-code")).toEqual([]);
+  await expect(api.invokeRuntime("another-read")).rejects.toMatchObject({ code: "WUU_PLUGIN_SCOPE_RETIRED" });
+  expect(invoke).toHaveBeenCalledTimes(1);
+  host.unload("scope");
+});

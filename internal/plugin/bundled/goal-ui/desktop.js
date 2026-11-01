@@ -48,15 +48,18 @@ export async function activate(api) {
     for (const listener of listeners.get(id) || []) listener();
   }
   async function refresh(id) {
-    if (!id || disposed) return;
+    if (!id || disposed || api.signal.aborted) return;
     const revision = (revisions.get(id) || 0) + 1;
     revisions.set(id, revision);
     try {
       const value = await requestGoal("get_goal", { thread_id: id });
-      if (disposed || revisions.get(id) !== revision) return;
+      if (disposed || api.signal.aborted || revisions.get(id) !== revision) return;
       const goal = value?.goal || null;
       publish(id, { goal, error: "", loaded: true });
     } catch (error) {
+      // The host proves graph retirement independently of provider error text.
+      // Keep the prior presentation until its replacement owns the composer.
+      if (api.signal.aborted || error?.code === "WUU_PLUGIN_SCOPE_RETIRED") return;
       if (!disposed && revisions.get(id) === revision) {
         const message = String(error.message || error);
         // Electron wraps the host's exact missing-provider message. Keep

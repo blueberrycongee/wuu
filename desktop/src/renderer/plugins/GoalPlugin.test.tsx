@@ -51,6 +51,7 @@ async function mount(invokeRuntime: InvokeRuntime) {
   await host.activateGeneration({
     pluginId: "goal-ui",
     generation: "one",
+    graphGeneration: "old-graph",
     register: activate,
   });
   const container = document.createElement("div");
@@ -332,4 +333,32 @@ it("does not notify a late goal action after leaving its conversation", async ()
   await ui.render("thread-two");
   await act(async () => reject(new Error("late private failure")));
   expect(notices).not.toHaveBeenCalled();
+});
+
+
+it("does not publish a retired graph refresh while its composer contribution remains mounted", async () => {
+  let reject!: (reason: Error) => void;
+  const ui = await mount(() => new Promise((_yes, no) => { reject = no; }));
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  await act(async () => {
+    ui.host.setInventoryGraphs([{ id: "goal-ui", graph_generation: "new-graph" }] as never);
+    reject(new Error("plugin graph generation is no longer active"));
+  });
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual([]);
+});
+
+
+it.each(["context canceled", "plugin graph generation is no longer active"])("keeps current-graph failure visible: %s", async message => {
+  let reject!: (reason: Error) => void;
+  const ui = await mount(() => new Promise((_yes, no) => { reject = no; }));
+  const failure = new Error(message);
+  await act(async () => {
+    ui.host.setInventoryGraphs([{ id: "goal-ui", graph_generation: "old-graph" }] as never);
+    reject(failure);
+  });
+  expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "runtime", cause: failure }),
+  ]));
 });
