@@ -1,11 +1,14 @@
-/* Voice controls share Send/Stop's visible 32px disc. */
+/* Voice controls share Send/Stop's visible 24px disc. */
 .composer-action-button.composer-dictation-button,
 .composer-dictation-recording .composer-action-button {
   color: var(--ink-muted);
+}
+.composer-action-button.composer-dictation-button::before,
+.composer-dictation-recording .composer-action-button::before {
   background: var(--surface-2);
 }
-.composer-action-button.composer-dictation-button:hover:not(:disabled),
-.composer-dictation-recording .composer-action-button:hover:not(:disabled) { background: var(--surface-3); }
+.composer-action-button.composer-dictation-button:hover:not(:disabled)::before,
+.composer-dictation-recording .composer-action-button:hover:not(:disabled)::before { background: var(--surface-3); }
 .composer-editor.is-dictating { align-items: center; }
 .composer-editor.is-dictating > textarea,
 .composer-editor.is-dictating > .composer-bar-left { display: none; }
