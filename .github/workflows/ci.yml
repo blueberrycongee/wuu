@@ -57,12 +57,6 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Verify CI selection contracts
-        run: node --test .github/scripts/*.test.mjs
-
-      - name: Check repository metadata
-        run: make repository-check
-
       # Reuse this already allocated runner instead of queueing another producer
       # after changes. Selection uses the same immutable base/head as changes.
       - name: Select shared Desktop build from the complete change
@@ -79,6 +73,7 @@ jobs:
           node .github/scripts/select-ci.mjs
 
       - uses: actions/setup-node@v4
+        id: build-node
         if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'
         with:
           node-version-file: .node-version
@@ -86,16 +81,33 @@ jobs:
           cache-dependency-path: |
             desktop/package-lock.json
             clients/core/package-lock.json
-      - name: Install build dependencies
-        if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'
+      - name: Check repository and prepare selected Desktop build
+        # Checks still run when selection/cache preparation fails. No background
+        # process survives this step, and a failed check prevents the build/upload.
+        if: ${{ !cancelled() }}
+        env:
+          BUILD_REQUIRED: ${{ steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]' }}
+          BUILD_SELECTION_RESULT: ${{ steps.select-build.outcome }}
+          BUILD_NODE_RESULT: ${{ steps.build-node.outcome }}
         run: |
-          npm ci --prefix desktop --ignore-scripts &
-          desktop_pid=$!
-          npm ci --prefix clients/core &
-          core_pid=$!
+          (
+            node --test .github/scripts/*.test.mjs
+            make repository-check
+          ) &
+          pids=("$!")
           status=0
-          wait "$desktop_pid" || status=1
-          wait "$core_pid" || status=1
+          if [ "$BUILD_SELECTION_RESULT" != success ]; then status=1; fi
+          if [ "$BUILD_REQUIRED" = true ]; then
+            if [ "$BUILD_NODE_RESULT" = success ]; then
+              npm ci --prefix desktop --ignore-scripts &
+              pids+=("$!")
+              npm ci --prefix clients/core &
+              pids+=("$!")
+            else
+              status=1
+            fi
+          fi
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
           exit "$status"
       - uses: actions/setup-go@v5
         if: steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]' && (contains(steps.select-build.outputs.desktop_suites, 'corpus') || contains(steps.select-build.outputs.desktop_suites, 'session'))
@@ -189,7 +201,17 @@ jobs:
 
       - name: Test all other Go packages
         if: matrix.suite == 'packages'
-        run: make test-go-packages
+        env:
+          WUU_GO_TIMING_EVIDENCE: ${{ runner.temp }}/go-package-timings
+        run: node .github/scripts/go-test-timing.mjs
+
+      - name: Upload Go package timing evidence
+        if: always() && matrix.suite == 'packages'
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-package-timings
+          path: ${{ runner.temp }}/go-package-timings/
+          if-no-files-found: warn
 
       - name: Test appserver shard
         if: matrix.suite == 'appserver'

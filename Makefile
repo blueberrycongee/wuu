@@ -96,7 +96,7 @@ test-go-packages:
 	@packages="$$(go list $(GO_PACKAGES))" || exit $$?; \
 		packages="$$(printf '%s\n' "$$packages" | sed '\|^github.com/blueberrycongee/wuu/internal/appserver$$|d' | \
 			awk '/^github.com\/blueberrycongee\/wuu\/(cmd\/wuu|internal\/(tools|runtime|codemode))$$/ { print; next } { rest[++n]=$$0 } END { for (i=1; i<=n; i++) print rest[i] }')"; \
-		go test $$packages
+		go test $(GO_TEST_OUTPUT_FLAGS) $$packages
 
 test-go-uncached:
 	go test $(GO_PACKAGES) -count=1

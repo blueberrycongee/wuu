@@ -24,14 +24,15 @@ test('shared Desktop outputs are same-run artifacts and verified against the che
   // This producer must start without the selector's extra queue hop, while
   // retaining identical immutable comparison refs and fail-closed consumers.
   assert.doesNotMatch(build.split('    steps:')[0], /needs:/);
-  assert(build.indexOf('make repository-check') < build.indexOf('id: select-build'));
+  assert(build.indexOf('make repository-check') < build.indexOf("- name: Build this run's renderer and core once"));
   const selection = workflow.split('      - name: Select jobs from the complete change\n')[1].split('\n  repository-check:')[0];
   const repeated = build.split('      - name: Select shared Desktop build from the complete change\n')[1].split('      - uses: actions/setup-node@v4')[0];
   assert.equal(repeated.replace('id: select-build', 'id: select').trim(), selection.trim());
   const required = `steps.select-build.outputs.desktop == 'true' && steps.select-build.outputs.desktop_suites != '["unit","unit-extra"]'`;
   const heavySteps = build.split('id: select-build')[1].split(/\n      - /).slice(1);
   assert.equal(heavySteps.length, 5);
-  for (const step of heavySteps) assert(step.includes(`if: ${required}`), step);
+  for (const step of heavySteps.filter(step => !step.startsWith('name: Check repository and prepare selected Desktop build'))) assert(step.includes(`if: ${required}`), step);
+  assert.match(build, /BUILD_REQUIRED: \$\{\{ steps\.select-build\.outputs\.desktop/);
   assert.match(consumers, /needs\.repository-check\.result == 'success'/);
   assert.doesNotMatch(consumers, /needs\.repository-check\.result == 'skipped'/);
   assert.match(build, /git rev-parse HEAD > .*source-commit.txt/);

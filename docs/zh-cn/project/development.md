@@ -726,11 +726,13 @@ iOS 的核心集成、模拟器构建和设备构建在三个独立任务中运�
 
 [Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
-[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 始终先执行仓库元数据检查；选中非单元 Desktop 套件时，同一 runner 随后生成校验源码提交和文件哈希的只读 renderer/core 构建产物，避免独立构建任务再次排队。纯文档或仅单元测试改动不安装构建依赖。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
+[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 中的仓库契约与元数据检查必须在共享构建前通过；选中非单元 Desktop 套件时，依赖安装与这些检查在同一 runner 上并行，所有分支均等待结束，任一失败仍会阻止构建。该 runner 随后生成校验源码提交和文件哈希的只读 renderer/core 构建产物，避免独立构建任务再次排队。纯文档或仅单元测试改动不安装构建依赖。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
 
 Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
 Go 验证拆分为静态及跨平台检查、其他 Go 包、插件验收，以及三个 appserver 测试分片。Project Agent 构建同样分三片运行完整的带标签 appserver 套件。每片通过 `go test -list` 枚举已编译包中的全部顶层测试、示例及 fuzz 种子测试，按名称分配，再用 `-count=1` 实际执行；清单随运行上传。可通过 `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3` 复现一个分片，最后可追加 `project_agent`；编号从零开始。CI 合约测试验证分配完整且能传递失败。
+
+其他 Go 包验证保留 Makefile 中的包发现与测试调用，仅增加 JSON 报告以记录逐测试耗时。`go-package-timings` 产物保留原始 stdout／stderr、结构化事件和汇总；缓存结果标记为重放，不当作本次实测。测试和构建失败仍会使该任务失败。
 
 公开 provider 验收分为独立的 controller、authority 和 cooperation 三组。每组构建被测版本，保留原有边界断言及证据，并检查自己的报告。所有 Go 矩阵组使用 `fail-fast: false`，汇总结果仍进入 `Go check`。拆分会增加 runner 需求，因此判断总耗时改善时必须同时检查排队与执行时间。
 
