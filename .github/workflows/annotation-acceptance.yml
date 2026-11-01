@@ -43,18 +43,31 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Install capture dependencies
+        shell: bash
         run: |
-          npm ci --prefix desktop
-          npm ci --prefix clients/core
-          node desktop/node_modules/electron/install.js
-          # Match Linux/workbench acceptance: avoid the slow hosted Azure mirror.
-          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg fonts-noto-cjk fonts-noto-color-emoji
+          # These independent installs must both finish before any validation runs.
+          (
+            npm ci --prefix desktop
+            npm ci --prefix clients/core
+            node desktop/node_modules/electron/install.js
+          ) &
+          npm_pid=$!
+          (
+            # Match Linux/workbench acceptance: avoid the slow hosted Azure mirror.
+            for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+              if [ -f "$apt_source" ]; then
+                sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+              fi
+            done
+            sudo apt-get update
+            sudo apt-get install -y xvfb ffmpeg fonts-noto-cjk fonts-noto-color-emoji
+          ) &
+          apt_pid=$!
+          npm_result=0
+          apt_result=0
+          wait "$npm_pid" || npm_result=$?
+          wait "$apt_pid" || apt_result=$?
+          test "$npm_result" -eq 0 && test "$apt_result" -eq 0
       - name: Typecheck and script syntax
         run: |
           npm --prefix desktop run typecheck

@@ -22,6 +22,7 @@ jobs:
       architecture: ${{ steps.select.outputs.architecture }}
       desktop: ${{ steps.select.outputs.desktop }}
       desktop_suites: ${{ steps.select.outputs.desktop_suites }}
+      desktop_e2e_suites: ${{ steps.select.outputs.desktop_e2e_suites }}
       desktop_related: ${{ steps.select.outputs.desktop_related }}
       clients: ${{ steps.select.outputs.clients }}
       native: ${{ steps.select.outputs.native }}
@@ -736,15 +737,16 @@ jobs:
             test "$ARCHITECTURE_RESULT" = skipped
           fi
 
-  desktop-suite:
+  desktop-unit:
     name: Desktop / ${{ matrix.suite }}
-    needs: [changes, repository-check]
-    if: ${{ !cancelled() && needs.changes.outputs.desktop == 'true' && needs.repository-check.result == 'success' }}
+    needs: changes
+    # Unit tests never consume the immutable renderer/core artifact.
+    if: needs.changes.outputs.desktop == 'true' && contains(fromJSON(needs.changes.outputs.desktop_suites), 'unit')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(needs.changes.outputs.desktop_suites) }}
+        suite: [unit, unit-extra]
     steps:
       - uses: actions/checkout@v4
 
@@ -759,24 +761,12 @@ jobs:
       - name: Install
         shell: bash
         run: |
-          # Independent dependency stores and apt can prepare together. Join all
+          # Independent dependency stores prepare together. Join all
           # workers before Electron extraction or any acceptance test starts.
           npm ci --prefix desktop &
           pids=("$!")
           npm ci --prefix clients/core &
           pids+=("$!")
-          if [[ '${{ matrix.suite }}' != unit* ]]; then
-            (
-              for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
-                if [ -f "$apt_source" ]; then
-                  sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
-                fi
-              done
-              sudo apt-get update
-              sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
-            ) &
-            pids+=("$!")
-          fi
           status=0
           for pid in "${pids[@]}"; do wait "$pid" || status=1; done
           if [ "$status" -ne 0 ]; then exit "$status"; fi
@@ -807,15 +797,80 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Verify unit dependency selection
+        if: ${{ matrix.suite == 'unit' }}
+        run: node --test desktop/scripts/ci-unit-dependencies.test.mjs desktop/scripts/ci-unit-plan.test.mjs
+
+      - name: Test
+        env:
+          WUU_CI_RELATED: ${{ needs.changes.outputs.desktop_related }}
+          WUU_CI_UNIT_SHARD: ${{ matrix.suite == 'unit' && '1/2' || '2/2' }}
+        run: node desktop/scripts/test-ci-unit.mjs
+
+      - name: Upload unit dependency selection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-dependency-selection-${{ matrix.suite }}
+          path: desktop/out/ci/unit-related.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+
+  desktop-suite:
+    name: Desktop / ${{ matrix.suite }}
+    needs: [changes, repository-check]
+    if: ${{ !cancelled() && needs.changes.outputs.desktop == 'true' && needs.changes.outputs.desktop_e2e_suites != '[]' && needs.repository-check.result == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.changes.outputs.desktop_e2e_suites) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+
+      - name: Install
+        shell: bash
+        run: |
+          # Independent dependency stores and apt can prepare together. Join all
+          # workers before Electron extraction or any acceptance test starts.
+          npm ci --prefix desktop &
+          pids=("$!")
+          npm ci --prefix clients/core &
+          pids+=("$!")
+          (
+            for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+              if [ -f "$apt_source" ]; then
+                sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+              fi
+            done
+            sudo apt-get update
+            sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
+          ) &
+          pids+=("$!")
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          # Electron downloads lazily on require; parallel Vitest workers must
+          # not extract into the same dist directory at the same time.
+          node desktop/node_modules/electron/install.js
+          node -e 'require("./desktop/node_modules/electron")'
+
       - uses: actions/download-artifact@v4
-        if: ${{ !startsWith(matrix.suite, 'unit') }}
         with:
           name: desktop-ci-build
           path: ${{ runner.temp }}/desktop-ci-build
 
       - name: Build
         # Every consumer verifies immutable output from this exact workflow run.
-        if: ${{ !startsWith(matrix.suite, 'unit') }}
         id: build-renderer
         shell: bash
         run: |
@@ -826,7 +881,7 @@ jobs:
 
       - name: Confirm multilingual capture dependencies
         id: install-desktop-fonts
-        if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         run: dpkg-query -W fonts-noto-cjk fonts-noto-color-emoji xdotool
 
       - name: Guard independent feature, inspection, and resize UI
@@ -1294,27 +1349,16 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-message-e2e.cjs 2>&1 | tee "$WUU_SESSION_MESSAGE_OUTPUT/process.log"
           WUU_JOURNEY_1_1
-            run_journey 'Guard error message appearance and recovery' 7m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
-          set -o pipefail
-          failed=0
-          for font in 15 20; do
-            export WUU_ERROR_STYLE_FONT="$font"
-            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
-            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
-            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
-          done
-          exit "$failed"
-          WUU_JOURNEY_1_2
             run_journey 'Verify PDF context through the desktop and core' 4m 'WUU_DOCUMENT_OUTPUT=${{ runner.temp }}/wuu-document-context-evidence' 'WUU_DOCUMENT_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_DOCUMENT_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_3'
           mkdir -p "$WUU_DOCUMENT_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
           WUU_JOURNEY_1_3
-            run_journey 'Guard closing workspace conversation entries' 4m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_CLOSE_OUTPUT=${{ runner.temp }}/wuu-workspace-conversation-close' <<'WUU_JOURNEY_1_4'
-          mkdir -p "$WUU_CLOSE_OUTPUT"
+            run_journey 'Guard onboarding chrome and workspace setup' 3m 'WUU_ONBOARDING_OUTPUT=${{ runner.temp }}/wuu-onboarding-workspaces-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_5'
+          mkdir -p "$WUU_ONBOARDING_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-conversation-close-e2e.cjs 2>&1 | tee "$WUU_CLOSE_OUTPUT/run.log"
-          WUU_JOURNEY_1_4
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/onboarding-workspaces-e2e.cjs 2>&1 | tee "$WUU_ONBOARDING_OUTPUT/run.log"
+          WUU_JOURNEY_2_5
             exit "$failed"
           ) &
           worker_1=$!
@@ -1339,6 +1383,25 @@ jobs:
           done
           exit "$failed"
           WUU_JOURNEY_2_1
+            run_journey 'Guard error message appearance and recovery' 7m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            export WUU_ERROR_STYLE_FONT="$font"
+            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
+            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+          WUU_JOURNEY_1_2
+            run_journey 'Verify worktree skill selection' 5m 'WUU_WORKTREE_OUTPUT=${{ runner.temp }}/wuu-composer-worktree-evidence' 'WUU_WORKTREE_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_4'
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
+          WUU_JOURNEY_2_4
+            exit "$failed"
+          ) &
+          worker_2=$!
+          (
+            failed=0
             run_journey 'Verify conversation search navigation' 7m 'WUU_SEARCH_OUTPUT=${{ runner.temp }}/wuu-conversation-search-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_2'
           mkdir -p "$WUU_SEARCH_OUTPUT"
           set -o pipefail
@@ -1349,14 +1412,11 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
           WUU_JOURNEY_2_3
-            run_journey 'Verify worktree skill selection' 5m 'WUU_WORKTREE_OUTPUT=${{ runner.temp }}/wuu-composer-worktree-evidence' 'WUU_WORKTREE_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_4'
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
-          WUU_JOURNEY_2_4
-            run_journey 'Guard onboarding chrome and workspace setup' 3m 'WUU_ONBOARDING_OUTPUT=${{ runner.temp }}/wuu-onboarding-workspaces-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_5'
-          mkdir -p "$WUU_ONBOARDING_OUTPUT"
+            run_journey 'Guard closing workspace conversation entries' 4m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_CLOSE_OUTPUT=${{ runner.temp }}/wuu-workspace-conversation-close' <<'WUU_JOURNEY_1_4'
+          mkdir -p "$WUU_CLOSE_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/onboarding-workspaces-e2e.cjs 2>&1 | tee "$WUU_ONBOARDING_OUTPUT/run.log"
-          WUU_JOURNEY_2_5
+          xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-conversation-close-e2e.cjs 2>&1 | tee "$WUU_CLOSE_OUTPUT/run.log"
+          WUU_JOURNEY_1_4
             run_journey 'Guard conversation history jump' 3m WUU_SCROLL_E2E_ONLY=history-jump 'WUU_SCROLL_E2E_OUTPUT=${{ runner.temp }}/wuu-conversation-history-jump-evidence' <<'WUU_JOURNEY_2_6'
           mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
           set -o pipefail
@@ -1369,10 +1429,9 @@ jobs:
           WUU_JOURNEY_2_7
             exit "$failed"
           ) &
-          worker_2=$!
+          worker_3=$!
           status=0
-          wait "$worker_1" || status=1
-          wait "$worker_2" || status=1
+          for worker in "$worker_1" "$worker_2" "$worker_3"; do wait "$worker" || status=1; done
           exit "$status"
 
       - name: Exercise bounded session-lifecycle journeys
@@ -1488,26 +1547,6 @@ jobs:
         with:
           name: document-context-evidence
           path: ${{ runner.temp }}/wuu-document-context-evidence/
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Verify unit dependency selection
-        if: ${{ matrix.suite == 'unit' }}
-        run: node --test desktop/scripts/ci-unit-dependencies.test.mjs desktop/scripts/ci-unit-plan.test.mjs
-
-      - name: Test
-        if: ${{ startsWith(matrix.suite, 'unit') }}
-        env:
-          WUU_CI_RELATED: ${{ needs.changes.outputs.desktop_related }}
-          WUU_CI_UNIT_SHARD: ${{ matrix.suite == 'unit' && '1/2' || '2/2' }}
-        run: node desktop/scripts/test-ci-unit.mjs
-
-      - name: Upload unit dependency selection evidence
-        if: ${{ always() && startsWith(matrix.suite, 'unit') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-dependency-selection-${{ matrix.suite }}
-          path: desktop/out/ci/unit-related.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -1910,7 +1949,7 @@ jobs:
 
   desktop-check:
     name: Desktop check
-    needs: [changes, desktop-suite]
+    needs: [changes, desktop-unit, desktop-suite]
     # Evaluate failed dependencies, but let superseded workflow runs cancel.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -1919,14 +1958,27 @@ jobs:
         env:
           SELECTION_RESULT: ${{ needs.changes.result }}
           DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
+          DESKTOP_SUITES: ${{ needs.changes.outputs.desktop_suites }}
+          E2E_SUITES: ${{ needs.changes.outputs.desktop_e2e_suites }}
+          UNIT_RESULT: ${{ needs.desktop-unit.result }}
           SUITES_RESULT: ${{ needs.desktop-suite.result }}
         run: |
           test "$SELECTION_RESULT" = success
-          if [ "$DESKTOP_REQUIRED" = true ]; then
-            test "$SUITES_RESULT" = success
-          else
-            test "$SUITES_RESULT" = skipped
-          fi
+          python3 - <<'PYTHON'
+          import json, os
+          suites = json.loads(os.environ['DESKTOP_SUITES'])
+          e2e = json.loads(os.environ['E2E_SUITES'])
+          flag = os.environ['DESKTOP_REQUIRED']
+          if not isinstance(suites, list) or flag not in ('true', 'false') or bool(suites) != (flag == 'true'):
+              raise SystemExit('Invalid Desktop selection')
+          unit = [suite for suite in suites if suite.startswith('unit')]
+          if unit not in ([], ['unit', 'unit-extra']) or e2e != [suite for suite in suites if not suite.startswith('unit')]:
+              raise SystemExit('Desktop partition differs from complete selection')
+          for name, selected in [('UNIT_RESULT', unit), ('SUITES_RESULT', e2e)]:
+              wanted = 'success' if selected else 'skipped'
+              if os.environ[name] != wanted:
+                  raise SystemExit(f'{name}: expected {wanted}, got {os.environ[name]}')
+          PYTHON
 
   clients-check:
     name: Clients check
@@ -2121,16 +2173,28 @@ jobs:
           node --test desktop/scripts/build-package-prerequisites.test.cjs
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
-      - name: Build read-only app snapshot helper
+      - name: Validate app snapshot and native helpers
         if: github.event_name != 'push'
+        shell: bash
         run: |
-          npm --prefix desktop run build:app-context-mac
-          "desktop/build/app-context/Wuu App Snapshot.app/Contents/MacOS/wuu-app-context" --status
-          ELECTRON_RUN_AS_NODE=1 desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -e 'if (typeof require(process.cwd() + "/desktop/build/app-context/capture-target.node").pinTarget !== "function") process.exit(1)'
-
-      - name: Test native helper
-        if: github.event_name != 'push'
-        run: make test-native
+          # These Swift packages have separate .build directories and outputs.
+          # Keep every validation and join both processes before packaging begins.
+          (
+            set -e
+            npm --prefix desktop run build:app-context-mac
+            "desktop/build/app-context/Wuu App Snapshot.app/Contents/MacOS/wuu-app-context" --status
+            ELECTRON_RUN_AS_NODE=1 desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -e 'if (typeof require(process.cwd() + "/desktop/build/app-context/capture-target.node").pinTarget !== "function") process.exit(1)'
+          ) &
+          validation_1=$!
+          (
+            set -e
+            make test-native
+          ) &
+          validation_2=$!
+          status=0
+          wait "$validation_1" || status=1
+          wait "$validation_2" || status=1
+          exit "$status"
 
       - name: Package macOS app
         if: steps.native-packaging.outputs.required == 'true'
@@ -2206,7 +2270,7 @@ jobs:
           for pid in "${pids[@]}"; do wait "$pid" || status=1; done
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           node desktop/node_modules/electron/install.js
-          node --test desktop/scripts/build-package-prerequisites.test.cjs
+          node --test desktop/scripts/build-package-prerequisites.test.cjs desktop/scripts/linux-package-cleanup.test.cjs
       - name: Require a working Linux filesystem sandbox
         run: |
           go test -json ./internal/processsandbox -run '^TestLinuxFilesystemBoundary$' -count=1 > "$RUNNER_TEMP/linux-sandbox.json"
