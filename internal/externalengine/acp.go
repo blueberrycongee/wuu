@@ -99,7 +99,7 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 	if err := ctx.Err(); err != nil {
 		return DiscoveredCatalog{}, err
 	}
-	p, err := startChild(e.binary, e.entry.Args, e.root, nil)
+	p, err := startChild(e.binary, e.entry.LaunchArgs(e.binary), e.root, nil)
 	if err != nil {
 		return DiscoveredCatalog{}, err
 	}
@@ -173,7 +173,7 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 }
 
 func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) (err error) {
-	p, err := startChild(s.engine.binary, s.engine.entry.Args, s.binding.RootDir, nil)
+	p, err := startChild(s.engine.binary, s.engine.entry.LaunchArgs(s.engine.binary), s.binding.RootDir, nil)
 	if err != nil {
 		return err
 	}
