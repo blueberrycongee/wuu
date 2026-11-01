@@ -24,11 +24,12 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState("");
+  const [previewUnavailable, setPreviewUnavailable] = useState(false);
   const element = useRef<HTMLButtonElement & HTMLImageElement>(null);
   const generation = useRef(0);
   useEffect(() => {
     lifetime.current = new AbortController();
-    generation.current++; setData(""); setPreview(""); setError(""); setLoading(false);
+    generation.current++; setData(""); setPreview(""); setPreviewUnavailable(false); setError(""); setLoading(false);
     return () => { generation.current++; lifetime.current.abort(); };
   }, [image.remote_ref, artifacts]);
   useEffect(() => {
@@ -39,12 +40,20 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
       observer.disconnect();
       void artifacts.readAttachment({remoteRef: image.remote_ref!, preview: true}, {signal: lifetime.current.signal}).then(src => {
         if (generation.current === requestGeneration) setPreview(src);
-      }).catch(() => { /* Original loading remains available for unsupported previews. */ });
+      }).catch(() => {
+        // Original loading remains available for unsupported previews. Stop
+        // treating the placeholder as pending so session restoration does not
+        // wait on a source that cannot produce a preview.
+        if (generation.current === requestGeneration) setPreviewUnavailable(true);
+      });
     }, { rootMargin: "160px" });
     observer.observe(element.current);
     return () => observer.disconnect();
   }, [image.remote_ref, image.data, artifacts]);
   const remote = Boolean(image.remote_ref && !image.data && !data);
+  const awaitingPreview = Boolean(remote && !preview && !previewUnavailable &&
+    image.remote_ref?.startsWith("thread:") && artifacts.capabilities.remoteAttachmentPreview &&
+    typeof IntersectionObserver !== "undefined");
   const labelOpen = t("composer.enlargeNamed", { name: label });
   const src = remote ? preview : imageSource(data ? { ...image, data } : image);
   const register = useImagePreviewRegistration(previewDisabled ? null : {
@@ -71,7 +80,7 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
     } finally { if (generation.current === requestGeneration) setLoading(false); }
   }
   if (remote && !preview) return <>
-    <button ref={imageRef} type="button" className={className} disabled={loading || previewDisabled} aria-label={labelOpen} onClick={() => void open()}>
+    <button ref={imageRef} type="button" className={className} data-conversation-image-pending={awaitingPreview ? "" : undefined} disabled={loading || previewDisabled} aria-label={labelOpen} onClick={() => void open()}>
       {loading ? t("common.loadingEllipsis") : label}
     </button>
     {error ? <span role="alert">{error}</span> : null}

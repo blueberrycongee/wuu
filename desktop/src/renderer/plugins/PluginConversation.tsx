@@ -119,7 +119,7 @@ export function PluginConversationView({ presentation = "standard", conversation
       </div>
     </ConversationReadingBoundary>
     <div className="plugin-conversation-composer" ref={setComposerNode}>{composer}</div>
-    {showJumpToLatest && conversationVisible && <JumpToLatestPill containerRef={controller.scrollRef} bottomAnchor={composerNode} scopeKey={conversationId} onJump={() => controller.scrollToBottom({ force: true, animate: true })} />}
+    {showJumpToLatest && conversationVisible && <JumpToLatestPill containerRef={controller.scrollRef} bottomAnchor={composerNode} scopeKey={conversationId} suspended={loading} onJump={() => controller.scrollToBottom({ force: true, animate: true })} />}
     {searchOpen && <Modal ariaLabel={searchLabel} title={searchLabel} onClose={closeSearch} panelClassName="plugin-conversation-search" footer={<button type="button" className="settings-button settings-button-ghost" data-action="close-history-search" onClick={closeSearch}>{t("common.close")}</button>}>{searchContent}</Modal>}
   </section>;
 }

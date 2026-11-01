@@ -142,6 +142,47 @@ describe("useViewSwitchState", () => {
 });
 
 
+it("waits for a restored image to load before revealing the conversation", async () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+    frames.set(++nextFrame, callback); return nextFrame;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+  const paint = () => act(() => {
+    const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0));
+  });
+  const viewportRef = { current: null as HTMLDivElement | null };
+  const finishViewSwitch = vi.fn(() => true);
+  function Probe() {
+    useConversationSwitchReady({ mediaExpected: true, pendingViewSwitch: { kind: "thread", targetID: "target", visible: true, restoreRequestID: 7 },
+      activeThreadID: "target", viewportRef, settleLayout: () => {}, finishViewSwitch });
+    return createElement("div", { ref: viewportRef });
+  }
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  await act(async () => { root.render(createElement(Probe)); });
+  const viewport = container.firstElementChild as HTMLDivElement;
+  viewport.getBoundingClientRect = () => ({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  const image = document.createElement("img");
+  image.className = "rich-image";
+  image.loading = "lazy";
+  image.getBoundingClientRect = () => ({ left: 20, top: 20, right: 220, bottom: 170, width: 200, height: 150, x: 20, y: 20, toJSON: () => ({}) }) as DOMRect;
+  let complete = false;
+  Object.defineProperty(image, "complete", { configurable: true, get: () => complete });
+  Object.defineProperty(image, "naturalWidth", { configurable: true, get: () => complete ? 200 : 0 });
+  viewport.append(image);
+  paint(); paint(); paint();
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(finishViewSwitch).not.toHaveBeenCalled();
+  expect(image.loading).toBe("eager");
+  complete = true;
+  image.dispatchEvent(new Event("load"));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(finishViewSwitch).toHaveBeenCalledExactlyOnceWith(7);
+});
+
 it.each([true, false])("releases navigation when the conversation viewport is temporarily absent (mounts=%s)", async mounts => {
   const frames = new Map<number, FrameRequestCallback>();
   let nextFrame = 0;

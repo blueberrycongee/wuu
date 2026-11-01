@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { PendingViewSwitch } from "./ViewSwitchState";
+import { CONVERSATION_MEDIA_DISCOVERY_MS, CONVERSATION_MEDIA_SETTLE_MS, hasPendingConversationMedia, settleConversationMedia, waitForConversationMedia } from "./ConversationMediaSettle";
 
 const MAX_RESTORATION_FRAMES = 8;
 
 /** Keep restoration covered through real layout and its first stable paint. */
 export function useConversationSwitchReady({
   visible = true,
+  mediaExpected = false,
   pendingViewSwitch,
   activeThreadID,
   viewportRef,
@@ -13,6 +15,8 @@ export function useConversationSwitchReady({
   finishViewSwitch,
 }: {
   visible?: boolean;
+  /** The resumed thread contains images that may mount after its first layout. */
+  mediaExpected?: boolean;
   pendingViewSwitch: PendingViewSwitch | undefined;
   activeThreadID: string | undefined;
   viewportRef: RefObject<HTMLElement | null>;
@@ -37,14 +41,21 @@ export function useConversationSwitchReady({
     let previous = "";
     let stableFrames = 0;
     let measuredFrames = 0;
+    let mediaSettled = false;
+    let cancelled = false;
     let frame = 0;
+    const startedAt = performance.now();
+    const finish = (): void => {
+      if (!cancelled) finishViewSwitch(requestID);
+    };
     const check = (): void => {
+      if (cancelled) return;
       measuredFrames += 1;
       const viewport = viewportRef.current;
       if (!viewport) {
         // A selected surface may remount after the resumed data is published.
         // Missing geometry must not strand navigation behind its loading cover.
-        if (measuredFrames >= MAX_RESTORATION_FRAMES) finishViewSwitch(requestID);
+        if (measuredFrames >= MAX_RESTORATION_FRAMES) finish();
         else frame = window.requestAnimationFrame(check);
         return;
       }
@@ -57,13 +68,40 @@ export function useConversationSwitchReady({
       // Live output or external assets may keep changing height. The snapshot
       // and snapped folds are already committed; bound only this layout phase,
       // never the preceding resume, and reveal their latest restored geometry.
+      if (stableFrames >= 2 && kind === "thread" && mediaExpected && !mediaSettled) {
+        // Layout is settled, but the resumed thread's image components can
+        // mount in a later nested commit and then decode into their reserved
+        // rows. Allow that commit to arrive, then keep the cover until images
+        // near the viewport have loaded and decoded. Both waits are bounded so
+        // an unavailable remote source cannot hold the conversation.
+        mediaSettled = true;
+        const discovery = Math.max(0, CONVERSATION_MEDIA_DISCOVERY_MS - (performance.now() - startedAt));
+        void waitForConversationMedia(viewport, discovery).then(() => {
+          if (cancelled) return;
+          if (!hasPendingConversationMedia(viewport)) {
+            settleLayoutRef.current();
+            finish();
+            return;
+          }
+          const remaining = Math.max(0, CONVERSATION_MEDIA_SETTLE_MS - (performance.now() - startedAt));
+          void settleConversationMedia(viewport, remaining).then(() => {
+            if (cancelled) return;
+            settleLayoutRef.current();
+            finish();
+          });
+        });
+        return;
+      }
       if (stableFrames >= 2 || measuredFrames >= MAX_RESTORATION_FRAMES) {
-        finishViewSwitch(requestID);
+        finish();
         return;
       }
       frame = window.requestAnimationFrame(check);
     };
     frame = window.requestAnimationFrame(check);
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeThreadID, finishViewSwitch, kind, requestID, targetID, viewportRef, visible]);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeThreadID, finishViewSwitch, kind, mediaExpected, requestID, targetID, viewportRef, visible]);
 }
