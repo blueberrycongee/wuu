@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
+
+var codexRetryFractionPattern = regexp.MustCompile(`\b(\d+)/(\d+)\b`)
 
 // Engine is the codex agent engine: the Codex CLI app-server hosted as an
 // external process. It implements agentengine.Factory and
@@ -1102,11 +1106,14 @@ func (sub *turnSubscription) close() {
 // filtered by turn id.
 func (sub *turnSubscription) run() {
 	var (
-		text         strings.Builder
-		reasoning    strings.Builder
-		usage        providers.TokenUsage
-		usageCursor  int
-		reconnecting bool
+		text            strings.Builder
+		reasoning       strings.Builder
+		usage           providers.TokenUsage
+		usageCursor     int
+		reconnecting    bool
+		retryCount      int
+		maxRetries      int
+		reconnectReason string
 	)
 	for {
 		notification, streamErr := sub.next()
@@ -1122,6 +1129,16 @@ func (sub *turnSubscription) run() {
 			}
 			if content != "" || reasoning.Len() > 0 {
 				result.NewMessages = []providers.ChatMessage{{Role: "assistant", Content: content, ReasoningContent: reasoning.String()}}
+			}
+			if reconnecting {
+				reason := reconnectReason
+				if !errors.Is(streamErr, context.Canceled) && strings.TrimSpace(streamErr.Error()) != "" {
+					reason = streamErr.Error()
+				}
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: providers.StreamPhaseFailed, RetryCount: retryCount, MaxRetries: maxRetries, Reason: reason,
+				}})
+				reconnecting = false
 			}
 			if !errors.Is(streamErr, context.Canceled) {
 				sub.emit(providers.StreamEvent{Type: providers.EventError, Error: streamErr})
@@ -1168,6 +1185,9 @@ func (sub *turnSubscription) run() {
 			case NotifyAgentMessageDelta, NotifyReasoningTextDelta, NotifyReasoningSummaryDelta, NotifyItemStarted, NotifyItemCompleted:
 				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseConnected}})
 				reconnecting = false
+				retryCount = 0
+				maxRetries = 0
+				reconnectReason = ""
 			}
 		}
 		switch notification.method {
@@ -1226,13 +1246,29 @@ func (sub *turnSubscription) run() {
 				// Codex owns recovery and may keep executing this turn. Ending
 				// our subscription here would lose its eventual output.
 				reconnecting = true
+				reconnectReason = lastErr.Error()
+				if match := codexRetryFractionPattern.FindStringSubmatch(reconnectReason); len(match) == 3 {
+					if n, err := strconv.Atoi(match[1]); err == nil && n > 0 {
+						retryCount = n
+					} else {
+						retryCount++
+					}
+					if m, err := strconv.Atoi(match[2]); err == nil && m > 0 {
+						maxRetries = m
+					}
+				} else {
+					retryCount++
+				}
 				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
-					Phase: providers.StreamPhaseReconnecting, Reason: lastErr.Error(),
+					Phase: providers.StreamPhaseReconnecting, RetryCount: retryCount, MaxRetries: maxRetries, Reason: lastErr.Error(),
 				}})
 				continue
 			}
 			if reconnecting {
-				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseFailed, Reason: lastErr.Error()}})
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: providers.StreamPhaseFailed, RetryCount: retryCount, MaxRetries: maxRetries, Reason: lastErr.Error(),
+				}})
+				reconnecting = false
 			}
 			// A non-retryable stream error is not native turn completion. Preserve
 			// partial output and let RunTurn confirm the turn stopped.
@@ -1257,10 +1293,18 @@ func (sub *turnSubscription) run() {
 			}
 			if reconnecting {
 				phase := providers.StreamPhaseConnected
+				reason := ""
 				if finishReason == providers.FinishReasonError {
 					phase = providers.StreamPhaseFailed
+					reason = reconnectReason
+					if turnErr != nil && !errors.Is(turnErr, context.Canceled) {
+						reason = turnErr.Error()
+					}
 				}
-				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: phase}})
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: phase, RetryCount: retryCount, MaxRetries: maxRetries, Reason: reason,
+				}})
+				reconnecting = false
 			}
 			sub.emit(providers.StreamEvent{
 				Type:         providers.EventDone,

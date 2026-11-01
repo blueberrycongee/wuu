@@ -86,7 +86,7 @@ func BuildTurnError(err error, provider string) TurnError {
 	// in the agentcontrol package). This is the belt-and-suspenders
 	// pass for wrapped / re-formatted errors.
 	if out.Category == "" {
-		out.Category = categoryFromClassifier(agentcontrol.ClassifyError(err))
+		out.Category = categoryFromClassifier(agentcontrol.ClassifyError(err), lowerMessage)
 	}
 
 	// 3. Last-resort message-substring scan. We only get here for
@@ -206,7 +206,7 @@ func categoryFromStreamError(streamErr *providers.StreamError) string {
 	return categoryFromFailure(providers.NormalizeFailure(streamErr))
 }
 
-func categoryFromClassifier(class agentcontrol.ErrorClass) string {
+func categoryFromClassifier(class agentcontrol.ErrorClass, lowerMessage string) string {
 	switch class {
 	case agentcontrol.ErrorClassCancelled:
 		return "cancelled"
@@ -215,6 +215,9 @@ func categoryFromClassifier(class agentcontrol.ErrorClass) string {
 	case agentcontrol.ErrorClassContextOverflow:
 		return "provider"
 	case agentcontrol.ErrorClassRetryable:
+		if isProviderBusinessMessage(lowerMessage) {
+			return "provider"
+		}
 		return "network"
 	case agentcontrol.ErrorClassFatal:
 		return ""
@@ -251,6 +254,8 @@ func categoryFromMessage(message string) string {
 		return "provider"
 	case isNetworkOrUpstreamMessage(lower):
 		return "network"
+	case isExternalEngineMessage(lower):
+		return "provider"
 	}
 	return "internal"
 }
@@ -270,6 +275,7 @@ func isAuthOrPermissionMessage(lower string) bool {
 	return strings.Contains(lower, "401") || strings.Contains(lower, "403") ||
 		strings.Contains(lower, "unauthorized") ||
 		strings.Contains(lower, "unauthenticated") ||
+		strings.Contains(lower, "authentication_failed") ||
 		strings.Contains(lower, "forbidden") ||
 		strings.Contains(lower, "permission denied") ||
 		strings.Contains(lower, "api key") ||
@@ -277,6 +283,8 @@ func isAuthOrPermissionMessage(lower string) bool {
 		strings.Contains(lower, "invalid token") ||
 		strings.Contains(lower, "oauth") ||
 		strings.Contains(lower, "login required") ||
+		strings.Contains(lower, "not logged in") ||
+		strings.Contains(lower, "/login") ||
 		strings.Contains(lower, "log in")
 }
 
@@ -285,6 +293,7 @@ func isProviderBusinessMessage(lower string) bool {
 		strings.Contains(lower, "context window") ||
 		strings.Contains(lower, "maximum context length") ||
 		strings.Contains(lower, "too many tokens") ||
+		strings.Contains(lower, "max_output_tokens") ||
 		strings.Contains(lower, "rate limit") ||
 		strings.Contains(lower, "rate_limit") ||
 		strings.Contains(lower, "too many requests") ||
@@ -292,6 +301,8 @@ func isProviderBusinessMessage(lower string) bool {
 		strings.Contains(lower, "insufficient_quota") ||
 		strings.Contains(lower, "quota exceeded") ||
 		strings.Contains(lower, "usage_limit") ||
+		strings.Contains(lower, "credit balance is too low") ||
+		strings.Contains(lower, "billing_error") ||
 		strings.Contains(lower, "resource_exhausted") ||
 		strings.Contains(lower, "resource has been exhausted") ||
 		strings.Contains(lower, "overloaded") ||
@@ -303,10 +314,35 @@ func isProviderBusinessMessage(lower string) bool {
 		strings.Contains(lower, "response failed") ||
 		strings.Contains(lower, "response error") ||
 		strings.Contains(lower, "previous_response_not_found") ||
-		strings.Contains(lower, "did not respond to the prompt")
+		strings.Contains(lower, "did not respond to the prompt") ||
+		strings.Contains(lower, "agent execution terminated") ||
+		strings.Contains(lower, "engine stopped:") ||
+		strings.Contains(lower, "engine turn failed") ||
+		strings.Contains(lower, "claude turn failed") ||
+		strings.Contains(lower, "codex turn failed") ||
+		strings.Contains(lower, "error_max_turns") ||
+		strings.Contains(lower, "error_max_budget_usd")
+}
+
+func isExternalEngineMessage(lower string) bool {
+	return strings.Contains(lower, "claude exited") ||
+		strings.Contains(lower, "claude app-server") ||
+		strings.Contains(lower, "claude turn failed") ||
+		strings.Contains(lower, "codex app-server") ||
+		strings.Contains(lower, "codex turn failed") ||
+		strings.Contains(lower, "opencode server") ||
+		strings.Contains(lower, " exited: ") ||
+		strings.Contains(lower, " exited during ") ||
+		strings.Contains(lower, " closed stdout during ") ||
+		strings.Contains(lower, "agent execution terminated") ||
+		strings.Contains(lower, "engine stopped:") ||
+		strings.Contains(lower, "engine turn failed")
 }
 
 func isLocalOperationMessage(lower string) bool {
+	if isExternalEngineMessage(lower) {
+		return false
+	}
 	return (strings.Contains(lower, "permission denied") || strings.Contains(lower, "operation not permitted")) &&
 		(strings.Contains(lower, "file") || strings.Contains(lower, "path") ||
 			strings.Contains(lower, "directory") || strings.Contains(lower, "command") ||

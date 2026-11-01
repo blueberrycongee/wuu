@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -317,6 +318,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		defer disarmStall()
 	}
 	err = r.call(promptCtx, "session/prompt", promptParams, &response)
+	t.flushACPDiagnostics()
 	if ctx.Err() != nil {
 		cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -329,6 +331,9 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			defer cancel()
 			_ = r.notify(cancelCtx, "session/cancel", map[string]string{"sessionId": ref})
 			return fmt.Errorf("%s did not respond to the prompt at all (no wire activity for %s). %s", s.engine.entry.Name, profile.promptStall, profile.stallHint)
+		}
+		if t.apiError != "" && !strings.Contains(err.Error(), t.apiError) {
+			err = fmt.Errorf("%w: %s", err, t.apiError)
 		}
 		return acpEngineError(s.engine.entry, p, err)
 	}
@@ -559,14 +564,30 @@ func finishACPTurn(t *turn, stopReason string) error {
 	t.stopReason = stopReason
 	switch stopReason {
 	case "end_turn":
+		if err := t.acpDiagnosticError(); err != nil {
+			return err
+		}
 		return nil
 	case "cancelled":
 		return context.Canceled
 	case "max_tokens", "max_turn_requests", "refusal":
 		return fmt.Errorf("engine stopped: %s", stopReason)
 	default:
+		if err := t.acpDiagnosticError(); err != nil {
+			return err
+		}
 		return fmt.Errorf("engine returned an unknown stop reason %q", stopReason)
 	}
+}
+
+func (t *turn) acpDiagnosticError() error {
+	if t.terminatedErr != "" {
+		return errors.New(t.terminatedErr)
+	}
+	if t.reconnecting && t.apiError != "" {
+		return errors.New(t.apiError)
+	}
+	return nil
 }
 
 type acpPermission struct {
@@ -912,7 +933,11 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 			return err
 		}
 		if t != nil && content.Type == "text" {
-			t.content(content.Text, update.Type == "agent_thought_chunk")
+			if update.Type == "agent_thought_chunk" {
+				t.content(content.Text, true)
+			} else {
+				t.acpMessageChunk(content.Text)
+			}
 		}
 	case "tool_call", "tool_call_update":
 		output := string(update.Output)
@@ -947,10 +972,151 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 		}
 	case "plan":
 		if t != nil {
+			t.clearReconnect()
 			t.emit(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: &providers.TodoUpdate{Todos: update.Entries}})
 		}
 	}
 	return nil
+}
+
+// ACP agents such as Antigravity emit retry and termination diagnostics as
+// `agent_message_chunk` lines (`⚠ API error (attempt N): ...` and
+// `⚠ Agent execution terminated due to error.`) before returning end_turn.
+// Route those lines into Wuu's reconnect lifecycle and terminal error state
+// instead of polluting the assistant reply.
+func (t *turn) acpMessageChunk(chunk string) {
+	if chunk == "" {
+		return
+	}
+	for chunk != "" {
+		if t.diagBuf.Len() == 0 {
+			idx := strings.Index(chunk, "⚠")
+			if idx < 0 {
+				t.content(chunk, false)
+				return
+			}
+			prefix := chunk[:idx]
+			trimmedPrefix := strings.TrimRight(prefix, "\r\n")
+			if trimmedPrefix != "" {
+				t.content(trimmedPrefix, false)
+			}
+			t.diagBuf.WriteString(prefix[len(trimmedPrefix):])
+			chunk = chunk[idx:]
+		}
+		if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
+			t.diagBuf.WriteString(chunk[:nl+1])
+			chunk = chunk[nl+1:]
+			line := t.diagBuf.String()
+			t.diagBuf.Reset()
+			if !t.consumeACPDiagnosticLine(line) {
+				t.content(line, false)
+			}
+			continue
+		}
+		t.diagBuf.WriteString(chunk)
+		chunk = ""
+		candidate := t.diagBuf.String()
+		// ACP chunks are arbitrary text deltas, not line boundaries. Keep a
+		// possible diagnostic until its newline or prompt completion so a
+		// later fragment cannot leak into content and falsely clear recovery.
+		if !isACPDiagnosticPrefix(candidate) {
+			t.diagBuf.Reset()
+			t.content(candidate, false)
+		}
+	}
+}
+
+func (t *turn) flushACPDiagnostics() {
+	if t.diagBuf.Len() == 0 {
+		return
+	}
+	candidate := t.diagBuf.String()
+	t.diagBuf.Reset()
+	if !t.consumeACPDiagnosticLine(candidate) {
+		t.content(candidate, false)
+	}
+}
+
+func normalizeACPDiagnosticCandidate(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "⚠") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(trimmed, "⚠")
+	rest = strings.TrimPrefix(rest, "\ufe0f")
+	return strings.TrimSpace(rest), true
+}
+
+func (t *turn) consumeACPDiagnosticLine(raw string) bool {
+	rest, ok := normalizeACPDiagnosticCandidate(raw)
+	if !ok || rest == "" {
+		return false
+	}
+	lower := strings.ToLower(rest)
+	if strings.HasPrefix(lower, "api error") {
+		tail := strings.TrimSpace(rest[len("api error"):])
+		attempt := 0
+		if strings.HasPrefix(strings.ToLower(tail), "(attempt ") {
+			closeIdx := strings.IndexByte(tail, ')')
+			if closeIdx < 0 {
+				return false
+			}
+			numStr := strings.TrimSpace(tail[len("(attempt "):closeIdx])
+			n, err := strconv.Atoi(numStr)
+			if err != nil || n <= 0 {
+				return false
+			}
+			attempt = n
+			tail = strings.TrimSpace(tail[closeIdx+1:])
+		}
+		if !strings.HasPrefix(tail, ":") {
+			return false
+		}
+		reason := strings.TrimSpace(tail[1:])
+		if reason == "" {
+			return false
+		}
+		t.startReconnect(attempt, reason, 0)
+		return true
+	}
+	if strings.HasPrefix(lower, "agent execution terminated") {
+		tail := strings.TrimSpace(rest[len("agent execution terminated"):])
+		lowerTail := strings.ToLower(tail)
+		switch {
+		case strings.HasPrefix(lowerTail, "due to error"):
+			if t.apiError != "" {
+				t.terminatedErr = t.apiError
+			} else {
+				t.terminatedErr = "agent execution terminated due to error"
+			}
+			return true
+		case strings.HasPrefix(tail, ":"):
+			reason := strings.TrimSpace(tail[1:])
+			if reason == "" {
+				return false
+			}
+			t.terminatedErr = reason
+			return true
+		}
+	}
+	return false
+}
+
+func isACPDiagnosticPrefix(raw string) bool {
+	rest, ok := normalizeACPDiagnosticCandidate(raw)
+	if !ok {
+		return false
+	}
+	if rest == "" {
+		return true
+	}
+	lower := strings.ToLower(rest)
+	for _, prefix := range []string{"api error", "agent execution terminated"} {
+		if strings.HasPrefix(prefix, lower) || strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // session retains configuration notifications sent before session/new or load

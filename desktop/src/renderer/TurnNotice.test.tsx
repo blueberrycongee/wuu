@@ -522,6 +522,9 @@ describe("TurnFailureNotice", () => {
     [undefined, "Authentication failed", "turnFailure.auth"],
     [undefined, "Provider is overloaded", "turnFailure.unavailable"],
     [undefined, "connection reset by peer", "turnFailure.network"],
+    [undefined, 'request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": EOF', "turnFailure.dropped"],
+    [undefined, "Credit balance is too low", "turnFailure.quota"],
+    [undefined, "OpenCode server exited: exit status 1: rate limit exceeded", "turnFailure.rateLimit"],
   ] as const)(
     "titles a failed reconnect from category %s or the redacted cause",
     (reason, text, titleKey) => {

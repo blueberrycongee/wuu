@@ -184,6 +184,28 @@ func TestOpenCodePermissionsAreOneShotAndFailClosed(t *testing.T) {
 	}
 }
 
+func TestOpenCodeRetryLifecycleAndStatusCodeError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var phases []providers.StreamLifecyclePhase
+	var retryCount int
+	_, err := openCodeTestSession(t, "retry-provider", testBinding()).RunTurn(ctx, testInput(), func(ev providers.StreamEvent) {
+		if ev.Type == providers.EventLifecycle && ev.Lifecycle != nil {
+			phases = append(phases, ev.Lifecycle.Phase)
+			if ev.Lifecycle.RetryCount > 0 {
+				retryCount = ev.Lifecycle.RetryCount
+			}
+		}
+	})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429: provider rate limited") {
+		t.Fatalf("err = %v, want HTTP 429 status in OpenCode error", err)
+	}
+	wantPhases := []providers.StreamLifecyclePhase{providers.StreamPhaseReconnecting, providers.StreamPhaseFailed}
+	if fmt.Sprint(phases) != fmt.Sprint(wantPhases) || retryCount != 2 {
+		t.Fatalf("phases = %v (retryCount=%d), want %v (retryCount=2)", phases, retryCount, wantPhases)
+	}
+}
+
 // This subprocess implements the native HTTP contract, not the adapter's private
 // methods. No installed CLI, provider credentials, or real model is required.
 func TestOpenCodeHelper(t *testing.T) {
@@ -327,10 +349,13 @@ func TestOpenCodeHelper(t *testing.T) {
 				events <- "{broken"
 			case "provider":
 				emit("session.error", map[string]any{"sessionID": "ses_native", "error": map[string]any{"name": "APIError", "data": map[string]string{"message": "provider failed"}}})
+			case "retry-provider":
+				emit("session.status", map[string]any{"sessionID": "ses_native", "status": map[string]any{"type": "retry", "attempt": 2, "message": "provider rate limited"}})
+				emit("session.error", map[string]any{"sessionID": "ses_native", "error": map[string]any{"name": "APIError", "data": map[string]any{"message": "provider rate limited", "statusCode": 429}}})
 			case "question":
 				emit("question.asked", map[string]string{"id": "que_one", "sessionID": "ses_native"})
 			}
-			if scenario == "eof" || scenario == "malformed" || scenario == "provider" || scenario == "question" {
+			if scenario == "eof" || scenario == "malformed" || scenario == "provider" || scenario == "retry-provider" || scenario == "question" {
 				<-r.Context().Done()
 				return
 			}
