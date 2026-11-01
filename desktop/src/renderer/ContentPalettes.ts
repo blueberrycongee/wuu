@@ -41,6 +41,8 @@ export function builtInContentThemes(): ContentTheme[] {
         "--wuu-color-border-subtle": mix(ink, 16),
         "--wuu-color-border-strong": mix(ink, 38),
         "--wuu-color-accent": accent,
+        "--wuu-color-focus": accent,
+        "--wuu-nav-item-hover-background": mix(ink, base === "light" ? 6 : 9),
         "--wuu-color-on-accent": onAccent,
         "--wuu-color-link": link,
         "--wuu-color-link-hover": link,

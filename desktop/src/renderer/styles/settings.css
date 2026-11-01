@@ -219,13 +219,13 @@
 }
 
 .settings-nav-item:hover {
-  background: var(--ink-overlay-4);
+  background: var(--sidebar-row-hover-bg);
   color: var(--ink);
 }
 
 /* Share the navigation selection surface without changing label metrics. */
 .settings-nav-item.active {
-  background: var(--ink-overlay-8);
+  background: var(--selection-surface);
   box-shadow: none;
   color: var(--ink-strong);
   font-weight: var(--weight-medium);
@@ -1043,13 +1043,13 @@
  * paper tint so it lightens in light theme and dims in dark theme. */
 .settings-button-primary {
   border-color: transparent;
-  background: var(--gray-900);
+  background: var(--ink-strong);
   color: var(--paper);
 }
 
 .settings-button-primary:hover:not(:disabled) {
   border-color: transparent;
-  background: color-mix(in srgb, var(--gray-900) 90%, var(--paper));
+  background: color-mix(in srgb, var(--ink-strong) 90%, var(--paper));
 }
 
 .settings-button-ghost {
@@ -1768,8 +1768,8 @@ button.settings-engine-expand:hover {
 }
 
 .settings-theme-card.active .settings-theme-preview {
-  border-color: var(--ink-strong);
-  box-shadow: inset 0 0 0 1px var(--ink-strong);
+  border-color: var(--wuu-accent);
+  box-shadow: inset 0 0 0 1px var(--wuu-accent);
 }
 
 .settings-theme-card-label {
@@ -1802,7 +1802,41 @@ button.settings-engine-expand:hover {
 }
 
 .settings-theme-card.active .settings-theme-card-radio {
-  box-shadow: inset 0 0 0 calc(var(--icon-size-sm) * 0.3) var(--ink-strong);
+  box-shadow: inset 0 0 0 calc(var(--icon-size-sm) * 0.3) var(--wuu-accent);
+}
+
+.settings-palette-swatch {
+  display: inline-flex;
+  position: relative;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2em;
+  height: 2em;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--palette-ink) 20%, var(--palette-canvas));
+  border-radius: 50%;
+  background: var(--palette-canvas);
+  color: var(--palette-ink);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+}
+
+.settings-palette-swatch i {
+  position: absolute;
+  inset: auto 0 0;
+  height: 0.3em;
+  background: var(--palette-accent);
+}
+
+.select-menu-trigger.settings-palette-trigger {
+  min-height: calc(2 * var(--font-sm) + 12px);
+}
+
+.settings-palette-menu .select-menu-item {
+  gap: var(--space-3);
+  padding-block: var(--space-2);
 }
 
 .settings-theme-preview-window {
@@ -1836,7 +1870,8 @@ button.settings-engine-expand:hover {
   border-radius: var(--radius-pill);
 }
 
-.settings-theme-preview-line-title {
+.settings-theme-preview-window .settings-theme-preview-line.settings-theme-preview-line-title {
+  background: var(--settings-preview-accent, var(--settings-preview-light-line));
   width: 60%;
   height: 4cqi;
 }

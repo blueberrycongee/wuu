@@ -283,7 +283,7 @@ export const zhCN = {
   "settings.skinCustom": "我的图片",
   "settings.skinUnavailable": "此皮肤暂不可用，当前显示默认外壳。启用对应插件后会自动恢复。",
   "settings.skinImageFailed": "图片不可用，已显示皮肤底色。",
-  "settings.contentTheme": "内容配色",
+  "settings.contentTheme": "配色方案",
   "settings.backgroundImage": "背景图片",
   "settings.backgroundChoose": "选择图片",
   "settings.backgroundLoading": "处理中…",
