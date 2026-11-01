@@ -8,12 +8,6 @@ Choose **Add workspace** in the sidebar. **Use existing folder** selects a folde
 
 Adding a folder registers its path. It does not upload the whole folder. During a task, however, the agent can send relevant file contents and tool results to the selected model provider. See the [security model](../reference/security-model.md).
 
-## Work without a workspace
-
-Use **Conversations** when the task does not belong to a registered workspace. These conversations use a persistent Wuu-managed directory and can still create files or open a terminal. They share that directory rather than receiving an isolated folder for each conversation.
-
-For work you want to keep in a repository, add and select that repository first. Tell the agent where existing outputs should go rather than assuming that switching the sidebar will move them.
-
 ## Switch between workspaces
 
 Select a workspace to see its conversations or start a new one. Reopening a saved conversation continues its own work; changing the foreground selection does not redirect other running sessions.

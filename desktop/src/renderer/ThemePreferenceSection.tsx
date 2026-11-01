@@ -1,5 +1,5 @@
 import { useSettingsControls } from "./SettingsControlsContext";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { ExtensionInventoryRecord, ThemePreference } from "../shared/protocol";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup } from "./SettingsSection";
@@ -26,14 +26,33 @@ export function ContentThemeControl({ inventory }: { inventory?: readonly Extens
   const selected = themes.find(theme => theme.key === saved || theme.legacyKeys.includes(saved));
   return <SettingsGroup><SettingsRow title={t("settings.contentTheme")}>
     <SelectMenu ariaLabel={t("settings.contentTheme")} value={selected?.key ?? ""}
-      options={[{ value: "", label: t("settings.skinDefault") }, ...themes.map(theme => ({ value: theme.key, label: theme.name }))]}
-      onChange={key => selectExtensionTheme(mode, key)} triggerClassName="settings-select-trigger" />
+      options={[{
+        value: "", label: t("settings.skinDefault"),
+        preview: <PaletteSwatch canvas={mode === "dark" ? "#191a1c" : "#fcfcfd"} ink={mode === "dark" ? "#f3f3f4" : "#151515"} accent={mode === "dark" ? "#f3f3f4" : "#151515"} />,
+      }, ...themes.map(theme => ({
+        value: theme.key, label: theme.name,
+        preview: theme.preview ? <PaletteSwatch {...theme.preview} /> : undefined,
+      }))]}
+      onChange={key => selectExtensionTheme(mode, key)} triggerClassName="settings-select-trigger settings-palette-trigger"
+      panelClassName="settings-palette-menu" minMenuWidthEm={16} flip />
   </SettingsRow></SettingsGroup>;
 }
 
-function ThemePreviewWindow({ theme }: { theme: "light" | "dark" }): JSX.Element {
+function PaletteSwatch({ canvas, ink, accent }: { canvas: string; ink: string; accent: string }): JSX.Element {
+  return <span className="settings-palette-swatch" aria-hidden="true" style={{
+    "--palette-canvas": canvas, "--palette-ink": ink, "--palette-accent": accent,
+  } as CSSProperties}><span>Aa</span><i /></span>;
+}
+
+function ThemePreviewWindow({ theme, preview }: { theme: "light" | "dark"; preview?: { canvas: string; ink: string; accent: string } }): JSX.Element {
+  const style = preview ? {
+    [`--settings-preview-${theme}-canvas`]: preview.canvas,
+    [`--settings-preview-${theme}-sidebar`]: `color-mix(in srgb, ${preview.ink} 5%, ${preview.canvas})`,
+    [`--settings-preview-${theme}-line`]: `color-mix(in srgb, ${preview.ink} 20%, ${preview.canvas})`,
+    "--settings-preview-accent": preview.accent,
+  } as CSSProperties : undefined;
   return (
-    <span className={`settings-theme-preview-window settings-theme-preview-window-${theme}`}>
+    <span className={`settings-theme-preview-window settings-theme-preview-window-${theme}`} style={style}>
       <span className="settings-theme-preview-sidebar" />
       <span className="settings-theme-preview-body">
         <span className="settings-theme-preview-line settings-theme-preview-line-title" />
@@ -52,9 +71,16 @@ function ThemePreviewWindow({ theme }: { theme: "light" | "dark" }): JSX.Element
  * <html data-theme> immediately so the user sees the switch without a save
  * step.
  */
-export function ThemePreferenceControl(): JSX.Element {
+export function ThemePreferenceControl({ inventory }: { inventory?: readonly ExtensionInventoryRecord[] }): JSX.Element {
   const settingsControls = useSettingsControls();
   const { t } = useI18n();
+  const [, refresh] = useState(0);
+  useEffect(() => settingsControls.observeContentThemeSelection(() => refresh(value => value + 1)), [settingsControls]);
+  const themes = settingsControls.availableExtensionThemes(inventory);
+  function previewFor(mode: "light" | "dark") {
+    const key = settingsControls.selectedExtensionThemeKey(mode);
+    return themes.find(theme => theme.base === mode && (theme.key === key || theme.legacyKeys.includes(key)))?.preview;
+  }
   const themeOptions: Array<{ value: ThemePreference; label: string }> = [
     { value: "system", label: t("settings.followSystem") },
     { value: "light", label: t("settings.themeLight") },
@@ -114,11 +140,11 @@ export function ThemePreferenceControl(): JSX.Element {
           <span className={`settings-theme-preview settings-theme-preview-${option.value}`} aria-hidden="true">
             {option.value === "system" ? (
               <>
-                <ThemePreviewWindow theme="light" />
-                <ThemePreviewWindow theme="dark" />
+                <ThemePreviewWindow theme="light" preview={previewFor("light")} />
+                <ThemePreviewWindow theme="dark" preview={previewFor("dark")} />
               </>
             ) : (
-              <ThemePreviewWindow theme={option.value} />
+              <ThemePreviewWindow theme={option.value} preview={previewFor(option.value)} />
             )}
           </span>
           <span className="settings-theme-card-label">

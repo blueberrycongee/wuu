@@ -29,10 +29,27 @@ import (
 )
 
 type channelTaskModel struct {
-	t *testing.T
+	t        *testing.T
+	question chan struct{}
+	result   chan struct{}
 }
 
-func (m *channelTaskModel) Chat(_ context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+func (m *channelTaskModel) Chat(_ context.Context, req providers.ChatRequest) (response providers.ChatResponse, err error) {
+	defer func() {
+		var milestone chan struct{}
+		switch response.Content {
+		case "CHANNEL_QUESTION: which color?":
+			milestone = m.question
+		case "CHANNEL_RESULT: blue selected.":
+			milestone = m.result
+		}
+		if milestone != nil {
+			select {
+			case milestone <- struct{}{}:
+			default:
+			}
+		}
+	}()
 	all := ""
 	for _, v := range req.Messages {
 		all += "\n" + v.Content
@@ -117,14 +134,17 @@ func TestPersonalChannelEnrolledTaskQuestionResumeE2E(t *testing.T) {
 	previousVersion := version.Version
 	version.Version = "2026.11.1"
 	t.Cleanup(func() { version.Version = previousVersion })
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	// This full multi-turn protocol measured about 6s normally and 65–70s
+	// under the race detector. Bound its instrumentation budget separately
+	// from production behavior, leaving headroom within the 5-minute CI step.
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "wuu"))
 	for _, key := range []string{"HOME", "USERPROFILE", "CODEX_HOME", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, filepath.Join(home, key))
 	}
-	model := &channelTaskModel{t: t}
+	model := &channelTaskModel{t: t, question: make(chan struct{}, 1), result: make(chan struct{}, 1)}
 	endpoint := newTestOpenAIEndpoint(t, "channel-fixture", "channel-title", model.Chat)
 	cfg := config.Config{DefaultProvider: "channel-fixture", Agent: config.AgentConfig{ToolLoading: config.ToolLoadingFlat}, Providers: map[string]config.ProviderConfig{"channel-fixture": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "synthetic-unused", Model: "fixture"}}}
 	cfg.Agent.ModelRoles.Title = config.ModelRoleConfig{Provider: "channel-fixture", Model: "channel-title"}
@@ -220,33 +240,72 @@ func TestPersonalChannelEnrolledTaskQuestionResumeE2E(t *testing.T) {
 	}
 	invoke("agents.send", send)
 	var task struct {
-		ID       string `json:"task_id"`
-		Revision int    `json:"revision"`
-		State    string `json:"state"`
-		Waiting  string `json:"waiting_reason"`
-		Delivery struct {
+		ID                   string `json:"task_id"`
+		Revision             int    `json:"revision"`
+		RequirementsRevision int    `json:"requirements_revision"`
+		State                string `json:"state"`
+		Waiting              string `json:"waiting_reason"`
+		Delivery             struct {
 			Status string `json:"status"`
 		} `json:"delivery"`
 	}
 	wait := func(completed bool) {
 		t.Helper()
+		// Observe the deterministic provider milestone without flooding the same
+		// authenticated RPC/storage path the worker and lifecycle callbacks need.
+		// A model response alone is not delivery: verify the durable public task
+		// state below, and assert exactly-once canonical history at the end.
+		milestone := model.question
+		if completed {
+			milestone = model.result
+		}
+		select {
+		case <-milestone:
+		case <-ctx.Done():
+		}
+		var latest json.RawMessage
 		for ctx.Err() == nil {
 			var list struct {
 				Tasks []json.RawMessage `json:"tasks"`
 			}
-			json.Unmarshal(invoke("tasks.list", map[string]any{}), &list)
+			listed, err := client.Call(ctx, "tasks.list", json.RawMessage(`{}`))
+			if err != nil {
+				t.Logf("task state inspection stopped: %v", err)
+				break
+			}
+			if err := json.Unmarshal(listed, &list); err != nil {
+				t.Fatal(err)
+			}
 			if len(list.Tasks) > 1 {
 				t.Fatal("duplicate input created replacement tasks")
 			}
 			if len(list.Tasks) == 1 {
+				latest = append(latest[:0], list.Tasks[0]...)
 				task.ID, task.State, task.Waiting, task.Delivery.Status = "", "", "", ""
-				task.Revision = 0
+				task.Revision, task.RequirementsRevision = 0, 0
 				json.Unmarshal(list.Tasks[0], &task)
 				if (!completed && task.Waiting == "user" && task.Delivery.Status == "delivered") || (completed && task.State == "completed" && task.Delivery.Status == "delivered") {
 					return
 				}
 			}
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(250 * time.Millisecond)
+		}
+		t.Logf("unsettled full task: %.16000s", latest)
+		diagnosticCtx, stopDiagnostics := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopDiagnostics()
+		var details struct {
+			Execution struct {
+				SessionID string `json:"session_id"`
+			} `json:"execution"`
+		}
+		json.Unmarshal(latest, &details)
+		for _, sessionID := range []string{setup.Agent.Session, details.Execution.SessionID} {
+			if sessionID == "" {
+				continue
+			}
+			history, readErr := rt.Sessions.WithContext(diagnosticCtx).ReadHistoryPage(sessionID, 1, 200)
+			encoded, _ := json.Marshal(history)
+			t.Logf("unsettled session %s history: %.16000s error=%v", sessionID, encoded, readErr)
 		}
 		t.Fatalf("task not settled: %+v", task)
 	}
@@ -254,8 +313,8 @@ func TestPersonalChannelEnrolledTaskQuestionResumeE2E(t *testing.T) {
 	original := task.ID
 	invoke("agents.send", map[string]any{"agent_id": setup.Agent.ID, "request_id": "slack-native-2", "prompt": "CHANNEL_ANSWER blue"})
 	wait(true)
-	if task.ID != original {
-		t.Fatal("answer replaced the task")
+	if task.ID != original || task.RequirementsRevision != 2 {
+		t.Fatalf("answer did not resume the same task exactly once: %+v", task)
 	}
 	history, err := rt.Sessions.ReadHistoryPage(setup.Agent.Session, 1, 200)
 	if err != nil {

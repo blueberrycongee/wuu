@@ -275,22 +275,6 @@ describe("useSidebarWorkspaceState", () => {
     expect(hook.get().workspaceThreadsByWorkspaceID.beta).toEqual([renamed]);
   });
 
-  it("retains a title-only resume update after leaving a scratch workspace", async () => {
-    const alphaThread = thread("thread-alpha", "/tmp/scratch-alpha");
-    const betaThread = thread("thread-beta", "/tmp/scratch-beta");
-    const hook = await renderSidebarWorkspaceState({
-      threads: [alphaThread], activeContext: { kind: "no_project", cwd: alphaThread.cwd },
-    });
-    const renamed = { ...alphaThread, title: "Investigate alpha deployment", preview: "Alpha deployment" };
-    await hook.rerender({ threads: [renamed] });
-    await hook.rerender({ threads: [betaThread], activeContext: { kind: "no_project", cwd: betaThread.cwd } });
-
-    expect(hook.get().cachedScratchThreads.find((item) => item.id === alphaThread.id)?.title).toBe(renamed.title);
-    act(() => { hook.get().patchCachedSidebarThread(alphaThread.id, (value) =>
-      value.title === renamed.title ? { ...value, title: undefined } : value); });
-    expect(hook.get().cachedScratchThreads.find((item) => item.id === alphaThread.id)).toEqual({ ...renamed, title: undefined });
-  });
-
   it("waits for bootstrap before fetching background catalogs, then populates the sidebar", async () => {
     const listed = thread("background-thread", "/tmp/other");
     const listAllThreads = vi.fn().mockResolvedValue({ threads: [listed] });
@@ -360,7 +344,7 @@ describe("useSidebarWorkspaceState", () => {
   it("mirrors active project threads into the sidebar cache", async () => {
     const alpha = project("alpha", "/tmp/alpha");
     const alphaThread = thread("thread-alpha", "/tmp/alpha");
-    const scratchThread = thread("thread-scratch", "/tmp/other");
+    const unrelatedThread = thread("thread-unrelated", "/tmp/other");
     const activeContext: RuntimeContext = {
       kind: "project",
       project_id: alpha.id,
@@ -369,7 +353,7 @@ describe("useSidebarWorkspaceState", () => {
 
     const hook = await renderSidebarWorkspaceState({
       projects: [alpha],
-      threads: [alphaThread, scratchThread],
+      threads: [alphaThread, unrelatedThread],
       activeContext,
       activeWorkspaceID: alpha.id,
     });
@@ -555,14 +539,13 @@ describe("useSidebarWorkspaceState", () => {
   it("caches search results across projects without requiring sidebar expansion", async () => {
     const alpha = project("alpha", "/tmp/alpha");
     const beta = project("beta", "/tmp/beta");
-    const scratch = thread("thread-scratch", "/tmp/scratch");
     const hook = await renderSidebarWorkspaceState({ projects: [alpha, beta] });
 
     act(() => {
       hook.get().cacheSidebarThreads([
         thread("thread-alpha", alpha.path),
         thread("thread-beta", beta.path),
-        scratch,
+        thread("thread-unowned", "/tmp/other"),
       ]);
     });
 
@@ -572,9 +555,8 @@ describe("useSidebarWorkspaceState", () => {
     expect(hook.get().workspaceThreadsByWorkspaceID.beta?.map((item) => item.id)).toEqual([
       "thread-beta",
     ]);
-    expect(hook.get().cachedScratchThreads.map((item) => item.id)).toEqual([
-      "thread-scratch",
-    ]);
+    expect(Object.values(hook.get().workspaceThreadsByWorkspaceID).flat().map((item) => item.id))
+      .not.toContain("thread-unowned");
   });
 
   it("patches a cached project session pin immediately", async () => {
@@ -600,25 +582,5 @@ describe("useSidebarWorkspaceState", () => {
     act(() => { hook.get().removeCachedSidebarThread(cached.id); });
     act(() => { hook.get().patchCachedSidebarThread(cached.id, rename); });
     expect(hook.get().workspaceThreadsByWorkspaceID.alpha).toEqual([]);
-  });
-
-  it("keeps other workspaces' scratch sessions when switching no-project workspaces", async () => {
-    const hook = await renderSidebarWorkspaceState({
-      projects: [],
-      threads: [thread("thread-a", "/tmp/a")],
-      activeContext: { kind: "no_project", cwd: "/tmp/a" },
-    });
-    expect(hook.get().cachedScratchThreads.map((item) => item.id)).toEqual([
-      "thread-a",
-    ]);
-
-    await hook.rerender({
-      threads: [thread("thread-b", "/tmp/b")],
-      activeContext: { kind: "no_project", cwd: "/tmp/b" },
-    });
-
-    expect(
-      hook.get().cachedScratchThreads.map((item) => item.id).sort(),
-    ).toEqual(["thread-a", "thread-b"]);
   });
 });

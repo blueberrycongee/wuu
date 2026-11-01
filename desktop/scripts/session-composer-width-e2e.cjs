@@ -27,7 +27,7 @@ async function run() {
     }
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
-  await waitFor(win, () => !!document.querySelector(".thread-row-main"));
+  await waitFor(win, () => [...document.querySelectorAll(".thread-row-main")].some(row => row.textContent.includes("Resize fixture")));
   await evaluate(win, () => [...document.querySelectorAll(".thread-row-main")].find(row => row.textContent.includes("Resize fixture")).click());
   await waitFor(win, () => !!document.querySelector(".turn"));
 

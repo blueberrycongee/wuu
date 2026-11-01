@@ -93,7 +93,6 @@ function ProjectHistoryFixture(): JSX.Element {
                 id: `pending-${index}`, title: `Creating conversation ${index + 1}`,
                 context: { kind: "project", project_id: project.id, cwd: project.path },
               }))}
-              scratchPseudoWorkspaceID="scratch" scratchPseudoActive={false}
               onToggleSidebarSectionCollapsed={() => setExpanded(value => !value)}
               onStartNewThread={() => setPending(value => value + 1)}
               onSelectThread={(_, id) => {

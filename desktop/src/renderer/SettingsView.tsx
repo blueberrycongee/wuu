@@ -1350,7 +1350,7 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
-        <ThemePreferenceControl />
+        <ThemePreferenceControl inventory={inventory} />
         <ContentThemeControl inventory={inventory} />
         {isTouchWebShell() ? null : (
           <div className="settings-inline-section-anchor" data-testid="settings-background">

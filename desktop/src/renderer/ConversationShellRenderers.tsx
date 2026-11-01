@@ -342,6 +342,9 @@ export function ConversationTitleContent({ application, slots, slotOwner, headin
   const catalog = tab?.kind === "skills";
   const nativeTitle = catalog ? t("skills.title") : conversationHeadingTitle(thread, tab?.kind === "draft" ? tab.title : undefined, t("tabs.newConversation"));
   const title = activePrimaryView?.title ?? nativeTitle;
+  const startWorkspaceId = view.navigationWorkspace.workspaces.find(workspace =>
+    workspace.id === view.navigationWorkspace.selectedWorkspaceId && !workspace.missing)?.id
+    ?? view.navigationWorkspace.workspaces.find(workspace => !workspace.missing)?.id;
   const editable = !activePrimaryView && !catalog && Boolean(thread ? !thread.read_only && !thread.ephemeral : tab?.kind === "draft");
   const localHeadingRef = useRef<HTMLHeadingElement>(null);
   const headingRef = externalHeadingRef ?? localHeadingRef;
@@ -373,14 +376,15 @@ export function ConversationTitleContent({ application, slots, slotOwner, headin
   const fallback = <div className="conversation-title-heading">
     {navigateBack ? <button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} onClick={navigateBack}>
       <ArrowLeft aria-hidden="true" />
-    </button> : <button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
+    </button> : <button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!startWorkspaceId}
       onClick={event => {
+        if (!startWorkspaceId) return;
         const document = event.currentTarget.ownerDocument;
         let focusRequested = true;
         // A later focus choice takes precedence over this asynchronous creation.
         const cancelFocus = () => { focusRequested = false; };
         document.addEventListener("focusin", cancelFocus);
-        void application.invoke("workspace.start-draft", { workspaceId: view.navigationWorkspace.selectedWorkspaceId })
+        void application.invoke("workspace.start-draft", { workspaceId: startWorkspaceId })
           .then(({ activated, tabId }) => {
             if (activated && tabId && focusRequested) return application.invoke("navigation.focus-composer", { tabId });
           })

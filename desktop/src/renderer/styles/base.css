@@ -492,6 +492,29 @@
   --theme-override-color-border-strong: var(--wuu-color-border-strong);
 }
 
+/* Interaction layers follow the palette ink, independently of floating surfaces.
+   Partial extension themes retain the existing defaults for undeclared roles. */
+:root[data-theme][data-theme-tokens~="--wuu-color-text"] {
+  --ink-overlay-4: color-mix(in srgb, var(--ink) 4%, transparent);
+  --ink-overlay-6: color-mix(in srgb, var(--ink) 6%, transparent);
+  --ink-overlay-8: color-mix(in srgb, var(--ink) 8%, transparent);
+  --ink-overlay-12: color-mix(in srgb, var(--ink) 12%, transparent);
+  --ink-overlay-18: color-mix(in srgb, var(--ink) 18%, transparent);
+  --placeholder-ink: var(--ink-soft);
+}
+
+:root[data-theme-tokens~="--wuu-color-canvas"][data-theme-tokens~="--wuu-color-text"] {
+  --selection-surface: color-mix(in srgb, var(--ink) 12%, var(--paper));
+  --surface-3: color-mix(in srgb, var(--ink) 12%, var(--paper));
+  --surface-4: color-mix(in srgb, var(--ink) 16%, var(--paper));
+  --sidebar-material-fill: var(--surface-1);
+}
+
+:root[data-theme][data-theme-tokens~="--wuu-color-accent"] {
+  --selection-bg: color-mix(in srgb, var(--wuu-color-accent) 28%, transparent);
+  --focus-ring: var(--wuu-color-focus, var(--wuu-color-accent));
+}
+
 :root[data-font-smoothing="grayscale"] {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
