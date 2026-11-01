@@ -22,8 +22,8 @@ describe('dictation session lifecycle', () => {
     expect(events.mock.calls.some(([event]) => event.type === 'error')).toBe(false);
   });
   it('retains earlier speech when macOS starts a new recognition window', async () => {
-    // macOS Speech drops the 60-second prefix without a final event; the next
-    // window begins at the live audio position.
+    // macOS Speech starts a new window at its audio limit or after a long
+    // pause without a final event; the next window begins at live audio.
     const { service, child, events } = fixture();
     await service.start('long', 'zh-CN', events);
     const firstWindow = '第一句今天我们来测试一段很长的语音听写看看前面的内容会不会丢失';

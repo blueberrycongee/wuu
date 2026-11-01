@@ -83,10 +83,10 @@ export class DictationService {
   }
 }
 
-// macOS Speech drops the recognized prefix after roughly one minute and
-// continues from the live audio position without marking the previous result
-// final. Keep completed windows and stitch them together so a long recording
-// does not collapse to its last sentence.
+// macOS Speech starts a new hypothesis window at its one-minute audio limit
+// or after a long pause, without marking the previous result final. Keep
+// completed windows and stitch them together so a long recording does not
+// collapse to its last sentence.
 function acceptTranscript(transcript: Transcript, text: string, final: boolean): string {
   if (!text) return joinTranscript(transcript.committed, transcript.current);
   if (!transcript.current) transcript.current = text;
