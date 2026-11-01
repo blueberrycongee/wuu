@@ -38,6 +38,7 @@ import {
   Code2,
   MoreHorizontal,
   Plus,
+  Plug,
   RotateCcw,
   Search,
   Trash2,
@@ -667,7 +668,7 @@ function ServicesOverview({
                       aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-status ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
                       onClick={() => onOpenService(provider.name)}
                     >
-                      <span className="connection-summary-icon"><ServiceMark identity={identity} /></span>
+                      <span className="connection-summary-icon">{identity.markID || identity.engineMark ? <ServiceMark identity={identity} /> : <Plug aria-hidden="true" />}</span>
                       <span className="connection-summary-copy">
                         <span className="connection-summary-heading">
                           <span className="model-service-card-title connection-summary-name">{label}</span>

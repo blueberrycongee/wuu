@@ -251,6 +251,8 @@ export const zhCN = {
   "settings.browserExtensionsNeedsReview": "待确认权限",
   "settings.browserExtensionsLoaded": "已加载",
   "settings.browserExtensionsDisabled": "已停用",
+  "settings.browserExtensionsMore": "{name} 的更多操作",
+  "settings.browserExtensionsHideDetails": "收起 {name} 的详情",
   "settings.browserExtensionsDetails": "{name} 的详情",
   "settings.browserExtensionsReload": "从来源文件夹重新加载 {name}",
   "settings.browserExtensionsEnableToReload": "请先启用扩展，再从来源文件夹重新加载。",

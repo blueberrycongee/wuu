@@ -92,12 +92,31 @@ describe("BrowserSettingsSection", () => {
     let rejectReload!: (reason: Error) => void;
     Object.assign(api, { reloadBrowserExtension: vi.fn().mockReturnValue(new Promise((_, reject) => { rejectReload = reject; })) });
     await render();
-    const reload = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(button => button.getAttribute("aria-label")?.includes("Reload"));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click());
+    const reload = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent?.includes("Reload"));
     expect(reload).toBeDefined();
     await act(async () => reload!.click());
     act(() => root!.render(null));
     await act(async () => rejectReload(new Error("late reload failure")));
     expect(api.listBrowserExtensions).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps removal behind an explicit menu action and details non-mutating", async () => {
+    const api = stubBrowserAPI({ listBrowserExtensions: vi.fn().mockResolvedValue([{ id: "fixture", name: "Fixture", version: "1", path: "/fixture", enabled: true, loaded: true }]) });
+    await render();
+    expect(Array.from(container.querySelectorAll("button")).some(button => button.getAttribute("aria-label")?.includes("Remove"))).toBe(false);
+    const menu = container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+    await act(async () => menu.click());
+    const details = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent?.includes("Details"))!;
+    await act(async () => details.click());
+    expect(container.querySelector(".browser-extension-details")?.textContent).toContain("/fixture");
+    expect(api.removeBrowserExtension).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(menu);
+    await act(async () => menu.click());
+    const remove = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent?.includes("Remove"))!;
+    await act(async () => remove.click());
+    expect(api.removeBrowserExtension).toHaveBeenCalledWith("fixture");
+    expect(api.removeBrowserExtension).toHaveBeenCalledTimes(1);
   });
 
   it("imports cookies from the selected local profile", async () => {

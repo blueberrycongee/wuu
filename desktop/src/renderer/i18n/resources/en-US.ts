@@ -254,6 +254,8 @@ export const enUS = {
   "settings.browserExtensionsNeedsReview": "Needs review",
   "settings.browserExtensionsLoaded": "Loaded",
   "settings.browserExtensionsDisabled": "Disabled",
+  "settings.browserExtensionsMore": "More actions for {name}",
+  "settings.browserExtensionsHideDetails": "Hide details for {name}",
   "settings.browserExtensionsDetails": "Details for {name}",
   "settings.browserExtensionsReload": "Reload {name} from its source folder",
   "settings.browserExtensionsEnableToReload": "Enable the extension before reloading its source folder.",
