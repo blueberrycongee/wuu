@@ -4,9 +4,10 @@ import { initialState } from "../AppState";
 import type { ServerEvent, Thread } from "../../shared/protocol";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
 import { externalAgentActivityStore } from "../ExternalAgentActivityStore";
-import { showErrorToast } from "../Toast";
+import { showErrorToast, showToast } from "../Toast";
+import { translateCurrent } from "../i18n";
 import { ApplicationEventEffects } from "./ApplicationEventEffects";
-vi.mock("../Toast",()=>({showErrorToast:vi.fn()}));
+vi.mock("../Toast",()=>({showErrorToast:vi.fn(),showToast:vi.fn()}));
 function thread(id:string, extras:Partial<Thread>={}):Thread {
   return {id,preview:"",cwd:"/active",model:"model",model_provider:"provider",status:"idle",created_at:"",updated_at:"",turns:[],...extras};
 }
@@ -20,7 +21,7 @@ function fixture() {
   const effects=new ApplicationEventEffects({getState:()=>state,getEnvironment:()=>({scheduleStatusRefresh}),notify,reportError});
   return {effects,telemetry,activity,notify,reportError,scheduleStatusRefresh,set:(value:Partial<AppState>)=>{state={...state,...value};}};
 }
-afterEach(()=>{vi.restoreAllMocks();vi.mocked(showErrorToast).mockClear();});
+afterEach(()=>{vi.restoreAllMocks();vi.mocked(showErrorToast).mockClear();vi.mocked(showToast).mockClear();});
 
 describe("host server event effects",()=>{
   it("ingests background telemetry exactly once and notifies known main completions before runtime filtering",()=>{
@@ -48,6 +49,14 @@ describe("host server event effects",()=>{
     expect(showErrorToast).toHaveBeenCalledWith("error",expect.any(String));
     expect(showErrorToast).toHaveBeenCalledWith("exit",expect.any(String),"app-server:exit");
     expect(showErrorToast).toHaveBeenCalledWith("config","","app-server:config-error");h.effects.dispose();
+  });
+  it("shows engine notices once for the visible thread",()=>{
+    const h=fixture();h.set({thread:thread("main")});
+    const event=notification("turn/event",{thread_id:"main",turn_id:"turn",event:{type:"notice",notice:{code:"mcp_unavailable",message:"fallback"}}});
+    h.effects.receive(event);h.effects.receive(event);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith({message:translateCurrent("runtime.mcpUnavailable"),dedupeKey:"engine-notice:main:mcp_unavailable"});
+    h.effects.receive(notification("turn/event",{thread_id:"child",turn_id:"turn",event:{type:"notice",notice:{code:"mcp_unavailable",message:"fallback"}}}));
+    expect(showToast).toHaveBeenCalledOnce();h.effects.dispose();
   });
   it("refreshes only eligible terminal events and cancels their scheduled work on disposal",()=>{
     const h=fixture();

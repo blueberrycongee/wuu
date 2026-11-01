@@ -113,7 +113,12 @@ func TestACPHostCapabilitiesRequireAdvertisedHTTPTransport(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer session.Close(context.Background())
-				result, err := session.RunTurn(ctx, testInput(), func(providers.StreamEvent) {})
+				var notices []providers.StreamNotice
+				result, err := session.RunTurn(ctx, testInput(), func(event providers.StreamEvent) {
+					if event.Type == providers.EventNotice && event.Notice != nil {
+						notices = append(notices, *event.Notice)
+					}
+				})
 				if err != nil {
 					t.Fatalf("ordinary chat failed: %v", err)
 				}
@@ -129,8 +134,19 @@ func TestACPHostCapabilitiesRequireAdvertisedHTTPTransport(t *testing.T) {
 					if len(servers) != 1 || servers[0].Type != "http" || servers[0].Name != binding.MCPServers[0].Name || servers[0].URL != binding.MCPServers[0].URL {
 						t.Fatalf("host binding was lost: %+v", servers)
 					}
-				} else if len(servers) != 0 || !strings.Contains(result.Result.Content, "does not advertise HTTP MCP support") {
-					t.Fatalf("unsupported host tools were not disclosed: %q", result.Result.Content)
+					if len(notices) != 0 {
+						t.Fatalf("supported host tools produced a notice: %+v", notices)
+					}
+				} else {
+					if len(servers) != 0 {
+						t.Fatalf("unsupported host tools were passed to the agent: %+v", servers)
+					}
+					if len(notices) != 1 || notices[0].Code != "mcp_unavailable" || notices[0].Message == "" {
+						t.Fatalf("unsupported host tools did not produce a UI notice: %+v", notices)
+					}
+					if strings.Contains(result.Result.Content, "unavailable") {
+						t.Fatalf("UI notice leaked into assistant content: %q", result.Result.Content)
+					}
 				}
 			})
 		}

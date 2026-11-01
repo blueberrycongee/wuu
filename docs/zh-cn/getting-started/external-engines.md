@@ -69,7 +69,7 @@ ACP 图片附件会写成本地文件，并把路径写进提示词，让 Agent 
 
 ## Wuu 浏览器和电脑工具
 
-Codex、Claude Code 和 OpenCode 通过本地 HTTP MCP 端点使用 Wuu 内嵌浏览器和已启用的 CUA 工具。包括 Pi 和 DeepSeek Harness 在内的 ACP 引擎，只有在已安装的适配器声明支持 HTTP MCP 时才会获得这些工具。不支持该能力的适配器仍可使用自身工具继续对话，Wuu 会显示浏览器和电脑工具不可用的提示。
+Codex、Claude Code 和 OpenCode 通过本地 HTTP MCP 端点使用 Wuu 内嵌浏览器和已启用的 CUA 工具。包括 Pi 和 DeepSeek Harness 在内的 ACP 引擎，只有在已安装的适配器声明支持 HTTP MCP 时才会获得这些工具。不支持该能力的适配器仍可使用自身工具继续对话，Wuu 会以临时提示说明浏览器和电脑工具不可用。
 
 宿主为每个会话轮次创建独立端点，通过引擎的启动参数或会话配置传入，不会修改 CLI 的全局配置。浏览器需要已连接且支持浏览器操作的桌面客户端；CUA 需要已启用并连接的电脑控制插件。其他 Wuu 插件工具不会导出。Wuu 模型服务的延迟加载和 Code Mode 设置不影响这个 MCP 工具目录，工具调用循环由外部引擎负责。
 

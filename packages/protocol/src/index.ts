@@ -2722,11 +2722,16 @@ export type ProviderStatePayload = {
 };
 
 export type ModelStepSummary = { provider: string; model: string; api_model?: string; revision?: number; step_index: number; operation_id: string; context_window_tokens?: number };
+export type StreamNotice = {
+  code?: string;
+  message: string;
+};
 export type StreamEventPayload = {
   model_step?: ModelStepSummary;
   type: string;
   agent_activity?: ExternalAgentActivity;
   lifecycle?: StreamLifecyclePayload;
+  notice?: StreamNotice;
   provider_state?: ProviderStatePayload;
 };
 
