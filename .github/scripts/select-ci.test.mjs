@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const script = resolve('.github/scripts/select-ci.mjs');
-const suites = ['unit', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
+const suites = ['unit', 'unit-extra', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
 function select(paths, event = 'pull_request', remove = false) {
   const cwd = mkdtempSync(join(tmpdir(), 'wuu-ci-selection-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();

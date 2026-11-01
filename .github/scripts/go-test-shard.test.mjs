@@ -13,7 +13,7 @@ function fixture(run) {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + '\\n');
-if (args.includes('-list=.')) {
+if (args.some(arg => arg.startsWith('-list='))) {
   console.log(process.env.NAMES);
   process.exit(Number(process.env.LIST_EXIT || 0));
 }
@@ -54,4 +54,31 @@ test('invalid shards, failed enumeration and missing tests fail closed', () => f
 
 test('a failing test fails its shard', () => fixture((execute) => {
   assert.equal(execute(0, { TEST_EXIT: '1' }).status, 1);
+}));
+
+ test('filtered race shards preserve instrumentation and the exact guard inventory', () => fixture((execute, dir) => {
+  const result = execute(0, { WUU_GO_TEST_RACE: 'true', WUU_GO_TEST_PATTERN: '^TestReceipt' });
+  assert.equal(result.status, 0, result.stderr);
+  const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert(calls[0].includes('-race'));
+  assert(calls[0].includes('-list=^TestReceipt'));
+  assert(calls[1].includes('-race'));
+  const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json')));
+  assert.equal(manifest.race, true);
+  assert.equal(manifest.pattern, '^TestReceipt');
+}));
+
+test('weighted shards separate expensive guards and retain every new test exactly once', () => fixture((execute, dir) => {
+  const weights = JSON.stringify({ TestAdmission: 200, TestRecovery: 50 });
+  const groups = [];
+  for (let shard = 0; shard < 3; shard++) {
+    const result = execute(shard, { WUU_GO_SHARD_WEIGHTS: weights });
+    assert.equal(result.status, 0, result.stderr);
+    groups.push(JSON.parse(readFileSync(join(dir, 'manifest.json'))).tests);
+  }
+  assert.deepEqual(groups.flat().sort(), [...names].sort());
+  assert.notEqual(groups.findIndex(g => g.includes('TestAdmission')), groups.findIndex(g => g.includes('TestRecovery')));
+  for (const value of ['[]', 'null', '{"TestAdmission":-1}', '{"TestAdmission":"200"}']) {
+    assert.notEqual(execute(0, { WUU_GO_SHARD_WEIGHTS: value }).status, 0);
+  }
 }));

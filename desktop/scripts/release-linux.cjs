@@ -14,7 +14,7 @@ if (process.env.WUU_RELEASE_SOURCE_COMMIT && process.env.WUU_RELEASE_SOURCE_COMM
 run(process.execPath, ["../scripts/release-version.mjs", "check", process.env.RELEASE_TAG || ""]);
 // Experimental Linux packages remain separate from the macOS release workflow.
 rmSync("release", { recursive: true, force: true });
-for (const script of ["build:core", "build:cua-linux", "build:ripgrep", "build"]) run("npm", ["run", script]);
+run(process.execPath, [join(__dirname, "build-package-prerequisites.cjs")]);
 run("node_modules/.bin/electron-builder", [
   "--linux", "AppImage", "deb", "--x64",
   "--publish=never", "--config.electronDist=node_modules/electron/dist",

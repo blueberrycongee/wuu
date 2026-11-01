@@ -76,6 +76,9 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
   console.log(`Compared ${paths.length} changed paths`);
 }
 
+// Unit work retains one selected surface but executes both inventory shards.
+if (desktopSuites.has('unit')) desktopSuites.add('unit-extra');
+
 // Main pushes only check native packaging. PRs own validation and E2E suites.
 const outputs = {
   go: event !== 'push' && selected.go,
