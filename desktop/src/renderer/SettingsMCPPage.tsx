@@ -294,7 +294,7 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
                         >
                           <Check className="icon" aria-hidden="true" />
                         </button></Tooltip>
-                        <Tooltip asChild content={t("mcp.cancelLogin")}><button
+                        <button
                           className="settings-button settings-button-ghost settings-icon-button"
                           type="button"
                           aria-label={t("mcp.cancelLoginNamed", { name })}
@@ -305,12 +305,12 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
                           }}
                         >
                           <X className="icon" aria-hidden="true" />
-                        </button></Tooltip>
+                        </button>
                       </>
                     ) : (
                       <div className="settings-row-actions">
                         {server.auth_status === "not_logged_in" || needsAuth ? (
-                          <Tooltip asChild content={t("mcp.oauthLogin")}><button
+                          <button
                             className="settings-button settings-button-ghost"
                             type="button"
                             aria-label={t("mcp.loginNamed", { name })}
@@ -319,7 +319,7 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
                           >
                             <KeyRound className="icon" aria-hidden="true" />
                             {t("mcp.login")}
-                          </button></Tooltip>
+                          </button>
                         ) : server.auth_status === "oauth" ? (
                           <Tooltip asChild content={t("mcp.removeLogin")}><button
                             className="settings-button settings-button-ghost settings-icon-button"

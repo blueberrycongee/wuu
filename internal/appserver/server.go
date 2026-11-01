@@ -228,6 +228,7 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
+	ownerLocalOperations   federationOperations
 	personalCoordination   *personalCoordinatorBridge
 	personalEffects        *PersonalEffectBridge
 	personalAccountsRouted bool

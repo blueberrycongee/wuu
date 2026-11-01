@@ -106,7 +106,7 @@ export function WebWorkspaceDownloadsMenu({ api, active = true, destinationId, p
         }}>
         <div className="web-workspace-downloads-heading">
           <span id={titleId}>{t("webWorkspace.downloads.title")}</span>
-          <button type="button" className="icon-button" aria-label={t("common.close")} title={t("common.close")} onClick={close}><X className="icon" aria-hidden="true" /></button>
+          <button type="button" className="icon-button" aria-label={t("common.close")} onClick={close}><X className="icon" aria-hidden="true" /></button>
         </div>
         {loadError ? <p className="web-workspace-downloads-empty" role="alert">{t("webWorkspace.downloads.loadFailed")}</p>
           : !items.length ? <p className="web-workspace-downloads-empty">{t("webWorkspace.downloads.empty")}</p> : null}

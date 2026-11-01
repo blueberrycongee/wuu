@@ -50,7 +50,15 @@ func defaultNativeProviderCatalog() []NativeProviderFactory {
 		{ID: toolbatch.AdapterModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			return toolbatch.NewService(input.Registry), nil
 		}},
-		{ID: toolservice.DefaultModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) { return toolservice.NewService(), nil }},
+		{ID: toolservice.DefaultModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+			return toolservice.NewServiceWithOwnToolResolver(func(caller, localID string) toolservice.ResolveOwnResult {
+				tool, found := input.Host.DeclaredTool(caller, localID)
+				if !found {
+					return toolservice.ResolveOwnResult{}
+				}
+				return toolservice.ResolveOwnResult{Found: true, Name: tool.PublicName, DirectOnly: tool.Registration.DirectOnly}
+			}), nil
+		}},
 		{ID: session.DefaultModule, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			return newNativeSessionDomain(input.Registry, statepath.SessionsDir(providerDataRoot(input)), input.Host), nil
 		}},

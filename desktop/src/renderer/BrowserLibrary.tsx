@@ -229,15 +229,15 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
                 <span className="browser-library-entry-url">{entry.url}</span>
                 {"visitedAt" in entry ? <time dateTime={new Date(entry.visitedAt).toISOString()}>{formatDate(entry.visitedAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time> : null}
               </button>
-              {section === "bookmarks" ? <Tooltip asChild content={t("browserLibrary.renameBookmark")}><button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
+              {section === "bookmarks" ? <button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
                 aria-label={`${t("browserLibrary.renameBookmark")}: ${entry.title || entry.url}`}
-                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button></Tooltip> : null}
-              {section === "bookmarks" ? <Tooltip asChild content={t("browserLibrary.removeBookmark")}><button type="button" className="icon-button browser-library-remove" disabled={pending}
+                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button> : null}
+              {section === "bookmarks" ? <button type="button" className="icon-button browser-library-remove" disabled={pending}
                 aria-label={`${t("browserLibrary.removeBookmark")}: ${entry.title || entry.url}`}
-                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button></Tooltip>
-                : <Tooltip asChild content={t("browserLibrary.removeHistory")}><button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
+                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button>
+                : <button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
                   aria-label={`${t("browserLibrary.removeHistory")}: ${entry.title || entry.url}`}
-                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button></Tooltip>}
+                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button>}
               </>}
             </li>)}</ul>
               : <p className="browser-library-empty">{t(needle ? "browserLibrary.noResults" : section === "history" ? "browserLibrary.emptyHistory" : "browserLibrary.emptyBookmarks")}</p>}

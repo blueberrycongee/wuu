@@ -419,7 +419,7 @@ export function ComposerCameraPanel({
         ) : null}
       </div>
       <div className="composer-camera-controls">
-        <Tooltip asChild content={t("composer.camera.close")}><button
+        <button
           ref={closeButtonRef}
           type="button"
           className="composer-camera-close"
@@ -428,7 +428,7 @@ export function ComposerCameraPanel({
           disabled={exiting}
         >
           <ChevronLeft aria-hidden="true" />
-        </button></Tooltip>
+        </button>
         <Tooltip asChild content={t("composer.camera.capture")}><button
           type="button"
           className="composer-camera-shutter"

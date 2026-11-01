@@ -223,7 +223,7 @@ var TOOL_SERVICE = "agent.tools";
 var TOOL_SERVICE_DESCRIPTOR = {
   name: TOOL_SERVICE,
   version: "1.0.0",
-  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
+  methods: ["list", "resolve", "resolve-own", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
     name,
     input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
     output_schema: `${TOOL_SERVICE}.${name}.output.v1`

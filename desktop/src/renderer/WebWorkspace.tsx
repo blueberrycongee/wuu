@@ -460,7 +460,7 @@ export function WebWorkspacePanel({
         <span className="web-workspace-find-count" role="status" aria-live="polite">{findText ? t("webWorkspace.findMatches", { current: current?.findResult?.activeMatchOrdinal ?? 0, total: current?.findResult?.matches ?? 0 }) : ""}</span>
         <button type="button" className="icon-button workspace-browser-nav" aria-label={t("webWorkspace.findPrevious")} title={t("webWorkspace.findPrevious")} disabled={!findText} onClick={() => find(findText, false, true)}><ChevronUp className="icon" aria-hidden="true" /></button>
         <button type="button" className="icon-button workspace-browser-nav" aria-label={t("webWorkspace.findNext")} title={t("webWorkspace.findNext")} disabled={!findText} onClick={() => find(findText, true, true)}><ChevronDown className="icon" aria-hidden="true" /></button>
-        <button type="button" className="icon-button workspace-browser-nav" aria-label={t("webWorkspace.closeFind")} title={t("webWorkspace.closeFind")} onClick={closeFind}><X className="icon" aria-hidden="true" /></button>
+        <button type="button" className="icon-button workspace-browser-nav" aria-label={t("webWorkspace.closeFind")} onClick={closeFind}><X className="icon" aria-hidden="true" /></button>
       </div> : null}
       <div className="web-workspace-content" id={`${instanceID}-page`}>
         {occluded && backdrop?.key === snapshotKey ? <img className="web-workspace-backdrop" src={backdrop.image} alt="" aria-hidden="true" /> : null}

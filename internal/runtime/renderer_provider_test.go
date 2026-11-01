@@ -90,6 +90,28 @@ func TestRendererConsumerWithoutProvidedServicesJoinsGraph(t *testing.T) {
 	}
 }
 
+func TestTokenSpeedApplicationDependency(t *testing.T) {
+	item, err := pluginpkg.LoadManifest("../../examples/plugins/token-speed/plugin.json", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modules := []string{defaultApplicationModule, item.ID}
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, t.TempDir(), "test", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(context.Background())
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range host.Dependencies()[item.ID] {
+		if edge.Service == "ui.application" && edge.Provider == defaultApplicationModule && edge.Required {
+			return
+		}
+	}
+	t.Fatalf("token speed does not depend on the application provider: %+v", host.Dependencies()[item.ID])
+}
+
 // Surface selection is independent of the shell and excludes unselected or
 // stopped providers even when their renderer package remains discoverable.
 func TestRendererSurfacesUseSelectedGraph(t *testing.T) {

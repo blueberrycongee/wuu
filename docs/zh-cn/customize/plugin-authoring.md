@@ -330,6 +330,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 
+`host.session.list` 的 owned 结果，以及调用插件所拥有会话的 `host.session.inspect` 结果，在可用时包含 `creation_request_id`。该字段是原始 `host.session.create` 请求 ID，在首个轮次开始前也可返回，因此插件能发现已被接纳但响应丢失的创建请求。shared 列表和对其他所有者会话的检查不返回此字段。它仅用于请求关联，不授予会话控制权限。
+
 对于 `host.session.send`，`session_send_unavailable` 表示宿主没有发送处理器，
 本次调用未被分派。服务恢复后，显式重试可以释放这条未被接受的请求身份。
 该错误码仅保留给此边界：已调用的处理器返回同码（包括嵌套调用返回）时，
@@ -340,6 +342,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 带有 `tool_policy` 的轮次是独立执行边界：不能插入其他轮次，传入的插件消息或完成通知会单独排队。对于尚未接纳的人类 `turn/steer` 输入，宿主返回 `isolated_turn_requires_queue`；桌面客户端仅对此明确拒绝，在同一已捕获连接上使用原始输入和相同 client ID 排队。其他错误或结果不确定时不得按此方式重试。已保留的输入必须使用原有恢复流程。用户仍可中断轮次。允许 `run_code` 时，其内嵌目录及搜索/描述文本仍可能列出被轮次策略排除的工具，但实际嵌套调用仍会受校验。若审查轮次不应展示无关绑定，应仅允许直接工具。工具名称只限制工具范围，不授予任务权限：接收插件仍须校验确切任务、执行请求、版本和工具参数。
 
+声明依赖 `agent.tools@1` 的插件，可调用 `toolService(host).resolveOwn({ tool_id: "local_tool_id" })` 查询自身工具当前的公开名称，无须猜测前缀或冲突哈希。这是可从后台回调调用的只读查询，不会初始化工具后端。原生提供方使用注册表认证的调用插件身份及所捕获 generation 的声明；调用方不能指定其他插件。结果为 `{found:false}` 或 `{found:true,name,direct_only?}`。每次使用前都应重新查询。结果只证明声明身份，**不**授予权限，也不保证目标会话暴露该工具：须另行检查确切已接纳模型请求的工具范围。选中提供方缺失或不支持查询时应保持只读，不能回退到原生提供方。执行方法仍保留原有更严格的作用域要求。
+
 `host.session.history.read` 只读返回物理审计记录，包括隐藏的模型上下文和工具记录。记录带有可选的 `hidden`、`read_only` 和 `origin` 元数据；省略的布尔标志视为 false，旧记录省略的来源视为空字符串。仅凭 `user` 角色不能认定内容由用户输入。构建对话视图时应保留并使用这些字段：排除隐藏记录，只有非只读且来源为 `user` 或空字符串的用户角色记录才作为真实用户输入。不要按文字特征判断来源，也不要删改真实输入中的相似文字。对话筛选不删除审计记录，也不改变提供方上下文。
 
 `host.session.history.search` 使用 `view: "conversation"` 时，在分页前对用户和助理记录应用这些可见性与来源规则，搜索显示的对话文字，不搜索推理或工具输出。省略 `view` 时保留默认审计／执行轨迹搜索。序号仍指向物理记录，客户端可以恢复原消息，不应将筛选结果重新编号。
@@ -349,6 +353,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 已完成的轮次可以没有 `final_output`：提供商正常结束不要求对外回复或调用确认工具。这只表示本轮执行结束，不证明用户目标已经达成；接收方仍须检查结果和证据，连接失败和异常终止仍会报错。
 
 Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到后续轮次，空闲会话仍会被自动唤醒。返回 `running` 和 `steered: true` 时，输入可能尚未被消费，不代表已持久送达。Peers 会保留待送达状态，直到持久记录确认送达；重启丢失的输入使用同一请求 ID 重试。
+
+Subagent 和 Peers 在信息可用时，用宿主提供的会话、工具、调用 ID、回合 ID 与步骤索引共同标识工具调用；传输执行 ID 不决定重试身份。缺少回合和步骤元数据的调用保留原有映射。已持久化的请求继续使用其保存的 ID 恢复，不推断过去未保存的回合或步骤身份。Peers 原有的内容去重与不确定发送匹配仍是独立策略。
 
 #### 会话实时进度
 

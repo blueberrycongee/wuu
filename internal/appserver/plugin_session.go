@@ -295,7 +295,11 @@ func (s *Server) listPluginSessions(ctx context.Context, pluginID string, params
 			state = pluginhost.TurnLifecycleQueued
 		}
 		s.queuedTurnMu.Unlock()
-		result.Sessions = append(result.Sessions, pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)})
+		summary := pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)}
+		if scope == pluginhost.SessionListScopeOwned {
+			summary.CreationRequestID = item.CreationRequestID
+		}
+		result.Sessions = append(result.Sessions, summary)
 	}
 	return result, nil
 }
@@ -469,6 +473,9 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
+	if metadata.Owner == "plugin:"+strings.TrimSpace(pluginID) {
+		result.Session.CreationRequestID = metadata.CreationRequestID
+	}
 	if s.clientInputReceiptsEnabled(binding) {
 		if err := s.validateClientInputSpace(binding, metadata.UserSpaceID, metadata.ProductDomain); err != nil {
 			return result, false, err

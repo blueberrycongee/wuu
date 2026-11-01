@@ -1301,7 +1301,7 @@ function SettingsGeneralPage({
             <span className="settings-row-control-value">
               {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
             </span>
-            <Tooltip asChild content={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}><button
+            <Tooltip asChild content={copyState === "copied" ? t("settings.copied") : undefined}><button
               className="settings-button settings-button-ghost settings-icon-button"
               type="button"
               aria-label={t("settings.copyVersion")}

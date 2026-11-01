@@ -16,7 +16,7 @@
   padding: calc(11px / var(--desktop-page-zoom, 1)) calc(12px / var(--desktop-page-zoom, 1));
   border-radius: 999px;
   background: #fff;
-  box-shadow: 0 5px 12px -3px rgba(0, 0, 0, 0.22), 0 2px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-pop);
   visibility: hidden;
   opacity: 0;
   transform: translateY(calc(-6px / var(--desktop-page-zoom, 1)));

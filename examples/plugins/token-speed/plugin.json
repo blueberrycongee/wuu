@@ -7,7 +7,10 @@
   "version": "0.2.0",
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "2026.10.19",
-  "desktop": { "entry": "desktop.js" },
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [{ "name": "ui.application", "major_version": 1, "required": true }]
+  },
   "interface": {
     "displayName": "Token Speed",
     "shortDescription": "See smoothly animated output speed in the workspace tool rail.",

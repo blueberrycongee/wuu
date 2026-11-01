@@ -39,7 +39,6 @@ conversation-shell.css .session-tab.running .session-tab-status border-top-color
 environment.css .conversation-search-error background --env-search-error-bg
 environment.css .environment-dialog-error background --danger-soft
 environment.css .plugin-inspector-section-error background --danger-soft
-fields.css .settings-switch-thumb, .plugin-ui-checkbox input::after, .plugin-setting-switch::after box-shadow --switch-thumb-shadow
 image-preview.css .image-preview-overlay background --image-preview-overlay-bg
 image-preview.css .image-preview-status color --image-preview-status-text
 image-preview.css .image-preview-toolbar background --image-preview-toolbar-actions-bg
@@ -53,8 +52,6 @@ mac-window-controls.css .mac-window-control background --traffic-light-color
 model-services.css .connection-auth-methods [aria-pressed="true"] background --ink-overlay-6
 model-services.css .model-service-tile:hover:not(:disabled) background --ink-overlay-4
 navigation-ribbon.css :where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button, :where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-button:hover, :where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-account-trigger:hover background --ink-overlay-6
-navigation-ribbon.css .sidebar-ribbon-brand > img box-shadow --shadow-color-medium
-navigation-ribbon.css .sidebar-ribbon-brand > img box-shadow --shadow-color-strong
 onboarding.css .equipment-binding fill --equipment-binding
 onboarding.css .equipment-bookmark fill --equipment-accent
 onboarding.css .equipment-edge fill --equipment-edge

@@ -4592,16 +4592,28 @@ func (s *Server) startThreadUserTurn(ctx context.Context, th *threadState, userM
 // It acquires the cross-process lease and refreshes disk state before running
 // hooks, then keeps ownership through the user append and turn lifecycle.
 func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threadState, userMsg providers.ChatMessage, snapshot turnRuntimeSnapshot, failIfRunning bool, readOnlyPolicy turnReadOnlyPolicy, hooks turnAdmissionHooks) (startedThreadTurn, bool, error) {
+	// Accepted plugin work owns its invocation after the admitting callback
+	// returns. A supplied capture, including a failed one, remains authoritative.
+	if !runtime.HasInvocationState(ctx) && snapshot.PluginTurn != nil && snapshot.PluginTurn.Origin != nil {
+		ctx = runtime.WithInvocationState(ctx, snapshot.PluginTurn.Origin)
+	}
 	if caller, ok := principal.FromContext(ctx); ok {
 		snapshot.AdmissionPrincipal = caller
 		snapshot.AdmissionDelegation = access.DelegationFromContext(ctx)
 		snapshot.AdmissionAuthorization = runtime.CaptureExecutionAuthorization(ctx)
-	} else if snapshot.AdmissionPrincipal.Valid() {
+	} else if snapshot.AdmissionPrincipal.Identity() != (principal.Identity{}) {
 		ctx = principal.WithContext(ctx, snapshot.AdmissionPrincipal)
 		if snapshot.AdmissionDelegation != nil {
 			ctx = access.WithDelegation(ctx, *snapshot.AdmissionDelegation)
 		}
 		ctx = runtime.WithExecutionAuthorization(ctx, snapshot.AdmissionAuthorization)
+	}
+	// Queue admission must revalidate the captured live source, not just its
+	// authenticated identity. An expired snapshot must not become anonymous.
+	if caller, ok := principal.FromContext(ctx); ok {
+		if err := caller.Check(ctx); err != nil {
+			return startedThreadTurn{}, false, err
+		}
 	}
 	timing := hooks.timing.buffered()
 	defer timing.flush()
@@ -4800,6 +4812,15 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		if err := hookErr; err != nil {
 			abortAdmission()
 			return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
+		}
+	}
+
+	// Runtime preparation and prompt hooks can outlive source authorization.
+	// Check again before committing the queued claim or appending user history.
+	if caller, ok := principal.FromContext(ctx); ok {
+		if err := caller.Check(ctx); err != nil {
+			abortAdmission()
+			return startedThreadTurn{}, false, err
 		}
 	}
 

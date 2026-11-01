@@ -13,7 +13,7 @@ import { join } from "node:path";
 // Exercise shipped JSONL runtime, owned history projection and authenticated
 // client dispatch. Only host persistence/session services and the model output
 // are synthetic; these results are not evidence of a live model call.
-test("shipped Personal GenUI model-output to history to owner action survives restart", async t => {
+for (const version of [2, 3]) test(`shipped Personal GenUI v${version} history and owner action survive restart`, async t => {
   const root = fileURLToPath(new URL("../../../../", import.meta.url));
   const scratch = await mkdtemp(join(tmpdir(), "twin-genui-runtime-")); t.after(() => rm(scratch, { recursive: true, force: true }));
   await build({ entryPoints: [join(root, "plugins/personal/src/genui/fixtures.ts")], outfile: join(scratch, "fixtures.mjs"), bundle: true, platform: "node", format: "esm" });
@@ -145,9 +145,9 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   // A completed shared resource must survive history projection with a stable
   // source and fallback. Failed, hidden or malformed tool results must not turn
   // into visible assistant messages.
-  const spec = JSON.stringify({ version: 2, title: "Budget", fallback: "Set a budget", state: [], body: [] });
+  const spec = JSON.stringify(version === 3 ? { version, title: "Budget", fallback: "Set a budget", source: "<Text>Set a budget</Text>" } : { version, title: "Budget", fallback: "Set a budget", state: [], body: [] });
   const digest = createHash("sha256").update(spec).digest("hex");
-  const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Budget", resource: { mimeType: "application/vnd.wuu.ui+json", text: spec }, artifact: { placement: "inline", ref: `ui-v2-${digest}`, sha256: digest, size_bytes: Buffer.byteLength(spec) } };
+  const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Budget", resource: { mimeType: "application/vnd.wuu.ui+json", text: spec }, artifact: { placement: "inline", ref: `ui-v${version}-${digest}`, sha256: digest, size_bytes: Buffer.byteLength(spec) } };
   historyToolName = "shared_ui_tool";
   publishedResult = { content: [{ type: "text", text: "Set a budget" }, part] };
   const shared = (await runtime.client("agents.history")).records.find(r => r.seq === 3);
@@ -175,7 +175,7 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   // forged, duplicated, cross-session or oversized snapshot reach the model.
   const { actionId, label, ...snapshot } = rendererContext;
   extraResult = structuredClone(publishedResult);
-  extraResult.content[1].artifact.ref = `ui-v2-${"1".repeat(64)}`;
+  extraResult.content[1].artifact.ref = `ui-v${version}-${"1".repeat(64)}`;
   const snapshot2 = { ...snapshot, seq: 4, tool_call_id: "model-call-two", artifact_ref: extraResult.content[1].artifact.ref, values: { budget: 24 } };
   const sharedChat = { request_id: "shared-chat", prompt: "What about these values?", renderer_contexts: [snapshot, snapshot2] };
   await assert.rejects(() => runtime.call("service.invoke", { service: "personal.agents", method: "agents.send", params: { agent_id: mainAgent, ...sharedChat }, execution_id: "forged-owner" }), /authenticated|owner/);

@@ -8,7 +8,7 @@ import { activate } from "../../../../internal/plugin/bundled/generative-ui/desk
 import { PluginHost } from "./PluginHost";
 import { WorkbenchController } from "./Workbench";
 
-it.each(["chart", "disclosure"] as const)("persists a %s view's open state before an immediate unmount", async (type) => {
+it.each(["chart", "disclosure", "source-disclosure-keys"] as const)("persists a %s view's open state before an immediate unmount", async (type) => {
   vi.stubGlobal("crypto", webcrypto);
   const host = new PluginHost({ react: React });
   const saved = new Map<string, string>();
@@ -26,7 +26,9 @@ it.each(["chart", "disclosure"] as const)("persists a %s view's open state befor
     const node = type === "chart"
       ? { id: "view", type, chartType: "area", points: { op: "literal", value: [{ label: "One", value: 1 }] } }
       : { id: "view", type, title: "Details", children: [{ id: "text", type: "text", text: "Local details" }] };
-    const content = { text: JSON.stringify({ version: 2, title: "Durable disclosure", fallback: "Local details", state: [], body: [node] }) };
+    const content = { text: JSON.stringify(type === "source-disclosure-keys"
+      ? { version: 3, title: "Durable disclosure", fallback: "Independent local details", source: '<Stack><Disclosure key="a/b" title="First details">First</Disclosure><Stack key="a"><Disclosure key="b" title="Second details">Second</Disclosure></Stack></Stack>' }
+      : { version: 2, title: "Durable disclosure", fallback: "Local details", state: [], body: [node] }) };
     const props = { content, metadata: { threadId: "thread", itemId: "item", partId: "part", artifactId: type }, host: controller.createPresentationHostAPI("generative-ui", type, []) };
     async function mount() {
       const read = new Promise<void>(resolve => { readDone = resolve; });
@@ -43,11 +45,13 @@ it.each(["chart", "disclosure"] as const)("persists a %s view's open state befor
       details.addEventListener("toggle", toggle);
       act(() => details.querySelector("summary")!.click());
       expect(details.open).toBe(open);
+      if (type === "source-disclosure-keys") expect(container.querySelectorAll("details")[1].open).toBe(false);
       expect(toggle).not.toHaveBeenCalled();
       // Navigation may unmount the view before the browser queues its toggle event.
       act(() => root.render(null));
       await mount();
       expect(container.querySelector("details")!.open).toBe(open);
+      if (type === "source-disclosure-keys") expect(container.querySelectorAll("details")[1].open).toBe(false);
     }
   } finally {
     act(() => root.unmount());
@@ -58,7 +62,7 @@ it.each(["chart", "disclosure"] as const)("persists a %s view's open state befor
   }
 });
 
-it("reports restored values and clears them on unmount", async () => {
+it.each([2, 3])("reports restored v%s values and clears them on unmount", async (version) => {
   vi.stubGlobal("crypto", webcrypto);
   const host = new PluginHost({ react: React });
   let readDone: () => void;
@@ -68,7 +72,7 @@ it("reports restored values and clears them on unmount", async () => {
   try {
     await host.activateGeneration({ pluginId: "generative-ui", generation: "state", register: api => activate(api as unknown as Parameters<typeof activate>[0]) });
     const Renderer = controller.getRenderer("tool-result", "application/vnd.wuu.ui+json")!.render;
-    const spec = { version: 2, title: "Quantity", fallback: "Choose quantity", state: [{ id: "quantity", value: 2 }], body: [{ id: "quantityInput", type: "input", inputType: "number", state: "quantity", label: "Quantity" }] };
+    const spec = version === 3 ? { version: 3, title: "Quantity", fallback: "Choose quantity", source: '{@body const [quantity, setQuantity] = DIL.useState(2); } <Input label="Quantity" inputType="number" value={quantity} onChange={setQuantity}/>' } : { version: 2, title: "Quantity", fallback: "Choose quantity", state: [{ id: "quantity", value: 2 }], body: [{ id: "quantityInput", type: "input", inputType: "number", state: "quantity", label: "Quantity" }] };
     const props = { content: { text: JSON.stringify(spec) }, metadata: { threadId: "thread", itemId: "item", partId: "part", artifactId: "artifact" }, host: { ...controller.createPresentationHostAPI("generative-ui", "state", []), reportState } };
     const read = new Promise<void>(resolve => { readDone = resolve; });
     await act(async () => { flushSync(() => root.render(<Renderer {...props} />)); await read; });

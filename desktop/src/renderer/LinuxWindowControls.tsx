@@ -97,7 +97,6 @@ export function LinuxWindowControls({ desktop }: { desktop: ApplicationDesktopCo
         type="button"
         className="linux-window-control linux-window-control-close"
         aria-label={t("shell.closeWindow")}
-        title={t("shell.closeWindow")}
         onClick={() => {
           void desktop.close?.().catch(() => {});
         }}

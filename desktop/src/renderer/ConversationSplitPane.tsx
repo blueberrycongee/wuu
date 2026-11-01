@@ -1,5 +1,4 @@
 import type { UIRegisterFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
-import { Tooltip } from "./Tooltip";
 import { X } from "./WuuIcons";
 import type {
   InputFile,
@@ -122,14 +121,14 @@ export function ConversationSplitPane({
       onPointerDown={onActivate}
     >
       {pane === "secondary" && (
-        <Tooltip asChild content={t("split.closeRight")}><button
+        <button
           className="icon-button conversation-split-close"
           type="button"
           aria-label={t("split.closeRight")}
           onClick={onClose}
         >
           <X className="icon" />
-        </button></Tooltip>
+        </button>
       )}
       <div
         ref={onBodyRef}

@@ -3,6 +3,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Pin, Volume2, VolumeX } from "./WuuIcons";
 import { useSortableTransition } from "./SortableMotion";
+import { TruncatedText } from "./TruncatedText";
 import { Tooltip } from "./Tooltip";
 import type { NavigationRibbonItem } from "./NavigationRibbon";
 
@@ -16,10 +17,11 @@ export function focusAfterRibbonClose(id: string): void {
   (available[index + 1] ?? available[index - 1] ?? current.closest("nav")?.querySelector<HTMLButtonElement>(".sidebar-ribbon-add"))?.focus();
 }
 
-export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, tabStop = false }: {
+export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, labelVisible = false, tabStop = false }: {
   item: NavigationRibbonItem;
   onMove: (direction: -1 | 1) => void;
   nativeTooltip: boolean;
+  labelVisible?: boolean;
   tabStop?: boolean;
   onMenu?: (x: number, y: number) => void;
 }): JSX.Element {
@@ -33,7 +35,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, tabStop
     <div ref={setNodeRef} style={style}
       className={`sidebar-ribbon-tab-row${item.active ? " active" : ""}${hasAudio ? " has-audio" : ""}`}
       data-dragging={isDragging || undefined}>
-      <Tooltip content={item.title} disabled={Boolean(active)} native={nativeTooltip}>
+      <Tooltip content={item.title} disabled={Boolean(active) || labelVisible} native={nativeTooltip}>
         <button
           {...attributes}
           {...listeners}
@@ -87,7 +89,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, tabStop
           }}
         >
           {item.icon}
-          <span className="sidebar-ribbon-label">{item.title}</span>
+          <TruncatedText className="sidebar-ribbon-label" text={item.title} nativeTooltip={nativeTooltip} />
           {item.pinned ? <Pin className="sidebar-ribbon-pin" aria-hidden="true" /> : null}
         </button>
       </Tooltip>

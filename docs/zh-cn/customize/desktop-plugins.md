@@ -2,6 +2,8 @@
 
 桌面插件是加载到 Wuu renderer 中的受信任 JavaScript 模块，通过宿主的 React 实例和 UI Kit，在定义好的边界上添加控件、页面和展示方式。可先用[快速上手](desktop-plugin-quickstart.md)创建可运行的包。
 
+使用 `application` 的插件必须在 `desktop.required_services` 中声明 `{ "name": "ui.application", "major_version": 1, "required": true }`，使其在工作区切换时与 application provider 按依赖顺序完成生命周期切换。
+
 ## 选择扩展点
 
 | 目标 | API |

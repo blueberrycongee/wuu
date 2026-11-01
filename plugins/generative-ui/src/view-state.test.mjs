@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // The client capability may only access bounded view snapshots for the owner.
 // Failures: forged/non-owner callback, unrelated key, oversized or malformed
@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 test('owner-scoped client stores only generative view state', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'wuu-genui-state-test-'));
   t.after(() => rm(dir, {recursive:true, force:true}));
-  await build({entryPoints:['plugins/generative-ui/src/index.ts'], outfile:join(dir,'plugin.mjs'), bundle:true, platform:'node', format:'esm'});
+  await build({entryPoints:[fileURLToPath(new URL('./index.ts', import.meta.url))], outfile:join(dir,'plugin.mjs'), bundle:true, platform:'node', format:'esm'});
   const plugin = (await import(pathToFileURL(join(dir,'plugin.mjs')).href)).default;
   assert(plugin.initialize().capabilities.some(x => x.id === 'plugin.client.request'));
   const values = new Map(), calls = [];
@@ -35,6 +35,9 @@ test('owner-scoped client stores only generative view state', async t => {
   assert.deepEqual((await client('view-state.get',{key})).output.result,{value:null});
   assert.deepEqual((await client('view-state.set',{key,value})).output.result,{});
   assert.deepEqual((await client('view-state.get',{key})).output.result,{value});
+  const sourceKey = `ui-v3-${"b".repeat(64)}`, sourceValue = JSON.stringify({version:3,values:{people:4},components:{}});
+  await client("view-state.set",{key:sourceKey,value:sourceValue});
+  assert.deepEqual((await client("view-state.get",{key:sourceKey})).output.result,{value:sourceValue});
   owner = false;
   const before = calls.filter(call => call.method.startsWith('host.storage.')).length;
   await assert.rejects(() => client('view-state.get',{key}));

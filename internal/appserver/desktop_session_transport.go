@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/access"
+	"github.com/blueberrycongee/wuu/internal/executionauth"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -172,6 +173,11 @@ func (p *desktopSessionTransport) InvokeService(ctx context.Context, call plugin
 	payload := map[string]any{"version": 1, "peer": peer}
 	if call.Method == "dispatch" {
 		payload["request"] = route
+		var scope executionauth.Scope
+		if json.Unmarshal(proof.Scope, &scope) == nil && scope.Kind == "exact-run" {
+			payload["controller"] = ownerLocalController{Consumer: scope.Consumer, UserSpaceID: scope.UserSpaceID, ProductDomain: scope.ProductDomain, SessionID: scope.SessionID, RunID: scope.RunID}
+		}
+
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

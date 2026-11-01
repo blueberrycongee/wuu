@@ -226,7 +226,11 @@ await scenario("bundled subagent foreground overlap and stale-result protection"
     switch(service) {
       case "host.storage.get": p.reply(frame,{value:stored}); break;
       case "host.storage.keys": p.reply(frame,{keys:[]}); break;
-      case "host.storage.set": stored = params.value; p.reply(frame); break;
+      case "host.storage.compare-exchange": {
+        const swapped = stored === params.expected;
+        if (swapped) stored = params.value;
+        p.reply(frame,{swapped,value:stored}); break;
+      }
       case "host.session.create": {
         const session_id = `child-${++sequence}`;
         sessions.push({session_id,parent_session_id:"parent",name:params.name,state:"running"});

@@ -15,7 +15,7 @@ const target={version:1,execution_host:'registered-host',session_id:'coding-sess
 const receipt=(patch={})=>({version:1,operation_id:'run-1',locator:target,status:'completed',result:{session_id:'coding-session',state:'queued',queue_id:'queue-1'},...patch});
 test('existing target requires exact locator and does not infer or substitute a host',()=>{
  assert.deepEqual(existingSessionTarget(target),target);
- for(const value of [null,{}, {...target,session_id:''},{...target,execution_host:''},{...target,version:2},{...target,owner:'claimed-owner'}])assert.throws(()=>existingSessionTarget(value));
+ for(const value of [null,{}, {...target,session_id:''},{...target,execution_host:''},{...target,version:2},{...target,owner:'claimed-owner'},{...target,route_kind:'owner-local'}])assert.throws(()=>existingSessionTarget(value));
 });
 test('queued command receipt stays queued; accepted operation is not completed work',()=>{
  assert.deepEqual(existingSessionResult(receipt(),target,'run-1'),{session_id:'coding-session',state:'queued',queue_id:'queue-1'});

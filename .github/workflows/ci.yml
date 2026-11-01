@@ -287,6 +287,18 @@ jobs:
 
       # Independent suites continue after a peer fails so one broken boundary
       # does not hide the others. Every failed step still fails this job.
+      - name: Verify registered existing-session controller loop
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        timeout-minutes: 6
+        shell: bash
+        env:
+          WUU_REGISTERED_SESSION_EVIDENCE: ${{ github.workspace }}/.tmp/e2e/architecture-conformance/registered-session.json
+        run: |
+          set -o pipefail
+          # Builds the native fixture binary and requires real-core reports;
+          # unlike ordinary Vitest, this cannot silently skip the journey.
+          node scripts/registered-session-transport-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/registered-session.log
+
       - name: Verify independent state authority
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
         timeout-minutes: 8
@@ -493,6 +505,7 @@ jobs:
             .tmp/e2e/architecture-conformance/*.txt
             .tmp/e2e/architecture-conformance/*.sha256
             .tmp/e2e/architecture-conformance/*.log
+            .tmp/e2e/architecture-conformance/registered-session*.json
             .tmp/e2e/plugin-failure-isolation/run-*/result.json
             .tmp/e2e/provider-authority/run-*/environment.json
             .tmp/e2e/provider-authority/run-*/verification.log

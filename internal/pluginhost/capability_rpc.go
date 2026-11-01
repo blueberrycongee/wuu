@@ -433,17 +433,18 @@ type SessionListParams struct {
 }
 
 type SessionSummary struct {
-	UserSpaceID     string `json:"user_space_id,omitempty"`
-	ProductDomain   string `json:"product_domain,omitempty"`
-	AgentID         string `json:"agent_id,omitempty"`
-	SessionID       string `json:"session_id"`
-	Name            string `json:"name,omitempty"`
-	ParentSessionID string `json:"parent_session_id,omitempty"`
-	Visibility      string `json:"visibility"`
-	State           string `json:"state"`
-	WorkspaceID     string `json:"workspace_id,omitempty"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
+	UserSpaceID       string `json:"user_space_id,omitempty"`
+	ProductDomain     string `json:"product_domain,omitempty"`
+	AgentID           string `json:"agent_id,omitempty"`
+	SessionID         string `json:"session_id"`
+	CreationRequestID string `json:"creation_request_id,omitempty"`
+	Name              string `json:"name,omitempty"`
+	ParentSessionID   string `json:"parent_session_id,omitempty"`
+	Visibility        string `json:"visibility"`
+	State             string `json:"state"`
+	WorkspaceID       string `json:"workspace_id,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
 }
 
 type SessionListResult struct {
