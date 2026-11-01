@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
@@ -18,6 +19,7 @@ type owner struct {
 	id       string
 	binding  userspace.Binding
 	lifetime context.Context
+	verified *principal.Verified
 }
 
 // AdmitDesktop consumes the dedicated inherited desktop-parent channel. Callers
@@ -47,6 +49,20 @@ func AdmitDesktop(ctx context.Context, binding userspace.Binding, bootstrap io.R
 	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: binding, lifetime: ctx}), nil
 }
 
+// AdmitOwnerTransport binds a host-verified, owner-enrolled transport to one
+// user space for its connection lifetime. Only trusted host adapters call this:
+// a sender identifier supplied by a plugin or an unverified message is not proof.
+func AdmitOwnerTransport(ctx context.Context, binding userspace.Binding, verified principal.Verified) (context.Context, error) {
+	if ctx == nil || binding.Validate() != nil || !binding.IsUser() || !verified.IsOwner() {
+		return nil, errors.New("owner transport requires verified enrollment and a user binding")
+	}
+	if err := verified.Check(ctx); err != nil {
+		return nil, err
+	}
+	ctx = principal.WithContext(ctx, verified)
+	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: binding, lifetime: ctx, verified: &verified}), nil
+}
+
 // BindConnection shortens inherited authority to one admitted transport. A
 // detached plugin callback cannot outlive that transport by dropping cancellation.
 func BindConnection(ctx context.Context) context.Context {
@@ -57,7 +73,7 @@ func BindConnection(ctx context.Context) context.Context {
 	if RequireOwner(ctx, proof.binding) != nil {
 		return context.WithValue(ctx, ownerKey{}, (*owner)(nil))
 	}
-	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: proof.binding, lifetime: ctx})
+	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: proof.binding, lifetime: ctx, verified: proof.verified})
 }
 
 func RequireOwner(ctx context.Context, binding userspace.Binding) error {
@@ -67,6 +83,9 @@ func RequireOwner(ctx context.Context, binding userspace.Binding) error {
 	proof, _ := ctx.Value(ownerKey{}).(*owner)
 	if proof == nil || ctx.Err() != nil || proof.lifetime.Err() != nil || binding.Validate() != nil || !binding.IsUser() || !proof.binding.Matches(binding) {
 		return errors.New("live owner UI transport for this user binding is required")
+	}
+	if proof.verified != nil {
+		return proof.verified.Check(ctx)
 	}
 	return nil
 }

@@ -14,6 +14,31 @@ import (
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
+const PersonalMessagingService = "personal.messaging"
+const PersonalMessagingConsumer = "wuu.personal-messaging-client"
+
+type PersonalChannelHandler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
+
+// BindPersonalChannel binds the host ingress for the selected messaging source.
+// The gateway supplies the authenticated provider ID, never a payload identity.
+func (r *PluginSessionRouter) BindPersonalChannel(handler PersonalChannelHandler) func() {
+	r.mu.Lock()
+	r.personalChannelBinding++
+	binding := r.personalChannelBinding
+	r.personalChannel = handler
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.personalChannelBinding == binding {
+				r.personalChannel = nil
+			}
+		})
+	}
+}
+
 type PersonalHostCall struct {
 	ExecutionAuthorization *pluginhost.ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
 	Operation              string                                      `json:"operation"`
@@ -47,6 +72,23 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 	var call PersonalHostCall
 	if err := decodeServiceParams(raw, &call); err != nil {
 		return nil, err
+	}
+
+	if call.Operation == "channel.call" {
+		if s.turnRouter == nil {
+			return nil, errors.New("Personal channel host unavailable")
+		}
+		s.turnRouter.mu.RLock()
+		handler := s.turnRouter.personalChannel
+		s.turnRouter.mu.RUnlock()
+		if handler == nil {
+			return nil, errors.New("Personal channel host unavailable")
+		}
+		value, err := handler(ctx, s.pluginID, call.Input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"ok": true, "value": value})
 	}
 	verifiedSession := ""
 	_, execution, known := personalhost.OperationAccess(call.Operation)

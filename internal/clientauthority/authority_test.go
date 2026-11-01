@@ -2,7 +2,9 @@ package clientauthority
 
 import (
 	"context"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/userspace"
@@ -52,5 +54,37 @@ func TestDesktopOwnerProofHasNoProductPrivilege(t *testing.T) {
 	}
 	if err := RequireOwner(owner, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}); err == nil {
 		t.Fatal("proof crossed product binding")
+	}
+}
+
+func TestEnrolledOwnerTransportAdmissionRechecksRevocation(t *testing.T) {
+	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
+	identity := principal.Identity{Kind: "user", Issuer: "slack", Tenant: "team", Subject: "owner"}
+	guest, _ := principal.Authenticated(identity)
+	if _, err := AdmitOwnerTransport(context.Background(), binding, guest); err == nil {
+		t.Fatal("authenticated but unpaired user became owner")
+	}
+	var live atomic.Bool
+	live.Store(true)
+	owner, _ := principal.OwnerConnection(identity, live.Load)
+	ctx, cancel := context.WithCancel(context.Background())
+	admitted, err := AdmitOwnerTransport(ctx, binding, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireOwner(admitted, binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireOwner(admitted, userspace.Binding{UserSpaceID: "other", ProductDomain: "personal"}); err == nil {
+		t.Fatal("cross-space owner admitted")
+	}
+	live.Store(false)
+	if err := RequireOwner(admitted, binding); err == nil {
+		t.Fatal("revoked enrollment retained authority")
+	}
+	live.Store(true)
+	cancel()
+	if err := RequireOwner(context.WithoutCancel(admitted), binding); err == nil {
+		t.Fatal("detached callback retained authority")
 	}
 }

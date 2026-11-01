@@ -30,6 +30,8 @@ type PluginSessionRouter struct {
 	executionAuthorization        ExecutionAuthorizationHandler
 	personalBinding               uint64
 	personalHost                  PersonalHostHandler
+	personalChannelBinding        uint64
+	personalChannel               PersonalChannelHandler
 	clientBinding                 uint64
 	clientInvalidation            func(context.Context, *pluginhost.Host, pluginhost.ClientInvalidation) error
 	mu                            sync.RWMutex

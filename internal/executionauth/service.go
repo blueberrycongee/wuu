@@ -66,7 +66,7 @@ func (s *Service) Status() pluginhost.Status {
 }
 func Descriptor() pluginhost.ServiceDescriptor {
 	methods := []pluginhost.ServiceMethodDescriptor{}
-	for _, name := range []string{"describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"} {
+	for _, name := range []string{"describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit", "enroll-owner", "read-owner", "revoke-owner"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1", Cleanup: name == "release-commit"})
 	}
 	return pluginhost.ServiceDescriptor{Name: ServiceName, Version: "1.0.0", Methods: methods}
@@ -86,7 +86,7 @@ func (s *Service) Activate(ctx context.Context) error {
 	if s.state != pluginhost.StatePrepared || s.documents == nil {
 		return errors.New("selected execution grant storage unavailable")
 	}
-	if err := persistence.ClaimNamespaces(ctx, s.documents, []string{grantsNamespace, legacyGrantsNamespace, requestsNamespace, eventsNamespace, commitsNamespace}); err != nil {
+	if err := persistence.ClaimNamespaces(ctx, s.documents, []string{grantsNamespace, legacyGrantsNamespace, requestsNamespace, eventsNamespace, commitsNamespace, ownerEnrollmentsNamespace}); err != nil {
 		return err
 	}
 	s.state = pluginhost.StateActive
@@ -118,10 +118,12 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	var result any
 	var err error
 	switch p.Method {
+	case "enroll-owner", "read-owner", "revoke-owner":
+		result, err = s.ownerEnrollment(ctx, p)
 	case "describe":
 		var r struct{}
 		if err = decode(p.Params, &r); err == nil {
-			result = PolicyInfo{DefaultLifetimeSeconds: int64((7 * 24 * time.Hour) / time.Second), MaxLifetimeSeconds: int64(MaxGrantLifetime / time.Second), AuthorityKinds: []string{"local-installation"}, ScopeKinds: []string{"task-lineage", "exact-run"}}
+			result = PolicyInfo{DefaultLifetimeSeconds: int64((7 * 24 * time.Hour) / time.Second), MaxLifetimeSeconds: int64(MaxGrantLifetime / time.Second), AuthorityKinds: []string{"local-installation", "owner-enrollment"}, ScopeKinds: []string{"task-lineage", "exact-run"}}
 		}
 	case "inspect":
 		var r InspectRequest
@@ -176,7 +178,8 @@ func admission(p pluginhost.ServiceInvokeParams, action string) (principal.Ident
 	if a == nil || a.Version != 1 || a.Principal.Validate() != nil || a.Action != action || a.InputJSON != string(p.Params) || a.InputDigest == "" || a.InputDigest != RawRequestDigest(p.Params) {
 		return principal.Identity{}, "", errors.New("authenticated execution admission required")
 	}
-	if a.Authority != "local-installation" && !(action == "execution/grant/derive" && a.Authority == "task-lineage") && !(action == "execution/commit/acquire" && a.Authority == "execution-grant") {
+	_, enrolled := principal.OwnerEnrollmentID(a.Authority)
+	if a.Authority != "local-installation" && !((action == "execution/grant/issue" || action == "execution/grant/revoke") && enrolled) && !(action == "execution/grant/derive" && a.Authority == "task-lineage") && !(action == "execution/commit/acquire" && a.Authority == "execution-grant") {
 		return principal.Identity{}, "", errors.New("durable account validity is unsupported by selected execution provider")
 	}
 	return a.Principal, a.Authority, nil
@@ -208,6 +211,18 @@ func (s *Service) issue(ctx context.Context, r IssueRequest, who principal.Ident
 	}{who, r.Scope.Consumer, r.RequestID})
 	digest := RequestDigest(r)
 	err := persistence.Update(ctx, s.documents, func(tx *persistence.Tx) error {
+		var enrolled ownerEnrollmentRecord
+		if authority != "local-installation" && r.Parent == nil {
+			var valid bool
+			var err error
+			enrolled, valid, err = s.enrollmentForGrant(tx, authority, who, r.Scope)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				return errors.New("owner enrollment is revoked or does not match this execution scope")
+			}
+		}
 		var existing requestRecord
 		found, err := tx.Get(requestsNamespace, key, &existing)
 		if err != nil {
@@ -237,6 +252,12 @@ func (s *Service) issue(ctx context.Context, r IssueRequest, who principal.Ident
 				return errors.New("child execution grant exceeds parent scope")
 			}
 			authority = parent.Authority
+		}
+		if enrolled.ID != "" {
+			enrolled.Roots = append(enrolled.Roots, reference)
+			if err := tx.Put(ownerEnrollmentsNamespace, enrolled.ID, enrolled); err != nil {
+				return err
+			}
 		}
 		if err = tx.Put(grantNamespace(reference), reference.ID, grantRecord{IssueResult: result, Parent: r.Parent, Authority: authority}); err != nil {
 			return err
@@ -271,8 +292,14 @@ func (s *Service) activeGrantChain(tx *persistence.Tx, reference Reference) ([]g
 		if err != nil {
 			return nil, false, err
 		}
-		if !found || r.Reference != reference || r.Revoked || r.Authority != "local-installation" || r.Principal.Validate() != nil || r.Scope.Validate() != nil || !validCapabilities(r.Capabilities) || !r.ExpiresAt.After(s.now()) {
+		if !found || r.Reference != reference || r.Revoked || r.Principal.Validate() != nil || r.Scope.Validate() != nil || !validCapabilities(r.Capabilities) || !r.ExpiresAt.After(s.now()) {
 			return nil, false, nil
+		}
+		if r.Authority != "local-installation" {
+			_, valid, err := s.enrollmentForGrant(tx, r.Authority, r.Principal, r.Scope)
+			if err != nil || !valid {
+				return nil, false, err
+			}
 		}
 		chain = append(chain, r)
 		if r.Parent == nil {

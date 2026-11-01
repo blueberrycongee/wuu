@@ -114,6 +114,32 @@ func OwnerConnection(identity Identity, valid func() bool) (Verified, error) {
 	return caller, nil
 }
 
+// OwnerEnrollmentAuthority names one immutable owner-approved enrollment.
+// It is distinct from local installation authority and grants no permission by
+// itself. The selected execution provider verifies its persisted validity.
+func OwnerEnrollmentAuthority(id string) string { return "owner-enrollment:" + id }
+func OwnerEnrollmentID(authority string) (string, bool) {
+	id, ok := strings.CutPrefix(authority, "owner-enrollment:")
+	return id, ok && id != "" && len(id) <= 128 && strings.TrimSpace(id) == id && !strings.ContainsRune(id, 0)
+}
+
+// EnrolledOwner is used only after a trusted host adapter verified both the
+// platform sender and the selected provider's active, exact owner enrollment.
+// Wire identities and ordinary authenticated accounts cannot call this API.
+func EnrolledOwner(identity Identity, enrollmentID string, live func() bool, revalidate func(context.Context) error) (Verified, error) {
+	authority := OwnerEnrollmentAuthority(enrollmentID)
+	if _, ok := OwnerEnrollmentID(authority); !ok {
+		return Verified{}, errors.New("owner enrollment identity is required")
+	}
+	verified, err := OwnerConnection(identity, live)
+	if err != nil {
+		return Verified{}, err
+	}
+	verified.revalidate = revalidate
+	verified.durableAuthority = authority
+	return verified, nil
+}
+
 // PairedOwner is for a device whose cryptographic key was verified against the
 // host's persisted owner-controlled pairing store. Pairing already grants full
 // owner control; mere possession of a device id does not.

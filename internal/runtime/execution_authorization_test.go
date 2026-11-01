@@ -241,6 +241,47 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 		t.Fatal("plugin trusted itself into owner issuance")
 	}
 	owner := principal.WithContext(context.Background(), principal.LocalOwner())
+	t.Run("owner enrollment through authenticated plugin gateway", func(t *testing.T) {
+		enrollment := executionauth.OwnerEnrollment{ID: "gateway-enrollment", Principal: principal.Identity{Kind: "user", Issuer: "fixture:messaging", Tenant: "tenant", Subject: "sender"}, UserSpaceID: binding.UserSpaceID, ProductDomain: binding.Domain(), ConversationID: "conversation"}
+		call := func(ctx context.Context, operation string, input any) (executionauth.OwnerEnrollment, error) {
+			params, _ := json.Marshal(input)
+			raw, _ := json.Marshal(ExecutionAuthorizationIntent{Operation: operation, Params: params})
+			result, err := host.CallService(ctx, item.ID, pluginhost.KernelExecutionAuthorizationService, "call", raw)
+			var got executionauth.OwnerEnrollment
+			if err != nil {
+				return got, err
+			}
+			return got, json.Unmarshal(result, &got)
+		}
+		if _, err := call(context.Background(), "enroll-owner", enrollment); err == nil {
+			t.Fatal("plugin self-enrolled without owner")
+		}
+		remote, err := principal.EnrolledOwner(enrollment.Principal, "prior-enrollment", func() bool { return true }, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := call(principal.WithContext(context.Background(), remote), "enroll-owner", enrollment); err == nil {
+			t.Fatal("remote owner escalated enrollment authority")
+		}
+		other := enrollment
+		other.UserSpaceID = "other"
+		if _, err := call(owner, "enroll-owner", other); err == nil {
+			t.Fatal("cross-user-space enrollment accepted")
+		}
+		got, err := call(owner, "enroll-owner", enrollment)
+		if err != nil || got != enrollment {
+			t.Fatalf("enroll: %+v %v", got, err)
+		}
+		ref := executionauth.OwnerEnrollmentRef{ID: enrollment.ID}
+		got, err = call(owner, "read-owner", ref)
+		if err != nil || got != enrollment {
+			t.Fatalf("read: %+v %v", got, err)
+		}
+		got, err = call(owner, "revoke-owner", ref)
+		if err != nil || !got.Revoked {
+			t.Fatalf("revoke: %+v %v", got, err)
+		}
+	})
 	parent, err := invoke(owner, intent)
 	if err != nil {
 		t.Fatal(err)

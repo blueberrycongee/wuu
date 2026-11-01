@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/personalim"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -46,6 +47,10 @@ type Host struct {
 // Options configures one workspace or explicitly domain-bound user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// PersonalMessaging supplies trusted bootstrap secrets, never renderer settings.
+	PersonalMessaging personalim.Credentials
+	// PersonalMessagingDrivers is a trusted embedding/test transport override.
+	PersonalMessagingDrivers map[string]personalim.Driver
 	// CompositionProfile explicitly selects a shipped or configured product profile.
 	// Empty preserves the configured profile; identity never selects a product.
 	CompositionProfile string
@@ -208,6 +213,9 @@ func New(opts Options) (*Runtime, error) {
 	}
 
 	bindings := appserver.NewRuntimeBindings()
+	if binding.Domain() == "personal" && !opts.SafeMode {
+		bindings.SetPersonalMessagingFactory(personalMessagingFactory(opts))
+	}
 	bindings.SetPersonalAccountsFactory(func(input runtime.NativeProviderContext) (personalhost.Options, error) {
 		personalOptions := personalhost.Options{}
 		if input.UserBinding.Domain() != "personal" || host.Kind != runtime.HostLocal || opts.SafeMode {
@@ -277,6 +285,11 @@ func New(opts Options) (*Runtime, error) {
 	if binding.IsUser() {
 		result.userHost, err = appserver.NewUserHost(core, personalhost.Options{}, appserver.WithRuntimeBindings(bindings))
 		if err != nil {
+			_, _ = core.Cleanup()
+			return nil, err
+		}
+		if err = bindings.BindPersonalMessagingHost(context.Background(), result.userHost); err != nil {
+			_ = result.userHost.Close()
 			_, _ = core.Cleanup()
 			return nil, err
 		}

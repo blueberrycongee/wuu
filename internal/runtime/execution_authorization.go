@@ -266,15 +266,70 @@ func (s *Session) HandleExecutionAuthorization(ctx context.Context, pluginID str
 		return nil, err
 	}
 	defer state.Close()
-	item, err := executionPackage(state, pluginID)
-	if err != nil {
-		return nil, err
-	}
 	ref := intent.Reference
 	if intent.Parent != nil {
 		ref = intent.Parent
 	}
 	client, err := executionClient(state, ref)
+	if err != nil {
+		return nil, err
+	}
+	if intent.Operation == "enroll-owner" || intent.Operation == "read-owner" || intent.Operation == "revoke-owner" {
+		if _, declared := state.Host.ServiceRegistry().ProviderPluginIDFor(pluginID, pluginhost.KernelExecutionAuthorizationService, 1); !declared {
+			return nil, errors.New("owner enrollment requires the declared execution authorization host service")
+		}
+		caller, ok := principal.FromContext(ctx)
+		if intent.Operation != "read-owner" && (!ok || !caller.IsOwner() || caller.Identity() != principal.LocalOwner().Identity() || caller.DurableAuthority() != "local-installation") {
+			return nil, errors.New("owner enrollment requires the authenticated local installation owner")
+		}
+		if intent.Operation != "read-owner" {
+			if err := caller.Check(ctx); err != nil {
+				return nil, err
+			}
+		}
+		var enrollment executionauth.OwnerEnrollment
+		var reference executionauth.OwnerEnrollmentRef
+		if intent.Operation == "enroll-owner" {
+			if err := decodeServiceParams(intent.Params, &enrollment); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := decodeServiceParams(intent.Params, &reference); err != nil {
+				return nil, err
+			}
+			enrollment, err = client.ReadOwner(ctx, reference)
+			if err != nil {
+				return nil, err
+			}
+		}
+		binding := s.UserBinding()
+		if enrollment.UserSpaceID != binding.UserSpaceID || enrollment.ProductDomain != binding.Domain() {
+			return nil, errors.New("owner enrollment belongs to a different user host")
+		}
+		if intent.Operation == "read-owner" {
+			return json.Marshal(enrollment)
+		}
+		var payload any = enrollment
+		if intent.Operation == "revoke-owner" {
+			payload = reference
+		}
+		canonical, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		admission := pluginhost.ServiceAdmission{Version: 1, Principal: caller.Identity(), Authority: caller.DurableAuthority(), Action: "execution/owner/" + intent.Operation, InputDigest: executionauth.RawRequestDigest(canonical)}
+		admitted := pluginhost.WithServiceAdmission(ctx, executionauth.ConsumerModule, executionauth.ServiceName, intent.Operation, admission)
+		if intent.Operation == "enroll-owner" {
+			enrollment, err = client.EnrollOwner(admitted, enrollment)
+		} else {
+			enrollment, err = client.RevokeOwner(admitted, reference)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(enrollment)
+	}
+	item, err := executionPackage(state, pluginID)
 	if err != nil {
 		return nil, err
 	}

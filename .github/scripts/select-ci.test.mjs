@@ -122,3 +122,15 @@ test('agent skill instructions are non-runtime documentation, not executable ski
   }
   assert.deepEqual(JSON.parse(select([instruction], 'workflow_dispatch').desktop_suites), suites);
 });
+
+test('messaging E2E selection follows source and shared admission inputs, not unrelated UI or documentation', () => {
+  for (const path of ['internal/personalim/bridge.go', 'internal/runtime/execution_authorization.go', 'internal/sdk/runtime.go', 'internal/config/config.go', 'plugins/personal/src/index.ts', 'go.sum']) {
+    assert.equal(select([path]).messaging, 'true', path);
+  }
+  for (const path of ['docs/en/integrations/user-hosts.md', 'desktop/src/renderer/LanguagePreferenceSection.tsx', 'internal/cli/help.go']) {
+    assert.equal(select([path]).messaging, 'false', path);
+  }
+  assert.equal(select(['internal/personalim/bridge.go'], 'push').messaging, 'false');
+  assert.equal(select(['docs/en/integrations/user-hosts.md'], 'workflow_dispatch').messaging, 'true');
+  assert.equal(select(['internal/personalim/bridge.go'], 'pull_request', true).messaging, 'true');
+});
