@@ -116,12 +116,14 @@ export function DictationRecording({ api, sessionId, phase, stop, cancel }: {
     return () => clearInterval(timer);
   }, [phase]);
   const listening = phase === "listening";
+  const status = t(listening ? "composer.voice.listening" : phase === "finalizing" ? "composer.voice.transcribing" : "composer.voice.preparing");
   return <div className="composer-dictation-recording" data-phase={phase}>
     <Tooltip asChild content={t("composer.voice.cancel")}><button type="button" className="composer-action-button" aria-label={t("composer.voice.cancel")} onClick={cancel}><X /></button></Tooltip>
-    <div className="composer-dictation-status" role="status">
+    <div className="composer-dictation-status">
       <span className="composer-dictation-dot" aria-hidden="true" />
-      <span>{t(listening ? "composer.voice.listening" : phase === "finalizing" ? "composer.voice.transcribing" : "composer.voice.preparing")}</span>
+      {!listening && <span className="composer-dictation-status-label">{status}</span>}
       {listening && <span className="composer-dictation-timer">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>}
+      <span className="sr-only" role="status" aria-live="polite">{status}</span>
     </div>
     <div className="composer-dictation-wave" aria-hidden="true">{levels.map((level, index) => <span key={index} style={{ transform: `scaleY(${0.08 + level * 0.92})`, opacity: 0.3 + level * 0.7 }} />)}</div>
     <Tooltip asChild content={t("composer.voice.stop")}><button type="button" className="composer-action-button composer-dictation-stop" aria-label={t("composer.voice.stop")} disabled={!listening} onClick={() => void stop()}>

@@ -1,4 +1,14 @@
-.composer-dictation-button { color: var(--ink-muted); }
+/* Voice controls share Send/Stop's visible 24px disc. */
+.composer-action-button.composer-dictation-button,
+.composer-dictation-recording .composer-action-button {
+  color: var(--ink-muted);
+}
+.composer-action-button.composer-dictation-button::before,
+.composer-dictation-recording .composer-action-button::before {
+  background: var(--surface-2);
+}
+.composer-action-button.composer-dictation-button:hover:not(:disabled)::before,
+.composer-dictation-recording .composer-action-button:hover:not(:disabled)::before { background: var(--surface-3); }
 .composer-editor.is-dictating,
 .composer-bar.is-dictating { align-items: center; }
 .composer-editor.is-dictating > textarea,
@@ -28,4 +38,4 @@
 @keyframes dictation-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes dictation-pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .composer-dictation-recording, .composer-dictation-dot { animation: none; } .composer-dictation-wave > span { transition: none; } }
-@container (max-width: 440px) { .composer-dictation-status > span:nth-child(2) { display: none; } .composer-dictation-recording { gap: var(--space-2); } }
+@container (max-width: 440px) { .composer-dictation-status-label { display: none; } .composer-dictation-recording { gap: var(--space-2); } }
