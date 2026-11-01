@@ -2669,33 +2669,6 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   padding: var(--menu-inset);
 }
 
-.runtime-engine-options {
-  display: flex;
-  gap: 2px;
-}
-
-.codex-runtime-menu .runtime-engine-option {
-  position: relative;
-  width: auto;
-  height: 38px;
-  min-width: 0;
-  align-items: center;
-  flex: 0 1 auto;
-  border-radius: var(--radius-xs);
-  color: var(--ink-secondary);
-  padding: 0 10px;
-  text-align: left;
-}
-
-.codex-runtime-menu .runtime-engine-option[aria-checked="true"] {
-  background: var(--selection-surface);
-  color: var(--ink);
-}
-
-.codex-runtime-menu .runtime-engine-option:hover:not(:disabled) {
-  background: var(--menu-hover);
-}
-
 .codex-runtime-menu .runtime-engine-option:disabled {
   cursor: default;
   opacity: 1;
@@ -2734,10 +2707,6 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: 2px;
-}
-
-.codex-model-item[aria-checked="true"] {
-  background: var(--menu-hover);
 }
 
 /* The one control in the panel that is dragged, so it is the one with weight:
@@ -2870,7 +2839,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   text-align: left;
 }
 
-.codex-runtime-menu button:hover {
+.codex-runtime-menu button:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
@@ -3203,12 +3172,6 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   color: var(--ink);
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);
-}
-
-.codex-runtime-menu .runtime-engine-option[aria-checked="true"],
-.codex-runtime-menu .runtime-provider-option[aria-checked="true"],
-.runtime-panel .codex-model-item[aria-checked="true"] {
-  background: var(--selection-surface);
 }
 
 .runtime-panel .runtime-engine-option[aria-checked="true"] > svg:not(.engine-icon),
