@@ -722,6 +722,8 @@ iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照�
 
 ## CI 覆盖范围
 
+iOS 的核心集成、模拟器构建和设备构建在三个独立任务中运行，分别上传证据。CI 通过 `bash clients/native/verify.sh ios-core` 运行真实服务器集成；独立使用的 `ios` 和 `all` 模式仍包含模拟器构建。一组失败不会取消另外两组。
+
 [Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
 [主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 始终执行轻量仓库元数据检查。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。

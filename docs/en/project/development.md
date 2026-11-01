@@ -969,6 +969,8 @@ The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone
 
 [Native mobile](../../../.github/workflows/native-mobile.yml) runs iOS core integration and unsigned simulator/device builds on pull requests and `main` pushes that change the iOS client, shared native fixtures, remote protocol, or Go dependencies. Manual `workflow_dispatch` also runs the existing Android integration, Release builds and lint. These checks do not cover device signing, store distribution, or physical phone interaction.
 
+iOS integration, simulator and device builds run as three independent jobs, each with its own evidence upload. CI uses `bash clients/native/verify.sh ios-core` for the real-server integration lane; standalone `ios` and `all` modes still include the simulator build. A failed job does not cancel the other two.
+
 [The main CI workflow](../../../.github/workflows/ci.yml) selects jobs from the complete PR diff, including deleted files and both sides of renames. Repository metadata checks remain lightweight and always run on PRs. Documentation-only and native-phone-only changes skip the main product suites; native phones keep their dedicated workflow.
 
 Renderer changes run Desktop and Clients because the Web client imports renderer sources. Other desktop changes run Desktop, Clients, and native OS checks. Shared protocol, client core, Go, plugins/SDK, dependency locks outside these scoped directories, build scripts, and unknown paths conservatively run all suites. Runtime Markdown under prompts or plugins is not exempt. Go CI supplies PostgreSQL for database-backed coverage.
