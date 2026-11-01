@@ -86,12 +86,12 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		}
 	}
 	artifactDir := statepath.SessionArtifactDir(stateDir, id)
+	environment, err := s.selectedExecutionEnvironment(id, artifactDir)
+	if err != nil {
+		return nil, err
+	}
 	if kit == nil {
 		manager, err := s.processManagerForThread(root, stateDir)
-		if err != nil {
-			return nil, err
-		}
-		environment, err := s.selectedExecutionEnvironment(id, artifactDir)
 		if err != nil {
 			return nil, err
 		}
@@ -126,6 +126,11 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	kit.SetImageInputSupported(true)
 	kit.SetAgentIdentity(id, agentthread.RootPath)
 	configureToolkitWorkspaceScope(kit, wuuHome, s.UserBinding(), artifactDir)
+	// Host capabilities execute locally even for an isolated conversation.
+	// Use its pinned environment, not the cleared toolkit executor, for grants.
+	if environment != nil {
+		kit.SetRegisteredWorkspaces(nil)
+	}
 	if dispatcher != nil {
 		kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, _ tools.ToolInfo, call providers.ToolCall) error {
 			_, err := dispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
