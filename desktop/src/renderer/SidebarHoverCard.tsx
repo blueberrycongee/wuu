@@ -331,11 +331,8 @@ export function ThreadHoverCardContent({
 
 export function WorkspaceHoverCardContent({
   workspace,
-  scratch,
 }: {
   workspace: DesktopProject;
-  // The 对话 pseudo workspace has no folder of its own.
-  scratch: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const facts = useContext(SidebarHoverFactsContext);
@@ -351,12 +348,10 @@ export function WorkspaceHoverCardContent({
             <SessionCounts sessions={sessions} facts={facts} />
           </HoverCardFact>
         ) : null}
-        {!scratch ? (
-          <HoverCardFact icon={<Folder />}>
-            <PathText path={workspace.path} />
-          </HoverCardFact>
-        ) : null}
-        {!scratch && workspace.missing ? (
+        <HoverCardFact icon={<Folder />}>
+          <PathText path={workspace.path} />
+        </HoverCardFact>
+        {workspace.missing ? (
           <HoverCardFact icon={<AlertTriangle />} tone="warning">
             {t("sidebarHoverCard.missingWorkspace")}
           </HoverCardFact>

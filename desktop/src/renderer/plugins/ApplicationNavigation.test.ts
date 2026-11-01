@@ -17,7 +17,7 @@ function webControls(values: Partial<ApplicationWebWorkspaceV1> = {}): Applicati
 }
 function fixture(controls = webControls()) {
   let state: AppState = { ...initialState, threads: [{ id: "t", preview: "", cwd: "/one", model_provider: "p", model: "m", status: "idle", created_at: "", updated_at: "", turns: [], forked_from_id: "parent", pinned: true }] };
-  const cache = { getSnapshot: () => ({ workspaceThreadsByWorkspaceID: {}, cachedScratchThreads: [], requestedWorkspaceThreadIDs: new Set<string>() }),
+  const cache = { getSnapshot: () => ({ workspaceThreadsByWorkspaceID: {}, requestedWorkspaceThreadIDs: new Set<string>() }),
     loadWorkspaceThreads: vi.fn(), cacheSidebarThreads: vi.fn(), updateCachedSidebarThread: vi.fn(),
     patchCachedSidebarThread: vi.fn(), updateCachedSidebarThreadPinned: vi.fn(), removeCachedSidebarThread: vi.fn() };
   const mutations = { toggleThreadPinned: vi.fn(), archiveThread: vi.fn(), deleteThread: vi.fn() };

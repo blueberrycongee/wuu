@@ -2,7 +2,14 @@ const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
-const runtimeContext = { kind: "no_project", cwd };
+const project = {
+  id: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? "tabbar-demo" : "e2e-workspace",
+  name: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? "Tabbar demo" : "E2E workspace",
+  path: cwd,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+const runtimeContext = { kind: "project", project_id: project.id, cwd };
 let startedThreadCount = 0;
 let workspacePreviewReadFailed = false;
 const threads = new Map();
@@ -10,10 +17,7 @@ const heldMessages = new Map();
 
 function projectList() {
   return {
-    projects: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? [{
-      id: "tabbar-demo", name: "Tabbar demo", path: cwd,
-      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-    }] : [],
+    projects: [project],
     active_context: runtimeContext
   };
 }
@@ -27,6 +31,8 @@ function mockThread(id, source) {
     model: "mock-stream",
     ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { model_variant: "medium" } : {}),
     cwd,
+    workspace_id: project.id,
+    workspace_kind: "project",
     status: "idle",
     ...(source ? { source } : {}),
     created_at: now,

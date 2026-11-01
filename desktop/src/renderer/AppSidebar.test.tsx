@@ -10,7 +10,6 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench, WorkbenchController } from "./plugins/Workbench";
 import {
   initialState,
-  SCRATCH_PSEUDO_PROJECT_ID,
   type AppState,
   type ThreadSummary,
 } from "./AppState";
@@ -54,13 +53,6 @@ function initialized(): InitializeResult {
 }
 
 const sidebarWorkspaces: DesktopProject[] = [
-  {
-    id: SCRATCH_PSEUDO_PROJECT_ID,
-    name: "对话",
-    path: "",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
   {
     id: "project-1",
     name: "wuu",
@@ -108,7 +100,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
     pendingThreadID,
     onSelectThread = () => {},
     onSelectWorkspaceThread = () => {},
-    sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
+    sectionOrder = ["project-1", "project-2"],
     state = {
       ...initialState,
       initialized: initialized(),
@@ -216,7 +208,7 @@ describe("AppSidebar layout", () => {
       renderSidebar({ workbenchController: controller });
       expect(container.querySelector("[data-owner-sidebar]")?.textContent).toBe("general");
       expect(container.querySelector("[data-sidebar-footer]")?.textContent).toBe("true");
-      expect(contexts.at(-1)).toMatchObject({ initialized: true, hasActiveThread: false, workspaceCount: 3 });
+      expect(contexts.at(-1)).toMatchObject({ initialized: true, hasActiveThread: false, workspaceCount: 2 });
       let viewID!: string;
       await act(async () => { viewID = await controller.openPluginView("test:app-sidebar-view", "context.view", { region: "primary" }); });
       const contextual = container.querySelector(".sidebar-section-scroll [data-owner-sidebar]");
@@ -442,30 +434,6 @@ describe("AppSidebar layout", () => {
     expect(container.querySelector('[aria-current="page"] .thread-row-title')?.textContent).toBe(unread.title);
     expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(idle.title);
     expect(container.querySelector<HTMLElement>(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
-  });
-
-  it("keeps a fork in its owning project while the scratch cache catches up", () => {
-    const fork: ThreadSummary = {
-      id: "fork-thread", title: "Forked conversation", cwd: "/repo/wuu/.worktrees/topic",
-      workspace_id: "project-1", status: "idle", pinned: false, archived: false,
-      created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
-      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
-    };
-    const select = vi.fn();
-    renderSidebar({
-      activeThreadID: fork.id,
-      expandedSidebarSectionIDs: new Set([SCRATCH_PSEUDO_PROJECT_ID, "project-1"]),
-      workspaceThreadsByWorkspaceID: {
-        [SCRATCH_PSEUDO_PROJECT_ID]: [{ ...fork, workspace_id: undefined }],
-        "project-1": [fork],
-      },
-      onSelectWorkspaceThread: select,
-    });
-    const rows = [...container.querySelectorAll<HTMLButtonElement>('[data-functional-group-id="workspace"] .thread-row-main')]
-      .filter((row) => row.textContent?.includes(fork.title!));
-    expect(rows).toHaveLength(1);
-    act(() => rows[0].click());
-    expect(select).toHaveBeenCalledWith("project-1", fork.id);
   });
 
   // The failure cases these guard: a project or its sessions also crowd the
@@ -698,9 +666,9 @@ describe("AppSidebar layout", () => {
     expect(projectsGroup().querySelector(".sidebar-functional-action")).toBeNull();
   });
 
-  it("renders only scratch and projects in the workspace order", () => {
+  it("renders projects in the workspace order", () => {
     renderSidebar({
-      sectionOrder: ["project-2", SCRATCH_PSEUDO_PROJECT_ID, "project-1"],
+      sectionOrder: ["project-2", "project-1"],
     });
 
     const sections = Array.from(
@@ -710,7 +678,6 @@ describe("AppSidebar layout", () => {
     );
     expect(sections.map((section) => section.dataset.sectionId)).toEqual([
       "project-2",
-      SCRATCH_PSEUDO_PROJECT_ID,
       "project-1",
     ]);
   });

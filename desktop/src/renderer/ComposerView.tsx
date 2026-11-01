@@ -220,7 +220,6 @@ export function Composer({
   onOpenSettings,
   onOpenSkillsCatalog,
   onSelectWorkspace,
-  onSelectNoProject,
   onCreateWorkspace,
   onOpenWorkspace,
   onStartNewThread,
@@ -346,7 +345,6 @@ export function Composer({
   onOpenSettings: () => void;
   onOpenSkillsCatalog: () => void;
   onSelectWorkspace: (id: string) => void;
-  onSelectNoProject: () => void;
   onSelectGitBranch: (branch: string) => void | Promise<void>;
   onCreateWorkspace: () => void;
   onOpenWorkspace: () => void;
@@ -1029,9 +1027,6 @@ export function Composer({
       case "open-workspace":
         onOpenWorkspace();
         break;
-      case "no-workspace":
-        onSelectNoProject();
-        break;
       case "context":
         onOpenContextComposition();
         break;
@@ -1259,7 +1254,6 @@ export function Composer({
               query={workspaceFilter}
               setQuery={setWorkspaceFilter}
               onSelectWorkspace={onSelectWorkspace}
-              onSelectNoProject={onSelectNoProject}
               onCreateWorkspace={onCreateWorkspace}
               onOpenWorkspace={onOpenWorkspace}
               onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, menuTriggerRef?.current ?? workspacePillRef.current)}
@@ -1969,10 +1963,8 @@ function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activ
     return activeWorkspace?.name ?? translate("composer.currentWorkspace");
   }
   if (activeContext?.kind === "no_project") {
-    // The no-project workspace is surfaced everywhere else — sidebar group,
-    // session tab — as "对话", so the draft's cwd control matches that name
-    // rather than the older, inconsistent "无工作区".
-    return translate("composer.conversation");
+    // No-project contexts only remain for legacy and CLI-owned sessions.
+    return translate("appState.noWorkspace");
   }
   return translate("composer.selectWorkspace");
 }

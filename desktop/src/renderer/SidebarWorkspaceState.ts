@@ -14,9 +14,7 @@ import type {
   Thread,
 } from "../shared/protocol";
 import {
-  SCRATCH_PSEUDO_PROJECT_ID,
   initialState,
-  isScratchThread,
   mergeSidebarThread,
   reconcileThreadTitle,
   reduceNotification,
@@ -45,7 +43,6 @@ export type SidebarWorkspaceStateController = {
   expandedSidebarSectionIDs: Set<string>;
   loadingWorkspaceThreadIDs: ReadonlySet<string>;
   workspaceThreadsByWorkspaceID: Record<string, Thread[]>;
-  cachedScratchThreads: Thread[];
   sidebarSectionOrder: string[];
   setSidebarSectionOrder: Dispatch<SetStateAction<string[]>>;
   loadWorkspaceThreads: (project: DesktopProject) => Promise<void>;
@@ -112,27 +109,19 @@ function initialCollapsedSidebarSectionIDs(): Set<string> {
 }
 
 function initialExpandedSidebarSectionIDs(): Set<string> {
-  const expanded = storedSidebarSectionIDSet(
+  return storedSidebarSectionIDSet(
     SIDEBAR_EXPANDED_SECTION_IDS_KEY,
     LEGACY_PROJECT_EXPANDED_IDS_KEY,
   );
-  // 对话 defaults to expanded. Older builds auto-expanded it whenever the
-  // no_project context was active without ever persisting that into the
-  // expanded set, so a stored state without an explicit collapse marker
-  // means "open". A user collapse writes the marker and wins from then on.
-  if (!initialCollapsedSidebarSectionIDs().has(SCRATCH_PSEUDO_PROJECT_ID)) {
-    expanded.add(SCRATCH_PSEUDO_PROJECT_ID);
-  }
-  return expanded;
 }
 
 /**
- * Session-tree (对话 / project) sections expand ONLY via their own header
- * toggle: expanded ⇔ the id is in the persisted expanded set. Selecting a
- * session, switching the active project/context, or opening a pinned
- * session must never change any section's expand state — the sidebar's
- * expand/collapse is purely manual (user mental model: clicking a session
- * opens its tab; clicking a header toggles that header's section).
+ * Project sections expand ONLY via their own header toggle: expanded ⇔ the id
+ * is in the persisted expanded set. Selecting a session, switching the active
+ * project/context, or opening a pinned session must never change any section's
+ * expand state — the sidebar's expand/collapse is purely manual (user mental
+ * model: clicking a session opens its tab; clicking a header toggles that
+ * header's section).
  */
 export function sessionTreeSectionExpanded(
   sectionID: string,
@@ -174,11 +163,6 @@ function threadSnapshotsShallowEqual(left: Thread, right: Thread): boolean {
     leftKeys.length === rightKeys.length &&
     leftKeys.every((key) => Object.is(left[key], right[key]))
   );
-}
-
-function sameWorkdirPath(left: string, right: string): boolean {
-  const trim = (path: string): string => path.replace(/\/+$/, "");
-  return trim(left) === trim(right);
 }
 
 export function mergeSidebarThreadSnapshots(
@@ -252,32 +236,24 @@ export function threadsForWorkspace(
 
 type SidebarThreadCacheSnapshot = {
   workspaceThreadsByWorkspaceID: Record<string, Thread[]>;
-  cachedScratchThreads: Thread[];
   requestedWorkspaceThreadIDs: ReadonlySet<string>;
 };
 
 /** Shared cache ownership is independent of navigation module mounts. */
 export function createSidebarThreadCache(getProjects: () => DesktopProject[], setStatus: (status: string) => void) {
   let workspaceThreadsByWorkspaceID: Record<string, Thread[]> = {};
-  let cachedScratchThreads: Thread[] = [];
   let requestedWorkspaceThreadIDs: ReadonlySet<string> = new Set();
-  let snapshot: SidebarThreadCacheSnapshot = { workspaceThreadsByWorkspaceID, cachedScratchThreads, requestedWorkspaceThreadIDs };
+  let snapshot: SidebarThreadCacheSnapshot = { workspaceThreadsByWorkspaceID, requestedWorkspaceThreadIDs };
   const listeners = new Set<() => void>();
   const loadingWorkspaceThreadIDsRef = { current: new Set<string>() };
   function changed(): void {
-    snapshot = { workspaceThreadsByWorkspaceID, cachedScratchThreads, requestedWorkspaceThreadIDs };
+    snapshot = { workspaceThreadsByWorkspaceID, requestedWorkspaceThreadIDs };
     for (const listener of listeners) listener();
   }
   function setWorkspaceThreadsByWorkspaceID(update: (current: Record<string, Thread[]>) => Record<string, Thread[]>): void {
     const next = update(workspaceThreadsByWorkspaceID);
     if (next === workspaceThreadsByWorkspaceID) return;
     workspaceThreadsByWorkspaceID = next;
-    changed();
-  }
-  function setCachedScratchThreads(update: (current: Thread[]) => Thread[]): void {
-    const next = update(cachedScratchThreads);
-    if (next === cachedScratchThreads) return;
-    cachedScratchThreads = next;
     changed();
   }
   function setRequestedWorkspaceThreadIDs(next: ReadonlySet<string>): void {
@@ -310,17 +286,9 @@ export function createSidebarThreadCache(getProjects: () => DesktopProject[], se
 
   function cacheSidebarThreads(
     incoming: Thread[],
-    requested?: { projects: Record<string, Thread[]>; scratch: Thread[] },
+    requested?: { projects: Record<string, Thread[]> },
   ): void {
     const projects = getProjects();
-    const scratchThreads = incoming.filter((thread) => isScratchThread(thread, projects));
-    if (scratchThreads.length > 0 || requested) {
-      setCachedScratchThreads((current) =>
-        mergeSidebarThreadSnapshots(current, requested
-          ? reconcileSidebarThreadList(requested.scratch, current, scratchThreads)
-          : scratchThreads),
-      );
-    }
     setWorkspaceThreadsByWorkspaceID((current) => {
       let next = current;
       for (const project of projects) {
@@ -361,7 +329,6 @@ export function createSidebarThreadCache(getProjects: () => DesktopProject[], se
       });
       return changed ? sortThreads(next) : threads;
     };
-    setCachedScratchThreads(patch);
     setWorkspaceThreadsByWorkspaceID((current) => {
       let changed = false;
       const next: Record<string, Thread[]> = {};
@@ -382,9 +349,6 @@ export function createSidebarThreadCache(getProjects: () => DesktopProject[], se
   }
 
   function removeCachedSidebarThread(threadID: string): void {
-    setCachedScratchThreads((current) =>
-      current.filter((thread) => thread.id !== threadID),
-    );
     setWorkspaceThreadsByWorkspaceID((current) => {
       let changed = false;
       const next: Record<string, Thread[]> = {};
@@ -431,7 +395,6 @@ export function createSidebarThreadCache(getProjects: () => DesktopProject[], se
       ).threads;
       return next === current ? current : next;
     };
-    setCachedScratchThreads(applyEvent);
     setWorkspaceThreadsByWorkspaceID((current) => {
       let changed = false;
       const next: Record<string, Thread[]> = {};
@@ -447,7 +410,7 @@ export function createSidebarThreadCache(getProjects: () => DesktopProject[], se
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    setWorkspaceThreadsByWorkspaceID, setCachedScratchThreads,
+    setWorkspaceThreadsByWorkspaceID,
     loadWorkspaceThreads, cacheSidebarThreads, updateCachedSidebarThread, patchCachedSidebarThread,
     updateCachedSidebarThreadPinned, removeCachedSidebarThread, syncSidebarServerEvent,
   };
@@ -475,8 +438,8 @@ export function useSidebarWorkspaceState({
   const latest = useRef({ projects, setStatus });
   latest.current = { projects, setStatus };
   const [cache] = useState(() => createSidebarThreadCache(() => latest.current.projects, status => latest.current.setStatus(status)));
-  const { workspaceThreadsByWorkspaceID, cachedScratchThreads, requestedWorkspaceThreadIDs } = useSyncExternalStore(cache.subscribe, cache.getSnapshot);
-  const { setWorkspaceThreadsByWorkspaceID, setCachedScratchThreads, loadWorkspaceThreads, cacheSidebarThreads,
+  const { workspaceThreadsByWorkspaceID, requestedWorkspaceThreadIDs } = useSyncExternalStore(cache.subscribe, cache.getSnapshot);
+  const { setWorkspaceThreadsByWorkspaceID, loadWorkspaceThreads, cacheSidebarThreads,
     updateCachedSidebarThread, patchCachedSidebarThread, updateCachedSidebarThreadPinned, removeCachedSidebarThread, syncSidebarServerEvent } = cache;
   const [sidebarSectionOrder, setSidebarSectionOrder] = useState<string[]>(
     () =>
@@ -586,7 +549,6 @@ export function useSidebarWorkspaceState({
     const validSectionIDs = new Set([
       ...validWorkspaceIDs,
       SIDEBAR_SECTION_PINNED,
-      SCRATCH_PSEUDO_PROJECT_ID,
     ]);
     setCollapsedSidebarSectionIDs((current) =>
       removeMissingIDs(current, validSectionIDs),
@@ -641,44 +603,14 @@ export function useSidebarWorkspaceState({
   ]);
 
   useEffect(() => {
-    if (activeContext?.kind !== "no_project") {
-      return;
-    }
-    const activeScratchThreads = sortThreads(
-      threads.filter(
-        (thread) => !thread.ephemeral && isScratchThread(thread, projects),
-      ),
-    );
-    const activeCwd = activeContext.cwd;
-    setCachedScratchThreads((current) => {
-      // The active workspace's list is authoritative for its own threads, but
-      // this cache also feeds the cross-workspace session tab strip and the
-      // global sidebar groups. Replacing it wholesale would drop every other
-      // workspace's sessions the moment the user switches workspaces, which
-      // regresses background tab labels to their stale snapshots (they fall
-      // back to "未命名对话" until clicked). Preserve other workspaces'
-      // entries and only reconcile the active workspace's slice.
-      const otherWorkspaceThreads = current.filter(
-        (thread) => !sameWorkdirPath(thread.cwd, activeCwd),
-      );
-      const next = sortThreads([
-        ...otherWorkspaceThreads,
-        ...activeScratchThreads,
-      ]);
-      return threadListsEquivalent(current, next) ? current : next;
-    });
-  }, [activeContext?.kind, projects, threads]);
-
-  useEffect(() => {
     if (!backgroundLoadingEnabled || !window.wuu?.listAllThreads) return;
     let cancelled = false;
     const requestedWorkspaces = workspaceThreadsByWorkspaceID;
-    const requestedScratch = cachedScratchThreads;
     void window.wuu.listAllThreads().then((listed) => {
       if (cancelled) return;
       // Snapshot `requested*` at request start so in-flight thread/started rows
       // survive a stale catalog. Reconcile against the live cache on arrival.
-      cacheSidebarThreads(listed.threads, { projects: requestedWorkspaces, scratch: requestedScratch });
+      cacheSidebarThreads(listed.threads, { projects: requestedWorkspaces });
     }).catch((error) => {
       if (!cancelled) {
         setStatus(desktopApiErrorMessage(error, translateCurrent("workspace.threadsLoadFailed")));
@@ -723,9 +655,9 @@ export function useSidebarWorkspaceState({
       });
       return;
     }
-    // 对话 / project tree sections: expanded ⇔ the id is in the expanded
-    // set. The collapse motion lives inside SidebarSection (it keeps the
-    // body mounted while animating), so the state flip is immediate here.
+    // Project tree sections: expanded ⇔ the id is in the expanded set. The
+    // collapse motion lives inside SidebarSection (it keeps the body mounted
+    // while animating), so the state flip is immediate here.
     const expanded = sessionTreeSectionExpanded(
       sectionID,
       expandedSidebarSectionIDs,
@@ -772,7 +704,6 @@ export function useSidebarWorkspaceState({
     expandedSidebarSectionIDs,
     loadingWorkspaceThreadIDs,
     workspaceThreadsByWorkspaceID: visibleWorkspaceThreadsByWorkspaceID,
-    cachedScratchThreads,
     sidebarSectionOrder,
     setSidebarSectionOrder,
     loadWorkspaceThreads,

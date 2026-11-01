@@ -14,7 +14,7 @@ The normal sidebar includes cross-workspace **Recent**. Opening the window order
 
 Starting work or receiving a new result gives that conversation priority while preserving the relative order of other conversations. A conversation that finishes stays just below the remaining running conversations, including when you are already viewing it and its result is marked read immediately. These priorities last until the window is reloaded or reopened. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, activity-driven moves wait until the interaction ends; status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
 
-These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
+These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
 
 ## Dictate a message
 
