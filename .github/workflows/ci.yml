@@ -872,16 +872,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard streamed reply settlement layout
+      - name: Guard independent stream and image layouts
+        id: layout-journeys
         if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 4
         shell: bash
         env:
           WUU_SETTLEMENT_OUTPUT: ${{ runner.temp }}/wuu-stream-settlement-evidence
+          WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
         run: |
-          mkdir -p "$WUU_SETTLEMENT_OUTPUT"
+          mkdir -p "$WUU_SETTLEMENT_OUTPUT" "$WUU_IMAGE_LAYOUT_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum npm --prefix desktop run test:e2e:stream-settlement -- --no-sandbox 2>&1 | tee "$WUU_SETTLEMENT_OUTPUT/run.log"
+          # Independent profiles and displays preserve focus and rAF assertions.
+          (xvfb-run --server-num=90 npm --prefix desktop run test:e2e:stream-settlement -- --no-sandbox 2>&1 | tee "$WUU_SETTLEMENT_OUTPUT/run.log") &
+          stream_pid=$!
+          (xvfb-run --server-num=91 desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log") &
+          image_pid=$!
+          stream_result=0
+          image_result=0
+          wait "$stream_pid" || stream_result=$?
+          wait "$image_pid" || image_result=$?
+          test "$stream_result" -eq 0 && test "$image_result" -eq 0
 
       - name: Upload streamed reply settlement evidence
         if: ${{ matrix.suite == 'layout' && (always()) }}
@@ -1121,6 +1132,7 @@ jobs:
         run: npm --prefix desktop run test:corpus
 
       - name: Replay conversation corpus through desktop and core
+        id: corpus-journeys
         if: ${{ matrix.suite == 'corpus' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 12
         shell: bash
@@ -1131,10 +1143,17 @@ jobs:
         run: |
           mkdir -p "$WUU_TOUR_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/run.log"
+          (xvfb-run --server-num=90 npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/run.log") &
+          corpus_pid=$!
           mkdir -p "$WUU_TOUR_OUTPUT/text-only"
-          WUU_CORPUS_TEXT_ONLY=1 WUU_TOUR_ONLY=sample-02 WUU_TOUR_OUTPUT="$WUU_TOUR_OUTPUT/text-only" \
-            xvfb-run --auto-servernum npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/text-only/run.log"
+          (WUU_CORPUS_TEXT_ONLY=1 WUU_TOUR_ONLY=sample-02 WUU_TOUR_OUTPUT="$WUU_TOUR_OUTPUT/text-only" \
+            xvfb-run --server-num=91 npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/text-only/run.log") &
+          text_pid=$!
+          corpus_result=0
+          text_result=0
+          wait "$corpus_pid" || corpus_result=$?
+          wait "$text_pid" || text_result=$?
+          test "$corpus_result" -eq 0 && test "$text_result" -eq 0
 
       - name: Upload conversation corpus acceptance evidence
         if: ${{ matrix.suite == 'corpus' && (always()) }}
@@ -1515,16 +1534,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-subscription-quota-evidence/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard image layout stability
-        if: ${{ matrix.suite == 'layout' }}
-        shell: bash
-        env:
-          # Keep native windows visible inside Xvfb so rAF checks use display cadence.
-          WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
-        run: |
-          mkdir -p "$WUU_IMAGE_LAYOUT_OUTPUT"
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log"
 
       - name: Upload image layout evidence
         if: ${{ matrix.suite == 'layout' && (always()) }}
