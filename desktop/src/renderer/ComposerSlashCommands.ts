@@ -18,7 +18,6 @@ export type ComposerSlashCommandAction =
   | "open-terminal"
   | "open-browser"
   | "open-workspace"
-  | "no-workspace"
   | "context"
   | "instructions"
   | "plugin"
@@ -302,18 +301,6 @@ export function buildComposerSlashCommands({
       action: "open-workspace",
       aliases: ["open"],
       keywords: ["folder", "工作区"]
-    },
-    {
-      id: "no-workspace",
-      name: "no-workspace",
-      title: t("slash.noWorkspace.title"),
-      description: t("slash.noWorkspace.description"),
-      tag: t("slash.tag.workspace"),
-      kind: "action",
-      action: "no-workspace",
-      aliases: ["scratch", "none"],
-      keywords: ["temporary", "临时", "无工作区"],
-      disabledReason: needsIdleThread
     },
     {
       id: "model",

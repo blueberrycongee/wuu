@@ -2,10 +2,11 @@ const { spawn: nodeSpawn } = require('node:child_process');
 const { resolve } = require('node:path');
 
 function scriptsForPlatform(platform) {
-  // The core/plugins and renderer have disjoint outputs. Start the two longest
-  // builds first; helper compilation and downloads fill the remaining slot.
-  if (platform === 'darwin') return ['build:core', 'build', 'build:cua-mac', 'build:app-context-mac', 'build:speech-mac', 'build:ripgrep'];
-  if (platform === 'linux') return ['build:core', 'build', 'build:cua-linux', 'build:ripgrep'];
+  // Core/plugins, mobile web, and Electron have disjoint outputs. Start core
+  // and web first, then let Electron use the first free slot instead of waiting
+  // for web; helper compilation and downloads fill the remaining slot.
+  if (platform === 'darwin') return ['build:core', 'build:web', 'build:renderer', 'build:cua-mac', 'build:app-context-mac', 'build:speech-mac', 'build:ripgrep'];
+  if (platform === 'linux') return ['build:core', 'build:web', 'build:renderer', 'build:cua-linux', 'build:ripgrep'];
   throw new Error(`Unsupported package build platform: ${platform}`);
 }
 
@@ -17,7 +18,12 @@ async function runBuilds(scripts, { spawn = nodeSpawn, cwd = resolve(__dirname, 
       const script = scripts[next++];
       try {
         await new Promise((resolveBuild, rejectBuild) => {
-          const child = spawn('npm', ['run', script], { cwd, env: process.env, stdio: 'inherit' });
+          // Two Vite graphs otherwise grow to their default heap limits together.
+          // Bound only these build workers; preserve other caller Node options.
+          const env = ['build:web', 'build:renderer'].includes(script)
+            ? { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=1536`.trim() }
+            : process.env;
+          const child = spawn('npm', ['run', script], { cwd, env, stdio: 'inherit' });
           child.once('error', error => rejectBuild(new Error(`${script}: ${error.message}`)));
           child.once('close', (code, signal) => {
             if (code === 0) resolveBuild();

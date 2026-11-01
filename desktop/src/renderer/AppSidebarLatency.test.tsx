@@ -89,6 +89,8 @@ function completedThread(): Thread {
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
+    workspace_id: "latency-project",
+    workspace_kind: "project",
     status: "idle",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -130,15 +132,22 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(): void {
+  const project = {
+    id: "latency-project",
+    name: "Latency Project",
+    path: workspace,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  window.localStorage.setItem(
+    "wuu.desktop.expandedSidebarSectionIDs",
+    JSON.stringify([project.id]),
+  );
   const thread = completedThread();
   const api = {
     listProjects: vi.fn().mockResolvedValue({
-      projects: [],
-      active_context: { kind: "no_project", cwd: workspace },
-    }),
-    selectNoProject: vi.fn().mockResolvedValue({
-      projects: [],
-      active_context: { kind: "no_project", cwd: workspace },
+      projects: [project],
+      active_context: { kind: "project", project_id: project.id, cwd: workspace },
     }),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads: [thread] }),
@@ -234,26 +243,26 @@ describe("sidebar click latency", () => {
     expect(container.querySelector(".is-reveal-snap")).toBeNull();
     const baseline = turnListProbe.renders;
 
-    // A pure sidebar interaction: collapse + expand the scratch section.
-    // This flips App-local state (collapsedSidebarSectionIDs) and must not
+    // A pure sidebar interaction: collapse + expand the workspace group.
+    // This flips App-local state (collapsed functional groups) and must not
     // cascade into the memoized conversation pane.
-    const scratchHeader = container.querySelector<HTMLButtonElement>(
-      'section[data-section-id="__wuu_scratch__"] .sidebar-section-row',
+    const workspaceHeader = container.querySelector<HTMLButtonElement>(
+      '[data-functional-group-id="workspace"] button[aria-expanded]',
     );
-    expect(scratchHeader).not.toBeNull();
-    expect(scratchHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(workspaceHeader).not.toBeNull();
+    expect(workspaceHeader?.getAttribute("aria-expanded")).toBe("true");
     await act(async () => {
-      scratchHeader?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      workspaceHeader?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsync();
-    expect(scratchHeader?.getAttribute("aria-expanded")).toBe("false");
+    expect(workspaceHeader?.getAttribute("aria-expanded")).toBe("false");
     expect(turnListProbe.renders).toBe(baseline);
     await act(async () => {
-      scratchHeader?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      workspaceHeader?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsync();
 
-    expect(scratchHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(workspaceHeader?.getAttribute("aria-expanded")).toBe("true");
 
     // The memoized conversation pane should not re-render from a sidebar-only
     // state change once the selected conversation is ready.

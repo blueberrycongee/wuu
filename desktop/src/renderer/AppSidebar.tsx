@@ -16,7 +16,6 @@ import {
   FolderMinus,
   FolderOpen,
   FolderPlus,
-  MessageSquare,
   MessageSquarePlus,
   MessagesSquare,
   Plus,
@@ -65,14 +64,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDropAnimation, useSortableTransition } from "./SortableMotion";
 import type { DesktopProject, ExtensionInventoryRecord } from "../shared/protocol";
 import {
-  isScratchThread,
   threadBelongsToWorkspace,
   isThreadExecuting,
   isThreadUnread,
   sidebarThreadSortTime,
   type ThreadSummary,
 } from "./AppState";
-import { SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
 import { projectDirectory } from "./ProjectSessions";
 import {
   OrganizationThreadList,
@@ -123,13 +120,8 @@ import { Tooltip } from "./Tooltip";
 import { HoverRevealScopeContext, useRetainHoverOwner } from "./HoverReveal";
 
 /**
- * Stable section identity keys for the new sidebar tree.
- *
- * - `SIDEBAR_SECTION_PINNED` is the legacy persisted collapse key. The visible
- *   pinned functional group now keeps its own persisted order/collapse state.
- * - `SCRATCH_PSEUDO_PROJECT_ID` ("__wuu_scratch__") is the 对话
- *   pseudo-project entry. It belongs to the workspace functional group and
- *   can be reordered with real projects.
+ * Stable section identity key for the pinned functional group. The visible
+ * pinned group keeps its own persisted order/collapse state.
  */
 export const SIDEBAR_SECTION_PINNED = "__wuu_pinned__";
 
@@ -358,24 +350,20 @@ function persistSidebarRecentsCollapsed(collapsed: boolean): void {
  * project list. Pure function so it is directly testable.
  *
  * Rules:
- *   1. Drop any stored key that is neither a real project id nor
- *      `SCRATCH_PSEUDO_PROJECT_ID` (including stale fixed or legacy section
- *      ids) once `workspaceIDs` is known. When `workspaceIDs` is empty the real
- *      project list has not been loaded yet, so stored keys are preserved —
- *      pruning them against an empty list would destroy the user's persisted
- *      workspace order on every launch.
+ *   1. Drop any stored key that is not a real project id (including stale
+ *      fixed, legacy, or retired conversation-workspace ids) once
+ *      `workspaceIDs` is known. When `workspaceIDs` is empty the real project
+ *      list has not been loaded yet, so stored keys are preserved — pruning
+ *      them against an empty list would destroy the user's persisted workspace
+ *      order on every launch.
  *   2. Append newly-seen project ids in `workspaceIDs` order.
- *   3. Ensure the scratch entry is present while preserving workspace order.
  */
 export function reconcileSidebarSectionOrder(
   stored: string[] | undefined,
   workspaceIDs: string[],
 ): string[] {
   const workspaceIDsKnown = workspaceIDs.length > 0;
-  const knownIDs = new Set<string>([
-    SCRATCH_PSEUDO_PROJECT_ID,
-    ...workspaceIDs,
-  ]);
+  const knownIDs = new Set<string>(workspaceIDs);
   const out: string[] = [];
   if (Array.isArray(stored)) {
     for (const key of stored) {
@@ -390,9 +378,6 @@ export function reconcileSidebarSectionOrder(
     if (!out.includes(id)) {
       out.push(id);
     }
-  }
-  if (!out.includes(SCRATCH_PSEUDO_PROJECT_ID)) {
-    out.unshift(SCRATCH_PSEUDO_PROJECT_ID);
   }
   if (
     stored &&
@@ -525,10 +510,6 @@ export function AppSidebar({
   selectedWorkspaceID?: string;
   extensionInventory?: readonly ExtensionInventoryRecord[];
   lastViewedTurnByThreadID: Readonly<Record<string, string>>;
-  // The sidebar renders scratch conversations through the same WorkspaceList
-  // path as real projects, so App.tsx prepends a synthetic DesktopProject
-  // (id = SCRATCH_PSEUDO_PROJECT_ID) into this array. The workspace registry
-  // stays unchanged; sidebarWorkspaces is what the sidebar actually shows.
   sidebarWorkspaces: DesktopProject[];
   pendingConversations?: readonly PendingConversation[];
   draftConversations?: readonly { id: string; title: string; pending: boolean; entering?: boolean }[];
@@ -547,9 +528,8 @@ export function AppSidebar({
   workspaceMenuOpen: boolean;
   workspaceMenuRef: RefObject<HTMLDivElement | null>;
   searchOpen: boolean;
-  // Order of reorderable sections. The pinned section is rendered first
-  // (fixed position) and is NOT included. Each key maps to either
-  // SCRATCH_PSEUDO_PROJECT_ID or a real project id.
+  // Order of reorderable workspace sections. The pinned section is rendered
+  // first (fixed position) and is NOT included.
   sectionOrder: string[];
   onStartNewThread: () => void;
   onOpenSkillsTab: () => void;
@@ -678,6 +658,7 @@ export function AppSidebar({
       && (folderDragThread?.pinned || organization.folderByThreadID[folderDragThreadID]),
   );
   const hasRuntimeContext = activeContextKind !== undefined;
+  const canStartNewThread = sidebarWorkspaces.some((project) => !project.missing);
   const declaredPluginNavigationEntries = useSyncExternalStore(
     (listener) => navigation ? () => {} : pluginHost.subscribe(listener),
     () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
@@ -1234,18 +1215,14 @@ export function AppSidebar({
     const next: Record<string, ThreadSummary[]> = {};
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const projectIDs = new Set(projectIndex.projects.map((thread) => thread.id));
-    const projects = sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID);
     for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
-      const project = projects.find((candidate) => candidate.id === workspaceID);
+      const project = sidebarWorkspaces.find((candidate) => candidate.id === workspaceID);
       // Cached buckets can overlap while a fork's workspace metadata refreshes.
       // Classify the same session snapshot in every bucket before publishing nodes.
       next[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread).filter(
         (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] &&
-          !projectIDs.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id) && (
-          workspaceID === SCRATCH_PSEUDO_PROJECT_ID
-            ? isScratchThread(thread, projects)
-            : project !== undefined && threadBelongsToWorkspace(thread, project)
-        ),
+          !projectIDs.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id) &&
+          project !== undefined && threadBelongsToWorkspace(thread, project),
       );
     }
     return next;
@@ -1257,8 +1234,8 @@ export function AppSidebar({
     : selectionOrigin?.section === "organization" ? !recentSelectionVisible || Boolean(organization.folderByThreadID[activeThreadID ?? ""])
     : expandedSidebarSectionIDs.has(selectionOrigin?.section ?? "")
       && (visibleWorkspaceThreadsByWorkspaceID[selectionOrigin?.section ?? ""]?.some(thread => thread.id === activeThreadID)
-        || pendingConversations.some(draft => draft.id === activeSessionTabID && (draft.context.kind === "project"
-          ? draft.context.project_id === selectionOrigin?.section : selectionOrigin?.section === SCRATCH_PSEUDO_PROJECT_ID)));
+        || pendingConversations.some(draft => draft.id === activeSessionTabID
+          && draft.context.kind === "project" && draft.context.project_id === selectionOrigin?.section));
   const selectionSection = !conversationsActive || onFocusWorkspace ? undefined
     : selectionOrigin?.id === selectedConversationID && originVisible ? selectionOrigin.section
     : recentSelectionVisible ? "recent"
@@ -1271,7 +1248,7 @@ export function AppSidebar({
       threadsByWorkspaceID[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread);
     }
     return {
-      workspaces: sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID),
+      workspaces: sidebarWorkspaces,
       threadsByWorkspaceID,
       sessionsByProjectID: projectIndex.sessionsByProjectID,
       activeThreadID,
@@ -1572,21 +1549,17 @@ export function AppSidebar({
   }
 
   function renderWorkspaceSection(project: DesktopProject, pinned: boolean): JSX.Element {
-    const isScratchPseudo = project.id === SCRATCH_PSEUDO_PROJECT_ID;
-    const sectionAriaLabel = isScratchPseudo
-      ? t("sidebar.workspace")
-      : t("sidebar.workspaceNamed", { name: project.name });
     return (
       <SortableSidebarSection
         key={project.id}
         id={project.id}
         className="project-section"
-        ariaLabel={sectionAriaLabel}
+        ariaLabel={t("sidebar.workspaceNamed", { name: project.name })}
         headerInfo={{
-          label: isScratchPseudo ? t("sidebar.conversations") : project.name,
-          iconKind: isScratchPseudo ? "conversation" : "project",
-          CollapsedIcon: isScratchPseudo ? MessageSquare : Folder,
-          ExpandedIcon: isScratchPseudo ? MessagesSquare : FolderOpen,
+          label: project.name,
+          iconKind: "project",
+          CollapsedIcon: Folder,
+          ExpandedIcon: FolderOpen,
         }}
         registerHeaderInfo={registerSectionHeaderInfo}
         sortIndicator={sidebarSortIndicator?.id === project.id
@@ -1597,8 +1570,7 @@ export function AppSidebar({
         <WorkspaceGroup
           project={project}
           pendingConversations={pendingConversations.filter((pending) => pending.context.kind === "project"
-            ? pending.context.project_id === project.id
-            : isScratchPseudo)}
+            && pending.context.project_id === project.id)}
           activeSessionTabID={selectionSection === project.id ? activeSessionTabID : undefined}
           onSelectPendingConversation={id => { setSelectionOrigin({ id, section: project.id }); onSelectPendingConversation?.(id); }}
           activeID={conversationsActive && onFocusWorkspace ? activeWorkspaceID ?? selectedWorkspaceID : undefined}
@@ -1610,8 +1582,6 @@ export function AppSidebar({
           selectedThreadID={selectionSection === project.id ? activeThreadID : null}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
           onFocusWorkspace={onFocusWorkspace}
           onStartNewThread={onStartNewThreadInWorkspace}
@@ -1868,7 +1838,7 @@ export function AppSidebar({
           <button
             className="nav-item"
             onClick={() => activateNative(onStartNewThread, true)}
-            disabled={!hasRuntimeContext}
+            disabled={!canStartNewThread}
           >
             <MessageSquarePlus className="icon-lg" />
             <span>{t("sidebar.newConversation")}</span>
@@ -2261,7 +2231,7 @@ export function AppSidebar({
                         className="sidebar-row-icon-button sidebar-recents-new-thread"
                         type="button"
                         aria-label={t("sidebar.newConversation")}
-                        disabled={!hasRuntimeContext}
+                        disabled={!canStartNewThread}
                         onClick={() => {
                           setRecentsCollapsed(false);
                           persistSidebarRecentsCollapsed(false);

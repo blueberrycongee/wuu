@@ -201,7 +201,6 @@ function Fixture(): JSX.Element {
           onOpenSettings={noop}
           onOpenSkillsCatalog={noop}
           onSelectWorkspace={noop}
-          onSelectNoProject={noop}
           onSelectGitBranch={noop}
           onCreateWorkspace={noop}
           onOpenWorkspace={noop}

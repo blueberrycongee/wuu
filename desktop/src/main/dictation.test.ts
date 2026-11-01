@@ -21,6 +21,44 @@ describe('dictation session lifecycle', () => {
     child.emit('close', 0);
     expect(events.mock.calls.some(([event]) => event.type === 'error')).toBe(false);
   });
+  it('retains earlier speech when macOS starts a new recognition window', async () => {
+    // macOS Speech starts a new window at its audio limit or after a long
+    // pause without a final event; the next window begins at live audio.
+    const { service, child, events } = fixture();
+    await service.start('long', 'zh-CN', events);
+    const firstWindow = '第一句今天我们来测试一段很长的语音听写看看前面的内容会不会丢失';
+    const correctedWindow = firstWindow + '第二句窗外阳光很好桌上的咖啡还冒着热气我准备把今天要做的事情都说一遍';
+    const revisedWindow = firstWindow + '第二句窗外阳光很好桌上的咖啡还冒着N';
+    const nextWindow = '第三句';
+    const finalWindow = '第三句上午先整理项目文档把昨天讨论的接口变更补充清楚';
+    for (const [text, is_final] of [
+      [firstWindow, false],
+      [revisedWindow, false],
+      [correctedWindow, false],
+      [nextWindow, false],
+      [finalWindow, true],
+    ] as const) {
+      child.stdout.write(JSON.stringify({ type: 'result', text, is_final }) + '\n');
+    }
+    const results = events.mock.calls.map(([event]) => event).filter(event => event.type === 'result');
+    expect(results.every(event => event.text.startsWith(firstWindow))).toBe(true);
+    expect(results.at(-1)?.text).toBe(correctedWindow + finalWindow);
+  });
+  it.each([
+    ['Please prepare the release', 'every', 'every morning', 'Please prepare the release every morning'],
+    ['Please prepare the release', 'release', 'release every morning', 'Please prepare the release every morning'],
+    ['Please preserve the database', 'base', 'base configuration', 'Please preserve the database base configuration'],
+    ['今天我们来测试这段很长的语音识别', '识别', '识别结果正确', '今天我们来测试这段很长的语音识别结果正确'],
+  ])('joins recognition windows without splitting words: %s / %s', async (previous, partial, final, expected) => {
+    const { service, child, events } = fixture();
+    await service.start('boundary', 'en-US', events);
+    for (const [text, is_final] of [[previous, false], [partial, false], [final, true]] as const) {
+      child.stdout.write(JSON.stringify({ type: 'result', text, is_final }) + '\n');
+    }
+    const results = events.mock.calls.map(([event]) => event).filter(event => event.type === 'result');
+    expect(results.at(-1)?.text).toBe(expected);
+    child.emit('close', 0);
+  });
   it('does not start recording after cancellation during permission access', async () => {
     let allow!: (value: boolean) => void;
     const { service, spawn, events } = fixture(new Promise(resolve => { allow = resolve; }));

@@ -1403,17 +1403,34 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 /* Send and stop share the utility-button footprint so the primary action
  * stays clear without overpowering the composer or shifting between states. */
 .composer-action-button {
+  position: relative;
+  isolation: isolate;
   display: grid;
   width: var(--composer-control-size);
   height: var(--composer-control-size);
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-pill);
+  /* Native button chrome is platform-dependent; state rules paint the disc. */
+  background: transparent;
   transition:
     background-color var(--motion-base) var(--ease-out),
     color var(--motion-base) var(--ease-out),
     opacity var(--motion-base) var(--ease-out),
     box-shadow var(--motion-base) var(--ease-out);
+}
+
+/* Every action keeps the same concentric 24px disc inside its 32px hit
+ * target; state rules only change the disc color. */
+.composer-action-button::before {
+  position: absolute;
+  z-index: -1;
+  inset: 4px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  content: "";
+  pointer-events: none;
+  transition: background-color var(--motion-base) var(--ease-out);
 }
 
 .composer-send-button {
@@ -1557,7 +1574,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-plus-button::before,
 .composer-send-button::before,
 .composer-stop-button::before {
-  /* Match the compact discs while preserving the full hit targets. */
+  /* Keep utility chrome compact inside the full hit targets. */
   inset: 4px;
   border-radius: var(--radius-pill);
 }

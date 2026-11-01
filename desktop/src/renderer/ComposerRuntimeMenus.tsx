@@ -18,7 +18,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  FolderX,
   Gauge,
   GitCommitHorizontal,
   GitCompare,
@@ -26,7 +25,6 @@ import {
   Globe,
   Hammer,
   Lock,
-  MessageSquare,
   MessageSquarePlus,
   Paperclip,
   PieChart,
@@ -1717,8 +1715,6 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
       return <Globe className="icon" />;
     case "open-workspace":
       return <FolderOpen className="icon" />;
-    case "no-workspace":
-      return <FolderX className="icon" />;
     case "reset-side-thread":
       return <RotateCcw className="icon" />;
     case "context":
@@ -1831,7 +1827,6 @@ export function WorkspacePickerMenu({
   query,
   setQuery,
   onSelectWorkspace,
-  onSelectNoProject,
   onCreateWorkspace,
   onOpenWorkspace,
   onKeyDown,
@@ -1841,7 +1836,6 @@ export function WorkspacePickerMenu({
   query: string;
   setQuery: (value: string) => void;
   onSelectWorkspace: (id: string) => void;
-  onSelectNoProject: () => void;
   onCreateWorkspace: () => void;
   onOpenWorkspace: () => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
@@ -1855,11 +1849,6 @@ export function WorkspacePickerMenu({
   const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
     : projects;
-  // Conversations without a project lead the list, as they lead the sidebar.
-  const conversationLabel = t("composer.conversation");
-  const showConversation = !normalizedQuery || conversationLabel.toLocaleLowerCase().includes(normalizedQuery);
-  const noProject = activeContext?.kind === "no_project";
-
   return (
     <div ref={menuRef} className="composer-project-menu" role="menu" onKeyDown={onKeyDown}
       style={{ "--composer-project-menu-width": `${composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}px` } as CSSProperties}>
@@ -1869,14 +1858,6 @@ export function WorkspacePickerMenu({
           onChange={(event) => setQuery(event.target.value)} />
       </label>
       <div className="project-picker-list">
-        {showConversation ? (
-          <button type="button" role="menuitemradio" aria-checked={noProject}
-            disabled={!(capabilities?.create ?? hostSupports("createBlankProject"))} onClick={onSelectNoProject}>
-            <MessageSquare />
-            <span>{conversationLabel}</span>
-            {noProject ? <Check /> : null}
-          </button>
-        ) : null}
         {filteredWorkspaces.map((project) => {
           const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
           return (
@@ -1887,7 +1868,7 @@ export function WorkspacePickerMenu({
             </button>
           );
         })}
-        {!showConversation && filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
+        {filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
       </div>
       <div className="project-picker-divider" />
       <button type="button" role="menuitem" disabled={!(capabilities?.open ?? hostSupports("chooseProjectFolder"))} onClick={onOpenWorkspace}>

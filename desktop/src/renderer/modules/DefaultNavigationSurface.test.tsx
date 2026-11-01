@@ -25,8 +25,11 @@ describe("navigation composer focus intent", () => {
   ] as const)("handles a not-yet-started %s draft request after replacement: %s", async (target, mode) => {
     window.wuu = {} as typeof window.wuu;
     const controller = new ApplicationController();
-    let snapshot = { ...controller.getSnapshot(), workspaces: { ...controller.getSnapshot().workspaces,
-      workspaces: [{ id: "project", name: "Project", root: "/project", available: true }] } };
+    let snapshot = { ...controller.getSnapshot(),
+      workspaces: { ...controller.getSnapshot().workspaces,
+        workspaces: [{ id: "project", name: "Project", root: "/project", available: true }] },
+      navigationWorkspace: { ...controller.getSnapshot().navigationWorkspace, selectedWorkspaceId: "project",
+        workspaces: [{ id: "project", name: "Project", path: "/project", created_at: "", updated_at: "" }] } };
     vi.spyOn(controller, "getSnapshot").mockImplementation(() => snapshot);
     const invoke = vi.spyOn(controller, "invoke").mockImplementation(async action => action === "draft.start" || action === "workspace.start-draft" ? { activated: true, tabId: "draft:next" } : undefined);
     const host = new PluginHost({ react: React, application: controller });
@@ -46,13 +49,16 @@ describe("navigation composer focus intent", () => {
       await activate("two");
       await act(async () => root.render(<DefaultNavigationSurface application={application} slots={{ Slot: () => null }} />));
       expect(invoke.mock.calls.filter(([action]) => action === "workspace.start-draft")).toHaveLength(mode === "same workspace" ? 1 : 0);
-      if (mode === "same workspace") expect(invoke).toHaveBeenCalledWith("workspace.start-draft", { workspaceId: target === "recent" ? undefined : "project" }, expect.anything());
+      if (mode === "same workspace") expect(invoke).toHaveBeenCalledWith("workspace.start-draft", { workspaceId: "project" }, expect.anything());
     } finally { act(() => root.unmount()); host.unload("navigation-test"); element.remove(); vi.restoreAllMocks(); }
   });
 
   it("does not retry a draft request that had already started", async () => {
     window.wuu = {} as typeof window.wuu;
     const controller = new ApplicationController();
+    const base = controller.getSnapshot();
+    vi.spyOn(controller, "getSnapshot").mockReturnValue({ ...base, navigationWorkspace: { ...base.navigationWorkspace, selectedWorkspaceId: "project",
+      workspaces: [{ id: "project", name: "Project", path: "/project", created_at: "", updated_at: "" }] } });
     let finish!: (value: { activated: boolean; tabId: string }) => void;
     const invoke = vi.spyOn(controller, "invoke").mockImplementation(async action => action === "workspace.start-draft" ? new Promise(resolve => { finish = resolve; }) : undefined);
     const host = new PluginHost({ react: React, application: controller });
@@ -78,6 +84,9 @@ describe("navigation composer focus intent", () => {
   it("does not create a second draft if only the subsequent focus request was retired", async () => {
     window.wuu = {} as typeof window.wuu;
     const controller = new ApplicationController();
+    const base = controller.getSnapshot();
+    vi.spyOn(controller, "getSnapshot").mockReturnValue({ ...base, navigationWorkspace: { ...base.navigationWorkspace, selectedWorkspaceId: "project",
+      workspaces: [{ id: "project", name: "Project", path: "/project", created_at: "", updated_at: "" }] } });
     const invoke = vi.spyOn(controller, "invoke").mockImplementation(async action => {
       if (action === "workspace.start-draft") return { activated: true, tabId: "draft:next" };
       if (action === "navigation.focus-composer") throw new PluginActionNotStartedError();

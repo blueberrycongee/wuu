@@ -108,6 +108,7 @@ jobs:
         working-directory: desktop
         shell: bash
         run: |
+          node --test scripts/fetch-ripgrep.test.cjs
           (npm run build:core:win && npm run build:ripgrep:win) &
           core_pid=$!
           npm run build &

@@ -680,8 +680,14 @@ jobs:
             clients/core/package-lock.json
       - name: Install build dependencies
         run: |
-          npm ci --prefix desktop --ignore-scripts
-          npm ci --prefix clients/core
+          npm ci --prefix desktop --ignore-scripts &
+          desktop_pid=$!
+          npm ci --prefix clients/core &
+          core_pid=$!
+          status=0
+          wait "$desktop_pid" || status=1
+          wait "$core_pid" || status=1
+          exit "$status"
       - uses: actions/setup-go@v5
         if: contains(needs.changes.outputs.desktop_suites, 'corpus') || contains(needs.changes.outputs.desktop_suites, 'session')
         with:
@@ -691,14 +697,24 @@ jobs:
         run: |
           mkdir -p .tmp/desktop-ci-build
           git rev-parse HEAD > .tmp/desktop-ci-build/source-commit.txt
-          (cd desktop && node_modules/.bin/electron-vite build)
-          if [[ '${{ needs.changes.outputs.desktop_suites }}' == *corpus* || '${{ needs.changes.outputs.desktop_suites }}' == *session* ]]; then
-            fixture_version="$(make -s print-version)"
-            go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/desktop-ci-build/wuu-session-switch-core ./cmd/wuu
-          fi
+          (cd desktop && NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=1536" node_modules/.bin/electron-vite build) &
+          renderer_pid=$!
+          (
+            if [[ '${{ needs.changes.outputs.desktop_suites }}' == *corpus* || '${{ needs.changes.outputs.desktop_suites }}' == *session* ]]; then
+              fixture_version="$(make -s print-version)"
+              go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/desktop-ci-build/wuu-session-switch-core ./cmd/wuu
+              go build -o .tmp/desktop-ci-build/wuu-session-fixture ./scripts/session-fixture
+            fi
+          ) &
+          core_pid=$!
+          status=0
+          wait "$renderer_pid" || status=1
+          wait "$core_pid" || status=1
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > .tmp/desktop-ci-build/bundle.sha256
           if [ -f .tmp/desktop-ci-build/wuu-session-switch-core ]; then
             sha256sum .tmp/desktop-ci-build/wuu-session-switch-core >> .tmp/desktop-ci-build/bundle.sha256
+            sha256sum .tmp/desktop-ci-build/wuu-session-fixture >> .tmp/desktop-ci-build/bundle.sha256
           fi
           tar -cf "$RUNNER_TEMP/desktop-ci-build.tar" desktop/out .tmp/desktop-ci-build
       - uses: actions/upload-artifact@v4
@@ -730,10 +746,29 @@ jobs:
             clients/core/package-lock.json
 
       - name: Install
+        shell: bash
         run: |
-          npm ci --prefix desktop
-          # The desktop main process consumes the shared remote client source.
-          npm ci --prefix clients/core
+          # Independent dependency stores and apt can prepare together. Join all
+          # workers before Electron extraction or any acceptance test starts.
+          npm ci --prefix desktop &
+          pids=("$!")
+          npm ci --prefix clients/core &
+          pids+=("$!")
+          if [[ '${{ matrix.suite }}' != unit* ]]; then
+            (
+              for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+                if [ -f "$apt_source" ]; then
+                  sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+                fi
+              done
+              sudo apt-get update
+              sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
+            ) &
+            pids+=("$!")
+          fi
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           # Electron downloads lazily on require; parallel Vitest workers must
           # not extract into the same dist directory at the same time.
           node desktop/node_modules/electron/install.js
@@ -778,27 +813,26 @@ jobs:
           sha256sum --check .tmp/desktop-ci-build/bundle.sha256
           find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/wuu-initial-renderer.sha256"
 
-      - name: Install fonts for multilingual selection captures
+      - name: Confirm multilingual capture dependencies
         id: install-desktop-fonts
         if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        run: |
-          # Hosted images can select the slow Azure archive through a mirror list.
-          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
+        run: dpkg-query -W fonts-noto-cjk fonts-noto-color-emoji xdotool
 
-      - name: Guard independent feature UI rendering
+      - name: Guard independent feature, inspection, and resize UI
         id: feature-ui-rendering
         if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success' && steps.install-desktop-fonts.outcome == 'success') }}
-        timeout-minutes: 5
+        timeout-minutes: 8
         shell: bash
         env:
           WUU_FEATURE_UI_VISUAL_OUTPUT: ${{ runner.temp }}/wuu-feature-ui-rendering-evidence
+          WUU_ARTIFACT_E2E_ONLY: inspection
+          WUU_ARTIFACT_OUTPUT: ${{ runner.temp }}/wuu-image-inspection-evidence
+          WUU_RESIZE_OUTPUT: ${{ runner.temp }}/wuu-resize-live-evidence/results.json
         run: |
+          # Private profiles and displays; preserve each journey's original timeout.
+          (
+            status=0
+            timeout --kill-after=10s 5m bash -e -o pipefail <<'FEATURE' || status=1
           set -euo pipefail
           mkdir -p "$WUU_FEATURE_UI_VISUAL_OUTPUT"
           # Missing Chromium must fail this gate rather than silently skip pixels.
@@ -813,7 +847,27 @@ jobs:
             exit 1
           fi
           node scripts/external-composition-acceptance/ui/visual.mjs 2>&1 | tee "$WUU_FEATURE_UI_VISUAL_OUTPUT/run.log"
-
+          FEATURE
+            timeout --kill-after=10s 3m bash -e -o pipefail <<'INSPECTION' || status=1
+          mkdir -p "$WUU_ARTIFACT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
+          INSPECTION
+            exit "$status"
+          ) &
+          feature_pid=$!
+          (
+            timeout --kill-after=10s 3m bash -e -o pipefail <<'RESIZE'
+          mkdir -p "$(dirname "$WUU_RESIZE_OUTPUT")"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$(dirname "$WUU_RESIZE_OUTPUT")/run.log"
+          RESIZE
+          ) &
+          resize_pid=$!
+          status=0
+          wait "$feature_pid" || status=1
+          wait "$resize_pid" || status=1
+          exit "$status"
       - name: Upload independent feature UI rendering evidence
         if: ${{ matrix.suite == 'layout' && always() && steps.feature-ui-rendering.outcome != 'skipped' && steps.feature-ui-rendering.outcome != '' }}
         uses: actions/upload-artifact@v4
@@ -873,18 +927,106 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Verify onboarding scroll-edge fades
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
+      - uses: actions/setup-go@v5
+        if: ${{ matrix.suite == 'shell' }}
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Exercise bounded shell journeys
+        if: ${{ matrix.suite == 'shell' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         shell: bash
-        env:
-          WUU_SCROLL_FADE_ONBOARDING: "1"
-          WUU_SCROLL_FADE_OUTPUT: ${{ runner.temp }}/wuu-onboarding-scroll-evidence
         run: |
+          # Concurrent acceptance preserves assertions, not unloaded timing comparability.
+          echo 'Concurrent acceptance: do not compare timings to unloaded baselines.'
+          run_journey() {
+            local label="$1" limit="$2" result=0
+            shift 2
+            timeout --kill-after=15s "$limit" env "$@" bash --noprofile --norc -e -o pipefail || result=$?
+            printf '%s: exit %s\n' "$label" "$result"
+            if [ "$result" -ne 0 ]; then failed=1; fi
+          }
+          (
+            failed=0
+            run_journey 'Guard titlebar alignment and sidebar hit targets' 3m  <<'WUU_JOURNEY_1_1'
+          node --test desktop/scripts/header-hit-ownership.test.cjs
+          mkdir -p desktop/out/e2e/settings-titlebar
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
+          WUU_JOURNEY_1_1
+            run_journey 'Guard account quota behavior and layout' 5m 'WUU_QUOTA_OUTPUT=${{ runner.temp }}/wuu-subscription-quota-evidence' <<'WUU_JOURNEY_1_2'
+          mkdir -p "$WUU_QUOTA_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
+          WUU_JOURNEY_1_2
+            run_journey 'Guard composer inline extension foundation' 3m 'WUU_INLINE_E2E_OUTPUT=${{ runner.temp }}/wuu-composer-inline-evidence' <<'WUU_JOURNEY_1_3'
+          mkdir -p "$WUU_INLINE_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-inline-e2e.cjs 2>&1 | tee "$WUU_INLINE_E2E_OUTPUT/run.log"
+          WUU_JOURNEY_1_3
+            run_journey 'Guard composer and process summary colors' 3m 'WUU_PROCESS_SUMMARY_OUTPUT=${{ runner.temp }}/wuu-process-summary-evidence' <<'WUU_JOURNEY_1_4'
+          mkdir -p "$WUU_PROCESS_SUMMARY_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/process-compaction-summary-e2e.cjs 2>&1 | tee "$WUU_PROCESS_SUMMARY_OUTPUT/run.log"
+          WUU_JOURNEY_1_4
+            exit "$failed"
+          ) &
+          worker_1=$!
+          (
+            failed=0
+            run_journey 'Guard workspace tabs and navigation' 3m  <<'WUU_JOURNEY_2_1'
+          mkdir -p desktop/out/workspace-new-tab-e2e
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-new-tab-e2e.cjs 2>&1 | tee desktop/out/workspace-new-tab-e2e/run.log
+          WUU_JOURNEY_2_1
+            run_journey 'Verify programmatic tool settings' 0  <<'WUU_JOURNEY_2_2'
+          mkdir -p desktop/out/e2e/ptc
+          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
+          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
+          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
+          WUU_JOURNEY_2_2
+            run_journey 'Verify onboarding scroll-edge fades' 3m WUU_SCROLL_FADE_ONBOARDING=1 'WUU_SCROLL_FADE_OUTPUT=${{ runner.temp }}/wuu-onboarding-scroll-evidence' <<'WUU_JOURNEY_2_3'
           mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
           set -o pipefail
           (cd desktop && node_modules/.bin/electron-vite build --config dev/onboarding/electron.vite.config.ts --ignoreConfigWarning)
           xvfb-run --auto-servernum --server-args='-screen 0 1800x1800x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
+          WUU_JOURNEY_2_3
+            run_journey 'Guard native Settings overlay visibility and interaction' 3m  <<'WUU_JOURNEY_2_4'
+          mkdir -p desktop/out/e2e/settings-overlay
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-overlay/run.log
+          WUU_JOURNEY_2_4
+            run_journey 'Guard sidebar and streaming scroll-edge fades' 3m 'WUU_SCROLL_FADE_OUTPUT=${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence' <<'WUU_JOURNEY_2_5'
+          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
+          WUU_JOURNEY_2_5
+            run_journey 'Guard independently distributed conversation addons' 3m 'WUU_CONVERSATION_ADDONS_OUTPUT=${{ runner.temp }}/wuu-conversation-addons-evidence' <<'WUU_JOURNEY_2_6'
+          mkdir -p "$WUU_CONVERSATION_ADDONS_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-addons-e2e.cjs 2>&1 | tee "$WUU_CONVERSATION_ADDONS_OUTPUT/run.log"
+          WUU_JOURNEY_2_6
+            run_journey 'Guard disabled app snapshots and system permissions' 3m  <<'WUU_JOURNEY_2_7'
+          mkdir -p desktop/out/app-context-e2e
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/app-context-e2e.cjs 2>&1 | tee desktop/out/app-context-e2e/run.log
+          WUU_JOURNEY_2_7
+            run_journey 'Guard titlebar rename interactions' 3m 'WUU_TITLEBAR_OUTPUT=${{ runner.temp }}/wuu-titlebar-evidence' <<'WUU_JOURNEY_2_8'
+          mkdir -p "$WUU_TITLEBAR_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/titlebar-rename-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+          WUU_JOURNEY_2_8
+            exit "$failed"
+          ) &
+          worker_2=$!
+          status=0
+          wait "$worker_1" || status=1
+          wait "$worker_2" || status=1
+          # Cover every journey, including work finishing after the PTC block.
+          sha256sum --quiet --check "${{ runner.temp }}/wuu-initial-renderer.sha256" || status=1
+          exit "$status"
 
       - name: Upload onboarding scroll evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
@@ -895,17 +1037,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard composer and process summary colors
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_PROCESS_SUMMARY_OUTPUT: ${{ runner.temp }}/wuu-process-summary-evidence
-        run: |
-          mkdir -p "$WUU_PROCESS_SUMMARY_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/process-compaction-summary-e2e.cjs 2>&1 | tee "$WUU_PROCESS_SUMMARY_OUTPUT/run.log"
-
       - name: Upload process summary evidence
         if: ${{ matrix.suite == 'shell' && always() }}
         uses: actions/upload-artifact@v4
@@ -914,17 +1045,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-process-summary-evidence
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard sidebar and streaming scroll-edge fades
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_SCROLL_FADE_OUTPUT: ${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence
-        run: |
-          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
 
       - name: Upload sidebar scroll fade evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
@@ -966,17 +1086,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard composer inline extension foundation
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_INLINE_E2E_OUTPUT: ${{ runner.temp }}/wuu-composer-inline-evidence
-        run: |
-          mkdir -p "$WUU_INLINE_E2E_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-inline-e2e.cjs 2>&1 | tee "$WUU_INLINE_E2E_OUTPUT/run.log"
-
       - name: Upload composer inline extension evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -986,17 +1095,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard independently distributed conversation addons
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_CONVERSATION_ADDONS_OUTPUT: ${{ runner.temp }}/wuu-conversation-addons-evidence
-        run: |
-          mkdir -p "$WUU_CONVERSATION_ADDONS_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-addons-e2e.cjs 2>&1 | tee "$WUU_CONVERSATION_ADDONS_OUTPUT/run.log"
-
       - name: Upload conversation addon evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1005,15 +1103,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-conversation-addons-evidence
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard disabled app snapshots and system permissions
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          mkdir -p desktop/out/app-context-e2e
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/app-context-e2e.cjs 2>&1 | tee desktop/out/app-context-e2e/run.log
 
       - name: Upload app snapshot renderer evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
@@ -1027,15 +1116,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard workspace tabs and navigation
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          mkdir -p desktop/out/workspace-new-tab-e2e
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-new-tab-e2e.cjs 2>&1 | tee desktop/out/workspace-new-tab-e2e/run.log
-
       - name: Upload workspace tab evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1047,25 +1127,6 @@ jobs:
             desktop/out/workspace-new-tab-e2e/*.log
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard titlebar alignment and sidebar hit targets
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          node --test desktop/scripts/header-hit-ownership.test.cjs
-          mkdir -p desktop/out/e2e/settings-titlebar
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
-
-      - name: Guard native Settings overlay visibility and interaction
-        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          mkdir -p desktop/out/e2e/settings-overlay
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-overlay/run.log
 
       - name: Upload native Settings overlay evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
@@ -1131,16 +1192,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard titlebar rename interactions
-        if: ${{ matrix.suite == 'shell' }}
-        timeout-minutes: 3
-        env:
-          WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-titlebar-evidence
-        run: |
-          mkdir -p "$WUU_TITLEBAR_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/titlebar-rename-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
-
       - name: Upload titlebar rename evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1153,18 +1204,6 @@ jobs:
             ${{ runner.temp }}/wuu-titlebar-evidence/*.txt
           retention-days: 14
 
-      - name: Guard image inspection aggregation
-        if: ${{ matrix.suite == 'layout' }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_ARTIFACT_E2E_ONLY: inspection
-          WUU_ARTIFACT_OUTPUT: ${{ runner.temp }}/wuu-image-inspection-evidence
-        run: |
-          mkdir -p "$WUU_ARTIFACT_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
-
       - name: Upload image inspection evidence
         if: ${{ matrix.suite == 'layout' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1176,12 +1215,6 @@ jobs:
             ${{ runner.temp }}/wuu-image-inspection-evidence/*.log
           if-no-files-found: ignore
           retention-days: 14
-
-      - uses: actions/setup-go@v5
-        if: ${{ matrix.suite == 'shell' }}
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
 
       - name: Build desktop fixture core
         if: ${{ contains(fromJSON('["corpus","session","session-lifecycle"]'), matrix.suite) }}
@@ -1216,17 +1249,208 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Verify incoming session cards and split drafts
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
-        timeout-minutes: 4
+      - name: Check session switch budget ratchet
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' }}
+        env:
+          PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+        run: |
+          node --test desktop/scripts/session-switch-budget.test.cjs
+          git fetch --no-tags --depth=1 origin "$PERF_BASE_SHA"
+          node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
+
+      - name: Exercise bounded session journeys
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         shell: bash
         env:
-          WUU_SESSION_MESSAGE_OUTPUT: ${{ runner.temp }}/wuu-session-message-evidence
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_SESSION_FIXTURE_BINARY: ${{ github.workspace }}/.tmp/desktop-ci-build/wuu-session-fixture
         run: |
+          # Parallel runs retain work-counter assertions, but their timing samples
+          # are not comparable with prior unloaded latency measurements.
+          echo 'Concurrent acceptance: do not compare timings to unloaded baselines.'
+          run_journey() {
+            local label="$1" limit="$2" result=0
+            shift 2
+            # Each block gets its original environment, fresh errexit/pipefail shell,
+            # and whole-block deadline. timeout owns its process group, including Xvfb.
+            timeout --kill-after=15s "$limit" env "$@" bash --noprofile --norc -e -o pipefail || result=$?
+            printf '%s: exit %s\n' "$label" "$result"
+            if [ "$result" -ne 0 ]; then failed=1; fi
+          }
+          (
+            failed=0
+            run_journey 'Verify incoming session cards and split drafts' 4m 'WUU_SESSION_MESSAGE_OUTPUT=${{ runner.temp }}/wuu-session-message-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_1_1'
           mkdir -p "$WUU_SESSION_MESSAGE_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-message-e2e.cjs 2>&1 | tee "$WUU_SESSION_MESSAGE_OUTPUT/process.log"
+          WUU_JOURNEY_1_1
+            run_journey 'Guard error message appearance and recovery' 7m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            export WUU_ERROR_STYLE_FONT="$font"
+            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
+            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+          WUU_JOURNEY_1_2
+            run_journey 'Verify PDF context through the desktop and core' 4m 'WUU_DOCUMENT_OUTPUT=${{ runner.temp }}/wuu-document-context-evidence' 'WUU_DOCUMENT_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_DOCUMENT_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_3'
+          mkdir -p "$WUU_DOCUMENT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+          WUU_JOURNEY_1_3
+            run_journey 'Guard closing workspace conversation entries' 4m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_CLOSE_OUTPUT=${{ runner.temp }}/wuu-workspace-conversation-close' <<'WUU_JOURNEY_1_4'
+          mkdir -p "$WUU_CLOSE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-conversation-close-e2e.cjs 2>&1 | tee "$WUU_CLOSE_OUTPUT/run.log"
+          WUU_JOURNEY_1_4
+            exit "$failed"
+          ) &
+          worker_1=$!
+          (
+            failed=0
+            run_journey 'Guard first-send bubble continuity' 7m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_2_1'
+          set -o pipefail
+          failed=0
+          for order in event-first ack-first rapid-ack rejected; do
+            export WUU_FIRST_SEND_ORDER="$order" WUU_FIRST_SEND_FAST=0 WUU_FIRST_SEND_NEWER=1
+            export WUU_FIRST_SEND_OUTPUT="${{ runner.temp }}/wuu-first-send-evidence/$order"
+            mkdir -p "$WUU_FIRST_SEND_OUTPUT"
+            if [ "$order" = ack-first ]; then
+              export WUU_FIRST_SEND_THEME=dark WUU_FIRST_SEND_FONT=20 WUU_FIRST_SEND_WIDTH=760 WUU_FIRST_SEND_ATTACHMENT=1
+            else
+              export WUU_FIRST_SEND_THEME=light WUU_FIRST_SEND_FONT=15 WUU_FIRST_SEND_WIDTH=1280 WUU_FIRST_SEND_ATTACHMENT=0
+            fi
+            if [ "$order" = rapid-ack ]; then
+              export WUU_FIRST_SEND_ORDER=ack-first WUU_FIRST_SEND_FAST=1 WUU_FIRST_SEND_NEWER=0
+            fi
+            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/first-send-continuity-e2e.cjs 2>&1 | tee "$WUU_FIRST_SEND_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+          WUU_JOURNEY_2_1
+            run_journey 'Verify conversation search navigation' 7m 'WUU_SEARCH_OUTPUT=${{ runner.temp }}/wuu-conversation-search-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_2'
+          mkdir -p "$WUU_SEARCH_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
+          WUU_JOURNEY_2_2
+            run_journey 'Verify compact Fast mode controls' 5m 'WUU_FAST_OUTPUT=${{ runner.temp }}/wuu-fast-mode-evidence' 'WUU_FAST_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_3'
+          mkdir -p "$WUU_FAST_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
+          WUU_JOURNEY_2_3
+            run_journey 'Verify worktree skill selection' 5m 'WUU_WORKTREE_OUTPUT=${{ runner.temp }}/wuu-composer-worktree-evidence' 'WUU_WORKTREE_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_4'
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
+          WUU_JOURNEY_2_4
+            run_journey 'Guard onboarding chrome and workspace setup' 3m 'WUU_ONBOARDING_OUTPUT=${{ runner.temp }}/wuu-onboarding-workspaces-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_5'
+          mkdir -p "$WUU_ONBOARDING_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/onboarding-workspaces-e2e.cjs 2>&1 | tee "$WUU_ONBOARDING_OUTPUT/run.log"
+          WUU_JOURNEY_2_5
+            run_journey 'Guard conversation history jump' 3m WUU_SCROLL_E2E_ONLY=history-jump 'WUU_SCROLL_E2E_OUTPUT=${{ runner.temp }}/wuu-conversation-history-jump-evidence' <<'WUU_JOURNEY_2_6'
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+          WUU_JOURNEY_2_6
+            run_journey 'Guard submitted query reflow' 3m WUU_SCROLL_E2E_ONLY=submission-reflow 'WUU_SCROLL_E2E_OUTPUT=${{ runner.temp }}/wuu-submission-reflow-evidence' <<'WUU_JOURNEY_2_7'
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+          WUU_JOURNEY_2_7
+            exit "$failed"
+          ) &
+          worker_2=$!
+          status=0
+          wait "$worker_1" || status=1
+          wait "$worker_2" || status=1
+          exit "$status"
+
+      - name: Exercise bounded session-lifecycle journeys
+        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        shell: bash
+        env:
+          WUU_SESSION_FIXTURE_BINARY: ${{ github.workspace }}/.tmp/desktop-ci-build/wuu-session-fixture
+        run: |
+          # Parallel runs retain work-counter assertions, but their timing samples
+          # are not comparable with prior unloaded latency measurements.
+          echo 'Concurrent acceptance: do not compare timings to unloaded baselines.'
+          run_journey() {
+            local label="$1" limit="$2" result=0
+            shift 2
+            # Each block gets its original environment, fresh errexit/pipefail shell,
+            # and whole-block deadline. timeout owns its process group, including Xvfb.
+            timeout --kill-after=15s "$limit" env "$@" bash --noprofile --norc -e -o pipefail || result=$?
+            printf '%s: exit %s\n' "$label" "$result"
+            if [ "$result" -ne 0 ]; then failed=1; fi
+          }
+          (
+            failed=0
+            run_journey 'Guard message-only navigation presentation' 0 WUU_SWITCH_PRESENTATION=1 WUU_SWITCH_STABLE_PRESENTATION=1 WUU_SWITCH_TURNS=12 WUU_SWITCH_ROUNDS=1 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_1_1'
+          node --test desktop/scripts/session-switch-native-page.test.cjs
+          for rig in wide:1 wide:2 narrow:1; do
+            export WUU_SWITCH_VARIANT="${rig%:*}"
+            scale="${rig#*:}"
+            export WUU_SWITCH_OUTPUT="${{ runner.temp }}/wuu-presentation-evidence/${WUU_SWITCH_VARIANT}-${scale}"
+            mkdir -p "$WUU_SWITCH_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 2880x2000x24" desktop/node_modules/.bin/electron --no-sandbox --force-device-scale-factor="$scale" desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
+          done
+          WUU_JOURNEY_1_1
+            run_journey 'Guard confirmed archive through selected providers' 12m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
+          set -o pipefail
+          failed=0
+          for mode in running stale-completed workspace-switched provider-replaced; do
+            export WUU_ARCHIVE_MODE="$mode"
+            export WUU_ARCHIVE_THEME=light WUU_ARCHIVE_FONT=15 WUU_ARCHIVE_WIDTH=1280
+            if [[ "$mode" == stale-completed ]]; then
+              export WUU_ARCHIVE_THEME=dark WUU_ARCHIVE_FONT=20 WUU_ARCHIVE_WIDTH=760
+            fi
+            export WUU_ARCHIVE_OUTPUT="${{ runner.temp }}/wuu-confirmed-archive-evidence/$mode"
+            mkdir -p "$WUU_ARCHIVE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/confirmed-archive-e2e.cjs 2>&1 | tee "$WUU_ARCHIVE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+          WUU_JOURNEY_1_2
+            run_journey 'Guard workspace terminal ownership handoff' 3m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_HANDOFF_COMMIT=${{ github.sha }}' 'WUU_HANDOFF_OUTPUT=${{ runner.temp }}/wuu-terminal-handoff-evidence' <<'WUU_JOURNEY_1_3'
+          set -o pipefail
+          mkdir -p "$WUU_HANDOFF_OUTPUT"
+          failed=0
+          for mode in start stop web quit; do
+            WUU_HANDOFF_MODE="$mode" desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000 desktop/scripts/terminal-handoff-e2e.cjs 2>&1 | tee "$WUU_HANDOFF_OUTPUT/$mode.log" || failed=1
+          done
+          exit "$failed"
+          WUU_JOURNEY_1_3
+            exit "$failed"
+          ) &
+          worker_1=$!
+          (
+            failed=0
+            run_journey 'Guard session switch work' 0 WUU_SWITCH_CHECK_BUDGET=1 'WUU_SWITCH_OUTPUT=${{ runner.temp }}/wuu-session-switch-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_1'
+          mkdir -p "$WUU_SWITCH_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
+          WUU_JOURNEY_2_1
+            run_journey 'Guard request lifecycle' 5m 'WUU_REQUEST_LIFECYCLE_OUTPUT=${{ runner.temp }}/wuu-request-lifecycle-evidence' <<'WUU_JOURNEY_2_2'
+          mkdir -p "$WUU_REQUEST_LIFECYCLE_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
+          WUU_JOURNEY_2_2
+            run_journey 'Guard responsive composer footer' 14m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_2_3'
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            for long_names in 0 1; do
+              export WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names"
+              export WUU_FOOTER_OUTPUT="${{ runner.temp }}/wuu-composer-footer-evidence/font-$font-long-$long_names"
+              mkdir -p "$WUU_FOOTER_OUTPUT"
+              xvfb-run --auto-servernum --server-args="-screen 0 1440x1100x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-footer-e2e.cjs 2>&1 | tee "$WUU_FOOTER_OUTPUT/run.log" || failed=1
+            done
+          done
+          exit "$failed"
+          WUU_JOURNEY_2_3
+            exit "$failed"
+          ) &
+          worker_2=$!
+          status=0
+          wait "$worker_1" || status=1
+          wait "$worker_2" || status=1
+          exit "$status"
 
       - name: Upload session card acceptance evidence
         if: ${{ matrix.suite == 'session' && (always()) }}
@@ -1236,31 +1460,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-session-message-evidence/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Verify PDF context through the desktop and core
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 4
-        shell: bash
-        env:
-          WUU_DOCUMENT_OUTPUT: ${{ runner.temp }}/wuu-document-context-evidence
-          WUU_DOCUMENT_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_DOCUMENT_COMMIT: ${{ github.sha }}
-        run: |
-          mkdir -p "$WUU_DOCUMENT_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
-
-      - name: Guard onboarding chrome and workspace setup
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_ONBOARDING_OUTPUT: ${{ runner.temp }}/wuu-onboarding-workspaces-evidence
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-        run: |
-          mkdir -p "$WUU_ONBOARDING_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/onboarding-workspaces-e2e.cjs 2>&1 | tee "$WUU_ONBOARDING_OUTPUT/run.log"
 
       - name: Upload onboarding chrome evidence
         if: ${{ matrix.suite == 'session' && (always()) }}
@@ -1300,42 +1499,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Verify compact Fast mode controls
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
-        timeout-minutes: 5
-        shell: bash
-        env:
-          WUU_FAST_OUTPUT: ${{ runner.temp }}/wuu-fast-mode-evidence
-          WUU_FAST_CORE: ${{ runner.temp }}/wuu-session-switch-core
-        run: |
-          mkdir -p "$WUU_FAST_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
-
-      - name: Verify conversation search navigation
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
-        timeout-minutes: 7
-        shell: bash
-        env:
-          WUU_SEARCH_OUTPUT: ${{ runner.temp }}/wuu-conversation-search-evidence
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-        run: |
-          mkdir -p "$WUU_SEARCH_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
-
-      - name: Guard conversation history jump
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_SCROLL_E2E_ONLY: history-jump
-          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
-        run: |
-          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
-
       - name: Upload conversation history jump evidence
         if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1344,18 +1507,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard submitted query reflow
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_SCROLL_E2E_ONLY: submission-reflow
-          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-submission-reflow-evidence
-        run: |
-          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
 
       - name: Upload submitted query reflow evidence
         if: ${{ matrix.suite == 'session' && (always()) }}
@@ -1387,16 +1538,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Verify worktree skill selection
-        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
-        timeout-minutes: 5
-        shell: bash
-        env:
-          WUU_WORKTREE_OUTPUT: ${{ runner.temp }}/wuu-composer-worktree-evidence
-          WUU_WORKTREE_CORE: ${{ runner.temp }}/wuu-session-switch-core
-        run: |
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
-
       - name: Upload worktree skill evidence
         if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1405,32 +1546,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-composer-worktree-evidence*
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard first-send bubble continuity
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-fixture-core.outcome == 'success' }}
-        timeout-minutes: 7
-        shell: bash
-        env:
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
-        run: |
-          set -o pipefail
-          failed=0
-          for order in event-first ack-first rapid-ack rejected; do
-            export WUU_FIRST_SEND_ORDER="$order" WUU_FIRST_SEND_FAST=0 WUU_FIRST_SEND_NEWER=1
-            export WUU_FIRST_SEND_OUTPUT="${{ runner.temp }}/wuu-first-send-evidence/$order"
-            mkdir -p "$WUU_FIRST_SEND_OUTPUT"
-            if [ "$order" = ack-first ]; then
-              export WUU_FIRST_SEND_THEME=dark WUU_FIRST_SEND_FONT=20 WUU_FIRST_SEND_WIDTH=760 WUU_FIRST_SEND_ATTACHMENT=1
-            else
-              export WUU_FIRST_SEND_THEME=light WUU_FIRST_SEND_FONT=15 WUU_FIRST_SEND_WIDTH=1280 WUU_FIRST_SEND_ATTACHMENT=0
-            fi
-            if [ "$order" = rapid-ack ]; then
-              export WUU_FIRST_SEND_ORDER=ack-first WUU_FIRST_SEND_FAST=1 WUU_FIRST_SEND_NEWER=0
-            fi
-            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/first-send-continuity-e2e.cjs 2>&1 | tee "$WUU_FIRST_SEND_OUTPUT/run.log" || failed=1
-          done
-          exit "$failed"
 
       - name: Upload first-send continuity evidence
         if: ${{ matrix.suite == 'session' && always() }}
@@ -1441,24 +1556,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard error message appearance and recovery
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        timeout-minutes: 7
-        shell: bash
-        env:
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
-        run: |
-          set -o pipefail
-          failed=0
-          for font in 15 20; do
-            export WUU_ERROR_STYLE_FONT="$font"
-            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
-            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
-            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
-          done
-          exit "$failed"
-
       - name: Upload error message appearance evidence
         if: ${{ matrix.suite == 'session' && always() }}
         uses: actions/upload-artifact@v4
@@ -1467,28 +1564,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-error-message-evidence/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard confirmed archive through selected providers
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        timeout-minutes: 12
-        shell: bash
-        env:
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
-        run: |
-          set -o pipefail
-          failed=0
-          for mode in running stale-completed workspace-switched provider-replaced; do
-            export WUU_ARCHIVE_MODE="$mode"
-            export WUU_ARCHIVE_THEME=light WUU_ARCHIVE_FONT=15 WUU_ARCHIVE_WIDTH=1280
-            if [[ "$mode" == stale-completed ]]; then
-              export WUU_ARCHIVE_THEME=dark WUU_ARCHIVE_FONT=20 WUU_ARCHIVE_WIDTH=760
-            fi
-            export WUU_ARCHIVE_OUTPUT="${{ runner.temp }}/wuu-confirmed-archive-evidence/$mode"
-            mkdir -p "$WUU_ARCHIVE_OUTPUT"
-            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/confirmed-archive-e2e.cjs 2>&1 | tee "$WUU_ARCHIVE_OUTPUT/run.log" || failed=1
-          done
-          exit "$failed"
 
       - name: Upload confirmed archive evidence
         if: ${{ matrix.suite == 'session-lifecycle' && always() }}
@@ -1499,18 +1574,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard closing workspace conversation entries
-        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        timeout-minutes: 4
-        shell: bash
-        env:
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_CLOSE_OUTPUT: ${{ runner.temp }}/wuu-workspace-conversation-close
-        run: |
-          mkdir -p "$WUU_CLOSE_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-conversation-close-e2e.cjs 2>&1 | tee "$WUU_CLOSE_OUTPUT/run.log"
-
       - name: Upload workspace conversation close evidence
         if: ${{ matrix.suite == 'session' && always() }}
         uses: actions/upload-artifact@v4
@@ -1519,26 +1582,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-workspace-conversation-close/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard responsive composer footer
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        timeout-minutes: 14
-        shell: bash
-        env:
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
-        run: |
-          set -o pipefail
-          failed=0
-          for font in 15 20; do
-            for long_names in 0 1; do
-              export WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names"
-              export WUU_FOOTER_OUTPUT="${{ runner.temp }}/wuu-composer-footer-evidence/font-$font-long-$long_names"
-              mkdir -p "$WUU_FOOTER_OUTPUT"
-              xvfb-run --auto-servernum --server-args="-screen 0 1440x1100x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-footer-e2e.cjs 2>&1 | tee "$WUU_FOOTER_OUTPUT/run.log" || failed=1
-            done
-          done
-          exit "$failed"
 
       - name: Upload composer footer evidence
         if: ${{ matrix.suite == 'session-lifecycle' && always() }}
@@ -1549,16 +1592,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard request lifecycle
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' }}
-        timeout-minutes: 5
-        shell: bash
-        env:
-          WUU_REQUEST_LIFECYCLE_OUTPUT: ${{ runner.temp }}/wuu-request-lifecycle-evidence
-        run: |
-          mkdir -p "$WUU_REQUEST_LIFECYCLE_OUTPUT"
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
-
       - name: Upload request lifecycle evidence
         if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1567,17 +1600,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-request-lifecycle-evidence/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard account quota behavior and layout
-        if: ${{ matrix.suite == 'shell' }}
-        timeout-minutes: 5
-        shell: bash
-        env:
-          WUU_QUOTA_OUTPUT: ${{ runner.temp }}/wuu-subscription-quota-evidence
-        run: |
-          mkdir -p "$WUU_QUOTA_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
 
       - name: Upload account quota evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
@@ -1601,23 +1623,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard workspace terminal ownership handoff
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-          WUU_HANDOFF_COMMIT: ${{ github.sha }}
-          WUU_HANDOFF_OUTPUT: ${{ runner.temp }}/wuu-terminal-handoff-evidence
-        run: |
-          set -o pipefail
-          mkdir -p "$WUU_HANDOFF_OUTPUT"
-          failed=0
-          for mode in start stop web quit; do
-            WUU_HANDOFF_MODE="$mode" desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000 desktop/scripts/terminal-handoff-e2e.cjs 2>&1 | tee "$WUU_HANDOFF_OUTPUT/$mode.log" || failed=1
-          done
-          exit "$failed"
-
       - name: Upload terminal handoff evidence
         if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1630,25 +1635,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard message-only navigation presentation
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        shell: bash
-        env:
-          WUU_SWITCH_PRESENTATION: "1"
-          WUU_SWITCH_STABLE_PRESENTATION: "1"
-          WUU_SWITCH_TURNS: "12"
-          WUU_SWITCH_ROUNDS: "1"
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-        run: |
-          node --test desktop/scripts/session-switch-native-page.test.cjs
-          for rig in wide:1 wide:2 narrow:1; do
-            export WUU_SWITCH_VARIANT="${rig%:*}"
-            scale="${rig#*:}"
-            export WUU_SWITCH_OUTPUT="${{ runner.temp }}/wuu-presentation-evidence/${WUU_SWITCH_VARIANT}-${scale}"
-            mkdir -p "$WUU_SWITCH_OUTPUT"
-            xvfb-run --auto-servernum --server-args="-screen 0 2880x2000x24" desktop/node_modules/.bin/electron --no-sandbox --force-device-scale-factor="$scale" desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
-          done
-
       - name: Upload navigation presentation evidence
         if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
         uses: actions/upload-artifact@v4
@@ -1657,27 +1643,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-presentation-evidence/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Check session switch budget ratchet
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' }}
-        env:
-          PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
-        run: |
-          node --test desktop/scripts/session-switch-budget.test.cjs
-          git fetch --no-tags --depth=1 origin "$PERF_BASE_SHA"
-          node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
-
-      - name: Guard session switch work
-        if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
-        # Preserve Electron failures through the evidence log pipeline.
-        shell: bash
-        env:
-          WUU_SWITCH_CHECK_BUDGET: "1"
-          WUU_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-session-switch-evidence
-          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
-        run: |
-          mkdir -p "$WUU_SWITCH_OUTPUT"
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
 
       - name: Upload session switch evidence
         if: ${{ matrix.suite == 'session-lifecycle' && (always()) }}
@@ -1688,17 +1653,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-
-      - name: Verify programmatic tool settings
-        if: ${{ matrix.suite == 'shell' }}
-        shell: bash
-        run: |
-          mkdir -p desktop/out/e2e/ptc
-          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
-          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
-          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
-          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
 
       - name: Upload programmatic tool settings evidence
         if: ${{ matrix.suite == 'shell' && (always()) }}
@@ -1712,16 +1666,6 @@ jobs:
             desktop/out/e2e/ptc/*.sha256
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard live resize layout
-        if: ${{ matrix.suite == 'layout' }}
-        timeout-minutes: 3
-        env:
-          WUU_RESIZE_OUTPUT: ${{ runner.temp }}/wuu-resize-live-evidence/results.json
-        run: |
-          mkdir -p "$(dirname "$WUU_RESIZE_OUTPUT")"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$(dirname "$WUU_RESIZE_OUTPUT")/run.log"
 
       - name: Upload live resize evidence
         if: ${{ matrix.suite == 'layout' && (always()) }}
@@ -1759,50 +1703,24 @@ jobs:
         id: install-focused-dependencies
         timeout-minutes: 10
         run: |
+          pids=()
           for workspace in desktop clients/core clients/mobile-web plugins; do
-            npm ci --prefix "$workspace"
+            npm ci --prefix "$workspace" &
+            pids+=("$!")
           done
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           node desktop/node_modules/electron/install.js
           node -e 'require("./desktop/node_modules/electron")'
       - name: Build production renderer
+        id: build-focused-renderer
         timeout-minutes: 6
         # Same renderer build as Linux shell fixtures; synthetic preload does
         # not require native core packaging or bundled plugin execution.
         run: cd desktop && node_modules/.bin/electron-vite build
-      - name: Exercise sandboxed narrow header and notification controls
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-macos-focused-controls
-        run: |
-          mkdir -p "$WUU_TITLEBAR_OUTPUT"
-          git rev-parse HEAD > "$WUU_TITLEBAR_OUTPUT/source-commit.txt"
-          set -o pipefail
-          desktop/node_modules/.bin/electron desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
-      - name: Exercise error feedback production components
-        id: error-feedback-components
-        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_ERROR_FEEDBACK_OUTPUT: ${{ runner.temp }}/wuu-macos-error-feedback
-        # Synthetic services and actual renderer components, not full-App or
-        # physical-display acceptance. No core or account is required.
-        run: |
-          mkdir -p "$WUU_ERROR_FEEDBACK_OUTPUT"
-          git rev-parse HEAD > "$WUU_ERROR_FEEDBACK_OUTPUT/source-commit.txt"
-          set -o pipefail
-          desktop/node_modules/.bin/electron desktop/scripts/error-feedback-e2e.cjs 2>&1 | tee "$WUU_ERROR_FEEDBACK_OUTPUT/run.log"
-      - name: Exercise sandboxed native Settings overlay
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_SETTINGS_OVERLAY_OUTPUT: ${{ runner.temp }}/wuu-macos-settings-overlay
-        run: |
-          mkdir -p "$WUU_SETTINGS_OVERLAY_OUTPUT"
-          git rev-parse HEAD > "$WUU_SETTINGS_OVERLAY_OUTPUT/source-commit.txt"
-          set -o pipefail
-          desktop/node_modules/.bin/electron desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee "$WUU_SETTINGS_OVERLAY_OUTPUT/run.log"
       - name: Build the shipped Personal desktop fixture
         id: build-personal-fixture
         if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
@@ -1836,15 +1754,6 @@ jobs:
             internal/plugin/bundled/personal-calendar/desktop.js \
             desktop/package-lock.json clients/mobile-web/package-lock.json \
             > desktop/out/personal-desktop-acceptance/inputs.sha256
-      - name: Exercise sandboxed Personal desktop settings
-        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' }}
-        timeout-minutes: 3
-        shell: bash
-        env:
-          WUU_PERSONAL_SETTINGS_OUTPUT: ${{ github.workspace }}/desktop/out/personal-desktop-acceptance/settings
-        run: |
-          set -o pipefail
-          desktop/node_modules/.bin/electron desktop/scripts/personal-settings-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/settings.log
       - name: Install locked Chromium for Personal desktop approval checks
         id: install-personal-chromium
         if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' }}
@@ -1853,17 +1762,94 @@ jobs:
         run: |
           set -o pipefail
           clients/mobile-web/node_modules/.bin/playwright install chromium 2>&1 | tee desktop/out/personal-desktop-acceptance/chromium-install.log
-      - name: Exercise sandboxed Personal home and approval recovery
-        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' && steps.install-personal-chromium.outcome == 'success' }}
-        timeout-minutes: 4
+      - name: Exercise native controls and headless Personal approval
+        if: ${{ !cancelled() && steps.build-focused-renderer.outcome == 'success' && steps.build-personal-fixture.outcome == 'success' && steps.install-personal-chromium.outcome == 'success' }}
+        timeout-minutes: 6
         shell: bash
         env:
+          WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-macos-focused-controls
+          WUU_ERROR_FEEDBACK_OUTPUT: ${{ runner.temp }}/wuu-macos-error-feedback
+          WUU_SETTINGS_OVERLAY_OUTPUT: ${{ runner.temp }}/wuu-macos-settings-overlay
+          WUU_PERSONAL_SETTINGS_OUTPUT: ${{ github.workspace }}/desktop/out/personal-desktop-acceptance/settings
           WUU_REVIEW_PLAYWRIGHT_PATH: ${{ github.workspace }}/clients/mobile-web/node_modules/playwright
           WUU_REVIEW_UI_OUTPUT: ${{ github.workspace }}/desktop/out/personal-desktop-acceptance/approval
         run: |
+          # Native windows share focus, so keep their checks serial. Headless
+          # Chromium uses separate contexts and evidence paths and can overlap.
+          (
+            set +e
+            set -o pipefail
+            status=0
+            (
+              set -e
+              mkdir -p "$WUU_TITLEBAR_OUTPUT"
+              git rev-parse HEAD > "$WUU_TITLEBAR_OUTPUT/source-commit.txt"
+              set -o pipefail
+              desktop/node_modules/.bin/electron desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+            )
+            result=$?
+            echo "header: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
+            if [ "$result" -ne 0 ]; then status=1; fi
+            (
+              set -e
+              mkdir -p "$WUU_ERROR_FEEDBACK_OUTPUT"
+              git rev-parse HEAD > "$WUU_ERROR_FEEDBACK_OUTPUT/source-commit.txt"
+              set -o pipefail
+              desktop/node_modules/.bin/electron desktop/scripts/error-feedback-e2e.cjs 2>&1 | tee "$WUU_ERROR_FEEDBACK_OUTPUT/run.log"
+            )
+            result=$?
+            echo "error-feedback: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
+            if [ "$result" -ne 0 ]; then status=1; fi
+            (
+              set -e
+              mkdir -p "$WUU_SETTINGS_OVERLAY_OUTPUT"
+              git rev-parse HEAD > "$WUU_SETTINGS_OVERLAY_OUTPUT/source-commit.txt"
+              set -o pipefail
+              desktop/node_modules/.bin/electron desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee "$WUU_SETTINGS_OVERLAY_OUTPUT/run.log"
+            )
+            result=$?
+            echo "overlay: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
+            if [ "$result" -ne 0 ]; then status=1; fi
+            (
+              set -e
+              set -o pipefail
+              desktop/node_modules/.bin/electron desktop/scripts/personal-settings-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/settings.log
+            )
+            result=$?
+            echo "personal-settings: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
+            if [ "$result" -ne 0 ]; then status=1; fi
+            exit "$status"
+          ) &
+          native_pid=$!
+          (
+            set +e
+            set -o pipefail
+            node desktop/scripts/personal-approval-ui-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/approval.log
+            approval_status=$?
+            echo "approval: $approval_status" | tee -a desktop/out/personal-desktop-acceptance/approval.log
+            exit "$approval_status"
+          ) &
+          approval_pid=$!
+          status=0
+          wait "$native_pid" || status=1
+          wait "$approval_pid" || status=1
+          # Verify immutable inputs after BOTH acceptance lanes have stopped.
+          shasum -a 256 --check desktop/out/personal-desktop-acceptance/inputs.sha256 || status=1
+          exit "$status"
+      - name: Exercise error feedback after prerequisite failure
+        id: error-feedback-components
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' && (steps.build-focused-renderer.outcome != 'success' || steps.build-personal-fixture.outcome != 'success' || steps.install-personal-chromium.outcome != 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ERROR_FEEDBACK_OUTPUT: ${{ runner.temp }}/wuu-macos-error-feedback
+        # Synthetic services and actual renderer components, not full-App or
+        # physical-display acceptance. No core or account is required.
+        run: |
+          mkdir -p "$WUU_ERROR_FEEDBACK_OUTPUT"
+          git rev-parse HEAD > "$WUU_ERROR_FEEDBACK_OUTPUT/source-commit.txt"
           set -o pipefail
-          node desktop/scripts/personal-approval-ui-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/approval.log
-          shasum -a 256 --check desktop/out/personal-desktop-acceptance/inputs.sha256
+          desktop/node_modules/.bin/electron desktop/scripts/error-feedback-e2e.cjs 2>&1 | tee "$WUU_ERROR_FEEDBACK_OUTPUT/run.log"
       - name: Upload hosted macOS Personal desktop evidence
         if: always()
         uses: actions/upload-artifact@v4
