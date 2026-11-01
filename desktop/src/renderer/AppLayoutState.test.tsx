@@ -427,6 +427,23 @@ describe("useAppLayoutState responsive workspace presentation", () => {
     expect(latest!.clampedWorkspaceRightPanelWidth).toBe(700);
   });
 
+  it("uses the current window size when expanding a panel after a resize", () => {
+    setInnerWidth(1600);
+    renderHookHarness();
+    act(() => {
+      setInnerWidth(1100);
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBe(WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH);
+    act(() => {
+      latest!.handleRightPanelSeparatorKey({
+        key: "Home",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent<HTMLDivElement>);
+    });
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBe(1100 - SIDEBAR_DEFAULT_WIDTH - 352);
+  });
+
   it("steps the right panel from its displayed width in a narrow window", () => {
     setInnerWidth(1600);
     window.localStorage.setItem("wuu.desktop.workspaceRightPanelWidth", "700");

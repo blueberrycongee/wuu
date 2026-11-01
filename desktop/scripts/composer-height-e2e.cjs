@@ -23,6 +23,8 @@ async function run() {
     if (message.includes("ResizeObserver loop")) errors.push(`${phase}: ${message}`);
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
+  await waitFor(win, () => !!document.querySelector(".thread-row-main"));
+  await evaluate(win, () => document.querySelector(".thread-row-main").click());
   await waitFor(win, () => !!document.querySelector(".turn"));
   await evaluate(win, () => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();
