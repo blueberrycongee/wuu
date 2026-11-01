@@ -462,6 +462,49 @@
   opacity: 0.55;
 }
 
+/* Settings actions stay in-flow rather than floating above each group. */
+.settings-page .plugin-ui-button { box-shadow: none; }
+.settings-page .plugin-ui-button:not([data-wuu-variant="primary"], [data-wuu-variant="ghost"], [data-wuu-variant="danger"]) {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font-weight: var(--weight-regular);
+}
+.settings-page .plugin-ui-button:not([data-wuu-variant="primary"], [data-wuu-variant="ghost"], [data-wuu-variant="danger"]):hover:not(:disabled) {
+  background: var(--field-hover-bg);
+  border-color: var(--hairline-strong);
+}
+
+/* Keep the native file chooser and filename, without a second field frame. */
+.settings-page input.plugin-ui-input[type="file"] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.settings-page input.plugin-ui-input[type="file"]::file-selector-button {
+  min-height: var(--control-field-height);
+  margin-inline-end: var(--space-2);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.settings-page input.plugin-ui-input[type="file"]:not(:disabled)::file-selector-button:hover {
+  background: var(--field-hover-bg);
+  border-color: var(--hairline-strong);
+}
+.settings-page input.plugin-ui-input[type="file"]:disabled::file-selector-button { cursor: default; }
+@media (forced-colors: active) {
+  .settings-page input.plugin-ui-input[type="file"]::file-selector-button {
+    background: ButtonFace;
+    color: ButtonText;
+    border-color: ButtonBorder;
+  }
+}
+
 .plugin-ui-toolbar-toggle {
   display: inline-grid;
   width: 32px;
