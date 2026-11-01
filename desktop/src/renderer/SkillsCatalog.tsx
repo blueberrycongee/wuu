@@ -472,6 +472,7 @@ function SkillsCatalogView({
       aria-label={t("skills.catalogLabel")}
       data-wuu-component="skills-catalog"
     >
+      <div className="catalog-header">
       <SettingsPageHeader title={t(activeTab === "plugins" ? "skills.tabPlugins" : "skills.tabSkills")} />
       <div className="catalog-toolbar">
         <CatalogSearchField
@@ -504,6 +505,7 @@ function SkillsCatalogView({
               : t("skills.pluginInstall")}
           </span>
         </button>
+      </div>
       </div>
 
       <div className="theme-segmented catalog-tabs" role="tablist" aria-label={t("skills.catalogLabel")}>
