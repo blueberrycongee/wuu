@@ -49,7 +49,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
-import { initialState } from "./AppState";
+import { initialState, SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
 
@@ -203,9 +203,10 @@ async function flushAsync(): Promise<void> {
   });
 }
 
-function threadRowButton(previewText: string): HTMLButtonElement | undefined {
+function threadRowButton(previewText: string, section: "recent" | "scratch"): HTMLButtonElement | undefined {
+  const selector = section === "recent" ? "[data-sidebar-recents]" : `[data-section-id="${SCRATCH_PSEUDO_PROJECT_ID}"]`;
   return Array.from(
-    container.querySelectorAll<HTMLButtonElement>(".thread-row-main"),
+    container.querySelectorAll<HTMLButtonElement>(`${selector} .thread-row-main`),
   ).find((button) => button.textContent?.includes(previewText));
 }
 
@@ -300,15 +301,20 @@ describe("对话 (scratch) sidebar thread selection", () => {
     });
     await flushAsync();
 
-    // Explicitly open A before exercising cross-workspace selection.
+    // Restored conversations select Recent, not every occurrence of the thread.
+    // Keep the cross-workspace click below in the scratch project list so it
+    // continues to exercise the original selectWorkspaceThread regression.
     expect(resumeThread).toHaveBeenCalledWith("thread-scratch-a");
-    const rowA = threadRowButton("scratch conversation A");
+    const rowA = threadRowButton("scratch conversation A", "recent");
     expect(rowA).toBeDefined();
     expect(rowA?.closest(".thread-row")?.classList.contains("active")).toBe(
       true,
     );
 
-    const rowB = threadRowButton("scratch conversation B");
+    expect([...container.querySelectorAll('.sidebar-main [aria-current="page"]')]).toEqual([rowA?.closest(".thread-row")]);
+    expect(threadRowButton("scratch conversation A", "scratch")?.closest(".thread-row")?.classList.contains("active")).toBe(false);
+
+    const rowB = threadRowButton("scratch conversation B", "scratch");
     expect(rowB).toBeDefined();
     expect(rowB?.closest(".thread-row")?.classList.contains("active")).toBe(
       false,
@@ -329,11 +335,13 @@ describe("对话 (scratch) sidebar thread selection", () => {
     // to move to thread B's own cwd, not stay on A's.
     expect(selectNoProject).toHaveBeenCalledWith(false, SCRATCH_CWD_B);
 
-    const rowBAfter = threadRowButton("scratch conversation B");
+    const rowBAfter = threadRowButton("scratch conversation B", "scratch");
     expect(
       rowBAfter?.closest(".thread-row")?.classList.contains("active"),
     ).toBe(true);
-    const rowAAfter = threadRowButton("scratch conversation A");
+    expect([...container.querySelectorAll('.sidebar-main [aria-current="page"]')]).toEqual([rowBAfter?.closest(".thread-row")]);
+    expect(threadRowButton("scratch conversation B", "recent")?.closest(".thread-row")?.classList.contains("active")).toBe(false);
+    const rowAAfter = threadRowButton("scratch conversation A", "scratch");
     expect(
       rowAAfter?.closest(".thread-row")?.classList.contains("active"),
     ).toBe(false);
