@@ -2,6 +2,8 @@
 
 A desktop plugin is a trusted JavaScript module loaded into Wuu's renderer. It uses the host's React instance and UI Kit to add controls, pages, and presentation at defined boundaries. Start with the [quickstart](desktop-plugin-quickstart.md) for a working package.
 
+Plugins that use `application` must declare `{ "name": "ui.application", "major_version": 1, "required": true }` in `desktop.required_services`. This keeps their lifecycle ordered with the application provider during workspace changes.
+
 ## Choose an extension point
 
 | Goal | API |

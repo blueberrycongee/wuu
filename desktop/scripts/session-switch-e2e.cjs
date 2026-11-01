@@ -15,6 +15,7 @@ const startupEntryNs = process.hrtime.bigint();
 // Exported source snapshots supply WUU_SWITCH_SOURCE_COMMIT and SOURCE_CHANGES.
 // WUU_SWITCH_SIDEBAR_THREADS=1500 adds metadata-only sidebar history.
 // WUU_SWITCH_SAME_WORKSPACE=1 isolates retained-history switching from runtime replacement.
+// WUU_SWITCH_RAIL_PLUGIN=1 installs the real Token Speed example and checks each switch.
 // WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
 // WUU_SWITCH_CHECK_BUDGET=1 checks settled work counters, never wall-clock time.
@@ -79,6 +80,7 @@ const startupMissingWorkspace = process.env.WUU_STARTUP_MISSING_WORKSPACE === '1
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
 const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
+const railPlugin = process.env.WUU_SWITCH_RAIL_PLUGIN === '1';
 const presentationMode = process.env.WUU_SWITCH_PRESENTATION === '1';
 if (presentationMode) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sameWorkspace, false, 'Presentation acceptance is a separate product workload');
 if (sameWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sidebarThreads > 0, false, 'Same-workspace switching is a separate diagnostic workload');
@@ -267,9 +269,19 @@ if (prepareOnly) {
   console.log('PREPARED_STARTUP', fixture);
   process.exit(0);
 }
+if (railPlugin) {
+  assert.equal(safeMode, '0', 'The rail plugin requires normal composition');
+  const source = path.join(desktop, '../examples/plugins/token-speed');
+  const publication = spawnSync(process.env.WUU_DESKTOP_CORE, ['plugin', 'dev', '--watch=false', source], {
+    cwd: projects[0].path, env: process.env, encoding: 'utf8', timeout: 30000,
+  });
+  fs.writeFileSync(path.join(output, 'token-speed-publication.log'), `${publication.stdout}\n${publication.stderr}`);
+  assert.equal(publication.status, 0, 'Token Speed plugin publication failed');
+}
 if (startupMissingWorkspace) fs.renameSync(projects[selectedIndex].path, `${projects[selectedIndex].path}-unavailable`);
 startupProbe?.mark('fixture-ready');
 const timings = [];
+const pluginActivations = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
 let archiveGate;
 let archiveBlocked = false;
@@ -278,6 +290,7 @@ let subscriptionGate;
 let subscriptionEntered = false;
 let failSubscription = false;
 ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) => {
+  if (railPlugin && channel === 'wuu:plugin-desktop-activation') pluginActivations.push(args[1]);
   const start = performance.now();
   // Insert at invocation, not completion, so overlapping RPCs keep attribution.
   const timing = { channel, startedAt: start, ...(startupProbe ? { launchMs: startupProbe.launchMs() } : {}), ms: null };
@@ -983,6 +996,17 @@ async function switchTo(win, index, scenario) {
   await waitFor(win, text => document.querySelector('.composer textarea')?.value === text, draft);
   // Clear without submitting; the fixture never invokes inference.
   await clearDraft(win, draft);
+  if (railPlugin) {
+    await waitFor(win, () => !!document.querySelector('[data-wuu-component="workspace-tool-rail"] [data-wuu-component="token-speed"]'));
+    const rail = await evaluate(win, () => {
+      const node = document.querySelector('[data-wuu-component="workspace-tool-rail"]');
+      return { readout: node?.querySelector('[data-wuu-component="token-speed"]')?.getAttribute('aria-label'),
+        unavailable: !!node?.querySelector('.surface-unavailable, [role="alert"], [role="status"]') };
+    });
+    assert.ok(rail.readout && !rail.unavailable, `${scenario}/${index}: token speed must render without a toolbar error`);
+    const failures = pluginActivations.filter(row => row.id.includes('token-speed') && row.status === 'failed');
+    assert.deepEqual(failures, [], `${scenario}/${index}: token speed reported a plugin failure`);
+  }
 }
 let main;
 app.on('browser-window-created', (_event, win) => {
@@ -1116,6 +1140,10 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
       releaseArchive();
       archiveGate = undefined;
     }
+  }
+  if (railPlugin) {
+    fs.writeFileSync(path.join(output, 'token-speed-activations.json'), JSON.stringify(pluginActivations, null, 2));
+    fs.writeFileSync(path.join(output, 'token-speed-final.png'), (await main.webContents.capturePage()).toPNG());
   }
   // Drain catalog work before subscribing for the separate snapshot protocol
   // check; conversation switches already wait for resume and layout readiness.
