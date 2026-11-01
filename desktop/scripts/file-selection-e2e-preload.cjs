@@ -5,6 +5,7 @@ const path = require("node:path");
 // This bridge is entirely in memory: no core process, credentials, or provider.
 const cwd = process.env.WUU_FILE_SELECTION_E2E_CWD || process.cwd();
 const now = new Date().toISOString();
+const project = { id: "file-selection-workspace", name: "File selection workspace", path: cwd, created_at: now, updated_at: now };
 const files = {
   "selection-guide.md": "# Selection guide\n\nSelect this Markdown passage for review.\n\nKeep **formatted words** beside ordinary text.\n\n```ts\nconst example = 42;\n```\n",
   "selection-code.ts": "export const selectionValue = 42;\nexport const secondValue = 7;\n",
@@ -18,6 +19,7 @@ files["selection-wrapped.ts"] = [
 const thread = {
   id: "file-selection-thread", preview: "File selection verification",
   model_provider: "e2e", model: "mock-selection", cwd, status: "idle",
+  workspace_id: project.id, workspace_kind: "project",
   created_at: now, updated_at: now,
   turns: [{ id: "selection-initial", status: "completed", items_view: "full",
     started_at: now, completed_at: now, items: [
@@ -28,7 +30,7 @@ const listeners = new Set();
 const submissions = [];
 const reads = [];
 const clone = value => JSON.parse(JSON.stringify(value));
-const projects = () => ({ projects: [], active_context: { kind: "no_project", cwd } });
+const projects = () => ({ projects: [project], active_context: { kind: "project", project_id: project.id, cwd } });
 const providers = [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true, api_key_configured: true }];
 function emit(method, params) {
   const event = { kind: "notification", message: { jsonrpc: "2.0", method, params } };
@@ -54,7 +56,7 @@ contextBridge.exposeInMainWorld("selectionE2E", {
 
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   initialLanguagePreference: "en-US", initialSystemLocale: "en-US", initialMessageFlowFontSize: 14,
-  listProjects: async () => projects(), selectNoProject: async () => projects(),
+  listProjects: async () => projects(), selectProject: async () => projects(),
   initialize: async () => ({
     protocol_version: "e2e", provider: "e2e", model: "mock-selection", workspace_root: cwd, providers,
     // Selection-to-side uses the public contribution, not a built-in command.
