@@ -1472,6 +1472,15 @@ jobs:
             xvfb-run --auto-servernum --server-args="-screen 0 2880x2000x24" desktop/node_modules/.bin/electron --no-sandbox --force-device-scale-factor="$scale" desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
           done
           WUU_JOURNEY_1_1
+            exit "$failed"
+          ) &
+          worker_1=$!
+          (
+            failed=0
+            run_journey 'Guard session switch work' 0 WUU_SWITCH_CHECK_BUDGET=1 'WUU_SWITCH_OUTPUT=${{ runner.temp }}/wuu-session-switch-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_1'
+          mkdir -p "$WUU_SWITCH_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
+          WUU_JOURNEY_2_1
             run_journey 'Guard confirmed archive through selected providers' 12m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
           set -o pipefail
           failed=0
@@ -1487,24 +1496,11 @@ jobs:
           done
           exit "$failed"
           WUU_JOURNEY_1_2
-            run_journey 'Guard workspace terminal ownership handoff' 3m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_HANDOFF_COMMIT=${{ github.sha }}' 'WUU_HANDOFF_OUTPUT=${{ runner.temp }}/wuu-terminal-handoff-evidence' <<'WUU_JOURNEY_1_3'
-          set -o pipefail
-          mkdir -p "$WUU_HANDOFF_OUTPUT"
-          failed=0
-          for mode in start stop web quit; do
-            WUU_HANDOFF_MODE="$mode" desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000 desktop/scripts/terminal-handoff-e2e.cjs 2>&1 | tee "$WUU_HANDOFF_OUTPUT/$mode.log" || failed=1
-          done
-          exit "$failed"
-          WUU_JOURNEY_1_3
             exit "$failed"
           ) &
-          worker_1=$!
+          worker_2=$!
           (
             failed=0
-            run_journey 'Guard session switch work' 0 WUU_SWITCH_CHECK_BUDGET=1 'WUU_SWITCH_OUTPUT=${{ runner.temp }}/wuu-session-switch-evidence' 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' <<'WUU_JOURNEY_2_1'
-          mkdir -p "$WUU_SWITCH_OUTPUT"
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
-          WUU_JOURNEY_2_1
             run_journey 'Guard request lifecycle' 5m 'WUU_REQUEST_LIFECYCLE_OUTPUT=${{ runner.temp }}/wuu-request-lifecycle-evidence' <<'WUU_JOURNEY_2_2'
           mkdir -p "$WUU_REQUEST_LIFECYCLE_OUTPUT"
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
@@ -1522,12 +1518,22 @@ jobs:
           done
           exit "$failed"
           WUU_JOURNEY_2_3
+            run_journey 'Guard workspace terminal ownership handoff' 3m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_HANDOFF_COMMIT=${{ github.sha }}' 'WUU_HANDOFF_OUTPUT=${{ runner.temp }}/wuu-terminal-handoff-evidence' <<'WUU_JOURNEY_1_3'
+          set -o pipefail
+          mkdir -p "$WUU_HANDOFF_OUTPUT"
+          failed=0
+          for mode in start stop web quit; do
+            WUU_HANDOFF_MODE="$mode" desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000 desktop/scripts/terminal-handoff-e2e.cjs 2>&1 | tee "$WUU_HANDOFF_OUTPUT/$mode.log" || failed=1
+          done
+          exit "$failed"
+          WUU_JOURNEY_1_3
             exit "$failed"
           ) &
-          worker_2=$!
+          worker_3=$!
           status=0
           wait "$worker_1" || status=1
           wait "$worker_2" || status=1
+          wait "$worker_3" || status=1
           exit "$status"
 
       - name: Upload session card acceptance evidence
