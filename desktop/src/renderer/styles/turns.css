@@ -2,8 +2,9 @@
    theme overrides these in base.css theme blocks. */
 :root {
   --turn-collapsed-focus-ring: var(--focus-ring);
-  /* Sent queries and the composer share a raised surface above the canvas. */
-  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-raised));
+  /* A filled query separates the user from the open assistant response.
+     Keep the composer on its own raised surface. */
+  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-2));
   --user-message-radius: var(--wuu-message-user-radius, 16px);
   --user-message-max-width: min(516px, 80%);
   --user-message-fg-color: var(--ink);
@@ -317,8 +318,8 @@
   );
   --user-message-background: var(--wuu-message-user-background, var(--user-message-bg-color));
   background: var(--user-message-background);
-  border: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
-  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
+  border: var(--wuu-message-user-border, 1px solid transparent);
+  box-shadow: var(--wuu-message-user-shadow, none);
   color: var(--wuu-message-user-color, var(--user-message-fg-color));
   border-radius: var(--user-message-radius);
   /* The same framed-text inset as the composer draft it was sent from. */

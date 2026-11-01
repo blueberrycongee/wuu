@@ -286,7 +286,7 @@ export const enUS = {
   "settings.skinCustom": "My image",
   "settings.skinUnavailable": "This skin is unavailable. The default frame is shown until its plugin is enabled again.",
   "settings.skinImageFailed": "Image unavailable; showing the skin color.",
-  "settings.contentTheme": "Content theme",
+  "settings.contentTheme": "Color palette",
   "settings.backgroundImage": "Background image",
   "settings.backgroundChoose": "Choose image",
   "settings.backgroundLoading": "Processing…",

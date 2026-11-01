@@ -22,6 +22,7 @@ import { PluginHost, type PluginGenerationApi } from "../../src/renderer/plugins
 import { WorkbenchController } from "../../src/renderer/plugins/Workbench";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
+import { applyThemePreference } from "../../src/renderer/Theme";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import memorySource from "../../../internal/plugin/bundled/memory/desktop.js?raw";
@@ -619,7 +620,7 @@ function Fixture(): JSX.Element {
   };
   const [collapsed, setCollapsed] = useState(params.has("collapsed"));
   useLayoutEffect(() => {
-    document.documentElement.dataset.theme = params.get("theme") || "light";
+    applyThemePreference(params.get("theme") === "dark" ? "dark" : "light");
     document.documentElement.dataset.platform = "darwin";
     applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
     const detail = params.get("detail");

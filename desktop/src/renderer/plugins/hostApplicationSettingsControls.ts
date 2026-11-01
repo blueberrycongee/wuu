@@ -7,7 +7,7 @@ import { readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory }
 import { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } from "../AppearancePreferences";
 import { listLocalFonts, isMonospaceFont } from "../LocalFonts";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
+import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableContentThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import type { InitializeResult } from "../../shared/protocol";
 import { createElement } from "react";
@@ -52,7 +52,7 @@ export function createApplicationSettingsControls(options: {
       pets: hostSupports("listCodexPets"),
       diagnostics: typeof window.wuu?.getPluginDiagnostics === "function"
     }),
-    currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme,
+    currentAppliedTheme, observeAppliedTheme, availableExtensionThemes: availableContentThemes, selectedExtensionThemeKey, selectExtensionTheme,
     observeContentThemeSelection: listener => {
       window.addEventListener("wuu-theme-selection", listener);
       window.addEventListener("storage", listener);
