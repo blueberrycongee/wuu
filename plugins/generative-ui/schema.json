@@ -1233,6 +1233,42 @@
             "type",
             "text"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "append"
+            },
+            "state": {
+              "$ref": "#/$defs/programID"
+            },
+            "value": {
+              "$ref": "#/$defs/expression"
+            }
+          },
+          "required": [
+            "type",
+            "state",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "remove"
+            },
+            "state": {
+              "$ref": "#/$defs/programID"
+            }
+          },
+          "required": [
+            "type",
+            "state"
+          ]
         }
       ]
     },
@@ -1497,7 +1533,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label"
       ],
       "propertyNames": {
@@ -1511,10 +1546,23 @@
           "placeholder",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
       },
-      "description": "Date inputs bind an empty string or a valid Gregorian date in exact YYYY-MM-DD format, with years 0001–9999. Required fields are checked on explicit form submission."
+      "description": "Date inputs bind an empty string or a valid Gregorian date in exact YYYY-MM-DD format, with years 0001–9999. Required fields are checked on explicit form submission.",
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_textarea": {
       "properties": {
@@ -1525,7 +1573,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label"
       ],
       "propertyNames": {
@@ -1538,9 +1585,22 @@
           "placeholder",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_select": {
       "properties": {
@@ -1551,7 +1611,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label",
         "options"
       ],
@@ -1565,9 +1624,22 @@
           "options",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_radio": {
       "properties": {
@@ -1578,7 +1650,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label",
         "options"
       ],
@@ -1592,9 +1663,22 @@
           "options",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_segmented": {
       "properties": {
@@ -1605,7 +1689,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label",
         "options"
       ],
@@ -1619,9 +1702,22 @@
           "options",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_checkbox": {
       "properties": {
@@ -1632,7 +1728,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label"
       ],
       "propertyNames": {
@@ -1644,9 +1739,22 @@
           "onChange",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_slider": {
       "properties": {
@@ -1660,7 +1768,6 @@
       "required": [
         "id",
         "type",
-        "state",
         "label",
         "min",
         "max"
@@ -1677,9 +1784,22 @@
           "step",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "required": [
+            "itemField"
+          ]
+        }
+      ]
     },
     "node_button": {
       "properties": {
@@ -2123,6 +2243,11 @@
         },
         "key": {
           "$ref": "#/$defs/expression"
+        },
+        "itemField": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
         }
       },
       "oneOf": [
@@ -2234,6 +2359,13 @@
               },
               "value": {
                 "$ref": "#/$defs/programValue"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "persistent",
+                  "temporary"
+                ]
               }
             },
             "required": [

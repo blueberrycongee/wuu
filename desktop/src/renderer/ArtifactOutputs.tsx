@@ -127,7 +127,7 @@ export function collectTurnArtifactsWithRenderers(
   return artifacts;
 }
 
-function toolInputRenderer(renderers: readonly RegisteredRendererV1[], capability: string): RegisteredRendererV1 | undefined {
+export function toolInputRenderer(renderers: readonly RegisteredRendererV1[], capability: string): RegisteredRendererV1 | undefined {
   const candidates = [...renderers].reverse().filter(renderer => renderer.category === "tool-result");
   return candidates.find(renderer => {
     if (renderer.toolInput?.capability !== capability || typeof renderer.match !== "string") return false;

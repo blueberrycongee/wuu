@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { RuntimePlugin, ToolExecuteResult } from "@wuu/plugin-sdk";
+import { requireKernelService, type RuntimePlugin, type ToolExecuteResult } from "@wuu/plugin-sdk";
 import inputSchema from "../schema.json";
 import { parseSpec } from "../../../internal/plugin/bundled/generative-ui/desktop.js";
 
@@ -9,16 +9,40 @@ const MAX_INPUT_BYTES = 128 * 1024;
 const plugin: RuntimePlugin = {
   initialize() {
     return {
+      capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
+      required_services: [requireKernelService("host.storage.get"), requireKernelService("host.storage.set"), { name: "host.personal", major_version: 1, required: false }],
       tools: [{
         id: "render_ui",
         // Presentation resources must remain top-level results in PTC mode.
         direct_only: true,
-        description: "Render an experimental interactive UI in the conversation. Use version 2 for a composable program: declare keyed JSON state and a body of nested layouts, text, metrics, charts, tables, controlled inputs, conditionals and repeated nodes. Expressions compute values with bounded arithmetic, comparisons, map/filter, ranges and formatting. Events can update/reset state or copy text; an explicit button or native form submission can ask the user to continue the same conversation using sendMessage. No HTML, scripts, styles, arbitrary tool execution or network requests. Every spec needs a title and useful plain-text fallback. Declare state before body for incremental previews. Version 1 text/table/chart/form specs remain supported. Arguments must fit in 128 KiB; programs have at most 256 nodes, 12 node levels, 2048 expressions, 16 expression levels and 16 KiB of initial state.",
+        description: "Render an experimental interactive UI in the conversation. Call this tool directly, including in PTC mode; do not call it through run_code. Use the current tool name and schema rather than obsolete tools or schemas from earlier conversation history. Use version 2 for a composable program: declare keyed JSON state and a body of nested layouts, text, metrics, charts, tables, controlled inputs, conditionals and repeated nodes. Expressions compute values with bounded arithmetic, comparisons, map/filter, ranges and formatting. States default to persistent; use scope temporary for values that reset when a view reopens. For editable lists, each must read a list state and declare a unique stable key; controls inside it bind itemField instead of state. Keep a separate immutable id on each item; never key an editable list by its editable text or index. For repeated additions, allocate ids from a separate increasing counter state and increment it in the same action sequence. Button actions can append an evaluated value to list state or remove the current keyed item. Events can update/reset state or copy text; an explicit button or native form submission can ask the user to continue the same conversation using sendMessage. No HTML, scripts, styles, arbitrary tool execution or network requests. Every spec needs a title and useful plain-text fallback. Declare state before body for incremental previews. Version 1 text/table/chart/form specs remain supported. Arguments must fit in 128 KiB; programs have at most 256 nodes, 12 node levels, 2048 expressions, 16 expression levels and 16 KiB of initial state.",
         input_schema: { ...inputSchema, type: "object" },
         activity: { read_only: true, concurrency_safe: true },
         display: { kind: "generative-ui", label: "Render UI", text: "Rendering interactive UI", capability: "generative-ui" },
       }],
     };
+  },
+  async invokeCapability(call, host, execution) {
+    if (call.capability !== "plugin.client.request" || !call.input || typeof call.input !== "object" || Array.isArray(call.input)) throw new Error("Invalid view state request");
+    const request = call.input as Record<string, unknown>;
+    if (request.method !== "view-state.get" && request.method !== "view-state.set") throw new Error("Unknown view state method");
+    if (!request.input || typeof request.input !== "object" || Array.isArray(request.input)) throw new Error("Invalid view state input");
+    const input = request.input as Record<string, unknown>;
+    const expected = request.method === "view-state.get" ? ["key"] : ["key", "value"];
+    if (Object.keys(input).length !== expected.length || expected.some(key => !Object.hasOwn(input, key)) || typeof input.key !== "string" || !/^ui-v[12]-[a-f0-9]{64}$/.test(input.key)) throw new Error("Invalid view state key or fields");
+    if (request.method === "view-state.set") {
+      if (typeof input.value !== "string" || Buffer.byteLength(input.value) > 16 * 1024 + 64) throw new Error("Invalid view state value");
+      try { JSON.parse(input.value); } catch { throw new Error("Invalid view state JSON"); }
+    }
+    const options = { signal: execution.signal };
+    const owner = await host.call("host.service.call", { service: "host.personal", method: "call", params: { operation: "owner.check", input: {} } }, options);
+    if (!owner || typeof owner !== "object" || !("ok" in owner) || owner.ok !== true) throw new Error("Owner authentication required");
+    if (request.method === "view-state.get") {
+      const result = await host.call("host.storage.get", { scope: "user", key: input.key }, options);
+      return { output: { result } };
+    }
+    await host.call("host.storage.set", { scope: "user", key: input.key, value: input.value as string }, options);
+    return { output: { result: {} } };
   },
   executeTool(call): ToolExecuteResult {
     if (call.tool_id !== "render_ui") throw new Error(`unknown generative UI tool ${JSON.stringify(call.tool_id)}`);

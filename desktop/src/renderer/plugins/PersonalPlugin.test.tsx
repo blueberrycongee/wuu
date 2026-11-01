@@ -21,7 +21,7 @@ const main = { agent_id: "a-main", user_space_id: "local", name: "Mosaic", kind:
 const cleanups: Array<() => void> = [];
 beforeEach(() => { window.localStorage.clear(); Object.assign(window, { wuu: { ...window.wuu, reportPluginDesktopActivation: vi.fn(async () => {}) } }); });
 afterEach(() => { cleanups.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); });
-async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean } = {}) {
+async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean; registerGenUI?: (api: PluginGenerationApi) => void } = {}) {
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input }) => {
     if (method === "agents.ensure_default") return { agent: mainAgent };
     if (method === "agents.list") return { agents: [mainAgent], default_agent_id: mainAgent.agent_id };
@@ -44,9 +44,10 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
     return (await mutate?.(method, input)) ?? {};
   });
   // Personal hides search; search-contract fixtures opt into the shared surface without changing product defaults.
-  const host = new PluginHost({ react: React, invokeRuntime: invoke, conversationComponents: { Composer: PluginConversationComposer, Message: PluginConversationMessage, View: fixtures.historySearch ? props => <PluginConversationView {...props} showHistorySearch /> : PluginConversationView, Attachment: PluginConversationAttachment } });
+  const host = new PluginHost({ react: React, invokeRuntime: invoke, conversationComponents: { Composer: PluginConversationComposer, Message: props => <PluginConversationMessage {...props} resources={props.resources?.map(resource => ({ ...resource, rendererScope: undefined }))} />, View: fixtures.historySearch ? props => <PluginConversationView {...props} showHistorySearch /> : PluginConversationView, Attachment: PluginConversationAttachment } });
   const controller = await selectPersonalTestApplication(host);
   await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal", generation: "one", register: activate });
+  if (fixtures.registerGenUI) await host.activateGeneration({ pluginId: "generative-ui", generation: "one", graphGeneration: "test-graph", register: fixtures.registerGenUI });
   if (fixtures.calendarView) await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal-calendar", generation: "one", register: api => { api.registerViewType({ id: "personal-calendar.confirmation", title: "Calendar confirmation", defaultRegion: "overlay", persistence: "session", render: () => null }); } });
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
@@ -1595,4 +1596,79 @@ it("marks the exact message read only after its context receipt and restores it"
   expect(status()?.dataset.deliveryStatus).toBe("read");
   await ui.remount();
   expect(status()?.dataset.deliveryStatus).toBe("read");
+});
+
+
+it("renders a persisted Personal tool resource with the registered shared renderer and falls back when unavailable", async () => {
+  const renderer = vi.fn(({ content, metadata }: { content: any; metadata: any }) => <section data-shared-genui>{metadata.threadId}:{content.text}</section>);
+  const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Question", resource: { mimeType: "application/vnd.wuu.ui+json", text: "fixture" }, artifact: { placement: "inline", ref: "artifact-1", sha256: "a".repeat(64), size_bytes: 7 } };
+  const history = [{ seq: 15, role: "assistant", content: "Fallback", ui_text: "", ui_resources: [{ part, part_index: 1, tool_call_id: "call-1", fallback_text: "Fallback" }] }];
+  const ui = await mount(undefined, main, history, { registerGenUI: api => api.registerRenderer({ id: "ui", category: "tool-result", match: "application/vnd.wuu.ui+json", render: renderer }) });
+  expect(ui.container.querySelector('[data-shared-genui]')?.textContent).toBe("s-private:fixture");
+  expect(ui.container.textContent).not.toContain("Fallback");
+  expect(renderer).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ threadId: "s-private", itemId: "call-1", artifactId: "artifact-1" }) }), undefined);
+  const withoutRenderer = await mount(undefined, main, history);
+  expect(withoutRenderer.container.textContent).toContain("Fallback");
+});
+
+it("includes mounted shared UI values in the owning Twin's ordinary message", async () => {
+  const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Question", resource: { mimeType: "application/vnd.wuu.ui+json", text: "fixture" }, artifact: { placement: "inline", ref: "artifact-1", sha256: "a".repeat(64), size_bytes: 7 } };
+  const history = [{ seq: 15, role: "assistant", content: "Fallback", ui_text: "", ui_resources: [{ part, part_index: 1, tool_call_id: "call-1", fallback_text: "Fallback" }] }];
+  const ui = await mount(async () => ({}), main, history, { registerGenUI: api => api.registerRenderer({ id: "ui", category: "tool-result", match: "application/vnd.wuu.ui+json", render: ({ host }) => {
+    React.useEffect(() => { host.reportState?.({ quantity: 3 }); return () => host.reportState?.(undefined); }, [host.reportState]);
+    return <section>Shared UI</section>;
+  } }) });
+  await ui.edit("Continue"); await ui.click('.composer-send-button');
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ agent_id: "a-main", renderer_contexts: [{ seq: 15, part_index: 1, tool_call_id: "call-1", artifact_ref: "artifact-1", values: { quantity: 3 } }] }) }));
+});
+
+it("warns and sends the most recent bounded shared UI context while preserving the draft on failed delivery", async () => {
+  const history = Array.from({ length: 17 }, (_, index) => {
+    const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Question", resource: { mimeType: "application/vnd.wuu.ui+json", text: String(index) }, artifact: { placement: "inline", ref: `artifact-${index}`, sha256: "a".repeat(64), size_bytes: 2 } };
+    return { seq: index + 1, role: "assistant", content: "Fallback", ui_text: "", ui_resources: [{ part, part_index: 1, tool_call_id: `call-${index}`, fallback_text: "Fallback" }] };
+  });
+  const ui = await mount(async method => { if (method === "agents.send") throw new Error("offline"); return {}; }, main, history, { registerGenUI: api => api.registerRenderer({ id: "ui", category: "tool-result", match: "application/vnd.wuu.ui+json", render: ({ host, content }) => {
+    React.useEffect(() => { host.reportState?.({ index: (content as { text: string }).text }); return () => host.reportState?.(undefined); }, [host.reportState]);
+    return <section>Shared UI</section>;
+  } }) });
+  expect(ui.container.querySelector('[data-renderer-context-limit]')).not.toBeNull();
+  await ui.edit("Continue"); await ui.click('.composer-send-button');
+  const request = ui.invoke.mock.calls.find(([value]) => value.method === "agents.send")![0];
+  const contexts = (request.input as { renderer_contexts: Array<{ seq: number }> }).renderer_contexts;
+  expect(contexts).toHaveLength(16); expect(contexts.map(value => value.seq)).toEqual(Array.from({ length: 16 }, (_, index) => index + 2));
+  expect(ui.container.querySelector("textarea")!.value).toBe("Continue");
+});
+
+it("streams only scoped tool previews and replaces them with the durable interactive result", async () => {
+  const renderer = vi.fn(({ content, metadata }: { content: any; metadata: any }) => <section data-preview={String(Boolean(content.preview))}>{metadata.toolInput?.argumentsText || content.text}</section>);
+  let rows: any[] = [];
+  const ui = await mount(undefined, main, [], { history: async () => ({ records: rows }), registerGenUI: api => api.registerRenderer({ id: "ui", category: "tool-result", match: "application/vnd.wuu.ui+json", toolInput: { capability: "generative-ui" }, render: renderer }) });
+  const scope = { user_space_id: "local", product_domain: "personal", composition_profile: "personal" };
+  const emit = async (method: string, params: unknown, user_scope: unknown = scope) => act(async () => ui.publish({ kind: "notification", user_scope, message: { method, params } }));
+  const tool = { id: "item-1", source_id: "call-1", type: "tool_call", status: "in_progress", display: { capability: "generative-ui" }, arguments: "" };
+  await emit("item/started", { thread_id: "s-private", turn_id: "turn-1", item: tool }, { ...scope, user_space_id: "foreign" });
+  await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-1", item_id: "item-1", delta: "bad" }, { ...scope, product_domain: "coding" });
+  expect(ui.container.querySelector('[data-preview="true"]')).toBeNull();
+  await emit("item/started", { thread_id: "s-private", turn_id: "turn-1", item: tool });
+  await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-1", item_id: "item-1", delta: "{partial" });
+  expect(ui.container.querySelector('[data-preview="true"]')?.textContent).toBe("{partial");
+  const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Question", resource: { mimeType: "application/vnd.wuu.ui+json", text: "final" }, artifact: { placement: "inline", ref: "artifact-1", sha256: "a".repeat(64), size_bytes: 5 } };
+  rows = [{ seq: 15, role: "assistant", content: "Fallback", ui_text: "", ui_resources: [{ part, part_index: 1, tool_call_id: "call-1", fallback_text: "Fallback" }] }];
+  await emit("turn/completed", { thread_id: "s-private", turn: { id: "turn-1", status: "completed", items_view: "full", items: [{ ...tool, status: "completed" }] } });
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-preview="false"]')?.textContent).toBe("final"));
+  expect(ui.container.querySelector('[data-preview="true"]')).toBeNull();
+});
+
+it("keeps an interrupted shared UI preview read-only and ignores late deltas", async () => {
+  let captured: any;
+  const ui = await mount(undefined, main, [], { registerGenUI: api => api.registerRenderer({ id: "ui", category: "tool-result", match: "application/vnd.wuu.ui+json", toolInput: { capability: "generative-ui" }, render: props => { captured = props; return <section data-preview-status={String((props.metadata.toolInput as any)?.status)} />; } }) });
+  const scope = { user_space_id: "local", product_domain: "personal", composition_profile: "personal" };
+  const emit = async (method: string, params: unknown) => act(async () => ui.publish({ kind: "notification", user_scope: scope, message: { method, params } }));
+  await emit("item/started", { thread_id: "s-private", turn_id: "turn-stop", item: { id: "item", source_id: "call-stop", type: "tool_call", status: "in_progress", display: { capability: "generative-ui" } } });
+  await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-stop", item_id: "item", delta: "initial" });
+  await emit("turn/completed", { thread_id: "s-private", turn: { id: "turn-stop", status: "interrupted", items: [] } });
+  expect(ui.container.querySelector('[data-preview-status="interrupted"]')).not.toBeNull();
+  expect(captured.host.actions).toEqual([]);
+  await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-stop", item_id: "item", delta: "late" });
+  expect(captured.metadata.toolInput.argumentsText).toBe("initial");
 });

@@ -610,8 +610,11 @@ export class AppServerClientPool {
     const thread = isRecord(params?.thread) ? params.thread : undefined;
     const sessionID = params?.thread_id ?? params?.session_id ?? thread?.id;
     const session_locator = route && this.locator(route, typeof sessionID === "string" ? sessionID : undefined);
+    const binding = client.userBinding;
+    const user_scope: ServerEvent["user_scope"] = binding && (binding.productDomain === "personal" || binding.productDomain === "coding")
+      ? { user_space_id: binding.userSpaceId, product_domain: binding.productDomain, ...(binding.compositionProfile ? { composition_profile: binding.compositionProfile } : {}) } : undefined;
     if (event.kind !== "server-request") {
-      return { ...event, workdir: client.workdir, session_locator };
+      return { ...event, workdir: client.workdir, session_locator, ...(user_scope ? { user_scope } : {}) };
     }
     const publicID = `server-request-${this.nextServerRequestRouteID++}`;
     this.serverRequestRoutes.set(publicID, {
@@ -622,6 +625,7 @@ export class AppServerClientPool {
       ...event,
       workdir: client.workdir,
       session_locator,
+      ...(user_scope ? { user_scope } : {}),
       message: {
         ...event.message,
         id: publicID,

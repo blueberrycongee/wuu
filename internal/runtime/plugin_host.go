@@ -235,7 +235,7 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 		return err
 	}
 	for _, item := range plugins {
-		if requireSelectedModules && resolved.Modules != nil {
+		if requireSelectedModules && resolved.Modules != nil && !slices.Contains(resolved.OptionalModules, item.ID) {
 			required[item.ID] = true
 		}
 		if dependencyErr := host.DependencyFailures()[item.ID]; dependencyErr != nil {
@@ -502,6 +502,17 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 		if resolved.Includes(item.ID) {
 			selected = append(selected, item)
 		}
+	}
+	if resolved.Modules != nil {
+		modules := make([]string, 0, len(*resolved.Modules))
+		for _, id := range *resolved.Modules {
+			if slices.Contains(resolved.OptionalModules, id) && !identities[id] {
+				delete(resolved.ModuleSources, id)
+				continue
+			}
+			modules = append(modules, id)
+		}
+		resolved.Modules = &modules
 	}
 	if err := resolved.ValidateAvailable(available); err != nil {
 		return nil, resolved, err

@@ -3,6 +3,860 @@
 // plugins/generative-ui/src/index.ts
 import { createHash } from "node:crypto";
 
+// packages/plugin-sdk/src/execution-backend.ts
+var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
+// packages/plugin-sdk/src/persistence.ts
+var DOCUMENT_STORE_SERVICE = "state.documents";
+var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
+
+// packages/plugin-sdk/src/theme-contract.generated.ts
+var PUBLIC_THEME_TOKEN_NAMES = [
+  "--wuu-paper",
+  "--wuu-ink",
+  "--wuu-ink-soft",
+  "--wuu-hairline",
+  "--wuu-surface-muted",
+  "--wuu-accent",
+  "--wuu-accent-press",
+  "--wuu-color-canvas",
+  "--wuu-color-surface",
+  "--wuu-color-surface-muted",
+  "--wuu-color-surface-elevated",
+  "--wuu-color-overlay-backdrop",
+  "--wuu-color-text",
+  "--wuu-color-text-muted",
+  "--wuu-color-live-highlight",
+  "--wuu-color-border-subtle",
+  "--wuu-color-border-strong",
+  "--wuu-color-accent",
+  "--wuu-color-accent-pressed",
+  "--wuu-color-focus",
+  "--wuu-color-success",
+  "--wuu-color-warning",
+  "--wuu-color-danger",
+  "--wuu-color-info",
+  "--wuu-color-link",
+  "--wuu-color-link-hover",
+  "--wuu-color-on-accent",
+  "--wuu-control-secondary-background",
+  "--wuu-control-field-background",
+  "--wuu-control-icon-background",
+  "--wuu-badge-neutral-background",
+  "--wuu-inline-code-background",
+  "--wuu-font-family-ui",
+  "--wuu-font-family-mono",
+  "--wuu-font-size-ui",
+  "--wuu-font-size-body",
+  "--wuu-line-height-body",
+  "--wuu-space-unit",
+  "--wuu-space-density",
+  "--wuu-message-actions-block-gap",
+  "--wuu-message-actions-overlay-gap",
+  "--wuu-message-actions-control-gap",
+  "--wuu-message-actions-inline-offset",
+  "--wuu-message-action-size",
+  "--wuu-message-action-radius",
+  "--wuu-message-user-background",
+  "--wuu-message-user-border",
+  "--wuu-message-user-color",
+  "--wuu-message-user-radius",
+  "--wuu-message-user-shadow",
+  "--wuu-nav-item-hover-background",
+  "--wuu-nav-item-hover-ring",
+  "--wuu-skill-mark-browser-a",
+  "--wuu-skill-mark-browser-b",
+  "--wuu-skill-mark-browser-c",
+  "--wuu-skill-mark-commit-a",
+  "--wuu-skill-mark-commit-b",
+  "--wuu-skill-mark-commit-c",
+  "--wuu-skill-mark-presentation-a",
+  "--wuu-skill-mark-presentation-b",
+  "--wuu-skill-mark-presentation-c",
+  "--wuu-skill-mark-creator-a",
+  "--wuu-skill-mark-creator-b",
+  "--wuu-skill-mark-creator-c",
+  "--wuu-skill-mark-plugin-a",
+  "--wuu-skill-mark-plugin-b",
+  "--wuu-skill-mark-plugin-c",
+  "--wuu-skill-mark-default-a",
+  "--wuu-skill-mark-default-b",
+  "--wuu-skill-mark-default-c",
+  "--wuu-radius-inner",
+  "--wuu-radius-control",
+  "--wuu-radius-panel",
+  "--wuu-radius-overlay",
+  "--wuu-border-subtle",
+  "--wuu-border-strong",
+  "--wuu-elevation-panel",
+  "--wuu-elevation-overlay",
+  "--wuu-motion-duration-fast",
+  "--wuu-motion-duration-normal",
+  "--wuu-motion-easing-standard",
+  "--wuu-content-max-width"
+];
+var PUBLIC_SYNTAX_TOKEN_NAMES = [
+  "--hljs-keyword",
+  "--hljs-function",
+  "--hljs-string",
+  "--hljs-number",
+  "--hljs-comment",
+  "--hljs-tag",
+  "--hljs-literal",
+  "--hljs-meta",
+  "--wuu-syntax-keyword",
+  "--wuu-syntax-function",
+  "--wuu-syntax-string",
+  "--wuu-syntax-number",
+  "--wuu-syntax-comment",
+  "--wuu-syntax-tag",
+  "--wuu-syntax-literal",
+  "--wuu-syntax-meta"
+];
+var PUBLIC_ICON_NAMES = [
+  "archive",
+  "bot",
+  "brain",
+  "calendar",
+  "check",
+  "check-circle",
+  "clock",
+  "code",
+  "database",
+  "file-text",
+  "folder",
+  "gauge",
+  "globe",
+  "inbox",
+  "layout-grid",
+  "list-todo",
+  "mascot",
+  "message-square",
+  "moon",
+  "plug",
+  "pulse",
+  "search",
+  "settings",
+  "shield",
+  "sliders",
+  "sparkles",
+  "terminal",
+  "users",
+  "workflow",
+  "wrench"
+];
+var PUBLIC_THEME_TOKEN_SET = new Set(PUBLIC_THEME_TOKEN_NAMES);
+var PUBLIC_SYNTAX_TOKEN_SET = new Set(PUBLIC_SYNTAX_TOKEN_NAMES);
+var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
+
+// packages/plugin-sdk/src/bundle-contract.ts
+var encoder = new TextEncoder();
+
+// packages/plugin-sdk/src/providers.ts
+var CREDENTIAL_STORE_SERVICE = "state.credentials";
+var CONFIG_SOURCE_SERVICE = "state.config";
+var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
+var ARTIFACT_STORE_SERVICE = "state.artifacts";
+function descriptor(name, methods, preparation = []) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`,
+    ...preparation.includes(method) ? { preparation: true } : {},
+    ...["release-inspection", "reconcile-inspection"].includes(method) ? { cleanup: true } : {}
+  })) };
+}
+var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
+var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "check-transfer-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state", "check-transfer-state"]);
+var ARTIFACT_STORE_DESCRIPTOR = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
+  version: "1.2.0"
+};
+
+// packages/plugin-sdk/src/coordination.ts
+var PROJECT_COORDINATION_SERVICE = "project.coordination";
+var MANAGED_SESSION_SERVICE = "host.managed-session";
+function descriptor2(name, methods) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`
+  })) };
+}
+var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
+  "scheduler",
+  "session",
+  "work",
+  "membership",
+  "create",
+  "turn",
+  "user-input",
+  "inbox",
+  "schedule",
+  "recover",
+  "instructions",
+  "member-work",
+  "coordinator",
+  "enqueue",
+  "capacity",
+  "work-list",
+  "tool-policy",
+  "tool-validate",
+  "tool-config",
+  "admission"
+]);
+var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
+
+// packages/plugin-sdk/src/tool-service.ts
+var TOOL_SERVICE = "agent.tools";
+var TOOL_SERVICE_DESCRIPTOR = {
+  name: TOOL_SERVICE,
+  version: "1.0.0",
+  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
+    name,
+    input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
+    output_schema: `${TOOL_SERVICE}.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/tool-batch.ts
+var TOOL_BATCH_SERVICE = "agent.tool.batch";
+var TOOL_BATCH_SERVICE_DESCRIPTOR = {
+  name: TOOL_BATCH_SERVICE,
+  version: "1.0.0",
+  methods: [{ name: "execute", input_schema: `${TOOL_BATCH_SERVICE}.execute.input.v1`, output_schema: `${TOOL_BATCH_SERVICE}.execute.output.v1` }]
+};
+var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
+  ...TOOL_BATCH_SERVICE_DESCRIPTOR,
+  methods: [...TOOL_BATCH_SERVICE_DESCRIPTOR.methods, {
+    name: "stream_admit",
+    input_schema: `${TOOL_BATCH_SERVICE}.stream.admit.input.v1`,
+    output_schema: `${TOOL_BATCH_SERVICE}.stream.admit.output.v1`
+  }]
+};
+
+// packages/plugin-sdk/src/session-service.ts
+var sessionDomainArity = {
+  "InspectionAuthority": [0, 1],
+  "ListInspections": [0, 1],
+  "ReconcileInspection": [1, 1],
+  "AcquireInspection": [1, 1],
+  "ReleaseInspection": [1, 0],
+  "AppendAcceptedUserHistoryRecordWithControl": [5, 1],
+  "ReadClientInput": [2, 2],
+  "ListUnsettledClientInputs": [1, 1],
+  "AcceptClientInput": [3, 2],
+  "ChangeClientInput": [6, 1],
+  "AppendAcceptedClientHistoryRecord": [6, 1],
+  "SettleClientInputExecution": [5, 0],
+  "MarkClientInputsRead": [2, 0],
+  "ListClientInputRecoveryCandidates": [1, 1],
+  "RecoverClientInput": [2, 0],
+  "ClientInputHistoryReceipts": [1, 1],
+  "AcceptHeldUserWork": [2, 1],
+  "AdmitThreadExecution": [4, 1],
+  "AppendAcceptedUserHistoryRecord": [3, 1],
+  "AppendContinuationHistoryRecord": [4, 1],
+  "AppendControlledHistoryRecord": [3, 1],
+  "AppendHistoryRecord": [2, 0],
+  "AppendHistoryRecordReturningSeq": [2, 1],
+  "AppendHistoryRecords": [2, 0],
+  "AppendHistoryRecordsReturningRange": [2, 2],
+  "BindDriver": [2, 0],
+  "BindWorktree": [2, 1],
+  "CancelHeldUserWork": [3, 1],
+  "ChangeControl": [4, 1],
+  "ClaimHeldUserWork": [2, 0],
+  "CompareAndSwapCompactionNote": [3, 1],
+  "CompleteParticipantRun": [4, 0],
+  "CountParticipantsByKind": [1, 1],
+  "Create": [1, 1],
+  "CreateFolder": [1, 1],
+  "CreateForkWithMetadata": [3, 1],
+  "CreateInitialized": [2, 1],
+  "CreateInitializedWithInbox": [5, 1],
+  "CreateInitializedWithLaunch": [4, 1],
+  "CreateManagedForkWithMetadata": [4, 1],
+  "CreateManagedWithMetadata": [3, 1],
+  "CreateManagedWithWorktree": [5, 1],
+  "CreateWithMetadata": [2, 1],
+  "CreateWithWorktree": [4, 1],
+  "Delete": [1, 1],
+  "DeleteArchived": [1, 1],
+  "DeleteFolder": [1, 0],
+  "DeleteHeldUserWork": [2, 1],
+  "DeletePluginTurnLifecycleOutbox": [2, 0],
+  "DeletePluginTurnLifecycleOutboxForPlugin": [1, 0],
+  "EnqueueInbox": [1, 0],
+  "Find": [1, 2],
+  "FindManagedByRequest": [2, 2],
+  "FindPinnedArchived": [1, 1],
+  "FindPluginTurnLifecycle": [4, 2],
+  "FindRetiredParticipantByName": [2, 2],
+  "GetParticipant": [1, 1],
+  "HasHeldUserWorkReceipt": [2, 1],
+  "InboxHas": [1, 1],
+  "InboxTargets": [0, 1],
+  "Journal.Close": [1, 0],
+  "Journal.CompleteAttempt": [3, 0],
+  "Journal.CompleteOperation": [3, 0],
+  "Journal.CompleteWorkflow": [3, 0],
+  "Journal.MarkAttemptFirstEvent": [6, 0],
+  "Journal.PrepareAttempt": [3, 0],
+  "Journal.PrepareOperation": [3, 0],
+  "Journal.PrepareRecoveryAttempt": [3, 0],
+  "Journal.Prune": [2, 1],
+  "Journal.ReconcileOrphans": [2, 1],
+  "Journal.UpsertSubmission": [3, 0],
+  "LatestHistoryCheckpoint": [1, 2],
+  "LatestSubscriptionActivity": [1, 1],
+  "List": [1, 1],
+  "ListControls": [0, 1],
+  "ListForCWD": [3, 1],
+  "ListOrganization": [0, 1],
+  "ListPage": [1, 1],
+  "ListParticipantRuns": [2, 1],
+  "ListParticipants": [1, 1],
+  "ListPluginTurnLifecycleOutbox": [0, 1],
+  "ListProjectWork": [1, 1],
+  "ListTokenUsage": [0, 1],
+  "LoadActiveHistoryRecords": [2, 1],
+  "LoadCompactionNote": [2, 2],
+  "LoadContextSeed": [1, 2],
+  "LoadDriverBinding": [1, 2],
+  "LoadDriverCheckpoint": [1, 2],
+  "LoadHeldUserWork": [1, 1],
+  "LoadHistoryRecords": [2, 1],
+  "LoadModelInputReceipts": [1, 1],
+  "LoadProviderHistorySnapshot": [1, 1],
+  "LoadRequestContextCheckpoint": [1, 1],
+  "LoadSessionLaunch": [1, 2],
+  "MaintainModelInputReceipts": [1, 1],
+  "MaintainRedundantStorage": [0, 1],
+  "MostRecent": [0, 1],
+  "MostRecentForCWD": [2, 1],
+  "NewInferenceJournalRuntime": [1, 1],
+  "PendingInbox": [1, 1],
+  "PendingProjectWork": [1, 1],
+  "ProjectWorkOperation": [1, 2],
+  "PutContextSeed": [1, 1],
+  "PutPluginTurnLifecycleOutbox": [3, 0],
+  "PutSessionLaunch": [1, 1],
+  "ReadControl": [1, 2],
+  "ReadHistoryPage": [3, 1],
+  "ReadActiveHistoryQuery": [1, 1],
+  "ReadHistoryQuery": [1, 1],
+  "ReadPluginGenerationSnapshot": [1, 2],
+  "ReadProjectWork": [1, 1],
+  "RebuildSessionIndexes": [0, 0],
+  "ReconcileProjectWork": [2, 0],
+  "ReleaseHeldUserWork": [2, 0],
+  "RenameFolder": [2, 1],
+  "ReorderFolders": [1, 0],
+  "ReplaceHeldUserWork": [2, 0],
+  "RequestThreadExecutionResetRecord": [1, 0],
+  "RetireParticipant": [1, 0],
+  "RewriteHistoryRecords": [2, 0],
+  "RewriteHistoryRecordsAtBaseline": [3, 0],
+  "RewriteHistoryRecordsForEdit": [4, 0],
+  "RewriteHistoryRecordsForEngineEdit": [6, 0],
+  "SaveDriverCheckpoint": [2, 0],
+  "SaveModelInputReceipt": [2, 0],
+  "SaveProjectWork": [3, 1],
+  "SaveRequestContextCheckpoint": [2, 0],
+  "SearchHistoryPage": [4, 1],
+  "SearchHistoryQuery": [1, 1],
+  "SetEngine": [2, 1],
+  "SetEngineRef": [2, 1],
+  "SetHistoryEngineTurnID": [5, 0],
+  "SetModelSelection": [4, 1],
+  "SetProjectMembership": [4, 1],
+  "SetNextStepModelSelection": [2, 1],
+  "SetRuntimeSelection": [2, 1],
+  "SetSource": [2, 1],
+  "SetWorkspaceID": [2, 1],
+  "SettleInbox": [2, 0],
+  "StoreCompactionNote": [1, 0],
+  "StoreContextWindow": [4, 1],
+  "StoreHistoryCheckpointAtBaseline": [4, 1],
+  "ThreadExecutionResetRequested": [2, 1],
+  "UpdateArchived": [2, 1],
+  "UpdateGeneratedTitle": [2, 1],
+  "UpdateHeldUserWork": [3, 1],
+  "UpdateIndex": [3, 0],
+  "UpdateOrganization": [2, 1],
+  "UpdatePinned": [2, 1],
+  "UpdateTitle": [2, 1],
+  "UpdateWorkspaceBinding": [5, 1],
+  "UpsertParticipant": [1, 0],
+  "UpsertParticipantRun": [1, 0],
+  "ValidateContinuationControl": [1, 0],
+  "ValidateControl": [1, 0],
+  "ValidateInboxControls": [1, 0],
+  "WorktreeInfoForSession": [1, 2],
+  "WritePluginGenerationSnapshot": [2, 0]
+};
+var SESSION_DOMAIN_METHODS = Object.freeze(Object.keys(sessionDomainArity));
+
+// packages/plugin-sdk/src/compaction-service.ts
+var COMPACTION_SERVICE = "agent.compaction";
+var COMPACTION_SERVICE_DESCRIPTOR = {
+  name: COMPACTION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "compact", "window", "handoff", "note-plan", "compact-note", "recover", "note-attempt"].map((name) => ({
+    name,
+    input_schema: `agent.compaction.${name}.input.v1`,
+    output_schema: `agent.compaction.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/title-service.ts
+var TITLE_SERVICE = "session.title";
+var TITLE_SERVICE_DESCRIPTOR = {
+  name: TITLE_SERVICE,
+  version: "1.0.0",
+  methods: ["plan", "resolve"].map((name) => ({
+    name,
+    input_schema: `${TITLE_SERVICE}.${name}.input.v1`,
+    output_schema: `${TITLE_SERVICE}.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/session-sharing.ts
+var SESSION_SHARING_SERVICE = "session.sharing";
+var SESSION_SHARING_DESCRIPTOR = {
+  name: SESSION_SHARING_SERVICE,
+  version: "1.0.0",
+  methods: ["preview", "create", "resolve", "read", "attachment", "revoke", "authorize"].map((name) => ({
+    name,
+    input_schema: `session.sharing.${name}.input.v1`,
+    output_schema: `session.sharing.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/execution-authorization.ts
+var EXECUTION_AUTHORIZATION_SERVICE = "execution.authorization";
+var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
+  name: EXECUTION_AUTHORIZATION_SERVICE,
+  version: "1.0.0",
+  methods: ["describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"].map((name) => ({
+    name,
+    ...name === "release-commit" ? { cleanup: true } : {},
+    input_schema: `execution.authorization.${name}.input.v1`,
+    output_schema: `execution.authorization.${name}.output.v1`
+  }))
+};
+
+// packages/plugin-sdk/src/index.ts
+var CAPABILITY_PROTOCOL_V3 = 3;
+var KERNEL_SERVICE_METHOD = "call";
+var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
+var SECURITY_AUTHORIZE_METHOD = "authorize";
+var KERNEL_SERVICE_NAMES = {
+  "host.storage.get": "host.storage.get",
+  "host.storage.set": "host.storage.set",
+  "host.storage.delete": "host.storage.delete",
+  "host.storage.keys": "host.storage.keys",
+  "host.storage.compare_exchange": "host.storage.compare-exchange",
+  "host.settings.get": "host.settings.get",
+  "host.settings.list": "host.settings.list",
+  "host.credentials.request": "host.credentials.request",
+  "host.session.create": "host.session.create",
+  "host.session.route": "host.session.route",
+  "host.session.send": "host.session.send",
+  "host.session.list": "host.session.list",
+  "host.session.cancel": "host.session.cancel",
+  "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
+  "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
+  "host.session.history.read": "host.session.history.read",
+  "host.session.history.search": "host.session.history.search",
+  "host.workspace.status": "host.workspace.status",
+  "host.workspace.apply": "host.workspace.apply",
+  "host.workspace.discard": "host.workspace.discard"
+};
+function kernelServiceCall(id, method, params) {
+  return {
+    id,
+    method: "host.service.call",
+    params: { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params }
+  };
+}
+function requireKernelService(method) {
+  return { name: KERNEL_SERVICE_NAMES[method], major_version: 1, required: true };
+}
+function authorizationServiceDescriptor(options = {}) {
+  return {
+    name: SECURITY_AUTHORIZE_SERVICE,
+    version: "1.0.0",
+    methods: [{ name: SECURITY_AUTHORIZE_METHOD, input_schema: "security.authorize.input.v1", output_schema: "security.authorize.output.v1" }, ...options.effect_fence ? [
+      { name: "acquire-authorization", input_schema: "security.authorize.acquire-authorization.input.v1", output_schema: "security.authorize.acquire-authorization.output.v1" },
+      { name: "release-authorization", input_schema: "security.authorize.release-authorization.input.v1", output_schema: "security.authorize.release-authorization.output.v1", cleanup: true }
+    ] : []]
+  };
+}
+var AUTHORIZATION_SERVICE_DESCRIPTOR = authorizationServiceDescriptor();
+var RuntimeHostServiceError = class extends Error {
+  code;
+  constructor(error) {
+    super(error.message);
+    this.name = "RuntimeHostServiceError";
+    this.code = error.code;
+  }
+};
+async function handleRuntimeRequest(plugin2, request, host = unavailableRuntimeHost, execution = idleRuntimeExecution, lifecycle = idleRuntimeExecution) {
+  const executionHost = scopedRuntimeHost(host, execution);
+  try {
+    switch (request.method) {
+      case "initialize": {
+        const result = await plugin2.initialize(request.params, host, lifecycle);
+        const protocolVersion = result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version;
+        if ((protocolVersion ?? 1) === 1 && (result.capabilities?.length || result.model_adapters?.length)) {
+          throw Object.assign(new Error("initialize() must return protocol_version: 2 or 3 when declaring capabilities or model_adapters; omission selects legacy v1"), { code: "invalid_capability_protocol" });
+        }
+        const offered = request.params.supported_host_features;
+        const required = result.required_host_features;
+        for (const features of [offered, required]) {
+          if (features !== void 0 && (!Array.isArray(features) || features.some((feature) => typeof feature !== "string" || !feature || feature.trim() !== feature || feature.includes("\0")))) {
+            throw Object.assign(new Error("Host feature declarations must be arrays of exact nonempty names"), { code: "invalid_host_features" });
+          }
+        }
+        const requirements = new Set(required);
+        if (result.provided_services?.some((service) => service.name === DOCUMENT_STORE_SERVICE && service.methods?.some((method) => method.name === "authority"))) {
+          requirements.add(DOCUMENT_AUTHORITY_HOST_FEATURE);
+        }
+        for (const feature of requirements) {
+          if (!offered?.includes(feature)) {
+            throw Object.assign(new Error(`Required host feature ${feature} is unavailable; refusing incompatible host semantics`), { code: "host_feature_unavailable" });
+          }
+        }
+        return { id: request.id, result: {
+          ...result,
+          ...requirements.size ? { required_host_features: [...requirements] } : {},
+          protocol_version: protocolVersion,
+          lifecycle_version: 2
+        } };
+      }
+      case "prepare":
+        await plugin2.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
+      case "activate":
+        await plugin2.activate?.(host, lifecycle);
+        return { id: request.id, result: null };
+      case "capability.invoke":
+        if (!plugin2.invokeCapability) throw new Error("capability.invoke is not implemented");
+        execution.signal.throwIfAborted();
+        return { id: request.id, result: await plugin2.invokeCapability(request.params, executionHost, execution) };
+      case "service.invoke":
+        if (!plugin2.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
+        return { id: request.id, result: await plugin2.invokeService(request.params, executionHost, execution) };
+      case "service.changed":
+        await plugin2.serviceChanged?.(request.params, host);
+        return { id: request.id, result: null };
+      case "tool.execute":
+        if (!plugin2.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
+        return { id: request.id, result: await plugin2.executeTool(request.params, executionHost, execution) };
+      case "shutdown":
+        await plugin2.shutdown?.();
+        return { id: request.id, result: null };
+    }
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...code ? { code } : {},
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
+    } };
+  }
+}
+function scopedRuntimeHost(host, execution) {
+  return {
+    supports: (method) => host.supports(method),
+    call: (method, params, options) => {
+      const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      if (method === "host.service.continue") {
+        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+        const continuation = params;
+        return host.call("host.service.continue", {
+          continuation_id: continuation.continuation_id,
+          execution_id: execution.executionId
+        }, { signal });
+      }
+      const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
+      return host.call("host.service.call", {
+        ...serviceParams,
+        ...options?.cleanup ? { execution_id: void 0, cleanup: true } : execution.executionId ? { execution_id: execution.executionId } : {}
+      }, { signal });
+    }
+  };
+}
+var unavailableRuntimeHost = {
+  supports: () => false,
+  call: async (method) => {
+    throw new Error(`host service ${method} is unavailable outside a runtime connection`);
+  }
+};
+var idleRuntimeExecutionController = new AbortController();
+var idleRuntimeExecution = {
+  executionId: "",
+  signal: idleRuntimeExecutionController.signal
+};
+var JSONLRuntimeHost = class {
+  constructor(send) {
+    this.send = send;
+  }
+  sequence = 0;
+  closed = false;
+  supported = /* @__PURE__ */ new Set();
+  pending = /* @__PURE__ */ new Map();
+  configure(methods) {
+    this.supported = new Set(methods ?? []);
+  }
+  supports(method) {
+    if (method === "host.service.continue") return this.supported.has(method);
+    return this.supported.has("host.service.call") || this.supported.has(method);
+  }
+  call(method, params, options) {
+    const signal = options?.signal;
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    if (this.closed) return Promise.reject(new Error("runtime transport closed"));
+    if (!this.supports(method)) {
+      return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    if (method === "host.service.continue" && options?.cleanup) {
+      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
+    }
+    const id = `plugin-${++this.sequence}`;
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        this.pending.delete(id);
+        signal?.removeEventListener("abort", abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(signal.reason);
+      };
+      const fail = (error) => {
+        cleanup();
+        reject(error);
+      };
+      this.pending.set(id, {
+        resolve(value) {
+          cleanup();
+          resolve(value);
+        },
+        reject: fail
+      });
+      signal?.addEventListener("abort", abort, { once: true });
+      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
+      if (options?.cleanup && frame.method !== "host.service.continue") {
+        frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
+      }
+      void this.send(frame).catch(fail);
+    });
+  }
+  route(value) {
+    if (typeof value !== "object" || value === null) return false;
+    const response = value;
+    if (typeof response.id !== "string" || response.method !== void 0 || !("result" in response) && !("error" in response)) return false;
+    const pending = this.pending.get(response.id);
+    if (!pending) return true;
+    this.pending.delete(response.id);
+    if (response.error !== void 0) {
+      const error = response.error;
+      pending.reject(new RuntimeHostServiceError({
+        code: typeof error.code === "string" ? error.code : "host_error",
+        message: typeof error.message === "string" ? error.message : "host service failed"
+      }));
+    } else {
+      pending.resolve(response.result);
+    }
+    return true;
+  }
+  close() {
+    this.closed = true;
+    for (const pending of this.pending.values()) {
+      pending.reject(new Error("runtime transport closed"));
+    }
+    this.pending.clear();
+  }
+};
+var MAX_CONCURRENT_TOOLS = 8;
+async function runJSONLRuntime(plugin2, streams) {
+  let writes = Promise.resolve();
+  const send = (value) => {
+    const next = writes.then(async () => {
+      await streams.output.write(`${JSON.stringify(value)}
+`);
+    });
+    writes = next.catch(() => void 0);
+    return next;
+  };
+  const host = new JSONLRuntimeHost(send);
+  const lifetime = new AbortController();
+  const executions = /* @__PURE__ */ new Map();
+  const callerScopes = /* @__PURE__ */ new Map();
+  lifetime.signal.addEventListener("abort", () => {
+    for (const controller of callerScopes.values()) controller.abort();
+    callerScopes.clear();
+  }, { once: true });
+  const active = /* @__PURE__ */ new Set();
+  const concurrentServices = new Set(plugin2.concurrentServices ?? []);
+  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin2.concurrentCapabilities ?? []]);
+  const concurrentTools = /* @__PURE__ */ new Set();
+  const queued = [];
+  let running = 0;
+  let exclusive = false;
+  const pump = () => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = () => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run, canOverlap = () => false) => {
+    const task = new Promise((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
+  let shuttingDown = false;
+  const track = (task) => {
+    active.add(task);
+    void task.then(() => active.delete(task), () => active.delete(task));
+  };
+  const enqueueResponse = (value) => {
+    track(schedule(() => send(value)));
+  };
+  const processLine = (line) => {
+    if (line.trim() === "") return;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch (error) {
+      enqueueResponse({ id: "invalid", error: { message: error instanceof Error ? error.message : String(error) } });
+      return;
+    }
+    if (host.route(parsed)) return;
+    if (isExecutionCancelRequest(parsed)) {
+      for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
+      callerScopes.get(parsed.params.execution_id)?.abort();
+      callerScopes.delete(parsed.params.execution_id);
+      return;
+    }
+    if (!isRuntimeRequest(parsed)) {
+      enqueueResponse({ id: "invalid", error: { message: "invalid runtime request" } });
+      return;
+    }
+    if (shuttingDown) {
+      track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
+      return;
+    }
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
+    if (parsed.method === "shutdown") {
+      shuttingDown = true;
+      lifetime.abort();
+    }
+    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service) || parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability);
+    const executionId = runtimeRequestExecutionId(parsed);
+    const controller = new AbortController();
+    let controllers = executions.get(executionId);
+    if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
+    controllers.add(controller);
+    let caller;
+    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
+      const scope = parsed.params.caller_scope;
+      let owner = callerScopes.get(scope.id);
+      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
+      caller = { ...scope, signal: owner.signal };
+    }
+    const execution = { executionId, signal: controller.signal, caller };
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async () => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin2, parsed, host, execution, { signal: lifetime.signal });
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(
+      run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
+    )).finally(() => {
+      const controllers2 = executions.get(executionId);
+      controllers2?.delete(controller);
+      if (controllers2?.size === 0) executions.delete(executionId);
+      controller.abort();
+    });
+    if (isLifecycle) lifecycle = task.catch(() => void 0);
+    track(task);
+  };
+  const decoder = new TextDecoder();
+  let buffered = "";
+  try {
+    for await (const chunk of streams.input) {
+      buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) processLine(line);
+    }
+    buffered += decoder.decode();
+    if (buffered.trim() !== "") processLine(buffered);
+  } finally {
+    lifetime.abort();
+    host.close();
+    for (const controllers of executions.values()) {
+      for (const controller of controllers) controller.abort();
+    }
+    await Promise.all(active);
+    await writes;
+  }
+}
+function isExecutionCancelRequest(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const request = value;
+  return typeof request.id === "string" && request.method === "execution.cancel" && typeof request.params?.execution_id === "string" && request.params.execution_id.trim() !== "";
+}
+function runtimeRequestExecutionId(request) {
+  switch (request.method) {
+    case "capability.invoke":
+    case "service.invoke":
+    case "tool.execute":
+      return request.params.execution_id?.trim() ?? "";
+    default:
+      return "";
+  }
+}
+function isRuntimeRequest(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const request = value;
+  if (typeof request.id !== "string" || typeof request.method !== "string") return false;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
+  return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
+}
+
 // plugins/generative-ui/schema.json
 var schema_default = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -1239,6 +2093,42 @@ var schema_default = {
             "type",
             "text"
           ]
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            type: {
+              const: "append"
+            },
+            state: {
+              $ref: "#/$defs/programID"
+            },
+            value: {
+              $ref: "#/$defs/expression"
+            }
+          },
+          required: [
+            "type",
+            "state",
+            "value"
+          ]
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            type: {
+              const: "remove"
+            },
+            state: {
+              $ref: "#/$defs/programID"
+            }
+          },
+          required: [
+            "type",
+            "state"
+          ]
         }
       ]
     },
@@ -1503,7 +2393,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label"
       ],
       propertyNames: {
@@ -1517,10 +2406,23 @@ var schema_default = {
           "placeholder",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
       },
-      description: "Date inputs bind an empty string or a valid Gregorian date in exact YYYY-MM-DD format, with years 0001\u20139999. Required fields are checked on explicit form submission."
+      description: "Date inputs bind an empty string or a valid Gregorian date in exact YYYY-MM-DD format, with years 0001\u20139999. Required fields are checked on explicit form submission.",
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_textarea: {
       properties: {
@@ -1531,7 +2433,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label"
       ],
       propertyNames: {
@@ -1544,9 +2445,22 @@ var schema_default = {
           "placeholder",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_select: {
       properties: {
@@ -1557,7 +2471,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label",
         "options"
       ],
@@ -1571,9 +2484,22 @@ var schema_default = {
           "options",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_radio: {
       properties: {
@@ -1584,7 +2510,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label",
         "options"
       ],
@@ -1598,9 +2523,22 @@ var schema_default = {
           "options",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_segmented: {
       properties: {
@@ -1611,7 +2549,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label",
         "options"
       ],
@@ -1625,9 +2562,22 @@ var schema_default = {
           "options",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_checkbox: {
       properties: {
@@ -1638,7 +2588,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label"
       ],
       propertyNames: {
@@ -1650,9 +2599,22 @@ var schema_default = {
           "onChange",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_slider: {
       properties: {
@@ -1666,7 +2628,6 @@ var schema_default = {
       required: [
         "id",
         "type",
-        "state",
         "label",
         "min",
         "max"
@@ -1683,9 +2644,22 @@ var schema_default = {
           "step",
           "required",
           "disabled",
-          "invalid"
+          "invalid",
+          "itemField"
         ]
-      }
+      },
+      oneOf: [
+        {
+          required: [
+            "state"
+          ]
+        },
+        {
+          required: [
+            "itemField"
+          ]
+        }
+      ]
     },
     node_button: {
       properties: {
@@ -2129,6 +3103,11 @@ var schema_default = {
         },
         key: {
           $ref: "#/$defs/expression"
+        },
+        itemField: {
+          type: "string",
+          minLength: 1,
+          maxLength: 80
         }
       },
       oneOf: [
@@ -2240,6 +3219,13 @@ var schema_default = {
               },
               value: {
                 $ref: "#/$defs/programValue"
+              },
+              scope: {
+                type: "string",
+                enum: [
+                  "persistent",
+                  "temporary"
+                ]
               }
             },
             required: [
@@ -2319,7 +3305,7 @@ var schema_default = {
 var MAX_BYTES = 128 * 1024;
 var MAX_STATE_BYTES = 16 * 1024;
 var ID = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
-var encoder = new TextEncoder();
+var encoder2 = new TextEncoder();
 function requireValue(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -2355,7 +3341,7 @@ function fieldValue(field, value) {
   else requireValue(field.options.includes(value), "Invalid selection");
 }
 function parseSpec(raw) {
-  requireValue(typeof raw === "string" && raw.length <= MAX_BYTES && encoder.encode(raw).length <= MAX_BYTES, "UI exceeds 128 KiB");
+  requireValue(typeof raw === "string" && raw.length <= MAX_BYTES && encoder2.encode(raw).length <= MAX_BYTES, "UI exceeds 128 KiB");
   const spec = JSON.parse(raw);
   if (spec.version === 2) return validateProgram(spec);
   object(spec, ["version", "title", "fallback", "blocks"]);
@@ -2493,13 +3479,14 @@ function validateProgram(spec) {
   list(spec.state, 0, 32);
   const states = /* @__PURE__ */ new Map();
   for (const state of spec.state) {
-    object(state, ["id", "value"]);
+    object(state, ["id", "value", "scope"], ["id", "value"]);
     programID(state.id);
     jsonValue(state.value);
+    if (state.scope !== void 0) requireValue(["persistent", "temporary"].includes(state.scope), "Invalid state scope");
     requireValue(!states.has(state.id), "Duplicate state identifier");
     states.set(state.id, state.value);
   }
-  requireValue(encoder.encode(JSON.stringify(spec.state)).length <= MAX_STATE_BYTES, "State exceeds 16 KiB");
+  requireValue(encoder2.encode(JSON.stringify(spec.state)).length <= MAX_STATE_BYTES, "State exceeds 16 KiB");
   const ids = /* @__PURE__ */ new Set();
   let expressionCount = 0;
   function expression(expr, context, depth = 1) {
@@ -2543,6 +3530,13 @@ function validateProgram(spec) {
         object(action, ["type", "state", "value"]);
         requireValue(states.has(action.state), "Unknown state assignment");
         expression(action.value, context);
+      } else if (action.type === "append") {
+        object(action, ["type", "state", "value"]);
+        requireValue(Array.isArray(states.get(action.state)), "Append requires list state");
+        expression(action.value, context);
+      } else if (action.type === "remove") {
+        object(action, ["type", "state"]);
+        requireValue(context.collectionState === action.state, "Remove requires the enclosing editable list");
       } else if (action.type === "reset") object(action, ["type"]);
       else if (action.type === "copy" || action.type === "sendMessage") {
         object(action, ["type", "text"]);
@@ -2600,12 +3594,14 @@ function validateProgram(spec) {
           nodes(node.then, context, depth + 1);
           if (node.else !== void 0) nodes(node.else, context, depth + 1);
           break;
-        case "each":
+        case "each": {
           check(["items", "key", "children"], ["items", "children"]);
           expr("items");
           if (node.key !== void 0) expression(node.key, { ...context, item: true });
-          nodes(node.children, { ...context, item: true }, depth + 1);
+          const collectionState = node.key !== void 0 && node.items?.op === "state" && Array.isArray(states.get(node.items.key)) ? node.items.key : void 0;
+          nodes(node.children, { ...context, item: true, collectionState }, depth + 1);
           break;
+        }
         case "form":
           check(["label", "children", "onSubmit"]);
           requireValue(!context.form, "Forms cannot be nested");
@@ -2647,8 +3643,16 @@ function validateProgram(spec) {
         case "segmented": {
           const extras = node.type === "input" ? ["inputType", "placeholder"] : node.type === "textarea" ? ["placeholder"] : node.type === "slider" ? ["min", "max", "step"] : ["select", "radio", "segmented"].includes(node.type) ? ["options"] : [];
           const required = node.type === "slider" ? ["min", "max"] : ["select", "radio", "segmented"].includes(node.type) ? ["options"] : [];
-          check(["label", "state", "onChange", "required", "disabled", "invalid", ...extras], ["label", "state", ...required]);
-          binding();
+          check(["label", "state", "itemField", "onChange", "required", "disabled", "invalid", ...extras], ["label", ...required]);
+          requireValue(node.state !== void 0 !== (node.itemField !== void 0), "Control requires exactly one state binding");
+          if (node.itemField !== void 0) {
+            requireValue(context.collectionState !== void 0, "Item binding requires a keyed list state");
+            safeKey(node.itemField);
+            for (const item of states.get(context.collectionState)) {
+              requireValue(item && typeof item === "object" && !Array.isArray(item) && Object.hasOwn(item, node.itemField), "Missing list item field");
+              validateBinding(node, item[node.itemField]);
+            }
+          } else binding();
           expr("label");
           expr("disabled");
           expr("invalid");
@@ -2673,7 +3677,7 @@ function validateProgram(spec) {
             }
             unique(node.options.map((option) => JSON.stringify(option.value)));
           }
-          validateBinding(node, states.get(node.state));
+          if (node.state !== void 0) validateBinding(node, states.get(node.state));
           if (node.onChange !== void 0) actions(node.onChange, { ...context, event: true });
           break;
         }
@@ -2792,16 +3796,44 @@ var MAX_INPUT_BYTES = 128 * 1024;
 var plugin = {
   initialize() {
     return {
+      capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
+      required_services: [requireKernelService("host.storage.get"), requireKernelService("host.storage.set"), { name: "host.personal", major_version: 1, required: false }],
       tools: [{
         id: "render_ui",
         // Presentation resources must remain top-level results in PTC mode.
         direct_only: true,
-        description: "Render an experimental interactive UI in the conversation. Use version 2 for a composable program: declare keyed JSON state and a body of nested layouts, text, metrics, charts, tables, controlled inputs, conditionals and repeated nodes. Expressions compute values with bounded arithmetic, comparisons, map/filter, ranges and formatting. Events can update/reset state or copy text; an explicit button or native form submission can ask the user to continue the same conversation using sendMessage. No HTML, scripts, styles, arbitrary tool execution or network requests. Every spec needs a title and useful plain-text fallback. Declare state before body for incremental previews. Version 1 text/table/chart/form specs remain supported. Arguments must fit in 128 KiB; programs have at most 256 nodes, 12 node levels, 2048 expressions, 16 expression levels and 16 KiB of initial state.",
+        description: "Render an experimental interactive UI in the conversation. Call this tool directly, including in PTC mode; do not call it through run_code. Use the current tool name and schema rather than obsolete tools or schemas from earlier conversation history. Use version 2 for a composable program: declare keyed JSON state and a body of nested layouts, text, metrics, charts, tables, controlled inputs, conditionals and repeated nodes. Expressions compute values with bounded arithmetic, comparisons, map/filter, ranges and formatting. States default to persistent; use scope temporary for values that reset when a view reopens. For editable lists, each must read a list state and declare a unique stable key; controls inside it bind itemField instead of state. Keep a separate immutable id on each item; never key an editable list by its editable text or index. For repeated additions, allocate ids from a separate increasing counter state and increment it in the same action sequence. Button actions can append an evaluated value to list state or remove the current keyed item. Events can update/reset state or copy text; an explicit button or native form submission can ask the user to continue the same conversation using sendMessage. No HTML, scripts, styles, arbitrary tool execution or network requests. Every spec needs a title and useful plain-text fallback. Declare state before body for incremental previews. Version 1 text/table/chart/form specs remain supported. Arguments must fit in 128 KiB; programs have at most 256 nodes, 12 node levels, 2048 expressions, 16 expression levels and 16 KiB of initial state.",
         input_schema: { ...schema_default, type: "object" },
         activity: { read_only: true, concurrency_safe: true },
         display: { kind: "generative-ui", label: "Render UI", text: "Rendering interactive UI", capability: "generative-ui" }
       }]
     };
+  },
+  async invokeCapability(call, host, execution) {
+    if (call.capability !== "plugin.client.request" || !call.input || typeof call.input !== "object" || Array.isArray(call.input)) throw new Error("Invalid view state request");
+    const request = call.input;
+    if (request.method !== "view-state.get" && request.method !== "view-state.set") throw new Error("Unknown view state method");
+    if (!request.input || typeof request.input !== "object" || Array.isArray(request.input)) throw new Error("Invalid view state input");
+    const input = request.input;
+    const expected = request.method === "view-state.get" ? ["key"] : ["key", "value"];
+    if (Object.keys(input).length !== expected.length || expected.some((key) => !Object.hasOwn(input, key)) || typeof input.key !== "string" || !/^ui-v[12]-[a-f0-9]{64}$/.test(input.key)) throw new Error("Invalid view state key or fields");
+    if (request.method === "view-state.set") {
+      if (typeof input.value !== "string" || Buffer.byteLength(input.value) > 16 * 1024 + 64) throw new Error("Invalid view state value");
+      try {
+        JSON.parse(input.value);
+      } catch {
+        throw new Error("Invalid view state JSON");
+      }
+    }
+    const options = { signal: execution.signal };
+    const owner = await host.call("host.service.call", { service: "host.personal", method: "call", params: { operation: "owner.check", input: {} } }, options);
+    if (!owner || typeof owner !== "object" || !("ok" in owner) || owner.ok !== true) throw new Error("Owner authentication required");
+    if (request.method === "view-state.get") {
+      const result = await host.call("host.storage.get", { scope: "user", key: input.key }, options);
+      return { output: { result } };
+    }
+    await host.call("host.storage.set", { scope: "user", key: input.key, value: input.value }, options);
+    return { output: { result: {} } };
   },
   executeTool(call) {
     if (call.tool_id !== "render_ui") throw new Error(`unknown generative UI tool ${JSON.stringify(call.tool_id)}`);
@@ -2846,857 +3878,6 @@ var plugin = {
   }
 };
 var src_default = plugin;
-
-// packages/plugin-sdk/src/execution-backend.ts
-var EXECUTION_BACKEND_MAX_FRAME_BYTES = 16 * 1024 * 1024;
-
-// packages/plugin-sdk/src/persistence.ts
-var DOCUMENT_STORE_SERVICE = "state.documents";
-var DOCUMENT_AUTHORITY_HOST_FEATURE = "state.documents.authority.v1";
-
-// packages/plugin-sdk/src/theme-contract.generated.ts
-var PUBLIC_THEME_TOKEN_NAMES = [
-  "--wuu-paper",
-  "--wuu-ink",
-  "--wuu-ink-soft",
-  "--wuu-hairline",
-  "--wuu-surface-muted",
-  "--wuu-accent",
-  "--wuu-accent-press",
-  "--wuu-color-canvas",
-  "--wuu-color-surface",
-  "--wuu-color-surface-muted",
-  "--wuu-color-surface-elevated",
-  "--wuu-color-overlay-backdrop",
-  "--wuu-color-text",
-  "--wuu-color-text-muted",
-  "--wuu-color-live-highlight",
-  "--wuu-color-border-subtle",
-  "--wuu-color-border-strong",
-  "--wuu-color-accent",
-  "--wuu-color-accent-pressed",
-  "--wuu-color-focus",
-  "--wuu-color-success",
-  "--wuu-color-warning",
-  "--wuu-color-danger",
-  "--wuu-color-info",
-  "--wuu-color-link",
-  "--wuu-color-link-hover",
-  "--wuu-color-on-accent",
-  "--wuu-control-secondary-background",
-  "--wuu-control-field-background",
-  "--wuu-control-icon-background",
-  "--wuu-badge-neutral-background",
-  "--wuu-inline-code-background",
-  "--wuu-font-family-ui",
-  "--wuu-font-family-mono",
-  "--wuu-font-size-ui",
-  "--wuu-font-size-body",
-  "--wuu-line-height-body",
-  "--wuu-space-unit",
-  "--wuu-space-density",
-  "--wuu-message-actions-block-gap",
-  "--wuu-message-actions-overlay-gap",
-  "--wuu-message-actions-control-gap",
-  "--wuu-message-actions-inline-offset",
-  "--wuu-message-action-size",
-  "--wuu-message-action-radius",
-  "--wuu-message-user-background",
-  "--wuu-message-user-border",
-  "--wuu-message-user-color",
-  "--wuu-message-user-radius",
-  "--wuu-message-user-shadow",
-  "--wuu-nav-item-hover-background",
-  "--wuu-nav-item-hover-ring",
-  "--wuu-skill-mark-browser-a",
-  "--wuu-skill-mark-browser-b",
-  "--wuu-skill-mark-browser-c",
-  "--wuu-skill-mark-commit-a",
-  "--wuu-skill-mark-commit-b",
-  "--wuu-skill-mark-commit-c",
-  "--wuu-skill-mark-presentation-a",
-  "--wuu-skill-mark-presentation-b",
-  "--wuu-skill-mark-presentation-c",
-  "--wuu-skill-mark-creator-a",
-  "--wuu-skill-mark-creator-b",
-  "--wuu-skill-mark-creator-c",
-  "--wuu-skill-mark-plugin-a",
-  "--wuu-skill-mark-plugin-b",
-  "--wuu-skill-mark-plugin-c",
-  "--wuu-skill-mark-default-a",
-  "--wuu-skill-mark-default-b",
-  "--wuu-skill-mark-default-c",
-  "--wuu-radius-inner",
-  "--wuu-radius-control",
-  "--wuu-radius-panel",
-  "--wuu-radius-overlay",
-  "--wuu-border-subtle",
-  "--wuu-border-strong",
-  "--wuu-elevation-panel",
-  "--wuu-elevation-overlay",
-  "--wuu-motion-duration-fast",
-  "--wuu-motion-duration-normal",
-  "--wuu-motion-easing-standard",
-  "--wuu-content-max-width"
-];
-var PUBLIC_SYNTAX_TOKEN_NAMES = [
-  "--hljs-keyword",
-  "--hljs-function",
-  "--hljs-string",
-  "--hljs-number",
-  "--hljs-comment",
-  "--hljs-tag",
-  "--hljs-literal",
-  "--hljs-meta",
-  "--wuu-syntax-keyword",
-  "--wuu-syntax-function",
-  "--wuu-syntax-string",
-  "--wuu-syntax-number",
-  "--wuu-syntax-comment",
-  "--wuu-syntax-tag",
-  "--wuu-syntax-literal",
-  "--wuu-syntax-meta"
-];
-var PUBLIC_ICON_NAMES = [
-  "archive",
-  "bot",
-  "brain",
-  "calendar",
-  "check",
-  "check-circle",
-  "clock",
-  "code",
-  "database",
-  "file-text",
-  "folder",
-  "gauge",
-  "globe",
-  "inbox",
-  "layout-grid",
-  "list-todo",
-  "mascot",
-  "message-square",
-  "moon",
-  "plug",
-  "pulse",
-  "search",
-  "settings",
-  "shield",
-  "sliders",
-  "sparkles",
-  "terminal",
-  "users",
-  "workflow",
-  "wrench"
-];
-var PUBLIC_THEME_TOKEN_SET = new Set(PUBLIC_THEME_TOKEN_NAMES);
-var PUBLIC_SYNTAX_TOKEN_SET = new Set(PUBLIC_SYNTAX_TOKEN_NAMES);
-var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
-
-// packages/plugin-sdk/src/bundle-contract.ts
-var encoder2 = new TextEncoder();
-
-// packages/plugin-sdk/src/providers.ts
-var CREDENTIAL_STORE_SERVICE = "state.credentials";
-var CONFIG_SOURCE_SERVICE = "state.config";
-var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
-var ARTIFACT_STORE_SERVICE = "state.artifacts";
-function descriptor(name, methods, preparation = []) {
-  return { name, version: "1.0.0", methods: methods.map((method) => ({
-    name: method,
-    input_schema: `${name}.${method}.input.v1`,
-    output_schema: `${name}.${method}.output.v1`,
-    ...preparation.includes(method) ? { preparation: true } : {},
-    ...["release-inspection", "reconcile-inspection"].includes(method) ? { cleanup: true } : {}
-  })) };
-}
-var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
-var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
-var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "check-transfer-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state", "check-transfer-state"]);
-var ARTIFACT_STORE_DESCRIPTOR = {
-  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
-  version: "1.2.0"
-};
-
-// packages/plugin-sdk/src/coordination.ts
-var PROJECT_COORDINATION_SERVICE = "project.coordination";
-var MANAGED_SESSION_SERVICE = "host.managed-session";
-function descriptor2(name, methods) {
-  return { name, version: "1.0.0", methods: methods.map((method) => ({
-    name: method,
-    input_schema: `${name}.${method}.input.v1`,
-    output_schema: `${name}.${method}.output.v1`
-  })) };
-}
-var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
-  "scheduler",
-  "session",
-  "work",
-  "membership",
-  "create",
-  "turn",
-  "user-input",
-  "inbox",
-  "schedule",
-  "recover",
-  "instructions",
-  "member-work",
-  "coordinator",
-  "enqueue",
-  "capacity",
-  "work-list",
-  "tool-policy",
-  "tool-validate",
-  "tool-config",
-  "admission"
-]);
-var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
-
-// packages/plugin-sdk/src/tool-service.ts
-var TOOL_SERVICE = "agent.tools";
-var TOOL_SERVICE_DESCRIPTOR = {
-  name: TOOL_SERVICE,
-  version: "1.0.0",
-  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
-    name,
-    input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
-    output_schema: `${TOOL_SERVICE}.${name}.output.v1`
-  }))
-};
-
-// packages/plugin-sdk/src/tool-batch.ts
-var TOOL_BATCH_SERVICE = "agent.tool.batch";
-var TOOL_BATCH_SERVICE_DESCRIPTOR = {
-  name: TOOL_BATCH_SERVICE,
-  version: "1.0.0",
-  methods: [{ name: "execute", input_schema: `${TOOL_BATCH_SERVICE}.execute.input.v1`, output_schema: `${TOOL_BATCH_SERVICE}.execute.output.v1` }]
-};
-var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
-  ...TOOL_BATCH_SERVICE_DESCRIPTOR,
-  methods: [...TOOL_BATCH_SERVICE_DESCRIPTOR.methods, {
-    name: "stream_admit",
-    input_schema: `${TOOL_BATCH_SERVICE}.stream.admit.input.v1`,
-    output_schema: `${TOOL_BATCH_SERVICE}.stream.admit.output.v1`
-  }]
-};
-
-// packages/plugin-sdk/src/session-service.ts
-var sessionDomainArity = {
-  "InspectionAuthority": [0, 1],
-  "ListInspections": [0, 1],
-  "ReconcileInspection": [1, 1],
-  "AcquireInspection": [1, 1],
-  "ReleaseInspection": [1, 0],
-  "AppendAcceptedUserHistoryRecordWithControl": [5, 1],
-  "ReadClientInput": [2, 2],
-  "ListUnsettledClientInputs": [1, 1],
-  "AcceptClientInput": [3, 2],
-  "ChangeClientInput": [6, 1],
-  "AppendAcceptedClientHistoryRecord": [6, 1],
-  "SettleClientInputExecution": [5, 0],
-  "MarkClientInputsRead": [2, 0],
-  "ListClientInputRecoveryCandidates": [1, 1],
-  "RecoverClientInput": [2, 0],
-  "ClientInputHistoryReceipts": [1, 1],
-  "AcceptHeldUserWork": [2, 1],
-  "AdmitThreadExecution": [4, 1],
-  "AppendAcceptedUserHistoryRecord": [3, 1],
-  "AppendContinuationHistoryRecord": [4, 1],
-  "AppendControlledHistoryRecord": [3, 1],
-  "AppendHistoryRecord": [2, 0],
-  "AppendHistoryRecordReturningSeq": [2, 1],
-  "AppendHistoryRecords": [2, 0],
-  "AppendHistoryRecordsReturningRange": [2, 2],
-  "BindDriver": [2, 0],
-  "BindWorktree": [2, 1],
-  "CancelHeldUserWork": [3, 1],
-  "ChangeControl": [4, 1],
-  "ClaimHeldUserWork": [2, 0],
-  "CompareAndSwapCompactionNote": [3, 1],
-  "CompleteParticipantRun": [4, 0],
-  "CountParticipantsByKind": [1, 1],
-  "Create": [1, 1],
-  "CreateFolder": [1, 1],
-  "CreateForkWithMetadata": [3, 1],
-  "CreateInitialized": [2, 1],
-  "CreateInitializedWithInbox": [5, 1],
-  "CreateInitializedWithLaunch": [4, 1],
-  "CreateManagedForkWithMetadata": [4, 1],
-  "CreateManagedWithMetadata": [3, 1],
-  "CreateManagedWithWorktree": [5, 1],
-  "CreateWithMetadata": [2, 1],
-  "CreateWithWorktree": [4, 1],
-  "Delete": [1, 1],
-  "DeleteArchived": [1, 1],
-  "DeleteFolder": [1, 0],
-  "DeleteHeldUserWork": [2, 1],
-  "DeletePluginTurnLifecycleOutbox": [2, 0],
-  "DeletePluginTurnLifecycleOutboxForPlugin": [1, 0],
-  "EnqueueInbox": [1, 0],
-  "Find": [1, 2],
-  "FindManagedByRequest": [2, 2],
-  "FindPinnedArchived": [1, 1],
-  "FindPluginTurnLifecycle": [4, 2],
-  "FindRetiredParticipantByName": [2, 2],
-  "GetParticipant": [1, 1],
-  "HasHeldUserWorkReceipt": [2, 1],
-  "InboxHas": [1, 1],
-  "InboxTargets": [0, 1],
-  "Journal.Close": [1, 0],
-  "Journal.CompleteAttempt": [3, 0],
-  "Journal.CompleteOperation": [3, 0],
-  "Journal.CompleteWorkflow": [3, 0],
-  "Journal.MarkAttemptFirstEvent": [6, 0],
-  "Journal.PrepareAttempt": [3, 0],
-  "Journal.PrepareOperation": [3, 0],
-  "Journal.PrepareRecoveryAttempt": [3, 0],
-  "Journal.Prune": [2, 1],
-  "Journal.ReconcileOrphans": [2, 1],
-  "Journal.UpsertSubmission": [3, 0],
-  "LatestHistoryCheckpoint": [1, 2],
-  "LatestSubscriptionActivity": [1, 1],
-  "List": [1, 1],
-  "ListControls": [0, 1],
-  "ListForCWD": [3, 1],
-  "ListOrganization": [0, 1],
-  "ListPage": [1, 1],
-  "ListParticipantRuns": [2, 1],
-  "ListParticipants": [1, 1],
-  "ListPluginTurnLifecycleOutbox": [0, 1],
-  "ListProjectWork": [1, 1],
-  "ListTokenUsage": [0, 1],
-  "LoadActiveHistoryRecords": [2, 1],
-  "LoadCompactionNote": [2, 2],
-  "LoadContextSeed": [1, 2],
-  "LoadDriverBinding": [1, 2],
-  "LoadDriverCheckpoint": [1, 2],
-  "LoadHeldUserWork": [1, 1],
-  "LoadHistoryRecords": [2, 1],
-  "LoadModelInputReceipts": [1, 1],
-  "LoadProviderHistorySnapshot": [1, 1],
-  "LoadRequestContextCheckpoint": [1, 1],
-  "LoadSessionLaunch": [1, 2],
-  "MaintainModelInputReceipts": [1, 1],
-  "MaintainRedundantStorage": [0, 1],
-  "MostRecent": [0, 1],
-  "MostRecentForCWD": [2, 1],
-  "NewInferenceJournalRuntime": [1, 1],
-  "PendingInbox": [1, 1],
-  "PendingProjectWork": [1, 1],
-  "ProjectWorkOperation": [1, 2],
-  "PutContextSeed": [1, 1],
-  "PutPluginTurnLifecycleOutbox": [3, 0],
-  "PutSessionLaunch": [1, 1],
-  "ReadControl": [1, 2],
-  "ReadHistoryPage": [3, 1],
-  "ReadActiveHistoryQuery": [1, 1],
-  "ReadHistoryQuery": [1, 1],
-  "ReadPluginGenerationSnapshot": [1, 2],
-  "ReadProjectWork": [1, 1],
-  "RebuildSessionIndexes": [0, 0],
-  "ReconcileProjectWork": [2, 0],
-  "ReleaseHeldUserWork": [2, 0],
-  "RenameFolder": [2, 1],
-  "ReorderFolders": [1, 0],
-  "ReplaceHeldUserWork": [2, 0],
-  "RequestThreadExecutionResetRecord": [1, 0],
-  "RetireParticipant": [1, 0],
-  "RewriteHistoryRecords": [2, 0],
-  "RewriteHistoryRecordsAtBaseline": [3, 0],
-  "RewriteHistoryRecordsForEdit": [4, 0],
-  "RewriteHistoryRecordsForEngineEdit": [6, 0],
-  "SaveDriverCheckpoint": [2, 0],
-  "SaveModelInputReceipt": [2, 0],
-  "SaveProjectWork": [3, 1],
-  "SaveRequestContextCheckpoint": [2, 0],
-  "SearchHistoryPage": [4, 1],
-  "SearchHistoryQuery": [1, 1],
-  "SetEngine": [2, 1],
-  "SetEngineRef": [2, 1],
-  "SetHistoryEngineTurnID": [5, 0],
-  "SetModelSelection": [4, 1],
-  "SetProjectMembership": [4, 1],
-  "SetNextStepModelSelection": [2, 1],
-  "SetRuntimeSelection": [2, 1],
-  "SetSource": [2, 1],
-  "SetWorkspaceID": [2, 1],
-  "SettleInbox": [2, 0],
-  "StoreCompactionNote": [1, 0],
-  "StoreContextWindow": [4, 1],
-  "StoreHistoryCheckpointAtBaseline": [4, 1],
-  "ThreadExecutionResetRequested": [2, 1],
-  "UpdateArchived": [2, 1],
-  "UpdateGeneratedTitle": [2, 1],
-  "UpdateHeldUserWork": [3, 1],
-  "UpdateIndex": [3, 0],
-  "UpdateOrganization": [2, 1],
-  "UpdatePinned": [2, 1],
-  "UpdateTitle": [2, 1],
-  "UpdateWorkspaceBinding": [5, 1],
-  "UpsertParticipant": [1, 0],
-  "UpsertParticipantRun": [1, 0],
-  "ValidateContinuationControl": [1, 0],
-  "ValidateControl": [1, 0],
-  "ValidateInboxControls": [1, 0],
-  "WorktreeInfoForSession": [1, 2],
-  "WritePluginGenerationSnapshot": [2, 0]
-};
-var SESSION_DOMAIN_METHODS = Object.freeze(Object.keys(sessionDomainArity));
-
-// packages/plugin-sdk/src/compaction-service.ts
-var COMPACTION_SERVICE = "agent.compaction";
-var COMPACTION_SERVICE_DESCRIPTOR = {
-  name: COMPACTION_SERVICE,
-  version: "1.0.0",
-  methods: ["describe", "compact", "window", "handoff", "note-plan", "compact-note", "recover", "note-attempt"].map((name) => ({
-    name,
-    input_schema: `agent.compaction.${name}.input.v1`,
-    output_schema: `agent.compaction.${name}.output.v1`
-  }))
-};
-
-// packages/plugin-sdk/src/title-service.ts
-var TITLE_SERVICE = "session.title";
-var TITLE_SERVICE_DESCRIPTOR = {
-  name: TITLE_SERVICE,
-  version: "1.0.0",
-  methods: ["plan", "resolve"].map((name) => ({
-    name,
-    input_schema: `${TITLE_SERVICE}.${name}.input.v1`,
-    output_schema: `${TITLE_SERVICE}.${name}.output.v1`
-  }))
-};
-
-// packages/plugin-sdk/src/session-sharing.ts
-var SESSION_SHARING_SERVICE = "session.sharing";
-var SESSION_SHARING_DESCRIPTOR = {
-  name: SESSION_SHARING_SERVICE,
-  version: "1.0.0",
-  methods: ["preview", "create", "resolve", "read", "attachment", "revoke", "authorize"].map((name) => ({
-    name,
-    input_schema: `session.sharing.${name}.input.v1`,
-    output_schema: `session.sharing.${name}.output.v1`
-  }))
-};
-
-// packages/plugin-sdk/src/execution-authorization.ts
-var EXECUTION_AUTHORIZATION_SERVICE = "execution.authorization";
-var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
-  name: EXECUTION_AUTHORIZATION_SERVICE,
-  version: "1.0.0",
-  methods: ["describe", "inspect", "issue", "validate", "revoke", "acquire-commit", "release-commit", "inspect-commit", "list-commits", "reconcile-commit"].map((name) => ({
-    name,
-    ...name === "release-commit" ? { cleanup: true } : {},
-    input_schema: `execution.authorization.${name}.input.v1`,
-    output_schema: `execution.authorization.${name}.output.v1`
-  }))
-};
-
-// packages/plugin-sdk/src/index.ts
-var CAPABILITY_PROTOCOL_V3 = 3;
-var KERNEL_SERVICE_METHOD = "call";
-var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
-var SECURITY_AUTHORIZE_METHOD = "authorize";
-var KERNEL_SERVICE_NAMES = {
-  "host.storage.get": "host.storage.get",
-  "host.storage.set": "host.storage.set",
-  "host.storage.delete": "host.storage.delete",
-  "host.storage.keys": "host.storage.keys",
-  "host.storage.compare_exchange": "host.storage.compare-exchange",
-  "host.settings.get": "host.settings.get",
-  "host.settings.list": "host.settings.list",
-  "host.credentials.request": "host.credentials.request",
-  "host.session.create": "host.session.create",
-  "host.session.route": "host.session.route",
-  "host.session.send": "host.session.send",
-  "host.session.list": "host.session.list",
-  "host.session.cancel": "host.session.cancel",
-  "host.session.inspect": "host.session.inspect",
-  "host.session.context": "host.session.context",
-  "host.session.control": "host.session.control",
-  "host.session.attachment.read": "host.session.attachment.read",
-  "host.session.history.read": "host.session.history.read",
-  "host.session.history.search": "host.session.history.search",
-  "host.workspace.status": "host.workspace.status",
-  "host.workspace.apply": "host.workspace.apply",
-  "host.workspace.discard": "host.workspace.discard"
-};
-function kernelServiceCall(id, method, params) {
-  return {
-    id,
-    method: "host.service.call",
-    params: { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params }
-  };
-}
-function authorizationServiceDescriptor(options = {}) {
-  return {
-    name: SECURITY_AUTHORIZE_SERVICE,
-    version: "1.0.0",
-    methods: [{ name: SECURITY_AUTHORIZE_METHOD, input_schema: "security.authorize.input.v1", output_schema: "security.authorize.output.v1" }, ...options.effect_fence ? [
-      { name: "acquire-authorization", input_schema: "security.authorize.acquire-authorization.input.v1", output_schema: "security.authorize.acquire-authorization.output.v1" },
-      { name: "release-authorization", input_schema: "security.authorize.release-authorization.input.v1", output_schema: "security.authorize.release-authorization.output.v1", cleanup: true }
-    ] : []]
-  };
-}
-var AUTHORIZATION_SERVICE_DESCRIPTOR = authorizationServiceDescriptor();
-var RuntimeHostServiceError = class extends Error {
-  code;
-  constructor(error) {
-    super(error.message);
-    this.name = "RuntimeHostServiceError";
-    this.code = error.code;
-  }
-};
-async function handleRuntimeRequest(plugin2, request, host = unavailableRuntimeHost, execution = idleRuntimeExecution, lifecycle = idleRuntimeExecution) {
-  const executionHost = scopedRuntimeHost(host, execution);
-  try {
-    switch (request.method) {
-      case "initialize": {
-        const result = await plugin2.initialize(request.params, host, lifecycle);
-        const protocolVersion = result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version;
-        if ((protocolVersion ?? 1) === 1 && (result.capabilities?.length || result.model_adapters?.length)) {
-          throw Object.assign(new Error("initialize() must return protocol_version: 2 or 3 when declaring capabilities or model_adapters; omission selects legacy v1"), { code: "invalid_capability_protocol" });
-        }
-        const offered = request.params.supported_host_features;
-        const required = result.required_host_features;
-        for (const features of [offered, required]) {
-          if (features !== void 0 && (!Array.isArray(features) || features.some((feature) => typeof feature !== "string" || !feature || feature.trim() !== feature || feature.includes("\0")))) {
-            throw Object.assign(new Error("Host feature declarations must be arrays of exact nonempty names"), { code: "invalid_host_features" });
-          }
-        }
-        const requirements = new Set(required);
-        if (result.provided_services?.some((service) => service.name === DOCUMENT_STORE_SERVICE && service.methods?.some((method) => method.name === "authority"))) {
-          requirements.add(DOCUMENT_AUTHORITY_HOST_FEATURE);
-        }
-        for (const feature of requirements) {
-          if (!offered?.includes(feature)) {
-            throw Object.assign(new Error(`Required host feature ${feature} is unavailable; refusing incompatible host semantics`), { code: "host_feature_unavailable" });
-          }
-        }
-        return { id: request.id, result: {
-          ...result,
-          ...requirements.size ? { required_host_features: [...requirements] } : {},
-          protocol_version: protocolVersion,
-          lifecycle_version: 2
-        } };
-      }
-      case "prepare":
-        await plugin2.prepare?.(host, lifecycle);
-        return { id: request.id, result: null };
-      case "activate":
-        await plugin2.activate?.(host, lifecycle);
-        return { id: request.id, result: null };
-      case "capability.invoke":
-        if (!plugin2.invokeCapability) throw new Error("capability.invoke is not implemented");
-        execution.signal.throwIfAborted();
-        return { id: request.id, result: await plugin2.invokeCapability(request.params, executionHost, execution) };
-      case "service.invoke":
-        if (!plugin2.invokeService) throw new Error("service.invoke is not implemented");
-        execution.signal.throwIfAborted();
-        return { id: request.id, result: await plugin2.invokeService(request.params, executionHost, execution) };
-      case "service.changed":
-        await plugin2.serviceChanged?.(request.params, host);
-        return { id: request.id, result: null };
-      case "tool.execute":
-        if (!plugin2.executeTool) throw new Error("tool.execute is not implemented");
-        execution.signal.throwIfAborted();
-        return { id: request.id, result: await plugin2.executeTool(request.params, executionHost, execution) };
-      case "shutdown":
-        await plugin2.shutdown?.();
-        return { id: request.id, result: null };
-    }
-  } catch (error) {
-    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
-    return { id: request.id, error: {
-      ...code ? { code } : {},
-      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
-    } };
-  }
-}
-function scopedRuntimeHost(host, execution) {
-  return {
-    supports: (method) => host.supports(method),
-    call: (method, params, options) => {
-      const signal = options?.cleanup ? options.signal : options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
-      if (method === "host.service.continue") {
-        if (options?.cleanup) return Promise.reject(new Error("Service continuation cannot run as cleanup"));
-        const continuation = params;
-        return host.call("host.service.continue", {
-          continuation_id: continuation.continuation_id,
-          execution_id: execution.executionId
-        }, { signal });
-      }
-      const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
-      return host.call("host.service.call", {
-        ...serviceParams,
-        ...options?.cleanup ? { execution_id: void 0, cleanup: true } : execution.executionId ? { execution_id: execution.executionId } : {}
-      }, { signal });
-    }
-  };
-}
-var unavailableRuntimeHost = {
-  supports: () => false,
-  call: async (method) => {
-    throw new Error(`host service ${method} is unavailable outside a runtime connection`);
-  }
-};
-var idleRuntimeExecutionController = new AbortController();
-var idleRuntimeExecution = {
-  executionId: "",
-  signal: idleRuntimeExecutionController.signal
-};
-var JSONLRuntimeHost = class {
-  constructor(send) {
-    this.send = send;
-  }
-  sequence = 0;
-  closed = false;
-  supported = /* @__PURE__ */ new Set();
-  pending = /* @__PURE__ */ new Map();
-  configure(methods) {
-    this.supported = new Set(methods ?? []);
-  }
-  supports(method) {
-    if (method === "host.service.continue") return this.supported.has(method);
-    return this.supported.has("host.service.call") || this.supported.has(method);
-  }
-  call(method, params, options) {
-    const signal = options?.signal;
-    if (signal?.aborted) return Promise.reject(signal.reason);
-    if (this.closed) return Promise.reject(new Error("runtime transport closed"));
-    if (!this.supports(method)) {
-      return Promise.reject(new Error(`host service ${method} is not supported`));
-    }
-    if (method === "host.service.continue" && options?.cleanup) {
-      return Promise.reject(new Error("Service continuation cannot run as cleanup"));
-    }
-    const id = `plugin-${++this.sequence}`;
-    return new Promise((resolve, reject) => {
-      const cleanup = () => {
-        this.pending.delete(id);
-        signal?.removeEventListener("abort", abort);
-      };
-      const abort = () => {
-        cleanup();
-        reject(signal.reason);
-      };
-      const fail = (error) => {
-        cleanup();
-        reject(error);
-      };
-      this.pending.set(id, {
-        resolve(value) {
-          cleanup();
-          resolve(value);
-        },
-        reject: fail
-      });
-      signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.continue" ? { id, method, params } : method === "host.service.call" ? { id, method: "host.service.call", params } : kernelServiceCall(id, method, params);
-      if (options?.cleanup && frame.method !== "host.service.continue") {
-        frame.params = { ...frame.params, execution_id: void 0, cleanup: true };
-      }
-      void this.send(frame).catch(fail);
-    });
-  }
-  route(value) {
-    if (typeof value !== "object" || value === null) return false;
-    const response = value;
-    if (typeof response.id !== "string" || response.method !== void 0 || !("result" in response) && !("error" in response)) return false;
-    const pending = this.pending.get(response.id);
-    if (!pending) return true;
-    this.pending.delete(response.id);
-    if (response.error !== void 0) {
-      const error = response.error;
-      pending.reject(new RuntimeHostServiceError({
-        code: typeof error.code === "string" ? error.code : "host_error",
-        message: typeof error.message === "string" ? error.message : "host service failed"
-      }));
-    } else {
-      pending.resolve(response.result);
-    }
-    return true;
-  }
-  close() {
-    this.closed = true;
-    for (const pending of this.pending.values()) {
-      pending.reject(new Error("runtime transport closed"));
-    }
-    this.pending.clear();
-  }
-};
-var MAX_CONCURRENT_TOOLS = 8;
-async function runJSONLRuntime(plugin2, streams) {
-  let writes = Promise.resolve();
-  const send = (value) => {
-    const next = writes.then(async () => {
-      await streams.output.write(`${JSON.stringify(value)}
-`);
-    });
-    writes = next.catch(() => void 0);
-    return next;
-  };
-  const host = new JSONLRuntimeHost(send);
-  const lifetime = new AbortController();
-  const executions = /* @__PURE__ */ new Map();
-  const callerScopes = /* @__PURE__ */ new Map();
-  lifetime.signal.addEventListener("abort", () => {
-    for (const controller of callerScopes.values()) controller.abort();
-    callerScopes.clear();
-  }, { once: true });
-  const active = /* @__PURE__ */ new Set();
-  const concurrentServices = new Set(plugin2.concurrentServices ?? []);
-  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin2.concurrentCapabilities ?? []]);
-  const concurrentTools = /* @__PURE__ */ new Set();
-  const queued = [];
-  let running = 0;
-  let exclusive = false;
-  const pump = () => {
-    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
-      const next = queued[0];
-      const safe = next.canOverlap();
-      if (!safe && running > 0) return;
-      queued.shift();
-      running++;
-      exclusive = !safe;
-      const finished = () => {
-        running--;
-        if (!safe) exclusive = false;
-        pump();
-      };
-      void next.run().then(finished, finished);
-    }
-  };
-  const schedule = (run, canOverlap = () => false) => {
-    const task = new Promise((resolve, reject) => {
-      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
-    });
-    pump();
-    return task;
-  };
-  let lifecycle = Promise.resolve();
-  let shuttingDown = false;
-  const track = (task) => {
-    active.add(task);
-    void task.then(() => active.delete(task), () => active.delete(task));
-  };
-  const enqueueResponse = (value) => {
-    track(schedule(() => send(value)));
-  };
-  const processLine = (line) => {
-    if (line.trim() === "") return;
-    let parsed;
-    try {
-      parsed = JSON.parse(line);
-    } catch (error) {
-      enqueueResponse({ id: "invalid", error: { message: error instanceof Error ? error.message : String(error) } });
-      return;
-    }
-    if (host.route(parsed)) return;
-    if (isExecutionCancelRequest(parsed)) {
-      for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
-      callerScopes.get(parsed.params.execution_id)?.abort();
-      callerScopes.delete(parsed.params.execution_id);
-      return;
-    }
-    if (!isRuntimeRequest(parsed)) {
-      enqueueResponse({ id: "invalid", error: { message: "invalid runtime request" } });
-      return;
-    }
-    if (shuttingDown) {
-      track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
-      return;
-    }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
-    if (parsed.method === "shutdown") {
-      shuttingDown = true;
-      lifetime.abort();
-    }
-    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service) || parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability);
-    const executionId = runtimeRequestExecutionId(parsed);
-    const controller = new AbortController();
-    let controllers = executions.get(executionId);
-    if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
-    controllers.add(controller);
-    let caller;
-    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
-      const scope = parsed.params.caller_scope;
-      let owner = callerScopes.get(scope.id);
-      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
-      caller = { ...scope, signal: owner.signal };
-    }
-    const execution = { executionId, signal: controller.signal, caller };
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
-    const run = async () => {
-      await ready;
-      if (parsed.method === "initialize") {
-        host.configure(parsed.params.supported_host_services);
-        concurrentTools.clear();
-      }
-      const response = await handleRuntimeRequest(plugin2, parsed, host, execution, { signal: lifetime.signal });
-      if (parsed.method === "initialize" && "result" in response) {
-        const definition = response.result;
-        for (const tool of definition.tools ?? []) {
-          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
-        }
-      }
-      await send(response);
-    };
-    const task = (concurrent ? run() : schedule(
-      run,
-      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
-    )).finally(() => {
-      const controllers2 = executions.get(executionId);
-      controllers2?.delete(controller);
-      if (controllers2?.size === 0) executions.delete(executionId);
-      controller.abort();
-    });
-    if (isLifecycle) lifecycle = task.catch(() => void 0);
-    track(task);
-  };
-  const decoder = new TextDecoder();
-  let buffered = "";
-  try {
-    for await (const chunk of streams.input) {
-      buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      const lines = buffered.split("\n");
-      buffered = lines.pop() ?? "";
-      for (const line of lines) processLine(line);
-    }
-    buffered += decoder.decode();
-    if (buffered.trim() !== "") processLine(buffered);
-  } finally {
-    lifetime.abort();
-    host.close();
-    for (const controllers of executions.values()) {
-      for (const controller of controllers) controller.abort();
-    }
-    await Promise.all(active);
-    await writes;
-  }
-}
-function isExecutionCancelRequest(value) {
-  if (typeof value !== "object" || value === null) return false;
-  const request = value;
-  return typeof request.id === "string" && request.method === "execution.cancel" && typeof request.params?.execution_id === "string" && request.params.execution_id.trim() !== "";
-}
-function runtimeRequestExecutionId(request) {
-  switch (request.method) {
-    case "capability.invoke":
-    case "service.invoke":
-    case "tool.execute":
-      return request.params.execution_id?.trim() ?? "";
-    default:
-      return "";
-  }
-}
-function isRuntimeRequest(value) {
-  if (typeof value !== "object" || value === null) return false;
-  const request = value;
-  if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
-  return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
-}
 
 // plugins/generative-ui/plugins/generative-ui/runtime-entry.ts
 var [major, minor] = process.versions.node.split(".").map(Number);

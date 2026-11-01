@@ -290,6 +290,40 @@ async function click(win, selector) {
   const delivered = await evaluate(win, 'window.nextNativeClick', `Receive native click: ${selector}`);
   assert.ok(delivered.trusted && delivered.matched, `Native click must reach ${selector}: ${JSON.stringify(delivered)}`);
 }
+async function verifyEditableList(win, nativeInput) {
+  // Shared list and field-scope contract: each row edits independently,
+  // add/remove persists, and temporary fields reset after the view is remounted.
+  const checklist = { version: 2, title: 'Checklist', fallback: 'Edit a checklist', state: [
+    { id: 'items', value: [{ id: 'one', text: 'Alpha' }, { id: 'two', text: 'Beta' }] },
+    { id: 'scratch', value: 'Initial', scope: 'temporary' },
+  ], body: [
+    { id: 'rows', type: 'each', items: state('items'), key: { op: 'item', path: ['id'] }, children: [
+      { id: 'itemText', type: 'input', label: 'Item', itemField: 'text' },
+      { id: 'deleteItem', type: 'button', label: 'Remove', onClick: [{ type: 'remove', state: 'items' }] },
+    ] },
+    { id: 'addItem', type: 'button', label: 'Add', onClick: [{ type: 'append', state: 'items', value: literal({ id: 'three', text: 'Gamma' }) }] },
+    { id: 'scratchInput', type: 'input', label: 'Temporary', state: 'scratch' },
+  ] };
+  const checklistResult = toolCall(checklist, 'editable-list').result?.result;
+  assert.ok(checklistResult && !checklistResult.is_error, 'Runtime accepts editable list and temporary field');
+  await evaluate(win, `window.probe.result(${JSON.stringify(checklistResult)})`);
+  await waitFor(win, `document.querySelectorAll('[data-genui-node="itemText"]').length === 2 && document.querySelector('.plugin-genui-program')?.getAttribute('aria-busy') === 'false'`);
+  await nativeInput('[data-genui-node="itemText"]:first-of-type', 'Changed');
+  assert.deepEqual(await evaluate(win, `Array.from(document.querySelectorAll('[data-genui-node="itemText"]'), el => el.value)`), ['Changed', 'Beta']);
+  await click(win, '[data-genui-node="rows"] .plugin-genui-repeat-item:nth-child(2) [data-genui-node="deleteItem"] button');
+  await click(win, '[data-genui-node="addItem"] button');
+  await nativeInput('[data-genui-node="scratchInput"]', 'Temporary');
+  await waitFor(win, 'window.probe.pending === 0');
+  await evaluate(win, 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  fs.writeFileSync(path.join(output, 'editable-list.png'), (await capturePage(win)).toPNG());
+  await evaluate(win, 'window.probe.mount(false)');
+  await waitFor(win, `!document.querySelector('.plugin-genui-program')`);
+  await evaluate(win, 'window.probe.mount(true)');
+  await waitFor(win, `document.querySelector('.plugin-genui-program')?.getAttribute('aria-busy') === 'false'`);
+  assert.deepEqual(await evaluate(win, `Array.from(document.querySelectorAll('[data-genui-node="itemText"]'), el => el.value)`), ['Changed', 'Gamma']);
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="scratchInput"]').value`), 'Initial');
+  results.checks.push('editable list state and temporary fields restore correctly');
+ }
 const rendererRun = app.whenReady().then(async () => {
   const win = new BrowserWindow({ width:1100, height:1200, show:true, ...(process.platform === 'linux' ? { frame:false, autoHideMenuBar:true } : {}), webPreferences:{ contextIsolation:true, nodeIntegration:false, sandbox:true, backgroundThrottling:false } });
   activeWindow = win;
@@ -298,6 +332,21 @@ const rendererRun = app.whenReady().then(async () => {
   win.focus();
   win.webContents.focus();
   await waitFor(win, '!!window.probe');
+  const nativeInput = async (selector, value) => {
+    await click(win, selector);
+    await waitFor(win, `document.activeElement === document.querySelector(${JSON.stringify(selector)})`);
+    win.webContents.selectAll();
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Backspace'});
+    win.webContents.sendInputEvent({type:'keyUp',keyCode:'Backspace'});
+    await waitFor(win, `document.querySelector(${JSON.stringify(selector)}).value === ''`);
+    await withDeadline(win.webContents.insertText(value),'Insert native input text');
+  };
+  if (process.env.WUU_GENUI_LIST_ONLY === '1') {
+    await evaluate(win, 'window.probe.enable()');
+    await verifyEditableList(win, nativeInput);
+    fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2));
+    win.destroy(); app.quit(); return;
+  }
   assert.equal(await evaluate(win, `!!document.querySelector('[data-wuu-component="generated-ui"]')`), false);
   assert.ok(await evaluate(win, `document.body.textContent.includes('Design: 12 tasks')`));
   results.checks.push('disabled renderer keeps ordinary text fallback');
@@ -515,15 +564,9 @@ const rendererRun = app.whenReady().then(async () => {
   await click(win, '[data-genui-node="detailsV2"] > summary');
   await waitFor(win, `!document.querySelector('[data-genui-node="detailsV2"]').open`);
 
-  const nativeInput = async (selector, value) => {
-    await click(win, selector);
-    await waitFor(win, `document.activeElement === document.querySelector(${JSON.stringify(selector)})`);
-    win.webContents.selectAll();
-    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Backspace'});
-    win.webContents.sendInputEvent({type:'keyUp',keyCode:'Backspace'});
-    await waitFor(win, `document.querySelector(${JSON.stringify(selector)}).value === ''`);
-    await withDeadline(win.webContents.insertText(value),'Insert native input text');
-  };
+  await verifyEditableList(win, nativeInput);
+  await evaluate(win, `window.probe.result(${JSON.stringify(programResult)})`);
+  await waitFor(win, `document.querySelector('[data-genui-node="capacityInput"]') && document.querySelector('.plugin-genui-program')?.getAttribute('aria-busy') === 'false'`);
   await nativeInput('[data-genui-node="capacityInput"]', '50');
   await waitFor(win, `document.querySelector('[data-genui-node="capacityMetric"] strong')?.textContent === '200'`);
   assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="capacitySlider"] input').value`), '50');

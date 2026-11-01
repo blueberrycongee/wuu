@@ -159,7 +159,7 @@ A named runtime composition can also select the complete module set. For example
 }
 ```
 
-`profile` selects one entry in `profiles`. A profile supplies `modules`, ordered `bundles`, or `patches`, including all dependencies. Module order does not determine service selection or lifecycle order. An explicit empty array starts no modules. Omitting a profile, `modules`, and `patches` preserves enabled, trusted discovery defaults. An unknown profile or bundle, repeated bundle, duplicate module, excluded binding target, unavailable selected module, or failed selected runtime rejects preparation. Module selection cannot install, enable, or trust a package. Filtering happens before runtime, hook, skill, and MCP contributions are loaded.
+`profile` selects one entry in `profiles`. A profile supplies `modules`, ordered `bundles`, or `patches`, including all dependencies. Module order does not determine service selection or lifecycle order. An explicit empty array starts no modules. Omitting a profile, `modules`, and `patches` preserves enabled, trusted discovery defaults. An unknown profile or bundle, repeated bundle, duplicate module, excluded binding target, unavailable selected module, or failed selected runtime rejects preparation. Ordinary module selection cannot install, enable, or trust a package. Filtering happens before runtime, hook, skill, and MCP contributions are loaded.
 
 Bundles are reusable static configuration. For example, the same analysis capability can be shared by several profiles:
 
@@ -187,7 +187,9 @@ Bundles are reusable static configuration. For example, the same analysis capabi
 }
 ```
 
-Resolution starts with an empty module set and applies the selected profile’s bundles in listed order, then its inline `modules` / `services`, then its `patches`. Top-level `modules` / `services` follow, and top-level `patches` apply last. Each inline `modules` array replaces the complete set; services override by name and major. A patches-only composition also starts empty. Bundles contain only patches and do not execute code or include other bundles.
+Resolution starts with an empty module set and applies the selected profile’s bundles in listed order, then its inline `modules` / `services`, then its `patches`. Top-level `modules` / `services` follow, and top-level `patches` apply last. Each inline `modules` array replaces the complete set; services override by name and major. A patches-only composition also starts empty. Bundles contain patches and optional module defaults; they do not execute code or include other bundles.
+
+Bundles in version 2 and later may declare `optional_modules` as an array of package IDs. These packages are enabled by default for the profile and selected when available; a missing, incompatible, untrusted, or explicitly disabled package does not block the composition. This default never grants trust. An explicit module selection or patch overrides the optional default. A required service binding still requires its provider to be available.
 
 In a patch, `modules` maps IDs to `true` (include) or `false` (exclude). `services` replaces individual bindings; `remove_services` accepts `{ "service": "...", "major": 1 }` entries to remove explicit selections. Removing a binding returns to unique-provider resolution, so multiple remaining providers still fail. Excluding a module does not silently erase bindings that target it: remove or replace those in the same composition. Duplicate or conflicting operations within one patch fail; later patches may intentionally override earlier choices. Empty arrays survive configuration saves. Resolution builds fresh state, so one profile cannot mutate another.
 

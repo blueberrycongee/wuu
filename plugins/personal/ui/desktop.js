@@ -58,6 +58,7 @@ export async function activate(api) {
       "today": "Today",
       "settings": "Settings",
       "placeholder": "Message",
+      "rendererContextLimited": "Only the most recently updated interfaces fit in the next message; older interface values will be omitted.",
       "stopped": "Stopped",
       "stopping": "Stopping · waiting for confirmation",
       "running": "Working",
@@ -159,6 +160,7 @@ export async function activate(api) {
       "today": "今天",
       "settings": "设置",
       "placeholder": "发送消息",
+      "rendererContextLimited": "下一条消息只能附带最近更新的部分界面，较早的界面内容不会附带。",
       "stopped": "已停止",
       "stopping": "正在停止 · 等待宿主确认",
       "running": "处理中",
@@ -547,7 +549,7 @@ export async function activate(api) {
   const recoveryPrefix = `wuu.personal.draftRecovery.v1:${route.userSpaceId}:`;
   const recoveryAge = 24 * 60 * 60 * 1000, recoveryLimit = 64 * 1024;
   const conversations = new Map(), draftListeners = new Set();
-  const genuiDrafts = new Map();
+  const genuiDrafts = new Map(), rendererDrafts = new Map();
   const recoveryKey = id => recoveryPrefix + encodeURIComponent(id);
   const readRecovery = raw => {
     if (!raw || raw.length > recoveryLimit) return null;
@@ -559,7 +561,7 @@ export async function activate(api) {
     if (pending && (typeof pending.requestID !== "string" || pending.requestID.length > 128 ||
         pending.prompt !== value.prompt || typeof pending.fileKey !== "string" ||
         (pending.relationKey !== undefined && typeof pending.relationKey !== "string"))) return null;
-    return { prompt: value.prompt, attachmentsMissing: value.attachmentsMissing, pending: pending ? { prompt: pending.prompt, fileKey: pending.fileKey, relationKey: pending.relationKey, requestID: pending.requestID, genuiContext: pending.genuiContext, uncertain: true } : null, recoveryUpdatedAt: value.updatedAt };
+    return { prompt: value.prompt, attachmentsMissing: value.attachmentsMissing, pending: pending ? { prompt: pending.prompt, fileKey: pending.fileKey, relationKey: pending.relationKey, requestID: pending.requestID, genuiContext: pending.genuiContext, rendererContext: pending.rendererContext, rendererContexts: pending.rendererContexts, uncertain: true } : null, recoveryUpdatedAt: value.updatedAt };
   };
   const draftFor = id => {
     if (!conversations.has(id)) {
@@ -626,14 +628,23 @@ export async function activate(api) {
   };
   const streams = new Map();
   let mainSessionID = "";
-  const streamFor = id => { if (!streams.has(id)) streams.set(id, { items: new Map(), completedItems: new Set(), completedTurns: new Set(), version: 0, running: false }); return streams.get(id); };
+  const streamFor = id => { if (!streams.has(id)) streams.set(id, { items: new Map(), tools: new Map(), completedItems: new Set(), completedTurns: new Set(), verifiedToolTurns: new Set(), version: 0, running: false }); return streams.get(id); };
   const seenEvents = new WeakSet();
   api.onHostEvent(event => {
-    if (!event || typeof event !== "object" || seenEvents.has(event) || event.kind !== "notification") return;
+    if (!event || typeof event !== "object" || seenEvents.has(event)) return;
     seenEvents.add(event);
+    const verifiedScope = event.user_scope?.user_space_id === route.userSpaceId && event.user_scope?.product_domain === route.productDomain && (event.user_scope?.composition_profile || undefined) === (route.compositionProfile || undefined);
+    if (verifiedScope && mainSessionID && ["connection-reset", "server-exit"].includes(event.kind)) {
+      const stream = streamFor(mainSessionID);
+      for (const tool of stream.tools.values()) if (tool.status === "in_progress") { tool.status = "interrupted"; stream.verifiedToolTurns.add(tool.turn_id); }
+      draftListeners.forEach(listener => listener());
+      return;
+    }
+    if (event.kind !== "notification") return;
     const params = event.message?.params, session = params?.thread_id || params?.session_id || params?.message?.thread_id || params?.queued?.thread_id;
     if (!mainSessionID || session !== mainSessionID) return;
     const stream = streamFor(session), method = event.message.method, item = params.item, itemID = item?.id || params.item_id;
+    const liveScope = verifiedScope && event.replayed !== true;
     const itemKey = `${params.turn_id}:${itemID}`;
     const queues = draftFor(session).queueIds;
     stream.version++;
@@ -642,6 +653,13 @@ export async function activate(api) {
     if (method === "turn/started") { stream.running = true; stream.activeTurnID = params.turn?.id || params.turn_id; }
     if (["turn/completed", "turn/error"].includes(method)) {
       const turnID = params.turn?.id || params.turn_id;
+      if (liveScope && turnID) {
+        stream.verifiedToolTurns.add(turnID);
+        for (const tool of stream.tools.values()) if (tool.turn_id === turnID) {
+          const interrupted = method === "turn/error" || ["failed", "interrupted", "cancelled"].includes(params.turn?.status);
+          tool.status = interrupted ? "interrupted" : tool.status === "failed" ? "failed" : "completed";
+        }
+      }
       stream.completedTurns.add(turnID);
       // Durable sequence IDs are stamped after item/completed. The terminal
       // turn is the persistence barrier and owns the final item identities.
@@ -660,7 +678,32 @@ export async function activate(api) {
       if (!stream.activeTurnID || stream.activeTurnID === turnID) { stream.running = false; stream.activeTurnID = undefined; }
       if (draftFor(session).stopTarget === turnID) updateDraft(session, { stopState: undefined, stopTarget: undefined });
     }
-    if (method === "item/removed") { stream.items.delete(itemKey); stream.completedItems.add(itemKey); }
+    if (method === "item/removed") { stream.items.delete(itemKey); if (liveScope) stream.tools.delete(itemKey); stream.completedItems.add(itemKey); }
+    if (liveScope && params.turn_id && !stream.verifiedToolTurns.has(params.turn_id)) {
+      if (method === "item/started" && item?.type === "tool_call" && item.id && item.source_id && typeof item.display?.capability === "string" && item.display.capability) {
+        if (stream.tools.size >= 32 && !stream.tools.has(itemKey)) {
+          const oldest = [...stream.tools].find(([, tool]) => tool.status !== "in_progress");
+          if (oldest) stream.tools.delete(oldest[0]);
+        }
+        const text = typeof item.arguments === "string" && item.arguments ? item.arguments : stream.tools.get(itemKey)?.argumentsText || "";
+        if ((stream.tools.size < 32 || stream.tools.has(itemKey)) && new TextEncoder().encode(text).length <= 131072) stream.tools.set(itemKey, { id: item.id, call_id: item.source_id, turn_id: params.turn_id, capability: item.display.capability, argumentsText: text, status: "in_progress" });
+      }
+      if (method === "item/toolCall/delta") {
+        const tool = stream.tools.get(itemKey);
+        if (tool?.status === "in_progress" && typeof params.delta === "string") {
+          const next = tool.argumentsText + params.delta;
+          if (new TextEncoder().encode(next).length <= 131072) tool.argumentsText = next;
+          else tool.status = "failed";
+        }
+      }
+      if (method === "item/completed" && item?.type === "tool_call") {
+        const tool = stream.tools.get(itemKey);
+        if (tool) {
+          if (typeof item.arguments === "string" && new TextEncoder().encode(item.arguments).length <= 131072) tool.argumentsText = item.arguments;
+          tool.status = item.result_detail?.is_error || item.status === "failed" ? "failed" : "completed";
+        }
+      }
+    }
     if (["item/agentMessage/delta", "item/agentMessage/replace"].includes(method)) {
       if (!itemID || stream.completedItems.has(itemKey) || stream.completedTurns.has(params.turn_id)) return;
       const previous = stream.items.get(itemKey) || { id: itemID, turn_id: params.turn_id, content: "" };
@@ -862,6 +905,7 @@ export async function activate(api) {
     const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
     const [sendRefreshError, setSendRefreshError] = React.useState("");
+    const [rendererContextLimited, setRendererContextLimited] = React.useState(false);
     const receiptStates = React.useRef(new Map());
     const acceptReceipt = (receipt, detail = {}) => {
       if (!receipt || receipt.session_id !== currentAgent.current?.main_session_id || (detail.requestID && detail.requestID !== receipt.request_id) || !receipt.request_id || !receipt.receipt_id || !receipt.client_id || !receipt.queue_id || !receipt.host_request_id || !receipt.accepted_at || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || !["accepted", "in_history"].includes(receipt.receipt_state)) return false;
@@ -964,7 +1008,7 @@ export async function activate(api) {
     const calendarRead = React.useRef(0), calendarOpening = React.useRef(false), historyRecovery = React.useRef({ complete: false, endSeq: undefined });
     currentAgent.current = agent;
     const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
-    const stream = streamFor(conversationID), running = stream.running, activeTurnID = stream.activeTurnID, queuedCount = draft.queueIds.size, liveMessages = [...stream.items.values()], stopState = draft.stopState;
+    const stream = streamFor(conversationID), running = stream.running, activeTurnID = stream.activeTurnID, queuedCount = draft.queueIds.size, liveMessages = [...stream.items.values()], liveTools = [...stream.tools.values()], stopState = draft.stopState;
     const task = tasks.find(item => item.task_id === selection?.taskId);
     const artifactOutputs = records.flatMap(record => (record.attachments || []).filter(attachment => attachment.kind === "artifact").map(attachment => ({ seq: record.seq, at: record.at, attachment })));
     const selectedArtifact = artifactOutputs.find(output => output.seq === selection?.seq && output.attachment.sha256 === selection?.sha256);
@@ -1095,6 +1139,7 @@ export async function activate(api) {
         for (const [id, message] of stream.items) {
           if (!message.streaming && (history.records || []).some(record => (message.seq !== undefined && record.seq === message.seq) || (message.source_id && record.provider_item_id === message.source_id))) stream.items.delete(id);
         }
+        for (const [id, tool] of stream.tools) if ((history.records || []).some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))) stream.tools.delete(id);
         const state = opened.session?.state;
         if (version === stream.version) {
           stream.running = ["running", "queued"].includes(state);
@@ -1276,11 +1321,26 @@ export async function activate(api) {
       for (const [key, draft] of genuiDrafts) if (key.startsWith(`${agent.agent_id}:`)) surfaces.set(draft.surfaceId, draft);
       return structuredClone([...surfaces.values()]);
     };
-    const send = async (submitted, draftID = conversationID) => {
+    const rendererContextSelection = () => {
+      const sources = new Map();
+      for (const [key, value] of rendererDrafts) if (key.startsWith(`${agent.agent_id}:${conversationID}:`)) {
+        const identity = JSON.stringify([value.seq, value.part_index, value.tool_call_id, value.artifact_ref]);
+        sources.delete(identity); sources.set(identity, value);
+      }
+      const selected = []; let limited = false;
+      for (const value of [...sources.values()].reverse()) {
+        const next = [value, ...selected];
+        if (next.length > 16 || new TextEncoder().encode(JSON.stringify(next)).length > 16384) { limited = true; continue; }
+        selected.unshift(value);
+      }
+      return { contexts: selected, limited };
+    };
+    const rendererContexts = () => structuredClone(rendererContextSelection().contexts);
+    const send = async (submitted, draftID = conversationID, rendererContext) => {
       const id = draftID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
-      if (!agent || state.submitting || state.attachmentsMissing || readingRef.current || (!text.trim() && !sentFiles.length)) return;
+      if (!agent || state.submitting || state.attachmentsMissing || readingRef.current || (!text.trim() && !sentFiles.length)) return false;
       const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
-      if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext() };
+      if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext)) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? undefined : rendererContexts() };
       const requestID = state.pending.requestID, editVersion = state.editVersion;
       if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
       const stream = streamFor(conversationID), version = stream.version;
@@ -1290,7 +1350,7 @@ export async function activate(api) {
       const recover = async () => { const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: requestID }); return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null; };
       try {
         let result = state.pending.uncertain ? await recover().catch(() => null) : null;
-        if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}), ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
+        if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}), ...(state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}), ...(state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}), ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
         if (!acceptReceipt(result?.receipt, detail)) {
           result = await recover();
           if (!result) throw new Error(locale?.startsWith("zh") ? "尚未确认持久接收，请保留草稿并重试。" : "Durable delivery is not confirmed. Keep the draft and retry.");
@@ -1306,13 +1366,14 @@ export async function activate(api) {
           const current = draftFor(id); if (current.pending?.requestID === requestID) current.pending.uncertain = true;
           const detailError = cause instanceof Error ? cause.message : String(cause);
           receiptStates.current.set(requestID, { ...detail, state: /request_id_conflict/.test(detailError) ? "rejected" : "unknown" });
-          updateDraft(id, { error: "" }); return;
+          updateDraft(id, { error: "" }); return false;
         }
       }
       finally { updateDraft(id, { submitting: false }); }
       // A successful admission is not undone by a failed read. Never turn a
       // history refresh into a retry of the accepted message or its attachments.
       if (mounted.current) await refreshAcceptedSend();
+      return true;
     };
     const retryReceipt = async entry => {
       if (entry.busy) return;
@@ -1346,7 +1407,7 @@ export async function activate(api) {
           receiptStates.current.delete(originalID);
           if (originalDraft.pending?.requestID === originalID) updateDraft(entry.draftID, { pending: null });
         }
-        await send(entry.prompt, retryID);
+        await send(entry.prompt, retryID, pending.rendererContext);
         // A message retry must never overwrite a newer composer draft.
         if (receiptStates.current.get(pending.requestID)?.receipt) clearOriginalDraft();
       } finally {
@@ -1457,7 +1518,25 @@ export async function activate(api) {
         onRetry: async resumeHeld => deliver(await call("genui.read", input), resumeHeld),
       };
     });
-    const renderReplyMessage = record => h(ConversationMessage, { className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.ui_parts?.length ? record.ui_text || "" : record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
+    const resourcesFor = record => record.ui_resources?.map(({ part, part_index, tool_call_id, fallback_text }) => ({
+      sessionId: conversationID, rendererScope: route, itemId: tool_call_id, partIndex: part_index, part, fallbackText: fallback_text, running,
+      onStateChange: (values, instanceId) => {
+        const key = `${agent.agent_id}:${conversationID}:${record.seq}:${part_index}:${instanceId}`;
+        rendererDrafts.delete(key);
+        if (values !== undefined) rendererDrafts.set(key, { seq: record.seq, part_index, tool_call_id, artifact_ref: part.artifact.ref, values });
+        setRendererContextLimited(rendererContextSelection().limited);
+      },
+      onSubmit: async input => {
+        const context = input.context;
+        if (!context || typeof context !== "object" || Array.isArray(context)) throw new Error("Invalid interface submission");
+        const rendererContext = { seq: record.seq, part_index, tool_call_id, artifact_ref: part.artifact.ref,
+          actionId: context.actionId, label: context.label, values: context.values };
+        const id = `resource:${conversationID}:${record.seq}:${part_index}`;
+        if (draftFor(id).prompt !== input.text) updateDraft(id, { prompt: input.text });
+        if (!await send(input.text, id, rendererContext)) throw new Error("The response was not confirmed. Your inputs have been kept.");
+      },
+    }));
+    const renderReplyMessage = record => h(ConversationMessage, { className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), resources: resourcesFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: (record.ui_parts?.length || record.ui_resources?.length) ? record.ui_text || "" : record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
     const rootSeq = replySelection?.rootSeq;
     const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
@@ -1486,7 +1565,7 @@ export async function activate(api) {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeReplies(); }
       if (event.key === "Tab") { const controls = [...replyPanelRef.current.querySelectorAll('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href]')].filter(node => node.tabIndex >= 0 && !node.closest('[hidden]')); const first = controls[0], last = controls[controls.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
     } }, h("div", { className: "mosaic-replies-toolbar" }, h("button", { type: "button", className: "icon-button mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" })))), sendRefreshNotice, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
-      composer: h(React.Fragment, null, draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply })) },
+      composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply })) },
       replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
       replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : null,
       taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
@@ -1499,13 +1578,13 @@ export async function activate(api) {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
         actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
         showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
-        composer: h("div", { hidden: Boolean(replySelection) }, h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
+        composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
           onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply }))
-      }, records.filter(record => (record.ui_parts?.length || !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id))) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
-          className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.ui_parts?.length ? record.ui_text || "" : record.display_content || record.content || "", linkPolicy: "external-only",
+      }, records.filter(record => (record.ui_parts?.length || record.ui_resources?.length || !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id))) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
+          className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), resources: resourcesFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_resources?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: (record.ui_parts?.length || record.ui_resources?.length) ? record.ui_text || "" : record.display_content || record.content || "", linkPolicy: "external-only",
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
-        })), pendingReceipts.map(entry => renderPendingReceipt(entry, conversationID)), liveMessages.filter(message => !records.some(record => record.ui_parts?.length && (message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)))).map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+        })), liveTools.filter(tool => !records.some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))).map(tool => h(ConversationMessage, { key: `tool-preview:${tool.turn_id}:${tool.id}`, id: `tool-preview:${conversationID}:${tool.turn_id}:${tool.id}`, role: "assistant", content: "", linkPolicy: "external-only", resources: [{ sessionId: conversationID, rendererScope: route, itemId: tool.call_id, partIndex: 0, part: { type: "resource" }, fallbackText: "", running: true, preview: { capability: tool.capability, turnId: tool.turn_id, argumentsText: tool.argumentsText, status: tool.status } }] })), pendingReceipts.map(entry => renderPendingReceipt(entry, conversationID)), liveMessages.filter(message => !records.some(record => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)))).map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         h(settingsPanels.ReviewConversation, { locale }), h(settingsPanels.ConnectorConversation),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),

@@ -444,6 +444,9 @@ func (h *UserHost) serve(ctx context.Context, in io.Reader, out io.Writer, regis
 	c := &userHostConnection{id: id, ctx: ctx, cancel: cancel, output: make(chan userHostOutput, 128)}
 	h.connections[id] = c
 	h.mu.Unlock()
+	// Renderer identities belong to this connection and retire on disconnect.
+	renderers := &Server{rt: h.runtime, out: userHostConnectionWriter{c}, access: connectionAccess{principal: caller, policy: h.server.access.policy}}
+	defer renderers.closeRendererClients()
 	// Reverse transport belongs to this connection, never the shared user host.
 	// The facade has no request dispatcher or session router.
 	var transport *Server
@@ -556,7 +559,7 @@ func (h *UserHost) serve(ctx context.Context, in io.Reader, out io.Writer, regis
 			return errors.New("user host requires an identified client request; reverse RPC is unavailable")
 		}
 		switch req.Method {
-		case MethodInitialize, MethodPluginClientRequest, MethodPluginClientCancel,
+		case MethodInitialize, MethodPluginClientRequest, MethodPluginClientCancel, MethodPluginDesktopModuleRead, MethodPluginDesktopActivation,
 			MethodStateInspectionsList, MethodStateInspectionsReconcile,
 			MethodDevicePushRegister, MethodDevicePushUnregister, MethodShutdown,
 			MethodUserQuestionList, MethodUserQuestionRespond, MethodUserQuestionCancel, MethodUserQuestionHold:
@@ -604,6 +607,21 @@ func (h *UserHost) serve(ctx context.Context, in io.Reader, out io.Writer, regis
 			data, _ := json.Marshal(Response{ID: req.ID, Result: OKResult{OK: true}})
 			c.enqueue(append(data, '\n'))
 			return nil
+		}
+		if req.Method == MethodPluginDesktopModuleRead || req.Method == MethodPluginDesktopActivation {
+			if err := renderers.authorizeRequest(ctx, req); err != nil {
+				_ = renderers.writeResponse(req.ID, nil, err)
+			} else if req.Method == MethodPluginDesktopModuleRead {
+				var identity PluginDesktopModuleReadParams
+				if err := decodeParams(req.Params, &identity); err != nil || strings.TrimSpace(identity.GraphGeneration) == "" {
+					_ = renderers.writeResponse(req.ID, nil, errors.New("desktop module read requires its active graph"))
+				} else {
+					_ = renderers.handlePluginDesktopModuleRead(req)
+				}
+			} else {
+				_ = renderers.handlePluginDesktopActivation(req)
+			}
+			continue
 		}
 		if req.Method == MethodDevicePushRegister || req.Method == MethodDevicePushUnregister {
 			direct := &Server{rt: h.runtime, out: userHostConnectionWriter{c}, pushRegistrar: registrar, access: connectionAccess{principal: caller, policy: h.server.access.policy}}

@@ -18,10 +18,13 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   const scratch = await mkdtemp(join(tmpdir(), "twin-genui-runtime-")); t.after(() => rm(scratch, { recursive: true, force: true }));
   await build({ entryPoints: [join(root, "plugins/personal/src/genui/fixtures.ts")], outfile: join(scratch, "fixtures.mjs"), bundle: true, platform: "node", format: "esm" });
   const { fixtures } = await import(pathToFileURL(join(scratch, "fixtures.mjs")));
+  await build({ entryPoints: [join(root, "plugins/personal/src/genui/service.ts"), join(root, "plugins/personal/src/genui/model-output.ts")], outdir: scratch, bundle: true, platform: "node", format: "esm", outExtension: { ".js": ".mjs" } });
+  const { PersonalGenUI, toolSource } = await import(pathToFileURL(join(scratch, "service.mjs")));
+  const { publishModelOutput } = await import(pathToFileURL(join(scratch, "model-output.mjs")));
   const storage = new Map(), contexts = {}, deliveries = new Map(), receipts = new Map(), frames = [];
   const genuiToolName = `plugin_personal_present_interactive_${createHash("sha256").update("personal\0present_interactive_answer\0" + "0").digest("hex").slice(0, 16)}`;
   let historyToolName = genuiToolName;
-  let publishedResult, main, mainAgent, loseAck = false, processes = [];
+  let publishedResult, extraResult, main, mainAgent, loseAck = false, processes = [], hiddenResult = false;
   const source = { seq: 2, role: "assistant", content: "", tool_calls: JSON.stringify([{ id: "model-call-one", type: "function", function: { name: "present_interactive_answer", arguments: "{}" } }]) };
   const host = async frame => {
     const { service, params: p } = frame.params;
@@ -37,10 +40,10 @@ test("shipped Personal GenUI model-output to history to owner action survives re
       }
       case "host.session.context": return contexts[p.session_id] ?? { session_id: p.session_id, product_domain: "coding" };
       case "host.session.inspect": return { session: contexts[p.session_id], receipt: receipts.get(p.request_id) };
-      case "host.session.history.read": return { session_id: p.session_id, records: p.session_id === main ? [{ seq: 1, role: "user", origin: "user", content: "Synthetic checklist request" }, source, ...(publishedResult ? [{ seq: 3, role: "tool", name: historyToolName, tool_call_id: "model-call-one", tool_result: JSON.stringify(publishedResult) }] : [])] : [], head_seq: 3, snapshot_seq: 3, has_more: false };
+      case "host.session.history.read": return { session_id: p.session_id, records: p.session_id === main ? [{ seq: 1, role: "user", origin: "user", content: "Synthetic checklist request" }, source, ...(publishedResult ? [{ seq: 3, role: "tool", name: historyToolName, tool_call_id: "model-call-one", hidden: hiddenResult, tool_result: JSON.stringify(publishedResult) }] : []), ...(extraResult ? [{ seq: 4, role: "tool", name: historyToolName, tool_call_id: "model-call-two", hidden: hiddenResult, tool_result: JSON.stringify(extraResult) }] : [])] : [], head_seq: extraResult ? 4 : 3, snapshot_seq: extraResult ? 4 : 3, has_more: false };
       case "host.session.send": {
         assert.equal(p.session_id, main); assert.equal(p.disable_tools, p.cause === "personal.chat" ? undefined : true);
-        assert.equal(p.user_input_request_id, p.cause === "personal.chat" ? "owner-chat" : "owner-submit");
+        assert.equal(p.user_input_request_id, p.cause === "personal.chat" ? (p.input.context_blocks?.some(block => block.kind === "wuu.genui.submission.v1") ? "shared-action" : p.input.context_blocks?.some(block => block.kind === "wuu.genui.context.v1") ? "shared-chat" : "owner-chat") : "owner-submit");
         assert.match(frame.params.execution_id, /owner-/);
         if (!deliveries.has(p.request_id)) {
           deliveries.set(p.request_id, p);
@@ -81,11 +84,15 @@ test("shipped Personal GenUI model-output to history to owner action survives re
     const output = process.env.GENUI_RUNTIME_OUTPUT || join(root, ".tmp/personal-genui"); await mkdir(output, { recursive: true });
     await writeFile(join(output, "shipped-runtime-protocol.jsonl"), frames.map(f => JSON.stringify(f)).join("\n") + "\n");
   });
-  let runtime = await start(); assert(runtime.definition.tools.some(t => t.id === "present_interactive_answer"));
+  let runtime = await start(); assert(!runtime.definition.tools.some(t => t.id === "present_interactive_answer"));
   const created = await runtime.client("agents.ensure_default"); main = created.agent.main_session_id; mainAgent = created.agent.agent_id;
-  const tool = await runtime.call("tool.execute", { tool_id: "present_interactive_answer", tool: genuiToolName, turn_id: "host-turn-one", arguments: { spec: fixtures.checklist }, session_id: main, thread_id: main, call_id: "model-call-one", execution_id: "model-execution" });
-  assert.equal(tool.result.structured_content.type, "personal.genui");
-  publishedResult = tool.result;
+  // Seed a historical result with the former implementation. The running
+  // Personal plugin no longer offers this tool, but must recover its records.
+  const legacyHost = { call: (service, params) => host({ params: { service: service.replace("host.storage.compare_exchange", "host.storage.compare-exchange"), params } }) };
+  const legacy = new PersonalGenUI(legacyHost, { owner: "fixture-space", session: main, agent: mainAgent });
+  const legacyActor = { owner: "fixture-space", session: main, agent: mainAgent, domain: "personal", source: "model" };
+  publishedResult = await publishModelOutput(legacy, { spec: fixtures.checklist }, legacyActor, toolSource("model-call-one", "host-turn-one", genuiToolName));
+  assert.equal(publishedResult.structured_content.type, "personal.genui");
   const history = await runtime.client("agents.history");
   const interactive = history.records.find(r => r.seq === 3); assert.equal(interactive.ui_parts.length, 1); assert.match(interactive.content, /示例清单/);
   const originalResult = structuredClone(publishedResult);
@@ -120,8 +127,8 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   await runtime.close(); runtime = await start();
   const recovered = await runtime.client("genui.retry", { surface_id: surface.surfaceId }); assert.equal(recovered.delivery, "accepted"); assert.equal(deliveries.size, 1);
   const sent = [...deliveries.values()][0]; assert.equal(JSON.parse(sent.input.context_blocks[0].content).state.items[0].done, true);
-  const second = await runtime.call("tool.execute", { tool_id: "present_interactive_answer", tool: genuiToolName, turn_id: "host-turn-two", arguments: { spec: fixtures.checklist }, session_id: main, thread_id: main, call_id: "model-call-two", execution_id: "model-execution" });
-  const fresh = second.result.meta.personal_genui;
+  const second = await publishModelOutput(legacy, { spec: fixtures.checklist }, legacyActor, toolSource("model-call-two", "host-turn-two", genuiToolName));
+  const fresh = second.meta.personal_genui;
   const edited = structuredClone(fresh.state); edited.items[0].done = true;
   await runtime.client("genui.sync", { request: { surfaceId: fresh.surfaceId, expectedRevision: 0, state: edited } });
   assert.equal(deliveries.size, 1);
@@ -135,6 +142,74 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   const changed = structuredClone(chat); changed.genui_context[0].state.items[0].done = false;
   await assert.rejects(() => runtime.client("agents.send", changed), /request_id_conflict/);
   assert.equal(deliveries.size, 2);
+  // A completed shared resource must survive history projection with a stable
+  // source and fallback. Failed, hidden or malformed tool results must not turn
+  // into visible assistant messages.
+  const spec = JSON.stringify({ version: 2, title: "Budget", fallback: "Set a budget", state: [], body: [] });
+  const digest = createHash("sha256").update(spec).digest("hex");
+  const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Budget", resource: { mimeType: "application/vnd.wuu.ui+json", text: spec }, artifact: { placement: "inline", ref: `ui-v2-${digest}`, sha256: digest, size_bytes: Buffer.byteLength(spec) } };
+  historyToolName = "shared_ui_tool";
+  publishedResult = { content: [{ type: "text", text: "Set a budget" }, part] };
+  const shared = (await runtime.client("agents.history")).records.find(r => r.seq === 3);
+  assert.equal(shared.role, "assistant");
+  assert.equal(shared.content, "Set a budget");
+  assert.deepEqual(shared.ui_resources, [{ part, part_index: 1, tool_call_id: "model-call-one", fallback_text: "Set a budget" }]);
+  // The owner continuation carries untrusted UI values only for the exact
+  // persisted resource of this agent's own conversation and is retry-safe.
+  const rendererContext = { seq: 3, part_index: 1, tool_call_id: "model-call-one", artifact_ref: part.artifact.ref, actionId: "submit", label: "Continue", values: { budget: 12 } };
+  const sharedSend = { request_id: "shared-action", prompt: "Explain my budget", renderer_context: rendererContext };
+  await assert.rejects(() => runtime.call("service.invoke", { service: "personal.agents", method: "agents.send", params: { agent_id: mainAgent, ...sharedSend }, execution_id: "forged-owner" }), /authenticated|owner/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedSend, renderer_context: { ...rendererContext, session_id: "other-session" } }), /unknown|unexpected|invalid/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedSend, renderer_context: { ...rendererContext, artifact_ref: "ui-v2-" + "0".repeat(64) } }), /source|resource|identity/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedSend, renderer_context: { ...rendererContext, seq: 42 } }), /source|resource|identity/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedSend, renderer_context: { ...rendererContext, values: { oversized: "x".repeat(17000) } } }), /size|large|limit/);
+  await runtime.client("agents.send", sharedSend);
+  const sharedDelivery = [...deliveries.values()].find(p => p.user_input_request_id === "shared-action");
+  const block = sharedDelivery.input.context_blocks.find(b => b.kind === "wuu.genui.submission.v1");
+  assert.deepEqual(JSON.parse(block.content), rendererContext);
+  assert.match(block.title, /untrusted/i);
+  await runtime.client("agents.send", sharedSend);
+  assert.equal([...deliveries.values()].filter(p => p.user_input_request_id === "shared-action").length, 1);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedSend, renderer_context: { ...rendererContext, values: { budget: 99 } } }), /request_id_conflict/);
+  // Ordinary chat carries edited state from each bound resource; never let a
+  // forged, duplicated, cross-session or oversized snapshot reach the model.
+  const { actionId, label, ...snapshot } = rendererContext;
+  extraResult = structuredClone(publishedResult);
+  extraResult.content[1].artifact.ref = `ui-v2-${"1".repeat(64)}`;
+  const snapshot2 = { ...snapshot, seq: 4, tool_call_id: "model-call-two", artifact_ref: extraResult.content[1].artifact.ref, values: { budget: 24 } };
+  const sharedChat = { request_id: "shared-chat", prompt: "What about these values?", renderer_contexts: [snapshot, snapshot2] };
+  await assert.rejects(() => runtime.call("service.invoke", { service: "personal.agents", method: "agents.send", params: { agent_id: mainAgent, ...sharedChat }, execution_id: "forged-owner" }), /authenticated|owner/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedChat, renderer_contexts: [{ ...snapshot, seq: 42 }] }), /source|resource|identity/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedChat, renderer_contexts: [{ ...snapshot, session_id: "another-session" }] }), /unknown|unexpected|invalid/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedChat, renderer_contexts: [snapshot, snapshot] }), /duplicate/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedChat, renderer_contexts: [{ ...snapshot, values: { oversized: "x".repeat(17000) } }] }), /size|large|limit/);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedChat, renderer_contexts: Array(17).fill(snapshot) }), /limit|many|invalid/);
+  await runtime.client("agents.send", sharedChat);
+  const sharedChatDelivery = [...deliveries.values()].find(p => p.user_input_request_id === "shared-chat");
+  const chatBlock = sharedChatDelivery.input.context_blocks.find(b => b.kind === "wuu.genui.context.v1");
+  assert.deepEqual(JSON.parse(chatBlock.content), [snapshot, snapshot2]);
+  assert.match(chatBlock.title, /untrusted/i);
+  await runtime.client("agents.send", sharedChat);
+  assert.equal([...deliveries.values()].filter(p => p.user_input_request_id === "shared-chat").length, 1);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedChat, renderer_contexts: [{ ...snapshot, values: { budget: 99 } }] }), /request_id_conflict/);
+  hiddenResult = true;
+  assert.equal((await runtime.client("agents.history")).records.find(r => r.seq === 3), undefined);
+  await assert.rejects(() => runtime.client("agents.send", { ...sharedSend, request_id: "hidden-action" }), /source|resource|identity/);
+  hiddenResult = false;
+  publishedResult.is_error = true;
+  assert.equal((await runtime.client("agents.history")).records.find(r => r.seq === 3), undefined);
+  delete publishedResult.is_error;
+  const originalPart = structuredClone(part);
+  part.artifact.sha256 = "0".repeat(64);
+  assert.equal((await runtime.client("agents.history")).records.find(r => r.seq === 3), undefined);
+  Object.assign(part, originalPart);
+  part.resource.mimeType = "text/html";
+  assert.equal((await runtime.client("agents.history")).records.find(r => r.seq === 3), undefined);
+  Object.assign(part, originalPart);
+  part.artifact.placement = "turn_end";
+  assert.equal((await runtime.client("agents.history")).records.find(r => r.seq === 3), undefined);
+  publishedResult = { content: [{ type: "text", text: "Private ordinary tool output" }] };
+  assert.equal((await runtime.client("agents.history")).records.find(r => r.seq === 3), undefined);
   await runtime.close();
   const coding = await start("coding"); assert.equal(coding.definition.tools.length, 0); await coding.close();
 });
