@@ -14,7 +14,7 @@ describe('complete workspace downloads', () => {
     }, 'archive.bin');
     expect(requests).toHaveLength(3);
     const bytes = await blob.arrayBuffer();
-    expect(Buffer.from(bytes)).toEqual(source);
+    expect(Buffer.from(bytes).equals(source)).toBe(true);
   });
   it('rejects a revision switch instead of exporting mixed file versions', async () => {
     await expect(downloadWorkspaceFile(async <T>(_method: string, raw?: unknown) => {
