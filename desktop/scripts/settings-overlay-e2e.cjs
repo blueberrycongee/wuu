@@ -149,7 +149,7 @@ async function run() {
     if (await evaluate(win.webContents, () => document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed"))) {
       await click(win.webContents, ".section-sidebar-toggle");
     }
-    await click(win.webContents, ".thread-row-main");
+    await click(win.webContents, ".sidebar-session-row:not([data-draft-id]) .thread-row-main");
     await until(() => evaluate(win.webContents, () => Boolean(document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="resize-thread"] [data-turn-status="in_progress"]'))), "synthetic running turn selected");
     win.setContentSize(width, 820);
     await evaluate(win.webContents, ({ font, theme }) => {
