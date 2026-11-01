@@ -3,13 +3,13 @@
 
 :root {
   --settings-canvas: var(--surface-1);
-  --settings-card: var(--surface-raised);
+  --settings-card: color-mix(in srgb, var(--surface-raised) 35%, var(--settings-canvas));
   /* In-flow groups use a shared surface and divider hierarchy. Elevation
    * belongs to controls and overlays, not every block of settings. */
-  --settings-group-radius: var(--radius-md);
+  --settings-group-radius: var(--radius-xs);
   --settings-group-shadow: none;
   /* Row breathing room; empty lines and list rows share it. */
-  --settings-row-pad-block: var(--space-3);
+  --settings-row-pad-block: calc(var(--space-1) * 2.5);
   --settings-number-control-width: 9.5em;
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
@@ -581,16 +581,15 @@
   gap: var(--space-2);
 }
 
-/* Text fields and pickers take the page's control width, so their edges line
- * up down a group; numbers keep their narrower field. */
-.settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+/* Text fields reserve editing space; choices fit their value on the trailing edge. */
+.settings-row-control > .settings-input:not(.settings-input-num) {
   width: var(--settings-control-width);
   max-width: 100%;
 }
 
-/* This choice is a compact trailing label, not a full-width text field. */
-.settings-row-control > .select-menu.settings-language-select {
+.settings-row-control > .select-menu {
   width: auto;
+  max-width: var(--settings-control-width);
 }
 
 /* Notes below a group: font loading, save failures, list errors. */
@@ -823,6 +822,7 @@
 /* Settings selectors sit on the page surface; text inputs keep their field fill. */
 .settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input) {
   background-color: transparent;
+  border-radius: var(--radius-xs);
 }
 .settings-page :is(.select-menu-trigger, select.plugin-ui-input, select.settings-input):hover:not(:disabled),
 .settings-page .select-menu-trigger[aria-expanded="true"] {
@@ -983,6 +983,19 @@
     background var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out),
     transform var(--motion-fast) var(--ease-out);
+}
+
+/* Secondary settings actions share the quiet, in-flow field boundary. */
+.settings-page .settings-button:not(.settings-button-primary, .settings-button-ghost, .settings-button-danger) {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  box-shadow: none;
+  font-weight: var(--weight-regular);
+}
+.settings-page .settings-button:not(.settings-button-primary, .settings-button-ghost, .settings-button-danger):hover:not(:disabled) {
+  background: var(--field-hover-bg);
+  border-color: var(--hairline-strong);
 }
 
 .settings-button > span {
@@ -2806,6 +2819,7 @@ button.settings-engine-expand:hover {
   /* Stacked fields and pickers span the row. */
   .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
     width: 100%;
+    max-width: 100%;
   }
 }
 

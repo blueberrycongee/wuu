@@ -135,23 +135,27 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
 }
 /* Font and size share fixed column tracks rather than intrinsic text widths. */
+.settings-section:has(.appearance-font-controls) {
+  --appearance-font-controls-width: 22em;
+  --appearance-font-size-width: 5em;
+}
 .settings-row:has(.appearance-font-controls) {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 26em);
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--appearance-font-controls-width));
 }
 .settings-row-control:has(.appearance-font-controls) { width: 100%; }
 .appearance-font-controls,
 .appearance-font-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6em;
+  grid-template-columns: minmax(0, 1fr) var(--appearance-font-size-width);
   gap: var(--space-3);
   min-width: 0;
 }
 .appearance-font-controls { width: 100%; }
 .appearance-font-columns {
-  width: 26em;
+  width: var(--appearance-font-controls-width);
   max-width: 100%;
   margin-inline-start: auto;
-  padding-top: var(--space-3);
+  padding-top: var(--space-2);
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
 }
@@ -159,7 +163,11 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .appearance-font-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .appearance-font-field-label { display: none; color: var(--ink-tertiary); font-size: var(--font-sm); }
 .appearance-font-picker { min-width: 0; }
-.appearance-font-size-field .settings-input-num { width: 100%; }
+.appearance-font-size-field .settings-input-num {
+  width: 100%;
+  border-radius: var(--radius-xs);
+  background: transparent;
+}
 .appearance-font-size-inherited {
   display: flex;
   align-items: center;
