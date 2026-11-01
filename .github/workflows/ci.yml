@@ -1379,6 +1379,7 @@ jobs:
         if: ${{ matrix.suite == 'session-lifecycle' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         shell: bash
         env:
+          WUU_SESSION_FIXTURE: ${{ github.workspace }}/.tmp/desktop-ci-build/wuu-session-fixture
           WUU_SESSION_FIXTURE_BINARY: ${{ github.workspace }}/.tmp/desktop-ci-build/wuu-session-fixture
         run: |
           # Parallel runs retain work-counter assertions, but their timing samples

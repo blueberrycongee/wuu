@@ -40,6 +40,10 @@ test('shared Desktop outputs are same-run artifacts and verified against the che
   assert.match(build, /go build -o .*wuu-session-fixture \.\/scripts\/session-fixture/);
   assert.match(build, /sha256sum .*wuu-session-fixture/);
   assert.match(consumers, /WUU_SESSION_FIXTURE_BINARY:/);
+  const lifecycle = consumers.split('      - name: Exercise bounded session-lifecycle journeys\n')[1].split('        run: |')[0];
+  for (const name of ['WUU_SESSION_FIXTURE', 'WUU_SESSION_FIXTURE_BINARY']) {
+    assert(lifecycle.includes(name + ': ${{ github.workspace }}/.tmp/desktop-ci-build/wuu-session-fixture'), name);
+  }
   assert.match(consumers, /needs: \[changes, repository-check\]/);
   assert.match(consumers, /actions\/download-artifact@v4/);
   assert.match(consumers, /source-commit.txt\)" = "\$\(git rev-parse HEAD\)"/);
