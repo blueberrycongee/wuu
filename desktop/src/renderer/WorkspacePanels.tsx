@@ -100,6 +100,7 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
 import { showErrorToast } from "./Toast";
+import { UIContributionErrorDisplayContext } from "./plugins/ApplicationShell";
 
 export interface WorkspacePanelLayout {
   registerFocusTarget?: UIRegisterFocusTargetV1;
@@ -782,7 +783,9 @@ function WorkspacePanelContent({
         ))}
         <div className="workspace-composer-controls" ref={runtimeControlsRef} />
         <div className="workspace-tool-rail-contributions">
-          <slots.Slot name="wuu.default-preview/workspace.rail" />
+          <UIContributionErrorDisplayContext.Provider value={false}>
+            <slots.Slot name="wuu.default-preview/workspace.rail" />
+          </UIContributionErrorDisplayContext.Provider>
         </div>
         </> : null}
       </nav>

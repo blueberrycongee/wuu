@@ -23,6 +23,7 @@ function activationKey(activation: object): number {
 
 const SurfaceBindings = React.createContext<Readonly<Record<string, ApplicationShellBinding>>>({});
 export const UICompositionPendingContext = React.createContext(false);
+export const UIContributionErrorDisplayContext = React.createContext(true);
 
 const SlotAncestors = React.createContext<readonly string[]>([]);
 
@@ -35,6 +36,7 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
     const slot = host.getUISlot(name);
     const bindings = React.useContext(SurfaceBindings);
     const pending = React.useContext(UICompositionPendingContext);
+    const showContributionErrors = React.useContext(UIContributionErrorDisplayContext);
     if (!slot) return null;
     let contributions = registered.filter(item => {
       if (typeof item.target === "string") return item.target === name;
@@ -58,7 +60,8 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
     const items = contentContributions.map(contribution => ({
       key: String(activationKey(contribution)), pluginId: contribution.pluginId, id: contribution.id, title: contribution.title ?? contribution.id,
       node: <ShellBoundary key={activationKey(contribution)}
-        identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
+        identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}
+        hideError={!showContributionErrors}>
         <Contribution host={host} contribution={contribution} slots={composition} context={context} />
       </ShellBoundary>,
     }));
@@ -106,7 +109,7 @@ function Contribution({ host, contribution, slots, context, children }: {
   return <View application={application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
 }
 
-class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
+class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; hideError?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
   componentDidMount(): void {
     this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation, this.state.error);
@@ -120,7 +123,7 @@ class ShellBoundary extends React.Component<{ children: React.ReactNode; identit
   static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
   render(): React.ReactNode {
     return this.state.error
-      ? this.props.recover ? this.props.fallback : <SurfaceUnavailable fullscreen={this.props.fullShell} onRetry={() => this.setState({ error: undefined })} />
+      ? this.props.recover ? this.props.fallback : this.props.hideError ? null : <SurfaceUnavailable fullscreen={this.props.fullShell} onRetry={() => this.setState({ error: undefined })} />
       : this.props.children;
   }
 }
