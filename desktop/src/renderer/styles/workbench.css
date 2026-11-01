@@ -288,6 +288,7 @@
 
 
 .plugin-conversation {
+  --dock-composer-height: 124px;
   display: grid;
   grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   min-width: 0;
@@ -300,9 +301,9 @@
 .plugin-conversation-heading { min-width: 0; display: flex; align-items: baseline; gap: var(--space-3); }
 .plugin-conversation-heading h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-conversation-subtitle { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plugin-conversation-scroll { margin-bottom: var(--plugin-composer-height, 124px); }
-.plugin-conversation-composer { grid-column: 1; grid-row: 2; align-self: end; min-width: 0; z-index: 5; }
-.plugin-conversation-flow { --conversation-flow-bottom-space: var(--conversation-turn-boundary-gap); }
+.plugin-conversation-scroll { margin-bottom: var(--conversation-input-inset, var(--dock-composer-height)); }
+.plugin-conversation-composer { grid-column: 1; grid-row: 2; align-self: end; min-width: 0; z-index: 5; pointer-events: none; }
+.plugin-conversation-composer :is(.plugin-composer-reply-context, .mosaic-draft-notice, [role="status"], [role="alert"], button, input, textarea, select, a) { pointer-events: auto; }
 .plugin-conversation-message { display: flex; flex-direction: column; min-width: 0; font-family: var(--conversation-message-font-family); font-weight: var(--conversation-message-font-weight); }
 .plugin-conversation-message[data-role="user"] { margin-bottom: calc(var(--conversation-user-rule-gap) - var(--conversation-user-message-trailing-gap)); }
 .plugin-conversation-message[data-role="assistant"] + .plugin-conversation-message[data-role="user"] { margin-top: var(--conversation-turn-boundary-gap); }

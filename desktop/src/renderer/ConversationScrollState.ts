@@ -200,6 +200,28 @@ export function dockComposerVisualHeight(node: HTMLElement): number {
   return layoutHeight + expandedOffset;
 }
 
+export function syncDockComposerCssProperties(
+  target: HTMLElement,
+  dockComposerNode: HTMLElement | null,
+): { height: number; changed: boolean } {
+  const nextHeight = dockComposerNode ? dockComposerVisualHeight(dockComposerNode) : 0;
+  const input = dockComposerNode?.querySelector<HTMLElement>(".composer-frame");
+  const inputRect = input && nextHeight > 0 ? input.getBoundingClientRect() : undefined;
+  const inputInset = inputRect && dockComposerNode && (inputRect.height > 0 || inputRect.bottom > inputRect.top)
+    ? Math.max(0, Math.ceil(dockComposerNode.getBoundingClientRect().bottom - inputRect.top))
+    : nextHeight;
+  const heightValue = `${nextHeight}px`;
+  const insetValue = `${inputInset}px`;
+  const changed =
+    target.style.getPropertyValue("--dock-composer-height") !== heightValue ||
+    target.style.getPropertyValue("--conversation-input-inset") !== insetValue;
+  if (changed) {
+    target.style.setProperty("--dock-composer-height", heightValue);
+    target.style.setProperty("--conversation-input-inset", insetValue);
+  }
+  return { height: nextHeight, changed };
+}
+
 type SubmissionScrollPhase = "pending" | "placing" | "holding";
 type ConversationScrollMode = "following" | "paused" | SubmissionScrollPhase;
 
@@ -364,21 +386,15 @@ export function useConversationScrollState({
   const dockComposerHeightRef = useRef(0);
   const syncDockComposerGeometry = useCallback((): void => {
     const pane = conversationPaneRef.current;
-    const nextHeight = dockComposerNode ? dockComposerVisualHeight(dockComposerNode) : 0;
-    const input = dockComposerNode?.querySelector<HTMLElement>(".composer-frame");
-    const inputInset = input && dockComposerNode
-      ? Math.max(0, Math.ceil(dockComposerNode.getBoundingClientRect().bottom - input.getBoundingClientRect().top))
-      : nextHeight;
-    const heightValue = `${nextHeight}px`;
-    const insetValue = `${inputInset}px`;
-    if (dockComposerHeightRef.current === nextHeight &&
-      pane?.style.getPropertyValue("--dock-composer-height") === heightValue &&
-      pane?.style.getPropertyValue("--conversation-input-inset") === insetValue) return;
-    dockComposerHeightRef.current = nextHeight;
-    pane?.style.setProperty("--dock-composer-height", heightValue);
-    pane?.style.setProperty("--conversation-input-inset", insetValue);
+    if (!pane) {
+      dockComposerHeightRef.current = dockComposerNode ? dockComposerVisualHeight(dockComposerNode) : 0;
+      return;
+    }
+    const { height, changed } = syncDockComposerCssProperties(pane, dockComposerNode);
+    if (dockComposerHeightRef.current === height && !changed) return;
+    dockComposerHeightRef.current = height;
     // The sibling tool rail scrolls above the dock instead of narrowing it.
-    pane?.closest<HTMLElement>(".app-shell")?.style.setProperty("--workspace-conversation-dock-height", heightValue);
+    pane.closest<HTMLElement>(".app-shell")?.style.setProperty("--workspace-conversation-dock-height", `${height}px`);
   }, [dockComposerNode]);
   /** Returns whether the reserved status-row space changed. */
   const syncConversationStatusSpace = useCallback((): boolean => {
