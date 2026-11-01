@@ -1179,6 +1179,11 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding: 0;
 }
 
+.workspace-composer-controls .codex-runtime-trigger.is-compact::before,
+.composer-footer-runtime .codex-runtime-trigger.is-compact::before {
+  inset: 0;
+}
+
 .workspace-composer-controls .codex-runtime-trigger .engine-icon,
 .composer-footer-runtime .codex-runtime-trigger .engine-icon {
   width: var(--icon-size);
@@ -2402,7 +2407,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .composer-project-menu button[aria-checked="true"] {
-  background: var(--menu-hover);
   opacity: 1;
 }
 
