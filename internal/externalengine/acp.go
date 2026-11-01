@@ -988,17 +988,6 @@ func (t *turn) acpMessageChunk(chunk string) {
 	if chunk == "" {
 		return
 	}
-	if t.skipLeadingNewline {
-		if strings.HasPrefix(chunk, "\r\n") {
-			chunk = chunk[2:]
-		} else if strings.HasPrefix(chunk, "\n") {
-			chunk = chunk[1:]
-		}
-		t.skipLeadingNewline = false
-		if chunk == "" {
-			return
-		}
-	}
 	for chunk != "" {
 		if t.diagBuf.Len() == 0 {
 			idx := strings.Index(chunk, "⚠")
@@ -1027,11 +1016,9 @@ func (t *turn) acpMessageChunk(chunk string) {
 		t.diagBuf.WriteString(chunk)
 		chunk = ""
 		candidate := t.diagBuf.String()
-		if t.consumeACPDiagnosticLine(candidate) {
-			t.diagBuf.Reset()
-			t.skipLeadingNewline = true
-			return
-		}
+		// ACP chunks are arbitrary text deltas, not line boundaries. Keep a
+		// possible diagnostic until its newline or prompt completion so a
+		// later fragment cannot leak into content and falsely clear recovery.
 		if !isACPDiagnosticPrefix(candidate) {
 			t.diagBuf.Reset()
 			t.content(candidate, false)

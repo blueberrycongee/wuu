@@ -150,20 +150,19 @@ func latestUserMessage(history []providers.ChatMessage) providers.ChatMessage {
 }
 
 type turn struct {
-	engine             string
-	sink               agentengine.EventSink
-	text, thinking     strings.Builder
-	diagBuf            strings.Builder
-	reconnecting       bool
-	retryCount         int
-	apiError           string
-	terminatedErr      string
-	skipLeadingNewline bool
-	tools              map[string]*providers.ToolCall
-	acpToolKinds       map[string]string
-	completed          map[string]bool
-	usage              providers.TokenUsage
-	stopReason         string
+	engine         string
+	sink           agentengine.EventSink
+	text, thinking strings.Builder
+	diagBuf        strings.Builder
+	reconnecting   bool
+	retryCount     int
+	apiError       string
+	terminatedErr  string
+	tools          map[string]*providers.ToolCall
+	acpToolKinds   map[string]string
+	completed      map[string]bool
+	usage          providers.TokenUsage
+	stopReason     string
 }
 
 func newTurn(engine string, sink agentengine.EventSink) *turn {

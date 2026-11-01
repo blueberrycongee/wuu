@@ -925,6 +925,16 @@ func TestACPHelper(t *testing.T) {
 				result = map[string]string{"stopReason": "end_turn"}
 				break
 			}
+			if scenario == "agy-retry-split" || scenario == "agy-termination-split" {
+				text("⚠ API error (attempt 1): request failed:")
+				text(" HTTP 429 Too Many Requests\n")
+				if scenario == "agy-termination-split" {
+					text("⚠ Agent execution terminated due to error")
+					text(".")
+				}
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "agy-retry-failed" {
 				text("⚠ API error (attempt 1): request failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\": EOF\n")
 				text("⚠ API error (attempt 2): request failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\": EOF\n")
@@ -1444,4 +1454,41 @@ func TestACPInStreamAPIRetriesAndTerminationSurfaceAsUnifiedLifecycleAndError(t 
 			t.Fatalf("lifecycle phases = %v, want %v", phases, wantPhases)
 		}
 	})
+}
+
+func TestACPSplitDiagnosticsPreserveFailure(t *testing.T) {
+	for _, scenario := range []string{"agy-retry-split", "agy-termination-split"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			session, err := testEngine(t, scenario).SessionForThread(ctx, testBinding())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close(ctx)
+			var content strings.Builder
+			var phases []providers.StreamLifecyclePhase
+			result, err := session.RunTurn(ctx, testInput(), func(ev providers.StreamEvent) {
+				if ev.Type == providers.EventContentDelta {
+					content.WriteString(ev.Content)
+				}
+				if ev.Type == providers.EventLifecycle && ev.Lifecycle != nil {
+					phases = append(phases, ev.Lifecycle.Phase)
+				}
+			})
+			if err == nil || !strings.Contains(err.Error(), "request failed: HTTP 429 Too Many Requests") {
+				t.Fatalf("err = %v, want complete split API diagnostic", err)
+			}
+			if content.Len() != 0 || result.Result.Content != "" || len(result.Result.NewMessages) != 0 {
+				t.Fatalf("split diagnostic leaked into reply: streamed=%q result=%+v", content.String(), result.Result)
+			}
+			if result.Result.FinishReason != providers.FinishReasonError {
+				t.Fatalf("finish reason = %q, want error", result.Result.FinishReason)
+			}
+			want := []providers.StreamLifecyclePhase{providers.StreamPhaseReconnecting, providers.StreamPhaseFailed}
+			if fmt.Sprint(phases) != fmt.Sprint(want) {
+				t.Fatalf("lifecycle phases = %v, want %v", phases, want)
+			}
+		})
+	}
 }
