@@ -6,7 +6,6 @@ const copy = {
     title: "Wuu Recovery",
     normalTitle: "The app didn't open normally",
     safeTitle: "Diagnostic mode is on",
-    normalLead: "Saved conversations and drafts are untouched. Unsent input may be lost.",
     safeLead: "Plugins and the backend are not running. Your configuration is unchanged.",
     retryTitle: "Reload window", retry: "Reload", cancel: "Stop waiting",
     idle: "Reloads the app page with the current configuration.", loading: "Waiting for the app page…", loaded: "Page loaded. Check the app window.",
@@ -23,7 +22,6 @@ const copy = {
     title: "Wuu 恢复中心",
     normalTitle: "应用未能正常打开",
     safeTitle: "诊断模式已启动",
-    normalLead: "已保存的会话和草稿不受影响。未发送的输入可能无法恢复。",
     safeLead: "插件与后端未启动。现有配置保持不变。",
     retryTitle: "重新加载窗口", retry: "重新加载", cancel: "停止等待",
     idle: "使用当前配置重新加载页面。", loading: "正在等待页面加载…", loaded: "页面已加载，请检查应用窗口。",
@@ -67,7 +65,10 @@ function render(snapshot: RecoverySnapshot): void {
   document.documentElement.lang = snapshot.locale === "zh" ? "zh-CN" : "en";
   document.title = c.title;
   text("title", snapshot.mode === "diagnostic" ? c.safeTitle : c.normalTitle);
-  text("lead", snapshot.mode === "diagnostic" ? c.safeLead : c.normalLead);
+  const lead = snapshot.mode === "diagnostic" ? c.safeLead : "";
+  const leadNode = element("lead");
+  leadNode.textContent = lead;
+  leadNode.hidden = !lead;
   text("retry-title", c.retryTitle);
   text("retry-label", c.retry);
   text("cancel", c.cancel);
