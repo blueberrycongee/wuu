@@ -1172,6 +1172,7 @@ ${personalReviewStyles}
 .mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field{display:inline-flex;align-items:center;gap:var(--space-2);padding:0;border:0;width:auto;}
 .mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field:first-child{flex:1;min-width:0;justify-content:space-between;}
 .mosaic-settings .mosaic-quiet-hours-row .plugin-ui-input{width:128px;}
+@container settings-page (max-width:32em){.mosaic-settings .mosaic-quiet-hours-row{flex-direction:column;align-items:stretch;}.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field{width:100%;justify-content:space-between;}.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field:first-child{flex:none;}.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-input{flex:0 0 128px;max-width:100%;}}
 .mosaic-settings .mosaic-settings-save-row{justify-content:flex-end;}
 .mosaic-settings [data-personal-connections]{display:flex;flex-direction:column;gap:var(--space-4);}
 .mosaic-settings [data-personal-connections]>h2{font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;color:var(--ink);margin:0;}

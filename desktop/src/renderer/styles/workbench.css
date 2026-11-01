@@ -248,6 +248,11 @@
   font-size: var(--font-ui);
 }
 
+/* Flat cards have no inset to absorb the switch's enlarged hit target. */
+.settings-page .plugin-ui-card .plugin-ui-checkbox input {
+  margin-inline-end: 0;
+}
+
 .settings-page .plugin-ui-card .plugin-ui-field:has(.plugin-ui-textarea) {
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
