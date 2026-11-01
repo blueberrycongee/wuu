@@ -88,7 +88,7 @@ func DiscoveryContext(id, binary, root string) ([32]byte, error) {
 		}
 		projectFiles = []string{"opencode.json", "opencode.jsonc", ".opencode/opencode.json", ".opencode/opencode.jsonc"}
 	case "antigravity":
-		add(location("GEMINI_HOME", filepath.Join(home, ".gemini")), "settings.json", "oauth_creds.json")
+		add(location("GEMINI_HOME", filepath.Join(home, ".gemini")), "settings.json", "oauth_creds.json", "antigravity-cli/settings.json", "antigravity-acp/settings.json")
 		projectFiles = []string{".gemini/settings.json"}
 	}
 	for dir := root; ; dir = filepath.Dir(dir) {

@@ -17,9 +17,11 @@ Codex and Claude Code details show the installed CLI version when their bounded 
 | `hermes` | `hermes acp` | ACP v1; [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
 | `pi` | `pi-acp` | ACP v1 through the [community adapter](https://github.com/svkozak/pi-acp), not the plain `pi` command |
 | `opencode` | `opencode serve --hostname 127.0.0.1 --port 0` | Native HTTP/SSE, OpenCode 1.x; [OpenCode](https://opencode.ai/docs) |
-| `antigravity` | `agy_acp_server` | ACP v1; install a compatible server separately; [Antigravity extensions](https://antigravity.google/docs/ide/extensions) |
+| `antigravity` | `agy_acp_server` or `agy acp` | ACP v1; use a compatible [standalone server](https://antigravity.google/docs/ide/extensions) or [Antigravity CLI](https://antigravity.google/docs/cli/overview) |
 
-Antigravity detection also accepts `agy_acp_server.par`; Linux launches it with `--uid=`. These commands describe the adapter contract, not a guarantee that every CLI release supports it. ACP must negotiate protocol version 1; OpenCode must report a healthy 1.x server. Incompatible versions fail explicitly.
+Antigravity detection prefers `agy_acp_server`, then `agy_acp_server.par`, then `agy`. Wuu launches `agy` with `acp`; on Linux it passes `--uid=` only to the standalone server. An executable path named `agy` or `agy.exe` also uses the CLI command; other names retain the standalone server's arguments. The CLI and standalone server can have separate authentication and native histories, so switching between them may require signing in again and can prevent existing native sessions from resuming.
+
+These commands describe the adapter contract, not a guarantee that every CLI release supports it. ACP must negotiate protocol version 1; OpenCode must report a healthy 1.x server. Incompatible versions fail explicitly.
 
 For these engines, executable lookup uses `engines.<id>.binary_path`, then `WUU_<ID>_BINARY` (for example `WUU_DEVIN_BINARY`), then `PATH`. An invalid override fails instead of silently using another executable. Supply a path to a program, not a command with arguments. Detection only resolves the executable: it does not validate credentials or start a conversation.
 

@@ -53,6 +53,16 @@ func Lookup(id string) (Entry, bool) {
 	return Entry{}, false
 }
 
+// LaunchArgs selects the ACP entry point when the executable is named agy.
+// Other executable names retain the catalog's existing launch arguments.
+func (e Entry) LaunchArgs(binary string) []string {
+	name := filepath.Base(binary)
+	if e.ID == "antigravity" && (strings.EqualFold(name, "agy") || strings.EqualFold(name, "agy.exe")) {
+		return []string{"acp"}
+	}
+	return e.Args
+}
+
 // Resolve honors an explicit setting, then the engine-specific environment
 // override, then PATH and the standard install locations. An invalid
 // override fails instead of selecting a different executable. It never
@@ -76,8 +86,10 @@ func (e Entry) Resolve(override string) (string, error) {
 		return path, nil
 	}
 	if e.ID == "antigravity" {
-		if path, err := LookBinary("agy_acp_server.par"); err == nil {
-			return path, nil
+		for _, name := range []string{"agy_acp_server.par", "agy"} {
+			if path, err := LookBinary(name); err == nil {
+				return path, nil
+			}
 		}
 	}
 	return "", fmt.Errorf("%s executable %q not found; install it or configure its executable path (%s)", e.Name, e.Binary, e.InstallURL)
