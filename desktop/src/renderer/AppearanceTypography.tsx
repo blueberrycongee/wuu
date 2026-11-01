@@ -49,7 +49,7 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     const reduce = preferences.motion === "reduce";
     return <SettingsSection title={t("settings.sectionMotion")} testID="settings-motion">
       <SettingsGroup>
-        <SettingsRow title={t("settings.reduceMotion")} hint={t("settings.reduceMotionHint")}>
+        <SettingsRow title={t("settings.reduceMotion")}>
           <button className="settings-switch" type="button" role="switch" aria-checked={reduce} aria-label={t("settings.reduceMotion")}
             onClick={() => update({ motion: reduce ? "system" : "reduce" })}>
             <span className="settings-switch-thumb" aria-hidden="true" />
@@ -63,9 +63,7 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     const label = key === "codeFont" ? "settings.codeFont" : key === "contentFont" ? "settings.contentFont" : "settings.uiFont";
     const names = key === "codeFont" ? monoFonts : localFonts;
     const current = preferences[key];
-    const defaultLabel = key === "contentFont"
-      ? t("settings.defaultContentFont", { font: preferences.uiFont || "vivo Sans SC" })
-      : key === "uiFont" ? t("settings.defaultContentFont", { font: "vivo Sans SC" }) : t("settings.systemFont");
+    const defaultLabel = t("settings.systemFont");
     const options = [{ value: "", label: defaultLabel }, ...names.map((name) => ({ value: name, label: name }))];
     if (current && !names.includes(current)) options.push({ value: current, label: current });
     return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
@@ -83,16 +81,27 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
   >
     <SettingsGroup>
       <SettingsRow title={t("settings.messageStyle")}>
-        <SelectMenu ariaLabel={t("settings.messageStyle")} value={preferences.messageStyle}
-          onChange={(value) => update({ messageStyle: value as AppearancePreferences["messageStyle"] })}
-          options={[{ value: "bubble", label: t("settings.messageStyleBubble") }, { value: "im", label: t("settings.messageStyleIM") }]}
-          triggerClassName="settings-select-trigger" />
+        <div className="theme-segmented" role="group" aria-label={t("settings.messageStyle")}>
+          {([
+            ["bubble", t("settings.messageStyleBubble")],
+            ["im", t("settings.messageStyleIM")],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={preferences.messageStyle === value}
+              onClick={() => update({ messageStyle: value })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </SettingsRow>
       <SettingsRow title={t("settings.textInterface")}>
         {fontPicker("uiFont")}
         <MessageFlowFontSizeControl />
       </SettingsRow>
-      <SettingsRow title={t("settings.textContent")} hint={t("settings.contentFontHint")}>
+      <SettingsRow title={t("settings.textContent")}>
         {fontPicker("contentFont")}
       </SettingsRow>
       <SettingsRow title={t("settings.textCode")}>
@@ -106,15 +115,26 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
           onBlur={(event) => commitSize(event.currentTarget.value)}
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </SettingsRow>
+      {controls.capabilities.platform === "darwin" && (
+        <SettingsRow title={t("settings.fontSmoothing")}>
+          <div className="theme-segmented" role="group" aria-label={t("settings.fontSmoothing")}>
+            {([
+              ["grayscale", t("settings.fontSmoothingGrayscale")],
+              ["system", t("settings.systemFont")],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={preferences.fontSmoothing === value}
+                onClick={() => update({ fontSmoothing: value })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+      )}
     </SettingsGroup>
-    {controls.capabilities.platform === "darwin" && <SettingsGroup>
-      <SettingsRow title={t("settings.fontSmoothing")} hint={t("settings.fontSmoothingHint")}>
-        <SelectMenu ariaLabel={t("settings.fontSmoothing")} value={preferences.fontSmoothing}
-          onChange={(value) => update({ fontSmoothing: value as AppearancePreferences["fontSmoothing"] })}
-          options={[{ value: "grayscale", label: t("settings.fontSmoothingGrayscale") }, { value: "system", label: t("settings.systemFont") }]}
-          triggerClassName="settings-select-trigger" />
-      </SettingsRow>
-    </SettingsGroup>}
     {(fontStatus === "loading" || fontStatus === "error") && <p className="settings-section-note" role="status">{t(fontStatus === "error" ? "settings.fontLoadFailed" : "settings.fontLoading")}</p>}
     {saveError}
   </SettingsSection>;

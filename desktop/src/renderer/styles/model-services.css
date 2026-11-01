@@ -95,7 +95,7 @@
 .model-service-card-copy {
   display: grid;
   min-width: 0;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
 .model-service-card-title,
@@ -115,7 +115,7 @@
 .model-service-card-meta {
   color: var(--ink-soft);
   font-size: var(--font-sm);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .model-service-badge {
@@ -208,14 +208,17 @@
 }
 
 :is(.model-service-card, .model-service-tile) > .provider-mark {
-  --provider-mark-size: var(--space-8);
+  --provider-mark-size: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline-soft);
+  background: var(--surface-1);
 }
 
 /* Extra space belongs around the artwork, keeping its visual weight stable. */
 :is(.model-service-card, .model-service-tile) > .provider-mark svg,
 :is(.model-service-card, .model-service-tile) > .provider-mark .provider-mark-engine {
-  width: calc(var(--font-ui) * 1.4);
-  height: calc(var(--font-ui) * 1.4);
+  width: 15px;
+  height: 15px;
 }
 
 .model-service-tile:hover:not(:disabled) {

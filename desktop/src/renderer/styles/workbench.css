@@ -144,19 +144,20 @@
 }
 
 /* In Settings a kit section reads like a native settings section: the
- * medium-weight title, the quieter scope line, the same heading gap. */
+ * semibold title, the quieter scope line, the same heading gap. */
 .settings-page .plugin-ui-section {
-  gap: var(--space-3);
+  gap: 10px;
 }
 
 .settings-page .plugin-ui-section-header {
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .settings-page .plugin-ui-section-header h2 {
   color: var(--ink-strong);
   font-size: var(--font-title);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
 }
 
 .settings-page .plugin-ui-section-header p {
@@ -178,6 +179,120 @@
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
+}
+
+/* Settings cards are flat hairline groups of the public kit's fields. The page
+ * owns the material and row rhythm, so plugins need no copies of the native layout. */
+.settings-page .plugin-ui-card {
+  border: 0;
+  border-top: 1px solid var(--hairline-soft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: var(--settings-row-pad-block) 0;
+}
+
+.settings-page .plugin-ui-card:has(.plugin-ui-field, .plugin-ui-checkbox) {
+  padding: 0;
+}
+
+.settings-page .plugin-ui-card :is(.plugin-ui-field, .plugin-ui-checkbox) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--settings-control-width));
+  align-items: center;
+  gap: var(--space-1) var(--space-6);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
+  padding: var(--settings-row-pad-block) 0;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.settings-page .plugin-ui-card :is(.plugin-ui-field, .plugin-ui-checkbox):last-child {
+  border-bottom: 0;
+}
+
+.settings-page .plugin-ui-card .plugin-ui-field-label {
+  grid-column: 1;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+}
+
+.settings-page .plugin-ui-card .plugin-ui-field-description {
+  grid-column: 1;
+  max-width: 60ch;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  overflow-wrap: anywhere;
+}
+
+.settings-page .plugin-ui-card .plugin-ui-field > .plugin-ui-input {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.settings-page .plugin-ui-card .plugin-ui-field:has(.plugin-ui-field-description) > .plugin-ui-input {
+  grid-row: 1 / span 2;
+}
+
+.settings-page .plugin-ui-card .plugin-ui-input[type="number"] {
+  justify-self: end;
+  width: var(--settings-number-control-width);
+  max-width: 100%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .plugin-ui-card .plugin-ui-checkbox {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+}
+
+.settings-page .plugin-ui-card .plugin-ui-field:has(.plugin-ui-textarea) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.settings-page .plugin-ui-input,
+.settings-page .plugin-ui-textarea {
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--field-bg);
+  box-shadow: none;
+  font-size: var(--font-sm);
+}
+
+.settings-page .plugin-ui-button {
+  min-height: var(--control-field-height);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: none;
+  font-size: var(--font-sm);
+  padding: 4px 12px;
+}
+
+.settings-page .plugin-ui-button[data-wuu-variant="primary"] {
+  border-color: transparent;
+}
+
+.settings-page .plugin-ui-button[data-wuu-variant="ghost"],
+.settings-page .plugin-ui-button[data-wuu-variant="danger"] {
+  border-color: transparent;
+}
+
+@container settings-page (max-width: 32em) {
+  .settings-page .plugin-ui-card .plugin-ui-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+  .settings-page .plugin-ui-card .plugin-ui-field > .plugin-ui-input,
+  .settings-page .plugin-ui-card .plugin-ui-field:has(.plugin-ui-field-description) > .plugin-ui-input {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .settings-page .plugin-ui-card .plugin-ui-input[type="number"] {
+    justify-self: start;
+  }
 }
 
 .plugin-ui-page[data-wuu-density="compact"] {

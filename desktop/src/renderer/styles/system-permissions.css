@@ -1,19 +1,25 @@
 .system-permissions {
-  display: grid;
-  gap: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   container: system-permissions / inline-size;
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
 }
 
 .system-permission-list {
-  display: grid;
-  gap: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline-soft);
 }
 
 .system-permission-slot,
 .permission-guide-source {
   container: system-permission / inline-size;
   min-width: 0;
+}
+
+.system-permission-slot {
+  border-bottom: 1px solid var(--hairline-soft);
 }
 
 /* Visibility preserves the entire card's footprint throughout the transfer. */
@@ -23,79 +29,94 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-3);
+  gap: 12px;
   min-width: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--radius-md);
-  background: var(--paper);
-  box-shadow: var(--shadow-soft);
-  font-size: var(--font-ui);
+  padding: var(--settings-row-pad-block, 12px) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-sm);
 }
 
 .system-permission-symbol {
-  display: grid;
-  place-items: center;
-  width: 2.4em;
-  height: 2.4em;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--info) 12%, var(--paper));
-  color: var(--info);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline-soft);
+  background: var(--surface-1);
+  color: var(--ink-soft);
 }
 
 .system-permission-row[data-permission="screen"] .system-permission-symbol {
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: var(--surface-1);
+  color: var(--ink-soft);
 }
 
 .system-permission-icon {
-  width: var(--icon-size-lg);
-  height: var(--icon-size-lg);
-  stroke-width: var(--icon-stroke);
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.75;
 }
 
 .system-permission-copy {
   display: grid;
   min-width: 0;
-  gap: var(--space-1);
-  line-height: var(--line-body);
+  gap: 2px;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .system-permission-title {
   color: var(--ink-strong);
-  font-weight: var(--weight-medium);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  line-height: 1.4;
 }
 
-.system-permission-description { color: var(--ink-soft); }
+.system-permission-description {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
 
 /* Keep launch, Enable and granted states from shifting the text column. */
 .system-permission-action {
-  display: grid;
-  min-width: 5.7em;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .system-permission-enable.settings-button {
-  min-width: 5.7em;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-pill);
-  background: var(--paper);
+  min-height: var(--control-field-height, 32px);
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--control-secondary-bg);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
 }
 
 .system-permission-granted {
   display: inline-flex;
-  min-height: var(--control-field-height);
+  min-height: var(--control-field-height, 32px);
   align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
+  justify-content: flex-end;
+  gap: 4px;
   color: var(--success);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
 .system-permissions-note {
   margin: 0;
-  color: var(--ink-soft);
-  line-height: var(--line-body);
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  line-height: 1.45;
 }
 
 .system-permission-feedback {
@@ -105,9 +126,9 @@
   gap: var(--space-2);
   margin: 0;
   color: var(--danger);
-  font-size: var(--font-ui);
+  font-size: var(--font-xs);
   font-weight: var(--weight-regular);
-  line-height: var(--line-body);
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
@@ -118,11 +139,10 @@
 
 .system-permissions-error {
   display: grid;
-  grid-template-columns: 2.4em minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-2) var(--space-3);
-  /* Share the cards’ content columns, including their border inset. */
-  padding-inline: calc(var(--space-4) + 1px);
+  gap: var(--space-2) 12px;
+  padding-inline: 0;
 }
 
 .system-permissions-error > .system-permission-feedback {
@@ -169,6 +189,10 @@
 
 .permission-guide-source .system-permission-row {
   min-height: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-md);
+  background: var(--paper);
   box-shadow: none;
 }
 

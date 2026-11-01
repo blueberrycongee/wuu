@@ -7,7 +7,7 @@ import type {
   BrowserExtensionRecord,
   BrowserProfile,
 } from "../shared/protocol";
-import { ChevronDown, Folder, Globe, Loader2, RefreshCw, Settings, Trash2 } from "./WuuIcons";
+import { ChevronDown, Folder, Loader2, RefreshCw, Settings, Trash2 } from "./WuuIcons";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
@@ -178,7 +178,6 @@ export function BrowserSettingsSection(): JSX.Element | null {
             </SettingsRow>
           ) : profiles.length === 0 ? (
             <div className="settings-group-empty" role="status">
-              <Globe size={18} aria-hidden="true" />
               <span>{t("settings.browserNoProfiles")}</span>
             </div>
           ) : (
@@ -240,7 +239,6 @@ export function BrowserSettingsSection(): JSX.Element | null {
         <SettingsGroup>
           {extensions.length === 0 ? (
             <div className="settings-group-empty" role="status">
-              <Globe size={18} aria-hidden="true" />
               <span>{t("settings.browserExtensionsEmpty")}</span>
             </div>
           ) : (
@@ -324,17 +322,13 @@ export function BrowserSettingsSection(): JSX.Element | null {
                       <dt>{t("settings.browserExtensionsOptional")}</dt><dd>{[...extension.manifest.optionalPermissions, ...extension.manifest.optionalSites].join(", ") || t("settings.browserExtensionsNone")}</dd>
                     </> : null}
                   </dl>
-                  <p>{t("settings.browserExtensionsSharedProfile")}</p>
-                  <p>{t("settings.browserExtensionsFileAccess")}</p>
                   {extension.manifest?.unsupportedPermissions.length ? <p>{t("settings.browserExtensionsUnsupported", { permissions: extension.manifest.unsupportedPermissions.join(", ") })}</p> : null}
                   {extension.manifest?.compatibility.map(warning => <p key={warning}>{t(`settings.browserExtensionsWarning.${warning}`)}</p>)}
-                  <p>{t("settings.browserExtensionsReloadHint")}</p>
                 </div> : null}
               </div>
             ))
           )}
         </SettingsGroup>
-        <p className="settings-section-note">{t("settings.browserExtensionsLocalOnly")}</p>
         {extensionError ? <p className="settings-error" role="alert">{extensionError}</p> : null}
       </SettingsSection>
     </>
