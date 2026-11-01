@@ -3,6 +3,7 @@ package appserver
 import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"sync"
 )
 
 type ServerOption func(*Server) error
@@ -17,6 +18,11 @@ type RuntimeBindings struct {
 	personalCoordination    *personalCoordinatorBridge
 	personalEffects         *PersonalEffectBridge
 	personalAccounts        PersonalAccountsFactory
+	personalMessaging       PersonalMessagingFactory
+	messagingMu             sync.Mutex
+	messagingHost           *UserHost
+	messagingProvider       *personalMessagingProvider
+	messagingClosed         bool
 }
 
 func NewRuntimeBindings() *RuntimeBindings {
@@ -25,6 +31,12 @@ func NewRuntimeBindings() *RuntimeBindings {
 func (b *RuntimeBindings) NativeProviders() []runtime.NativeProviderFactory {
 	factory := b.personalAccounts
 	return []runtime.NativeProviderFactory{b.desktopSessionTransport.factory(), b.personalEffects.ProviderFactory(), b.project.ProviderFactory(), b.project.MechanismFactory(), ProjectCoordinatorConsumerFactory(), PersonalActionsConsumerFactory(), PersonalCoordinationConsumerFactory(),
+		{ID: PersonalMessagingModule, DefaultEnabled: false, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
+			return newPersonalMessagingProvider(input, b), nil
+		}},
+		{ID: PersonalMessagingConsumer, DefaultEnabled: false, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+			return &personalMessagingConsumer{}, nil
+		}},
 		{ID: PersonalAccountsModule, DefaultEnabled: true, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
 			return newPersonalAccountsProvider(input, factory), nil
 		}},
@@ -38,6 +50,7 @@ func WithRuntimeBindings(bindings *RuntimeBindings) ServerOption {
 		bindings.desktopSessionTransport.bind(server)
 		server.personalEffects = bindings.personalEffects
 		server.personalAccountsRouted = true
+		server.personalMessagingRouted = true
 		server.personalCoordination = bindings.personalCoordination
 		_, err := bindings.project.Bind(server)
 		return err

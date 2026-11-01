@@ -3552,7 +3552,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
     };
   }
   sourceRelation(task, destination) {
-    return { ...task.source.message_binding === "host_turn" && task.source.session_id === destination && task.source.message_seq ? { reply_to: { session_id: task.source.session_id, seq: task.source.message_seq } } : {}, metadata: { task_links: [this.taskLink(task)] } };
+    return { ...task.requirements_revision === 1 && task.source.message_binding === "host_turn" && task.source.session_id === destination && task.source.message_seq ? { reply_to: { session_id: task.source.session_id, seq: task.source.message_seq } } : {}, metadata: { task_links: [this.taskLink(task)] } };
   }
   async messageRelation(sessionID, seq, relation, tasks) {
     const sources = (tasks ?? await this.list("task")).filter((task) => task.source.message_binding === "host_turn" && task.source.session_id === sessionID && task.source.message_seq === seq);
@@ -4742,6 +4742,10 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
   }
   async request(method, input, clientHost, execution, ownerClient = false, ownerDeliveryIntent = false) {
     this.assertActive();
+    if (method.startsWith("im.")) {
+      if (!ownerClient || !clientHost) throw new Error("Messaging controls require the authenticated owner client");
+      return callPersonalHost(clientHost, method, input, void 0, execution?.signal);
+    }
     if (method.startsWith("connections.") || method.startsWith("review.") || method.startsWith("connectors.")) {
       if (!ownerClient || !clientHost) throw new Error("Owner UI control requires a live desktop admission");
       const operation = method.startsWith("connections.") ? `calendar.${method.slice(12)}` : method;
@@ -4879,6 +4883,12 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
           }
           return (clientHost ?? this.host).call("host.session.send", { request_id: `personal-chat-${id(agent.agent_id, input.request_id)}`, user_input_request_id: input.request_id, session_id: agent.main_session_id, ...input.relation === void 0 ? {} : { relation: input.relation }, input: { prompt: input.prompt, ...attachments ? { attachments } : {}, ...context_blocks?.length ? { context_blocks } : {} }, cause: "personal.chat", if_running: "queue" });
         });
+      }
+      case "agents.channel_history": {
+        if (!ownerClient) throw new Error("Messaging history requires the authenticated owner client");
+        const agent = await this.conversation(input, true);
+        await this.inspectAgent(agent);
+        return this.history(agent.main_session_id, input);
       }
       case "agents.history": {
         const agent = await this.conversation(input, true);

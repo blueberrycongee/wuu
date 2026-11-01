@@ -25,6 +25,290 @@ var personalDesktop = (() => {
     activate: () => activate
   });
 
+  // plugins/personal/ui/im-panel.ts
+  var states = ["unconfigured", "disabled", "connecting", "connected", "error", "reconnecting"];
+  function object(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("invalid_im_status");
+    return value;
+  }
+  function connections(raw) {
+    const value = object(raw);
+    if (!Array.isArray(value.connections) || value.connections.length > 2) throw Error("invalid_im_status");
+    const seen = /* @__PURE__ */ new Set();
+    return value.connections.map((rawRow) => {
+      const row = object(rawRow), binding = object(row.binding);
+      if (row.platform !== "slack" && row.platform !== "feishu" || seen.has(row.platform)) throw Error("invalid_im_platform");
+      seen.add(row.platform);
+      if (typeof row.state !== "string" || !states.includes(row.state)) throw Error("invalid_im_state");
+      for (const key of ["enabled", "configured", "credential_ready"]) if (typeof row[key] !== "boolean") throw Error("invalid_im_status");
+      for (const key of ["tenant_id", "sender_id", "conversation_id"]) if (typeof binding[key] !== "string") throw Error("invalid_im_binding");
+      for (const key of ["pending_outbound", "unknown_delivery"]) if (!Number.isSafeInteger(row[key]) || row[key] < 0) throw Error("invalid_im_delivery");
+      for (const key of ["app_id", "last_error"]) if (row[key] !== void 0 && typeof row[key] !== "string") throw Error("invalid_im_status");
+      if (row.state === "connected" && (!row.enabled || !row.configured || !row.credential_ready)) throw Error("invalid_im_connection");
+      return structuredClone(row);
+    });
+  }
+  function pendingRows(raw) {
+    const value = object(raw), result2 = [], seen = /* @__PURE__ */ new Set();
+    for (const [key, kind] of [["inputs", "input"], ["outputs", "output"]]) {
+      const items = value[key];
+      if (!Array.isArray(items)) throw Error("invalid_im_pending");
+      for (const item of items) {
+        const row = object(item);
+        if (row.platform !== "slack" && row.platform !== "feishu" || typeof row.id !== "string" || !row.id || typeof row.state !== "string" || typeof row.preview !== "string" || row.error !== void 0 && typeof row.error !== "string") throw Error("invalid_im_pending");
+        const identity = `${row.platform}:${kind}:${row.id}`;
+        if (seen.has(identity)) throw Error("duplicate_im_pending");
+        seen.add(identity);
+        result2.push({ ...row, kind });
+      }
+    }
+    return result2;
+  }
+  var copy = {
+    en: {
+      pending: "Messages needing attention",
+      input: "Incoming request",
+      output: "Outgoing reply",
+      preview: "Message preview",
+      discard: "Abandon this message",
+      confirmDiscard: "Confirm abandon",
+      cancel: "Cancel",
+      discardWarning: "This stops local attempts only. The message may already have reached Personal or the chat. It does not undo work or resend anything.",
+      title: "Chat with Personal",
+      intro: "Receive messages from your enrolled identity and reply in the same chat. This is separate from read-only work connectors.",
+      refresh: "Refresh status",
+      loading: "Checking\u2026",
+      unavailable: "Connection status could not be verified. Refresh before making changes.",
+      uncertain: "The operation receipt was not received. Refresh saved state before trying again; do not assume the change failed.",
+      credentials: "Host credentials",
+      ready: "Available",
+      missing: "Not configured",
+      setup: "Configure these secrets in the host environment, then restart. The host saves them in its selected credential store; removing an environment value does not revoke it. Never paste tokens into plugin settings or messages.",
+      binding: "Owner identity binding",
+      bindingHint: "Only messages matching all three IDs are admitted. Disable before changing a binding. Pending or unknown deliveries must be resolved first.",
+      team: "Slack workspace ID",
+      tenant: "Feishu tenant key",
+      user: "Slack owner user ID",
+      sender: "Feishu owner open ID",
+      channel: "Slack conversation/channel ID",
+      chat: "Feishu chat ID",
+      save: "Save binding",
+      test: "Test connection",
+      testHint: "Checks credentials and binding without sending a message.",
+      tested: "Connection test finished. Check the current host status below; no message was sent.",
+      enable: "Enable",
+      disable: "Disable",
+      retry: "Reconnect",
+      retryHint: "Reconnect restarts transport only. It does not replay messages with unknown delivery.",
+      queued: "Pending outbound",
+      unknown: "Unknown delivery",
+      unknownHint: "A provider may already have accepted these messages. Check the original chat; they will not be resent automatically.",
+      failure: "Last failure",
+      unsaved: "Unsaved binding \u2014 save before testing or enabling.",
+      app: "App ID",
+      unverified: "Status unverified",
+      unconfigured: "Not configured",
+      disabled: "Disabled",
+      connecting: "Connecting",
+      connected: "Connected",
+      error: "Connection failed",
+      reconnecting: "Reconnecting"
+    },
+    zh: {
+      pending: "\u9700\u8981\u5904\u7406\u7684\u6D88\u606F",
+      input: "\u6536\u5230\u7684\u8BF7\u6C42",
+      output: "\u5F85\u6295\u9012\u7684\u56DE\u590D",
+      preview: "\u6D88\u606F\u9884\u89C8",
+      discard: "\u653E\u5F03\u8FD9\u6761\u6D88\u606F",
+      confirmDiscard: "\u786E\u8BA4\u653E\u5F03",
+      cancel: "\u53D6\u6D88",
+      discardWarning: "\u53EA\u505C\u6B62\u672C\u5730\u540E\u7EED\u5C1D\u8BD5\u3002\u6D88\u606F\u53EF\u80FD\u5DF2\u7ECF\u8FDB\u5165 Personal \u6216\u539F\u4F1A\u8BDD\uFF0C\u4E0D\u4F1A\u64A4\u9500\u5DE5\u4F5C\uFF0C\u4E5F\u4E0D\u4F1A\u91CD\u53D1\u3002",
+      title: "\u901A\u8FC7\u804A\u5929\u8054\u7CFB Personal",
+      intro: "\u63A5\u6536\u5DF2\u7ED1\u5B9A\u8EAB\u4EFD\u7684\u6D88\u606F\uFF0C\u5E76\u5728\u539F\u4F1A\u8BDD\u56DE\u590D\u3002\u6B64\u5165\u53E3\u4E0E\u53EA\u8BFB\u5DE5\u4F5C\u8D44\u6599\u8FDE\u63A5\u5668\u72EC\u7ACB\u3002",
+      refresh: "\u5237\u65B0\u72B6\u6001",
+      loading: "\u6B63\u5728\u6838\u5BF9\u2026",
+      unavailable: "\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\u8FDE\u63A5\u72B6\u6001\u3002\u8BF7\u5237\u65B0\u540E\u518D\u4FEE\u6539\u3002",
+      uncertain: "\u672A\u6536\u5230\u64CD\u4F5C\u56DE\u6267\u3002\u8BF7\u5148\u5237\u65B0\u5DF2\u4FDD\u5B58\u72B6\u6001\uFF0C\u4E0D\u8981\u5047\u5B9A\u4FEE\u6539\u5931\u8D25\u6216\u91CD\u590D\u64CD\u4F5C\u3002",
+      credentials: "\u5BBF\u4E3B\u51ED\u636E",
+      ready: "\u5DF2\u914D\u7F6E",
+      missing: "\u672A\u914D\u7F6E",
+      setup: "\u5728\u5BBF\u4E3B\u73AF\u5883\u4E2D\u914D\u7F6E\u8FD9\u4E9B\u79D8\u5BC6\u503C\u5E76\u91CD\u542F\u3002\u5BBF\u4E3B\u4F1A\u5C06\u5B83\u4EEC\u4FDD\u5B58\u5230\u6240\u9009\u51ED\u636E\u5E93\uFF1B\u79FB\u9664\u73AF\u5883\u503C\u4E0D\u7B49\u4E8E\u64A4\u9500\u51ED\u636E\u3002\u4E0D\u8981\u628A\u4EE4\u724C\u7C98\u8D34\u5230\u63D2\u4EF6\u8BBE\u7F6E\u6216\u6D88\u606F\u4E2D\u3002",
+      binding: "\u4E3B\u4EBA\u8EAB\u4EFD\u7ED1\u5B9A",
+      bindingHint: "\u53EA\u6709\u540C\u65F6\u5339\u914D\u8FD9\u4E09\u4E2A ID \u7684\u6D88\u606F\u624D\u4F1A\u8FDB\u5165\u3002\u66F4\u6539\u7ED1\u5B9A\u524D\u8BF7\u5148\u505C\u7528\uFF0C\u5E76\u5904\u7406\u5C1A\u672A\u5B8C\u6210\u6216\u6295\u9012\u7ED3\u679C\u672A\u77E5\u7684\u6D88\u606F\u3002",
+      team: "Slack \u5DE5\u4F5C\u533A ID",
+      tenant: "\u98DE\u4E66\u79DF\u6237 tenant key",
+      user: "Slack \u4E3B\u4EBA\u7528\u6237 ID",
+      sender: "\u98DE\u4E66\u4E3B\u4EBA open ID",
+      channel: "Slack \u4F1A\u8BDD/\u9891\u9053 ID",
+      chat: "\u98DE\u4E66\u4F1A\u8BDD chat ID",
+      save: "\u4FDD\u5B58\u7ED1\u5B9A",
+      test: "\u6D4B\u8BD5\u8FDE\u63A5",
+      testHint: "\u6838\u5B9E\u51ED\u636E\u548C\u7ED1\u5B9A\uFF0C\u4E0D\u53D1\u9001\u6D88\u606F\u3002",
+      tested: "\u8FDE\u63A5\u6D4B\u8BD5\u5DF2\u5B8C\u6210\uFF0C\u8BF7\u6838\u5BF9\u4E0B\u65B9\u5BBF\u4E3B\u72B6\u6001\uFF1B\u672A\u53D1\u9001\u6D88\u606F\u3002",
+      enable: "\u542F\u7528",
+      disable: "\u505C\u7528",
+      retry: "\u91CD\u65B0\u8FDE\u63A5",
+      retryHint: "\u91CD\u65B0\u8FDE\u63A5\u53EA\u91CD\u542F\u4F20\u8F93\uFF0C\u4E0D\u4F1A\u91CD\u53D1\u6295\u9012\u7ED3\u679C\u672A\u77E5\u7684\u6D88\u606F\u3002",
+      queued: "\u5F85\u53D1\u9001",
+      unknown: "\u6295\u9012\u7ED3\u679C\u672A\u77E5",
+      unknownHint: "\u5E73\u53F0\u53EF\u80FD\u5DF2\u7ECF\u63A5\u6536\u8FD9\u4E9B\u6D88\u606F\u3002\u8BF7\u5230\u539F\u4F1A\u8BDD\u6838\u5BF9\uFF1B\u7CFB\u7EDF\u4E0D\u4F1A\u81EA\u52A8\u91CD\u53D1\u3002",
+      failure: "\u6700\u8FD1\u5931\u8D25",
+      unsaved: "\u7ED1\u5B9A\u5C1A\u672A\u4FDD\u5B58\uFF1B\u8BF7\u5148\u4FDD\u5B58\u518D\u6D4B\u8BD5\u6216\u542F\u7528\u3002",
+      app: "\u5E94\u7528 ID",
+      unverified: "\u72B6\u6001\u672A\u6838\u5B9E",
+      unconfigured: "\u672A\u914D\u7F6E",
+      disabled: "\u5DF2\u505C\u7528",
+      connecting: "\u8FDE\u63A5\u4E2D",
+      connected: "\u5DF2\u8FDE\u63A5",
+      error: "\u8FDE\u63A5\u5931\u8D25",
+      reconnecting: "\u91CD\u65B0\u8FDE\u63A5\u4E2D"
+    }
+  };
+  function createIMPanel(react, ui) {
+    const h = react.createElement, Button = ui.Button;
+    function PlatformPanel({ row, service, locale, locked, verified, pending, run }) {
+      const t = copy[locale];
+      const [draft, setDraft] = react.useState(row.binding), [dirty, setDirty] = react.useState(false), [tested, setTested] = react.useState(false), [confirming, setConfirming] = react.useState("");
+      react.useEffect(() => {
+        if (!dirty) setDraft(row.binding);
+      }, [row.binding.tenant_id, row.binding.sender_id, row.binding.conversation_id, dirty]);
+      const bindingLocked = row.enabled || row.pending_outbound > 0 || row.unknown_delivery > 0 || pending.some((item) => item.kind === "input" || ["pending", "sending", "uncertain"].includes(item.state));
+      const complete = Object.values(draft).every((value) => value.trim().length > 0);
+      const target = { platform: row.platform };
+      const action = (name, title, disabled, work, done) => h(Button, { "data-im-action": name, disabled: locked || disabled, onClick: () => void run(work, done) }, title);
+      const field = (name, label) => h(ui.TextInput, { key: name, label, name, value: draft[name], autoComplete: "off", spellCheck: false, disabled: locked || bindingLocked, onChange: (event) => {
+        setDraft((current) => ({ ...current, [name]: event.target.value }));
+        setDirty(true);
+        setTested(false);
+      } });
+      return h(
+        "article",
+        { className: "personal-im-platform", "data-im-platform": row.platform },
+        h("div", { className: "personal-im-heading" }, h("h4", null, row.platform === "slack" ? "Slack" : "\u98DE\u4E66 / Feishu"), h("span", { "data-im-state": verified ? row.state : "unverified" }, verified ? t[row.state] : t.unverified)),
+        h("p", null, `${t.credentials}: ${row.credential_ready ? t.ready : t.missing}`),
+        row.app_id ? h("p", null, `${t.app}: ${row.app_id}`) : null,
+        h("details", { open: !row.credential_ready }, h("summary", null, t.credentials), h("p", null, t.setup), h("code", null, row.platform === "slack" ? "WUU_SLACK_APP_TOKEN \xB7 WUU_SLACK_BOT_TOKEN" : "WUU_FEISHU_APP_ID \xB7 WUU_FEISHU_APP_SECRET")),
+        h("fieldset", { disabled: locked || bindingLocked }, h("legend", null, t.binding), h("p", null, t.bindingHint), h("div", { className: "personal-im-fields" }, field("tenant_id", row.platform === "slack" ? t.team : t.tenant), field("sender_id", row.platform === "slack" ? t.user : t.sender), field("conversation_id", row.platform === "slack" ? t.channel : t.chat))),
+        dirty ? h("p", { role: "status" }, t.unsaved) : null,
+        h(
+          "div",
+          { className: "personal-im-controls" },
+          action("configure", t.save, bindingLocked || !complete || !dirty, () => service.configure({ ...target, binding: { tenant_id: draft.tenant_id.trim(), sender_id: draft.sender_id.trim(), conversation_id: draft.conversation_id.trim() } }), () => setDirty(false)),
+          action("test", t.test, dirty || !row.configured || !row.credential_ready, () => service.test(target), () => setTested(true)),
+          row.enabled ? action("disable", t.disable, false, () => service.disable(target)) : action("enable", t.enable, dirty || !row.configured || !row.credential_ready, () => service.enable(target)),
+          row.enabled ? action("retry", t.retry, false, () => service.retry(target)) : null
+        ),
+        h("p", null, t.testHint),
+        tested ? h("p", { role: "status" }, t.tested) : null,
+        row.enabled ? h("p", null, t.retryHint) : null,
+        h("dl", { className: "personal-im-delivery" }, h("div", null, h("dt", null, t.queued), h("dd", null, row.pending_outbound)), h("div", { "data-im-unknown": true }, h("dt", null, t.unknown), h("dd", null, row.unknown_delivery))),
+        row.unknown_delivery > 0 ? h("p", { role: "status" }, t.unknownHint) : null,
+        row.last_error ? h("p", { role: "status" }, `${t.failure}: ${row.last_error}`) : null,
+        pending.length ? h("section", { className: "personal-im-pending" }, h("h4", null, t.pending), ...pending.map((item) => {
+          const identity = `${item.kind}-${item.id}`, canDiscard = item.kind === "input" ? item.state === "pending" : ["pending", "failed", "uncertain"].includes(item.state);
+          return h(
+            "article",
+            { key: identity },
+            h("p", null, `${item.kind === "input" ? t.input : t.output} \xB7 ${item.state}`),
+            h("code", null, item.id),
+            item.error ? h("p", null, item.error) : null,
+            h("details", null, h("summary", null, t.preview), h("pre", null, item.preview)),
+            confirming === identity && canDiscard ? h("div", null, h("p", { role: "status" }, t.discardWarning), h(
+              "div",
+              { className: "personal-im-controls" },
+              action(`confirm-discard-${identity}`, t.confirmDiscard, false, () => service.resolve({ ...target, kind: item.kind, id: item.id, decision: "discard" }), () => setConfirming("")),
+              h(Button, { "data-im-action": `cancel-discard-${identity}`, disabled: locked, onClick: () => setConfirming("") }, t.cancel)
+            )) : h(Button, { "data-im-action": `discard-${identity}`, disabled: locked || !canDiscard, onClick: () => setConfirming(identity) }, t.discard)
+          );
+        })) : null
+      );
+    }
+    return function IMPanel({ service, locale }) {
+      const language = locale?.startsWith("zh") ? "zh" : "en", t = copy[language];
+      const [rows, setRows] = react.useState([]), [pending, setPending] = react.useState([]), [loading, setLoading] = react.useState(true), [busy, setBusy] = react.useState(false), [error, setError] = react.useState(""), [uncertain, setUncertain] = react.useState(false);
+      const alive = react.useRef(false), gate = react.useRef(false), epoch = react.useRef(0), lifetime = react.useRef(0), reading = react.useRef(false), uncertainty = react.useRef(false);
+      const load = async (manual = false) => {
+        if (reading.current) return;
+        reading.current = true;
+        const current = ++epoch.current, owner = lifetime.current;
+        setLoading(true);
+        try {
+          const [status, queued] = await Promise.all([service.status(), service.pending()]);
+          const next = connections(status), attention = pendingRows(queued);
+          if (!alive.current || current !== epoch.current || owner !== lifetime.current) return;
+          setRows(next);
+          setPending(attention);
+          setError("");
+          if (manual) {
+            uncertainty.current = false;
+            setUncertain(false);
+          }
+        } catch {
+          if (alive.current && current === epoch.current && owner === lifetime.current) setError(t.unavailable);
+        } finally {
+          if (alive.current && current === epoch.current && owner === lifetime.current) {
+            reading.current = false;
+            setLoading(false);
+          }
+        }
+      };
+      react.useEffect(() => {
+        alive.current = true;
+        reading.current = false;
+        gate.current = false;
+        uncertainty.current = false;
+        setRows([]);
+        setPending([]);
+        setBusy(false);
+        setUncertain(false);
+        void load(true);
+        const timer = setInterval(() => {
+          if (!gate.current && !uncertainty.current) void load();
+        }, 5e3);
+        return () => {
+          alive.current = false;
+          lifetime.current++;
+          epoch.current++;
+          clearInterval(timer);
+        };
+      }, [service]);
+      const run = async (work, done) => {
+        if (gate.current || uncertainty.current || reading.current) return;
+        gate.current = true;
+        setBusy(true);
+        setError("");
+        const owner = lifetime.current;
+        try {
+          await work();
+          if (alive.current && owner === lifetime.current) {
+            done?.();
+            await load(true);
+          }
+        } catch {
+          if (alive.current && owner === lifetime.current) {
+            uncertainty.current = true;
+            setUncertain(true);
+            setError(t.uncertain);
+          }
+        } finally {
+          if (alive.current && owner === lifetime.current) {
+            gate.current = false;
+            setBusy(false);
+          }
+        }
+      };
+      return h(
+        "section",
+        { className: "personal-im", "data-personal-im": true },
+        h("div", { className: "personal-im-heading" }, h("h3", null, t.title), h(Button, { "data-im-refresh": true, disabled: busy || loading, onClick: () => void load(true) }, loading ? t.loading : t.refresh)),
+        h("p", null, t.intro),
+        error ? h("p", { role: "alert" }, error) : null,
+        ...rows.map((row) => h(PlatformPanel, { key: row.platform, row, service, locale: language, locked: busy || loading || uncertain || Boolean(error), verified: !error && !uncertain, pending: pending.filter((item) => item.platform === row.platform), run }))
+      );
+    };
+  }
+  var imStyles = `.personal-im{font:inherit;min-width:0}.personal-im h3{margin:0;font-size:max(var(--font-ui,15px),var(--font-title,16px));font-weight:var(--weight-semibold,600)}.personal-im h4{margin:0;font:inherit;font-weight:var(--weight-medium,500)}.personal-im p{margin:var(--space-2,8px) 0;color:var(--ink-tertiary);overflow-wrap:anywhere}.personal-im-heading,.personal-im-controls{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap}.personal-im-controls{justify-content:flex-start}.personal-im-platform{border-top:1px solid var(--hairline-soft);padding-block:var(--space-4,16px);margin-top:var(--space-3,12px)}.personal-im fieldset{border:0;padding:0;margin:var(--space-4,16px) 0;min-width:0}.personal-im legend{font-weight:var(--weight-medium,500);padding:0}.personal-im-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15em),1fr));gap:var(--space-3,12px)}.personal-im .plugin-ui-field{min-width:0}.personal-im .plugin-ui-input{width:100%;min-width:0;box-sizing:border-box}.personal-im summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.personal-im summary{cursor:pointer}.personal-im code{font:var(--font-code,13px)/1.5 var(--font-mono,monospace);overflow-wrap:anywhere}.personal-im-delivery{display:flex;flex-wrap:wrap;gap:var(--space-4,16px);margin-block:var(--space-3,12px)}.personal-im-delivery>div{display:flex;gap:var(--space-2,8px)}.personal-im dd{margin:0}.personal-im [role=alert]{color:var(--danger);border-left:2px solid var(--danger);padding-left:var(--space-3,12px)}.personal-im button{white-space:normal}.personal-im-pending>article{border-top:1px solid var(--hairline-soft);padding-block:var(--space-3,12px)}.personal-im-pending pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:20em;overflow:auto;font:var(--font-code,13px)/1.5 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2)}`;
+
   // plugins/personal/src/share-capture.ts
   function normalizeShareCapture(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid_capture");
@@ -276,25 +560,25 @@ var personalDesktop = (() => {
 
   // plugins/personal/ui/connectors-panel.ts
   var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["github", "GitHub", "PR\u3001Issue\u3001CI \u4E0E Release"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
-  var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
-  function object(value) {
+  var states2 = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
+  function object2(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid connector response");
     return value;
   }
-  function connections(raw) {
-    const rows = object(raw).connections;
+  function connections2(raw) {
+    const rows = object2(raw).connections;
     if (!Array.isArray(rows) || rows.length > 100) throw Error("Invalid connector list");
     return rows.map((row) => {
-      const v = object(row);
+      const v = object2(row);
       if (!["connection_id", "provider", "account_id", "domain", "state"].every((key) => typeof v[key] === "string") || !Array.isArray(v.resources) || !v.resources.every((x) => typeof x === "string") || !Array.isArray(v.scopes) || !v.scopes.every((x) => typeof x === "string")) throw Error("Invalid connector identity");
       return structuredClone(v);
     });
   }
   function actions(raw) {
-    const rows = object(raw).actions;
+    const rows = object2(raw).actions;
     if (!Array.isArray(rows) || rows.length > 1e3) throw Error("Invalid connector actions");
     return rows.map((row) => {
-      const v = object(row);
+      const v = object2(row);
       if (typeof v.state !== "string" || typeof v.action_id !== "string") throw Error("Invalid connector action");
       for (const key of ["digest", "summary", "connection_id", "operation", "arguments_json", "account_id", "code"]) if (v[key] !== void 0 && typeof v[key] !== "string") throw Error("Invalid connector action");
       return structuredClone(v);
@@ -303,7 +587,7 @@ var personalDesktop = (() => {
   function confirmable(a) {
     if (a.state !== "awaiting_confirmation" || !a.digest || !/^[a-f0-9]{64}$/.test(a.digest) || !a.arguments_json) return false;
     try {
-      return !!object(JSON.parse(a.arguments_json));
+      return !!object2(JSON.parse(a.arguments_json));
     } catch {
       return false;
     }
@@ -326,7 +610,7 @@ var personalDesktop = (() => {
         try {
           const [list, history] = await Promise.all([conversation ? Promise.resolve({ connections: [] }) : service.list(), service.actions()]);
           if (!alive.current || n !== generation.current) return;
-          setRows(connections(list));
+          setRows(connections2(list));
           setSaved(actions(history));
           setError("");
           setUncertain(false);
@@ -400,7 +684,7 @@ var personalDesktop = (() => {
         visible.length ? h("div", { className: "personal-connectors-actions" }, !conversation ? h("h3", null, "\u52A8\u4F5C\u4E0E\u56DE\u6267") : null, ...visible.map((a) => h(
           "article",
           { key: a.action_id, "data-connector-state": a.state, className: "personal-connector-action" },
-          h("div", { className: "personal-connector-title" }, h("h4", null, a.summary || a.operation || "\u8FDE\u63A5\u5668\u52A8\u4F5C"), h("span", null, states[a.state] || "\u5F85\u6838\u5B9E\u72B6\u6001")),
+          h("div", { className: "personal-connector-title" }, h("h4", null, a.summary || a.operation || "\u8FDE\u63A5\u5668\u52A8\u4F5C"), h("span", null, states2[a.state] || "\u5F85\u6838\u5B9E\u72B6\u6001")),
           h("p", null, `${a.account_id || a.connection_id || ""} \xB7 ${a.operation || ""}`),
           a.arguments_json ? h("details", { open: a.state === "awaiting_confirmation" }, h("summary", null, "\u6838\u5BF9\u5B8C\u6574\u64CD\u4F5C\u5185\u5BB9"), h("pre", null, a.arguments_json)) : null,
           a.state === "uncertain" ? h("p", null, "\u5916\u90E8\u670D\u52A1\u53EF\u80FD\u5DF2\u63A5\u53D7\u6B64\u64CD\u4F5C\u3002\u6B64\u5904\u4E0D\u4F1A\u91CD\u53D1\uFF1B\u5148\u5230\u6765\u6E90\u6838\u5BF9\u7ED3\u679C\u3002") : null,
@@ -434,9 +718,9 @@ var personalDesktop = (() => {
     }
   }
   function reviewRecord(value) {
-    if (!exactObject(value, ["revision", "status", "outcome", "reason", "action", ...typeof value === "object" && value !== null && Object.hasOwn(value, "receipt_json") ? ["receipt_json"] : []]) || value.receipt_json !== void 0 && !parametersText(value.receipt_json) || !exactRevision(value.revision) || typeof value.status !== "string" || !Object.hasOwn(copy.en.states, value.status) || typeof value.outcome !== "string" || !["allow", "ask", "deny"].includes(value.outcome) || typeof value.reason !== "string") return false;
+    if (!exactObject(value, ["revision", "status", "outcome", "reason", "action", ...typeof value === "object" && value !== null && Object.hasOwn(value, "receipt_json") ? ["receipt_json"] : []]) || value.receipt_json !== void 0 && !parametersText(value.receipt_json) || !exactRevision(value.revision) || typeof value.status !== "string" || !Object.hasOwn(copy2.en.states, value.status) || typeof value.outcome !== "string" || !["allow", "ask", "deny"].includes(value.outcome) || typeof value.reason !== "string") return false;
     const action = value.action;
-    if (!exactObject(action, ["id", "digest", "operation", "scope", "effect", "summary", "arguments_json", "expires_at"]) || !nonempty(action.id) || typeof action.digest !== "string" || !/^[a-f0-9]{64}$/.test(action.digest) || !nonempty(action.operation) || typeof action.effect !== "string" || !Object.hasOwn(copy.en.effects, action.effect) || !parametersText(action.arguments_json) || typeof action.expires_at !== "string" || !Number.isFinite(Date.parse(action.expires_at))) return false;
+    if (!exactObject(action, ["id", "digest", "operation", "scope", "effect", "summary", "arguments_json", "expires_at"]) || !nonempty(action.id) || typeof action.digest !== "string" || !/^[a-f0-9]{64}$/.test(action.digest) || !nonempty(action.operation) || typeof action.effect !== "string" || !Object.hasOwn(copy2.en.effects, action.effect) || !parametersText(action.arguments_json) || typeof action.expires_at !== "string" || !Number.isFinite(Date.parse(action.expires_at))) return false;
     const scope = action.scope, summary = action.summary;
     return exactObject(scope, ["space_id", "session_id", "task_id", "requirements_revision", ...typeof scope === "object" && scope !== null && Object.hasOwn(scope, "context_digest") ? ["context_digest"] : []]) && (scope.context_digest === void 0 || typeof scope.context_digest === "string" && /^[a-f0-9]{64}$/.test(scope.context_digest)) && nonempty(scope.space_id) && nonempty(scope.session_id) && nonempty(scope.task_id) && exactRevision(scope.requirements_revision) && exactObject(summary, ["title", "account", "target", "consequence"]) && typeof summary.title === "string" && typeof summary.account === "string" && typeof summary.target === "string" && typeof summary.consequence === "string";
   }
@@ -449,7 +733,7 @@ var personalDesktop = (() => {
     }
     throw new ReviewContractError("Action data could not be verified. Refresh to check the saved state.");
   }
-  var copy = {
+  var copy2 = {
     en: {
       title: "Action approvals",
       description: "Checks each action against your request before it runs.",
@@ -568,7 +852,7 @@ var personalDesktop = (() => {
     const h = react.createElement;
     return function PersonalReviewPanel({ service, locale = "en", variant = "settings" }) {
       const conversation = variant === "conversation";
-      const words = locale.startsWith("zh") ? copy.zh : copy.en;
+      const words = locale.startsWith("zh") ? copy2.zh : copy2.en;
       const hadActions = react.useRef(false);
       const [loaded, setLoaded] = react.useState();
       const [failure2, setFailure] = react.useState();
@@ -1079,7 +1363,7 @@ var personalDesktop = (() => {
   var connection_view_default = '.gcal-view { font-family:var(--wuu-font-family-ui,Inter,ui-sans-serif,system-ui,-apple-system,"PingFang SC",sans-serif); font-size:var(--font-ui,15px); color:var(--ink-strong); line-height:1.55; max-width:760px; margin:auto; }\n.gcal-view * { box-sizing:border-box; }\n.gcal-view h2 { font-size:1.35em;font-weight:600;margin:0 0 4px; }\n.gcal-view h3 { font-size:1.1em;font-weight:600;margin:0; }\n.gcal-view p { margin:0; }\n.gcal-heading { display:flex;gap:16px;align-items:center;margin-bottom:32px; }\n.gcal-icon { flex:none;display:grid;place-items:center;width:48px;height:48px;border:1px solid var(--hairline);border-radius:12px;background:var(--surface-1);font-size:1.25em;font-weight:600; }\n.gcal-muted { color:var(--ink-soft); }\n.gcal-connection { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline); }\n.gcal-status { display:flex;align-items:center;gap:8px; }\n.gcal-status::before { content:"";width:7px;height:7px;flex:none;border-radius:50%;background:currentColor; }\n.gcal-button { font:inherit;cursor:pointer;padding:9px 14px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--paper);color:var(--ink-strong);white-space:normal; }\n.gcal-button:hover { background:var(--surface-2); }\n.gcal-button.primary { background:var(--ink-strong);color:var(--paper);border-color:var(--ink-strong); }\n.gcal-view :disabled { cursor:default;opacity:.55; }\n.gcal-view :focus-visible { outline:2px solid var(--ink-soft);outline-offset:3px; }\n.gcal-view fieldset { border:0;padding:24px 0;margin:0;min-width:0; }\n.gcal-view legend { padding:20px 0 0;font-weight:600; }\n.gcal-choice { display:flex;align-items:flex-start;gap:12px;padding:10px 0;cursor:pointer; }\n.gcal-choice input { width:18px;height:18px;flex:none;margin:3px 0;accent-color:var(--ink-strong); }\n.gcal-choice span { overflow-wrap:anywhere; }\n.gcal-choice small { display:block;font-size:.9em;margin-top:3px; }\n.gcal-agenda-form { display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;padding:20px 0;border-top:1px solid var(--hairline); }\n.gcal-zone { grid-column:1/-1;display:flex;gap:14px;align-items:center;flex-wrap:wrap;color:var(--ink-soft); }\n.gcal-view input:not([type=checkbox]) { min-width:0;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--paper);color:var(--ink-strong);font:inherit;padding:10px 12px; }\n.gcal-zone input { flex:1;max-width:310px; }\n.gcal-results { padding:24px 0; }\n.gcal-results > .gcal-muted { margin-top:5px;margin-bottom:16px; }\n.gcal-event { display:grid;grid-template-columns:120px 1fr;gap:16px;padding:15px 0;border-bottom:1px solid var(--hairline);overflow-wrap:anywhere; }\n.gcal-time { color:var(--ink-soft);font-variant-numeric:tabular-nums; }\n.gcal-disconnect { padding:20px 0;border-top:1px solid var(--hairline);margin-top:12px; }\n.gcal-disconnect summary { cursor:pointer;color:var(--ink-soft); }\n.gcal-disconnect p { margin:8px 0 16px; }\n.gcal-notice { padding:16px 0; }\n@media(max-width:520px) { .gcal-connection { align-items:flex-start;flex-direction:column; } .gcal-event { grid-template-columns:1fr;gap:4px; } .gcal-agenda-form { grid-template-columns:1fr; } }\n';
 
   // plugins/personal/ui/settings-panels.ts
-  function object2(value) {
+  function object3(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Calendar response");
     return value;
   }
@@ -1089,22 +1373,22 @@ var personalDesktop = (() => {
   }
   function time(value) {
     if (value === void 0) return;
-    const v = object2(value);
+    const v = object3(value);
     return { timezone: text(v.timezone), ...v.date === void 0 ? {} : { date: text(v.date) }, ...v.date_time === void 0 ? {} : { date_time: text(v.date_time) } };
   }
   function events(value) {
     if (!Array.isArray(value) || value.length > 2e3) throw new Error("Invalid Calendar events");
     return value.map((item) => {
-      const v = object2(item);
+      const v = object3(item);
       if (!["confirmed", "tentative", "cancelled"].includes(text(v.status))) throw new Error("Invalid event status");
       return { id: text(v.id), status: v.status, summary: v.summary === void 0 ? void 0 : text(v.summary), start: time(v.start), end: time(v.end), all_day: v.all_day === true };
     });
   }
   function snapshot(raw) {
-    const v = object2(raw);
+    const v = object3(raw);
     if (!["ready", "error"].includes(text(v.state)) || !["fresh", "stale", "empty"].includes(text(v.freshness)) || v.state === "error" && v.freshness === "fresh") throw new Error("Invalid Calendar result state");
     if (v.freshness === "empty") throw { code: typeof v.error_code === "string" ? v.error_code : "provider_unavailable" };
-    const source = object2(v.source), query = calendarQuery(source);
+    const source = object3(v.source), query = calendarQuery(source);
     const freshness = v.freshness === "fresh" ? "fresh" : "stale";
     return { freshness, source: { ...query, provider: "google-calendar", read_only: true, user_space_id: text(source.user_space_id), account_id: text(source.account_id), fetched_at: text(source.fetched_at), connection_id: text(source.connection_id), selection_revision: text(source.selection_revision) }, events: events(v.events), cancelled_events: events(v.cancelled_events) };
   }
@@ -1123,7 +1407,18 @@ var personalDesktop = (() => {
     const host = async (method, input) => unwrapPersonalHost(await invoke(method, input));
     const reviewService = { list: () => host("review.list"), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
     const connectorService = { oauth: { start: (input) => host("connectors.start", input), attempt: (input) => host("connectors.attempt", input), cancel: (input) => host("connectors.cancel", input) }, list: () => host("connectors.list"), actions: () => host("connectors.actions"), decide: (input) => host("connectors.decide", input), disconnect: (input) => host("connectors.disconnect", input) };
-    function Connections() {
+    const IMPanel = createIMPanel(react, ui);
+    const imService = {
+      status: () => invoke("im.status"),
+      pending: () => invoke("im.pending"),
+      resolve: (input) => invoke("im.resolve", input),
+      configure: (input) => invoke("im.configure", input),
+      test: (input) => invoke("im.test", input),
+      enable: (input) => invoke("im.enable", input),
+      disable: (input) => invoke("im.disable", input),
+      retry: (input) => invoke("im.retry", input)
+    };
+    function Connections({ locale }) {
       const root = react.useRef(null);
       react.useEffect(() => {
         if (!root.current) return;
@@ -1133,7 +1428,7 @@ var personalDesktop = (() => {
             const rows = await host("connections.calendars", { connection_id: connectionID });
             if (!Array.isArray(rows)) throw new Error("Invalid calendar list");
             return rows.map((row) => {
-              const v = object2(row);
+              const v = object3(row);
               return { id: text(v.id), summary: text(v.summary), timeZone: text(v.timeZone), primary: v.primary === true };
             });
           },
@@ -1141,19 +1436,19 @@ var personalDesktop = (() => {
             await host("connections.select", { connection_id: connectionID, calendar_ids: ids });
           },
           disconnect: async (connectionID, revoke) => {
-            const v = object2(await host("connections.disconnect", { connection_id: connectionID, revoke }));
+            const v = object3(await host("connections.disconnect", { connection_id: connectionID, revoke }));
             if (typeof v.local_deleted !== "boolean") throw new Error("Invalid disconnect result");
             return { local_deleted: v.local_deleted, revocation: text(v.revocation) };
           },
           agenda: async (query) => snapshot(await invoke("connections.agenda", query)),
           startAuthorization: async (signal) => {
-            const started = object2(await host("connections.start")), attemptID = text(started.attempt_id);
+            const started = object3(await host("connections.start")), attemptID = text(started.attempt_id);
             for (; ; ) {
               if (signal.aborted) {
                 await host("connections.cancel", { attempt_id: attemptID });
                 return;
               }
-              const attempt = object2(await host("connections.attempt", { attempt_id: attemptID }));
+              const attempt = object3(await host("connections.attempt", { attempt_id: attemptID }));
               if (attempt.state === "connected") return;
               if (!["pending", "exchanging"].includes(text(attempt.state))) throw { code: typeof attempt.error_code === "string" ? attempt.error_code : "authorization_failed" };
               await pause(signal);
@@ -1162,9 +1457,10 @@ var personalDesktop = (() => {
         });
         return () => mounted.destroy();
       }, []);
-      return h("section", { "data-personal-connections": true }, h("h2", null, "\u8FDE\u63A5\u4E0E\u5DE5\u5177"), h("div", { ref: root }), h(ConnectorsPanel, { service: connectorService }), h(ShareCapturePanel));
+      return h("section", { "data-personal-connections": true }, h("h2", null, locale?.startsWith("zh") ? "\u8FDE\u63A5\u4E0E\u5DE5\u5177" : "Connections & tools"), h(IMPanel, { service: imService, locale }), h("div", { ref: root }), h(ConnectorsPanel, { service: connectorService }), h(ShareCapturePanel));
     }
-    return { Connections, ConnectorConversation: () => h(ConnectorsPanel, { service: connectorService, conversation: true }), ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${shareCaptureStyles}
+    return { Connections, ConnectorConversation: () => h(ConnectorsPanel, { service: connectorService, conversation: true }), ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${imStyles}
+${shareCaptureStyles}
 ${connectorsStyles}
 ${connection_view_default}
 ${personalReviewStyles}
@@ -1235,12 +1531,12 @@ ${personalReviewStyles}
       const width = destination.width / zoom, height = destination.height / zoom;
       const x = (flight.origin.right - destination.right) / zoom;
       const y = (flight.origin.top - destination.top) / zoom;
-      const overlay = row.cloneNode(false), copy2 = body.cloneNode(true);
+      const overlay = row.cloneNode(false), copy3 = body.cloneNode(true);
       overlay.classList.add("mosaic-send-overlay");
       overlay.setAttribute("aria-hidden", "true");
       overlay.inert = true;
-      copy2.removeAttribute("data-personal-send-source");
-      overlay.append(copy2);
+      copy3.removeAttribute("data-personal-send-source");
+      overlay.append(copy3);
       for (const node of overlay.querySelectorAll("[id]")) node.removeAttribute("id");
       overlay.style.width = `${width}px`;
       flight.view.append(overlay);
@@ -1275,7 +1571,7 @@ ${personalReviewStyles}
         { offset: 0.9, scale: "1 1" },
         { offset: 1, scale: "1 1" }
       ], { duration: travelMS });
-      const bubble = copy2.querySelector(".user-message");
+      const bubble = copy3.querySelector(".user-message");
       const extra = bubble ? Math.max(0, (flight.origin.width - bubble.getBoundingClientRect().width) / zoom) : 0;
       if (bubble && extra > 0) {
         const style = getComputedStyle(bubble);
@@ -2304,7 +2600,7 @@ ${personalReviewStyles}
             h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save"))
           )
         ),
-        h(settingsPanels.Connections),
+        h(settingsPanels.Connections, { locale }),
         h(settingsPanels.Review, { locale })
       ));
     }

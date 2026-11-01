@@ -18,6 +18,172 @@ Choose the shipped Personal composition explicitly with `--composition-profile p
 
 Desktop runtime calls may supply `userSpaceId`, `productDomain`, and `compositionProfile`. The source UI retains its original `graph_generation`. Before dispatch, the main process verifies that source identity, initializes the selected target host, and matches the exact plugin ID and fingerprint against its actual inventory. Calls and cancellation retain the target graph and connection captured by that handshake. A different target, failed binding, or removed provider is an error, not permission to replay the call elsewhere. The target independently checks its runtime state, declared service, and resource authorization. UI registration belongs to the source graph; the runtime-only target does not receive synthetic desktop activation reports.
 
+## Slack and Feishu messaging
+
+Personal settings → **Connections & tools → Chat with Personal** binds one
+messaging identity and one chat per platform to the existing Personal host.
+This is a messaging entry point, not the read-only Slack/Feishu work-data
+connector. It does not create another agent, task system, or memory store.
+Messages from other users, tenants, or chats are not owner input, even if their
+text claims to be the owner.
+
+### Prepare the host
+
+Keep credentials in the environment of the process that starts the Personal
+host, not in plugin settings, messages, a checked-in file, or command-line
+arguments. Configure `WUU_SLACK_APP_TOKEN` and `WUU_SLACK_BOT_TOKEN` for Slack;
+configure `WUU_FEISHU_APP_ID` and `WUU_FEISHU_APP_SECRET` for Feishu. Restart the
+host after changing its environment. The selected host credential provider saves
+these values for later starts. Unsetting an environment variable does not delete
+a saved credential; disable the connection and revoke or rotate its token at the
+platform when retiring it. The settings panel reports credential
+availability without displaying secret values. A saved binding or available
+credential is not evidence of a connected account.
+
+Both transports make outbound connections; no public inbound webhook is needed.
+Keep the host running and allow the platform's HTTPS and WebSocket connections.
+Closing a settings panel does not disable a connection. Use **Disable** to stop
+new messaging admissions and revoke its IM enrollment for future task effects.
+Existing receipts are retained; already completed external effects are not undone.
+
+### Slack app
+
+Create a Slack app for the intended workspace. Enable Socket Mode, create an
+app-level token with `connections:write`, and subscribe to the bot event
+`message.im`. For a DM setup, grant bot scopes `im:history`, `im:read`,
+`users:read`, and `chat:write`, then install the app into the workspace. Keep the app-level token
+separate from the bot token. See [Slack Socket Mode setup](https://docs.slack.dev/tools/python-slack-sdk/socket-mode/)
+[conversation lookup permissions](https://docs.slack.dev/reference/methods/conversations.info/),
+and [sender lookup permissions](https://docs.slack.dev/reference/methods/users.info/).
+
+If you use files, grant [file read](https://docs.slack.dev/reference/scopes/files.read/)
+and [file write](https://docs.slack.dev/reference/scopes/files.write/) permissions.
+A channel setup also needs the matching channel event/history/read permissions
+and bot membership; do not grant broader workspace access just to bypass a
+missing-permission error. Reinstall after changing app permissions. Use native
+IDs from the platform's developer tools or conversation details, not copied
+names. Binding a channel does not authorize its other members as the owner.
+
+### Feishu app
+
+Create an enterprise/internal Feishu app, enable its bot capability, and select
+[long-connection event reception](https://open.feishu.cn/document/ukTMukTMukTM/uYDNxYjL2QTM24iN0EjN/event-subscription-configure-)
+for `im.message.receive_v1`. Grant the selected bot DM or group-mention message
+permissions, `im:message:send_as_bot`, and resource permissions for files/images.
+Publish the app version and make it available to the enrolled owner.
+
+Binding validation also reads the [app-scoped user](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/contact-v3/user/get)
+and [chat information](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat/get).
+Grant the permissions required by those API pages in the app's permission panel;
+message-send permission alone is insufficient. Use the app-scoped owner open ID,
+not a user ID from a different app. A valid app credential does not prove that
+the app can contact this owner or read this chat.
+
+### Bind and test
+
+1. Create and authorize the platform bot as described above.
+2. In Personal settings, enter the platform-native identifiers, not display names
+   or email addresses. Slack requires the workspace/team ID, owner's user ID, and
+   conversation/channel ID (start with a bot DM). Feishu requires the tenant key,
+   owner's `open_id`, and chat `chat_id`. The Feishu open ID must belong to this app.
+3. Choose **Save binding**, then **Test connection**. The host checks credentials
+   and the configured tenant, sender identity and chat access without sending
+   a message.
+   The explicit owner enrollment is your decision: provider lookup does not prove
+   that a person owns this Personal host or guarantee channel membership. A
+   successful check is not a live inbound/outbound acceptance test and does not enable the transport.
+4. Choose **Enable** and wait for **Connected**. If connection fails, inspect
+   **Last failure**, correct the app permissions or host configuration, and
+   refresh. **Reconnect** only restarts the connection.
+5. For live acceptance, send a harmless message yourself from the enrolled
+   identity in the bound chat and check the reply there and the existing
+   Personal conversation. This step requires your actual app credentials; local
+   protocol tests do not establish account readiness.
+
+An enabled binding cannot be edited. Pending inputs and pending or unknown
+reply outcomes must also be resolved before rebinding. Disable it first, verify
+all replacement IDs, save, test, and enable again. Binding IDs are ordinary configuration;
+secrets are not part of the binding form.
+
+### Task controls in the bound chat
+
+Ordinary messages continue the existing Personal conversation. Reply in the
+original message thread when answering a task question so the bridge can retain
+the prior Personal message relation instead of creating an unrelated task.
+
+The following exact messages are owner controls, not natural-language prompts:
+
+| Message | Result |
+| --- | --- |
+| `!wuu help` | Show available commands. |
+| `!wuu tasks` | Show tracked task states, IDs and current revisions. |
+| `!wuu stop TASK_ID REVISION` | Request stopping that exact task revision. |
+| `!wuu pause` / `!wuu resume` | Pause or resume the existing Personal agent. |
+| `!wuu approvals` | Inspect pending action details and exact decision commands. |
+| `!wuu approve ACTION_ID DIGEST REVISION` | Approve that exact current action once. |
+| `!wuu reject ACTION_ID DIGEST REVISION` | Reject that exact current action. |
+
+Replace placeholders with the values from the latest status or approval reply.
+Review the account, target, consequence and parameters before approving. A stale
+revision or changed digest requires a fresh inspection, not a guessed value.
+An approval receipt is a recorded decision, not proof the external action
+succeeded. Repeating an already settled decision reports its state rather than
+repeating the effect. Only commands received from the enrolled owner identity
+can enter this control path; quoted content and model output are not decisions.
+
+### Delivery and recovery
+
+The panel distinguishes pending outbound messages from **Unknown delivery**.
+Unknown means the provider may already have accepted a message: inspect the
+original chat before taking any further action. Reconnecting, refreshing, and
+reopening settings do not authorize replaying an uncertain external effect.
+
+**Messages needing attention** shows the bounded message previews, IDs and failure
+codes of unresolved inputs and replies. After checking the original chat, choose
+**Abandon this message** and confirm only if you want to stop local attempts.
+Abandoning is not an undo: Personal may already have accepted an input, or the
+platform may already have delivered a reply. It never sends the message again.
+In-flight delivery cannot be abandoned until its outcome settles. Resolve the
+remaining items before replacing a binding.
+
+If a settings operation loses its receipt, the panel locks further changes until
+an explicit, read-only refresh verifies saved state. Do not assume a timeout
+means nothing changed. Refresh preserves unsaved binding edits; the saved state
+remains authoritative for enable/disable and connection indicators.
+
+### Files, routing, and extension boundary
+
+Messaging accepts at most **16 files / 8 MiB decoded total per incoming message**.
+This is intentionally smaller than the native client's input limit. Exact bytes
+and digests are retained until host acceptance; only attachment references reach
+the model plugin. Each outgoing file is also limited to 8 MiB, read from pinned Personal history and sent
+as separate durable effects. A Feishu resource upload and its message send have
+separate receipts. Unknown file effects are not silently repeated.
+
+Long replies are split into ordered, durable chunks of at most 3,000 Unicode
+characters, without truncation. Input identity and reply receipts survive host
+restart; already accepted inputs resume with the original receipt rather than
+becoming new submissions. The messaging ledger applies 32 MiB backpressure:
+resolve pending items before admitting more when that limit is reached. Accepted
+file bytes and delivered reply text are released; native source identities and
+deduplication receipts remain. Source-bound task questions and results return to
+the original IM thread, including after a task revision or unrelated desktop
+message. Unrelated desktop-only notifications are not broadcast into IM groups.
+
+The selected `personal.messaging` provider owns transport verification and its
+inbox/outbox. Native and process providers use the same host admission boundary:
+`host.personal` operation `channel.call` carries the enrolled binding, the
+Personal client method and its input. Mutations carry the original
+`channel_source` event (platform, tenant, sender, conversation, thread, native
+message/event IDs, and literal text). The host verifies the **currently selected
+provider**, active immutable enrollment, exact source identity, stable native
+request ID and literal send or explicit control command. It removes this source
+envelope before calling Personal; ordinary plugin/model JSON cannot mint owner
+input. Owner enrollment operations use the declared
+`host.execution.authorization` gateway and require the authenticated local
+installation owner. Revocation invalidates descendant execution authority; an
+already admitted publication must settle before revocation can be acknowledged.
+
 ## Input and context receipts
 
 `wuu.client-input-receipts` is an optional host observer selected through the ordinary composition module list or patches. The shipped Personal bundle selects it; a bound Coding host can select it too. A user-space/product-domain binding alone does not enable it. Custom explicit module lists must include it when durable authenticated input receipts are required.
@@ -156,7 +322,7 @@ Task-generated questions, results and failure replies run with tools disabled. E
 
 ### Personal file-action review
 
-The first production adapter covers native **local `write_file` and `edit_file`** inside the bound Personal files root. Reads and ordinary questions do not produce approval cards. The main conversation shows the exact target, content/edit arguments, existing-file SHA-256, consequences and action identity. Approval/rejection is accepted only from the live owning desktop connection, bound to the immutable action digest and current revision. An unchanged repeated click returns the existing result; it does not dispatch twice. Symlinks, multiple-link/nonregular files, changed targets, stale requirements, stopped tasks/agents/routines, disabled Personal, safe mode and protected application/Coding state fail closed.
+The first production adapter covers native **local `write_file` and `edit_file`** inside the bound Personal files root. Reads and ordinary questions do not produce approval cards. The main conversation shows the exact target, content/edit arguments, existing-file SHA-256, consequences and action identity. Approval/rejection is accepted from the live owning desktop connection or an exact source-bound command from an enrolled messaging owner, bound to the immutable action digest and current revision. An unchanged repeated click returns the existing result; it does not dispatch twice. Symlinks, multiple-link/nonregular files, changed targets, stale requirements, stopped tasks/agents/routines, disabled Personal, safe mode and protected application/Coding state fail closed.
 
 An active worker waits at its original native tool invocation. Approval returns that invocation's real result and tool-call evidence. After restart, the durable action ledger resumes only the same active task/version/session with a deduplicated receipt request. Completion may cite `action_id`; the host verifies the succeeded native receipt and exact task version rather than trusting the continuation message. Rejection/revocation/unknown outcomes do not launch a tool-enabled worker. A durable execution claim with no certain receipt is shown as uncertain and never automatically replayed. Revocation prevents an unstarted action; it does not undo an already completed file change.
 

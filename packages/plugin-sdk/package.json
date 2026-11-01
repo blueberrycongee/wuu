@@ -136,6 +136,8 @@
     "dist/session-sharing.d.ts",
     "dist/personal-authority.js",
     "dist/personal-authority.d.ts",
+    "dist/personal-messaging.js",
+    "dist/personal-messaging.d.ts",
     "dist/personal-memory.js",
     "dist/personal-memory.d.ts",
     "dist/execution-authorization.js",

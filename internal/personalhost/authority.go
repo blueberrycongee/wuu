@@ -9,9 +9,9 @@ func OperationAccess(operation string) (read, execution, known bool) {
 		return true, true, true
 	case "memory.commit", "connectors.call", "connectors.poll":
 		return false, true, true
-	case "memory.operations", "owner.check", "review.list", "calendar.status", "calendar.calendars", "calendar.attempt", "connectors.list", "connectors.actions", "connectors.attempt":
+	case "im.status", "im.test", "im.pending", "memory.operations", "owner.check", "review.list", "calendar.status", "calendar.calendars", "calendar.attempt", "connectors.list", "connectors.actions", "connectors.attempt":
 		return true, false, true
-	case "memory.reconcile", "review.settings", "review.resolve", "review.revoke", "calendar.select", "calendar.disconnect", "calendar.cancel", "calendar.start", "connectors.start", "connectors.cancel", "connectors.decide", "connectors.disconnect":
+	case "im.resolve", "im.configure", "im.enable", "im.disable", "im.retry", "memory.reconcile", "review.settings", "review.resolve", "review.revoke", "calendar.select", "calendar.disconnect", "calendar.cancel", "calendar.start", "connectors.start", "connectors.cancel", "connectors.decide", "connectors.disconnect":
 		return false, false, true
 	default:
 		return false, false, false

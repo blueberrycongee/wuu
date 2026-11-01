@@ -695,7 +695,9 @@ export class PersonalPlugin implements RuntimePlugin {
       ...(task.question && task.question.requirements_revision === requirementsRevision ? { question_request_id: task.question.request_id } : {}) };
   }
   private sourceRelation(task: PersonalTask, destination: string): MessageRelation {
-    return { ...(task.source.message_binding === "host_turn" && task.source.session_id === destination && task.source.message_seq ? { reply_to: { session_id: task.source.session_id, seq: task.source.message_seq } } : {}), metadata: { task_links: [this.taskLink(task)] } };
+    // The original source message describes revision 1. Later results retain
+    // their exact task revision without misquoting that source as a newer request.
+    return { ...(task.requirements_revision === 1 && task.source.message_binding === "host_turn" && task.source.session_id === destination && task.source.message_seq ? { reply_to: { session_id: task.source.session_id, seq: task.source.message_seq } } : {}), metadata: { task_links: [this.taskLink(task)] } };
   }
   private async messageRelation(sessionID: string, seq: number, relation?: MessageRelation, tasks?: PersonalTask[]): Promise<MessageRelation | undefined> {
     // Legacy model-supplied source sequences remain audit data, not trusted quote bindings.
@@ -1735,6 +1737,10 @@ export class PersonalPlugin implements RuntimePlugin {
   }
   private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost, execution?: RuntimeExecutionContext, ownerClient = false, ownerDeliveryIntent = false): Promise<unknown> {
     this.assertActive();
+    if (method.startsWith("im.")) {
+      if (!ownerClient || !clientHost) throw new Error("Messaging controls require the authenticated owner client");
+      return callPersonalHost(clientHost, method, input, undefined, execution?.signal);
+    }
     if (method.startsWith("connections.") || method.startsWith("review.") || method.startsWith("connectors.")) {
       if (!ownerClient || !clientHost) throw new Error("Owner UI control requires a live desktop admission");
       const operation = method.startsWith("connections.") ? `calendar.${method.slice(12)}` : method;
@@ -1855,6 +1861,14 @@ export class PersonalPlugin implements RuntimePlugin {
         }
         return (clientHost ?? this.host).call("host.session.send", { request_id: `personal-chat-${id(agent.agent_id, input.request_id as string)}`, user_input_request_id: input.request_id as string, session_id: agent.main_session_id, ...(input.relation === undefined ? {} : { relation: input.relation as MessageRelation }), input: { prompt: input.prompt, ...(attachments ? { attachments } : {}), ...(context_blocks?.length ? { context_blocks } : {}) }, cause: "personal.chat", if_running: "queue" });
         });
+      }
+      case "agents.channel_history": {
+        if (!ownerClient) throw new Error("Messaging history requires the authenticated owner client");
+        const agent = await this.conversation(input, true);
+        await this.inspectAgent(agent);
+        // Keep source/query rows for causal routing. The bridge publishes only
+        // visible assistant output, never these internal context records.
+        return this.history(agent.main_session_id, input);
       }
       case "agents.history": {
         const agent = await this.conversation(input, true); await this.inspectAgent(agent);

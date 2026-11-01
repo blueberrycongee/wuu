@@ -737,7 +737,7 @@ export async function activate(api) {
           h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })),
         h(Row, { className: "mosaic-settings-save-row" },
           h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")))),
-      h(settingsPanels.Connections),
+      h(settingsPanels.Connections, { locale }),
       h(settingsPanels.Review, { locale })));
   }
   let identityAgent;

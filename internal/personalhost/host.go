@@ -30,6 +30,8 @@ type Calendar interface {
 	Close() error
 }
 type Options struct {
+	// Messaging routes owner controls through the selected generation.
+	Messaging func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Accounts routes account operations to the selected generation. When set,
 	// Calendar and Connectors are not consulted.
 	Accounts func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
@@ -131,6 +133,15 @@ func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, 
 		return h.options.Accounts(ctx, operation, raw, verifiedSession)
 	}
 
+	if strings.HasPrefix(operation, "im.") {
+		if err := clientauthority.RequireOwner(ctx, h.binding); err != nil {
+			return nil, err
+		}
+		if h.options.Messaging == nil {
+			return nil, errors.New("Personal messaging provider unavailable")
+		}
+		return h.options.Messaging(ctx, operation, raw, verifiedSession)
+	}
 	if strings.HasPrefix(operation, "memory.") {
 		h.mu.Lock()
 		closed, handler := h.closed, h.options.Memory

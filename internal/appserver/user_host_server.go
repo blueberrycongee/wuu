@@ -33,25 +33,27 @@ var ErrUserHostClientOverflow = errors.New("user host client fell behind; reconn
 // Closing a connection never closes this host or replaces its session router.
 // Headless hosts do not negotiate client computer/browser reverse-RPC tools.
 type UserHost struct {
-	personal            *personalhost.Host
-	unbindPersonal      func()
-	runtime             *runtime.Session
-	mu                  sync.Mutex
-	dispatchMu          sync.Mutex
-	server              *Server
-	connections         map[string]*userHostConnection
-	pending             map[string]userHostResponse
-	next                uint64
-	closed              bool
-	closeDone           chan struct{}
-	closeErr            error
-	attentionCtx        context.Context
-	attentionCancel     context.CancelFunc
-	attentionDone       chan struct{}
-	attentionJobs       chan userAttentionJob
-	attentionEvents     chan userAttentionEvent
-	attentionSubscribed bool
-	attentionLastTurn   map[string]string
+	unbindPersonalChannel func()
+	personal              *personalhost.Host
+	stopPersonalMessaging func() error
+	unbindPersonal        func()
+	runtime               *runtime.Session
+	mu                    sync.Mutex
+	dispatchMu            sync.Mutex
+	server                *Server
+	connections           map[string]*userHostConnection
+	pending               map[string]userHostResponse
+	next                  uint64
+	closed                bool
+	closeDone             chan struct{}
+	closeErr              error
+	attentionCtx          context.Context
+	attentionCancel       context.CancelFunc
+	attentionDone         chan struct{}
+	attentionJobs         chan userAttentionJob
+	attentionEvents       chan userAttentionEvent
+	attentionSubscribed   bool
+	attentionLastTurn     map[string]string
 }
 type userHostResponse struct {
 	connection *userHostConnection
@@ -136,6 +138,9 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		}
 	}
 
+	if h.server.personalMessagingRouted {
+		personalOptions.Messaging = h.server.callPersonalMessaging
+	}
 	if h.server.personalAccountsRouted {
 		personalOptions.Accounts = h.server.callPersonalAccounts
 	}
@@ -153,6 +158,7 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 	h.personal = personalhost.New(rt.UserBinding(), personalOptions)
 	if rt.PluginSessionRouter != nil {
 		h.unbindPersonal = rt.PluginSessionRouter.BindPersonalHost(h.personal.Call)
+		h.unbindPersonalChannel = rt.PluginSessionRouter.BindPersonalChannel(h.HandlePersonalChannel)
 	}
 	go h.runAttentionPolicy()
 	return h, nil
@@ -180,10 +186,16 @@ func (h *UserHost) Close() error {
 	for _, c := range connections {
 		c.cancel()
 	}
+	if h.unbindPersonalChannel != nil {
+		h.unbindPersonalChannel()
+	}
 	if h.unbindPersonal != nil {
 		h.unbindPersonal()
 	}
-	h.closeErr = h.personal.Close()
+	if h.stopPersonalMessaging != nil {
+		h.closeErr = h.stopPersonalMessaging()
+	}
+	h.closeErr = errors.Join(h.closeErr, h.personal.Close())
 	h.server.personalEffects.Close()
 	h.closeErr = errors.Join(h.closeErr, h.server.personalCoordination.Close())
 	h.server.Close()
