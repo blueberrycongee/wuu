@@ -152,6 +152,7 @@ export function WorkspaceGroup({
   loadingWorkspaceThreadIDs,
   threadsByWorkspaceID,
   activeThreadID,
+  selectedThreadID = activeThreadID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   scratchPseudoWorkspaceID,
@@ -180,6 +181,7 @@ export function WorkspaceGroup({
   loadingWorkspaceThreadIDs?: ReadonlySet<string>;
   threadsByWorkspaceID: Record<string, ThreadSummary[]>;
   activeThreadID?: string;
+  selectedThreadID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   scratchPseudoWorkspaceID: string;
@@ -347,6 +349,7 @@ export function WorkspaceGroup({
             activeSessionTabID={activeSessionTabID}
             onSelectPendingConversation={onSelectPendingConversation}
             activeID={activeThreadID}
+            selectedID={selectedThreadID}
             pendingThreadID={pendingThreadID}
             lastViewedTurnByThreadID={lastViewedTurnByThreadID}
             visibleCount={historyVisibleCount}
@@ -441,6 +444,7 @@ function ThreadList({
   activeSessionTabID,
   onSelectPendingConversation,
   activeID,
+  selectedID = activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   visibleCount,
@@ -458,6 +462,7 @@ function ThreadList({
   activeSessionTabID?: string;
   onSelectPendingConversation?: (id: string) => void;
   activeID?: string;
+  selectedID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   visibleCount: number;
@@ -560,6 +565,7 @@ function ThreadList({
         <ThreadRows
           threads={limitedThreads}
           activeID={activeID}
+        selectedID={selectedID}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
           onSelect={onSelect}
@@ -663,6 +669,7 @@ function ThreadRows({
   threads,
   projectSummaries,
   activeID,
+  selectedID = activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   onSelect,
@@ -677,6 +684,7 @@ function ThreadRows({
   // What a project row shows for its sessions, which the sidebar does not list.
   projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
+  selectedID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   onSelect: (id: string) => void;
@@ -905,12 +913,12 @@ function ThreadRows({
         return (
           <div
             key={thread.id}
-            className={`thread-row sidebar-session-row ${thread.id === activeID ? "active" : ""}${running ? " running" : ""}${
+            className={`thread-row sidebar-session-row ${thread.id === selectedID ? "active" : ""}${running ? " running" : ""}${
               pendingSwitch ? " pending-switch" : ""
             }${unread ? " has-unread" : ""}${draggingThreadID === thread.id ? " dragging" : ""}${project ? " project-thread-row" : ""}${
               sessionDropTargetID === thread.id ? " drop-active" : ""
             }`}
-            aria-current={thread.id === activeID ? "page" : undefined}
+            aria-current={thread.id === selectedID ? "page" : undefined}
             draggable={Boolean(organization || onReorder)}
             data-draggable={Boolean(organization || onReorder) || undefined}
             data-sortable={Boolean(onReorder) || undefined}
@@ -1138,6 +1146,7 @@ export function OrganizationThreadList({
   threads,
   projectSummaries,
   activeID,
+  selectedID = activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   onSelect,
@@ -1151,6 +1160,7 @@ export function OrganizationThreadList({
   threads: ThreadSummary[];
   projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
+  selectedID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   onSelect: (id: string) => void;
@@ -1167,6 +1177,7 @@ export function OrganizationThreadList({
         threads={threads}
         projectSummaries={projectSummaries}
         activeID={activeID}
+        selectedID={selectedID}
         pendingThreadID={pendingThreadID}
         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
         onSelect={onSelect}

@@ -68,12 +68,12 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       await invoke("navigation.focus-composer", { tabId });
     }
   };
-  type DraftTarget = { kind: "active" } | { kind: "workspace"; workspaceId: string };
+  type DraftTarget = { workspaceId: string };
   type DraftIntent = { application: ApplicationServiceV1; context: string; target: DraftTarget; targetContext: string; gesture: { origin: Element | null; version: number } };
   const [deferredDraft, setDeferredDraft] = useState<DraftIntent>();
   const draftContext = JSON.stringify([view.activeContextKind, snapshot.workspaces.activeWorkspaceId, snapshot.workspaces.activeRoot]);
   const targetContext = (target: DraftTarget): string => {
-    if (target.kind === "active" || target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID) return target.kind === "active" ? "active" : "scratch";
+    if (target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID) return "scratch";
     const workspace = snapshot.workspaces.workspaces.find(row => row.id === target.workspaceId);
     return JSON.stringify([target.workspaceId, workspace?.root, workspace?.available]);
   };
@@ -81,7 +81,6 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     const intent = { application, context: draftContext, target, targetContext: targetContext(target), gesture };
     void focusAfterNavigation(async () => {
       try {
-        if (target.kind === "active") return (await application.invoke("draft.start", {})).tabId;
         const result = await application.invoke("workspace.start-draft", { workspaceId: target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : target.workspaceId });
         return result.activated ? result.tabId : undefined;
       } catch (error) {
@@ -102,7 +101,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   type ThreadIntent = { application: ApplicationServiceV1; target: ThreadTarget; targetContext?: string; version: number };
   const [deferredThread, setDeferredThread] = useState<ThreadIntent>();
   const threadTargetContext = (target: ThreadTarget): string | undefined => target.workspaceId
-    ? targetContext({ kind: "workspace", workspaceId: target.workspaceId }) : undefined;
+    ? targetContext({ workspaceId: target.workspaceId }) : undefined;
   const selectThread = (target: ThreadTarget, version = interactionVersion.current): void => {
     const intent = { application, target, targetContext: threadTargetContext(target), version };
     run(presentNavigation(async () => {
@@ -214,7 +213,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     collapsedSidebarSectionIDs={collapsed} expandedSidebarSectionIDs={expanded} collapsedFolderIDs={collapsedFolders} setCollapsedFolderIDs={setCollapsedFolders}
     loadingWorkspaceThreadIDs={new Set(view.loadingWorkspaceIds)} workspaceThreadsByWorkspaceID={workspaceRows}
     workspaceMenuOpen={workspaceMenuOpen} workspaceMenuRef={workspaceMenuRef} searchOpen={view.searchOpen} sectionOrder={sectionOrder}
-    onStartNewThread={() => startDraft({ kind: "active" })}
+    onStartNewThread={() => startDraft({ workspaceId: SCRATCH_PSEUDO_PROJECT_ID })}
     onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
     onSelectThread={threadId => selectThread({ threadId })}
@@ -228,7 +227,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onOpenWorkspaceFolder={() => { setWorkspaceMenuOpen(false); run(application.invoke("workspace.create", { kind: "folder" })); }}
     onToggleSidebarSectionCollapsed={toggleSection} onLoadWorkspaceThreads={workspace => invoke("navigation.load-workspace", { workspaceId: workspace.id })}
     onFocusWorkspace={workspaceSelectionEnabled ? workspaceId => run(presentNavigation(() => invoke("navigation.focus-workspace", { workspaceId }))) : undefined}
-    onStartNewThreadInWorkspace={workspaceId => startDraft({ kind: "workspace", workspaceId })}
+    onStartNewThreadInWorkspace={workspaceId => startDraft({ workspaceId })}
     onRemoveWorkspace={workspaceId => run((async () => { if (await confirmAction({ title: t("workspace.removeTitle", { name: view.workspaces.find(row => row.id === workspaceId)?.name ?? workspaceId }), message: t("workspace.removeConfirm"), confirmLabel: t("common.remove") })) await application.invoke("workspace.remove", { workspaceId }); })())}
     onRelocateWorkspace={workspaceId => run(application.invoke("workspace.relocate", { workspaceId }))}
     onCreateProject={view.projectAgentEnabled ? workspaceId => run(focusAfterNavigation(() => createProject(workspaceId))) : undefined}
