@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import type { ApplicationPresentationAPI, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
-import { SCRATCH_PSEUDO_PROJECT_ID, isScratchThread, threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
+import { threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
 import type { DesktopProject } from "../../shared/protocol";
 import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
@@ -73,7 +73,6 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const [deferredDraft, setDeferredDraft] = useState<DraftIntent>();
   const draftContext = JSON.stringify([view.activeContextKind, snapshot.workspaces.activeWorkspaceId, snapshot.workspaces.activeRoot]);
   const targetContext = (target: DraftTarget): string => {
-    if (target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID) return "scratch";
     const workspace = snapshot.workspaces.workspaces.find(row => row.id === target.workspaceId);
     return JSON.stringify([target.workspaceId, workspace?.root, workspace?.available]);
   };
@@ -81,7 +80,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     const intent = { application, context: draftContext, target, targetContext: targetContext(target), gesture };
     void focusAfterNavigation(async () => {
       try {
-        const result = await application.invoke("workspace.start-draft", { workspaceId: target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : target.workspaceId });
+        const result = await application.invoke("workspace.start-draft", { workspaceId: target.workspaceId });
         return result.activated ? result.tabId : undefined;
       } catch (error) {
         // Retry only when the draft request itself never reached a writer.
@@ -144,13 +143,16 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState(new Set<string>());
   const [collapsed, setCollapsed] = useStoredIDs("wuu.desktop.collapsedSidebarSectionIDs");
-  const [expanded, setExpanded] = useStoredIDs("wuu.desktop.expandedSidebarSectionIDs", collapsed.has(SCRATCH_PSEUDO_PROJECT_ID) ? [] : [SCRATCH_PSEUDO_PROJECT_ID]);
+  const [expanded, setExpanded] = useStoredIDs("wuu.desktop.expandedSidebarSectionIDs", []);
   const [collapsedFolders, setCollapsedFolders] = useState(new Set<string>());
   const [order, setOrder] = useState(() => [...readIDs("wuu.desktop.sidebarSectionOrder")]);
   const rows = useMemo(() => structuredClone(view.threads) as ThreadSummary[], [view.threads]);
-  const workspaces = useMemo<DesktopProject[]>(() => [{ id: SCRATCH_PSEUDO_PROJECT_ID, name: t("sidebar.conversations"), path: "", created_at: "", updated_at: "" }, ...view.workspaces.map(row => ({ ...row }))], [view.workspaces, t]);
+  const workspaces = useMemo<DesktopProject[]>(() => view.workspaces.map(row => ({ ...row })), [view.workspaces]);
   const sectionOrder = useMemo(() => reconcileSidebarSectionOrder(order, workspaces.map(row => row.id)), [order, workspaces]);
-  const workspaceRows = useMemo(() => Object.fromEntries(workspaces.map(workspace => [workspace.id, rows.filter(row => !row.archived && (workspace.id === SCRATCH_PSEUDO_PROJECT_ID ? isScratchThread(row, [...view.workspaces]) : threadBelongsToWorkspace(row, workspace)))])), [rows, workspaces, view.workspaces]);
+  const workspaceRows = useMemo(() => Object.fromEntries(workspaces.map(workspace => [workspace.id, rows.filter(row => !row.archived && threadBelongsToWorkspace(row, workspace))])), [rows, workspaces]);
+  const defaultDraftWorkspaceID = view.selectedWorkspaceId && view.workspaces.some(row => row.id === view.selectedWorkspaceId && !row.missing)
+    ? view.selectedWorkspaceId
+    : view.workspaces.find(row => !row.missing)?.id;
   useEffect(() => { if (!view.initialized) return; const lifetime = new AbortController(); void invoke("navigation.refresh", {}, { signal: lifetime.signal }).catch(error => { if (!lifetime.signal.aborted) showApplicationActionError(error); }); return () => lifetime.abort(); }, [invoke, view.initialized]);
   const navigation = useMemo<SidebarNavigationService>(() => ({ view, invoke, slots, organization: {
     folders: view.folders.map(folder => ({ ...folder })),
@@ -165,10 +167,10 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     const opening = !expanded.has(id);
     setExpanded(current => { const next = new Set(current); if (opening) next.add(id); else next.delete(id); return next; });
     setCollapsed(current => { const next = new Set(current); if (opening) next.delete(id); else next.add(id); return next; });
-    if (opening && id !== SCRATCH_PSEUDO_PROJECT_ID) run(invoke("navigation.load-workspace", { workspaceId: id }));
+    if (opening) run(invoke("navigation.load-workspace", { workspaceId: id }));
   };
   const createProject = async (workspaceId?: string) => {
-    const targetId = workspaceId ?? (view.activeContextKind === "project" ? view.selectedWorkspaceId : undefined) ?? view.workspaces.find(row => !row.missing)?.id;
+    const targetId = workspaceId ?? defaultDraftWorkspaceID;
     const workspace = view.workspaces.find(row => row.id === targetId);
     if (!workspace || workspace.missing) throw new Error(t("projects.needsWorkspace"));
     const result = await application.invoke("workspace.start-draft", { workspaceId: workspace.id });
@@ -213,11 +215,11 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     collapsedSidebarSectionIDs={collapsed} expandedSidebarSectionIDs={expanded} collapsedFolderIDs={collapsedFolders} setCollapsedFolderIDs={setCollapsedFolders}
     loadingWorkspaceThreadIDs={new Set(view.loadingWorkspaceIds)} workspaceThreadsByWorkspaceID={workspaceRows}
     workspaceMenuOpen={workspaceMenuOpen} workspaceMenuRef={workspaceMenuRef} searchOpen={view.searchOpen} sectionOrder={sectionOrder}
-    onStartNewThread={() => startDraft({ workspaceId: SCRATCH_PSEUDO_PROJECT_ID })}
+    onStartNewThread={() => { if (defaultDraftWorkspaceID) startDraft({ workspaceId: defaultDraftWorkspaceID }); }}
     onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
     onSelectThread={threadId => selectThread({ threadId })}
-    onSelectWorkspaceThread={(workspaceId, threadId) => selectThread({ threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId })}
+    onSelectWorkspaceThread={(workspaceId, threadId) => selectThread({ threadId, workspaceId })}
     onTogglePinned={thread => run(invoke("navigation.pin-thread", { threadId: thread.id, pinned: !thread.pinned }))}
     onArchiveThread={thread => run(archiveThread(thread))}
     onDeleteThread={thread => run(invoke("navigation.delete-thread", { threadId: thread.id }))}

@@ -12,7 +12,6 @@ import {
   requireThread,
   resolveThreadRuntimeContext,
   sameRuntimeContext,
-  SCRATCH_PSEUDO_PROJECT_ID,
   sessionTabDraftForThread,
   threadForTab,
   threadNeedsResumeOnReselect,
@@ -384,22 +383,6 @@ export function createThreadActivationActions(
       pendingViewSwitch?.kind === "thread" &&
       pendingViewSwitch.targetID === threadID
     ) {
-      return;
-    }
-    if (workspaceID === SCRATCH_PSEUDO_PROJECT_ID) {
-      const thread = findKnownThread(threadID);
-      if (!thread) {
-        return;
-      }
-      const targetContext = resolveThreadRuntimeContext(
-        thread,
-        currentState.projects,
-      );
-      if (sameRuntimeContext(targetContext, currentState.activeContext)) {
-        await selectThread(threadID);
-        return;
-      }
-      await selectContextThread(targetContext, threadID);
       return;
     }
     const project = currentState.projects.find(

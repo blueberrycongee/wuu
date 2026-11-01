@@ -57,7 +57,6 @@ export type WorkspaceRuntimeActions = {
   chooseProjectFolder: () => Promise<void>;
   removeProject: (projectId: string) => Promise<void>;
   relocateProject: (projectId: string) => Promise<void>;
-  useNoProject: (fresh: boolean) => Promise<boolean>;
 };
 
 export function createWorkspaceRuntimeActions(
@@ -155,9 +154,7 @@ export function createWorkspaceRuntimeActions(
 
   /**
    * The composer's workspace picker has one mental model regardless of the
-   * destination: "retarget the conversation I'm drafting at that
-   * context". Selecting a workspace and selecting 不使用工作区 are the same
-   * gesture, so they share this implementation:
+   * destination: "retarget the conversation I'm drafting at that context".
    *
    *   - re-selecting the current context returns to its draft page when
    *     a conversation is on screen (and is otherwise a no-op);
@@ -168,13 +165,11 @@ export function createWorkspaceRuntimeActions(
    *     applyLoadedRuntimeWithDraftCarry).
    */
   async function retargetDraftToContext({
-    switchKind,
     switchTarget,
     isCurrentContext,
     selectContext,
     failureStatus,
   }: {
-    switchKind: "workspace" | "runtime";
     switchTarget: string;
     isCurrentContext: (state: AppState) => boolean;
     selectContext: () => Promise<ProjectListResult>;
@@ -192,7 +187,7 @@ export function createWorkspaceRuntimeActions(
     // Project navigation is independent from task execution. The main process
     // pools app-server clients by workdir and keeps busy clients alive, so a
     // running thread in the source context must not lock this draft in place.
-    const requestID = deps.beginViewSwitch(switchKind, switchTarget);
+    const requestID = deps.beginViewSwitch("workspace", switchTarget);
     deps.closeWorkspaceMenus();
 
     let outgoingDraft = deps.getComposerDraftSnapshot();
@@ -238,7 +233,6 @@ export function createWorkspaceRuntimeActions(
 
   async function selectWorkspaceForNewThread(projectId: string): Promise<void> {
     await retargetDraftToContext({
-      switchKind: "workspace",
       switchTarget: projectId,
       isCurrentContext: (state) =>
         projectId === state.activeProjectId &&
@@ -250,7 +244,6 @@ export function createWorkspaceRuntimeActions(
 
   async function openWorktreeForNewThread(path: string): Promise<void> {
     await retargetDraftToContext({
-      switchKind: "workspace",
       switchTarget: path,
       isCurrentContext: (state) => state.activeContext?.cwd === path,
       selectContext: async () => {
@@ -527,79 +520,6 @@ export function createWorkspaceRuntimeActions(
     }
   }
 
-  async function useNoProject(fresh: boolean): Promise<boolean> {
-    // The non-fresh flavor is the composer picker's 不使用工作区 entry —
-    // the same "retarget my draft" gesture as picking a workspace, so it
-    // shares that path (land on the 对话 draft page, never resume an
-    // old conversation). The fresh flavor below is the sidebar's 新对话
-    // button: an explicit "start clean" that discards nothing but also
-    // carries nothing.
-    if (!fresh) {
-      return retargetDraftToContext({
-        switchKind: "runtime",
-        switchTarget: "no-project",
-        isCurrentContext: (state) => state.activeContext?.kind === "no_project",
-        selectContext: () => window.wuu.selectNoProject(false),
-        failureStatus: translateCurrent("workspace.scratchOpenFailed"),
-      });
-    }
-    const currentState = deps.getAppState();
-    const requestID = deps.beginViewSwitch("runtime", "no-project:fresh");
-    deps.closeWorkspaceMenus();
-    let outgoingDraft = deps.getComposerDraftSnapshot();
-    try {
-      const workspaceState = await window.wuu.selectNoProject(true);
-      const loadedState = await loadRuntime(workspaceState, {
-        resumeLatestThread: false,
-      });
-      if (!deps.finishViewSwitch(requestID, loadedState)) {
-        return false;
-      }
-      if (!loadedState.activeContext) {
-        return false;
-      }
-      const existingDraft = draftSessionTabForContext(
-        currentState.sessionTabs,
-        loadedState.activeContext,
-      );
-      if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
-        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
-        deps.restoreLoadedRuntimeComposerDraft(loadedState);
-        deps.setAppState((current) =>
-          withLoadedRuntimeSessionTab(
-            persistComposerDrafts(current, outgoingDraft),
-            loadedState,
-          ),
-        );
-        return true;
-      }
-      const nextTab = deps.nextDraftSessionTab(loadedState.activeContext);
-      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
-      deps.clearPrimaryComposerDraft();
-      deps.setAppState((current) => {
-        const withDraft = persistComposerDrafts(current, outgoingDraft);
-        return {
-          ...withDraft,
-          ...loadedState,
-          thread: undefined,
-          secondaryThread: undefined,
-          activePane: "primary",
-          sessionTabs: ensureSessionTab(withDraft.sessionTabs, nextTab),
-          activeSessionTabID: nextTab.id,
-          allowThreadAutoActivation: false,
-          running: false,
-        };
-      });
-      return true;
-    } catch (error) {
-      if (!deps.finishViewSwitch(requestID)) {
-        return false;
-      }
-      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.scratchOpenFailed"));
-      return false;
-    }
-  }
-
   return {
     selectWorkspaceForNewThread,
     openWorktreeForNewThread,
@@ -608,6 +528,5 @@ export function createWorkspaceRuntimeActions(
     chooseProjectFolder,
     removeProject,
     relocateProject,
-    useNoProject,
   };
 }

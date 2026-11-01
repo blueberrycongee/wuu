@@ -113,7 +113,6 @@ export function SideThreadComposer({
       onOpenSettings={noop}
       onOpenSkillsCatalog={noop}
       onSelectWorkspace={noop}
-      onSelectNoProject={noop}
       onSelectGitBranch={noop}
       onCreateWorkspace={noop}
       onOpenWorkspace={noop}

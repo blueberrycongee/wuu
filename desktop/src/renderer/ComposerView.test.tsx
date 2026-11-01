@@ -244,7 +244,6 @@ function renderComposer(props: {
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
           onSelectWorkspace={() => {}}
-          onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
           onCreateWorkspace={() => {}}
           onOpenWorkspace={() => {}}
@@ -725,7 +724,6 @@ function renderStatefulComposer(props: {
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
           onSelectWorkspace={() => {}}
-          onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
           onCreateWorkspace={() => {}}
           onOpenWorkspace={() => {}}
@@ -2326,7 +2324,7 @@ describe("Composer send control", () => {
     expect(await hoverTooltipText(selector)).toBe("/repo/wuu");
   });
 
-  it("labels the hero pill 对话 for the no-project workspace", () => {
+  it("labels the hero pill 无工作区 for a legacy no-project context", () => {
     renderComposer({
       variant: "hero",
       activeContext: { kind: "no_project", cwd: "/scratch/default" },
@@ -2334,8 +2332,7 @@ describe("Composer send control", () => {
 
     const selector = container.querySelector<HTMLButtonElement>(".hero-project-pill");
     expect(selector).not.toBeNull();
-    // Matches the sidebar group and the session tab, which both read "对话".
-    expect(selector?.textContent).toContain("对话");
+    expect(selector?.textContent).toContain("无工作区");
   });
 
   it("keeps attachment and send actions in the editor with runtime controls below", () => {
@@ -2350,7 +2347,7 @@ describe("Composer send control", () => {
 
     expect(leftGroup).not.toBeNull();
     expect(rightGroup).not.toBeNull();
-    // A sent project/对话 conversation (dock variant) locks its cwd, so no
+    // A sent project conversation (dock variant) locks its cwd, so no
     // project/cwd control renders in the leading slot anymore.
     expect(leftGroup?.querySelector(".composer-project-control")).toBeNull();
     expect(leftGroup?.querySelector(".composer-plus-button")).not.toBeNull();
@@ -3588,7 +3585,6 @@ describe("Composer menu keyboard", () => {
             onOpenSettings={() => {}}
             onOpenSkillsCatalog={() => {}}
             onSelectWorkspace={() => {}}
-            onSelectNoProject={() => {}}
             onSelectGitBranch={() => {}}
             onCreateWorkspace={() => {}}
             onOpenWorkspace={() => {}}

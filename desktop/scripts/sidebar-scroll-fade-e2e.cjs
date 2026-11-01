@@ -242,6 +242,11 @@ app.whenReady().then(async () => {
       // Full product shell with the existing synthetic IPC bridge; no user data.
       for (const theme of ["light", "dark"]) {
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+        await waitFor(() => Boolean(document.querySelector(".project-row")));
+        await evaluate(() => {
+          const row = document.querySelector(".project-row");
+          if (row.getAttribute("aria-expanded") !== "true") row.click();
+        });
         await waitFor(() => Boolean(document.querySelector(".thread-list-more")));
         await evaluate(() => document.querySelector(".thread-row-main").click());
         await waitFor(() => Boolean(document.querySelector(".thread-row.active")));
@@ -356,6 +361,11 @@ app.whenReady().then(async () => {
         const label = `${theme}-${size}`;
         win.setContentSize(size === 14 ? 1100 : 940, 820);
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+        await waitFor(() => Boolean(document.querySelector(".project-row")));
+        await evaluate(() => {
+          const row = document.querySelector(".project-row");
+          if (row.getAttribute("aria-expanded") !== "true") row.click();
+        });
         await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="workspace"] .thread-list-more'))
           && Boolean(document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle')));
         // Recent includes the workspace sessions and the current unsent draft.

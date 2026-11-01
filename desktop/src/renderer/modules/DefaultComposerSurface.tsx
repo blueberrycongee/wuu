@@ -250,11 +250,11 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   };
   submitAfterRebind.current = { application, context: submissionContext, invoke: submit };
   const toggle = (next: typeof menu) => setMenu(menu === next ? null : next);
-  const selectWorkspace = (workspaceId?: string) => {
+  const selectWorkspace = (workspaceId: string) => {
     // Picking a destination closes presentation now; provider retirement may
     // cancel the original request after the new workspace has committed.
     setMenu(null); setFilter("");
-    run(presentNavigation(() => application.invoke("workspace.retarget-draft", workspaceId ? { workspaceId } : {})));
+    run(presentNavigation(() => application.invoke("workspace.retarget-draft", { workspaceId })));
   };
   const compactReason = !presentation.threadId ? t("app.openConversationFirst") : selection.engine !== "wuu" ? t("slash.compact.externalEngineUnavailable") : undefined;
   const question = offer ? <UserQuestionCard key={offer.request_id} request={structuredClone(offer) as UserQuestionRequest}
@@ -309,7 +309,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectPermissionMode={(mode, approveForMe) => { run(controls.choosePermission(mode, approveForMe)); setMenu(null); }}
       onOpenSettings={() => run(application.invoke("settings.open", { pageId: "providers" }))}
       onOpenSkillsCatalog={() => run(application.invoke("catalog.select-section", { section: "skills" }).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
-      onSelectWorkspace={selectWorkspace} onSelectNoProject={() => selectWorkspace()}
+      onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "blank" })); }} onOpenWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "folder" })); }}
       onOpenGitWorktree={async path => { setMenu(null); await application.invoke("workspace.open-worktree", { path }); }}
       onSelectGitBranch={async branch => { await application.environment.checkoutBranch(branch); setMenu(null); }} onCreateGitBranch={async branch => { await application.environment.createAndCheckoutBranch(branch); setMenu(null); }}

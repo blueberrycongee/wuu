@@ -152,8 +152,8 @@ export interface ApplicationAppearanceV1 {
 export interface ApplicationActionMapV1 extends ApplicationSideConversationActionMapV1, ApplicationSearchActionMapV1, ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   /** Open an existing worktree in a draft, importing its workspace when needed. */
   "workspace.open-worktree": { input: { readonly path: string }; result: void };
-  "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
-  "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
+  "workspace.retarget-draft": { input: { readonly workspaceId: string }; result: void };
+  "workspace.start-draft": { input: { readonly workspaceId: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };
   /** Remove a workspace after the caller has confirmed the user's intent. */
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };

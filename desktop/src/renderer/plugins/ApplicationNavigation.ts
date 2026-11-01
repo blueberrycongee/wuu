@@ -55,9 +55,9 @@ export class ApplicationNavigation {
     updateState: (update: SetStateAction<AppState>) => void;
     changed: () => void;
     sidebarCache: {
-      getSnapshot: () => { workspaceThreadsByWorkspaceID: Record<string, Thread[]>; cachedScratchThreads: Thread[]; requestedWorkspaceThreadIDs: ReadonlySet<string> };
+      getSnapshot: () => { workspaceThreadsByWorkspaceID: Record<string, Thread[]>; requestedWorkspaceThreadIDs: ReadonlySet<string> };
       loadWorkspaceThreads: (project: DesktopProject) => Promise<void>;
-      cacheSidebarThreads: (threads: Thread[], requested?: { projects: Record<string, Thread[]>; scratch: Thread[] }) => void;
+      cacheSidebarThreads: (threads: Thread[], requested?: { projects: Record<string, Thread[]> }) => void;
       updateCachedSidebarThread: (thread: Thread) => void;
       patchCachedSidebarThread: (id: string, update: (thread: Thread) => Thread) => void;
       updateCachedSidebarThreadPinned: (id: string, pinned: boolean) => void;
@@ -71,7 +71,7 @@ export class ApplicationNavigation {
     const state = this.host.getState();
     const cache = this.host.sidebarCache.getSnapshot();
     const rows = new Map<string, Thread>();
-    for (const thread of [...cache.cachedScratchThreads, ...Object.values(cache.workspaceThreadsByWorkspaceID).flat(), ...state.threads, ...[state.thread, state.secondaryThread].filter((row): row is Thread => Boolean(row))]) {
+    for (const thread of [...Object.values(cache.workspaceThreadsByWorkspaceID).flat(), ...state.threads, ...[state.thread, state.secondaryThread].filter((row): row is Thread => Boolean(row))]) {
       const previous = rows.get(thread.id);
       rows.set(thread.id, previous ? mergeSidebarThread(previous, thread) : thread);
     }
@@ -242,7 +242,7 @@ export class ApplicationNavigation {
         signal?.throwIfAborted();
         // Organization and thread listings are independent; preserve each
         // successful result while still surfacing a failed refresh to callers.
-        if (threads.status === "fulfilled") this.host.sidebarCache.cacheSidebarThreads(threads.value.threads, { projects: requested.workspaceThreadsByWorkspaceID, scratch: requested.cachedScratchThreads });
+        if (threads.status === "fulfilled") this.host.sidebarCache.cacheSidebarThreads(threads.value.threads, { projects: requested.workspaceThreadsByWorkspaceID });
         if (folders.status === "fulfilled" && folderRevision === this.folderRevision) this.folders = parseSessionOrganization(folders.value.organization).folders;
         if (threads.status === "rejected") { this.host.changed(); throw threads.reason; }
         if (folders.status === "rejected") { this.host.changed(); throw folders.reason; }
