@@ -227,7 +227,16 @@ export function createApplicationSettingsControls(options: {
     },
     listEngines: async (...args) => {
       if (typeof window.wuu?.listEngines !== "function") throw new Error("Settings operation unavailable: listEngines");
-      return window.wuu.listEngines(...args);
+      try { return await window.wuu.listEngines(...args); }
+      catch (error) {
+        const options = args[0];
+        if (options?.include_activity !== false || !(error instanceof Error)
+          || !error.message.includes('json: unknown field "include_activity"')) throw error;
+        // Remove this fallback when supported app-server versions accept include_activity.
+        const { include_activity: _includeActivity, ...legacyOptions } = options;
+        args[0] = legacyOptions;
+        return window.wuu.listEngines(...args);
+      }
     },
     getPluginSetting: async (...args) => {
       if (typeof window.wuu?.getPluginSetting !== "function") throw new Error("Settings operation unavailable: getPluginSetting");

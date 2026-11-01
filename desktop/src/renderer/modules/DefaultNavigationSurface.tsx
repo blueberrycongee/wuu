@@ -1,6 +1,6 @@
 import { ArchiveTip } from "../ArchiveTip";
 import { UILayerPortal } from "../ui/layers/UILayerHost";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
 import type { ApplicationPresentationAPI, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
@@ -35,6 +35,15 @@ function useStoredIDs(key: string, fallback: string[] = []) {
 export function DefaultNavigationSurface({ application, slots, workspaceSelectionEnabled = false, ...layout }: DefaultNavigationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const presentNavigation = usePresentedNavigation();
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  // Compare the complete tab inventory, not just visible drafts: selecting an
+  // existing draft must not look like creation. Initial/restored tabs stay still.
+  const previousTabs = useRef({ application, items: snapshot.tabs.items, phase: snapshot.phase });
+  const previousTabIDs = new Set(previousTabs.current.items.map(tab => tab.id));
+  const canAnimateNewTabs = previousTabs.current.application === application
+    && previousTabs.current.phase === "ready" && snapshot.phase === "ready";
+  useLayoutEffect(() => {
+    previousTabs.current = { application, items: snapshot.tabs.items, phase: snapshot.phase };
+  }, [application, snapshot.tabs.items, snapshot.phase]);
   // The controller owns this SDK extension; no private state or reducer is accepted.
   const view = (snapshot as ApplicationSnapshotV1 & { navigationWorkspace: ApplicationNavigationViewV1 }).navigationWorkspace;
   const invoke = useMemo(() => application.invoke.bind(application) as SidebarNavigationService["invoke"], [application]);
@@ -196,7 +205,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       && (tab.id === snapshot.tabs.activeTabId || view.pendingConversations.some(row => row.id === tab.id))).map(tab => {
       const pending = view.pendingConversations.find(row => row.id === tab.id);
       // Draft input is not a session title; wait for the created thread's title.
-      return { id: tab.id, title: t("tabs.newConversation"), pending: Boolean(pending) };
+      return { id: tab.id, title: t("tabs.newConversation"), pending: Boolean(pending), entering: canAnimateNewTabs && !previousTabIDs.has(tab.id) };
     })}
     onSelectPendingConversation={tabId => run(presentNavigation(() => application.invoke("tab.select", { tabId })))}
     pinnedThreads={rows.filter(row => row.pinned && !row.archived)} activeThreadID={snapshot.conversation.threadId}

@@ -11,7 +11,7 @@ console.on("error", error => errors.push(String(error)));
 // jsdom cannot render font bytes; omit embedded assets from CSS without changing runtime code.
 const html = fs.readFileSync(target, "utf8").replace(/<style>([\s\S]*?)<\/style>/g, (_match, css) => `<style>${css.replace(/url\([^)]*data:[^)]*\)/g, "url(data:,)")}</style>`);
 const dom = new JSDOM(html, {
-  url: "https://synthetic-fixture.invalid/", runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: console,
+  url: `https://synthetic-fixture.invalid/${process.env.WUU_PERSONAL_EXISTING_SCENARIO ? "?existingSession=review" : ""}`, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: console,
   beforeParse(window) {
     window.matchMedia = query => ({ matches:false, media:query, addEventListener(){}, removeEventListener(){} });
     window.ResizeObserver = class { observe(){} unobserve(){} disconnect(){} };
@@ -52,6 +52,13 @@ function waitFor(predicate) {
   if(document.querySelector('.conversation-attachment-preview iframe, .conversation-attachment-preview object')) throw new Error("Remote text became an embedded document");
   document.querySelector('.plugin-view-attachment-panel').dispatchEvent(new dom.window.KeyboardEvent("keydown", {key:"Escape", bubbles:true}));
   await waitFor(() => !document.querySelector('.plugin-view-attachment-panel'));
+  if (process.env.WUU_PERSONAL_EXISTING_SCENARIO) {
+    document.querySelector('[data-task-id="dinner"]').click();
+    await waitFor(() => document.querySelector('[data-task-detail="dinner"]'));
+    const detail = document.querySelector('[data-task-detail="dinner"]');
+    if (detail.dataset.taskState !== "awaiting_review" || !detail.querySelector('[data-worker-result]') || !detail.textContent.includes('existing-user-session-2f629e5c') || !detail.textContent.includes('Which branch should I use')) throw new Error('Existing worker response lost target, question or review attribution');
+    document.querySelector('[data-action="close-detail"]').click();
+  }
   const conversation = document.querySelector('.plugin-conversation');
   const conversationId = conversation.dataset.conversationId;
   const textarea = document.querySelector('.mosaic textarea');

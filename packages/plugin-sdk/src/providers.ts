@@ -19,7 +19,7 @@ function descriptor(name: string, methods: readonly string[], preparation: reado
 }
 export const CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ['get', 'set', 'delete', 'compare-exchange']);
 export const CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ['read', 'compare-exchange'], ['read']);
-export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state', 'transfer-state', 'acquire-inspection', 'release-inspection','list-inspections','reconcile-inspection','inspection-authority'], ['read', 'read-state']);
+export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state', 'check-transfer-state', 'transfer-state', 'acquire-inspection', 'release-inspection','list-inspections','reconcile-inspection','inspection-authority'], ['read', 'read-state', 'check-transfer-state']);
 export const ARTIFACT_STORE_DESCRIPTOR: ServiceDescriptor = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'read-range', 'fork', 'delete-thread']),
   version: '1.2.0',
@@ -229,6 +229,7 @@ export function pluginSettingsStore(host: RuntimeHost) {
     readState: (input: PluginSettingsAddress) => call<PluginStateView>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'read-state', input),
     updateState: (input: PluginStateUpdate) => call<PluginStateView>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'update-state', input),
     /** No local fallback, emulated read/update sequence or automatic retry. */
+    checkStateTransfer: (input: StateTransfer) => call<Record<string, never>>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'check-transfer-state', input),
     transferState: (input: StateTransfer) => call<Record<string, never>>(host, PLUGIN_SETTINGS_STORE_SERVICE, 'transfer-state', input),
   };
 }

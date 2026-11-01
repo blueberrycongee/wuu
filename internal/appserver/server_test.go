@@ -35,6 +35,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
@@ -10104,7 +10105,7 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	}
 }
 
-func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
+func newTestRuntime(t *testing.T, client *fakeClient, additional ...pluginhost.Client) *runtime.Session {
 	t.Helper()
 	root := retryingTempDir(t)
 	t.Setenv("HOME", retryingTempDir(t))
@@ -10130,11 +10131,11 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 			},
 		},
 	}
-	registerTestWuuEngine(t, rt)
+	registerTestWuuEngine(t, rt, additional...)
 	return rt
 }
 
-func registerTestWuuEngine(t *testing.T, rt *runtime.Session) {
+func registerTestWuuEngine(t *testing.T, rt *runtime.Session, additional ...pluginhost.Client) {
 	t.Helper()
 	if rt.Documents == nil {
 		documents, err := persistence.Open(context.Background(), filepath.Join(rt.SessionDir, "documents"), "sqlite")
@@ -10154,7 +10155,7 @@ func registerTestWuuEngine(t *testing.T, rt *runtime.Session) {
 		t.Fatal(err)
 	}
 	rt.SetEnginesForTest(registry)
-	attachTestModelGeneration(t, rt)
+	attachTestModelGeneration(t, rt, additional...)
 }
 
 func retryingTempDir(t *testing.T) string {

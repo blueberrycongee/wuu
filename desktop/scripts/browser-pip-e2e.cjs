@@ -24,6 +24,8 @@ async function main() {
     plugins: [{
       name: "raw-svg",
       setup(build) {
+        build.onResolve({ filter: /\?asset$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -6)), namespace: 'asset' }));
+        build.onLoad({ filter: /.*/, namespace: 'asset' }, args => ({ contents: `export default ${JSON.stringify(args.path)}`, loader: 'js' }));
         build.onResolve({ filter: /\.svg\?raw$/ }, (args) => ({
           path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: "raw-svg",
         }));

@@ -1,3 +1,5 @@
+import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
+import { RegisteredSessionTransport, REGISTERED_SESSION_REVERSE_METHODS } from "./registeredSessionTransport";
 import { resolveUserHostContext } from "./userHost";
 import { PresentationFrameCapture } from "./presentationFrame";
 import { createDesktopRecovery } from "./desktopRecovery";
@@ -337,6 +339,7 @@ const appServerClientPool = new AppServerClientPool(
   desktopInitializeParams,
   { appPath: app.getAppPath(), isPackaged: app.isPackaged },
 );
+const registeredSessionTransport = new RegisteredSessionTransport(appServerClientPool);
 // Cross-workdir running state (which sessions are actively turning in any
 // workspace) is aggregated in the main process from each client's own turn
 // lifecycle tracking and broadcast to the renderer on change. The renderer's
@@ -715,7 +718,7 @@ function desktopInitializeParams() {
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
     capabilities: {
-      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] },
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, ...REGISTERED_SESSION_REVERSE_METHODS] },
     },
   };
 }
@@ -824,6 +827,11 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 });
 
 function emitServerEvent(event: ServerEvent): void {
+  registeredSessionTransport.handleConnectionEvent(event);
+  if (event.kind === "server-request" && REGISTERED_SESSION_REVERSE_METHODS.includes(event.message.method)) {
+    void registeredSessionTransport.handleServerRequest(event);
+    return;
+  }
   remoteAppServerBridge.publish(event);
   codexPetActivity.handleServerEvent(event);
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
@@ -1784,6 +1792,10 @@ app.whenReady().then(async () => {
     }
     return result;
   });
+  ipcMain.handle("wuu:project-recover-unavailable", (event) => {
+    if (windowRegistry.runtimeContextForWindow(event.sender.id)) return undefined;
+    return projectManager.recoverUnavailableProject();
+  });
   ipcMain.handle(
     "wuu:project-select",
     (_event, projectIDToSelect: string) => {
@@ -2235,9 +2247,10 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
     appServerRequest<EngineListResult>(event, "engine/list", {
       include_quota: options?.include_quota === true,
+      include_activity: options?.include_activity,
       refresh_models: options?.refresh_models === true,
       cwd: options?.cwd,
     }, context),
@@ -3098,8 +3111,14 @@ app.whenReady().then(async () => {
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
       targetContext?: RuntimeContext,
-    ) =>
-      appServerRequest(event, "turn/steer", {
+    ) => {
+      const context = targetContext
+        ? targetContext.kind === "user"
+          ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain, targetContext.composition_profile)
+          : projectManager.resolveSubmissionContext(targetContext)
+        : runtimeContextForEvent(event);
+      const request = appServerClientPool.bindSessionRequest(context, threadId);
+      return steerOrQueueIsolatedTurn(request, {
         thread_id: threadId,
         expected_turn_id: expectedTurnId,
         prompt,
@@ -3108,7 +3127,8 @@ app.whenReady().then(async () => {
         client_id: clientId,
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }, targetContext),
+      });
+    },
   );
   ipcMain.handle("wuu:turn-unsteer", (event, threadId: string, steerId: string) =>
     appServerRequest<{ ok: boolean }>(event, "turn/unsteer", {

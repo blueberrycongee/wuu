@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -104,5 +105,48 @@ func TestSessionRouteLocalAndDisabledRemote(t *testing.T) {
 	request.Params = json.RawMessage(`{"session_id":"created"}`)
 	if _, err := router.Route(context.Background(), "caller", request); err == nil {
 		t.Fatal("unfenced remote-style cancellation accepted")
+	}
+}
+
+// Only absence of a send handler proves that this admission was not dispatched.
+// A downstream handler may already have accepted work before returning an error.
+func TestSessionSendUnavailableOnlyIdentifiesPreDispatchRejection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		router  bool
+		invoked bool
+		code    string
+		want    string
+	}{
+		{"no router", false, false, "", "session_send_unavailable"},
+		{"unbound router", true, false, "", "session_send_unavailable"},
+		{"accepted then generic unavailable", true, true, "service_unavailable", "service_unavailable"},
+		{"accepted then reserved unavailable", true, true, "session_send_unavailable", "host_error"},
+		{"accepted then nested unbound router", true, true, "nested", "host_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var router *PluginSessionRouter
+			accepted := false
+			if tc.router {
+				router = NewPluginSessionRouter()
+			}
+			if tc.invoked {
+				router.Bind(nil, func(context.Context, string, pluginhost.SessionSendParams) (pluginhost.SessionSendResult, error) {
+					accepted = true
+					if tc.code == "nested" {
+						return NewPluginSessionRouter().Send(context.Background(), "nested", pluginhost.SessionSendParams{})
+					}
+					return pluginhost.SessionSendResult{}, &pluginhost.HostServiceError{Code: tc.code, Message: "synthetic downstream failure after acceptance"}
+				}, nil, nil)
+			}
+			services := newPluginHostServices(serviceTestPlugin("goal", "plugin:goal", "one"), t.TempDir(), t.TempDir(), router)
+			services.activate()
+			defer services.close()
+			_, err := services.HandleHostService(context.Background(), pluginhost.HostServiceSessionSend, json.RawMessage(`{"request_id":"request","session_id":"thread","input":{"prompt":"work"}}`))
+			var serviceErr *pluginhost.HostServiceError
+			if !errors.As(err, &serviceErr) || serviceErr.Code != tc.want || accepted != tc.invoked {
+				t.Fatalf("code=%v accepted=%v; want=%s accepted=%v", err, accepted, tc.want, tc.invoked)
+			}
+		})
 	}
 }

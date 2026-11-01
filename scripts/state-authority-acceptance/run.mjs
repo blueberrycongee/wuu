@@ -25,5 +25,6 @@ writeFileSync(join(fixture, "tsconfig.json"), JSON.stringify({ compilerOptions: 
 command("npm", ["install", "--no-audit", "--no-fund"], fixture);
 command("npm", ["exec", "--", "tsc", "--noEmit"], fixture);
 command("go", ["test", "-race", "-count=1", "-v", "./internal/runtime", "-run", "^TestProviderAuthorityHTTPProcess$"], root, { WUU_PROVIDER_AUTHORITY_FIXTURE: fixture });
+command("go", ["test", "-race", "-count=1", "-v", "./internal/appserver", "-run", "^TestQueuedShutdownRetainsExternalProviderUntilCancellation$"], root, { WUU_PROVIDER_AUTHORITY_FIXTURE: fixture });
 writeFileSync(join(run, "environment.json"), JSON.stringify({ node: process.version, go: command("go", ["version"]).trim(), commit: command("git", ["rev-parse", "HEAD"]).trim() }, null, 2));
 console.log(`Verified independent HTTP authority, no local business journal. Log: ${log}`);

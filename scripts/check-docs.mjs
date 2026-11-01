@@ -53,7 +53,9 @@ function check(files, manifest, read) {
     if (retiredRoots.some((prefix) => file.startsWith(prefix))) {
       failures.push(`${file}: one-off or private material belongs outside the public repository`)
     }
-    if (file.startsWith("docs/") && file.endsWith(".md") && file !== "docs/README.md" && !published.has(file)) {
+    // Version-named release bodies feed GitHub Releases rather than site navigation.
+    const releaseNote = /^docs\/releases\/\d{4}\.\d{1,2}\.\d{1,2}(?:-[0-9A-Za-z.-]+)?\.md$/.test(file)
+    if (file.startsWith("docs/") && file.endsWith(".md") && file !== "docs/README.md" && !releaseNote && !published.has(file)) {
       failures.push(`${file}: merge into maintained bilingual documentation and register in docs/site.json`)
     }
     if (!humanMarkdown(file)) continue

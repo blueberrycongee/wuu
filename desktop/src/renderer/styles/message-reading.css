@@ -20,26 +20,45 @@
   margin-block-start: var(--conversation-prose-block-gap, 1em);
 }
 
-/* Markdown URLs and tool images need a footprint before their dimensions are
- * known. Keep it through loading/failure so a restored conversation cannot
- * move its reading content. Workspace document images retain their own sizing. */
+/* Reserve the row before decoding, including on failure and session restore.
+ * Only the image inside it uses intrinsic dimensions: resizing this footprint
+ * on load would move the reader's text. Document previews keep their own sizing. */
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image-block,
 .turn-artifact-image-preview {
   position: relative;
   /* A definite preferred width participates in table intrinsic sizing. */
-  width: 400px;
+  width: var(--conversation-image-width);
   max-width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 5 / 2;
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image {
   position: absolute;
-  inset: 0;
+  inset: 0 auto auto 0;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--hairline);
+  border-radius: var(--conversation-image-radius);
+  object-fit: scale-down;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image-unavailable {
   width: 100%;
   height: 100%;
-  max-width: none;
-  max-height: none;
-  object-fit: scale-down;
+}
+
+/* Tables need a definite cell contribution even before the image is decoded. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap .rich-image-block {
+  width: 400px;
+  aspect-ratio: 4 / 3;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap .rich-image {
+  width: 100%;
+  height: 100%;
+  object-position: left top;
 }
 
 .rich-image-unavailable {

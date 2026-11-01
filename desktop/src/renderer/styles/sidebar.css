@@ -1070,6 +1070,36 @@
   overscroll-behavior: contain;
 }
 
+/* Drag-only destinations must not move the source or neighboring rows. */
+.sidebar-drag-targets {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 0;
+  flex: 0 0 0;
+}
+
+.sidebar-drag-targets-content {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidebar-functional-row-gap);
+  border-radius: var(--sidebar-row-radius);
+  background: var(--surface-raised);
+  box-shadow: var(--menu-shadow);
+}
+
+.sidebar-drag-targets-content > .sidebar-functional-group {
+  margin-top: 0;
+}
+
+.sidebar-drag-target {
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 24%, transparent);
+  color: var(--ink);
+}
+
 .sidebar-unread-view {
   display: flex;
   min-width: 0;
@@ -2028,19 +2058,13 @@ html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .p
  * contains independently expanded project/folder folds. Text stays in place
  * while the outer clip moves, without a second fade or translate phase. */
 .thread-list-collapse {
-  interpolate-size: allow-keywords;
-  height: 0;
+  --reveal-duration: var(--section-fold-ms);
+  --reveal-easing: var(--section-fold-ease);
   margin-top: 0;
-  min-height: 0;
-  overflow: clip;
-  transition:
-    height var(--section-fold-ms) var(--section-fold-ease),
-    margin-top var(--section-fold-ms) var(--section-fold-ease);
   contain: layout paint;
 }
 
 .thread-list-collapse[data-state="open"] {
-  height: auto;
   margin-top: var(--sidebar-section-body-gap);
 }
 
@@ -2121,6 +2145,10 @@ html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .p
   outline-offset: -2px;
   background: var(--sidebar-thread-list-button-hover-bg);
   color: var(--ink);
+}
+
+.sidebar-draft-reveal {
+  --reveal-gap: var(--sidebar-functional-row-gap);
 }
 
 .sidebar-session-row {

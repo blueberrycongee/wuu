@@ -217,7 +217,9 @@ func runLifecycle(runtimePath, outputPath string) error {
 					if err != nil {
 						return fmt.Errorf("%s schema compilation: %w", route, err)
 					}
-					inputs := append([]json.RawMessage{arguments}, validPrograms()...)
+					// Model-facing generation uses source; legacy programs above still
+					// exercise runtime and persisted-artifact compatibility.
+					inputs := []json.RawMessage{json.RawMessage(`{"spec":{"version":3,"title":"Estimate","fallback":"Two items cost 24.","source":"{@body const [quantity, setQuantity] = DIL.useState(2); } <Stack><Input label=\"Quantity\" inputType=\"number\" value={quantity} onChange={setQuantity}/><Metric label=\"Total\" value={quantity * 12}/></Stack>"}}`)}
 					for index, arguments := range inputs {
 						var input any
 						if err := json.Unmarshal(arguments, &input); err != nil {
@@ -278,7 +280,7 @@ func checkRuntimeReplacement(rt *runtime.Session, cfg config.Config, target plug
 		return err
 	}
 	const marker = "Generation replacement fixture"
-	updated := strings.Replace(string(original), "Render an experimental interactive UI", marker+": Render an experimental interactive UI", 1)
+	updated := strings.Replace(string(original), "Render an interactive explanation", marker+": Render an interactive explanation", 1)
 	updated = strings.Replace(updated, "input_schema: {", "input_schema: { description: \""+marker+"\",", 1)
 	if updated == string(original) {
 		return errors.New("runtime fixture did not change its tool contract")

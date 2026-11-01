@@ -1000,6 +1000,9 @@ func (e *InferenceExecution) bindJournal(journal InferenceJournal, requestHash s
 		e.journalErr = err
 		return err
 	}
+	e.workflow.mu.Lock()
+	e.workflow.prepared = true
+	e.workflow.mu.Unlock()
 	e.journal = journal
 	e.requestHash = requestHash
 	return nil

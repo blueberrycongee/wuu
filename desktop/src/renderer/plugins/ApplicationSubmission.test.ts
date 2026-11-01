@@ -106,7 +106,26 @@ describe("application submission ownership",()=>{
     expect(f.pending.pendingComposerMessagesForThread("created").queued.map(row=>row.id)).toEqual([id]);
     expect(window.wuu.queueTurn).toHaveBeenCalledOnce();
   });
-  it.each([false, true])("fences guide acknowledgement after tab switch or disposal (disposed=%s)",async(disposed)=>{
+  it.each([false,true])("adopts an isolated-turn queue receipt without replaying input (notificationFirst=%s)",async notificationFirst=>{
+    const accepted=deferred<Awaited<ReturnType<WuuDesktopApi["steerTurn"]>>>();
+    window.wuu={steerTurn:vi.fn(()=>accepted.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"review",status:"in_progress",items_view:"full",items:[]}]});
+    const submitted=f.submission.submit({ownerTabId:"thread:created",mode:"steer"});
+    await vi.waitFor(()=>expect(window.wuu.steerTurn).toHaveBeenCalledOnce());
+    const id=submitted.operationID!;
+    f.setState({...f.getState(),activeSessionTabID:"draft:other",sessionTabs:[...f.getState().sessionTabs,{id:"draft:other",kind:"draft",context,title:"",createdAt:1,prompt:"other draft",images:[],files:[]}]});
+    if(notificationFirst){
+      f.submission.receive({kind:"notification",workdir:context.cwd,message:{method:"turn/queued",params:{thread_id:"created",message:{id,thread_id:"created",origin:"queue",prompt:"hello"}}}});
+      await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0].phase).toBe("completed"));
+      accepted.reject(new Error("reply lost after queued notification"));
+    }else accepted.resolve({turn_id:"",delivery:"queued",queued:{id,thread_id:"created"}});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]).toMatchObject({phase:"completed",mode:"queue"}));
+    expect(f.pending.pendingComposerMessagesForThread("created").guides).toEqual([]);
+    expect(f.pending.pendingComposerMessagesForThread("created").queued.map(row=>row.id)).toEqual([id]);
+    expect(f.getDraft("thread:created").prompt).toBe("");expect(f.getDraft("draft:other").prompt).toBe("other draft");
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();expect(window.wuu.steerTurn).toHaveBeenCalledOnce();
+  });
+  it.each([[false,false],[false,true],[true,false],[true,true]])("fences guide acknowledgement after tab switch or disposal (disposed=%s, queued=%s)",async(disposed,queued)=>{
     const accepted=deferred<Awaited<ReturnType<WuuDesktopApi["steerTurn"]>>>();
     window.wuu={steerTurn:vi.fn(()=>accepted.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
     const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
@@ -117,7 +136,7 @@ describe("application submission ownership",()=>{
       {id:"draft:other",kind:"draft",context,title:"",createdAt:1,prompt:"other input",images:[],files:[]}]});
     if(disposed) f.submission.dispose();
     const checkpoint=f.getState();const pending=JSON.stringify(f.pending.pendingComposerMessagesByThread);
-    accepted.resolve({turn_id:"running",delivery:"active_turn"});
+    accepted.resolve(queued ? {turn_id:"",delivery:"queued",queued:{id:vi.mocked(window.wuu.steerTurn).mock.calls[0][4]!,thread_id:"created"}} : {turn_id:"running",delivery:"active_turn"});
     await vi.waitFor(()=>expect(release).toHaveBeenCalledOnce());
     if(disposed){expect(f.getState()).toBe(checkpoint);expect(JSON.stringify(f.pending.pendingComposerMessagesByThread)).toBe(pending);}
     else {expect(f.getDraft("thread:created").prompt).toBe("");expect(f.submission.getSnapshot().operations[0]).toMatchObject({phase:"completed",draftPending:false});}

@@ -32,11 +32,15 @@ func (r *foregroundRouter) RouteServiceCall(ctx context.Context, _ string, call 
 		r.mu.Lock()
 		result = pluginhost.StorageGetResult{Value: r.stored}
 		r.mu.Unlock()
-	case pluginhost.KernelStorageSetService:
-		var p pluginhost.StorageSetParams
+	case pluginhost.KernelStorageCompareExchangeService:
+		var p pluginhost.StorageCompareExchangeParams
 		_ = json.Unmarshal(call.Params, &p)
 		r.mu.Lock()
-		r.stored = &p.Value
+		swapped := r.stored == nil && p.Expected == nil || r.stored != nil && p.Expected != nil && *r.stored == *p.Expected
+		if swapped {
+			r.stored = p.Value
+		}
+		result = pluginhost.StorageCompareExchangeResult{Swapped: swapped, Value: r.stored}
 		r.mu.Unlock()
 	case pluginhost.KernelStorageKeysService:
 		result = map[string]any{"keys": []string{}}

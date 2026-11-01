@@ -24,9 +24,10 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 ## Token 一览
 
 合同共定义 **82 个公开 token**（其中 **7 个**
-旧名称兼容别名）与 **16 个语法高亮 token**；当前 **54 个**
-已接入宿主界面。「已接入」表示宿主样式已在引用该 token，覆盖会立即生效；
-「未接入（预留）」表示 token 已声明但宿主尚未引用，覆盖暂不改变任何界面。
+旧名称兼容别名）与 **16 个语法高亮 token**；当前 **73 个**
+有宿主样式引用路径。「已接入」包括颜色、排版和几何属性，沿样式变量依赖计算；
+这不是所有主题和状态下的渲染保证，用户保存的外观设置及 CSS 层叠仍可能覆盖它。
+「未接入（预留）」表示在宿主样式中未找到引用路径；插件自己的样式不在此统计内。
 
 ### 颜色
 
@@ -91,39 +92,39 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 
 | token | 说明 | 宿主 |
 | --- | --- | --- |
-| `--wuu-font-family-ui` | 界面字体族 | 未接入（预留） |
-| `--wuu-font-family-mono` | 等宽字体族（代码） | 未接入（预留） |
+| `--wuu-font-family-ui` | 界面字体族 | 已接入 |
+| `--wuu-font-family-mono` | 等宽字体族（代码） | 已接入 |
 | `--wuu-font-size-ui` | 界面字号 | 已接入 |
 | `--wuu-font-size-body` | 正文（消息等大段文字）字号 | 已接入 |
-| `--wuu-line-height-body` | 正文行高 | 未接入（预留） |
+| `--wuu-line-height-body` | 正文行高 | 已接入 |
 
 ### 间距
 
 | token | 说明 | 宿主 |
 | --- | --- | --- |
-| `--wuu-space-unit` | 基础间距单位 | 未接入（预留） |
+| `--wuu-space-unit` | 基础间距单位 | 已接入 |
 | `--wuu-message-actions-block-gap` | 消息操作区之间的间距 | 未接入（预留） |
-| `--wuu-message-actions-overlay-gap` | 消息操作浮层间距 | 未接入（预留） |
-| `--wuu-message-actions-control-gap` | 消息操作按钮间距 | 未接入（预留） |
-| `--wuu-message-actions-inline-offset` | 消息操作的行内偏移 | 未接入（预留） |
-| `--wuu-message-action-size` | 消息操作按钮尺寸 | 未接入（预留） |
+| `--wuu-message-actions-overlay-gap` | 消息操作浮层间距 | 已接入 |
+| `--wuu-message-actions-control-gap` | 消息操作按钮间距 | 已接入 |
+| `--wuu-message-actions-inline-offset` | 消息操作的行内偏移 | 已接入 |
+| `--wuu-message-action-size` | 消息操作按钮尺寸 | 已接入 |
 
 ### 密度
 
 | token | 说明 | 宿主 |
 | --- | --- | --- |
-| `--wuu-space-density` | 界面密度缩放 | 未接入（预留） |
+| `--wuu-space-density` | 界面密度缩放 | 已接入 |
 
 ### 圆角
 
 | token | 说明 | 宿主 |
 | --- | --- | --- |
-| `--wuu-message-action-radius` | 消息操作按钮圆角 | 未接入（预留） |
-| `--wuu-message-user-radius` | 用户消息气泡圆角 | 未接入（预留） |
-| `--wuu-radius-inner` | 内层高亮与嵌套圆角 | 未接入（预留） |
-| `--wuu-radius-control` | 控件圆角 | 未接入（预留） |
-| `--wuu-radius-panel` | 面板圆角 | 未接入（预留） |
-| `--wuu-radius-overlay` | 浮层圆角 | 未接入（预留） |
+| `--wuu-message-action-radius` | 消息操作按钮圆角 | 已接入 |
+| `--wuu-message-user-radius` | 用户消息气泡圆角 | 已接入 |
+| `--wuu-radius-inner` | 内层高亮与嵌套圆角 | 已接入 |
+| `--wuu-radius-control` | 控件圆角 | 已接入 |
+| `--wuu-radius-panel` | 面板圆角 | 已接入 |
+| `--wuu-radius-overlay` | 浮层圆角 | 已接入 |
 
 ### 边框
 
@@ -145,15 +146,15 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 
 | token | 说明 | 宿主 |
 | --- | --- | --- |
-| `--wuu-motion-duration-fast` | 快速动效时长 | 未接入（预留） |
-| `--wuu-motion-duration-normal` | 常规动效时长 | 未接入（预留） |
-| `--wuu-motion-easing-standard` | 标准缓动曲线 | 未接入（预留） |
+| `--wuu-motion-duration-fast` | 快速动效时长 | 已接入 |
+| `--wuu-motion-duration-normal` | 常规动效时长 | 已接入 |
+| `--wuu-motion-easing-standard` | 标准缓动曲线 | 已接入 |
 
 ### 内容
 
 | token | 说明 | 宿主 |
 | --- | --- | --- |
-| `--wuu-content-max-width` | 主内容区最大宽度 | 未接入（预留） |
+| `--wuu-content-max-width` | 主内容区最大宽度 | 已接入 |
 
 ## 语法高亮
 

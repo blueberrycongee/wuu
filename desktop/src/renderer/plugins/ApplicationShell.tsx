@@ -1,3 +1,4 @@
+import { SurfaceUnavailable } from "./SurfaceUnavailable";
 import { RuntimeLoading } from "../LoadingViews";
 import { showErrorToast } from "../Toast";
 import { useI18n, translateCurrent } from "../i18n";
@@ -75,24 +76,22 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
   return composition;
 }
 
-function SlotConflict({ host, name, contributions }: { host: PluginHost; name: string; contributions: readonly RegisteredUIContribution[] }): null {
+function SlotConflict({ host, name, contributions }: { host: PluginHost; name: string; contributions: readonly RegisteredUIContribution[] }): React.ReactNode {
   const identities = contributions.map(activationKey).join(":");
   React.useEffect(() => {
-    showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-slot-conflict:${name}:${identities}`);
     const observers = contributions.map(item => host.observeGenerationRender(item.pluginId, item.generation, new Error(`UI slot conflict: ${name}`)));
     return () => { for (const observer of observers) observer.dispose(); };
   }, [host, name, identities]);
-  return null;
+  return <SurfaceUnavailable />;
 }
 
-function UnavailableSurface({ host, binding, service }: { host: PluginHost; binding?: ApplicationShellBinding; service: string }): null {
+function UnavailableSurface({ host, binding, service }: { host: PluginHost; binding?: ApplicationShellBinding; service: string }): React.ReactNode {
   React.useEffect(() => {
-    showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-surface:${binding?.pluginId ?? service}:${binding?.generation ?? "none"}`);
     if (!binding || !host.getGenerationActivation(binding.pluginId, binding.generation)) return;
     const observer = host.observeGenerationRender(binding.pluginId, binding.generation, new Error(`Selected UI surface is unavailable: ${service}`));
     return () => observer.dispose();
   }, [host, binding?.pluginId, binding?.generation, service]);
-  return null;
+  return <SurfaceUnavailable />;
 }
 
 function Contribution({ host, contribution, slots, context, children }: {
@@ -114,14 +113,14 @@ class ShellBoundary extends React.Component<{ children: React.ReactNode; identit
   }
   componentDidCatch(error: Error): void {
     this.observer?.failed(error);
-    showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-surface:${this.props.pluginId}:${this.props.generation}`);
+    if (this.props.recover) showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-surface:${this.props.pluginId}:${this.props.generation}`);
   }
   componentWillUnmount(): void { this.observer?.dispose(); }
   state: { error?: Error } = {};
   static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
   render(): React.ReactNode {
     return this.state.error
-      ? this.props.recover ? this.props.fallback : this.props.fullShell ? <RuntimeLoading fullscreen status={translateCurrent("plugins.applicationUnavailable")} onRetry={() => window.location.reload()} /> : null
+      ? this.props.recover ? this.props.fallback : <SurfaceUnavailable fullscreen={this.props.fullShell} onRetry={() => this.setState({ error: undefined })} />
       : this.props.children;
   }
 }

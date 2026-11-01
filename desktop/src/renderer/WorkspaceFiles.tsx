@@ -1,3 +1,4 @@
+import { showActionErrorToast } from "./Toast";
 import { workspacePdfRevision } from "./PdfSelection";
 import { ThreadContextMenu, copyToClipboard } from "./ThreadContextMenu";
 import { usePreviewContent } from "./PreviewContentContext";
@@ -277,6 +278,16 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
   const { service } = usePreviewContent();
   const { locale, t } = useI18n();
   const treeFrameRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(false);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  // Selecting a menu item closes the menu immediately. Feedback belongs to the
+  // owning tree, which survives that dismissal but not a workspace switch.
+  const reportActionError = (error: unknown): void => {
+    if (mountedRef.current) showActionErrorToast(error);
+  };
   const paths = useMemo(() => Object.values(directories).flatMap((directory) => directory.entries.map((entry) => entry.path)), [directories]);
   // useFileTree builds its model once at mount and never re-reads the
   // options object, so the prepared input is only consumed on the first
@@ -418,6 +429,7 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
           />
         ) : (
           <WorkspaceTreeContextMenu
+            onError={reportActionError}
             entry={{ ...item, path: absoluteWorkspacePath(workspaceRoot, item.path) }}
             workspaceRoot={workspaceRoot}
             x={context.anchorRect.left}
@@ -441,18 +453,30 @@ function MacWorkspaceTreeContextMenu({
 }): null {
   const { service } = usePreviewContent();
   const openedRef = useRef(false);
+  const mountedRef = useRef(false);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   useEffect(() => {
     if (openedRef.current) return;
     openedRef.current = true;
-    void service.showItemMenu({ path, root: workspaceRoot }).then(onClose, onClose);
+    void service.showItemMenu({ path, root: workspaceRoot }).then(() => {
+      if (mountedRef.current) onClose();
+    }, error => {
+      if (!mountedRef.current) return;
+      showActionErrorToast(error);
+      onClose();
+    });
   }, [service, path, workspaceRoot, onClose]);
   return null;
 }
 
 function WorkspaceTreeContextMenu({
-  entry, workspaceRoot, x, y, onClose
+  entry, workspaceRoot, x, y, onClose, onError
 }: {
   entry: WorkspaceFileTreeEntry;
+  onError: (error: unknown) => void;
   workspaceRoot: string;
   x: number;
   y: number;
@@ -465,13 +489,16 @@ function WorkspaceTreeContextMenu({
   const normalizedPath = absolutePath.replace(/\\/g, "/");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1) : absolutePath;
+  const copy = async (text: string): Promise<void> => {
+    if (!await copyToClipboard(text)) onError(t("common.copyFailed"));
+  };
   return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[
-    { label: t("workspace.files.copyPath"), onSelect: () => { void copyToClipboard(absolutePath); } },
-    { label: t("workspace.files.copyRelativePath"), onSelect: () => { void copyToClipboard(relativePath); } },
-    { label: t("workspace.files.copyFileName"), onSelect: () => { void copyToClipboard(entry.name); } },
+    { label: t("workspace.files.copyPath"), onSelect: () => { void copy(absolutePath); } },
+    { label: t("workspace.files.copyRelativePath"), onSelect: () => { void copy(relativePath); } },
+    { label: t("workspace.files.copyFileName"), onSelect: () => { void copy(entry.name); } },
     { separator: true },
     { label: t("workspace.files.revealInFileManager"), disabled: !service.capabilities.revealItem,
-      onSelect: () => service.revealItem({ root: workspaceRoot, path: relativePath }).catch(error => console.error("[desktop] reveal item failed", error)) },
+      onSelect: () => service.revealItem({ root: workspaceRoot, path: relativePath }).catch(onError) },
   ]} />;
 }
 

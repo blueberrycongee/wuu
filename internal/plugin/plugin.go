@@ -18,8 +18,18 @@ type Plugin struct {
 	AuthorizedDev        bool
 	WorkspaceID          string
 	SubjectID            string
+	StorageSubjectID     string
 	Fingerprint          string
 	EffectivePermissions []string
+}
+
+// StorageSubject preserves persistent data ownership across an authorized
+// development override. Execution trust continues to use SubjectID and Source.
+func (p Plugin) StorageSubject() string {
+	if p.AuthorizedDev && p.StorageSubjectID != "" {
+		return p.StorageSubjectID
+	}
+	return p.SubjectID
 }
 
 func Discover(projectRoot, wuuHome string) []Plugin {
@@ -33,7 +43,10 @@ func DiscoverWithOptions(projectRoot, wuuHome string, options DiscoverOptions) [
 	bundledPlugins := discoverBundled(wuuHome, options)
 	userPlugins := filterCompatiblePlugins(scanPluginRoots(userPluginRoots(wuuHome), "user", ""), compatibility)
 	projectPlugins := filterCompatiblePlugins(scanPluginRoots(projectPluginRoots(projectRoot), "project", workspacePolicyID(projectRoot)), compatibility)
-	devPlugins := filterCompatiblePlugins(discoverAuthorizedDev(wuuHome), compatibility)
+	var devPlugins []Plugin
+	if !options.ExcludeDev {
+		devPlugins = filterCompatiblePlugins(discoverAuthorizedDev(wuuHome), compatibility)
+	}
 
 	byID := make(map[string]Plugin, len(bundledPlugins)+len(userPlugins)+len(projectPlugins)+len(devPlugins))
 	for _, item := range userPlugins {

@@ -345,7 +345,7 @@ export function ModelServicesPage({
     if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) { setQuotaLoading(false); return; }
     let active = true;
     setQuotaLoading(true);
-    void controls.listEngines({ include_quota: true }).then(snapshot => {
+    void controls.listEngines({ include_quota: true, include_activity: false }).then(snapshot => {
       if (active) { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }
     }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setQuotaFailed(true); })
       .finally(() => { if (active) setQuotaLoading(false); });

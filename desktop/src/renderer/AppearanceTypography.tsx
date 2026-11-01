@@ -69,7 +69,8 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     const options = [{ value: "", label: defaultLabel }, ...names.map((name) => ({ value: name, label: name }))];
     if (current && !names.includes(current)) options.push({ value: current, label: current });
     return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
-      <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable triggerClassName="settings-select-trigger" />
+      <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable
+        triggerClassName="settings-select-trigger" panelClassName="appearance-font-menu" minMenuWidthEm={20} />
     </div>;
   };
   const fontsAreDefault = preferences.uiFont === appearanceDefaults.uiFont && preferences.contentFont === appearanceDefaults.contentFont && preferences.codeFont === appearanceDefaults.codeFont;

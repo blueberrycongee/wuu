@@ -3217,6 +3217,8 @@ export type WuuDesktopApi = {
   discoverRecentWorkspaces?: () => Promise<RecentWorkspacesResult>;
   chooseWorkspaceDirectory?: () => Promise<string | null>;
   importWorkspaces?: (paths: string[]) => Promise<ProjectListResult>;
+  /** Recover a missing selected desktop workspace during initial bootstrap. */
+  recoverUnavailableProject?: () => Promise<ProjectRuntimeIssue | undefined>;
   listProjects: () => Promise<ProjectListResult>;
   createBlankProject: () => Promise<ProjectListResult>;
   chooseProjectFolder: () => Promise<ProjectListResult>;
@@ -3315,7 +3317,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: (options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;
@@ -3558,7 +3560,12 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
-  ) => Promise<{ turn_id: string; delivery?: "active_turn" | "queued" }>;
+  ) => Promise<{
+    turn_id: string;
+    delivery?: "active_turn" | "queued";
+    /** Present only when an isolated-turn refusal was safely queued as independent user input. */
+    queued?: QueuedTurn;
+  }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
     threadId: string,

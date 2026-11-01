@@ -2,6 +2,44 @@ import { expect, it, vi } from "vitest";
 import type { InitializeResult, ServerEvent, WuuDesktopApi } from "../../shared/protocol";
 import { DesktopBootstrap } from "./DesktopBootstrap";
 
+it("starts in conversations and reports the unavailable workspace after startup recovery", async () => {
+  const issue = { code: "active_project_unavailable", project_id: "offline", cwd: "/offline", message: "Workspace unavailable: /offline" } as const;
+  const initialize = vi.fn().mockRejectedValueOnce(new Error("Workspace unavailable"))
+    .mockResolvedValueOnce({ workspace_root: "/scratch", extension_inventory: [] });
+  const recoverUnavailableProject = vi.fn().mockResolvedValue(issue);
+  window.wuu = { initialize, recoverUnavailableProject, onServerEvent: () => () => {} } as unknown as WuuDesktopApi;
+  const bootstrap = new DesktopBootstrap(), stop = bootstrap.start();
+  try {
+    await vi.waitFor(() => expect(bootstrap.getSnapshot().initialized?.workspace_root).toBe("/scratch"));
+    expect(bootstrap.getSnapshot()).toMatchObject({ startupWorkspaceIssue: issue, error: undefined });
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(recoverUnavailableProject).toHaveBeenCalledTimes(1);
+  } finally { stop(); }
+});
+
+it("keeps an unrelated startup failure visible without switching workspaces", async () => {
+  const recoverUnavailableProject = vi.fn().mockResolvedValue(undefined);
+  const initialize = vi.fn().mockRejectedValue(new Error("core failed"));
+  window.wuu = { initialize, recoverUnavailableProject, onServerEvent: () => () => {} } as unknown as WuuDesktopApi;
+  const bootstrap = new DesktopBootstrap(), stop = bootstrap.start();
+  try {
+    await vi.waitFor(() => expect(bootstrap.getSnapshot().error).toContain("core failed"));
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(bootstrap.getSnapshot().startupWorkspaceIssue).toBeUndefined();
+  } finally { stop(); }
+});
+
+it("reports a failed fallback initialization instead of hiding the failure", async () => {
+  const issue = { code: "active_project_unavailable", project_id: "offline", cwd: "/offline", message: "unavailable" } as const;
+  const initialize = vi.fn().mockRejectedValueOnce(new Error("offline")).mockRejectedValueOnce(new Error("fallback failed"));
+  window.wuu = { initialize, recoverUnavailableProject: async () => issue, onServerEvent: () => () => {} } as unknown as WuuDesktopApi;
+  const bootstrap = new DesktopBootstrap(), stop = bootstrap.start();
+  try {
+    await vi.waitFor(() => expect(bootstrap.getSnapshot().error).toContain("fallback failed"));
+    expect(bootstrap.getSnapshot().initialized).toBeUndefined();
+  } finally { stop(); }
+});
+
 it("keeps initialization and inventory bound to the active transport workspace, including racing publications", async () => {
   let receive!: (event: ServerEvent) => void;
   let initialized!: Parameters<NonNullable<WuuDesktopApi["onRuntimeInitialization"]>>[0];

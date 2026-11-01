@@ -157,6 +157,7 @@ export interface ApplicationSettingsControlsV1 {
   listCatalogProviders: (provider?: string) => Promise<ConfigModelCatalogProvidersResult>;
   listEngines: (options?: {
     include_quota?: boolean;
+    include_activity?: boolean;
     refresh_models?: boolean;
     cwd?: string;
   }, context?: RuntimeContext) => Promise<EngineListResult>;

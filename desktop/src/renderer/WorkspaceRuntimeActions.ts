@@ -17,7 +17,7 @@ import {
   type SessionTab,
 } from "./AppState";
 import { seedDraftRuntimeFromMemory } from "./DraftRuntimeMemory";
-import { loadRuntime as defaultLoadRuntime } from "./RuntimeLoadState";
+import { loadRuntime as defaultLoadRuntime, selectRuntimeContext } from "./RuntimeLoadState";
 import { confirmAction } from "./ConfirmDialog";
 import { translateCurrent } from "./i18n";
 import { showErrorToast } from "./Toast";
@@ -44,6 +44,7 @@ export type WorkspaceRuntimeActionsDeps = {
   
   beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetID: string) => number;
   finishViewSwitch: (requestID: number, loadedState?: Partial<AppState>) => boolean;
+  isCurrentViewSwitchRequest: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   loadRuntime?: typeof defaultLoadRuntime;
 };
@@ -67,6 +68,34 @@ export function createWorkspaceRuntimeActions(
   function setStatus(status: string): void {
     if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
+  }
+
+  async function rejectUnavailableWorkspace(
+    workspace: ProjectListResult,
+    source: AppState["activeContext"],
+    requestID: number,
+  ): Promise<void> {
+    const issue = workspace.runtime_issue;
+    if (!issue) return;
+    if (source && deps.isCurrentViewSwitchRequest(requestID)) {
+      let restored: ProjectListResult;
+      try {
+        restored = await selectRuntimeContext(source);
+      } catch (error) {
+        if (deps.isCurrentViewSwitchRequest(requestID)) deps.setAppState(current => ({
+          ...current, initialized: undefined, activeContext: undefined, activeProjectId: undefined,
+          gitStatus: undefined, status: String(error),
+        }));
+        throw error;
+      }
+      if (deps.isCurrentViewSwitchRequest(requestID) && restored.runtime_issue) {
+        const sourceIssue = restored.runtime_issue;
+        deps.setAppState(current => ({ ...current, initialized: undefined, projects: restored.projects,
+          gitStatus: undefined, status: sourceIssue.message }));
+        throw new Error(sourceIssue.message);
+      }
+    }
+    throw new Error(issue.message);
   }
 
   function withoutWorkspaceSessionTabs(state: AppState, projectId: string): AppState {
@@ -169,6 +198,8 @@ export function createWorkspaceRuntimeActions(
     let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await selectContext();
+      if (!deps.isCurrentViewSwitchRequest(requestID)) return false;
+      if (workspaceState.runtime_issue) await rejectUnavailableWorkspace(workspaceState, currentState.activeContext, requestID);
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
@@ -252,6 +283,8 @@ export function createWorkspaceRuntimeActions(
     let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await window.wuu.selectProject(projectId);
+      if (!deps.isCurrentViewSwitchRequest(requestID)) return false;
+      if (workspaceState.runtime_issue) await rejectUnavailableWorkspace(workspaceState, currentState.activeContext, requestID);
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });

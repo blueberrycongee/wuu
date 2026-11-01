@@ -200,6 +200,9 @@ export function createThreadActivationActions(
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
         return;
       }
+      if (workspaceState.runtime_issue) {
+        throw new Error(workspaceState.runtime_issue.message);
+      }
       const selectedContext = workspaceState.active_context;
       if (!selectedContext || !sameRuntimeContext(selectedContext, targetContext)) {
         throw new Error("Selected workspace does not match the requested conversation context");
@@ -300,6 +303,7 @@ export function createThreadActivationActions(
             activeContext: undefined,
             activeProjectId: undefined,
             gitStatus: undefined,
+            status: restoreError instanceof Error ? restoreError.message : String(restoreError),
           }));
           failure = restoreError;
         }

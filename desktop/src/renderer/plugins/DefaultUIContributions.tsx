@@ -1,3 +1,4 @@
+import { SurfaceUnavailable } from "./SurfaceUnavailable";
 import { TruncatedText } from "../TruncatedText";
 import * as React from "react";
 import type { ApplicationServiceV1, ApplicationPresentationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
@@ -125,20 +126,22 @@ function WorkspaceTool({ entry, ...props }: ContributionViewProps & { entry: Ret
   </button></Lifetime>;
 }
 
-class ContributionBoundary extends React.Component<{ host: PluginHost; identity: Identity; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { failed: boolean }> {
+class ContributionBoundary extends React.Component<{ host: PluginHost; identity: Identity; activeView?: boolean; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { failed: boolean }> {
   state = { failed: false };
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidMount() { this.observer = this.props.host.observeGenerationRender(this.props.identity.pluginId, this.props.identity.generation); }
   componentDidCatch(error: Error) { this.observer?.failed(error); this.props.onFailure?.(error); }
   componentWillUnmount() { this.observer?.dispose(); }
-  render() { return this.state.failed ? this.props.fallback : this.props.children; }
+  render() { return this.state.failed ? this.props.activeView
+    ? <SurfaceUnavailable onRetry={() => this.setState({ failed: false })} />
+    : this.props.fallback : this.props.children; }
 }
 function WorkspaceView(props: ContributionViewProps): React.ReactNode {
   const definitions = useRegistry(props.host, () => props.host.getViewTypes());
   const { pluginId, generation, viewTypeId, tabId } = props.context;
   const definition = definitions.find(view => view.pluginId === pluginId && view.generation === generation && view.id === viewTypeId);
-  if (!definition || typeof tabId !== "string") return props.fallback ?? <div role="status">Plugin view is unavailable</div>;
+  if (!definition || typeof tabId !== "string") return <SurfaceUnavailable />;
   return <ViewContent key={`${activationKey(props.host, definition)}:${tabId}`} {...props} definition={definition} tabId={tabId} />;
 }
 function ViewContent({ definition, tabId, ...props }: ContributionViewProps & { definition: ReturnType<PluginHost["getViewTypes"]>[number]; tabId: string }): React.ReactNode {
@@ -150,7 +153,7 @@ function ViewContent({ definition, tabId, ...props }: ContributionViewProps & { 
   const commandContext = React.useMemo(() => Object.freeze({ contractVersion: 1 as const, target: "view.title" as const,
     viewId: tabId, viewTypeId: definition.id, viewPluginId: definition.pluginId, region: "auxiliary" as const }), [tabId, definition]);
   const View = definition.render;
-  return <Lifetime host={props.host} identity={definition}><ContributionBoundary host={props.host} identity={definition} fallback={props.fallback}>
+  return <Lifetime host={props.host} identity={definition}><ContributionBoundary host={props.host} identity={definition} activeView>
     <div className="plugin-view-content" data-wuu-plugin={definition.pluginId} data-wuu-view={definition.id}>
       {retain(props.host, commands, <PluginCommandActions host={props.host} context={commandContext} />)}
       <View host={api} context={props.context} locale={locale} translate={translate} />

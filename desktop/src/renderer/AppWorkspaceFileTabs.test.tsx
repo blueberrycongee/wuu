@@ -690,7 +690,7 @@ describe("workspace file tabs", () => {
       .toBe("Next question");
     expect(selectionActions!.comments).toEqual([original, next]);
     if (failure === "thread") {
-      const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+      const recovery = document.querySelector<HTMLButtonElement>('[data-wuu-component="draft-recovery"] button');
       expect(recovery).not.toBeNull();
       await act(async () => recovery!.click());
       expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)

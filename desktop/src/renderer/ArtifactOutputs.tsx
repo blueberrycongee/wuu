@@ -824,11 +824,9 @@ export function ArtifactPreview({
                 </button>
               </Tooltip>
             ) : null}
-            <Tooltip content={t("common.close")}>
-              <button type="button" onClick={onClose} aria-label={t("common.close")}>
-                <X className="icon" aria-hidden="true" />
-              </button>
-            </Tooltip>
+            <button type="button" onClick={onClose} aria-label={t("common.close")}>
+              <X className="icon" aria-hidden="true" />
+            </button>
           </div>
         </header>
         {downloadError && <p role="alert">{downloadError}</p>}

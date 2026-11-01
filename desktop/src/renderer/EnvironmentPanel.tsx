@@ -451,14 +451,14 @@ function EnvironmentFilePreview({
               {file.truncated ? t("environment.truncated512") : ""}
             </span>
           </div>
-          <Tooltip asChild content={t("common.back")}><button
+          <button
             type="button"
             className="icon-button"
             onClick={onClose}
             aria-label={t("environment.backToInfo")}
           >
             <ChevronRight aria-hidden="true" className="icon" />
-          </button></Tooltip>
+          </button>
         </header>
         <div className="workspace-file-code-scroll">
           <pre className="workspace-file-code">
@@ -481,14 +481,14 @@ function EnvironmentFilePreview({
       <div className="environment-panel-header">
         <h2>{t("environment.file")}</h2>
         <div className="environment-panel-actions">
-          <Tooltip asChild content={t("common.back")}><button
+          <button
             className="icon-button"
             type="button"
             aria-label={t("environment.backToInfo")}
             onClick={onClose}
           >
             <X aria-hidden="true" className="icon" />
-          </button></Tooltip>
+          </button>
         </div>
       </div>
       {body}

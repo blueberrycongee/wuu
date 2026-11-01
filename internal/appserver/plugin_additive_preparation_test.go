@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/plugincontrol"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
@@ -376,8 +378,21 @@ func testAdditivePreparationAdmission(t *testing.T, change string) {
 	if !rt.IsCurrentPluginGeneration(base) {
 		t.Fatal("old graph was replaced while candidate preparation remained held")
 	}
+	// An admissible old graph is not an activation receipt for the new addon.
+	// With preparation held, observation must remain pending until cancelled.
+	observeCtx, cancelObserve := context.WithCancel(context.Background())
+	cancelObserve()
+	observeRequest := plugincontrol.Request{Operation: "observe", PluginID: item.ID, Fingerprint: item.Fingerprint}
+	if err := srv.observePluginPublication(observeCtx, observeRequest); !errors.Is(err, context.Canceled) {
+		t.Fatalf("observation completed before addon activation: %v", err)
+	}
 	release()
 	waitPluginGenerationWatchTest(t, func() bool { return srv.pluginGenerationEpoch.Load() == epoch && !rt.IsCurrentPluginGeneration(base) })
+	observeCtx, cancelObserve = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelObserve()
+	if report := srv.handlePluginControl(observeCtx, observeRequest); report.Error != "" || report.ActivationError(item.ID, item.Fingerprint) != nil {
+		t.Fatalf("observation did not report committed addon: %+v", report)
+	}
 	requireActiveRuntime(t, rt.PluginHost, manifest.ID)
 	t.Log(fmt.Sprintf("warm and cold turns completed while real plugin prepare was held; generation %d published only after release", epoch))
 }

@@ -2,7 +2,7 @@ export async function activate(api) {
   if (!api.supportedFeatures?.includes("ui.selected-slot-target.v1")) throw new Error("Automation catalog requires renderer feature ui.selected-slot-target.v1");
   const React = api.react;
   const h = React.createElement;
-  const { Page, Button, TextInput, TextArea, Checkbox, EmptyState } = api.ui;
+  const { Page, Button, TextInput, TextArea, Checkbox, EmptyState, Row, Section } = api.ui;
   const requestScheduler = (method, input, options) => api.invokeService({
     service: "automation.scheduler", method: "request", params: { method, input },
   }, options);
@@ -13,6 +13,10 @@ export async function activate(api) {
     "automation.history": "Recent runs", "automation.more": "More actions",
 
     "automation.title": "Automations",
+    "automation.refreshFailed": "Schedules could not be refreshed. Displayed tasks may be out of date.",
+    "automation.workspacesFailed": "Workspaces could not be loaded.",
+    "automation.actionFailed": "Could not update the automation. Please try again.",
+    "automation.retry": "Retry", "automation.details": "Technical details",
     "automation.sidebar.running": "Running now", "automation.sidebar.upcoming": "Up next",
     "automation.sidebar.loading": "Loading schedules…", "automation.sidebar.refreshError": "Could not refresh schedules",
     "automation.run.starting": "Starting",
@@ -38,6 +42,10 @@ export async function activate(api) {
     "automation.history": "最近运行", "automation.more": "更多操作",
 
     "automation.title": "自动化",
+    "automation.refreshFailed": "自动化列表暂时无法刷新，当前显示的任务可能不是最新状态。",
+    "automation.workspacesFailed": "工作区暂时无法加载。",
+    "automation.actionFailed": "自动化未能更新，请重试。",
+    "automation.retry": "重试", "automation.details": "技术详情",
     "automation.sidebar.running": "正在运行", "automation.sidebar.upcoming": "接下来",
     "automation.sidebar.loading": "正在加载调度…", "automation.sidebar.refreshError": "调度信息刷新失败",
     "automation.run.starting": "正在启动",
@@ -67,8 +75,8 @@ export async function activate(api) {
       --automation-gap: var(--space-4);
       --automation-inset: var(--space-6);
       height:100%; min-height:0; container-type:inline-size;
-      color:var(--wuu-color-text, var(--ink));
-      font-size:var(--font-ui);
+      color:var(--wuu-color-text, inherit);
+      font-size:var(--wuu-font-size-ui, 1rem);
     }
     .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
     .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; font-size:inherit; }
@@ -78,14 +86,11 @@ export async function activate(api) {
     .plugin-automation-body[data-resizing="true"] { transition:none; }
     .plugin-automation-main { min-width:0; overflow:auto; padding:var(--automation-inset); }
     .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
-    .plugin-automation-toolbar { display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--section-gap); }
+    .plugin-automation-toolbar { align-items:center; gap:var(--space-2); margin-bottom:var(--section-gap); }
     .plugin-automation-toolbar .plugin-automation-create { display:inline-flex; flex:none; align-items:center; gap:var(--space-2); }
     .plugin-automation-create svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-search-height); border:1px solid var(--field-border); border-radius:var(--radius-sm); padding:0 var(--control-padding-inline); color:var(--ink-muted); background:var(--field-bg); transition:background var(--motion-fast) var(--ease-out); }
-    .plugin-automation-search:hover { background:var(--field-hover-bg); }
-    .plugin-automation-search svg { width:var(--icon-size); height:var(--icon-size); flex:none; }
-    .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
-    .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
+    .plugin-automation-search { flex:1; min-width:0; }
+    .plugin-automation-search .plugin-ui-field-label { display:none; }
     .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
     .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
     .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
@@ -108,9 +113,9 @@ export async function activate(api) {
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
     .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:var(--compact-padding-inline); }
     .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:inherit; line-height:1.4; }
-    .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:var(--font-sm); line-height:1.5; }
+    .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:inherit; line-height:1.5; }
     .plugin-automation-item-meta > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--wuu-font-size-ui, 1rem); font-weight:var(--weight-semibold); line-height:1.4; }
     /* This contribution also runs in independent navigation providers. Own its
      * geometry; default-sidebar private variables are not a surface contract. */
     .plugin-automation-sidebar { --automation-sidebar-inset:0.5em; --automation-sidebar-icon:1.1em; display:flex; flex-direction:column; gap:1em; padding-block:1em; color:var(--wuu-color-text, inherit); font-size:var(--wuu-font-size-ui, 1rem); line-height:1.4; }
@@ -130,9 +135,12 @@ export async function activate(api) {
     .plugin-automation-sidebar .plugin-automation-sidebar-item:focus-visible { outline-offset:-2px; }
     .plugin-automation-sidebar-item:disabled { cursor:default; opacity:0.45; }
     .plugin-automation-empty { min-height:160px; }
-    .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
+    .plugin-automation-unavailable { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; color:var(--ink-muted); overflow-wrap:anywhere; }
+    .plugin-automation-unavailable details { flex-basis:100%; }
+    .plugin-automation-unavailable pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+    .plugin-automation-error { color:var(--danger); font-size:inherit; overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
-    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--wuu-font-size-ui, 1rem); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-automation-detail-head > .plugin-automation-enable { flex:none; margin-inline-end:auto; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
     .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration) var(--ease-in), translate var(--environment-panel-exit-duration) var(--ease-in); }
     /* Content enters from the edge the column opens toward and leaves the
@@ -149,7 +157,7 @@ export async function activate(api) {
     .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
     .plugin-automation-body[data-resizing="true"], .plugin-automation-body[data-resizing="true"] * { cursor:col-resize !important; user-select:none; }
     .plugin-automation-detail-head { flex:none; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-field-height); padding:var(--automation-inset) var(--automation-inset) var(--automation-gap); }
-    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:var(--font-sm); }
+    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:inherit; }
     .plugin-automation-detail-status[data-saved="true"] { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--ink-soft); animation:wuu-fade-in var(--motion-base) var(--ease-out) both; }
     .plugin-automation-detail-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation .plugin-automation-detail-close { display:grid; place-items:center; width:var(--control-field-height); padding:0; }
@@ -166,7 +174,7 @@ export async function activate(api) {
      * per decision, rows divided by a soft hairline. */
     .plugin-automation-form-card { display:flex; flex-direction:column; min-width:0; border:1px solid var(--hairline); border-radius:var(--radius-sm); padding-inline:var(--card-padding); }
     .plugin-automation-form-card > .plugin-automation-form-row + .plugin-automation-form-row { border-top:1px solid var(--hairline-soft); }
-    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:calc(var(--control-field-height) + var(--space-3)); font-size:inherit; }
+    .plugin-automation-form-row { align-items:center; justify-content:space-between; gap:var(--space-3); min-height:calc(var(--control-field-height) + var(--space-3)); font-size:inherit; }
     /* A row that a schedule choice reveals drops in under the one above. */
     .plugin-automation-form-row[data-entering="true"] { --enter-y:-4px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
     .plugin-automation-form-row > span:first-child { flex:none; }
@@ -177,8 +185,8 @@ export async function activate(api) {
     .plugin-automation-field[type="time"] { width:8em; font-variant-numeric:tabular-nums; }
     .plugin-automation-field::-webkit-calendar-picker-indicator { display:none; }
     .plugin-automation-form-actions { flex:none; display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); padding:var(--space-3) var(--automation-inset); border-top:1px solid var(--hairline-soft); }
-    .plugin-automation-history { display:grid; gap:var(--space-2); font-size:var(--font-sm); }
-    .plugin-automation-history > .plugin-automation-group-title { margin-bottom:var(--space-1); font-size:var(--font-ui); }
+    .plugin-automation-history { display:grid; gap:var(--space-2); font-size:inherit; }
+    .plugin-automation-history > .plugin-automation-group-title { margin-bottom:var(--space-1); font-size:var(--wuu-font-size-ui, 1rem); }
     .plugin-automation-history-row { display:flex; align-items:center; gap:var(--space-2); color:var(--ink-soft); font-variant-numeric:tabular-nums; }
     .plugin-automation-history-row > span:last-child { color:var(--ink-tertiary); }
     .plugin-automation-history-empty { margin:0; color:var(--ink-tertiary); }
@@ -464,7 +472,7 @@ export async function activate(api) {
   // row already on screen would replay it.
   function FieldRow({ label, entering, children }) {
     const [enter] = React.useState(entering);
-    return h("div", { className: "plugin-automation-form-row", "data-entering": enter },
+    return h(Row, { className: "plugin-automation-form-row", "data-entering": enter },
       ...(label === undefined ? [children] : [h("span", { key: "label" }, label), h("label", { key: "control", className: "plugin-automation-form-row-control" }, children)]));
   }
 
@@ -497,7 +505,7 @@ export async function activate(api) {
       h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))));
   }
 
-  function Editor({ tr, locale, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, swap, separator }) {
+  function Editor({ tr, locale, task, initial, workspace, threads, busy, onSave, onPause, onRemove, onClose, runs, readOnly, closing, swap, separator }) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
     const [localError, setLocalError] = React.useState("");
@@ -545,8 +553,7 @@ export async function activate(api) {
               h("div", { className: "plugin-automation-form-identity" },
                 h(TextInput, { className: "plugin-automation-form-name", "aria-label": tr("automation.name"), placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) }),
                 h(TextArea, { className: "plugin-automation-form-prompt", "aria-label": tr("automation.prompt"), required: true, rows: 3, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) })),
-              h("section", { className: "plugin-automation-form-group" },
-                h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.details")),
+              h(Section, { className: "plugin-automation-form-group", title: tr("automation.group.details") },
                 h("div", { className: "plugin-automation-form-card" },
                   h(FieldRow, { label: tr("automation.field.target") }, h(TargetPicker, {
                     tr, threads, disabled: busy || readOnly,
@@ -554,10 +561,9 @@ export async function activate(api) {
                     onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
                   })),
                   draft.mode !== "thread_heartbeat" ? h(FieldRow, { key: "isolation", entering }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
-              h("section", { className: "plugin-automation-form-group" },
-                h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.schedule")),
+              h(Section, { className: "plugin-automation-form-group", title: tr("automation.group.schedule") },
                 h("div", { className: "plugin-automation-form-card" }, h(ScheduleFields, { tr, locale, draft, onChange: setDraft })))),
-            error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
+            localError ? h("div", { className: "plugin-automation-error", role: "alert" }, localError) : null,
             task ? h("section", { className: "plugin-automation-history" },
               h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")),
               runs.length ? runs.slice(0, 5).map((run) => h("div", { key: run.id },
@@ -658,7 +664,7 @@ export async function activate(api) {
       items) : null;
     return h("div", { className: "plugin-automation-sidebar" },
       h("p", { className: "plugin-automation-sidebar-workspace" }, workspace.name || workspaceName(workspace.root)),
-      error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status", title: error }, tr("automation.sidebar.refreshError")) : null,
+      error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status" }, tr("automation.sidebar.refreshError")) : null,
       !loaded ? (!error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status" }, tr("automation.sidebar.loading")) : null) : h(React.Fragment, null,
         group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at))),
         group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)))));
@@ -679,7 +685,15 @@ export async function activate(api) {
     const [loadedID, setLoadedID] = React.useState("");
     const [refreshError, setRefreshError] = React.useState("");
     const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState("");
+    const [workspaceError, setWorkspaceError] = React.useState("");
+    const [loadingWorkspaces, setLoadingWorkspaces] = React.useState(false);
+    const workspaceRequest = React.useRef(0);
+    const activeView = React.useRef(true);
+    const notice = React.useRef(null);
+    React.useEffect(() => {
+      activeView.current = true;
+      return () => { activeView.current = false; notice.current?.dispose(); };
+    }, []);
     const [query, setQuery] = React.useState("");
     const [threads, setThreads] = React.useState([]);
     const epoch = React.useRef(0);
@@ -697,16 +711,26 @@ export async function activate(api) {
         setRefreshError("");
       } catch (reason) { if (current === epoch.current) setRefreshError(String(reason)); }
     }, []);
-    React.useEffect(() => {
-      let cancelled = false;
-      api.listWorkspaces().then((snapshot) => {
-        if (cancelled) return;
+    const loadWorkspaces = React.useCallback(async () => {
+      const request = ++workspaceRequest.current;
+      setLoadingWorkspaces(true);
+      try {
+        const snapshot = await api.listWorkspaces();
+        if (!activeView.current || api.signal.aborted || request !== workspaceRequest.current) return;
         const items = (snapshot?.workspaces || []).filter((item) => item.available !== false && item.id);
         setWorkspaces(items);
         setWorkspaceID(items.find((item) => item.id === snapshot.activeWorkspaceId)?.id || items[0]?.id || "");
-      }).catch((reason) => { if (!cancelled) setError(String(reason)); });
-      return () => { cancelled = true; epoch.current++; };
+        setWorkspaceError("");
+      } catch (reason) {
+        if (activeView.current && !api.signal.aborted && request === workspaceRequest.current) setWorkspaceError(String(reason?.message || reason));
+      } finally {
+        if (activeView.current && !api.signal.aborted && request === workspaceRequest.current) setLoadingWorkspaces(false);
+      }
     }, []);
+    React.useEffect(() => {
+      void loadWorkspaces();
+      return () => { epoch.current++; };
+    }, [loadWorkspaces]);
     React.useEffect(() => {
       void refresh(workspaceID);
       const refreshVisible = () => { if (!document.hidden) void refresh(workspaceID); };
@@ -732,13 +756,18 @@ export async function activate(api) {
     }, [tasks, loaded]);
     const act = async (method, input) => {
       if (!workspace || busy || refreshError || !loaded) return null;
-      setBusy(true); setError("");
+      setBusy(true);
+      notice.current?.dispose();
+      const attempt = crypto.randomUUID();
       try {
         const result = await requestScheduler(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
+        if (!activeView.current || api.signal.aborted) return null;
         await refresh(workspace.id);
-        return result;
-      } catch (reason) { setError(String(reason)); return null; }
-      finally { setBusy(false); }
+        return activeView.current && !api.signal.aborted ? result : null;
+      } catch {
+        if (activeView.current && !api.signal.aborted) notice.current = api.showNotice({ message: tr("automation.actionFailed"), tone: "error", key: `automation-action:${attempt}` });
+        return null;
+      } finally { if (activeView.current && !api.signal.aborted) setBusy(false); }
     };
     const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
     // One-shot tasks leave the schedule on dispatch. Their retained snapshots
@@ -753,7 +782,7 @@ export async function activate(api) {
     const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || sortedRuns.find((run) => run.task_id === selection.id)?.task : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
-      setError("");
+      notice.current?.dispose();
       if (!selection || panelClosing) return;
       if (panelMotionMs("--environment-panel-exit-duration", 220) === 0) {
         setSelection(null);
@@ -767,13 +796,12 @@ export async function activate(api) {
       const timer = window.setTimeout(() => {
         setSelection(null);
         setPanelClosing(false);
-        setError("");
       }, panelMotionMs("--environment-panel-exit-duration", 220));
       return () => window.clearTimeout(timer);
     }, [panelClosing]);
     // Opening from a closed panel plays its entrance; choosing again while it
     // stays open swaps the content in place.
-    const choose = (next) => { setError(""); setSwap(panelOpen && !panelClosing); setPanelClosing(false); setSelection(next); };
+    const choose = (next) => { notice.current?.dispose(); setSwap(panelOpen && !panelClosing); setPanelClosing(false); setSelection(next); };
     React.useEffect(() => {
       publishSidebar(props.context, { tasks, runs, workspace, loaded, error: refreshError, selectedID: panelClosing ? null : selection?.id, busy, choose });
     });
@@ -803,24 +831,27 @@ export async function activate(api) {
     return h("main", { className: "plugin-automation" }, h(Page, null,
       h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
         h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
-          h("div", { className: "plugin-automation-toolbar" },
-            h("label", { className: "plugin-automation-search" }, h(SearchIcon), h("span", { className: "plugin-automation-sr" }, tr("automation.search")), h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
+          h(Row, { className: "plugin-automation-toolbar" },
+            h("div", { className: "plugin-automation-search" }, h(TextInput, { type: "search", "aria-label": tr("automation.search"), value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
             h("div", { className: "plugin-automation-workspace-picker" }, h(Picker, {
               label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
               placeholder: tr("automation.workspaceNone"),
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
-              onChange: (id) => { epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); setRefreshError(""); },
+              onChange: (id) => { notice.current?.dispose(); epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setRefreshError(""); },
             })),
             h(Button, { className: "plugin-automation-create", disabled: busy || !workspace || !loaded || !!refreshError, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
-          refreshError || (error && !panelOpen) ? h("p", { className: "plugin-automation-error", role: "alert" }, refreshError || error) : null,
-          !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
+          refreshError || workspaceError ? h("div", { className: "plugin-automation-unavailable", role: "alert" },
+            h("span", null, tr(workspaceError ? "automation.workspacesFailed" : "automation.refreshFailed")),
+            h(Button, { variant: "ghost", disabled: loadingWorkspaces, onClick: () => workspaceError ? void loadWorkspaces() : void refresh(workspaceID) }, tr("automation.retry")),
+            workspaceError ? h("details", null, h("summary", null, tr("automation.details")), h("pre", null, workspaceError)) : null) : null,
+          workspaceError ? null : !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
             : loaded && !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty") })
             : h(React.Fragment, null,
               scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false))) : null,
               finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
-          key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
+          key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy,
           readOnly: !!refreshError || (!!selectedTask && !tasks.some((task) => task.id === selectedTask.id)),
           closing: panelClosing, swap, separator: resize.separator,
           runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: closePanel,

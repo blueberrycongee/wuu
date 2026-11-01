@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -491,5 +492,74 @@ func TestResumeSamplingIsPartOfRequestIdentity(t *testing.T) {
 	}
 	if original == resumed {
 		t.Fatal("adapter continuation guidance absent from request identity")
+	}
+}
+
+// Cancellation can end an admitted execution before its first journal write.
+// Only a successfully prepared operation creates a durable workflow to settle.
+func TestWorkflowCompletionRequiresDurablePreparation(t *testing.T) {
+	for _, prepare := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prepared=%t", prepare), func(t *testing.T) {
+			workflow := NewInferenceWorkflow(InferenceProfileInteractive)
+			journal := &recordingInferenceJournal{}
+			ctx := WithInferenceJournal(WithInferenceWorkflow(context.Background(), workflow), journal)
+			req, err := EnsureInferenceExecutionContext(ctx, ChatRequest{}, InferenceOperationAgentRound, InferenceProfileInteractive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepare {
+				if _, err := EnsureInferenceAttemptContext(ctx, req, InferenceOperationAgentRound, InferenceProfileInteractive); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := CompleteInferenceWorkflow(workflow, journal, InferenceOutcomeCanceled); err != nil {
+				t.Fatal(err)
+			}
+			completed := false
+			for _, event := range journal.events {
+				completed = completed || event == "complete_workflow"
+			}
+			if completed != prepare {
+				t.Fatalf("durable completion=%t, operation prepared=%t; events=%v", completed, prepare, journal.events)
+			}
+		})
+	}
+}
+
+func TestWorkflowCompletionAfterJournalPreparationFailure(t *testing.T) {
+	workflow := NewInferenceWorkflow(InferenceProfileInteractive)
+	ctx := WithInferenceJournal(WithInferenceWorkflow(context.Background(), workflow), rejectedLineageJournal{})
+	if _, err := EnsureInferenceAttemptContext(ctx, ChatRequest{}, InferenceOperationAgentRound, InferenceProfileInteractive); err == nil {
+		t.Fatal("expected journal preparation failure")
+	}
+	journal := &recordingInferenceJournal{}
+	if err := CompleteInferenceWorkflow(workflow, journal, InferenceOutcomeFailed); err != nil {
+		t.Fatal(err)
+	}
+	if len(journal.events) != 0 {
+		t.Fatalf("failed preparation must not settle a nonexistent durable workflow: %v", journal.events)
+	}
+}
+
+type failingWorkflowCompletionJournal struct {
+	recordingInferenceJournal
+	err error
+}
+
+func (j *failingWorkflowCompletionJournal) CompleteWorkflow(context.Context, InferenceWorkflowTerminalRecord) error {
+	return j.err
+}
+
+func TestPreparedWorkflowCompletionStillFailsClosed(t *testing.T) {
+	workflow := NewInferenceWorkflow(InferenceProfileInteractive)
+	journal := &failingWorkflowCompletionJournal{err: errors.New("workflow persistence unavailable")}
+	ctx := WithInferenceJournal(WithInferenceWorkflow(context.Background(), workflow), journal)
+	if _, err := EnsureInferenceAttemptContext(ctx, ChatRequest{}, InferenceOperationAgentRound, InferenceProfileInteractive); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := CompleteInferenceWorkflow(workflow, journal, InferenceOutcomeCanceled); !errors.Is(err, journal.err) {
+			t.Fatalf("completion lost durable failure: %v", err)
+		}
 	}
 }

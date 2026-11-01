@@ -84,7 +84,9 @@ it("locks inline navigation during a save and restores it with the error if savi
   await act(async () => back.click());
   expect(close).not.toHaveBeenCalled();
   await act(async () => rejectSave(new Error("Connection could not be saved")));
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection could not be saved");
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-expanded="false"][aria-controls]')!.click());
+  expect(container.querySelector("pre")?.textContent).toBe("Connection could not be saved");
   expect(back.disabled).toBe(false);
   expect(connect.disabled).toBe(false);
   expect(connected).not.toHaveBeenCalled();
@@ -108,4 +110,26 @@ it("keeps existing web accounts usable without instructions for an unavailable l
   await act(async () => connect.click());
   expect(save).toHaveBeenCalledWith("chatgpt", "web-model", undefined, expect.objectContaining({ chatgpt_account_id: "account-web" }));
   expect(start).not.toHaveBeenCalled();
+});
+
+it.each(["accounts", "models"] as const)("recovers a failed %s read in place without submitting the connection", async (failure) => {
+  const accounts = { accounts: [{ id: "account-a", status: "connected" }] };
+  const models = { models: [{ id: "model-a", name: "Model A" }] };
+  const loadAccounts = vi.fn().mockResolvedValue(accounts);
+  const loadModels = vi.fn().mockResolvedValue(models);
+  (failure === "accounts" ? loadAccounts : loadModels).mockRejectedValueOnce(new Error("upstream temporarily unavailable"));
+  const save = vi.fn();
+  vi.stubGlobal("wuu", { listChatGPTAccounts: loadAccounts, listChatGPTModels: loadModels });
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={save} onClose={vi.fn()} onConnected={vi.fn()} /></SettingsControlsProvider>));
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("upstream temporarily unavailable");
+  const details = container.querySelector<HTMLButtonElement>('[aria-expanded="false"][aria-controls]')!;
+  await act(async () => details.click());
+  expect(container.querySelector("pre")?.textContent).toBe("upstream temporarily unavailable");
+  expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!.disabled).toBe(true);
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-error-retry"]')!.click());
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!.disabled).toBe(false);
+  expect(save).not.toHaveBeenCalled();
 });

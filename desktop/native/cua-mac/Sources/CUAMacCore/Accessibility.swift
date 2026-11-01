@@ -21,7 +21,8 @@ struct AXSnapshot {
         let currentIDs = Set(nodes.map(\.id))
         let added = nodes.filter { old[$0.id] == nil }
         let updated = nodes.filter { old[$0.id] != nil && old[$0.id] != $0 }
-        let removed = previous.nodes.filter { !currentIDs.contains($0.id) }.map(\.id)
+        // A missing node in a partial observation is not evidence of removal.
+        let removed = truncated || previous.truncated ? [] : previous.nodes.filter { !currentIDs.contains($0.id) }.map(\.id)
         let count = added.count + updated.count + removed.count
         let limit = 240
         let summary = added.map { "+ " + $0.text.trimmingCharacters(in: .whitespaces) } +
@@ -87,7 +88,7 @@ final class AXSnapshotter {
         walk(application, parentID: nil, index: 0, depth: 0, nodes: &nodes, visited: &visited, previous: previous)
         var lines = nodes.map(\.text)
         if truncated {
-            lines.append("… accessibility tree truncated (limit \(maxElements) elements / depth \(maxDepth)); use observe with root_element_id and snapshot_id to inspect a subtree.")
+            lines.append("… accessibility tree incomplete (limit \(maxElements) elements / depth \(maxDepth), or child enumeration failed); inspect children_incomplete and observe again, or use root_element_id with snapshot_id to inspect a subtree.")
         }
         return AXSnapshot(text: lines.joined(separator: "\n"), elements: elements, truncated: truncated, nodes: nodes)
     }
@@ -100,6 +101,7 @@ final class AXSnapshotter {
         elements.removeAll(keepingCapacity: true)
         descriptors.removeAll(keepingCapacity: true)
         nextID = 0
+        truncated = false
     }
 
     func isCurrent(id: Int) -> Bool {
@@ -110,11 +112,13 @@ final class AXSnapshotter {
     func descriptor(id: Int) -> AXElementDescriptor? { descriptors[id] }
 
     func uniqueElement(matching descriptor: AXElementDescriptor) -> AXUIElement? {
+        guard !truncated else { return nil }
         let matches = descriptors.compactMap { id, candidate in candidate == descriptor ? elements[id] : nil }
         return matches.count == 1 ? matches[0] : nil
     }
 
     func uniqueElement(role: String?, title: String?, description: String?) -> AXUIElement? {
+        guard !truncated else { return nil }
         let matches = descriptors.compactMap { id, candidate -> AXUIElement? in
             if let role, !role.isEmpty, candidate.role != role { return nil }
             if let title, !title.isEmpty, candidate.title != title { return nil }
@@ -129,7 +133,6 @@ final class AXSnapshotter {
                       previous: [CFHashCode: [(id: Int, element: AXUIElement)]]) {
         let hash = CFHash(element)
         guard !(visited[hash] ?? []).contains(where: { CFEqual($0, element) }) else { return }
-        guard elements.count < maxElements, depth <= maxDepth else { truncated = true; return }
         visited[hash, default: []].append(element)
         // Hashes are only lookup buckets. AX identity, not a title or tree position,
         // determines whether an ID survives the next observation.
@@ -143,11 +146,53 @@ final class AXSnapshotter {
         elements[id] = element
         let saved = descriptor(element)
         descriptors[id] = saved
+        let nodeIndex = nodes.count
         nodes.append(node(element, id: id, parentID: parentID, index: index, depth: depth, descriptor: saved))
-        for (childIndex, child) in axElements(element, attribute: kAXChildrenAttribute as String).enumerated() {
-            if elements.count >= maxElements { truncated = true; break }
+        let children = readChildren(element, limit: maxElements - elements.count, atDepthLimit: depth == maxDepth)
+        var incomplete = children.incomplete
+        for (childIndex, child) in children.elements.enumerated() {
+            if elements.count >= maxElements { incomplete = incomplete ?? "element_limit"; break }
             walk(child, parentID: id, index: childIndex, depth: depth + 1, nodes: &nodes, visited: &visited, previous: previous)
         }
+        if let incomplete {
+            truncated = true
+            let original = nodes[nodeIndex]
+            var attributes = original.attributes
+            attributes["children_incomplete"] = incomplete
+            attributes["children_ax_error"] = children.error
+            nodes[nodeIndex] = AXSnapshotNode(id: id, parentID: parentID, index: index, attributes: attributes,
+                text: original.text + " children_incomplete=\(incomplete)" + (children.error.map { " children_ax_error=\($0)" } ?? ""))
+        }
+    }
+
+    private func readChildren(_ element: AXUIElement, limit: Int, atDepthLimit: Bool)
+        -> (elements: [AXUIElement], incomplete: String?, error: Int32?) {
+        let attribute = kAXChildrenAttribute as CFString
+        var count: CFIndex = 0
+        let countError = AXUIElementGetAttributeValueCount(element, attribute, &count)
+        if countError == .attributeUnsupported || countError == .noValue { return ([], nil, nil) }
+        guard countError == .success else { return ([], "ax_error", countError.rawValue) }
+        guard count >= 0 else { return ([], "invalid_children", nil) }
+        guard count > 0 else { return ([], nil, nil) }
+        if atDepthLimit { return ([], "depth_limit", nil) }
+        if limit == 0 { return ([], "element_limit", nil) }
+
+        // Bound native allocation as well as the walk. AXChildren can contain far
+        // more elements than the remaining snapshot budget permits us to visit.
+        let requested = min(count, limit)
+        var values: CFArray?
+        let readError = AXUIElementCopyAttributeValues(element, attribute, 0, requested, &values)
+        guard readError == .success else { return ([], "ax_error", readError.rawValue) }
+        guard let children = values as? [AXUIElement], children.count <= requested else {
+            return ([], "invalid_children", nil)
+        }
+        // Count and prefix are separate IPC reads; a shrinking tree must not look
+        // like a complete enumeration simply because the prefix call succeeded.
+        var finalCount: CFIndex = 0
+        let finalError = AXUIElementGetAttributeValueCount(element, attribute, &finalCount)
+        guard finalError == .success else { return (children, "ax_error", finalError.rawValue) }
+        if finalCount != count || children.count != requested { return (children, "changed", nil) }
+        return (children, count > requested ? "element_limit" : nil, nil)
     }
 
     private func descriptor(_ element: AXUIElement) -> AXElementDescriptor {

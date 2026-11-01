@@ -1168,6 +1168,178 @@ ${personalReviewStyles}
 .mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
   }
 
+  // plugins/personal/ui/send-motion.js
+  var travelMS = 360;
+  var travelCurve = "cubic-bezier(.33,1,.68,1)";
+  var shapeMS = 190;
+  var shapeCurve = "cubic-bezier(.73,.42,.54,1)";
+  var reduced = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  var sendMotionStyles = `
+  .mosaic [data-personal-send-source] { opacity:0; }
+  .mosaic .mosaic-send-overlay { position:absolute!important;margin:0!important;pointer-events:none;z-index:12; }
+  .mosaic .mosaic-send-overlay > .bubble-message-body { width:100%;max-width:none;transform:none;transition:none;margin:0; }
+  .mosaic .mosaic-send-overlay .user-message[data-send-shaping] { position:relative;isolation:isolate;overflow:visible;background:transparent;border-color:transparent;box-shadow:none; }
+  .mosaic .mosaic-send-overlay .user-message[data-send-shaping]::before { content:"";position:absolute;inset:var(--send-inset);z-index:-1;pointer-events:none;border-radius:inherit;background:var(--send-background);border:var(--send-border);box-shadow:var(--send-shadow); }
+`;
+  function useSendMotion(React, rootRef) {
+    const flights = React.useRef(/* @__PURE__ */ new Map());
+    const className = (requestID) => requestID ? `mosaic-send-${requestID}` : void 0;
+    const reconcile = (flight) => {
+      const row = flight.view.querySelector(".plugin-conversation-flow")?.getElementsByClassName(className(flight.requestID))[0];
+      const body = row?.querySelector(".bubble-message-body");
+      if (body !== flight.source) {
+        flight.source?.removeAttribute("data-personal-send-source");
+        flight.source = body;
+        body?.setAttribute("data-personal-send-source", "");
+      }
+      return row;
+    };
+    const start = (flight) => {
+      const row = reconcile(flight), body = flight.source;
+      if (!body || flight.stop) return;
+      if (document.hidden || reduced() || flight.view.closest('[hidden],[inert],[aria-hidden="true"]')) {
+        body.removeAttribute("data-personal-send-source");
+        flights.current.delete(flight.requestID);
+        return;
+      }
+      const destination = body.getBoundingClientRect(), viewRect = flight.view.getBoundingClientRect();
+      const viewport = flight.view.querySelector(".plugin-conversation-scroll").getBoundingClientRect();
+      if (!destination.width || !body.animate || destination.bottom <= viewport.top || destination.top >= viewport.bottom) {
+        body.removeAttribute("data-personal-send-source");
+        flights.current.delete(flight.requestID);
+        return;
+      }
+      const zoom = flight.view.currentCSSZoom;
+      const width = destination.width / zoom, height = destination.height / zoom;
+      const x = (flight.origin.right - destination.right) / zoom;
+      const y = (flight.origin.top - destination.top) / zoom;
+      const overlay = row.cloneNode(false), copy2 = body.cloneNode(true);
+      overlay.classList.add("mosaic-send-overlay");
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.inert = true;
+      copy2.removeAttribute("data-personal-send-source");
+      overlay.append(copy2);
+      for (const node of overlay.querySelectorAll("[id]")) node.removeAttribute("id");
+      overlay.style.width = `${width}px`;
+      flight.view.append(overlay);
+      let previousPosition;
+      const place = () => {
+        const target = flight.source?.getBoundingClientRect(), parent = flight.view.getBoundingClientRect();
+        if (!target) return;
+        const position = { left: (target.left - parent.left) / zoom, top: (target.top - parent.top) / zoom };
+        overlay.style.left = `${position.left}px`;
+        overlay.style.top = `${position.top}px`;
+        const previous = previousPosition;
+        previousPosition = position;
+        return previous && { x: previous.left - position.left, y: previous.top - position.top };
+      };
+      place();
+      const tracks = [];
+      const play = (target, frames, options) => {
+        const track = target.animate(frames, options);
+        if (document.timeline.currentTime !== null) track.startTime = document.timeline.currentTime;
+        tracks.push(track);
+        return track;
+      };
+      let travel = play(overlay, [
+        { translate: `${x}px ${y}px` },
+        { translate: "0px 0px" }
+      ], { duration: travelMS, easing: travelCurve });
+      const size = Math.min(1, Math.max(width, height) / 360);
+      overlay.style.transformOrigin = "right top";
+      const compression = play(overlay, [
+        { offset: 0, scale: "1 1", easing: "cubic-bezier(.65,0,.35,1)" },
+        { offset: 1 / 3, scale: `${1 - Math.min(0.5, 18 * size / width)} ${1 - Math.min(0.5, 4 * size / height)}`, easing: "cubic-bezier(.19,0,.48,1)" },
+        { offset: 0.9, scale: "1 1" },
+        { offset: 1, scale: "1 1" }
+      ], { duration: travelMS });
+      const bubble = copy2.querySelector(".user-message");
+      const extra = bubble ? Math.max(0, (flight.origin.width - bubble.getBoundingClientRect().width) / zoom) : 0;
+      if (bubble && extra > 0) {
+        const style = getComputedStyle(bubble);
+        for (const [name, value] of Object.entries({
+          background: style.background,
+          border: style.border,
+          shadow: style.boxShadow,
+          inset: `-${style.borderTopWidth} -${style.borderRightWidth} -${style.borderBottomWidth} -${style.borderLeftWidth}`
+        })) bubble.style.setProperty(`--send-${name}`, value);
+        const borderLeft = style.borderLeftWidth;
+        bubble.setAttribute("data-send-shaping", "");
+        const shape = play(bubble, [{ left: `${-extra - parseFloat(borderLeft)}px` }, { left: `-${borderLeft}` }], { duration: shapeMS, easing: shapeCurve, pseudoElement: "::before" });
+        for (const child of bubble.children) play(child, [{ translate: `${-extra}px 0` }, { translate: "0px 0px" }], { duration: shapeMS, easing: shapeCurve });
+        shape.addEventListener("finish", () => bubble.removeAttribute("data-send-shaping"), { once: true });
+      }
+      let frame;
+      const stop = () => {
+        cancelAnimationFrame(frame);
+        for (const track of tracks) track.cancel();
+        overlay.remove();
+        flight.source?.removeAttribute("data-personal-send-source");
+        for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.removeEventListener(event, stop, true);
+        flights.current.delete(flight.requestID);
+      };
+      flight.stop = stop;
+      const follow = () => {
+        if (document.hidden || reduced() || !flight.view.isConnected || flight.view.closest('[hidden],[inert],[aria-hidden="true"]') || Math.abs(flight.view.offsetWidth - viewRect.width / zoom) > 1) {
+          stop();
+          return;
+        }
+        reconcile(flight);
+        const delta = place();
+        if (delta && Math.hypot(delta.x, delta.y) > 0.5) {
+          const current = getComputedStyle(overlay).translate.split(" ").map(parseFloat);
+          const remaining = Math.max(1, travelMS - Number(compression.currentTime));
+          const paused = travel.playState === "paused";
+          travel.cancel();
+          travel = play(overlay, [{ translate: `${(current[0] || 0) + delta.x}px ${(current[1] || 0) + delta.y}px` }, { translate: "0px 0px" }], { duration: remaining, easing: travelCurve });
+          if (paused) travel.pause();
+          travel.addEventListener("finish", stop, { once: true });
+        }
+        frame = requestAnimationFrame(follow);
+      };
+      for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.addEventListener(event, stop, true);
+      travel.addEventListener("finish", stop, { once: true });
+      frame = requestAnimationFrame(follow);
+    };
+    React.useLayoutEffect(() => {
+      for (const flight of flights.current.values()) {
+        reconcile(flight);
+        if (!flight.frame && !flight.stop) {
+          flight.frame = requestAnimationFrame(() => {
+            flight.frame = requestAnimationFrame(() => {
+              flight.frame = void 0;
+              start(flight);
+            });
+          });
+        }
+      }
+    });
+    React.useEffect(() => () => {
+      for (const flight of flights.current.values()) {
+        cancelAnimationFrame(flight.frame);
+        flight.stop?.();
+        flight.source?.removeAttribute("data-personal-send-source");
+      }
+      flights.current.clear();
+    }, []);
+    return {
+      className,
+      begin(requestID, conversationID) {
+        if (document.hidden || reduced()) return;
+        const view = [...rootRef.current?.querySelectorAll(".plugin-conversation") || []].find((node) => node.dataset.conversationId === conversationID);
+        const composer = view?.querySelector(".composer-frame");
+        if (!composer || view.closest('[hidden],[inert],[aria-hidden="true"]')) return;
+        for (const flight of flights.current.values()) if (flight.view === view) {
+          cancelAnimationFrame(flight.frame);
+          flight.stop?.();
+          flight.source?.removeAttribute("data-personal-send-source");
+          flights.current.delete(flight.requestID);
+        }
+        flights.current.set(requestID, { requestID, view, origin: composer.getBoundingClientRect() });
+      }
+    };
+  }
+
   // plugins/personal/ui/desktop.js
   async function activate(api) {
     const React = api.react, h = React.createElement;
@@ -1181,6 +1353,7 @@ ${personalReviewStyles}
     };
     const settingsPanels = createSettingsPanels(React, api.ui, call);
     api.registerStyle({ id: "personal-settings-panels", css: settingsPanels.styles });
+    api.registerStyle({ id: "personal-send-motion", css: sendMotionStyles });
     const words = {
       "en": {
         "profile": "About twin",
@@ -1257,6 +1430,11 @@ ${personalReviewStyles}
         "requirements": "Request version",
         "outcome": "Result",
         "stopTask": "Stop this task",
+        "existingSession": "Existing session",
+        "workerResult": "Worker response \xB7 not independently verified",
+        "awaiting_review": "Awaiting controller review",
+        "controllerDecision": "Controller review",
+        "remoteTrace": "Detailed history remains in the original session.",
         "openMainChat": "Open chat",
         "replies": "Replies",
         "replyUnavailable": "Original message unavailable",
@@ -1370,6 +1548,11 @@ ${personalReviewStyles}
         "requirements": "\u8981\u6C42\u7248\u672C",
         "outcome": "\u7ED3\u679C",
         "stopTask": "\u505C\u6B62\u8FD9\u4EF6\u4E8B",
+        "existingSession": "\u5DF2\u6709\u4F1A\u8BDD",
+        "workerResult": "\u5DE5\u4F5C\u4F1A\u8BDD\u56DE\u590D \xB7 \u672A\u72EC\u7ACB\u6838\u9A8C",
+        "awaiting_review": "\u7B49\u5F85\u4E3B\u52A9\u624B\u590D\u6838",
+        "controllerDecision": "\u4E3B\u52A9\u624B\u590D\u6838\u51B3\u5B9A",
+        "remoteTrace": "\u8BE6\u7EC6\u8BB0\u5F55\u4FDD\u7559\u5728\u539F\u4F1A\u8BDD\u4E2D\u3002",
         "openMainChat": "\u6253\u5F00\u804A\u5929",
         "replies": "\u56DE\u590D",
         "replyUnavailable": "\u539F\u6D88\u606F\u4E0D\u53EF\u7528",
@@ -1410,7 +1593,7 @@ ${personalReviewStyles}
       }
     };
     api.registerStyle({ id: "personal", css: `
-    .mosaic { --mosaic-message-accent:#3566f0;position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
+    .mosaic { --mosaic-message-accent:#3566f0;--mosaic-message-tail-space:max(var(--conversation-turn-boundary-gap), calc(var(--font-sm) * 1.3 + 4px));position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
     .mosaic-main { flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
     .mosaic-panel-layer { position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden; }
     .mosaic-panel-layer[data-panel-phase="open"] { overflow:visible; }
@@ -1424,25 +1607,26 @@ ${personalReviewStyles}
     .mosaic-profile-name { font-size:calc(var(--font-ui) * 1.2);font-weight:600;line-height:1.45; }
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
     .mosaic-profile-trigger { position:relative;width:40px;height:40px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
-    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);z-index:31; }
-    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:240px;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
+    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);width:max-content;max-width:100%;z-index:31; }
+    .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
+    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:min(240px,100%);box-sizing:border-box;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
     .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:20px;font-weight:400; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
     .mosaic[data-panel-open="true"] .mosaic-identity { visibility:hidden; }
     .mosaic[data-panel-open="true"] .mosaic-identity-label { visibility:hidden;opacity:0;pointer-events:none; }
     .mosaic-profile-name-button { border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
     .mosaic-name-backdrop { position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:#00000026;padding:16px; }
-    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;left:50%;bottom:12px;transform:translateX(-50%);box-sizing:border-box;width:calc(100% - 48px);max-width:calc(100% - 24px);max-height:calc(100% - 48px);border:1px solid var(--hairline);border-radius:36px;background:var(--paper);box-shadow:0 16px 32px -8px rgb(0 0 0 / .19);overflow:hidden; }
+    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;inset:auto 8px 8px;box-sizing:border-box;max-height:min(52%,480px);border:1px solid var(--hairline);border-radius:28px;background:var(--paper);box-shadow:0 12px 28px -8px rgb(0 0 0 / .16);overflow:hidden;-webkit-app-region:no-drag; }
     .mosaic .mosaic-replies .plugin-conversation { display:flex;flex-direction:column;height:auto;min-height:0;flex:1 1 auto;max-height:none;overflow:hidden; }
     .mosaic .mosaic-replies .plugin-conversation-titlebar { display:none; }
     .mosaic-replies .title-block { display:none; }
-    .mosaic-replies-close { position:absolute;top:16px;right:16px;z-index:6;display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);box-shadow:0 2px 8px rgb(0 0 0 / .06);color:var(--ink);cursor:pointer; }
-    .mosaic-replies-close svg { width:16px;height:16px; }
-    .mosaic-replies-close:hover { background:var(--surface-2);color:var(--ink); }
-    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:20px 24px 12px; }
-    .mosaic .mosaic-replies .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding:0;--conversation-flow-bottom-space:0px; }
-    .mosaic-replies .plugin-conversation-flow > :first-child { padding-right:36px; }
-    .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 24px 16px;box-sizing:border-box; }
+    .mosaic-replies-toolbar { display:flex;justify-content:flex-end;flex:none;padding:8px 16px 0; }
+    .mosaic-replies-close { flex:none;width:var(--control-size-toolbar);height:var(--control-size-toolbar);padding:0;border:0;box-shadow:none;color:var(--ink-muted);cursor:pointer; }
+    .mosaic-replies-close svg { width:18px;height:18px;pointer-events:none; }
+    .mosaic-replies-close:focus-visible { outline:2px solid var(--ink);outline-offset:2px; }
+    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:12px 16px 0; }
+    .mosaic .mosaic-replies .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding:0 0 var(--mosaic-message-tail-space); }
+    .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 16px 12px;box-sizing:border-box; }
     .mosaic-replies .composer-wrap { margin:0;padding:0; }
     .mosaic-replies .composer-stack { width:100%;--composer-expanded-offset:0px; }
     .mosaic-replies .plugin-conversation-attachment:has(> img) > .conversation-file-card { display:none; }
@@ -1458,7 +1642,7 @@ ${personalReviewStyles}
     .mosaic-reply-task-context { margin:0;overflow-wrap:anywhere; }
     .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
     .mosaic-reply-task-context > p { margin:8px 0 0; }
-    @media(max-width:720px) { .mosaic-replies { width:calc(100% - 24px);border-radius:28px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:16px; } }
+    @media(max-width:720px) { .mosaic-replies { inset-inline:6px;border-radius:24px;max-height:60%; } .mosaic-replies-toolbar { padding-inline:12px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:12px; } }
     .mosaic-name-dialog { position:relative;width:min(360px,100%);max-height:100%;overflow:auto;min-height:450px;display:flex;flex-direction:column;align-items:center;gap:20px;padding:48px 32px 24px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
     .mosaic-name-input { width:100%;min-width:0;border:0;border-radius:12px;background:var(--surface-1);color:var(--ink);padding:12px 8px;text-align:center;font-size:32px;font-weight:600; }
@@ -1466,12 +1650,13 @@ ${personalReviewStyles}
     .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
-    /* The identity owns its intrinsic row so scrolled text cannot pass beneath it. */
-    .mosaic-main > .plugin-conversation { grid-template-rows:auto minmax(0,1fr); }
-    .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
+    /* Only the identity's halo covers history; its initial clearance scrolls away. */
+    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;justify-self:center;max-width:100%;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
+    .mosaic .mosaic-main > .plugin-conversation > .plugin-conversation-scroll > .plugin-conversation-flow { padding-top:calc(var(--mosaic-identity-height,0px) + var(--conversation-flow-top-gap)); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
-    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none; }
+    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none;-webkit-app-region:no-drag; }
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { mask-image:none; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
@@ -1554,7 +1739,23 @@ ${personalReviewStyles}
     .mosaic-routine-link { display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);width:100%;margin-top:var(--space-3);font:inherit;color:var(--ink);cursor:pointer;text-align:left; }
     .mosaic-routine-link { padding-block:var(--space-3); }
     .mosaic-routine-link:hover { background:var(--field-hover-bg); }
-    .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;gap:var(--space-2);font-size:12px;color:var(--ink-muted);padding-top:var(--space-1);flex-wrap:wrap; }
+    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:var(--mosaic-message-tail-space); }
+    .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
+    .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
+    .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
+    .plugin-conversation-message:has(> .mosaic-receipt[data-delivery-status="failed"]) { --personal-retry-size:24px;--personal-retry-gap:8px;padding-right:calc(var(--personal-retry-size) + var(--personal-retry-gap)); }
+    .mosaic-receipt[data-delivery-status="failed"] { position:absolute;position-anchor:--personal-receipt-bubble;left:calc(anchor(right) + var(--personal-retry-gap));top:anchor(center);transform:translateY(-50%); }
+    .mosaic-receipt-retry { display:grid;place-items:center;width:var(--personal-retry-size);height:var(--personal-retry-size);padding:0;border:0;border-radius:50%;background:transparent;color:var(--danger);cursor:pointer; }
+    .mosaic-receipt-retry svg { width:18px;height:18px; }
+    .mosaic-receipt-retry:hover { background:var(--field-hover-bg); }
+    .mosaic-receipt-retry:focus-visible { outline:2px solid var(--danger);outline-offset:2px; }
+    .mosaic-receipt-retry:disabled { cursor:wait;opacity:.6; }
+    .mosaic-receipt[data-transient] { position:absolute;top:100%;right:0;padding-top:2px;line-height:1.3;white-space:nowrap;pointer-events:none;transform:translateX(calc(-1 * var(--bubble-time-progress, 0) * var(--bubble-time-gutter)));transition:transform 300ms cubic-bezier(.19, 1, .22, 1); }
+    .plugin-conversation-message:has(~ .plugin-conversation-message) > .mosaic-receipt[data-transient],
+    .plugin-conversation-message:has(> .bubble-message-body[data-personal-send-source]) > .mosaic-receipt[data-transient] { display:none; }
+    [data-times-dragging="true"] .mosaic-receipt[data-transient] { transition:none; }
+    @media (prefers-reduced-motion: reduce) { .mosaic-receipt[data-transient] { transition:none; } }
+    @container style(--motion-reduced: 1) { .mosaic-receipt[data-transient] { transition:none; } }
     .mosaic-routine-footer { display:flex;justify-content:flex-end;gap:var(--space-2);padding:0 var(--space-5) var(--space-4);flex:none; }
     .mosaic-routine-link.plugin-ui-button { justify-content:flex-start;background:var(--paper);border:1px solid var(--hairline-soft);padding:var(--space-3) var(--card-padding); }
     .mosaic-routine-editor-identity { display:grid;gap:var(--space-4);margin-bottom:var(--space-5); }
@@ -2346,6 +2547,22 @@ ${personalReviewStyles}
       const { record: record2, loading, retry } = useReplySource({ reference, records, sessionID, agentID });
       return record2 ? renderMessage(record2, true) : h("p", { className: "mosaic-reply-status", role: "status" }, t(loading ? "replyLoading" : "replyUnavailable"), !loading && retry && h(Button, { onClick: retry }, t("retry")));
     }
+    const receiptDisplayDuration = 5e3;
+    function MessageReceipt({ receipt, state, busy, onRetry, locale }) {
+      const failed = ["unknown", "rejected", "held"].includes(state);
+      const read = Boolean(receipt?.read_at), transient = Boolean(receipt) && !failed && state !== "cancelled";
+      const expiresAt = Date.parse(receipt?.read_at || receipt?.accepted_at) + receiptDisplayDuration;
+      const [, redraw] = React.useState(0);
+      React.useEffect(() => {
+        if (!transient || !(expiresAt > Date.now())) return;
+        const timer = setTimeout(() => redraw((value) => value + 1), expiresAt - Date.now());
+        return () => clearTimeout(timer);
+      }, [transient, expiresAt]);
+      if (!failed && (!transient || !(expiresAt > Date.now()))) return null;
+      const zh = locale?.startsWith("zh");
+      const retryLabel = zh ? "\u53D1\u9001\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5" : "Send failed. Click to retry";
+      return h("div", { className: "mosaic-receipt", role: "status", "data-transient": transient || void 0, "data-receipt-state": state, "data-delivery-status": failed ? "failed" : read ? "read" : "delivered", "data-receipt-id": receipt?.receipt_id }, failed ? h("button", { type: "button", className: "mosaic-receipt-retry", "data-action": "retry-message", "aria-label": retryLabel, title: retryLabel, disabled: busy, onClick: onRetry }, h("svg", { viewBox: "0 0 20 20", "aria-hidden": true }, h("circle", { cx: 10, cy: 10, r: 9, fill: "none", stroke: "currentColor", strokeWidth: 1.5 }), h("path", { d: "M10 5.5v5M10 14h.01", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" }))) : h("span", null, read ? zh ? "\u5DF2\u8BFB" : "Read" : zh ? "\u5DF2\u9001\u8FBE" : "Delivered"));
+    }
     function PersonalHome({ locale, host }) {
       const t = (key) => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
       const [agent, setAgent] = React.useState(null), [records, setRecords] = React.useState([]), [historyInfo, setHistoryInfo] = React.useState(null);
@@ -2367,8 +2584,9 @@ ${personalReviewStyles}
         if (!receipt || receipt.session_id !== currentAgent.current?.main_session_id || detail.requestID && detail.requestID !== receipt.request_id || !receipt.request_id || !receipt.receipt_id || !receipt.client_id || !receipt.queue_id || !receipt.host_request_id || !receipt.accepted_at || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || !["accepted", "in_history"].includes(receipt.receipt_state)) return false;
         const previous = receiptStates.current.get(receipt.request_id);
         if (previous?.receipt && previous.receipt.receipt_id !== receipt.receipt_id) return false;
+        if (previous && detail.inHistory) previous.inHistory = true;
         if (previous?.receipt && previous.receipt.revision > receipt.revision) return true;
-        receiptStates.current.set(receipt.request_id, { ...previous, ...detail, receipt, state: receipt.execution_state });
+        receiptStates.current.set(receipt.request_id, { ...previous, ...detail, receipt, state: receipt.execution_state, retryFiles: void 0, retryInput: void 0 });
         if (mounted.current) setDraftVersion((value) => value + 1);
         return true;
       };
@@ -2384,8 +2602,7 @@ ${personalReviewStyles}
           const status = await call("agents.messages.status", { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id });
           acceptReceipt(status.receipt);
           await loadConversation(currentAgent.current);
-        } catch (cause) {
-          report(cause);
+        } catch {
         } finally {
           const latest = receiptStates.current.get(receipt.request_id);
           if (latest) latest.busy = false;
@@ -2396,10 +2613,7 @@ ${personalReviewStyles}
         const entry = receipt && receiptStates.current.get(receipt.request_id) || fallback;
         if (!entry && !receipt) return void 0;
         const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
-        const zh = locale?.startsWith("zh");
-        const labels2 = zh ? { sending: "\u53D1\u9001\u4E2D", unknown: "\u9001\u8FBE\u72B6\u6001\u5F85\u786E\u8BA4", rejected: "\u53D1\u9001\u5931\u8D25", queued: "\u5DF2\u9001\u8FBE", held: "\u7B49\u5F85\u7EE7\u7EED", running: "\u5DF2\u9001\u8FBE", completed: "\u5DF2\u9001\u8FBE", failed: "\u5904\u7406\u5931\u8D25", interrupted: "\u5904\u7406\u5DF2\u505C\u6B62", cancelled: "\u5DF2\u53D6\u6D88", unconfirmed: "\u5904\u7406\u7ED3\u679C\u5F85\u786E\u8BA4" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered", held: "Awaiting continue", running: "Delivered", completed: "Delivered", failed: "Processing failed", interrupted: "Processing stopped", cancelled: "Cancelled", unconfirmed: "Outcome unconfirmed" };
-        if (!labels2[state]) return void 0;
-        return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels2[state]), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "\u7EE7\u7EED" : "Continue"));
+        return h(MessageReceipt, { receipt: r, state, busy: entry?.busy, onRetry: () => retryReceipt(entry || { receipt: r }), locale });
       };
       const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
       const [nameOpen, setNameOpen] = React.useState(false);
@@ -2413,10 +2627,22 @@ ${personalReviewStyles}
       });
       const replyLoadVersion = React.useRef(0), replyPaging = React.useRef(false);
       const replyPanelRef = React.useRef(null), replyTrigger = React.useRef(null);
+      const replyMotion = React.useRef(null), replyClosing = React.useRef(false);
       const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
       const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
       const [, setDraftVersion] = React.useState(0);
       const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+      const sendMotion = useSendMotion(React, rootRef);
+      const [identityNode, setIdentityNode] = React.useState(null);
+      React.useLayoutEffect(() => {
+        const root = rootRef.current, header = identityNode?.closest(".plugin-conversation-titlebar");
+        if (!header) return;
+        const measure = () => root.style.setProperty("--mosaic-identity-height", `${header.offsetHeight}px`);
+        measure();
+        const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+        observer?.observe(header);
+        return () => observer?.disconnect();
+      }, [identityNode]);
       const panelRef = React.useRef(null), profileTrigger = React.useRef(null), focusVersion = React.useRef(0), panelID = React.useId();
       const reducePanelMotion = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       const openPanel = () => {
@@ -2460,7 +2686,7 @@ ${personalReviewStyles}
             });
           });
         } else timer = setTimeout(settle, delay);
-        const reduced = () => {
+        const reduced2 = () => {
           if (reducePanelMotion()) {
             cancelAnimationFrame(frame);
             cancelAnimationFrame(secondFrame);
@@ -2470,14 +2696,14 @@ ${personalReviewStyles}
           }
         };
         const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-        media?.addEventListener("change", reduced);
-        const observer = new MutationObserver(reduced);
+        media?.addEventListener("change", reduced2);
+        const observer = new MutationObserver(reduced2);
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion"] });
         return () => {
           cancelAnimationFrame(frame);
           cancelAnimationFrame(secondFrame);
           clearTimeout(timer);
-          media?.removeEventListener("change", reduced);
+          media?.removeEventListener("change", reduced2);
           observer.disconnect();
         };
       }, [panelOpen, panelPresent]);
@@ -2620,7 +2846,7 @@ ${personalReviewStyles}
           if (opened.agent?.main_session_id && opened.agent.main_session_id !== identity.main_session_id) throw new Error("main_session_binding_conflict");
           publishIdentity(opened.agent);
           for (const entry of opened.pending_inputs || []) acceptReceipt(entry.receipt, entry);
-          for (const record2 of latest.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation });
+          for (const record2 of latest.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           const receiptReadErrors = [];
           const readReceiptStatus = async (requestID) => {
             try {
@@ -2646,7 +2872,7 @@ ${personalReviewStyles}
             if (!receiptStates.current.has(pending.requestID)) receiptStates.current.set(pending.requestID, { ...detail, state: "unknown" });
             const status = await readReceiptStatus(pending.requestID);
             if (!current()) return;
-            if (acceptReceipt(status.receipt, detail) && saved.pending?.requestID === pending.requestID && saved.editVersion === editVersion) updateDraft(draftID, { pending: null, prompt: "", files: [], attachmentsMissing: false, error: "" });
+            if (acceptReceipt(status.receipt, detail) && saved.pending?.requestID === pending.requestID) updateDraft(draftID, { pending: null, ...saved.editVersion === editVersion && saved.prompt === pending.prompt && (saved.attachmentsMissing || JSON.stringify(saved.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === pending.fileKey) ? { prompt: "", files: [], attachmentsMissing: false } : {}, error: "" });
           }
           let history = latest;
           const recovery = historyRecovery.current;
@@ -2829,22 +3055,55 @@ ${personalReviewStyles}
           if (!mounted.current || version !== replyLoadVersion.current) return;
           const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
           if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
-          for (const record2 of history?.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation });
+          for (const record2 of history?.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           setReplyHistory(history);
           closePanel(false);
+          if (replyClosing.current && replyMotion.current) {
+            replyClosing.current = false;
+            replyMotion.current.onfinish = null;
+            replyMotion.current.reverse();
+          }
           setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
         } catch (cause) {
           if (version === replyLoadVersion.current) report(cause);
         }
       };
-      const closeReplies = () => {
-        replyLoadVersion.current++;
-        setReplySelection(null);
-        requestAnimationFrame(() => {
-          const trigger = replyTrigger.current;
+      React.useLayoutEffect(() => {
+        const panel = replyPanelRef.current;
+        if (!replySelection && replyClosing.current) {
+          const trigger = replyTrigger.current, main = rootRef.current?.querySelector(".mosaic-main");
           if (trigger?.isConnected && !trigger.closest("[inert],[hidden]")) trigger.focus({ preventScroll: true });
-          else rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true });
-        });
+          if (!main?.contains(document.activeElement)) main?.querySelector("textarea")?.focus({ preventScroll: true });
+        }
+        replyClosing.current = false;
+        if (!replySelection || !panel?.animate || reducePanelMotion()) return;
+        const motion = panel.animate([{ transform: "translateY(calc(100% + 8px))", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }], { duration: 360, easing: "cubic-bezier(.16,1,.3,1)", fill: "both" });
+        replyMotion.current = motion;
+        const reduced2 = () => {
+          if (reducePanelMotion()) motion.finish();
+        };
+        const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+        media?.addEventListener("change", reduced2);
+        const observer = new MutationObserver(reduced2);
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion"] });
+        return () => {
+          motion.onfinish = null;
+          motion.cancel();
+          replyMotion.current = null;
+          media?.removeEventListener("change", reduced2);
+          observer.disconnect();
+        };
+      }, [replySelection?.key]);
+      const closeReplies = () => {
+        if (replyClosing.current) return;
+        replyClosing.current = true;
+        replyLoadVersion.current++;
+        const finish = () => setReplySelection(null);
+        const motion = replyMotion.current;
+        if (motion && !reducePanelMotion()) {
+          motion.onfinish = finish;
+          motion.reverse();
+        } else finish();
       };
       React.useEffect(() => {
         if (replySelection) replyPanelRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
@@ -2860,7 +3119,7 @@ ${personalReviewStyles}
         try {
           const page = await call("agents.history", { agent_id: agent.agent_id, reply_seq: replySelection.rootSeq, ...earlier ? { end_seq: replyHistory.first_seq - 1 } : {} });
           if (!mounted.current || version !== replyLoadVersion.current) return;
-          for (const record2 of page.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation });
+          for (const record2 of page.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           setReplyHistory((current) => ({ ...page, ...!earlier && current?.records.length ? { first_seq: current.first_seq, has_earlier: current.has_earlier } : {}, records: [...new Map([...current?.records || [], ...page.records].map((record2) => [record2.seq, record2])).values()].sort((a, b) => a.seq - b.seq) }));
         } catch (cause) {
           if (version === replyLoadVersion.current) updateDraft(replySelection.key, { error: String(cause.message || cause) });
@@ -2900,17 +3159,18 @@ ${personalReviewStyles}
         const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
         if (!state.pending || state.pending.prompt !== text2 || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text2, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext() };
         const requestID = state.pending.requestID, editVersion = state.editVersion;
+        if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
         const stream2 = streamFor(conversationID), version = stream2.version;
         updateDraft(id, { submitting: true, error: "" });
         if (id === conversationID) setError("");
-        const detail = { requestID, prompt: text2, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id };
-        receiptStates.current.set(requestID, { ...detail, ...receiptStates.current.get(requestID), state: "sending" });
+        const detail = { requestID, prompt: text2, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id, retryFiles: sentFiles, retryInput: { ...state.pending } };
+        receiptStates.current.set(requestID, { ...receiptStates.current.get(requestID), ...detail, state: "sending" });
         const recover = async () => {
           const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: requestID });
           return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null;
         };
         try {
-          let result2 = state.pending.uncertain ? await recover() : null;
+          let result2 = state.pending.uncertain ? await recover().catch(() => null) : null;
           if (!result2) result2 = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text2, ...state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text2, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
           if (!acceptReceipt(result2?.receipt, detail)) {
             result2 = await recover();
@@ -2942,14 +3202,60 @@ ${personalReviewStyles}
             if (current.pending?.requestID === requestID) current.pending.uncertain = true;
             const detailError = cause instanceof Error ? cause.message : String(cause);
             receiptStates.current.set(requestID, { ...detail, state: /request_id_conflict/.test(detailError) ? "rejected" : "unknown" });
-            updateDraft(id, { error: detailError });
-            if (id === conversationID) report(cause);
+            updateDraft(id, { error: "" });
             return;
           }
         } finally {
           updateDraft(id, { submitting: false });
         }
         if (mounted.current) await refreshAcceptedSend();
+      };
+      const retryReceipt = async (entry) => {
+        if (entry.busy) return;
+        if (entry.receipt) {
+          await resumeReceipt(entry);
+          return;
+        }
+        entry.busy = true;
+        setDraftVersion((value) => value + 1);
+        const originalID = entry.requestID, originalDraft = draftFor(entry.draftID), originalEditVersion = originalDraft.editVersion;
+        const originalInput = entry.retryInput || (originalDraft.pending?.requestID === originalID ? originalDraft.pending : void 0);
+        const fileKey = originalInput?.fileKey || JSON.stringify(entry.attachments || []);
+        const clearOriginalDraft = () => {
+          if (originalDraft.pending && originalDraft.pending.requestID !== originalID) return;
+          const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === entry.prompt && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
+          updateDraft(entry.draftID, { pending: null, ...unchanged ? { prompt: "", files: [], attachmentsMissing: false } : {}, error: "" });
+        };
+        const retryID = `${conversationID}:retry:${originalID}`;
+        try {
+          const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: originalID }).catch(() => ({}));
+          if (acceptReceipt(status.receipt, { ...entry, requestID: originalID })) {
+            clearOriginalDraft();
+            if (status.receipt.execution_state === "held") await resumeReceipt({ ...entry, receipt: status.receipt, busy: false });
+            return;
+          }
+          const files2 = entry.retryFiles || (originalDraft.pending?.requestID === originalID ? originalDraft.files : []);
+          if (JSON.stringify(files2.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) !== fileKey) {
+            updateDraft(entry.draftID, { attachmentsMissing: true });
+            return;
+          }
+          const pending = { ...originalInput, prompt: entry.prompt, fileKey, relationKey: JSON.stringify(entry.relation), requestID: originalID, uncertain: true };
+          if (entry.state === "rejected") {
+            pending.requestID = crypto.randomUUID();
+            pending.uncertain = false;
+          }
+          Object.assign(draftFor(retryID), { prompt: entry.prompt, files: files2, replyTarget: entry.relation ? { relation: entry.relation } : void 0, pending, attachmentsMissing: false });
+          if (pending.requestID !== originalID) {
+            receiptStates.current.delete(originalID);
+            if (originalDraft.pending?.requestID === originalID) updateDraft(entry.draftID, { pending: null });
+          }
+          await send(entry.prompt, retryID);
+          if (receiptStates.current.get(pending.requestID)?.receipt) clearOriginalDraft();
+        } finally {
+          const latest = receiptStates.current.get(originalID);
+          if (latest) latest.busy = false;
+          if (mounted.current) setDraftVersion((value) => value + 1);
+        }
       };
       const stopReply = async () => {
         const id = conversationID, pending = draftFor(id), target = pending.stopTarget || activeTurnID;
@@ -3091,13 +3397,16 @@ ${personalReviewStyles}
           h("div", { className: "mosaic-detail-content" }, h(Attachment, { key: `${selectedArtifact.seq}:${selectedArtifact.attachment.sha256}`, agentId: agent.agent_id, seq: selectedArtifact.seq, attachment: selectedArtifact.attachment, t }))
         ) : selection && task ? h(
           "div",
-          { className: "mosaic-detail", "data-task-detail": task.task_id },
+          { className: "mosaic-detail", "data-task-detail": task.task_id, "data-task-state": task.state },
           h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: task.title }, task.title)),
           h(
             "div",
             { className: "mosaic-detail-content" },
+            task.existing_session && h("p", { className: "mosaic-task-meta" }, `${t("existingSession")}: ${task.existing_session.session_id} \xB7 ${task.existing_session.execution_host}`),
+            task.worker_result && h("p", { className: "mosaic-task-meta", "data-worker-result": true }, t("workerResult")),
             task.goal && h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:goal`, role: "user", content: task.goal, linkPolicy: "external-only", messageActions: "none" }),
-            h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:result`, role: "assistant", content: (typeof task.result === "string" ? task.result : task.result?.summary) || task.question?.text || "", timestamp: task.result?.verified_at, latest: true, linkPolicy: "external-only", messageActions: "none", turnStatus: task.state === "completed" ? "completed" : task.state === "failed" ? "failed" : ["running", "queued", "stopping"].includes(task.state) ? "in_progress" : "interrupted", process: { label: t(task.state), content: progressText(task), details: h(TaskTrace, { key: `${task.task_id}:${task.requirements_revision}`, taskId: task.task_id, taskRevision: task.revision, requirementsRevision: task.requirements_revision, requirements: task.requirements, t }) } }),
+            h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:result`, role: "assistant", content: task.worker_result?.text || (typeof task.result === "string" ? task.result : task.result?.summary) || task.question?.text || "", timestamp: task.worker_result?.received_at || task.result?.verified_at || task.result?.accepted_at, latest: true, linkPolicy: "external-only", messageActions: "none", turnStatus: task.state === "completed" ? "completed" : task.state === "failed" ? "failed" : ["running", "queued", "stopping"].includes(task.state) ? "in_progress" : "interrupted", process: { label: t(task.state), content: progressText(task), details: task.existing_session ? h("p", null, t("remoteTrace")) : h(TaskTrace, { key: `${task.task_id}:${task.requirements_revision}`, taskId: task.task_id, taskRevision: task.revision, requirementsRevision: task.requirements_revision, requirements: task.requirements, t }) } }),
+            task.controller_decision && h(React.Fragment, null, h("p", { className: "mosaic-task-meta" }, t("controllerDecision")), h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:controller-review`, role: "assistant", content: task.controller_decision.summary, timestamp: task.controller_decision.accepted_at, linkPolicy: "external-only", messageActions: "none" })),
             task.error && h("p", { role: "alert" }, task.error),
             task.reconciliation_required && h("p", { role: "status" }, t("reconciliation"))
           ),
@@ -3143,7 +3452,7 @@ ${personalReviewStyles}
           onRetry: async (resumeHeld) => deliver(await call("genui.read", input), resumeHeld)
         };
       });
-      const renderReplyMessage = (record2) => h(ConversationMessage, { interactive: interactiveFor(record2), footer: receiptFooter(record2.receipt), reaction: reactionFor(record2), key: `reply:${record2.seq ?? record2.id}`, id: `reply:${conversationID}:${record2.seq ?? record2.id}`, streaming: record2.streaming, role: record2.role, content: record2.ui_parts?.length ? record2.ui_text || "" : record2.display_content || record2.content || "", timestamp: record2.at, linkPolicy: "external-only", attachments: record2.attachments?.length ? h(React.Fragment, null, record2.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record2.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record2.seq, attachment, t, autoLoad: true }))) : void 0 });
+      const renderReplyMessage = (record2) => h(ConversationMessage, { className: sendMotion.className(record2.receipt?.request_id), interactive: interactiveFor(record2), footer: receiptFooter(record2.receipt), reaction: reactionFor(record2), key: `reply:${record2.seq ?? record2.id}`, id: `reply:${conversationID}:${record2.seq ?? record2.id}`, streaming: record2.streaming, role: record2.role, content: record2.ui_parts?.length ? record2.ui_text || "" : record2.display_content || record2.content || "", timestamp: record2.at, linkPolicy: "external-only", attachments: record2.attachments?.length ? h(React.Fragment, null, record2.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record2.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record2.seq, attachment, t, autoLoad: true }))) : void 0 });
       const replyDraft = replySelection ? draftFor(replySelection.key) : void 0;
       const rootSeq = replySelection?.rootSeq;
       const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
@@ -3159,8 +3468,8 @@ ${personalReviewStyles}
       const taskSource = replySelection?.taskContext?.source;
       const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : void 0;
       const replyRecords = replySelection ? replyMessages.filter((record2) => ["user", "assistant"].includes(record2.role) && (replySelection.taskContext ? record2.seq !== taskSourceRef?.seq && record2.relation?.metadata?.task_links?.some((link) => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record2.seq) || record2.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record2.relation.reply_to.seq))) : [];
-      const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && !entry.receipt?.message_seq && !records.some((record2) => record2.receipt?.receipt_id && record2.receipt.receipt_id === entry.receipt?.receipt_id));
-      const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : void 0, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
+      const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some((record2) => record2.receipt?.receipt_id && record2.receipt.receipt_id === entry.receipt?.receipt_id));
+      const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : void 0, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
       const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
         if (entry.draftID === replySelection.key) return true;
         if (replySelection.taskContext) {
@@ -3193,7 +3502,7 @@ ${personalReviewStyles}
             first?.focus();
           }
         }
-      } }, h("button", { type: "button", className: "mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" }))), sendRefreshNotice, h(
+      } }, h("div", { className: "mosaic-replies-toolbar" }, h("button", { type: "button", className: "icon-button mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" })))), sendRefreshNotice, h(
         ConversationView,
         {
           presentation: "bubbles",
@@ -3230,7 +3539,7 @@ ${personalReviewStyles}
             onQuestionReply: replyToQuestion,
             title: "twin",
             loading,
-            actions: h("div", { className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} \xB7 ${displayName} \xB7 ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => {
+            actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} \xB7 ${displayName} \xB7 ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => {
               if (panelOpen) closePanel();
               else openPanel();
             } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} \xB7 ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
@@ -3257,6 +3566,7 @@ ${personalReviewStyles}
             }))
           },
           records.filter((record2) => (record2.ui_parts?.length || !liveMessages.some((message) => message.seq === record2.seq || message.source_id && message.source_id === record2.provider_item_id)) && ["user", "assistant"].includes(record2.role) && (record2.display_content || record2.content || record2.attachments?.length)).map((record2) => h(ConversationMessage, {
+            className: sendMotion.className(record2.receipt?.request_id),
             interactive: interactiveFor(record2),
             footer: receiptFooter(record2.receipt),
             reaction: reactionFor(record2),
@@ -3274,7 +3584,7 @@ ${personalReviewStyles}
           })),
           pendingReceipts.map((entry) => renderPendingReceipt(entry, conversationID)),
           liveMessages.filter((message) => !records.some((record2) => record2.ui_parts?.length && (message.seq === record2.seq || message.source_id && message.source_id === record2.provider_item_id))).map((message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })),
-          !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+          !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
           h(settingsPanels.ReviewConversation, { locale }),
           h(settingsPanels.ConnectorConversation),
           pendingCalendarOperations.length > 0 && h(

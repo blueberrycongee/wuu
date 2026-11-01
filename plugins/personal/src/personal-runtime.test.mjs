@@ -147,6 +147,22 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   await optional.close(); assert.deepEqual(storage, beforeOptional, "optional Memory has no Personal activation or storage effects");
   const binding = (await runtime.call("capability.invoke", { capability: "plugin.client.request", input: { method: "agents.ensure_default", input: {} }, execution_id: "create-main" })).output.result.agent;
   mainSession = binding.main_session_id; mainAgent = binding.agent_id;
+  const observe = session_id => runtime.call("service.invoke", {service:"personal.agents",method:"observe-execution",caller:"wuu.personal-actions-consumer",params:{session_id},execution_id:"facts-observer"});
+  assert.deepEqual(await observe(mainSession), {session_id:mainSession,agent_id:mainAgent,main_session_id:mainSession,active:true});
+  await assert.rejects(observe("unknown-session"), /owning agent/);
+  const taskKey = [...storage.keys()].find(key => key.endsWith(`.agent.${mainAgent}`)).replace(`.agent.${mainAgent}`, ".task.facts-task");
+  const observedTask = {user_space_id:"local",agent_id:mainAgent,task_id:"facts-task",requirements_revision:1,state:"running",goal:"Bound objective",cancel_requested:false,source:{session_id:mainSession,message_seq:7,message_binding:"host_turn"},execution:{session_id:"facts-worker",request_id:"facts-run",requirements_revision:1}};
+  storage.set(taskKey, JSON.stringify(observedTask));
+  assert.deepEqual((await observe("facts-worker")).task, {id:"facts-task",revision:1,run_id:"facts-run",active:true,goal:"Bound objective",source_session_id:mainSession,source_message_seq:7});
+  observedTask.cancel_requested = true; storage.set(taskKey, JSON.stringify(observedTask));
+  assert.equal((await observe("facts-worker")).task.active, false);
+  observedTask.cancel_requested = false; observedTask.requirements_revision = 2; storage.set(taskKey, JSON.stringify(observedTask));
+  const changedFacts = await observe("facts-worker");
+  assert.equal(changedFacts.task.active, false); assert.equal(changedFacts.task.source_message_seq, 0);
+  storage.delete(taskKey);
+
+  assert.deepEqual(await runtime.call("service.invoke", {service:"personal.agents",method:"legacy-memory",caller:"wuu.personal-actions-consumer",params:{},execution_id:"legacy-observer"}), {});
+
   const receiptClient = (method,input={}) => runtime.call("capability.invoke",{capability:"plugin.client.request",input:{method,input:{agent_id:mainAgent,...input}},execution_id:`receipt-${frames.length}`}).then(r=>r.output.result);
   const receiptHistory=await receiptClient("agents.history");
   assert.deepEqual(receiptHistory.records.map(r=>r.receipt?.receipt_id),["history-one","history-two"]);

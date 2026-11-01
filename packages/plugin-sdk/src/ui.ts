@@ -247,6 +247,15 @@ export type ConversationToolActivitySlotContextV1 = {
 };
 
 /** Slots are qualified as `${ownerPluginId}/${localId}`. */
+/** A surface owns focusable controls; containing layouts never inspect its DOM. */
+export interface UIFocusTargetV1 {
+  /** Returns false while no enabled focus target is ready. Must preserve scroll when requested. */
+  focus(options?: FocusOptions): boolean;
+  contains(element: Element): boolean;
+}
+/** Register during a mounted surface's layout effect and release on cleanup. */
+export type UIRegisterFocusTargetV1 = (target: UIFocusTargetV1) => () => void;
+
 export interface UISlotDefinition {
   readonly id: string;
   readonly cardinality: "one" | "many";

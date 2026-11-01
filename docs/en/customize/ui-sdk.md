@@ -228,13 +228,51 @@ facets and action callbacks never silently retarget a successor. A module that
 both provides and consumes its own business service shares its own generation
 lifetime and does not need a self-dependency.
 
-Use `api.showNotice({ message, tone: "error", key: "refresh" })` for actionable
-plugin feedback rather than placing exception text inside a composer, navigation
-row or message. The host uses the existing central notification surface; repeated
-semantic keys are deduplicated. The returned disposable dismisses the notice,
-and generation retirement dismisses its notices and rejects later calls. Keep
-messages concise and put technical detail in diagnostics. Standalone preview
-explicitly does not simulate central product notification delivery.
+### Error feedback
+
+Choose the surface from the failed operation, not from the exception type:
+
+| Situation | Presentation |
+| --- | --- |
+| A user action fails while the surrounding view still works | A central notice; preserve the view and the user's input |
+| A field needs correction | A concise explanation next to that field |
+| A page or settings section cannot load | A readable in-place state with a retry control |
+| A conversation turn or background task fails | Retain the failed state in its history; a temporary notice is not the record |
+
+Use `api.showNotice({ message, tone: "error", key })` for temporary plugin
+feedback. Do not insert exception text into composer status, navigation rows or
+message prose, and do not import the default renderer's private Toast module.
+The host owns notice placement, dismissal and accessibility. The public notice
+API accepts message, tone and key; it does not offer a retry-button option.
+Keep recovery controls in the relevant view when the operation needs one.
+
+Say what failed in the interface language and, when useful, how to recover.
+For example, “Could not refresh automations. Try again.” is more useful than a
+JavaScript stack or IPC wrapper. Preserve useful technical details in an
+on-demand diagnostic view, without credentials or private payloads. Logging an
+exception alone is not feedback. Do not clear a draft, show success, replace a
+working page, or present an empty result merely because its action failed.
+
+Use a stable semantic `key` for repeated background failures. Each explicit user
+attempt needs fresh feedback even when the reason is unchanged: use an
+attempt-specific key rather than reusing the background key. The returned
+disposable dismisses the active or queued notice. Dispose obsolete notices after
+recovery; generation retirement also dismisses its notices and rejects later
+calls. Fence late results when a view changes or unmounts. Only a proven retired
+scope is cancellation; an unrelated transport failure must remain visible.
+
+Retry a read against the same failed target. Preserve input when a save fails.
+Do not automatically replay writes whose outcome is unknown. A retry button
+should become available again after failure, and a successful retry should
+remove the stale failure state. Use one primary feedback surface per failure,
+rather than both a Toast and duplicate inline error text.
+
+Check failure → retry → failure → success, repeated clicks, navigation while a
+request is pending, and plugin retirement. Inspect long messages, narrow windows,
+large text, both themes and keyboard interaction in the actual host. Standalone
+preview does not simulate central notice delivery. Temporary notices are bounded
+and are not a durable error log; essential failures must remain discoverable in
+their owning view or task history.
 
 ### Following a selected presentation provider
 

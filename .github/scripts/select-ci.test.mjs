@@ -107,3 +107,18 @@ test('architecture conformance follows shared changes and existing event policy,
   assert.equal(select(['docs/en/project/development.md'], 'workflow_dispatch').architecture, 'true');
   assert.equal(select(['desktop/src/main/trustedRemoteTransport.ts'], 'push').architecture, 'false');
 });
+
+test('agent skill instructions are non-runtime documentation, not executable skill resources', () => {
+  const instruction = '.agents/skills/change-validation/SKILL.md';
+  for (const remove of [false, true]) {
+    const result = select([instruction], 'pull_request', remove);
+    for (const job of ['go', 'architecture', 'desktop', 'clients', 'native']) assert.equal(result[job], 'false', job);
+    assert.deepEqual(JSON.parse(result.desktop_suites), []);
+  }
+  assert.deepEqual(JSON.parse(select([instruction, 'desktop/src/renderer/LanguagePreferenceSection.tsx']).desktop_related), ['src/renderer/LanguagePreferenceSection.tsx']);
+  for (const path of ['.agents/skills/change-validation/scripts/check.mjs', '.agents/skills/change-validation/assets/SKILL.md', 'plugins/example/SKILL.md']) {
+    assert.equal(select([path]).go, 'true', path);
+    assert.deepEqual(JSON.parse(select([path]).desktop_suites), suites, path);
+  }
+  assert.deepEqual(JSON.parse(select([instruction], 'workflow_dispatch').desktop_suites), suites);
+});

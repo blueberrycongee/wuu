@@ -996,7 +996,7 @@ describe("session tab switch latency", () => {
     await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(threadRowButton("first pending query")).toBeUndefined();
     expect(mainComposerTextarea().value).toBe("newer draft");
-    const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+    const recovery = document.querySelector<HTMLButtonElement>('[data-wuu-component="draft-recovery"] button');
     expect(recovery).not.toBeNull();
     await act(async () => { recovery!.click(); });
     expect(mainComposerTextarea().value).toBe("first pending query");

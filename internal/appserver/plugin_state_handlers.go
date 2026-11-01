@@ -34,7 +34,7 @@ func (s *Server) handlePluginSettingGet(req Request) error {
 		return s.pluginSecretSetting(req, services, plugin, definition, key, nil)
 	}
 	scope := PluginValueScope(definition.Scope)
-	document, err := services.Settings.Read(context.Background(), plugin.SubjectID, pluginsettings.Scope(scope))
+	document, err := services.Settings.Read(context.Background(), plugin.StorageSubject(), pluginsettings.Scope(scope))
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -91,7 +91,7 @@ func (s *Server) handlePluginSettingSet(req Request) error {
 		return s.pluginSecretSetting(req, services, plugin, definition, key, &value)
 	}
 	scope := PluginValueScope(definition.Scope)
-	document, err := services.Settings.Update(context.Background(), plugin.SubjectID, pluginsettings.Scope(scope), plugin.Fingerprint, func(values map[string]json.RawMessage) error {
+	document, err := services.Settings.Update(context.Background(), plugin.StorageSubject(), pluginsettings.Scope(scope), plugin.Fingerprint, func(values map[string]json.RawMessage) error {
 		values[key] = append(json.RawMessage(nil), params.Value...)
 		for patchKey, value := range patch {
 			values[patchKey] = append(json.RawMessage(nil), value...)
@@ -268,7 +268,7 @@ func (s *Server) handlePluginStorageGet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	document, err := services.Settings.ReadState(context.Background(), plugin.SubjectID, scope)
+	document, err := services.Settings.ReadState(context.Background(), plugin.StorageSubject(), scope)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -300,7 +300,7 @@ func (s *Server) handlePluginStorageSet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	document, err := services.Settings.UpdateState(context.Background(), plugin.SubjectID, scope, func(values map[string]string) error {
+	document, err := services.Settings.UpdateState(context.Background(), plugin.StorageSubject(), scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})
@@ -390,7 +390,7 @@ func pluginStorageScope(scope PluginValueScope) (pluginsettings.Scope, error) {
 // Secret settings share the existing fingerprint-gated UI route but never enter
 // pluginsettings files, broadcasts or read responses. Empty input removes a token.
 func (s *Server) pluginSecretSetting(req Request, services *runtime.StateServices, plugin pluginpkg.Plugin, definition pluginpkg.SettingDefinition, key string, value *string) error {
-	binding, err := plugincredentials.BindingFor(s.rt.WuuHome, s.rt.RootDir, plugin.SubjectID, key, definition.CredentialOrigins)
+	binding, err := plugincredentials.BindingFor(s.rt.WuuHome, s.rt.RootDir, plugin.StorageSubject(), key, definition.CredentialOrigins)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

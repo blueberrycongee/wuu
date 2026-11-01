@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
-import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { UIRegisterFocusTargetV1, ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
 import { ArtifactsProvider } from "../ArtifactsContext";
@@ -32,6 +32,7 @@ type Pane = "primary" | "secondary";
 export interface DefaultConversationLayout {
   scrollRef?: RefObject<HTMLDivElement | null>;
   contentRef?: RefObject<HTMLDivElement | null>;
+  composerFocusTargets?: Readonly<Record<Pane, UIRegisterFocusTargetV1>>;
   splitPaneRefs?: MutableRefObject<Record<Pane, HTMLElement | null>>;
   visible?: boolean;
   restoring?: boolean;
@@ -146,7 +147,7 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
         {view.conversation.error ? <div role="alert">{view.conversation.error}</div> : null}
         {split ? <div className="conversation-split" style={{ "--conversation-split-left": `${layout.splitLeftPercent ?? 50}%` } as CSSProperties}>
           {(["primary", "secondary"] as const).map(pane => <SplitConversation key={pane} pane={pane} thread={pane === "primary" ? primary! : secondary!} application={application} onStreamFrame={onStreamFrame}
-            onScroll={layout.onScroll} onBodyRef={node => { if (layout.splitPaneRefs) layout.splitPaneRefs.current[pane] = node; }}
+            registerComposerFocusTarget={layout.composerFocusTargets?.[pane]} onScroll={layout.onScroll} onBodyRef={node => { if (layout.splitPaneRefs) layout.splitPaneRefs.current[pane] = node; }}
             fork={fork} edit={edit} submitEdit={submitEdit} cancelEdit={cancelEdit} canEdit={canEdit} openFile={openFile} openURL={openURL} openAgent={openAgent} openDiff={openDiff}
             separator={pane === "primary" ? <div className="conversation-split-resizer" role="separator" aria-orientation="vertical" aria-label={t("shell.resizeSplit")} aria-valuemin={CONVERSATION_SPLIT_MIN_PERCENT} aria-valuemax={CONVERSATION_SPLIT_MAX_PERCENT} aria-valuenow={Math.round(layout.splitLeftPercent ?? 50)} tabIndex={0} onPointerDown={layout.onSplitResizeStart} onDoubleClick={layout.onSplitSeparatorDoubleClick} onKeyDown={layout.onSplitSeparatorKey} /> : undefined} />)}
         </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={pending.turn as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
@@ -174,7 +175,8 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
   </WorkbenchConnectionContext.Provider>;
 }
 
-function SplitConversation({ pane, thread, application, separator, onBodyRef, onScroll, onStreamFrame, fork, edit, submitEdit, cancelEdit, canEdit, openFile, openURL, openAgent, openDiff }: {
+function SplitConversation({ pane, thread, application, registerComposerFocusTarget, separator, onBodyRef, onScroll, onStreamFrame, fork, edit, submitEdit, cancelEdit, canEdit, openFile, openURL, openAgent, openDiff }: {
+  registerComposerFocusTarget?: UIRegisterFocusTargetV1;
   pane: Pane; thread: Thread; application: ApplicationServiceV1; separator?: import("react").ReactNode;
   onBodyRef: (node: HTMLElement | null) => void; onScroll?: (node: HTMLElement) => void; onStreamFrame: () => void;
   fork: (thread: Thread, turnId: string, itemId: string) => void;
@@ -189,7 +191,7 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
   const editing = view.conversationActions.editing?.threadId === thread.id ? view.conversationActions.editing : undefined;
   const question = view.conversationActions.questions.find(row => row.thread_id === thread.id && row.mode !== "offer");
   return <><ConversationSplitPane pane={pane} thread={thread} active={view.conversationWorkspace.activePane === pane}
-    ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
+    registerComposerFocusTarget={registerComposerFocusTarget} ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
     streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]}
     editingMessage={editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined}
     onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showApplicationActionError); }}

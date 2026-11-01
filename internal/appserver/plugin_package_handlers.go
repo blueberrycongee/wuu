@@ -809,16 +809,21 @@ func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetada
 // Capture the committed state before releasing mutation ownership. Activation
 // failures still publish it and retain their actionable response error.
 func (s *Server) writePluginGenerationResponse(req Request, result any, activationErr error, finish func() error) error {
+	publicationErr := s.finishPluginGenerationPublication(finish)
+	if activationErr != nil || publicationErr != nil {
+		result = nil
+	}
+	return s.writeResponse(req.ID, result, errors.Join(activationErr, publicationErr))
+}
+
+func (s *Server) finishPluginGenerationPublication(finish func() error) error {
 	inventory, skills := s.currentExtensionState()
 	shell, surfaces := s.rt.ApplicationBindings()
 	publication := PluginInventoryChangedNotification{
 		ApplicationShell: shell, ApplicationSurfaces: surfaces, ExtensionInventory: inventory, Skills: skills,
 	}
-	activationErr = errors.Join(activationErr, finish())
+	finishErr := finish()
 	publication.Epoch = s.pluginGenerationEpoch.Load()
 	notifyErr := s.writeNotification(NotificationPluginInventoryChanged, publication)
-	if activationErr != nil {
-		result = nil
-	}
-	return errors.Join(notifyErr, s.writeResponse(req.ID, result, activationErr))
+	return errors.Join(finishErr, notifyErr)
 }

@@ -115,7 +115,7 @@ describe("SubscriptionDashboard", () => {
     await renderControls(previous, oldChanged);
     const section = container.querySelector('[data-testid="settings-subscriptions"]');
     await renderControls(next, nextChanged);
-    expect(nextRead).toHaveBeenCalledExactlyOnceWith({ include_quota: true });
+    expect(nextRead).toHaveBeenCalledExactlyOnceWith({ include_quota: true, include_activity: false });
     expect(container.querySelector('[data-testid="settings-subscriptions"]')).toBe(section);
     expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"] meter')?.getAttribute("value")).toBe("80");
     await act(async () => resolveOld({ engines: [], subscription_providers: [{ ...providers[1], quota: quota({ windows: [{ id: "weekly", used_percent: 90 }] }) }] }));
@@ -159,7 +159,7 @@ describe("SubscriptionDashboard", () => {
     const meters = container.querySelectorAll("meter");
     expect([...meters].map((meter) => meter.value)).toEqual([70, 0]);
     expect(container.querySelector('[data-testid="subscription-engine-codex"] meter')).toBeNull();
-    expect(window.wuu.listEngines).toHaveBeenCalledWith({ include_quota: true });
+    expect(window.wuu.listEngines).toHaveBeenCalledWith({ include_quota: true, include_activity: false });
     expect(container.textContent).not.toContain("99999");
 
     // A manual refresh keeps the loaded allowance on screen.

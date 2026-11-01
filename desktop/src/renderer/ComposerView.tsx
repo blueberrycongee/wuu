@@ -1,3 +1,4 @@
+import { showActionErrorToast } from "./Toast";
 import { createPortal } from "react-dom";
 import { useComposerServices } from "./ComposerServicesContext";
 import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
@@ -142,6 +143,7 @@ export function Composer({
   canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
+  statusAccessory,
   inlineSelection,
   permissionLocked = false,
   containerRef,
@@ -262,6 +264,7 @@ export function Composer({
   canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
+  statusAccessory?: ReactNode;
   inlineSelection?: ReactNode;
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
@@ -462,6 +465,12 @@ export function Composer({
     commitPrompt(value);
   }
   const services = useComposerServices();
+  const commandScopeKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
+  const commandLifetime = useRef(0);
+  useEffect(() => {
+    commandLifetime.current++;
+    return () => { commandLifetime.current++; };
+  }, [services?.presentation, services?.ownerTabId, pluginHost, queryHistorySessionID, commandScopeKey]);
   const catalog = services?.catalog;
   const statusText = composerStatusText(status);
   const className = `composer-wrap ${
@@ -1026,23 +1035,25 @@ export function Composer({
         onOpenInstructions();
         break;
       case "plugin": {
+        const owner = commandLifetime.current;
+        const reportFailure = (error: unknown): void => {
+          if (owner === commandLifetime.current) showActionErrorToast(error, t("error.commandFailed"));
+        };
         if (services) {
-          void services.presentation.executeCommand({ ownerTabId: services.ownerTabId, pluginId: command.pluginId!, id: command.pluginCommandId!, args: draft?.args ?? "" }).catch((error: unknown) => console.error("Plugin slash command failed", error));
+          void services.presentation.executeCommand({ ownerTabId: services.ownerTabId, pluginId: command.pluginId!, id: command.pluginCommandId!, args: draft?.args ?? "" }).catch(reportFailure);
           break;
         }
         const pluginCommand = pluginHost.getCommands().find((candidate) =>
           candidate.pluginId === command.pluginId
           && candidate.id === command.pluginCommandId);
         if (!pluginCommand) break;
-        void Promise.resolve(pluginCommand.execute(Object.freeze({
+        void Promise.resolve().then(() => pluginCommand.execute(Object.freeze({
           source: "slash-command",
           commandId: command.pluginCommandId,
           args: draft?.args ?? "",
           threadId: queryHistorySessionID,
           context: activeContext,
-        }))).catch((error: unknown) => {
-          console.error(`Plugin slash command ${command.pluginId}:${command.pluginCommandId} failed`, error);
-        });
+        }))).catch(reportFailure);
         break;
       }
       case "model":
@@ -1367,6 +1378,7 @@ export function Composer({
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
+      {statusAccessory}
       <div className="composer-above-input">
         <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>

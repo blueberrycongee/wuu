@@ -326,6 +326,7 @@ export class ObservationCoordinator {
     this.observations.set(key, activity);
     if (!this.observationIsGone(activity)) this.goneObservations.delete(key);
     this.syncObservation(key, restoreTarget);
+    if (source && observationKey(source.activity) !== key) this.promote(key);
     this.restack();
   }
 
@@ -387,7 +388,13 @@ export class ObservationCoordinator {
       || this.observationIsGone(activity)) return;
     if (entry) {
       if (entry.phase === "failed") {
-        if (this.retryTimers.has(key) || (this.retryAttempts.get(key) ?? 0) >= 4) return;
+        if (!activityPreviewIsLive(activity)) {
+          // A stop/takeover can still need one helper restart to restore the
+          // target. Reconciliation alone must not retry an ended capture.
+          if (!restoreTarget) return;
+          this.resetRetryBudget(key);
+        }
+        if (this.retryTimers.has(key)) return;
         entry.phase = "preparing";
         entry.pip.retarget?.(activity, this.eventSink(entry));
         if (this.entries.get(key) !== entry) return;
@@ -396,7 +403,7 @@ export class ObservationCoordinator {
       return;
     }
     if ((activity.state === "stopped" && !this.explicitlyShown.has(activity.thread_id))
-      || this.retryTimers.has(key) || (this.retryAttempts.get(key) ?? 0) >= 4) return;
+      || this.retryTimers.has(key)) return;
     this.startEntry(activity, key, restoreTarget);
   }
 
@@ -507,7 +514,7 @@ export class ObservationCoordinator {
     switch (event.event) {
       case "ready":
         entry.phase = "live";
-        this.retryAttempts.delete(entry.key);
+        this.resetRetryBudget(entry.key);
         this.restack();
         return;
       case "retry":
@@ -562,16 +569,18 @@ export class ObservationCoordinator {
   }
 
   private handlePiPFailure(entry: PiPEntry, message: string): void {
+    if (entry.phase === "failed") return;
     if (entry.pip.suspendContent) {
       entry.phase = "failed";
       entry.pip.suspendContent(message);
       this.restack();
     } else this.stopEntry(entry);
     const key = entry.key;
-    if (this.dismissedCards.has(key)) return;
-    const attempts = (this.retryAttempts.get(key) ?? 0) + 1;
+    if (this.dismissedCards.has(key) || !activityPreviewIsLive(entry.activity)) return;
+    // Keep recovering at a bounded rate while the activity can produce frames.
+    // A transient outage must not permanently exhaust the preview's retries.
+    const attempts = Math.min(4, (this.retryAttempts.get(key) ?? 0) + 1);
     this.retryAttempts.set(key, attempts);
-    if (attempts >= 4) return;
     const timer = setTimeout(() => {
       if (this.retryTimers.get(key) !== timer) return;
       this.retryTimers.delete(key);

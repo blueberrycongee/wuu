@@ -41,7 +41,7 @@ it("refreshes retained catalog and quota reads with new controls and ignores old
     await render(previous);
     const page = container.querySelector('[data-testid="settings-providers"]');
     await render(next);
-    expect(next.listEngines).toHaveBeenCalledExactlyOnceWith({ include_quota: true });
+    expect(next.listEngines).toHaveBeenCalledExactlyOnceWith({ include_quota: true, include_activity: false });
     expect(next.listCatalogProviders).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-testid="settings-providers"]')).toBe(page);
     expect(container.querySelector("meter")?.value).toBe(80);

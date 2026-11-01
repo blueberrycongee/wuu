@@ -75,8 +75,8 @@ func (s *Service) Status() pluginhost.Status {
 func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
-	for _, method := range []string{"read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state", Cleanup: method == "release-inspection" || method == "reconcile-inspection"})
+	for _, method := range []string{"read", "update", "read-state", "update-state", "transfer-state", "check-transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state" || method == "check-transfer-state", Cleanup: method == "release-inspection" || method == "reconcile-inspection"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
 }
@@ -118,7 +118,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	readOnly := params.Method == "read" || params.Method == "read-state"
+	readOnly := params.Method == "read" || params.Method == "read-state" || params.Method == "check-transfer-state"
 	if (s.state != pluginhost.StateActive && params.Method != "release-inspection" && params.Method != "reconcile-inspection" && params.Method != "list-inspections" && !(s.state == pluginhost.StatePrepared && readOnly)) || params.Service != ServiceName {
 		return nil, settingsError("service_unavailable", "settings provider is unavailable")
 	}
@@ -196,7 +196,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 			return nil, err
 		}
 		result, err = s.updateState(ctx, request)
-	case "transfer-state":
+	case "transfer-state", "check-transfer-state":
 		var request StateTransfer
 		if err = decodeSettingsRequest(params.Params, &request); err != nil {
 			return nil, err
@@ -204,7 +204,14 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		if err = validateStateTransfer(request); err != nil {
 			return nil, settingsError("invalid_params", "invalid state ownership transfer")
 		}
-		err = moveStatePrefixContext(ctx, s.stateRoot, s.project, request, nil)
+		if params.Method == "check-transfer-state" {
+			err = CheckStateTransfer(ctx, s.stateRoot, s.project, request)
+			if err != nil {
+				return nil, settingsError("storage_transfer_conflict", err.Error())
+			}
+		} else {
+			err = moveStatePrefixContext(ctx, s.stateRoot, s.project, request, nil)
+		}
 		result = struct{}{}
 	default:
 		return nil, settingsError("method_not_found", "settings method is unavailable")

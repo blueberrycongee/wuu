@@ -35,14 +35,13 @@ type trustedTransportValidator struct {
 	Token   string `json:"token"`
 }
 type trustedTransportState struct {
-	generation   string
-	bindingOrder []string
-	bindings     map[string]*trustedTransportBinding
-	enabled      bool
-	mu           sync.Mutex
-	pending      map[string]string
-	receipts     map[string]trustedTransportReceipt
-	order        []string
+	generation string
+	bindings   map[string]*trustedTransportBinding
+	enabled    bool
+	mu         sync.Mutex
+	pending    map[string]string
+	receipts   map[string]trustedTransportReceipt
+	order      []string
 }
 type trustedTransportEnvelope struct {
 	Validation trustedTransportValidator `json:"validation"`
@@ -121,6 +120,7 @@ func (s *Server) handleTrustedTransport(ctx context.Context, req Request) error 
 	if err != nil {
 		return deny(err)
 	}
+	originalContext := ctx
 	ctx = principal.WithContext(ctx, identity)
 	if req.Method == "transport/event" {
 		notification := Notification{Method: input.Method, Params: input.Params}
@@ -151,6 +151,10 @@ func (s *Server) handleTrustedTransport(ctx context.Context, req Request) error 
 	}
 	s.trustedTransport.pending[string(req.ID)] = input.PeerID
 	s.trustedTransport.mu.Unlock()
+	if input.Method == ownerLocalSessionMethod {
+		return s.handleOwnerLocalSession(originalContext, identity, Request{ID: req.ID, Method: ownerLocalSessionMethod, Params: input.Params})
+	}
+
 	nested, err := json.Marshal(Request{ID: req.ID, Method: input.Method, Params: input.Params})
 	if err != nil {
 		return deny(err)
@@ -181,15 +185,10 @@ func (s *Server) bindTrustedTransport(input trustedTransportEnvelope) (principal
 		}
 		return binding.principal, nil
 	}
-	// Forgotten/dead transports cannot permanently exhaust the core. Expiring
-	// the oldest binding revokes its in-flight/replay closures; never promote it.
-	for len(s.trustedTransport.bindingOrder) >= 256 {
-		oldest := s.trustedTransport.bindingOrder[0]
-		s.trustedTransport.bindingOrder = s.trustedTransport.bindingOrder[1:]
-		if old := s.trustedTransport.bindings[oldest]; old != nil {
-			old.revoked.Store(true)
-			delete(s.trustedTransport.bindings, oldest)
-		}
+	// Active peers may own queued work. Capacity must refuse a new peer rather
+	// than revoke another live run; owners explicitly release expired peers.
+	if len(s.trustedTransport.bindings) >= 256 {
+		return principal.Verified{}, errors.New("trusted transport peer capacity exhausted")
 	}
 	binding := &trustedTransportBinding{envelope: trustedTransportEnvelope{Principal: input.Principal, Owner: input.Owner, Validation: input.Validation}}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
@@ -221,7 +220,6 @@ func (s *Server) bindTrustedTransport(input trustedTransportEnvelope) (principal
 	}
 	binding.principal = identity
 	s.trustedTransport.bindings[input.PeerID] = binding
-	s.trustedTransport.bindingOrder = append(s.trustedTransport.bindingOrder, input.PeerID)
 	return identity, nil
 }
 

@@ -285,12 +285,14 @@ app.whenReady().then(async () => {
           source: image.src, width: rect.width, height: rect.height,
           buttonWidth: button.width, buttonHeight: button.height,
           frameWidth: frame.width, frameHeight: frame.height,
+          contained: rect.left >= frame.left - 1 && rect.right <= frame.right + 1
+            && rect.top >= frame.top - 1 && rect.bottom <= frame.bottom + 1,
         };
       }));
       for (const image of geometry) {
         assert.ok(image.width > 0 && image.height > 0, "Delivered images must remain visible");
-        assert.ok(Math.abs(image.buttonWidth - image.width) < 1 && Math.abs(image.buttonHeight - image.height) < 1, "The preview target must cover the entire reserved image frame");
-        assert.ok(Math.abs(image.frameWidth - image.width) < 1 && Math.abs(image.frameHeight - image.height) < 1, "The image must stay inside its reserved message frame");
+        assert.ok(Math.abs(image.buttonWidth - image.frameWidth) < 1 && Math.abs(image.buttonHeight - image.frameHeight) < 1, "The preview target must cover the entire reserved image frame");
+        assert.ok(image.contained, "The complete image must stay inside its reserved message frame");
       }
       const source = geometry[geometry.length - 1].source;
       await evaluate(win, () => {

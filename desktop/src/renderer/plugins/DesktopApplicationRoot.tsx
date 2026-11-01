@@ -11,6 +11,7 @@ export function DesktopApplicationRoot(): JSX.Element {
   const reportFailure = useSyncExternalStore(listener => desktopPluginHost.subscribe(listener), desktopPluginHost.getActivationReportFailure);
   const { t } = useI18n();
   const notice = useRef<number | undefined>(undefined);
+  const reportedWorkspaceIssue = useRef<string | undefined>(undefined);
   const hasShownApplication = useRef(false);
   const state = useSyncExternalStore(desktopBootstrap.subscribe, desktopBootstrap.getSnapshot, desktopBootstrap.getSnapshot);
   useEffect(() => desktopBootstrap.start(), []);
@@ -46,6 +47,13 @@ export function DesktopApplicationRoot(): JSX.Element {
   const shell = state.initialized?.application_shell;
   const binding = shell ? { pluginId: shell.plugin_id, generation: shell.generation, id: shell.provider_id } : null;
   const pending = pluginsPending || !state.initialized && !state.error || selectionReady?.key !== selectionKey;
+  useEffect(() => {
+    const issue = state.startupWorkspaceIssue;
+    if (!issue || pending || !active || failure || reportedWorkspaceIssue.current === issue.project_id) return;
+    reportedWorkspaceIssue.current = issue.project_id;
+    const name = issue.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || issue.cwd;
+    showErrorToast(t("runtime.startupWorkspaceFallback", { name }), "", "workspace-startup-unavailable");
+  }, [state.startupWorkspaceIssue, pending, active, failure, t]);
   useEffect(() => {
     if (pending || !state.initialized) return;
     desktopBootstrap.settleRestoration(state.connectionGeneration,

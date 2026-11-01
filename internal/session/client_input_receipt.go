@@ -32,8 +32,8 @@ type ClientInputScope struct {
 }
 
 func (scope ClientInputScope) validate(requireSession bool) error {
-	if scope.Binding.Validate() != nil || !scope.Binding.IsUser() || scope.Binding.ProductDomain != "personal" || (requireSession && scope.SessionID == "") {
-		return errors.New("client receipts require a Personal host binding and target session")
+	if scope.Binding.Validate() != nil || !scope.Binding.IsUser() || (requireSession && scope.SessionID == "") {
+		return errors.New("client receipts require a user host binding and target session")
 	}
 	return nil
 }

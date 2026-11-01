@@ -127,6 +127,11 @@ func connectorChain(t *testing.T, scenario string) {
 			t.Fatal(e)
 		}
 		bindings := NewRuntimeBindings()
+		var broker *personalconnectors.Broker
+		bindings.SetPersonalAccountsFactory(func(runtimepkg.NativeProviderContext) (personalhost.Options, error) {
+			broker = personalconnectors.New(personalconnectors.Options{Store: store, HTTPClient: transport})
+			return personalhost.Options{Connectors: broker}, nil
+		})
 		credentials := runtimepkg.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(runtimepkg.NativeProviderContext) (pluginhost.Client, error) {
 			return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) { return store, nil }), nil
 		}}
@@ -135,10 +140,16 @@ func connectorChain(t *testing.T, scenario string) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		broker := personalconnectors.New(personalconnectors.Options{Store: store, HTTPClient: transport})
-		host, e := NewUserHost(rt, personalhost.Options{Connectors: broker}, WithRuntimeBindings(bindings))
+		host, e := NewUserHost(rt, personalhost.Options{}, WithRuntimeBindings(bindings))
 		if e != nil {
 			rt.Cleanup()
+			t.Fatal(e)
+		}
+		owner, e := clientauthority.AdmitDesktop(personalTestOwner(context.Background()), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = host.personal.Call(owner, "connectors.list", json.RawMessage(`{}`), ""); e != nil {
 			t.Fatal(e)
 		}
 		return rt, host, broker, model

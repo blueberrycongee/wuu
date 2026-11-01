@@ -6,7 +6,6 @@ import (
 	"errors"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
-	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"strconv"
 )
@@ -28,17 +27,13 @@ func (p *personalActions) connectorAuthority(ctx context.Context, actor personal
 	}
 	defer state.Close()
 	ctx = runtime.WithInvocationState(ctx, state)
-	selected, services, err := p.selectedTaskProvider(state)
+	selected, _, err := p.selectedTaskProvider(state)
 	if err != nil {
 		return "", err
 	}
-	doc, err := services.Settings.ReadState(ctx, selected.SubjectID, pluginsettings.ScopeUser)
-	if err != nil {
-		return "", err
-	}
-	return p.connectorAuthorityForState(ctx, state, selected, actor, doc)
+	return p.connectorAuthorityForState(ctx, state, selected, actor)
 }
-func (p *personalActions) connectorAuthorityForState(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, actor personalconnectors.Actor, doc pluginsettings.StateDocument) (string, error) {
+func (p *personalActions) connectorAuthorityForState(ctx context.Context, state *runtime.State, selected pluginpkg.Plugin, actor personalconnectors.Actor) (string, error) {
 	binding := p.server.rt.UserBinding()
 	if actor.ProductDomain != binding.ProductDomain || actor.UserSpaceID != binding.UserSpaceID || actor.SessionID == "" || p.server.rt.SafeMode {
 		return "", errors.New("Personal connector authority is unavailable")
@@ -75,7 +70,7 @@ func (p *personalActions) connectorAuthorityForState(ctx context.Context, state 
 		}
 		taskID = "conversation:" + actor.SessionID + ":" + strconv.Itoa(seq)
 	}
-	authority, err := p.authority(ctx, state, selected, actor.SessionID, taskID, doc)
+	authority, err := p.authority(ctx, state, selected, actor.SessionID, taskID)
 	if err != nil {
 		return "", err
 	}

@@ -2373,6 +2373,8 @@ Usage:
   wuu composition resolve [--file composition.json] [--profile NAME]
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]
+  wuu plugin hosts [PLUGIN_ID]
+  wuu plugin reload PLUGIN_ID
   wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
   wuu state check|export|import|migrate --dir DIRECTORY [flags]
   wuu state migrate-personal-review --user-space ID [--composition-profile NAME] [--apply --expect-source-digest SHA256]

@@ -32,6 +32,7 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
     // Only known non-runtime documentation is exempt. Markdown under prompts,
     // plugins, or fixtures can be executable input and is not ignored globally.
     if (/^(docs\/|docs-site\/|landing\/|\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$))/.test(path)
+      || /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(path)
       || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
     // Desktop transport and additive plugin fixtures consume these boundaries
     // without Electron. Unrelated renderer edits do not rerun provider checks.

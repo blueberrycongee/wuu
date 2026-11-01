@@ -157,3 +157,46 @@ it("keeps account access usable without advertising unsupported QR pairing", () 
   expect(container!.querySelector('code')).toBeNull();
   expect(paired).toBe(false);
 });
+
+describe("pairing link copy failure", () => {
+  it("does not report a clipboard failure after leaving the remote page", async () => {
+    const { ToastViewport, clearToasts } = await import("./Toast");
+    let reject!: (error: unknown) => void;
+    const pending = new Promise<void>((_, fail) => { reject = fail; });
+    const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => pending } });
+    mount(baseProps({ hostRunning: true, pairUri: "https://example.test/pair" }));
+    const toastContainer=document.createElement("div"); document.body.append(toastContainer);
+    const toastRoot=createRoot(toastContainer);
+    try {
+      act(() => toastRoot.render(<ToastViewport />));
+      await act(async () => container!.querySelector<HTMLButtonElement>('[data-testid="remote-copy-link"]')!.click());
+      unmount();
+      await act(async () => reject(new Error("old clipboard failure")));
+      expect(document.querySelector('[data-wuu-component="notice"]')).toBeNull();
+    } finally {
+      act(() => toastRoot.unmount()); toastContainer.remove(); clearToasts();
+      if (previous) Object.defineProperty(navigator, "clipboard", previous);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+  it("reports rejected clipboard writes without losing the pairing link", async () => {
+    const { ToastViewport, clearToasts } = await import("./Toast");
+    const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.reject(new Error("clipboard denied")) } });
+    mount(baseProps({ hostRunning: true, pairUri: "https://example.test/pair" }));
+    const toastContainer = document.createElement("div"); document.body.append(toastContainer);
+    const toastRoot = createRoot(toastContainer);
+    try {
+      act(() => toastRoot.render(<ToastViewport />));
+      act(() => container!.querySelector<HTMLButtonElement>('[data-testid="remote-copy-link"]')!.click());
+      await flushAsync();
+      expect(document.querySelector('[data-wuu-component="notice"]')?.textContent).toContain("clipboard denied");
+      expect(container!.querySelector('[data-testid="remote-pair-panel"]')).not.toBeNull();
+    } finally {
+      act(() => toastRoot.unmount()); toastContainer.remove(); clearToasts();
+      if (previous) Object.defineProperty(navigator, "clipboard", previous);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+});

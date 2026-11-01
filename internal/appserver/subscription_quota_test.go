@@ -231,9 +231,13 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 			}
 		}
 	}
-	list := func(id string, include bool) EngineListResult {
+	list := func(id string, include bool, options ...string) EngineListResult {
 		t.Helper()
-		if err := srv.handleEngineList(Request{ID: json.RawMessage(`"` + id + `"`), Params: json.RawMessage(fmt.Sprintf(`{"include_quota":%t}`, include))}); err != nil {
+		extra := ""
+		if len(options) > 0 {
+			extra = "," + strings.Join(options, ",")
+		}
+		if err := srv.handleEngineList(Request{ID: json.RawMessage(`"` + id + `"`), Params: json.RawMessage(fmt.Sprintf(`{"include_quota":%t%s}`, include, extra))}); err != nil {
 			t.Fatal(err)
 		}
 		response := responseByID(t, parseOutput(t, out.String()), id)
@@ -268,6 +272,16 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	for _, engine := range dashboard.Engines {
 		if engine.ID == "codex" && (engine.LatestRequest == nil || engine.LocalUsage == nil || engine.LocalUsage.InputTokens != 12) {
 			t.Fatalf("missing external engine history: %+v", engine)
+		}
+	}
+	documents.historyReads.Store(0)
+	quotaOnly := list("quota-only", true, `"include_activity":false`)
+	if documents.historyReads.Load() != 0 {
+		t.Fatal("quota-only request scanned historical activity")
+	}
+	for _, provider := range quotaOnly.SubscriptionProviders {
+		if provider.Quota == nil || provider.LatestRequest != nil || provider.LocalUsage != nil {
+			t.Fatalf("quota-only response: %+v", provider)
 		}
 	}
 	// A dashboard snapshot must not contaminate the cached config summaries.
@@ -320,10 +334,14 @@ func TestSubscriptionQuotaGoesOnlyToEnginesAdvertisingIt(t *testing.T) {
 // Fault injection stays at the selected document boundary used by history.
 type subscriptionHistoryDocuments struct {
 	persistence.Documents
-	fail bool
+	fail         bool
+	historyReads atomic.Int32
 }
 
 func (d *subscriptionHistoryDocuments) Read(ctx context.Context, query persistence.Query) (persistence.View, error) {
+	if query.Namespace == "wuu.sessions.v1" || query.Namespace == "wuu.session_activity.v1" {
+		d.historyReads.Add(1)
+	}
 	if d.fail {
 		return persistence.View{}, errors.New("history provider unavailable")
 	}

@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
 import { ApplicationShellOutlet } from "./ApplicationShell";
+import * as Toast from "../Toast";
 
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal-ui/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
@@ -27,6 +28,7 @@ it("rejects a host without selected-slot targeting before registering presentati
 
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
+  Toast.clearToasts(); vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -294,7 +296,8 @@ it("keeps ordinary conversations empty until a goal is created", async () => {
   expect(ui.button("结束目标").disabled).toBe(false);
 });
 
-it("keeps action failures diagnostic-only while allowing an explicit retry", async () => {
+it("notifies action failures outside the composer and allows each explicit retry", async () => {
+  const notices = vi.spyOn(Toast, "showToast");
   const failure = new Error("internal goal writer path /private/state failed");
   let rejected = true, goal = activeGoal;
   const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
@@ -306,12 +309,27 @@ it("keeps action failures diagnostic-only while allowing an explicit retry", asy
   });
   const ui = await mount(invoke);
   await ui.click("暂停");
-  expect(ui.container.querySelector('[role="alert"]')?.textContent?.trim()).toBeTruthy();
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(notices).toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));
+  const firstKey = notices.mock.calls.at(-1)![0].dedupeKey;
+  await ui.click("暂停");
+  expect(notices).toHaveBeenCalledTimes(2);
+  expect(notices.mock.calls.at(-1)![0].dedupeKey).not.toBe(firstKey);
   expect(ui.container.textContent).not.toContain(failure.message);
   expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime", cause: failure })]));
   expect(ui.button("暂停").disabled).toBe(false);
   rejected = false;
   await ui.click("暂停");
   expect(ui.container.querySelector('[role="alert"]')).toBeNull();
-  expect(invoke.mock.calls.filter(([request]) => request.method === "pause")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([request]) => request.method === "pause")).toHaveLength(3);
+});
+
+it("does not notify a late goal action after leaving its conversation", async () => {
+  const notices = vi.spyOn(Toast, "showToast");
+  let reject!: (reason: Error) => void;
+  const ui = await mount(async request => request.method === "pause" ? new Promise((_yes, no) => { reject = no; }) : { goal: activeGoal });
+  await ui.click("暂停");
+  await ui.render("thread-two");
+  await act(async () => reject(new Error("late private failure")));
+  expect(notices).not.toHaveBeenCalled();
 });

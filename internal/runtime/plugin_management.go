@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/plugincontrol"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -36,6 +37,7 @@ type pluginManagementResult struct {
 	Plugins    []pluginManagementStatus `json:"plugins"`
 	Diagnostic string                   `json:"diagnostic,omitempty"`
 	Adoption   string                   `json:"adoption"`
+	Hosts      []plugincontrol.Response `json:"hosts"`
 }
 type pluginManagementCommand func(context.Context, string, string, []string) (string, error)
 
@@ -43,7 +45,7 @@ type pluginManagementCommand func(context.Context, string, string, []string) (st
 // latest published generation. The tool authorizes execution before calling it.
 func (s *Session) pluginManager(generation *PluginGeneration, run pluginManagementCommand) tools.PluginManager {
 	return func(ctx context.Context, req tools.PluginManagementRequest) (any, error) {
-		result := pluginManagementResult{Action: req.Action, Plugins: []pluginManagementStatus{}, Adoption: "published changes can be adopted at an idle turn boundary after host preparation and activation; this turn keeps its existing tools"}
+		result := pluginManagementResult{Action: req.Action, Plugins: []pluginManagementStatus{}, Adoption: "published changes can be adopted at an idle turn boundary after host preparation and activation; this turn keeps its existing tools; inspect hosts for each actual runtime outcome"}
 		configPath := filepath.Join(s.WuuHome, "config.json")
 		settings, published, err := s.pluginManagementInventory(req.CWD)
 		if err != nil {
@@ -57,6 +59,8 @@ func (s *Session) pluginManager(generation *PluginGeneration, run pluginManageme
 			switch req.Action {
 			case "apply":
 				args = []string{"plugin", "dev", "--watch=false", req.Path}
+			case "reload":
+				args = []string{"plugin", "reload", "--json", req.ID}
 			case "enable", "disable":
 				if s.ConfigPath != "" && filepath.Clean(s.ConfigPath) != filepath.Clean(configPath) {
 					return nil, fmt.Errorf("plugin policy changes require the canonical user config; this runtime uses a different config")
@@ -91,6 +95,7 @@ func (s *Session) pluginManager(generation *PluginGeneration, run pluginManageme
 			}
 			status := value.(pluginManagementResult)
 			result.Plugins = status.Plugins
+			result.Hosts = status.Hosts
 			if req.Action == "apply" {
 				filtered := result.Plugins[:0]
 				for _, record := range result.Plugins {
@@ -140,6 +145,10 @@ func (s *Session) pluginManager(generation *PluginGeneration, run pluginManageme
 				record.AdoptionPending = true
 			}
 			result.Plugins = append(result.Plugins, record)
+		}
+		result.Hosts, err = plugincontrol.Inspect(ctx, s.WuuHome, req.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read live plugin host status: %w", err)
 		}
 		return result, nil
 	}

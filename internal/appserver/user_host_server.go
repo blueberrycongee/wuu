@@ -15,7 +15,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
@@ -34,7 +33,6 @@ var ErrUserHostClientOverflow = errors.New("user host client fell behind; reconn
 // Closing a connection never closes this host or replaces its session router.
 // Headless hosts do not negotiate client computer/browser reverse-RPC tools.
 type UserHost struct {
-	actions             *personalActions
 	personal            *personalhost.Host
 	unbindPersonal      func()
 	runtime             *runtime.Session
@@ -94,6 +92,11 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		h.server.Close()
 		return nil, err
 	}
+	if h.server.personalAccountsRouted && (personalOptions.Calendar != nil || personalOptions.Connectors != nil) {
+		h.attentionCancel()
+		h.server.Close()
+		return nil, errors.New("generation-owned Personal accounts require RuntimeBindings.SetPersonalAccountsFactory")
+	}
 	if h.server.bootOwner && strings.TrimSpace(rt.WuuHome) != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		h.server.storageMaintenanceCancel = cancel
@@ -103,25 +106,40 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		}
 	}
 
+	if h.server.personalEffects == nil {
+		h.server.personalEffects = NewPersonalEffectBridge()
+	}
+	if h.server.personalCoordination == nil {
+		h.server.personalCoordination = newPersonalCoordinatorBridge()
+	}
 	if rt.UserBinding().Domain() == "personal" {
-		var err error
-		h.actions, err = newPersonalActions(h.server)
+		state, err := rt.RetainState()
 		if err != nil {
 			h.attentionCancel()
 			h.server.Close()
 			return nil, err
 		}
-		h.server.personalActions = h.actions
-		if broker, ok := personalOptions.Connectors.(*personalconnectors.Broker); ok {
-			broker.SetAuthorization(h.actions.connectorAuthority)
-			broker.SetAuthorizationBoundary(h.actions.withConnectorAuthorization)
+		selected := h.server.personalCoordinationAvailable(state)
+		state.Close()
+		if selected {
+			if _, err = h.server.invokePersonalCoordination(context.Background(), "initialize", personalCoordinationRequest{}, nil); err != nil {
+				h.attentionCancel()
+				_ = h.server.personalCoordination.Close()
+				h.server.Close()
+				return nil, err
+			}
 		}
-		personalOptions.Review = h.actions.Call
-		personalOptions.Memory = h.actions.callMemory
+		personalOptions.Review = h.server.callPersonalCoordination
+		personalOptions.Memory = h.server.callPersonalCoordination
 		if rt.Toolkit != nil {
-			rt.Toolkit.SetFileActionGate(h.actions.gate)
+			rt.Toolkit.SetFileActionGate(h.server.personalFileGate)
 		}
 	}
+
+	if h.server.personalAccountsRouted {
+		personalOptions.Accounts = h.server.callPersonalAccounts
+	}
+
 	additionalAuthorization := personalOptions.Authorize
 	personalOptions.Authorize = func(ctx context.Context, operation, verifiedSession string) error {
 		if err := h.authorizePersonalOperation(ctx, operation, verifiedSession); err != nil {
@@ -135,9 +153,6 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 	h.personal = personalhost.New(rt.UserBinding(), personalOptions)
 	if rt.PluginSessionRouter != nil {
 		h.unbindPersonal = rt.PluginSessionRouter.BindPersonalHost(h.personal.Call)
-	}
-	if h.actions != nil {
-		h.actions.start()
 	}
 	go h.runAttentionPolicy()
 	return h, nil
@@ -169,9 +184,8 @@ func (h *UserHost) Close() error {
 		h.unbindPersonal()
 	}
 	h.closeErr = h.personal.Close()
-	if h.actions != nil {
-		h.closeErr = errors.Join(h.closeErr, h.actions.close())
-	}
+	h.server.personalEffects.Close()
+	h.closeErr = errors.Join(h.closeErr, h.server.personalCoordination.Close())
 	h.server.Close()
 	<-h.attentionDone
 	close(h.closeDone)
@@ -389,6 +403,20 @@ func (c *userHostConnection) enqueueAuthorized(data []byte, guard func() error) 
 // implements io.Closer, so a stalled reader cannot retain a revoked device.
 // Device registrations remain bound to this transport's registrar.
 func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, registrar PushRegistrar) error {
+	return h.serve(ctx, in, out, registrar, false)
+}
+
+// ServeTrustedLocal enables only registered-session transport on an embedding's
+// private local Desktop pipe. Authenticated device/network callers use Serve.
+func (h *UserHost) ServeTrustedLocal(ctx context.Context, in io.Reader, out io.Writer) error {
+	caller, ok := principal.FromContext(ctx)
+	if !ok || !caller.IsOwner() || caller.Identity() != principal.LocalOwner().Identity() {
+		return errors.New("trusted local user host requires its local installation principal")
+	}
+	return h.serve(ctx, in, out, nil, true)
+}
+
+func (h *UserHost) serve(ctx context.Context, in io.Reader, out io.Writer, registrar PushRegistrar, trustedLocal bool) error {
 	if ctx == nil || in == nil || out == nil {
 		return errors.New("user host connection requires context, input and output")
 	}
@@ -416,6 +444,20 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 	c := &userHostConnection{id: id, ctx: ctx, cancel: cancel, output: make(chan userHostOutput, 128)}
 	h.connections[id] = c
 	h.mu.Unlock()
+	// Reverse transport belongs to this connection, never the shared user host.
+	// The facade has no request dispatcher or session router.
+	var transport *Server
+	if trustedLocal && h.server.desktopSessionTransport != nil {
+		transport = &Server{out: userHostConnectionWriter{c}, access: connectionAccess{principal: caller, policy: h.server.access.policy}, clientCalls: make(map[string]chan clientResponse)}
+		transport.trustedTransport.enabled = true
+		h.server.desktopSessionTransport.bind(transport)
+		defer func() {
+			transport.closed.Store(true)
+			transport.failPendingClientCalls()
+			transport.desktopSessionTransport.unbind(transport)
+		}()
+	}
+
 	stopInput := context.AfterFunc(ctx, func() {
 		if closer, ok := in.(io.Closer); ok {
 			_ = closer.Close()
@@ -506,6 +548,10 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 		if err := json.Unmarshal([]byte(raw), &req); err != nil {
 			return fmt.Errorf("invalid user host request: %w", err)
 		}
+		if transport != nil && len(req.ID) > 0 && req.Method == "" {
+			transport.deliverClientResponse([]byte(raw))
+			continue
+		}
 		if len(req.ID) == 0 || string(req.ID) == "null" || req.Method == "" {
 			return errors.New("user host requires an identified client request; reverse RPC is unavailable")
 		}
@@ -579,6 +625,15 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 			var params InitializeParams
 			if err := decodeParams(req.Params, &params); err != nil {
 				return err
+			}
+			if transport != nil {
+				var methods []string
+				for _, method := range params.Capabilities.ReverseRPC.Methods {
+					if method == desktopSessionDispatch || method == desktopSessionTargets || method == desktopSessionRelease {
+						methods = append(methods, method)
+					}
+				}
+				transport.setClientMethods(methods)
 			}
 			params.Capabilities.ReverseRPC.Methods = nil
 			// All user-host consumers use bounded content references. No connection

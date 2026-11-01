@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -161,6 +163,9 @@ func emit(v any) {
 
 func main() {
 	provider := flag.String("provider", "", "configured provider identifier (required)")
+	model := flag.String("model", "", "process-local model override; does not change saved configuration")
+	loopWorkload := flag.String("loop-workload", "", "short, long, tools or many-tools agent-loop evaluation")
+	reuseCodex := flag.Bool("reuse-codex-credentials", false, "explicitly select native read-only Codex CLI credentials for -loop-workload")
 	transport := flag.String("transport", "sse", "sse, auto, websocket or websocket-cached")
 	records := flag.Int("records", 0, "number of varied synthetic history records")
 	repeats := flag.Int("repeats", 2, "independent conversations")
@@ -208,6 +213,9 @@ func main() {
 		panic("provider unavailable")
 	}
 	pc.StreamTransport = *transport
+	if *model != "" {
+		pc.Model = *model
+	}
 	build := map[string]string{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "source_revision": sourceRevision, "source_diff_sha256": sourceDiff}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
@@ -215,6 +223,25 @@ func main() {
 				build[setting.Key] = setting.Value
 			}
 		}
+	}
+	if *loopWorkload != "" {
+		var bindings []providerfactory.Bindings
+		if *reuseCodex {
+			backend, err := credentialstore.NewDesktopStore()
+			if err != nil {
+				panic("native credential backend unavailable")
+			}
+			selected, err := authstorage.NewNativeStore(backend, root, home)
+			if err != nil {
+				panic("native credential source unavailable")
+			}
+			pc.ReuseCodexCredentials = true
+			bindings = append(bindings, providerfactory.Bindings{Credentials: selected})
+		}
+		if !runLoopWorkload(pc, *provider, *label, *loopWorkload, *repeats, *records, *timeout, build, bindings...) {
+			os.Exit(1)
+		}
+		return
 	}
 	if *shellWorkload {
 		if !runShellWorkload(pc, *provider, *label, *repeats, *timeout, *shellDelay, build) {

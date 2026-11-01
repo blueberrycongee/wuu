@@ -51,21 +51,29 @@ type Scope struct {
 	Revision      int64            `json:"revision"`
 }
 
+// SessionRouteBinding is observed business intent, not a target access grant.
+type SessionRouteBinding struct {
+	Locator    pluginhost.SessionLocatorV1 `json:"locator"`
+	Operations []string                    `json:"operations"`
+}
+
 // Lineage is returned by the selected task authority and carried only in
 // host-attested invocation metadata, never accepted from issuance request JSON.
+// The runtime binds Route to the context digest and admitted resources.
 type Lineage struct {
-	Authority      AuthorityBinding `json:"authority"`
-	ParentTaskID   string           `json:"parent_task_id"`
-	ParentRevision int64            `json:"parent_revision"`
-	TaskID         string           `json:"task_id"`
-	RunID          string           `json:"run_id"`
-	SessionID      string           `json:"session_id"`
-	Revision       int64            `json:"revision"`
-	ContextDigest  string           `json:"context_digest"`
-	ModelProvider  string           `json:"model_provider"`
-	Model          string           `json:"model"`
-	PermissionMode string           `json:"permission_mode"`
-	Depth          int              `json:"depth"`
+	Route          *SessionRouteBinding `json:"route,omitempty"`
+	Authority      AuthorityBinding     `json:"authority"`
+	ParentTaskID   string               `json:"parent_task_id"`
+	ParentRevision int64                `json:"parent_revision"`
+	TaskID         string               `json:"task_id"`
+	RunID          string               `json:"run_id"`
+	SessionID      string               `json:"session_id"`
+	Revision       int64                `json:"revision"`
+	ContextDigest  string               `json:"context_digest"`
+	ModelProvider  string               `json:"model_provider"`
+	Model          string               `json:"model"`
+	PermissionMode string               `json:"permission_mode"`
+	Depth          int                  `json:"depth"`
 }
 type PolicyInfo struct {
 	DefaultLifetimeSeconds int64    `json:"default_lifetime_seconds"`

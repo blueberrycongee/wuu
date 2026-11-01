@@ -1,7 +1,9 @@
 import { ipcRenderer } from "electron";
+import { startNativePreview } from "../nativePreview";
 
-// This sandbox preload transfers only the private preview port. It exposes no
-// desktop bridge, filesystem access, navigation, or input capabilities.
+// The decoder ships with this sandbox preload, independent of the renderer
+// dev server. Its private port exposes no desktop bridge or input capability.
+// Main transfers the port only after the local canvas document has loaded.
 ipcRenderer.once("wuu-native-preview-port", (event) => {
-  window.postMessage("wuu-native-preview-port", "*", event.ports);
+  startNativePreview(event.ports[0]);
 });

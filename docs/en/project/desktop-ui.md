@@ -87,12 +87,16 @@ Explicitly presented image artifacts, message attachments, and Markdown images
 remain directly visible. This distinction also applies to PTC and background
 tool results.
 
-Message and inline tool images reserve a responsive 4:3 preview area before
-loading. The complete image fits inside without cropping or upscaling; portrait
-and panoramic images may leave space around them. Loading failures keep the same
-area, so switching conversations does not shift text when an image finishes.
-Opening a preview still shows the original image. Workspace document images keep
-their natural proportions.
+Standalone message and inline tool images share a wider, left-aligned preview,
+with rounded edges on the image itself. Horizontal galleries use a shared row
+height and proportionate image widths; tiled galleries and Markdown tables keep
+regular 4:3 cells. Images remain complete, without cropping or upscaling.
+
+Preview rows reserve their height before loading and retain it on failure, so
+switching conversations does not shift text when an image finishes. Short or
+panoramic images may leave space below them. Gallery widths can settle as images
+load, without changing the row height. Opening a preview still shows the original
+image. Workspace document images keep their natural proportions.
 
 Run `npm --prefix desktop run test:e2e:image-layout` to check cold loads, failed
 loads, cached session switches, and bottom following in Electron. It saves

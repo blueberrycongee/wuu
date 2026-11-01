@@ -15,9 +15,16 @@ import (
 func TestStateInspectionMaintenanceRequiresOwnerAndPolicy(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
 	out := &lockedBuffer{}
-	server := &Server{rt: f.rt, personalActions: f.host.actions, out: out, access: localOwnerTestAccess()}
+	server := f.host.server
+	server.out = out
+	server.access = localOwnerTestAccess()
 	allowed := true
-	server.access.policy = access.PolicyFunc(func(context.Context, access.Request) (access.Decision, error) {
+	maintenanceGated := false
+	gate := f.host.actionsForTest(t).effectGate
+	server.access.policy = access.PolicyFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
+		if request.Action == MethodStateInspectionsReconcile && len(gate) == 1 {
+			maintenanceGated = true
+		}
 		return access.Decision{Allow: allowed}, nil
 	})
 	call := func(ctx context.Context, id, method, params string) map[string]any {
@@ -56,6 +63,9 @@ func TestStateInspectionMaintenanceRequiresOwnerAndPolicy(t *testing.T) {
 	row = call(owner, "reconcile", MethodStateInspectionsReconcile, `{"target":"settings","id":"orphaned-fixture-claim","expected_owner":"`+runtime.StateServicesConsumer+`","subject":"plugin:bundled:personal","outcome":"not-dispatched","reason":"stopped test writer; receipt verified before dispatch","writers_stopped":true}`)
 	if row["error"] != nil || row["result"] == nil {
 		t.Fatalf("explicit owner reconciliation failed: %+v", row)
+	}
+	if !maintenanceGated {
+		t.Fatal("maintenance bypassed selected coordinator effect gate")
 	}
 	result := remarshal[struct {
 		Manual bool                            `json:"manual_reconciliation_only"`

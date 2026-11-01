@@ -1,4 +1,4 @@
-import { Tooltip } from "./Tooltip";
+import type { UIRegisterFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
 import { X } from "./WuuIcons";
 import type {
   InputFile,
@@ -23,6 +23,7 @@ import { useI18n } from "./i18n";
 export function ConversationSplitPane({
   pane,
   ownerTabId,
+  registerComposerFocusTarget,
   thread,
   active,
   activeContextCwd,
@@ -47,6 +48,7 @@ export function ConversationSplitPane({
 }: {
   pane: ConversationPaneID;
   ownerTabId?: string;
+  registerComposerFocusTarget?: UIRegisterFocusTargetV1;
   thread: Thread;
   active: boolean;
   activeContextCwd?: string;
@@ -119,14 +121,14 @@ export function ConversationSplitPane({
       onPointerDown={onActivate}
     >
       {pane === "secondary" && (
-        <Tooltip asChild content={t("split.closeRight")}><button
+        <button
           className="icon-button conversation-split-close"
           type="button"
           aria-label={t("split.closeRight")}
           onClick={onClose}
         >
           <X className="icon" />
-        </button></Tooltip>
+        </button>
       )}
       <div
         ref={onBodyRef}
@@ -197,7 +199,7 @@ export function ConversationSplitPane({
         </div>
       </div>
       {!paneReadOnly && ownerTabId && (
-        <slots.Slot name={`${slotOwner}/application.composer`} context={{ variant: "dock", pane, ownerTabId }} />
+        <slots.Slot name={`${slotOwner}/application.composer`} context={{ variant: "dock", pane, ownerTabId, registerFocusTarget: registerComposerFocusTarget }} />
       )}
     </section>
   );

@@ -731,7 +731,7 @@ button.conversation-reaction-badge { cursor:pointer; }
 .bubble-message-body[data-reactable] > .plugin-message-reply { top:calc(50% + 4px); }
 .plugin-conversation-message:hover .conversation-reaction-trigger,.plugin-conversation-message:focus-within .conversation-reaction-trigger { opacity:1;pointer-events:auto; }
 .conversation-reaction-trigger:hover { background:var(--surface-2);color:var(--ink); }
-.conversation-reaction-picker { position:fixed;z-index:1000;display:flex;gap:2px;max-width:calc(100vw - 16px);padding:6px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);box-shadow:0 4px 22px rgb(0 0 0 / .14);overflow-x:auto; }
+.conversation-reaction-picker { position:fixed;z-index:1000;display:flex;gap:2px;max-width:calc(100vw - 16px);padding:6px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);box-shadow:var(--shadow-pop);overflow-x:auto; }
 .conversation-reaction-picker button { display:flex;align-items:center;justify-content:center;flex:0 0 38px;width:38px;height:38px;padding:0;border:0;border-radius:50%;background:transparent;font-size:25px;line-height:1;cursor:pointer; }
 .conversation-reaction-picker button:hover,.conversation-reaction-picker button[aria-pressed="true"] { background:var(--surface-2); }
 .conversation-reaction-picker button:focus-visible,.conversation-reaction-trigger:focus-visible,.conversation-reaction-badge:focus-visible { outline:2px solid var(--focus-ring,var(--ink));outline-offset:2px; }
@@ -745,6 +745,7 @@ button.conversation-reaction-badge { cursor:pointer; }
 .plugin-view-attachment-tabs { display: flex; flex: 1; overflow-x: auto; min-width: 0; }
 .plugin-view-attachment-tab { display: flex; align-items: center; min-width: 100px; max-width: 240px; }
 .plugin-view-attachment-tab > [role="tab"] { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink-muted); padding: var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
+.plugin-view-attachment-tab-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-view-attachment-tab > [aria-selected="true"] { color: var(--ink); background: var(--selection-surface); }
 .plugin-view-attachment-content { flex: 1; min-height: 0; overflow: auto; }
 .plugin-view-attachment-content > .conversation-attachment-preview { height: 100%; }

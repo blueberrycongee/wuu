@@ -76,9 +76,9 @@ function PermissionGuide(): JSX.Element | null {
           <span>{t("permissions.dragHint", { app: config.appName, permission: t(`permissions.${config.permission}`) })}</span>
         </p>
         <div className="permission-guide-controls">
-          <Tooltip asChild content={t("permissions.closeGuide")}><button className="settings-button settings-button-ghost settings-icon-button permission-guide-back" type="button"
+          <button className="settings-button settings-button-ghost settings-icon-button permission-guide-back" type="button"
             aria-label={t("permissions.closeGuide")} tabIndex={showingRow ? -1 : 0}
-            onClick={() => window.wuuPermissionGuide.close()}><ChevronLeft className="icon" aria-hidden="true" /></button></Tooltip>
+            onClick={() => window.wuuPermissionGuide.close()}><ChevronLeft className="icon" aria-hidden="true" /></button>
           <Tooltip asChild content={t("permissions.dragFallback")}><button aria-description={t("permissions.dragFallback")} className="permission-guide-app" type="button" draggable tabIndex={showingRow ? -1 : 0}
             onDragStart={event => { event.preventDefault(); setError(false); window.wuuPermissionGuide.drag(); }}
             onClick={() => window.wuuPermissionGuide.reveal()} aria-describedby="permission-guide-help permission-guide-fallback">
