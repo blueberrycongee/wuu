@@ -18,7 +18,7 @@ These conversations remain in their workspace lists too. Pinned and archived con
 
 ## Dictate a message
 
-On macOS, click the microphone in the desktop composer to start dictation. Allow microphone and Speech Recognition access on first use. The waveform follows microphone volume. Stop waits for the final transcription and appends it to your existing draft. Clicking Send during recording finishes transcription first, then submits through the conversation's normal send flow.
+On macOS, click the microphone in any desktop composer, including Coding and Personal agent conversations, to start dictation. Allow microphone and Speech Recognition access on first use. The waveform follows microphone volume. Stop waits for the final transcription and appends it to your existing draft. Clicking Send during recording finishes transcription first, then submits through the conversation's normal send flow.
 
 Cancel or switch conversations to end dictation and keep the original draft. Recognition uses the interface language and requires on-device speech recognition support for that language on your Mac; unavailable recognition is reported in the composer.
 

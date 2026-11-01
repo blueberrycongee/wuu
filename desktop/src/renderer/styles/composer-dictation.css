@@ -1,7 +1,12 @@
 .composer-dictation-button { color: var(--ink-muted); }
-.composer-editor.is-dictating { align-items: center; }
+.composer-editor.is-dictating,
+.composer-bar.is-dictating { align-items: center; }
 .composer-editor.is-dictating > textarea,
-.composer-editor.is-dictating > .composer-bar-left { display: none; }
+.composer-editor.is-dictating > .composer-bar-left,
+.composer-bar.is-dictating > textarea,
+.composer-bar.is-dictating > .composer-bar-left { display: none; }
+.composer-bar.is-dictating > .composer-dictation-recording { flex: 1 1 auto; }
+.composer-bar.is-dictating > .composer-bar-right { width: auto; flex: 0 0 auto; }
 .composer-dictation-recording {
   grid-column: 1 / 3;
   display: flex;
