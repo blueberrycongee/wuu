@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, WuuDesktopApi } from "../../shared/protocol";
 import { DesktopPluginRuntime, desktopPluginHost } from "./DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
-import { ApplicationShellOutlet } from "./ApplicationShell";
+import { ApplicationShellOutlet, createUIComposition } from "./ApplicationShell";
 
 const originalWuu = window.wuu;
 
@@ -16,6 +16,56 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
+  it("keeps a toolbar contribution usable when its application provider changes", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    const slots = createUIComposition(host);
+    let version = 0;
+    let entered!: () => void, release!: () => void;
+    const entering = new Promise<void>(resolve => { entered = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    const runtime = new DesktopPluginRuntime(host, async id => id === "user:business" ? { activate(api: PluginGenerationApi) {
+      const current = ++version;
+      api.registerApplicationProvider({ id: "ui.application", prepare: () => ({
+        async activate() { if (current === 2) { entered(); await resume; } }, deactivate() { return undefined; }, dispose() {},
+        createScope(signal: AbortSignal) {
+          const snapshot = { tabs: { activeTabId: `tab-${current}` } };
+          const presentation = { threadId: `thread-${current}` };
+          return {
+            getSnapshot() { signal.throwIfAborted(); return snapshot; },
+            subscribe() { signal.throwIfAborted(); return () => {}; },
+            composerPresentation: {
+              getSnapshot(owner: string) { signal.throwIfAborted(); if (owner !== snapshot.tabs.activeTabId) throw new Error("wrong owner"); return presentation; },
+              subscribe() { signal.throwIfAborted(); return () => {}; },
+            },
+          } as unknown as import("../../../../packages/plugin-sdk/src/ui").ApplicationServiceV1;
+        },
+      }) });
+    } } : { activate(api: PluginGenerationApi) {
+      api.registerUIContribution({ id: "speed", target: "fixture/rail", render({ application }) {
+        const owner = React.useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs.activeTabId);
+        const presentation = application.composerPresentation;
+        const view = React.useSyncExternalStore(presentation.subscribe, () => presentation.getSnapshot(owner));
+        return React.createElement("span", null, view.threadId);
+      } });
+    } });
+    const provider = { ...dependencyPlugin("business"), graph_generation: "one" };
+    const plugin = { ...dependencyPlugin("speed", ["business"]), graph_generation: "one" };
+    await host.activateGeneration({ pluginId: "fixture", generation: "one", register: api => { api.registerUISlot({ id: "rail", cardinality: "many" }); } });
+    await host.selectApplicationBinding({ pluginId: provider.id, generation: provider.fingerprint!, id: "ui.application" });
+    expect(await runtime.sync([provider, plugin])).toEqual([]);
+    const element = document.createElement("div"), root = createRoot(element);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await act(async () => root.render(React.createElement(slots.Slot, { name: "fixture/rail" })));
+      expect(element.textContent).toBe("thread-1");
+      let switching!: ReturnType<typeof runtime.sync>;
+      await act(async () => { switching = runtime.sync([{ ...provider, graph_generation: "two" }, { ...plugin, graph_generation: "two" }]); await entering; });
+      await act(async () => { release(); expect(await switching).toEqual([]); });
+      expect(element.textContent).toBe("thread-2");
+      expect(host.getGenerationDiagnostics(plugin.id, plugin.fingerprint!)).toEqual([]);
+    } finally { release(); act(() => root.unmount()); await runtime.shutdown(); host.unload("fixture"); errors.mockRestore(); }
+  });
   it("preserves message relations in the authenticated renderer input receipt", async () => {
     const request = vi.fn().mockResolvedValue({ result: { state: "accepted" } });
     window.wuu = { ...originalWuu, requestPluginRuntime: request, reportPluginDesktopActivation: vi.fn(async () => {}), cancelPluginRuntime: vi.fn().mockResolvedValue({}) };
