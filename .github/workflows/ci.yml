@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.select.outputs.go }}
+      messaging: ${{ steps.select.outputs.messaging }}
       architecture: ${{ steps.select.outputs.architecture }}
       desktop: ${{ steps.select.outputs.desktop }}
       desktop_suites: ${{ steps.select.outputs.desktop_suites }}
@@ -249,6 +250,25 @@ jobs:
       - name: Guard generation admission under race detector
         timeout-minutes: 10
         run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
+
+      - name: Guard Personal messaging journeys under race detector
+        if: needs.changes.outputs.messaging == 'true'
+        timeout-minutes: 5
+        env:
+          WUU_MESSAGING_E2E: "1"
+        run: |
+          mkdir -p "${{ runner.temp }}/wuu-messaging-evidence"
+          set -o pipefail
+          go test -race -p 2 -count=1 -v -run '^(TestPersonalChannelEnrolledTaskQuestionResumeE2E|TestPersonalMessagingSDKCompositionE2E)$' ./internal/appserver ./internal/sdk 2>&1 | tee "${{ runner.temp }}/wuu-messaging-evidence/run.log"
+
+      - name: Upload Personal messaging evidence
+        if: always() && needs.changes.outputs.messaging == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-messaging-evidence
+          path: ${{ runner.temp }}/wuu-messaging-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Guard shared authority and model receipt lifecycle under race detector
         timeout-minutes: 10

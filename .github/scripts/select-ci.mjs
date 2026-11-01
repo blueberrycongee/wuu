@@ -6,6 +6,7 @@ const desktopSuites = new Set();
 let fullDesktop = false;
 let relatedEligible = true;
 let desktopArchitecture = false;
+let messaging = false;
 const relatedSources = [];
 const selected = { go: false, desktop: false, clients: false, native: false };
 const all = () => {
@@ -21,6 +22,7 @@ if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) {
 // Manual runs cover everything. A newly created branch has no before commit.
 if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
   all();
+  messaging = true;
 } else {
   if (!process.env.CI_BASE || !process.env.CI_HEAD) throw new Error('Missing CI comparison refs');
   // Include both sides of renames and deletions, without API pagination limits.
@@ -34,6 +36,9 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
     if (/^(docs\/|docs-site\/|landing\/|\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$))/.test(path)
       || /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(path)
       || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
+    // The real messaging journeys exercise transport, selected authority and
+    // Personal execution. Unrelated CLI/renderer edits do not rerun them.
+    if (/^(internal\/(personal[^/]*|appserver|runtime|runtimeconfig|execution[^/]*|principal|clientauthority|sdk|session|plugin[^/]*|composition|config|credentialstore|userspace|persistence|agent[^/]*|subagent|providers|model[^/]*)\/|internal\/plugin\/|plugins\/personal\/|packages\/plugin-sdk\/|go\.(mod|sum)$|scripts\/build-bundled-plugins\.mjs$|\.github\/(scripts\/select-ci[^/]*|workflows\/ci\.yml)$)/.test(path)) messaging = true;
     // Desktop transport and additive plugin fixtures consume these boundaries
     // without Electron. Unrelated renderer edits do not rerun provider checks.
     if (/^desktop\/(src\/(main|shared|renderer\/plugins)\/|src\/renderer\/test\/setup\.ts$|scripts\/trusted-desktop-|(?:package(?:-lock)?\.json|vitest\.config\.ts)$)/.test(path)) desktopArchitecture = true;
@@ -78,6 +83,7 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
 
 // Main pushes only check native packaging. PRs own validation and E2E suites.
 const outputs = {
+  messaging: event !== 'push' && messaging,
   go: event !== 'push' && selected.go,
   architecture: event !== 'push' && (selected.go || desktopArchitecture),
   desktop: event !== 'push' && selected.desktop,
