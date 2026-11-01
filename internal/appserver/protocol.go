@@ -785,7 +785,8 @@ type ExtensionCommandDescriptor struct {
 }
 
 type ExtensionDesktopDescriptor struct {
-	Entry string `json:"entry"`
+	Entry            string                             `json:"entry"`
+	ContentRenderers []pluginpkg.DesktopContentRenderer `json:"content_renderers,omitempty"`
 }
 
 type ExtensionThemeDescriptor struct {
@@ -1034,8 +1035,9 @@ type PluginPackageRemoveResult struct {
 }
 
 type PluginDesktopModuleReadParams struct {
-	ID          string `json:"id"`
-	Fingerprint string `json:"fingerprint"`
+	ID              string `json:"id"`
+	Fingerprint     string `json:"fingerprint"`
+	GraphGeneration string `json:"graph_generation,omitempty"`
 }
 
 type PluginDesktopModuleReadResult struct {

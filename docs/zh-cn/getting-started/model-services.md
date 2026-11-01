@@ -229,9 +229,10 @@ Peers 插件的只读 `list_peers` 工具支持在 `run_code` 内发现并筛选
 `description` 是展示元数据，省略它不会阻止执行。
 入口说明在固定目录预算内提供常用文件、搜索和命令工具的完整定义，其他绑定提供预览。
 可直接使用已列出的参数定义；只有预览的绑定再查询精确参数。`await searchTools(query, {limit: 8, offset: 0})`
-返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
+返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看完整目录。
 `await describeTool(name)` 返回完整说明与精确的 `input_schema`。
-使用 `await tools[name](args)` 调用；方括号保留带标点的原名，不创建别名或碰撞。
+标记 `direct_only: true` 的结果是顶层工具，必须在 `run_code` 外直接调用，没有 `tools.*` 绑定。
+其余结果使用 `await tools[name](args)` 调用；方括号保留带标点的原名，不创建别名或碰撞。
 
 结果保留 `content`、可选的 `structured_content`，以及供模型紧凑阅读的
 `model_text`。可捕获 `ToolCallError`，读取 `toolName`、`message`，以及已完成

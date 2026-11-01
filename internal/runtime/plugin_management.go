@@ -51,6 +51,10 @@ func (s *Session) pluginManager(generation *PluginGeneration, run pluginManageme
 		if err != nil {
 			return nil, err
 		}
+		cfg, _, err := s.LoadEffectiveConfig()
+		if err != nil {
+			return nil, err
+		}
 		if req.Action != "status" {
 			if s.SafeMode {
 				return nil, fmt.Errorf("plugin mutation is unavailable in safe mode")
@@ -112,7 +116,7 @@ func (s *Session) pluginManager(generation *PluginGeneration, run pluginManageme
 			if req.ID != "" && item.ID != req.ID {
 				continue
 			}
-			record := pluginManagementStatus{ID: item.ID, SubjectID: item.SubjectID, Source: item.Source, PublishedFingerprint: item.Fingerprint, DesiredEnabled: settings.IsEnabled(item.SubjectID, item.EnabledByDefault()), Trusted: pluginManagementTrusted(settings, item), RuntimeState: "inactive"}
+			record := pluginManagementStatus{ID: item.ID, SubjectID: item.SubjectID, Source: item.Source, PublishedFingerprint: item.Fingerprint, DesiredEnabled: settings.IsEnabled(item.SubjectID, PluginEnabledByDefault(cfg, item)), Trusted: pluginManagementTrusted(settings, item), RuntimeState: "inactive"}
 			revoked := false
 			if generation != nil {
 				for _, active := range generation.active {

@@ -589,7 +589,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Extensions == nil || !pluginManagementTrusted(*cfg.Extensions, candidate) || (cfg.Extensions.IsEnabled(candidate.SubjectID, candidate.EnabledByDefault()) && !containsPluginGeneration(generation.active, id, fingerprint)) {
+	if cfg.Extensions == nil || !pluginManagementTrusted(*cfg.Extensions, candidate) || (cfg.Extensions.IsEnabled(candidate.SubjectID, PluginEnabledByDefault(cfg, candidate)) && !containsPluginGeneration(generation.active, id, fingerprint)) {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
 		return nil, fmt.Errorf("plugin %q candidate is not approved for its exact fingerprint", id)

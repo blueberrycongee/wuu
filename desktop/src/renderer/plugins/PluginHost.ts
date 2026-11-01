@@ -1205,6 +1205,7 @@ export class PluginHost {
     const application = this.createApplicationService(state);
     const scopedConversation = <Props extends object>(Component: React.ComponentType<Props>): React.ComponentType<Props> =>
       props => this.react.createElement(PluginConversationScope, { application, signal: state.lifetime.signal,
+        source: state.graphGeneration ? { id: state.pluginId, fingerprint: state.generation, graph_generation: state.graphGeneration } : undefined,
         children: this.react.createElement(Component, props) });
     const conversationUI = {
       ConversationView: scopedConversation(this.ui.ConversationView),

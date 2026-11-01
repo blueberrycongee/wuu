@@ -98,7 +98,11 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 ## 交互内容渲染器
 
+桌面模块可以在 `plugin.json` 的 `desktop.content_renderers`（也支持 `contentRenderers`）声明作用域内的内容渲染器，例如 `[{"category":"tool-result","match":"application/vnd.example+json"}]`。声明只接受小写、精确的 MIME 类型，不接受参数或通配符。模块导出 `activateContent(api)`，接收 SDK 的 `ContentRendererActivationAPI`：React、UI 基础组件、取消信号，以及渲染器、样式和清理注册接口；它不会收到应用的其他插件贡献接口。注册的渲染器必须与声明的类别和 MIME 类型一致。宿主为所选来源图单独加载该入口，并在作用域结束或插件被禁用时清理。
+
 内容渲染器也接收 `host.actions` 和 `host.invoke`。已完成的会话资源公布 `conversation.composer.submit` 时，接受 `{ text, context? }`：文本最多 8,000 字符，可选 JSON 上下文最多 16,384 字符。必须在真实按钮点击或该点击引发的原生表单提交中同步调用，键盘激活按钮同样有效。表单提交必须匹配该次点击的表单与提交按钮；单独调用 `requestSubmit()` 不构成动作授权。宿主一次性消费交互凭据，绑定来源会话和产物，再通过普通轮次准入与权限流程提交。会话运行中、来源被替换或卸载、插件被禁用时会拒绝动作，并保留输入框草稿和附件。`metadata.interaction` 提供 `running`、`readOnly` 和可选 `disabledReason`；调用时仍会重新检查。此输入契约仅用于内容渲染器；输入框 Presenter 提交现有草稿，仍不接受动作输入。
+
+内容渲染器可以调用 `host.reportState?.(values)`，向所属会话提供当前 JSON 草稿。报告是绑定当前挂载来源的不可信数据，不会发送消息或授权动作。超过 16 KiB 的报告会被忽略。宿主可以不提供这一能力；渲染器在缺少该能力时仍需正常工作。不要报告尚未完成的预览状态。来源被替换、卸载或渲染器被禁用时，宿主会丢弃报告。
 
 需要预览工具参数流时，`tool-result` 注册可声明 `toolInput: { capability }`，并使用字面 MIME `match`。只有当前实际负责该 MIME 的渲染器会收到预览。`content.preview` 标识临时输出；`metadata.toolInput` 提供累计且可能合并的 `argumentsText`、`turnId`、`status` 和可选 `error`。只解析完整且有界的数据单元，保留最近有效预览，不要执行动作或持久化尚未完成的状态。首个匹配的最终资源会沿用预览的 part 标识。
 

@@ -375,6 +375,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
 };
 installFixtureBridge(invokeRuntime);
 const params=new URLSearchParams(location.search);
+
 if (!localStorage.getItem("wuu.fixture.reactions")) { reactionStore["3"] = {agent:"✅",revision:1}; persistReactions(); }
 // Normal preview stays representative; stress/error files remain opt-in for QA.
 if (!["all", "reference"].includes(params.get("attachments") || "")) histories.mosaic[3].attachments = histories.mosaic[3].attachments!.slice(0, 2);
@@ -419,6 +420,25 @@ if (params.get("grouping") === "1") histories.mosaic.push(
   {seq:7,role:"user",at:now,content:"安静、方便聊天就好。"},
 );
 if(params.has("receipts")) histories.mosaic[3].attachments = undefined;
+if (params.has("genui")) {
+  const spec = { version: 2, title: "旅行预算", fallback: "选择人数并查看预算", state: [{id:"people",value:2}], body: [
+    {id:"peopleInput",type:"input",inputType:"number",state:"people",label:"人数"},
+    {id:"total",type:"metric",label:"预算",value:{op:"multiply",args:[{op:"state",key:"people"},100]}},
+    {id:"send",type:"button",label:"提交选择",onClick:[{type:"sendMessage",text:"继续安排"}]},
+  ]};
+  const text = JSON.stringify(spec);
+  const part = { type:"resource", mime_type:"application/vnd.wuu.ui+json", name:spec.title, resource:{mimeType:"application/vnd.wuu.ui+json",text}, artifact:{placement:"inline",ref:`ui-v2-${"a".repeat(64)}`,sha256:"b".repeat(64),size_bytes:new TextEncoder().encode(text).length} };
+  histories.mosaic = [{seq:1,role:"assistant",at:now,content:spec.fallback,ui_text:"",ui_resources:[{part,part_index:1,tool_call_id:"synthetic-call",fallback_text:spec.fallback}]} as typeof histories.mosaic[number]];
+  const streamSpec = { version:2, title:"流式界面", fallback:"流式摘要", state:[{id:"count",value:2}], body:[{id:"streamText",type:"text",text:"第一段已生成"},{id:"streamInput",type:"input",inputType:"number",state:"count",label:"预览输入"}] };
+  Object.assign(window, { __streamFixture: {
+    spec: streamSpec,
+    emit: (method:string, payload:unknown, userScope = {user_space_id:"local",product_domain:"personal",composition_profile:"personal"}) => host.publishHostEvent({kind:"notification",user_scope:userScope,message:{method,params:payload}}),
+    finish: () => {
+      const raw=JSON.stringify(streamSpec), resource={type:"resource",mime_type:"application/vnd.wuu.ui+json",name:streamSpec.title,resource:{mimeType:"application/vnd.wuu.ui+json",text:raw},artifact:{placement:"inline",ref:`ui-v2-${"c".repeat(64)}`,sha256:"d".repeat(64),size_bytes:new TextEncoder().encode(raw).length}};
+      histories.mosaic.push({seq:100,role:"assistant",at:now,content:streamSpec.fallback,ui_text:"",ui_resources:[{part:resource,part_index:1,tool_call_id:"stream-call",fallback_text:streamSpec.fallback}]} as typeof histories.mosaic[number]);
+    },
+  } });
+}
 applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
@@ -439,6 +459,9 @@ function setActivity(status: "idle" | "thinking" | "responding") {
   }
 }
 async function start(){
+  const scoped = (window as unknown as {__scopedFixture?: {call(method:string):Promise<any>}}).__scopedFixture;
+  const personalSource = params.has("genui") && scoped ? (await scoped.call("personal-source")) : undefined;
+  const personalID = personalSource?.id ?? "personal";
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"wuu.default-application",generation:"fixture",register:activateApplication});
   await host.selectApplicationBinding({pluginId:"wuu.default-application",generation:"fixture",id:"ui.application"});
   for (const [pluginId, register] of [
@@ -449,10 +472,10 @@ async function start(){
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"fixture-controls",generation:"fixture",register(api){fixtureApplication=api.application;}});
   controller = fixtureApplication.workbench;
   window.addEventListener("pagehide", () => { fixtureLifetime.abort(); void host.selectApplicationBinding(undefined).finally(() => { for (const id of ["personal", "personal-calendar", "automations", "fixture-controls", "wuu.default-shell", "wuu.default-navigation", "wuu.default-composer", "wuu.default-conversation", "wuu.default-preview", "wuu.default-settings", "wuu.default-application"]) host.unload(id); }); }, {once:true});
-  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
+  await host.activateGeneration({graphGeneration:personalSource?.graph_generation ?? "fixture-graph",pluginId:personalID,manifestId:"personal",generation:personalSource?.fingerprint ?? "synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal-calendar",generation:"synthetic-ui-fixture",register:activateCalendar});
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
-  if (params.get("presentation") !== "standard") await controller.openPluginView("personal", "personal.home");
+  if (params.get("presentation") !== "standard") await controller.openPluginView(personalID, "personal.home");
   createRoot(document.getElementById("root")!).render(<FixtureSurface/>);
   (window as any).mosaicFixture={host,controller,setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),setActivity,synthetic:true};
 }

@@ -302,8 +302,10 @@ Its description includes core file, search and command definitions within a
 fixed catalog budget, with previews for other bindings. Use included schemas
 directly; discover arguments for bindings shown only as previews. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
-empty query pages through all bindings. `await describeTool(name)` returns the
-exact description and `input_schema`. Call `await tools[name](args)`; bracket
+empty query pages through the catalog. `await describeTool(name)` returns the
+exact description and `input_schema`. Results marked `direct_only: true` are
+top-level tools: call them outside `run_code`; they have no `tools.*` binding.
+For other results, call `await tools[name](args)`; bracket
 access preserves names containing punctuation without aliases or collisions.
 
 Results retain `content`, optional `structured_content`, and optional

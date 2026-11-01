@@ -38,7 +38,8 @@ type Profile struct {
 // Bundle is reusable static configuration. It neither executes code nor grants
 // authority. Profiles may share bundles without sharing mutable resolved state.
 type Bundle struct {
-	Patches []Patch `json:"patches"`
+	Patches         []Patch  `json:"patches"`
+	OptionalModules []string `json:"optional_modules,omitempty"`
 }
 
 // Patch edits an explicit module set and service selection. A false module
@@ -73,12 +74,13 @@ type Binding struct {
 // Resolved is an immutable, owned selection used for one generation. Nil
 // Modules means discovery defaults; a non-nil empty set disables every module.
 type Resolved struct {
-	Profile       string            `json:"profile,omitempty"`
-	Modules       *[]string         `json:"modules"`
-	ModuleSource  string            `json:"module_source"`
-	ModuleSources map[string]string `json:"module_sources,omitempty"`
-	Layers        []string          `json:"layers,omitempty"`
-	Services      []Binding         `json:"services,omitempty"`
+	Profile         string            `json:"profile,omitempty"`
+	Modules         *[]string         `json:"modules"`
+	ModuleSource    string            `json:"module_source"`
+	ModuleSources   map[string]string `json:"module_sources,omitempty"`
+	Layers          []string          `json:"layers,omitempty"`
+	Services        []Binding         `json:"services,omitempty"`
+	OptionalModules []string          `json:"optional_modules,omitempty"`
 }
 
 var serviceName = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`)
@@ -127,6 +129,12 @@ func (c *Config) ResolveWithMetadata(metadata Metadata) (Resolved, error) {
 		}
 		if c.Bundles[name].Patches == nil {
 			return Resolved{}, fmt.Errorf("composition bundle %q requires a patches array", name)
+		}
+		if c.Version < 2 && len(c.Bundles[name].OptionalModules) > 0 {
+			return Resolved{}, fmt.Errorf("composition bundle %q optional modules require version 2 or later", name)
+		}
+		if err := validateModules(c.Bundles[name].OptionalModules); err != nil {
+			return Resolved{}, fmt.Errorf("composition bundle %q: %w", name, err)
 		}
 		if err := validatePatches(c.Bundles[name].Patches, "bundle:"+name); err != nil {
 			return Resolved{}, err
@@ -177,10 +185,12 @@ func (c *Config) ResolveWithMetadata(metadata Metadata) (Resolved, error) {
 
 	bindings := make(map[string]Binding)
 	excluded := make(map[string]bool)
+	optional := make(map[string]bool)
 	applyChoices := func(modules []string, services []Binding, source string) {
 		if modules != nil {
 			resolved.ModuleSources = make(map[string]string, len(modules))
 			clear(excluded)
+			clear(optional)
 			for _, id := range modules {
 				resolved.ModuleSources[id] = source
 			}
@@ -199,6 +209,7 @@ func (c *Config) ResolveWithMetadata(metadata Metadata) (Resolved, error) {
 			source := fmt.Sprintf("%s:patch:%d", owner, index)
 			resolved.Layers = append(resolved.Layers, source)
 			for id, enabled := range patch.Modules {
+				delete(optional, id)
 				if enabled {
 					resolved.ModuleSources[id] = source
 					delete(excluded, id)
@@ -234,6 +245,12 @@ func (c *Config) ResolveWithMetadata(metadata Metadata) (Resolved, error) {
 		resolved.ModuleSource = "profile:" + c.Profile
 		for _, bundle := range profile.Bundles {
 			applyPatches(c.Bundles[bundle].Patches, "bundle:"+bundle)
+			for _, id := range c.Bundles[bundle].OptionalModules {
+				if _, exists := resolved.ModuleSources[id]; !exists && !excluded[id] {
+					resolved.ModuleSources[id] = "bundle:" + bundle
+					optional[id] = true
+				}
+			}
 		}
 		applyChoices(profile.Modules, profile.Services, "profile:"+c.Profile)
 		applyPatches(profile.Patches, "profile:"+c.Profile)
@@ -257,6 +274,7 @@ func (c *Config) ResolveWithMetadata(metadata Metadata) (Resolved, error) {
 		}
 		sort.Strings(modules)
 		resolved.Modules = &modules
+		resolved.OptionalModules = slices.Sorted(maps.Keys(optional))
 	}
 	for _, key := range slices.Sorted(maps.Keys(bindings)) {
 		binding := bindings[key]

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -2515,19 +2516,28 @@ func discoverPlugins(rootDir, wuuHome string) []pluginpkg.Plugin {
 // minimum_wuu_version compatibility gate. Overridable in tests.
 var currentWuuVersion = func() string { return version.Info().Version }
 
+// PluginEnabledByDefault includes optional defaults from the selected product.
+// It does not grant trust and explicit user settings continue to take precedence.
+func PluginEnabledByDefault(cfg config.Config, item pluginpkg.Plugin) bool {
+	if cfg.Composition != nil {
+		if resolved, err := cfg.Composition.Resolve(); err == nil && slices.Contains(resolved.OptionalModules, item.ID) {
+			return true
+		}
+	}
+	return item.EnabledByDefault()
+}
+
 // activatedPlugins separates inert discovery from executable activation.
 // Community packages require an exact user-owned grant. Official bundled
 // packages and authenticated local development generations are trusted by
-// provenance. Every tier follows its package default unless the user has made
-// an explicit choice, and every tier
-// must satisfy its declared minimum_wuu_version against the running host:
-// the compatibility contract fails closed regardless of trust tier.
+// provenance. Every tier follows its package or product default unless the user
+// has made an explicit choice, and must satisfy its minimum Wuu version.
 func activatedPlugins(cfg config.Config, discovered []pluginpkg.Plugin) []pluginpkg.Plugin {
 	settings := cfg.Extensions
 	hostVersion := currentWuuVersion()
 	out := make([]pluginpkg.Plugin, 0, len(discovered))
 	for _, item := range discovered {
-		enabled := item.EnabledByDefault()
+		enabled := PluginEnabledByDefault(cfg, item)
 		if settings != nil {
 			enabled = settings.IsEnabled(item.SubjectID, enabled)
 		}

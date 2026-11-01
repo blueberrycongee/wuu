@@ -265,9 +265,23 @@ export interface PluginUIInteractiveAnswerProps {
   onRetry(resumeHeld?: boolean): Promise<unknown>;
 }
 
+export interface PluginUIConversationResourceProps {
+  readonly rendererScope?: { userSpaceId: string; productDomain: "personal" | "coding"; compositionProfile?: string };
+  readonly sessionId: string;
+  readonly itemId: string;
+  readonly partIndex: number;
+  readonly part: { type: string; mime_type?: string; name?: string; text?: string; resource?: unknown; artifact?: { ref?: string; sha256?: string; size_bytes?: number } };
+  readonly fallbackText: string;
+  readonly preview?: { capability: string; turnId: string; argumentsText: string; status: "in_progress" | "completed" | "failed" | "interrupted"; error?: string };
+  readonly running?: boolean;
+  readonly onSubmit?: (input: RendererSubmissionV1) => Promise<void>;
+  readonly onStateChange?: (state: unknown, instanceId: string) => void;
+}
+
 export interface PluginUIConversationMessageProps {
   /** Opt-in bounded interactive answer; transport remains owned by the contribution. */
   interactive?: readonly PluginUIInteractiveAnswerProps[];
+  resources?: readonly PluginUIConversationResourceProps[];
   footer?: React.ReactNode;
   linkPolicy?: "external-only";
   role: "user" | "assistant";
@@ -1102,6 +1116,8 @@ export type SettingsActionId = (typeof SETTINGS_ACTIONS)[keyof typeof SETTINGS_A
 export interface PresentationHost extends ViewHostAPI {
   readonly actions: readonly string[];
   invoke(action: string, input?: unknown): Promise<unknown>;
+  /** Reports untrusted, source-scoped draft state to the host, when supported. */
+  reportState?(state: unknown): void;
 }
 
 export interface PresenterProps {

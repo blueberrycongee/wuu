@@ -41,17 +41,17 @@ export function createSourceView(api, shared) {
           const identity = JSON.stringify([metadata.threadId, metadata.itemId, metadata.partId, metadata.artifactId, raw]);
           const digest = await crypto.subtle.digest("SHA-256", encoder.encode(identity));
           const key = "ui-v3-" + Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, "0")).join("");
-          await shared.hydrateView(hostRef.current, key, restore, next => { current.current = next; setSnapshot(next); }, state);
+          await shared.hydrateView(hostRef.current, key, restore, next => { current.current = next; setSnapshot(next); hostRef.current.reportState?.(next.values); }, state);
         } catch (error) { if (state.mounted) setNotice(`Saved view state is unavailable. ${error.message}`); }
         finally { if (state.mounted) setReady(true); }
       })();
-      return () => { state.mounted = false; state.unsubscribe?.(); };
+      return () => { state.mounted = false; state.unsubscribe?.(); hostRef.current.reportState?.(undefined); };
     }, [preview, raw, metadata.threadId, metadata.itemId, metadata.partId, metadata.artifactId]);
     const disabled = preview || !ready || pending;
     const canSend = !preview && host.actions?.includes("conversation.composer.submit");
     function commit(next) {
       validateSourceState({ values: next.values, components: next.components });
-      current.current = next; setSnapshot(next); setNotice("");
+      current.current = next; setSnapshot(next); setNotice(""); hostRef.current.reportState?.(next.values);
       const storage = persistence.current;
       if (storage.key) void shared.writeSnapshot(hostRef.current, storage.key, { version: 3, ...next }, 16448).catch(() => {
         if (storage.mounted) setNotice("This view could not be saved. Your changes are still available here.");

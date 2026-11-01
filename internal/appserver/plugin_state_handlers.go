@@ -354,7 +354,7 @@ func (s *Server) requireActiveDesktopPluginIn(snapshot runtime.ExtensionSnapshot
 			settings = *snapshot.ExtensionSettings
 
 		}
-		approval, state, _, enabled := pluginPackageInventoryState(settings, plugin)
+		approval, state, _, enabled := pluginPackageInventoryState(settings, plugin, runtime.PluginEnabledByDefault(s.currentExtensionConfig(), plugin))
 		if !enabled || (approval != ExtensionApprovalGranted && approval != ExtensionApprovalOfficial) || (state != ExtensionStateGranted && state != ExtensionStateActive) {
 			return pluginpkg.Plugin{}, errors.New("desktop plugin is not approved and enabled")
 		}

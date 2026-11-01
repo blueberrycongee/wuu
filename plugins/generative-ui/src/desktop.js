@@ -163,7 +163,8 @@ function validateProgram(spec) {
   list(spec.state, 0, 32);
   const states = new Map();
   for (const state of spec.state) {
-    object(state, ["id", "value"]); programID(state.id); jsonValue(state.value);
+    object(state, ["id", "value", "scope"], ["id", "value"]); programID(state.id); jsonValue(state.value);
+    if (state.scope !== undefined) requireValue(["persistent", "temporary"].includes(state.scope), "Invalid state scope");
     requireValue(!states.has(state.id), "Duplicate state identifier");
     states.set(state.id, state.value);
   }
@@ -194,6 +195,10 @@ function validateProgram(spec) {
     for (const action of value) {
       if (action.type === "set") {
         object(action, ["type", "state", "value"]); requireValue(states.has(action.state), "Unknown state assignment"); expression(action.value, context);
+      } else if (action.type === "append") {
+        object(action, ["type", "state", "value"]); requireValue(Array.isArray(states.get(action.state)), "Append requires list state"); expression(action.value, context);
+      } else if (action.type === "remove") {
+        object(action, ["type", "state"]); requireValue(context.collectionState === action.state, "Remove requires the enclosing editable list");
       } else if (action.type === "reset") object(action, ["type"]);
       else if (action.type === "copy" || action.type === "sendMessage") {
         object(action, ["type", "text"]); expression(action.text, context);
@@ -224,7 +229,12 @@ function validateProgram(spec) {
         case "heading": check(["text", "level"], ["text"]); expr("text"); if (node.level !== undefined) requireValue([1, 2, 3].includes(node.level), "Invalid heading level"); break;
         case "divider": check([]); break;
         case "if": check(["when", "then", "else"], ["when", "then"]); expr("when"); nodes(node.then, context, depth + 1); if (node.else !== undefined) nodes(node.else, context, depth + 1); break;
-        case "each": check(["items", "key", "children"], ["items", "children"]); expr("items"); if (node.key !== undefined) expression(node.key, { ...context, item: true }); nodes(node.children, { ...context, item: true }, depth + 1); break;
+        case "each": {
+          check(["items", "key", "children"], ["items", "children"]); expr("items");
+          if (node.key !== undefined) expression(node.key, { ...context, item: true });
+          const collectionState = node.key !== undefined && node.items?.op === "state" && Array.isArray(states.get(node.items.key)) ? node.items.key : undefined;
+          nodes(node.children, { ...context, item: true, collectionState }, depth + 1); break;
+        }
         case "form":
           check(["label", "children", "onSubmit"]); requireValue(!context.form, "Forms cannot be nested"); expr("label"); actions(node.onSubmit, context); nodes(node.children, { ...context, form: true }, depth + 1); break;
         case "disclosure": check(["title", "children", "open"], ["title", "children"]); expr("title"); if (node.open !== undefined) requireValue(typeof node.open === "boolean", "Invalid disclosure state"); nodes(node.children, context, depth + 1); break;
@@ -234,7 +244,16 @@ function validateProgram(spec) {
         case "input": case "textarea": case "checkbox": case "slider": case "select": case "radio": case "segmented": {
           const extras = node.type === "input" ? ["inputType", "placeholder"] : node.type === "textarea" ? ["placeholder"] : node.type === "slider" ? ["min", "max", "step"] : ["select", "radio", "segmented"].includes(node.type) ? ["options"] : [];
           const required = node.type === "slider" ? ["min", "max"] : ["select", "radio", "segmented"].includes(node.type) ? ["options"] : [];
-          check(["label", "state", "onChange", "required", "disabled", "invalid", ...extras], ["label", "state", ...required]); binding(); expr("label"); expr("disabled"); expr("invalid");
+          check(["label", "state", "itemField", "onChange", "required", "disabled", "invalid", ...extras], ["label", ...required]);
+          requireValue((node.state !== undefined) !== (node.itemField !== undefined), "Control requires exactly one state binding");
+          if (node.itemField !== undefined) {
+            requireValue(context.collectionState !== undefined, "Item binding requires a keyed list state"); safeKey(node.itemField);
+            for (const item of states.get(context.collectionState)) {
+              requireValue(item && typeof item === "object" && !Array.isArray(item) && Object.hasOwn(item, node.itemField), "Missing list item field");
+              validateBinding(node, item[node.itemField]);
+            }
+          } else binding();
+          expr("label"); expr("disabled"); expr("invalid");
           if (node.required !== undefined) requireValue(typeof node.required === "boolean", "Invalid required flag");
           if (node.inputType !== undefined) requireValue(["text", "number", "date"].includes(node.inputType), "Unsupported input type");
           if (node.placeholder !== undefined) string(node.placeholder, 500, false);
@@ -244,7 +263,7 @@ function validateProgram(spec) {
             for (const option of node.options) { object(option, ["label", "value"]); string(option.label, 80); programScalar(option.value); }
             unique(node.options.map(option => JSON.stringify(option.value)));
           }
-          validateBinding(node, states.get(node.state));
+          if (node.state !== undefined) validateBinding(node, states.get(node.state));
           if (node.onChange !== undefined) actions(node.onChange, { ...context, event: true }); break;
         }
         case "table":
@@ -362,8 +381,10 @@ function validateComponentRecord(node, record) {
 function programSnapshotPayload(spec, snapshot) {
   // The original program already contains defaults. A small explicit marker
   // can restore them even when the declared-state limit leaves no envelope room.
-  return Object.keys(snapshot.components).length === 0 && JSON.stringify(snapshot.values) === JSON.stringify(programDefaults(spec))
-    ? { version: 2, defaults: true } : { version: 2, ...snapshot };
+  const values = Object.fromEntries(spec.state.filter(state => state.scope !== "temporary").map(state => [state.id, snapshot.values[state.id]]));
+  const defaults = Object.fromEntries(spec.state.filter(state => state.scope !== "temporary").map(state => [state.id, state.value]));
+  return Object.keys(snapshot.components).length === 0 && JSON.stringify(values) === JSON.stringify(defaults)
+    ? { version: 2, defaults: true } : { version: 2, values, components: snapshot.components };
 }
 function validateProgramSnapshot(spec, snapshot, legacy = false) {
   object(snapshot, ["values", "components"]);
@@ -401,7 +422,9 @@ function restoreProgramSnapshot(spec, raw) {
   requireValue(saved.version === 2, "Unsupported saved state");
   const legacy = !Object.hasOwn(saved, "components");
   if (!legacy) requireValue(encoder.encode(raw).length <= MAX_STATE_BYTES, "Saved state is too large");
-  return validateProgramSnapshot(spec, { values: saved.values, components: saved.components ?? {} }, legacy);
+  const persistent = spec.state.filter(state => state.scope !== "temporary").map(state => state.id);
+  object(saved.values, persistent);
+  return validateProgramSnapshot(spec, { values: { ...programDefaults(spec), ...saved.values }, components: saved.components ?? {} }, legacy);
 }
 
 function canonicalJSON(value, budget) {
@@ -649,7 +672,7 @@ function writeSnapshot(host, key, snapshot, maxBytes = MAX_STATE_BYTES) {
 }
 function display(value) { return value === null ? "—" : String(value); }
 
-export async function activate(api) {
+export async function activateContent(api) {
   const { createElement: h, useState, useEffect, useMemo, useRef } = api.react;
   const ui = api.ui;
   const SourceUI = createSourceView(api, { hydrateView, writeSnapshot, Details: ProgramDetails, NumberInput: ProgramNumberInput, Table: ProgramTable, Chart: ProgramChart });
@@ -709,18 +732,22 @@ export async function activate(api) {
             // Invalid computed results cannot replace a valid initial view.
             renderProgram(spec, restored.values, { disabled: true, run: () => {}, components: restored.components });
             return restored;
-          }, restored => { current.current = restored; setSnapshot(restored); }, state);
+          }, restored => {
+            const temporary = Object.fromEntries(spec.state.filter(field => field.scope === "temporary").map(field => [field.id, current.current.values[field.id]]));
+            const next = { ...restored, values: { ...restored.values, ...temporary } };
+            current.current = next; setSnapshot(next); hostRef.current.reportState?.(next.values);
+          }, state);
         } catch {
           if (state.mounted) setNotice("Saved view state is unavailable. The original values are shown.");
         } finally { if (state.mounted) setReady(true); }
       })();
-      return () => { state.mounted = false; state.unsubscribe?.(); };
+      return () => { state.mounted = false; state.unsubscribe?.(); hostRef.current.reportState?.(undefined); };
     }, [spec, raw, preview, metadata.threadId, metadata.itemId, metadata.partId, metadata.artifactId]);
 
     const disabled = preview || !ready || pending;
     const canSend = !preview && host.actions?.includes("conversation.composer.submit");
     function commit(next) {
-      current.current = next; setSnapshot(next); setNotice("");
+      current.current = next; setSnapshot(next); setNotice(""); hostRef.current.reportState?.(next.values);
       const storage = persistence.current;
       if (storage.key) void writeSnapshot(hostRef.current, storage.key, programSnapshotPayload(spec, next)).catch(() => {
         if (storage.mounted) setNotice("This view could not be saved. Your changes are still available here.");
@@ -741,18 +768,31 @@ export async function activate(api) {
       } catch (error) { setNotice(error.message); return false; }
       commit(next); return true;
     }
-    function run(node, actions, event, item, boundValue) {
+    function run(node, actions, event, itemScope, boundValue) {
       if (disabled || pendingRef.current || !event.isTrusted) return false;
       let next = { ...current.current.values };
-      const scope = { item, event: boundValue };
+      const scope = { ...itemScope, event: boundValue };
       const budget = { operations: PROGRAM_LIMITS.operations };
       const effects = [];
       let reset = false, changed = false;
       try {
         if (node.state) next[node.state] = boundValue;
+        if (node.itemField !== undefined) {
+          const collection = scope.collection, items = next[collection.state];
+          list(items, 0, PROGRAM_LIMITS.iterations); requireValue(items[collection.index] === scope.item, "List item changed; retry the edit");
+          validateBinding(node, boundValue);
+          next[collection.state] = items.map((item, index) => index === collection.index ? { ...item, [node.itemField]: boundValue } : item);
+        }
         for (const action of actions) {
           if (action.type === "set") next[action.state] = evaluateExpression(action.value, next, scope, budget);
-          else if (action.type === "reset") { next = programDefaults(spec); reset = true; }
+          else if (action.type === "append") {
+            const items = next[action.state]; list(items, 0, PROGRAM_LIMITS.iterations - 1);
+            next[action.state] = [...items, evaluateExpression(action.value, next, scope, budget)];
+          } else if (action.type === "remove") {
+            const collection = scope.collection, items = next[action.state]; list(items, 0, PROGRAM_LIMITS.iterations);
+            requireValue(collection?.state === action.state && items[collection.index] === scope.item, "List item changed; retry the removal");
+            next[action.state] = items.filter((_, index) => index !== collection.index);
+          } else if (action.type === "reset") { next = programDefaults(spec); reset = true; }
           else {
             const text = valueText(evaluateExpression(action.text, next, scope, budget));
             if (action.type === "sendMessage") requireValue(canSend && text.trim(), metadata.interaction?.disabledReason || "Conversation continuation is unavailable here.");
@@ -780,7 +820,7 @@ export async function activate(api) {
         let promise;
         try {
           promise = effect.type === "copy" ? navigator.clipboard.writeText(effect.text)
-            : hostRef.current.invoke("conversation.composer.submit", { text: effect.text, context: { actionId: node.id, label: valueText(evaluateExpression(node.label, next, { item })), values: next } });
+            : hostRef.current.invoke("conversation.composer.submit", { text: effect.text, context: { actionId: node.id, label: valueText(evaluateExpression(node.label, next, scope)), values: next } });
         } catch (error) { promise = Promise.reject(error); }
         return Promise.resolve(promise).then(() => effect.type === "copy" ? "Copied" : "Sent to this conversation.", error => error?.message || "The action could not be completed. Your local values are unchanged.");
       });
@@ -819,9 +859,14 @@ export async function activate(api) {
         const children = () => nodes(node.children, scope, ancestors);
         const component = runtime.components?.[address] ?? componentDefaults(node);
         const changeView = update => runtime.changeComponent?.(address, node, update) ?? false;
-        const change = (value, event) => runtime.run(node, node.onChange ?? [], event, scope.item, value);
-        const controlInvalid = Boolean(node.state && node.invalid !== undefined && evaluate(node.invalid));
-        const controlProps = node.state ? {
+        const change = (value, event) => runtime.run(node, node.onChange ?? [], event, scope, value);
+        const bound = node.itemField !== undefined ? scope.item?.[node.itemField] : values[node.state];
+        if (node.itemField !== undefined) {
+          requireValue(scope.collection && scope.item && typeof scope.item === "object" && !Array.isArray(scope.item) && Object.hasOwn(scope.item, node.itemField), "Missing list item field");
+          validateBinding(node, bound);
+        }
+        const controlInvalid = Boolean((node.state || node.itemField) && node.invalid !== undefined && evaluate(node.invalid));
+        const controlProps = node.state || node.itemField ? {
           disabled: runtime.disabled || Boolean(node.disabled !== undefined && evaluate(node.disabled)),
           required: node.required,
           "aria-invalid": controlInvalid || undefined,
@@ -840,11 +885,11 @@ export async function activate(api) {
           case "each": {
             const items = evaluate(node.items); list(items, 0, PROGRAM_LIMITS.iterations);
             const identities = collectionIdentities(node, items, values, scope, budget);
-            return h("div", { ...props, className: "plugin-genui-repeat" }, items.map((item, index) => h("div", { key: identities[index], className: "plugin-genui-repeat-item" }, nodes(node.children, { ...scope, item }, [...ancestors, [node.id, identities[index]]]))));
+            return h("div", { ...props, className: "plugin-genui-repeat" }, items.map((item, index) => h("div", { key: identities[index], className: "plugin-genui-repeat-item" }, nodes(node.children, { ...scope, item, collection: node.key !== undefined && node.items?.op === "state" ? { state: node.items.key, index } : undefined }, [...ancestors, [node.id, identities[index]]]))));
           }
           case "form": {
             const sends = node.onSubmit.some(action => action.type === "sendMessage");
-            return h("form", { ...props, className: "plugin-genui-form", onSubmit: event => { event.preventDefault(); if (event.currentTarget.reportValidity()) runtime.run(node, node.onSubmit, event, scope.item); } },
+            return h("form", { ...props, className: "plugin-genui-form", onSubmit: event => { event.preventDefault(); if (event.currentTarget.reportValidity()) runtime.run(node, node.onSubmit, event, scope); } },
               children(), h("div", { className: "plugin-genui-action" }, h(ui.Button, { type: "submit", disabled: runtime.disabled || (sends && !runtime.canSend), variant: "primary" }, text(node.label)), sends ? h("span", { className: "plugin-genui-muted plugin-genui-action-hint" }, "Sends a message") : null));
           }
           case "disclosure": return h(ProgramDetails, { ...props, title, className: "plugin-genui-disclosure", disabled: runtime.disabled, open: component.open, change: open => changeView(current => ({ ...current, open })) }, h("div", { className: "plugin-genui-stack plugin-genui-layout", "data-gap": "medium" }, children()));
@@ -856,20 +901,20 @@ export async function activate(api) {
           }
           case "button": {
             const sends = node.onClick.some(action => action.type === "sendMessage");
-            return h("div", { ...props, className: "plugin-genui-action" }, h(ui.Button, { variant: node.variant ?? "secondary", disabled: runtime.disabled || Boolean(node.disabled !== undefined && evaluate(node.disabled)) || (sends && !runtime.canSend), onClick: event => runtime.run(node, node.onClick, event, scope.item) }, text(node.label)), sends ? h("span", { className: "plugin-genui-muted plugin-genui-action-hint" }, "Sends a message") : null);
+            return h("div", { ...props, className: "plugin-genui-action" }, h(ui.Button, { variant: node.variant ?? "secondary", disabled: runtime.disabled || Boolean(node.disabled !== undefined && evaluate(node.disabled)) || (sends && !runtime.canSend), onClick: event => runtime.run(node, node.onClick, event, scope) }, text(node.label)), sends ? h("span", { className: "plugin-genui-muted plugin-genui-action-hint" }, "Sends a message") : null);
           }
           case "input": case "textarea": {
             const numberInput = node.inputType === "number";
-            if (numberInput) return h(ProgramNumberInput, { ...props, label: text(node.label), ...controlProps, placeholder: node.placeholder, value: values[node.state], change, resetVersion: runtime.resetVersion });
-            return h(node.type === "textarea" ? ui.TextArea : ui.TextInput, { ...props, label: text(node.label), ...controlProps, type: node.inputType ?? "text", placeholder: node.placeholder, maxLength: 4000, value: values[node.state], ...(numberInput ? { min: -1e12, max: 1e12, step: "any" } : {}), onChange: event => {
+            if (numberInput) return h(ProgramNumberInput, { ...props, label: text(node.label), ...controlProps, placeholder: node.placeholder, value: bound, change, resetVersion: runtime.resetVersion });
+            return h(node.type === "textarea" ? ui.TextArea : ui.TextInput, { ...props, label: text(node.label), ...controlProps, type: node.inputType ?? "text", placeholder: node.placeholder, maxLength: 4000, value: bound, ...(numberInput ? { min: -1e12, max: 1e12, step: "any" } : {}), onChange: event => {
               const next = numberInput ? event.target.valueAsNumber : event.target.value;
               if (!numberInput || Number.isFinite(next)) change(next, event);
             } });
           }
-          case "checkbox": return h(ui.Checkbox, { ...props, label: text(node.label), ...controlProps, checked: values[node.state], onChange: event => change(event.target.checked, event) });
-          case "slider": return h("label", { ...props, className: "plugin-ui-field plugin-genui-slider" }, h("span", { className: "plugin-genui-slider-label" }, text(node.label), h("output", null, valueText(values[node.state]))), h("input", { type: "range", ...controlProps, min: node.min, max: node.max, step: node.step ?? 1, value: values[node.state], onChange: event => change(event.target.valueAsNumber, event) }), h("span", { className: "plugin-genui-slider-bounds plugin-genui-muted", "aria-hidden": true }, h("span", null, node.min), h("span", null, node.max)));
-          case "select": return h(ui.Select, { ...props, label: text(node.label), ...controlProps, value: String(node.options.findIndex(option => option.value === values[node.state])), onChange: event => change(node.options[Number(event.target.value)].value, event) }, node.options.map((option, index) => h("option", { key: index, value: String(index) }, option.label)));
-          case "radio": case "segmented": return h("fieldset", { ...props, disabled: controlProps.disabled, className: `plugin-genui-options plugin-genui-${node.type}` }, h("legend", null, text(node.label)), h("div", { className: "plugin-genui-options-list" }, node.options.map((option, index) => h("label", { key: index, "data-selected": option.value === values[node.state] }, h("input", { type: "radio", ...controlProps, name: `${runtime.instanceId}/${address}`, checked: option.value === values[node.state], onChange: event => change(option.value, event) }), h("span", null, option.label)))));
+          case "checkbox": return h(ui.Checkbox, { ...props, label: text(node.label), ...controlProps, checked: bound, onChange: event => change(event.target.checked, event) });
+          case "slider": return h("label", { ...props, className: "plugin-ui-field plugin-genui-slider" }, h("span", { className: "plugin-genui-slider-label" }, text(node.label), h("output", null, valueText(bound))), h("input", { type: "range", ...controlProps, min: node.min, max: node.max, step: node.step ?? 1, value: bound, onChange: event => change(event.target.valueAsNumber, event) }), h("span", { className: "plugin-genui-slider-bounds plugin-genui-muted", "aria-hidden": true }, h("span", null, node.min), h("span", null, node.max)));
+          case "select": return h(ui.Select, { ...props, label: text(node.label), ...controlProps, value: String(node.options.findIndex(option => option.value === bound)), onChange: event => change(node.options[Number(event.target.value)].value, event) }, node.options.map((option, index) => h("option", { key: index, value: String(index) }, option.label)));
+          case "radio": case "segmented": return h("fieldset", { ...props, disabled: controlProps.disabled, className: `plugin-genui-options plugin-genui-${node.type}` }, h("legend", null, text(node.label)), h("div", { className: "plugin-genui-options-list" }, node.options.map((option, index) => h("label", { key: index, "data-selected": option.value === bound }, h("input", { type: "radio", ...controlProps, name: `${runtime.instanceId}/${address}`, checked: option.value === bound, onChange: event => change(option.value, event) }), h("span", null, option.label)))));
           case "table": {
             const rows = evaluate(node.rows); list(rows, 0, 200);
             charge((rows.length + 1) * (node.columns.length + 1));
@@ -1035,20 +1080,21 @@ export async function activate(api) {
           const identity = JSON.stringify([metadata.threadId, metadata.itemId, metadata.partId, metadata.artifactId, raw]);
           const digest = await crypto.subtle.digest("SHA-256", encoder.encode(identity));
           const key = "ui-v1-" + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-          await hydrateView(hostRef.current, key, saved => restoreValues(spec, saved), restored => { current.current = restored; setValues(restored); }, state);
+          await hydrateView(hostRef.current, key, saved => restoreValues(spec, saved), restored => { current.current = restored; setValues(restored); hostRef.current.reportState?.(Object.fromEntries(spec.blocks.filter(block => block.type === "form").map(block => [block.id, restored[block.id]]))); }, state);
         } catch {
           if (state.mounted) setNotice("Saved view state is unavailable. Changes may not be restored.");
         } finally {
           if (state.mounted) setReady(true);
         }
       })();
-      return () => { state.mounted = false; state.unsubscribe?.(); };
+      return () => { state.mounted = false; state.unsubscribe?.(); hostRef.current.reportState?.(undefined); };
     }, [spec, raw, preview, metadata.threadId, metadata.itemId, metadata.partId, metadata.artifactId]);
     function change(id, value) {
       if (!ready) return;
       const next = { ...current.current, [id]: value };
       current.current = next;
       setValues(next);
+      hostRef.current.reportState?.(Object.fromEntries(spec.blocks.filter(block => block.type === "form").map(block => [block.id, next[block.id]])));
       const state = persistence.current;
       if (state.key) void saveValues(hostRef.current, state.key, next).catch(() => {
         if (state.mounted) setNotice("This view could not be saved. Your current changes are still available here.");
@@ -1159,6 +1205,8 @@ export async function activate(api) {
   api.registerRenderer({ id: "generated-ui-v1", category: "tool-result", match: MIME, toolInput: { capability: "generative-ui" }, render: GeneratedUI });
   api.registerCSSSnippet({ id: "generated-ui-layout", css: styles });
 }
+
+export async function activate(api) { return activateContent(api); }
 
 function hasContinuation(nodes) {
   return nodes.some(node => (node.onClick ?? node.onSubmit)?.some(action => action.type === "sendMessage") || ["children", "then", "else"].some(key => node[key] && hasContinuation(node[key])));

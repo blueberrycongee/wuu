@@ -61,3 +61,23 @@ it.each(["chart", "disclosure", "source-disclosure-keys"] as const)("persists a 
     vi.unstubAllGlobals();
   }
 });
+
+it.each([2, 3])("reports restored v%s values and clears them on unmount", async (version) => {
+  vi.stubGlobal("crypto", webcrypto);
+  const host = new PluginHost({ react: React });
+  let readDone: () => void;
+  const controller = new WorkbenchController(host, { getStorage: async () => { readDone(); return null; } });
+  const container = document.createElement("div"), root = createRoot(container);
+  const reportState = vi.fn();
+  try {
+    await host.activateGeneration({ pluginId: "generative-ui", generation: "state", register: api => activate(api as unknown as Parameters<typeof activate>[0]) });
+    const Renderer = controller.getRenderer("tool-result", "application/vnd.wuu.ui+json")!.render;
+    const spec = version === 3 ? { version: 3, title: "Quantity", fallback: "Choose quantity", source: '{@body const [quantity, setQuantity] = DIL.useState(2); } <Input label="Quantity" inputType="number" value={quantity} onChange={setQuantity}/>' } : { version: 2, title: "Quantity", fallback: "Choose quantity", state: [{ id: "quantity", value: 2 }], body: [{ id: "quantityInput", type: "input", inputType: "number", state: "quantity", label: "Quantity" }] };
+    const props = { content: { text: JSON.stringify(spec) }, metadata: { threadId: "thread", itemId: "item", partId: "part", artifactId: "artifact" }, host: { ...controller.createPresentationHostAPI("generative-ui", "state", []), reportState } };
+    const read = new Promise<void>(resolve => { readDone = resolve; });
+    await act(async () => { flushSync(() => root.render(<Renderer {...props} />)); await read; });
+    expect(reportState).toHaveBeenCalledWith({ quantity: 2 });
+    act(() => root.render(null));
+    expect(reportState).toHaveBeenLastCalledWith(undefined);
+  } finally { act(() => root.unmount()); controller.dispose(); host.unload("generative-ui"); vi.unstubAllGlobals(); }
+});

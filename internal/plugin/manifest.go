@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -135,6 +136,12 @@ type DesktopSpec struct {
 	Entry            string                          `json:"entry"`
 	Services         []pluginhost.ServiceDescriptor  `json:"services,omitempty"`
 	RequiredServices []pluginhost.ServiceRequirement `json:"required_services,omitempty"`
+	ContentRenderers []DesktopContentRenderer        `json:"content_renderers,omitempty"`
+}
+
+type DesktopContentRenderer struct {
+	Category string `json:"category"`
+	Match    string `json:"match"`
 }
 
 type ThemeSpec struct {
@@ -710,12 +717,55 @@ func normalizeDesktop(root string, raw json.RawMessage) (*DesktopSpec, error) {
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	if err := validateObjectFields("desktop", trimmed, "entry", "services", "required_services"); err != nil {
+	if err := validateObjectFields("desktop", trimmed, "entry", "services", "required_services", "contentRenderers", "content_renderers"); err != nil {
 		return nil, err
 	}
 	var spec DesktopSpec
 	if err := json.Unmarshal(trimmed, &spec); err != nil {
 		return nil, fmt.Errorf("desktop: %w", err)
+	}
+	var aliases struct {
+		Camel json.RawMessage `json:"contentRenderers"`
+		Snake json.RawMessage `json:"content_renderers"`
+	}
+	if err := json.Unmarshal(trimmed, &aliases); err != nil {
+		return nil, fmt.Errorf("desktop: %w", err)
+	}
+	if len(aliases.Camel) > 0 && len(aliases.Snake) > 0 {
+		return nil, errors.New("desktop content renderer aliases cannot both be set")
+	}
+	declarations := aliases.Snake
+	if len(aliases.Camel) > 0 {
+		declarations = aliases.Camel
+		if err := json.Unmarshal(declarations, &spec.ContentRenderers); err != nil {
+			return nil, fmt.Errorf("desktop.contentRenderers: %w", err)
+		}
+	}
+	if len(spec.ContentRenderers) > 64 {
+		return nil, errors.New("desktop content renderer limit exceeded")
+	}
+	if len(declarations) > 0 {
+		var entries []json.RawMessage
+		if err := json.Unmarshal(declarations, &entries); err != nil {
+			return nil, fmt.Errorf("desktop.content_renderers: %w", err)
+		}
+		for _, entry := range entries {
+			if err := validateObjectFields("desktop.content_renderers", entry, "category", "match"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	renderers := make(map[string]bool)
+	for _, renderer := range spec.ContentRenderers {
+		mediaType, params, err := mime.ParseMediaType(renderer.Match)
+		if renderer.Category != "tool-result" || err != nil || mediaType != renderer.Match || len(params) != 0 || strings.Contains(mediaType, "*") || !strings.Contains(mediaType, "/") {
+			return nil, fmt.Errorf("invalid desktop content renderer %q for %q", renderer.Category, renderer.Match)
+		}
+		key := renderer.Category + "\x00" + renderer.Match
+		if renderers[key] {
+			return nil, fmt.Errorf("duplicate desktop content renderer %q", renderer.Match)
+		}
+		renderers[key] = true
 	}
 	seen := make(map[string]bool)
 	for _, service := range spec.Services {

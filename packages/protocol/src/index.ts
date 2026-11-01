@@ -514,6 +514,7 @@ export type ExtensionCommandDescriptor = {
 
 export interface ExtensionDesktopDescriptor {
   entry: string;
+  content_renderers?: Array<{ category: "tool-result"; match: string }>;
 }
 
 export interface ExtensionThemeDescriptor {
@@ -780,6 +781,7 @@ export interface PluginDesktopActivationParams {
 export interface PluginDesktopModuleReadParams {
   id: string;
   fingerprint: string;
+  graph_generation?: string;
 }
 
 export interface PluginDesktopModuleReadResult {
@@ -871,6 +873,19 @@ export interface PluginStorageResult {
   scope: PluginValueScope;
   key: string;
   value: string | null;
+}
+export interface PluginScopeInitializeParams extends PluginIdentityParams {
+  graph_generation: string;
+  user_space_id: string;
+  product_domain: "personal" | "coding";
+  composition_profile?: string;
+}
+export interface PluginScopeInvalidation {
+  id: string;
+  fingerprint: string;
+  graph_generation: string;
+  scope: string;
+  epoch: number;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
   /** Exact client-authored message, bound to this live plugin invocation by the host. */
@@ -2850,6 +2865,8 @@ export type ThreadResumeResult = {
 export type ServerEvent = {
   workdir: string;
   session_locator?: SessionLocatorV1;
+  /** Scope verified by the main process for the event's owning user host. */
+  user_scope?: { user_space_id: string; product_domain: "personal" | "coding"; composition_profile?: string };
 } & (
   | {
       kind: "notification";
@@ -3343,6 +3360,8 @@ export type WuuDesktopApi = {
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
+  initializePluginScope?: (params: PluginScopeInitializeParams) => Promise<readonly ExtensionInventoryRecord[]>;
+  onPluginScopeInvalidated?: (handler: (event: PluginScopeInvalidation) => void) => () => void;
   cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
   readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;

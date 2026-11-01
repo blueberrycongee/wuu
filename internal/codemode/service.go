@@ -105,6 +105,7 @@ type ToolDefinition struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	DirectOnly  bool            `json:"direct_only,omitempty"`
 }
 
 type ServiceConfig struct{ NodeExecutable string }
@@ -421,7 +422,7 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	if readErr != nil {
 		return result, readErr
 	}
-	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.Names(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm,
+	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.BindingNames(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm,
 		"state": committed, "stateEnabled": scope != nil, "maxStateBytes": MaxStateBytes, "maxStateKeys": MaxStateKeys})
 	if err != nil {
 		return result, err
@@ -478,7 +479,9 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	}
 	allowed := make(map[string]struct{}, len(request.Tools))
 	for _, tool := range request.Tools {
-		allowed[tool.Name] = struct{}{}
+		if !tool.DirectOnly {
+			allowed[tool.Name] = struct{}{}
+		}
 	}
 	var writes sync.Mutex
 	var calls sync.WaitGroup

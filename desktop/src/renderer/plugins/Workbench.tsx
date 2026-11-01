@@ -855,6 +855,7 @@ export interface WorkbenchContentRendererProps {
   /** Only host callers may advertise actions for this exact source. */
   actions?: readonly string[];
   dispatchAction?: (action: string, input: unknown, isCurrent: () => boolean, signal: AbortSignal) => unknown | Promise<unknown>;
+  onStateChange?: (state: unknown) => void;
   fallback: React.ReactNode;
 }
 
@@ -899,12 +900,14 @@ function MountedContentRenderer(props: WorkbenchContentRendererProps & { rendere
   }
   React.useLayoutEffect(() => {
     const sourceLifetime = new AbortController();
+    const clearSourceState = latest.current.onStateChange;
     lifetime.current = sourceLifetime;
     mounted.current = true;
     const unsubscribe = controller.host.subscribe(() => {
       if (controller.host.getGenerationActivation(renderer.pluginId, renderer.generation) !== activation) sourceLifetime.abort();
     });
     return () => {
+      clearSourceState?.(undefined);
       mounted.current = false;
       sourceLifetime.abort();
       if (lifetime.current === sourceLifetime) lifetime.current = undefined;
@@ -974,6 +977,15 @@ function MountedContentRenderer(props: WorkbenchContentRendererProps & { rendere
       if (!signal || signal.aborted) throw new Error("Content action source is no longer active");
       return current.dispatchAction(action, input, isCurrent, signal);
     });
+  const reportState = React.useCallback((value: unknown) => {
+    if (!isCurrent() || !latest.current.onStateChange) return;
+    if (value === undefined) { latest.current.onStateChange(undefined); return; }
+    try {
+      const json = JSON.stringify(value);
+      if (json && new TextEncoder().encode(json).length <= 16_384) { latest.current.onStateChange(JSON.parse(json)); return; }
+    } catch { /* Malformed extension data cannot become conversation context. */ }
+    latest.current.onStateChange(undefined);
+  }, [sourceKey, activation]);
   const Renderer = renderer.render;
   return (
     <PluginErrorBoundary
@@ -987,7 +999,7 @@ function MountedContentRenderer(props: WorkbenchContentRendererProps & { rendere
       <div style={{ display: "contents" }} data-wuu-component="content-renderer"
         onClickCapture={captureInteraction} onClick={releaseInteraction}
         onSubmitCapture={captureSubmit} onSubmit={releaseInteraction}>
-        <Renderer content={props.content} metadata={props.metadata ?? {}} host={host} />
+        <Renderer content={props.content} metadata={props.metadata ?? {}} host={{ ...host, reportState }} />
       </div>
     </PluginErrorBoundary>
   );

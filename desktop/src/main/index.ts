@@ -151,6 +151,7 @@ import type {
   PluginDesktopModuleLoadResult,
   PluginDesktopModuleReadParams,
   PluginDesktopActivationParams,
+  PluginScopeInitializeParams,
   ExtensionInventoryRecord,
   PluginDesktopModuleReadResult,
   PluginIconLoadResult,
@@ -856,14 +857,23 @@ function emitServerEvent(event: ServerEvent): void {
   // down so respondSafe drops late replies, and broadcasts invalidation.
   // Idempotent with a later disposeClient.
   if (event.kind === "server-exit") {
-    for (const owner of desktopActivationOwners.values()) owner.invalidateWorkspace(event.workdir);
+    for (const [id, owner] of desktopActivationOwners) {
+      owner.invalidateWorkspace(event.workdir);
+      const window = windowRegistry.windowForID(id);
+      for (const invalidation of owner.invalidateScopes(event.workdir)) if (window) sendToWindow(window, "wuu:plugin-scope-invalidated", invalidation);
+    }
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
   if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
     const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
     if (params?.extension_inventory) {
-      for (const owner of desktopActivationOwners.values()) owner.observeInventory(event.workdir, params.extension_inventory);
+      for (const [id, owner] of desktopActivationOwners) {
+        const invalidations = owner.invalidateScopes(event.workdir);
+        if (!invalidations.length) owner.observeInventory(event.workdir, params.extension_inventory);
+        const window = windowRegistry.windowForID(id);
+        for (const invalidation of invalidations) if (window) sendToWindow(window, "wuu:plugin-scope-invalidated", invalidation);
+      }
     }
   }
   browserHostCoordinator.handleServerEvent(event);
@@ -2317,11 +2327,19 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "wuu:plugin-desktop-module-load",
     async (event, params: PluginDesktopModuleReadParams): Promise<PluginDesktopModuleLoadResult> => {
-      const module = await appServerRequest<PluginDesktopModuleReadResult>(
-        event,
-        "plugin/desktop-module/read",
-        params,
-      );
+      let module: PluginDesktopModuleReadResult;
+      if (params.graph_generation) {
+        const owner = desktopActivationOwner(event);
+        const identity = { id: params.id, fingerprint: params.fingerprint, graph_generation: params.graph_generation };
+        try { module = await owner.readModule(identity); }
+        catch (error) {
+          if (!(error instanceof DesktopGraphOwnershipError)) throw error;
+          await owner.recoverGraph(params.graph_generation, () => initializeDesktopGraph(event, owner));
+          module = await owner.readModule(identity);
+        }
+      } else {
+        module = await appServerRequest<PluginDesktopModuleReadResult>(event, "plugin/desktop-module/read", params);
+      }
       if (module.entry.startsWith("wuu-builtin:")) {
         return { id: module.id, fingerprint: module.fingerprint, digest: module.digest, url: module.entry };
       }
@@ -2359,6 +2377,24 @@ app.whenReady().then(async () => {
     appServerRequest<PluginStorageResult>(event, "plugin/storage/get", params));
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
+  ipcMain.handle("wuu:plugin-scope-initialize", async (event, params: PluginScopeInitializeParams) => {
+    const owner = desktopActivationOwner(event);
+    const admissionContext = runtimeContextForEvent(event);
+    await owner.recoverRuntimeRequest(params.graph_generation, admissionContext.cwd, () => initializeDesktopGraph(event, owner));
+    const identity = { id: params.id, fingerprint: params.fingerprint, graph_generation: params.graph_generation };
+    await owner.readModule(identity);
+    const context = resolveUserHostContext(params.user_space_id, params.product_domain, params.composition_profile);
+    const scope = JSON.stringify([context.user_space_id, context.product_domain, context.composition_profile]);
+    const inventory = await owner.scopedInventory(identity, scope, async () => ({
+      workdir: context.cwd, request: appServerClientPool.bindContextRequest(context), params: desktopInitializeParams(),
+    }));
+    await owner.readModule(identity);
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame || desktopActivationOwners.get(event.sender.id) !== owner
+      || JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(admissionContext)) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin scope admission document was replaced"));
+    }
+    return inventory;
+  });
   ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
     if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
       throw new Error("User host and workspace routes cannot be combined");

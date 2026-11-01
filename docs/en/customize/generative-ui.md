@@ -1,9 +1,6 @@
 # Generative UI (experimental)
 
-Generative UI lets a model return interactive layouts, charts, calculators, and forms inside a conversation. The bundled plugin is **disabled by default**.
-Open **Skills & Plugins**, select **Generative UI (Experimental)**, and enable
-it to make its `render_ui` tool available. Disabling the plugin removes the tool
-and renderer; existing results retain their text summary.
+Generative UI lets a model return interactive layouts, charts, calculators, and forms inside a conversation. The bundled plugin is enabled by default in Personal and disabled by default in Coding. Open **Skills & Plugins** and select **Generative UI (Experimental)** to change its setting. Disabling the plugin removes its `render_ui` tool and renderer; existing results retain their text summary.
 
 The plugin uses Wuu's existing tool-calling path. It does not require another
 API key or a separate UI-generation service. Your selected provider and model
@@ -24,6 +21,9 @@ use it; merely enabling the plugin does not add tools to an unrelated engine.
   Sending requires a real user interaction and uses the normal conversation path.
   It does not clear an existing composer draft or its attachments. Previews and
   unavailable or running conversations cannot submit a follow-up.
+- In Twin, the current values of mounted interactive results also accompany the
+  next ordinary message as untrusted context. View-only state, such as table
+  sorting or chart visibility, is not included.
 
 While tool arguments stream, the renderer previews complete, validated nodes.
 Incomplete or invalid updates keep the last usable preview. Preview state is
@@ -105,8 +105,7 @@ restore on reopening the same result; only declared values accompany a follow-up
 
 `render_ui` accepts `{ "spec": { "version": 2, "title": "…", "fallback": "…",
 "state": [], "body": [] } }`. State entries contain an `id` and JSON `value`;
-body nodes have unique IDs and explicit, type-specific properties. Version 2 is retained for historical artifacts and direct runtime compatibility;
-new model calls use version 3.
+body nodes have unique IDs and explicit, type-specific properties. Version 2 is retained for historical artifacts and direct runtime compatibility; new model calls use version 3. State is persistent by default; set `scope: "temporary"` to reset an entry when the view reopens. Both kinds accompany the current values sent to the conversation.
 
 Version 2 is a bounded data program. Expressions read declared state and support
 arithmetic, comparisons, formatting, conditions, array construction, mapping,
@@ -115,7 +114,16 @@ expression supplies a stable identity across reordering: a nonblank string of
 at most 80 characters or a finite number within the normal bounds. Duplicate
 sibling keys fail validation at runtime. Without an explicit key, full item
 values determine identity, so editing an item may reset its local view state.
-Actions can set declared state, reset, copy text, or explicitly send a message.
+For an editable list, make `each.items` reference a list state and provide a
+unique stable `each.key`. Controls inside that list can use `itemField` in place
+of `state` to bind a field on the current item. Keep the key in a separate,
+immutable item ID, not editable text or an array index. Repeated additions should
+allocate IDs from a counter state and increment it in the same action sequence.
+A button can use
+`{ "type": "append", "state": "items", "value": ... }` to append an evaluated
+item; within the matching `each`, `{ "type": "remove", "state": "items" }`
+removes the current item. Edits remain local to the view and do not change a
+Personal task. Actions can also set declared state, reset, copy text, or explicitly send a message.
 Unknown nodes, properties, state references, and out-of-scope expressions fail
 validation. It does not execute generated JavaScript or accept arbitrary HTML,
 CSS, URLs, network access, or React props.
@@ -194,6 +202,8 @@ For example:
 
 `render_ui` is a direct presentation tool, including when programmatic tool
 calling is enabled. Call it at the top level; it cannot run inside `run_code`.
+`searchTools` and `describeTool` can discover its current name and schema with
+`direct_only: true`; discovery does not create a `tools.*` binding.
 
 ## Boundaries and recovery
 

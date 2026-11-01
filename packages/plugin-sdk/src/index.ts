@@ -307,7 +307,15 @@ export interface PluginUIInteractiveAnswerProps {
   onRefresh(): Promise<unknown>;
   onRetry(resumeHeld?: boolean): Promise<unknown>;
 }
-export interface PluginUIConversationMessageProps { interactive?: readonly PluginUIInteractiveAnswerProps[]; footer?: React.ReactNode; reaction?: { emoji?: string; label: string; pending?: boolean; error?: string; onChange?(emoji: string | null): void }; replyPreview?: React.ReactNode; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: React.ReactNode; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: React.ReactNode }; messageActions?: "copy-only" | "none" }
+export interface PluginUIConversationResourceProps {
+  readonly rendererScope?: { userSpaceId: string; productDomain: "personal" | "coding"; compositionProfile?: string };
+  readonly sessionId: string; readonly itemId: string; readonly partIndex: number; readonly part: { type: string; mime_type?: string; name?: string; text?: string; resource?: unknown; artifact?: { ref?: string; sha256?: string; size_bytes?: number } };
+  readonly fallbackText: string; readonly running?: boolean;
+  readonly preview?: { capability: string; turnId: string; argumentsText: string; status: "in_progress" | "completed" | "failed" | "interrupted"; error?: string };
+  readonly onSubmit?: (input: RendererSubmissionV1) => Promise<void>;
+  readonly onStateChange?: (state: unknown, instanceId: string) => void;
+}
+export interface PluginUIConversationMessageProps { resources?: readonly PluginUIConversationResourceProps[]; interactive?: readonly PluginUIInteractiveAnswerProps[]; footer?: React.ReactNode; reaction?: { emoji?: string; label: string; pending?: boolean; error?: string; onChange?(emoji: string | null): void }; replyPreview?: React.ReactNode; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: React.ReactNode; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: React.ReactNode }; messageActions?: "copy-only" | "none" }
 
 export interface PluginUIConversationViewProps {
   presentation?: "standard" | "bubbles";
@@ -605,6 +613,10 @@ export interface LocaleDefinition {
 // ---------------------------------------------------------------------------
 // Plugin generation API
 // ---------------------------------------------------------------------------
+
+/** Renderer-only desktop activation receives no application, runtime, or other contributions. */
+export type ContentRendererActivationAPI = Pick<PluginGenerationApi,
+  "react" | "ui" | "signal" | "registerRenderer" | "registerCSSSnippet" | "registerStyle" | "registerCleanup">;
 
 export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** Host-owned React runtime. Executable desktop bundles must use this instance. */
@@ -2948,6 +2960,8 @@ export type SettingsActionId = (typeof SETTINGS_ACTIONS)[keyof typeof SETTINGS_A
 export interface PresentationHost extends ViewHostAPI {
   readonly actions: readonly string[];
   invoke(action: string, input?: unknown): Promise<unknown>;
+  /** Report untrusted source-scoped draft values, when the host supports it. */
+  reportState?(state: unknown): void;
 }
 
 export interface PresenterProps {

@@ -594,6 +594,7 @@
   /* The reveal distance and reserved width share a column that scales with text. */
   --bubble-time-gutter: max(88px, calc(var(--conversation-message-font-size) * 6));
 }
+.plugin-conversation-message[data-preview-only]:not(:has([data-wuu-component="content-renderer"])) { display: none; }
 .plugin-conversation-message[data-bubble] + .plugin-conversation-message[data-bubble] { margin-top: 16px; }
 .plugin-conversation-message[data-bubble][data-role="assistant"] + .plugin-conversation-message[data-bubble][data-role="assistant"],
 .plugin-conversation-message[data-bubble][data-role="user"] + .plugin-conversation-message[data-bubble][data-role="user"] { margin-top: 4px; }
@@ -691,6 +692,8 @@
 
 /* Bubble reply affordances mirror the quiet inline action, never a second row. */
 .bubble-message-body { position: relative; display: flex; flex-direction: column; align-self: flex-start; width: fit-content; max-width: min(88%, calc(100% - var(--bubble-time-gutter))); min-width: 0; }
+.plugin-conversation-message[data-bubble][data-has-resources] > .bubble-message-body { width: min(100%, 600px); }
+.plugin-conversation-message[data-bubble][data-has-resources] > .bubble-message-body > .bubble-message-content { width: 100%; }
 .plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body {
   align-self: flex-end;
   transform: translateX(calc(-1 * var(--bubble-time-progress, 0) * var(--bubble-time-gutter)));

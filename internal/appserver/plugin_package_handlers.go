@@ -48,6 +48,9 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 
 	snapshot, releaseSnapshot := s.rt.RetainExtensionSnapshot()
 	defer releaseSnapshot()
+	if params.GraphGeneration != "" && params.GraphGeneration != snapshot.GenerationID {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin graph is no longer active"))
+	}
 	for _, module := range snapshot.NativeRendererModules() {
 		if params.ID != module.SubjectID {
 			continue
@@ -96,7 +99,7 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 	} else if cfg := s.currentExtensionConfig(); cfg.Extensions != nil {
 		settings = *cfg.Extensions
 	}
-	approval, state, _, enabled := pluginPackageInventoryState(settings, fresh)
+	approval, state, _, enabled := pluginPackageInventoryState(settings, fresh, runtime.PluginEnabledByDefault(s.currentExtensionConfig(), fresh))
 	approved := approval == ExtensionApprovalGranted || approval == ExtensionApprovalOfficial
 	active := state == ExtensionStateGranted || state == ExtensionStateActive
 	if !enabled || !approved || !active {

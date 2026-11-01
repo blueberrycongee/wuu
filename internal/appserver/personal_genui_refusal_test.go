@@ -2,8 +2,10 @@ package appserver
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -246,31 +248,27 @@ func TestPersonalGenUIRegistryRefusalThroughShippedSDK(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	publicTool := ""
-	for _, definition := range bridge.host.ToolDefinitions() {
-		tool, ok := bridge.host.Tool(definition.Name)
-		if ok && tool.PluginID == "personal" && tool.Registration.ID == "present_interactive_answer" {
-			publicTool = definition.Name
-		}
-	}
-	if publicTool == "" {
-		t.Fatal("GenUI tool unavailable")
-	}
-	publish := func(id string) string {
-		result, err := bridge.host.ExecuteTool(personalTestOwner(context.Background()), publicTool, pluginhost.ToolExecuteInput{SessionID: sessionID, ThreadID: sessionID, CallID: id, TurnID: "test-turn", Tool: "test-genui-tool", Arguments: json.RawMessage(`{"spec":{"schemaVersion":1,"title":"Synthetic","fallbackText":"Synthetic choices","fields":{"count":{"type":"number","scope":"persistent","initial":4,"min":1,"max":20}},"actions":[{"id":"submit","kind":"submit","label":"Explain"}],"tree":{"id":"submit","type":"button","label":"Explain","action":"submit"}}}`)})
+	// Historical surfaces remain actionable after the publication tool is retired.
+	// Seed the persisted record so this test exercises recovery and refusal,
+	// without reintroducing the removed model-facing tool.
+	seedHistorical := func(id string) string {
+		surfaceID := fmt.Sprintf("surface_%x", sha256.Sum256([]byte(id)))
+		spec := json.RawMessage(`{"schemaVersion":1,"title":"Synthetic","fallbackText":"Synthetic choices","fields":{"count":{"type":"number","scope":"persistent","initial":4,"min":1,"max":20}},"actions":[{"id":"submit","kind":"submit","label":"Explain"}],"tree":{"id":"submit","type":"button","label":"Explain","action":"submit"}}`)
+		raw, err := json.Marshal(map[string]any{
+			"binding":     map[string]string{"owner": "local", "session": sessionID, "agent": agentID},
+			"publication": id,
+			"surface":     map[string]any{"schemaVersion": 1, "surfaceId": surfaceID, "messageId": id, "spec": spec, "state": map[string]int{"count": 4}, "revision": 0, "submitted": false},
+			"source":      map[string]string{"toolCallId": id, "toolName": "test-genui-tool"},
+			"receipts":    map[string]any{},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var reference struct {
-			SurfaceID string `json:"surfaceId"`
-		}
-		if err := json.Unmarshal(result.StructuredContent, &reference); err != nil {
-			t.Fatal(err)
-		}
-		if reference.SurfaceID == "" {
-			t.Fatalf("tool result: %+v", result)
-		}
-		return reference.SurfaceID
+		value := string(raw)
+		bridge.mu.Lock()
+		bridge.storage["personal.genui.v1."+surfaceID] = &value
+		bridge.mu.Unlock()
+		return surfaceID
 	}
 	submit := func(surface, event string, revision, count int) (map[string]any, error) {
 		return invoke("genui.action", map[string]any{"agent_id": agentID, "request": map[string]any{"surfaceId": surface, "actionId": "submit", "expectedRevision": revision, "eventId": event, "state": map[string]any{"count": count}}})
@@ -278,7 +276,7 @@ func TestPersonalGenUIRegistryRefusalThroughShippedSDK(t *testing.T) {
 	retry := func(surface string) map[string]any {
 		return mustInvoke("genui.retry", map[string]any{"agent_id": agentID, "surface_id": surface})
 	}
-	a := publish("definite-refusal")
+	a := seedHistorical("definite-refusal")
 	setEngine("codex")
 	if _, err := submit(a, "refused-event", 0, 4); err != nil {
 		t.Fatal(err)
@@ -298,7 +296,7 @@ func TestPersonalGenUIRegistryRefusalThroughShippedSDK(t *testing.T) {
 	if !strings.Contains(bridge.sends[1].Input.ContextBlocks[0].Content, `"count":7`) {
 		t.Fatal("corrected actual state was lost")
 	}
-	b := publish("unknown-refusal")
+	b := seedHistorical("unknown-refusal")
 	if _, err := submit(b, "unknown-event", 0, 4); err != nil {
 		t.Fatal(err)
 	}
