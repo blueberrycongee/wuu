@@ -29,8 +29,8 @@ describe('dictation session lifecycle', () => {
     const firstWindow = '第一句今天我们来测试一段很长的语音听写看看前面的内容会不会丢失';
     const correctedWindow = firstWindow + '第二句窗外阳光很好桌上的咖啡还冒着热气我准备把今天要做的事情都说一遍';
     const revisedWindow = firstWindow + '第二句窗外阳光很好桌上的咖啡还冒着N';
-    const nextWindow = '第三句上午先整理项目文档';
-    const finalWindow = nextWindow + '把昨天讨论的接口变更补充清楚';
+    const nextWindow = '第三句';
+    const finalWindow = '第三句上午先整理项目文档把昨天讨论的接口变更补充清楚';
     for (const [text, is_final] of [
       [firstWindow, false],
       [revisedWindow, false],
