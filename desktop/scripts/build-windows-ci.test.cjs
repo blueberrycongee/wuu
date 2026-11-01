@@ -2,14 +2,30 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { runWindowsBuild } = require('./build-windows-ci.cjs');
 
-test('only pull-request validation changes compression; release and manual routes retain defaults', () => {
-  for (const event of ['pull_request', 'push', 'workflow_dispatch', 'pull_request_target', '', 'PULL_REQUEST']) {
-    let called;
-    runWindowsBuild(event, { spawn: (command, args, options) => { called = { command, args, options }; return { status: 0 }; } });
-    assert.equal(called.args.includes('--config.compression=store'), event === 'pull_request', event);
-    assert.deepEqual(called.args.filter(arg => !arg.startsWith('--config.compression=' )).slice(1), ['--win', 'nsis', 'zip', '--publish=never']);
-    assert.equal(called.options.stdio, 'inherit');
-    assert.equal(called.args.some(arg => /npmRebuild|sign|differentialPackage/.test(arg)), false);
+test('only pull-request validation overrides archive compression without leaking its environment', () => {
+  const key = 'ELECTRON_BUILDER_COMPRESSION_LEVEL';
+  const original = process.env[key];
+  try {
+    for (const inherited of [undefined, '9']) {
+      if (inherited === undefined) delete process.env[key];
+      else process.env[key] = inherited;
+      const before = { ...process.env };
+      for (const event of ['pull_request', 'push', 'workflow_dispatch', 'pull_request_target', '', 'PULL_REQUEST']) {
+        let called;
+        runWindowsBuild(event, { spawn: (command, args, options) => { called = { command, args, options }; return { status: 0 }; } });
+        const validation = event === 'pull_request';
+        assert.equal(called.args.includes('--config.compression=store'), validation, event);
+        assert.deepEqual(called.args.filter(arg => !arg.startsWith('--config.compression=')).slice(1), ['--win', 'nsis', 'zip', '--publish=never']);
+        assert.equal(called.options.stdio, 'inherit');
+        assert.equal(called.args.some(arg => /npmRebuild|sign|differentialPackage/.test(arg)), false);
+        assert.deepEqual({ ...called.options.env }, validation ? { ...before, [key]: '1' } : before);
+        if (validation) assert.notEqual(called.options.env, process.env);
+        assert.deepEqual({ ...process.env }, before, 'the parent environment is unchanged');
+      }
+    }
+  } finally {
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
   }
 });
 
