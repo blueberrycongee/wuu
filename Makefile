@@ -91,9 +91,11 @@ test-go:
 	go test $(GO_PACKAGES)
 
 # CI runs appserver separately; keep the remaining inventory tied to the full gate.
+# Start measured long-running packages first within the same Go worker pool.
 test-go-packages:
 	@packages="$$(go list $(GO_PACKAGES))" || exit $$?; \
-		packages="$$(printf '%s\n' "$$packages" | sed '\|^github.com/blueberrycongee/wuu/internal/appserver$$|d')"; \
+		packages="$$(printf '%s\n' "$$packages" | sed '\|^github.com/blueberrycongee/wuu/internal/appserver$$|d' | \
+			awk '/^github.com\/blueberrycongee\/wuu\/(cmd\/wuu|internal\/(tools|runtime|codemode))$$/ { print; next } { rest[++n]=$$0 } END { for (i=1; i<=n; i++) print rest[i] }')"; \
 		go test $$packages
 
 test-go-uncached:

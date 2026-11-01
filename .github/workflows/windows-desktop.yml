@@ -117,9 +117,12 @@ jobs:
           wait "$presentation_pid" || presentation_result=$?
           test "$core_result" -eq 0 && test "$presentation_result" -eq 0
 
+      - name: Verify Windows packaging event routing
+        run: node --test desktop/scripts/build-windows-ci.test.cjs
+
       - name: Build Windows installer and portable archive
         working-directory: desktop
-        run: npx --no-install electron-builder --win nsis zip --publish=never
+        run: node scripts/build-windows-ci.cjs
 
       - name: Exercise the packaged terminal native module
         working-directory: desktop

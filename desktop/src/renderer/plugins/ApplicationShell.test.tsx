@@ -126,11 +126,12 @@ describe("application shell assembly", () => {
     const skins = Object.freeze({ skins: [], selected: "default" });
     const make = (mode: "light" | "dark", size: number) => {
       const lifetime = new AbortController();
+      const observeContentThemeSelection = vi.fn(() => vi.fn());
       const source = { ...base, capabilities: { ...base.capabilities, themeChanges: true, appContext: true, appContextChanges: true, appContextRecording: true },
         currentAppliedTheme: () => mode, getThemePreference: vi.fn(async () => mode), getMessageFlowFontSize: vi.fn(async () => size),
         readAppearance: () => ({ ...base.appearanceDefaults, motion: mode === "dark" ? "reduce" as const : "system" as const }),
         getShellSkins: () => skins, readBackground: async () => null,
-        observeAppliedTheme: vi.fn(() => vi.fn()), observeContentThemeSelection: vi.fn(() => vi.fn()),
+        observeAppliedTheme: vi.fn(() => vi.fn()), observeContentThemeSelection,
         onThemePreferenceChange: vi.fn(() => vi.fn()), observeAppearance: vi.fn(() => vi.fn()),
         observeBackground: vi.fn(() => vi.fn()), subscribeShellSkins: vi.fn(() => vi.fn()),
         onAppContextChanged: vi.fn(() => vi.fn()),
@@ -139,7 +140,7 @@ describe("application shell assembly", () => {
       } as unknown as ReturnType<typeof createApplicationSettingsControls> & { setAppContextShortcutRecording: ReturnType<typeof vi.fn> };
       const scoped = scopeApplicationSettingsControls(() => source, lifetime.signal, () => lifetime.signal.throwIfAborted());
       const controls = retainPresentationReads({ settingsControls: scoped } as ApplicationServiceV1, lifetime.signal).settingsControls;
-      return { source, controls, lifetime };
+      return { source, controls, lifetime, observeContentThemeSelection };
     };
     const old = make("light", 14), next = make("dark", 18), third = make("light", 20);
     const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
@@ -151,12 +152,18 @@ describe("application shell assembly", () => {
       await act(async () => render(old.controls));
       const theme = container.querySelector('[data-testid="settings-theme-dark"]');
       const font = container.querySelector<HTMLInputElement>('[data-testid="settings-message-flow-font-size-input"]')!;
+      // The palette selector and mode previews each own a selection observer.
+      expect(old.observeContentThemeSelection).toHaveBeenCalledTimes(2);
       old.lifetime.abort(new PluginLifecycleCancellationError());
+      for (const subscription of old.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
       await act(async () => window.dispatchEvent(new Event("blur")));
       expect(container.querySelector('[role="alert"]')).toBeNull();
       await act(async () => render(next.controls));
       expect(next.source.observeAppliedTheme).toHaveBeenCalledTimes(2);
-      expect(next.source.observeContentThemeSelection).toHaveBeenCalledOnce();
+      expect(next.observeContentThemeSelection).toHaveBeenCalledTimes(2);
+      expect(old.observeContentThemeSelection).toHaveBeenCalledTimes(2);
+      for (const subscription of old.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
+      for (const subscription of next.observeContentThemeSelection.mock.results) expect(subscription.value).not.toHaveBeenCalled();
       expect(next.source.onThemePreferenceChange).toHaveBeenCalledOnce();
       expect(next.source.observeAppearance).toHaveBeenCalledOnce();
       expect(next.source.onAppContextChanged).toHaveBeenCalledOnce();
@@ -175,9 +182,14 @@ describe("application shell assembly", () => {
       });
       expect(font.value).toBe("1");
       await act(async () => render(third.controls));
+      expect(third.observeContentThemeSelection).toHaveBeenCalledTimes(2);
+      for (const subscription of next.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
       expect(third.source.getMessageFlowFontSize).toHaveBeenCalledOnce();
       expect(font.value).toBe("1");
     } finally { act(() => root.unmount()); next.lifetime.abort(); third.lifetime.abort(); container.remove(); }
+    for (const generation of [old, next, third]) {
+      for (const subscription of generation.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
+    }
   });
 
   it("keeps explicit recovery usable while a successor shell registers late", async () => {
