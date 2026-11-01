@@ -8,6 +8,19 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, va
     const composer = input?.closest<HTMLElement>(".composer");
     const stack = input?.closest<HTMLElement>(".composer-stack");
     if (!input || !composer || !stack) return;
+    // An empty conversation draft has no text to wrap. Let the stylesheet
+    // size it so window resizing does not repeatedly force layout.
+    if (!input.value && !stack.dataset.documentComposer) {
+      if (stack.dataset.multiline !== undefined) delete stack.dataset.multiline;
+      if (input.style.height) input.style.removeProperty("height");
+      if (input.style.getPropertyValue("--composer-chrome-height")) {
+        input.style.removeProperty("--composer-chrome-height");
+      }
+      if (stack.style.getPropertyValue("--composer-input-growth")) {
+        stack.style.removeProperty("--composer-input-growth");
+      }
+      return;
+    }
     // Covered workspaces keep their draft mounted. Measuring a hidden textarea
     // still forces layout twice, even though none of its pixels can be shown.
     if (input.checkVisibility && !input.checkVisibility({ checkVisibilityCSS: true })) return;
