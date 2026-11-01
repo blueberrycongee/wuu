@@ -33,7 +33,16 @@ export default {
 wuu plugin dev ./hello.ts
 ```
 
-此操作授权这个具体文件并监听变化。默认导出遵循公开的 `RuntimePlugin` 契约。Wuu 保存文件快照，检查语法、导入和默认导出，不调用 `initialize`，再发布独立快照的开发 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。正在执行轮次时仍可发布；该轮次及其未完成工作者或受管进程继续使用已有 generation。这些工作结束且宿主完成准备与激活后，会话才能在空闲轮次边界接入更新。实际宿主随后通过 `initialize` 收集候选的声明，再调用 `prepare`，通过所选服务验证状态。准备失败保留旧运行时；原生激活在运行时变更提交后进行。此后若激活失败，新 generation 仍保持发布并记录失败诊断，不会回滚。发布成功不等于每个已打开会话都已激活新版本，请检查实际状态及 [generation 契约](plugin-system.md#运行时-generation)。
+此操作授权这个具体文件并监听变化。单个 `.ts` 文件可以默认导出 `RuntimePlugin`，也可以导出 `activate(api)` / `activatePresentation(api)` 作为 Wuu Desktop 界面插件，或者在同一文件中**同时导出两者**，把运行时能力与桌面 UI 合成为一个全栈单文件插件。如果需要声明桌面贡献或元数据而不编写 `plugin.json`，还可以按需导出 `export const manifest = { version, description, permissions, contributes, interface }`。Wuu 保存文件快照，检查语法、导入和导出，不调用 `initialize`，再发布独立快照的 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。正在执行轮次时仍可发布；该轮次及其未完成工作者或受管进程继续使用已有 generation。这些工作结束且宿主完成准备与激活后，会话才能在空闲轮次边界接入更新。实际宿主随后通过 `initialize` 收集候选的声明，再调用 `prepare`，通过所选服务验证状态。准备失败保留旧运行时；原生激活在运行时变更提交后进行。此后若激活失败，新 generation 仍保持发布并记录失败诊断，不会回滚。发布成功不等于每个已打开会话都已激活新版本，请检查实际状态及 [generation 契约](plugin-system.md#运行时-generation)。
+
+你也可以直接检查、安装或原地更新单个 `.ts` 文件，无需创建目录或 `.zip` 压缩包：
+
+```bash
+wuu plugin inspect ./hello.ts
+wuu plugin install ./hello.ts
+```
+
+安装本地 `.ts` 文件会直接信任该规范路径并启用插件；修改 `./hello.ts` 后再次运行 `wuu plugin install ./hello.ts`（或 `wuu plugin update <id> ./hello.ts`）即视为同源更新，直接保留信任而无需额外确认步骤。
 
 请使用普通 `.ts` 文件，不支持符号链接。单文件路径仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。其他本地文件、npm 依赖、JSX 或自定义 `tsconfig` 转换需要下方的插件包流程。直接执行 TypeScript 不进行类型检查。stdout 保留给协议，诊断信息使用 `console.error`。导入模块会执行顶层代码，验证期间也一样。开发授权表示信任这个来源，不会沙箱化代码，也不代表已批准分发包。
 

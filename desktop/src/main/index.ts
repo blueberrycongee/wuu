@@ -2303,7 +2303,7 @@ app.whenReady().then(async () => {
     const context = runtimeContextForEvent(event);
     const packagePath = await showProjectDirectoryDialog({
       properties: ["openFile", "openDirectory"],
-      filters: [{ name: "Wuu Plugin Package", extensions: ["zip"] }],
+      filters: [{ name: "Wuu Plugin Package", extensions: ["zip", "ts"] }],
     });
     if (!packagePath) {
       return undefined;

@@ -979,6 +979,7 @@ type PluginPackageSourceKind string
 const (
 	PluginPackageSourceDirectory PluginPackageSourceKind = "directory"
 	PluginPackageSourceZip       PluginPackageSourceKind = "zip"
+	PluginPackageSourceFile      PluginPackageSourceKind = "file"
 )
 
 type PluginPackageMetadata struct {

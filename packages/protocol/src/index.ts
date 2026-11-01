@@ -716,7 +716,7 @@ export type ConfigChangedNotification = {
   providers?: ProviderSummary[];
 };
 
-export type PluginPackageSourceKind = "directory" | "zip";
+export type PluginPackageSourceKind = "directory" | "zip" | "file";
 
 export type PluginPackageDistribution = {
   lock_version: 1;
@@ -729,7 +729,7 @@ export type PluginPackageDistribution = {
 };
 
 export type PluginPackageSourceParams = {
-  /** Local directory/ZIP, npm:name@exact-version, or lock:path. */
+  /** Local directory/ZIP/.ts file, npm:name@exact-version, or lock:path. */
   path: string;
   registry?: string;
   integrity?: string;

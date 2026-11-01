@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -1136,3 +1137,103 @@ func writePluginPackageZip(t *testing.T, path string, entries map[string]string)
 		t.Fatal(err)
 	}
 }
+
+func TestPluginPackageInstallSingleFileFullStackAndSameSourceUpdate(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required")
+	}
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
+
+	source := filepath.Join(t.TempDir(), "single-fullstack.ts")
+	v1 := `import type { PluginGenerationApi, RuntimePlugin } from "@wuu/plugin-sdk";
+export const manifest = { name: "Single File Fullstack", version: "1.0.0" };
+export default {
+  initialize() {
+    return { tools: [{ id: "echo", description: "Echo from single file", input_schema: { type: "object" } }] };
+  },
+  executeTool() {
+    return { result: { content: [{ type: "text", text: "runtime-v1" }] } };
+  },
+} satisfies RuntimePlugin;
+export function activate(api: PluginGenerationApi) {
+  api.registerStatusItem({ id: "status", label: "desktop-v1" });
+}
+`
+	writePluginPackageFile(t, source, v1)
+	pluginID := pluginpkg.SingleFileID(source)
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+
+	callPluginPackageRPC(t, srv, "inspect-v1", MethodPluginPackageInspect, PluginPackageInspectParams{Path: source})
+	inspectResp := responseByID(t, parseOutput(t, out.String()), "inspect-v1")
+	if inspectResp["error"] != nil {
+		t.Fatalf("inspect single-file plugin: %v", inspectResp["error"])
+	}
+	inspected := remarshal[PluginPackageInspectResult](t, inspectResp["result"])
+	if inspected.Package.ID != pluginID || inspected.Package.SourceKind != PluginPackageSourceFile || inspected.Package.Version != "1.0.0" {
+		t.Fatalf("inspected single-file metadata = %+v", inspected.Package)
+	}
+
+	callPluginPackageRPC(t, srv, "install-v1", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+	installResp := responseByID(t, parseOutput(t, out.String()), "install-v1")
+	if installResp["error"] != nil {
+		t.Fatalf("install single-file plugin: %v", installResp["error"])
+	}
+	installed := remarshal[PluginPackageInstallResult](t, installResp["result"])
+	if installed.Pending || installed.Replaced || installed.Package.SourceKind != PluginPackageSourceFile {
+		t.Fatalf("install result = %+v", installed)
+	}
+	record := pluginPackageRecord(t, installed.ExtensionInventory, pluginID)
+	if record.ApprovalState != ExtensionApprovalGranted || record.Enabled == nil || !*record.Enabled || record.Desktop == nil || record.RuntimeState != ExtensionRuntimeActive {
+		t.Fatalf("installed single-file plugin inventory record = %+v", record)
+	}
+
+	callPluginPackageRPC(t, srv, "read-desktop-v1", MethodPluginDesktopModuleRead, PluginDesktopModuleReadParams{
+		ID: record.ID, Fingerprint: record.Fingerprint,
+	})
+	readResp := responseByID(t, parseOutput(t, out.String()), "read-desktop-v1")
+	if readResp["error"] != nil {
+		t.Fatalf("read desktop module v1: %v", readResp["error"])
+	}
+	desktopV1 := remarshal[PluginDesktopModuleReadResult](t, readResp["result"])
+	if !strings.Contains(desktopV1.Source, "desktop-v1") {
+		t.Fatalf("desktop module v1 source = %q", desktopV1.Source)
+	}
+
+	v2 := strings.ReplaceAll(v1, "1.0.0", "2.0.0")
+	v2 = strings.ReplaceAll(v2, "runtime-v1", "runtime-v2")
+	v2 = strings.ReplaceAll(v2, "desktop-v1", "desktop-v2")
+	writePluginPackageFile(t, source, v2)
+
+	callPluginPackageRPC(t, srv, "install-v2", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+	installV2Resp := responseByID(t, parseOutput(t, out.String()), "install-v2")
+	if installV2Resp["error"] != nil {
+		t.Fatalf("same-source update single-file plugin: %v", installV2Resp["error"])
+	}
+	installedV2 := remarshal[PluginPackageInstallResult](t, installV2Resp["result"])
+	if installedV2.Pending || !installedV2.Replaced || installedV2.Package.Version != "2.0.0" {
+		t.Fatalf("same-source update result = %+v", installedV2)
+	}
+	recordV2 := pluginPackageRecord(t, installedV2.ExtensionInventory, pluginID)
+	if recordV2.ApprovalState != ExtensionApprovalGranted || recordV2.Fingerprint == record.Fingerprint {
+		t.Fatalf("updated single-file plugin inventory record = %+v", recordV2)
+	}
+
+	callPluginPackageRPC(t, srv, "read-desktop-v2", MethodPluginDesktopModuleRead, PluginDesktopModuleReadParams{
+		ID: recordV2.ID, Fingerprint: recordV2.Fingerprint,
+	})
+	readV2Resp := responseByID(t, parseOutput(t, out.String()), "read-desktop-v2")
+	if readV2Resp["error"] != nil {
+		t.Fatalf("read desktop module v2: %v", readV2Resp["error"])
+	}
+	desktopV2 := remarshal[PluginDesktopModuleReadResult](t, readV2Resp["result"])
+	if !strings.Contains(desktopV2.Source, "desktop-v2") {
+		t.Fatalf("desktop module v2 source = %q", desktopV2.Source)
+	}
+}
+
