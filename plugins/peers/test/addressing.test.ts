@@ -28,6 +28,18 @@ test("shared names receive refs that stay unique on a prefix collision", () => {
   assert.notEqual(peers[2].address, peers[3].address);
 });
 
+test("a unique name cannot be shadowed by another peer's disambiguated address", () => {
+  const shadowed = addPeerAddresses([
+    {session_id: "cccccccc-3333-4333-8333-333333333333", name: "shared"},
+    {session_id: "cccccccc-4444-4444-8444-444444444444", name: "shared"},
+    {session_id: "ffffffff-7777-4777-8777-777777777777", name: "shared [cccccccc-333]"},
+  ]);
+  assert.equal(shadowed[2].address, "shared [cccccccc-333]");
+  assert.equal(shadowed[0].address, "shared [cccccccc-3333-43]");
+  assert.equal(shadowed[1].address, "shared [cccccccc-444]");
+  assert.equal(resolvePeerAddress(shadowed, shadowed[2].address, selfID).session_id, shadowed[2].session_id);
+});
+
 test("resolves an exact session id, an exact address, or a unique bare name", () => {
   assert.equal(resolvePeerAddress(peers, sessions[0].session_id, selfID).name, "alpha");
   assert.equal(resolvePeerAddress(peers, peers[3].address, selfID).name, "shared");

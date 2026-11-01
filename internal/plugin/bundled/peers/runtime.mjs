@@ -865,12 +865,33 @@ function addPeerAddresses(sessions) {
     const name = displayName(session);
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
-  return sessions.map((session) => {
+  const addressed = sessions.map((session) => {
     const name = displayName(session);
     const sameName = sessions.filter((peer) => displayName(peer) === name);
     const ref = uniqueRef(session.session_id, sameName);
-    return { ...session, name, ref, address: (counts.get(name) ?? 0) > 1 ? `${name} [${ref}]` : name };
+    return { ...session, name, ref, address: name };
   });
+  const used = /* @__PURE__ */ new Set();
+  for (const peer of addressed) {
+    if ((counts.get(peer.name) ?? 0) !== 1) continue;
+    peer.address = peer.name;
+    used.add(peer.address);
+  }
+  for (const peer of addressed) {
+    if ((counts.get(peer.name) ?? 0) === 1) continue;
+    const id = peer.session_id.trim();
+    let ref = peer.ref;
+    let address = `${peer.name} [${ref}]`;
+    while (used.has(address) && ref.length < id.length) {
+      ref = id.slice(0, Math.min(ref.length + 4, id.length));
+      address = `${peer.name} [${ref}]`;
+    }
+    if (used.has(address)) throw new Error(`peer address collision for ${JSON.stringify(peer.name)}`);
+    peer.ref = ref;
+    peer.address = address;
+    used.add(address);
+  }
+  return addressed;
 }
 function resolvePeerAddress(peers, input, selfID) {
   const value = input.trim();
