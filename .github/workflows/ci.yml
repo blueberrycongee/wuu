@@ -2277,7 +2277,7 @@ jobs:
           for pid in "${pids[@]}"; do wait "$pid" || status=1; done
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           node desktop/node_modules/electron/install.js
-          node --test desktop/scripts/build-package-prerequisites.test.cjs desktop/scripts/linux-package-cleanup.test.cjs
+          node --test desktop/scripts/build-package-prerequisites.test.cjs desktop/scripts/linux-package-cleanup.test.cjs desktop/scripts/build-linux-ci.test.cjs
       - name: Require a working Linux filesystem sandbox
         run: |
           go test -json ./internal/processsandbox -run '^TestLinuxFilesystemBoundary$' -count=1 > "$RUNNER_TEMP/linux-sandbox.json"
