@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -93,8 +94,10 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	result := t.result()
 	if err != nil {
 		result.FinishReason = providers.FinishReasonError
+		t.failReconnect(err)
 		t.emit(providers.StreamEvent{Type: providers.EventError, Error: err})
 	} else {
+		t.clearReconnect()
 		t.emit(providers.StreamEvent{Type: providers.EventDone, StopReason: t.stopReason, FinishReason: result.FinishReason})
 	}
 	return agentengine.TurnResult{Result: result}, err
@@ -147,14 +150,20 @@ func latestUserMessage(history []providers.ChatMessage) providers.ChatMessage {
 }
 
 type turn struct {
-	engine         string
-	sink           agentengine.EventSink
-	text, thinking strings.Builder
-	tools          map[string]*providers.ToolCall
-	acpToolKinds   map[string]string
-	completed      map[string]bool
-	usage          providers.TokenUsage
-	stopReason     string
+	engine             string
+	sink               agentengine.EventSink
+	text, thinking     strings.Builder
+	diagBuf            strings.Builder
+	reconnecting       bool
+	retryCount         int
+	apiError           string
+	terminatedErr      string
+	skipLeadingNewline bool
+	tools              map[string]*providers.ToolCall
+	acpToolKinds       map[string]string
+	completed          map[string]bool
+	usage              providers.TokenUsage
+	stopReason         string
 }
 
 func newTurn(engine string, sink agentengine.EventSink) *turn {
@@ -167,6 +176,9 @@ func (t *turn) emit(event providers.StreamEvent) {
 	}
 }
 func (t *turn) content(text string, thinking bool) {
+	if text != "" {
+		t.clearReconnect()
+	}
 	kind := providers.EventContentDelta
 	if thinking {
 		t.thinking.WriteString(text)
@@ -177,10 +189,66 @@ func (t *turn) content(text string, thinking bool) {
 	t.emit(providers.StreamEvent{Type: kind, Content: text})
 }
 
+func (t *turn) startReconnect(attempt int, reason string, retryIn time.Duration) {
+	if attempt <= 0 {
+		t.retryCount++
+		attempt = t.retryCount
+	} else {
+		t.retryCount = attempt
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		t.apiError = reason
+	}
+	t.reconnecting = true
+	t.emit(providers.StreamEvent{
+		Type: providers.EventLifecycle,
+		Lifecycle: &providers.StreamLifecycle{
+			Phase:      providers.StreamPhaseReconnecting,
+			RetryCount: t.retryCount,
+			RetryIn:    retryIn,
+			Reason:     t.apiError,
+		},
+	})
+}
+
+func (t *turn) clearReconnect() {
+	if !t.reconnecting {
+		return
+	}
+	t.reconnecting = false
+	t.apiError = ""
+	t.terminatedErr = ""
+	t.retryCount = 0
+	t.emit(providers.StreamEvent{
+		Type:      providers.EventLifecycle,
+		Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseConnected},
+	})
+}
+
+func (t *turn) failReconnect(err error) {
+	if !t.reconnecting {
+		return
+	}
+	t.reconnecting = false
+	reason := t.apiError
+	if err != nil && !errors.Is(err, context.Canceled) && strings.TrimSpace(err.Error()) != "" {
+		reason = err.Error()
+	}
+	t.emit(providers.StreamEvent{
+		Type: providers.EventLifecycle,
+		Lifecycle: &providers.StreamLifecycle{
+			Phase:      providers.StreamPhaseFailed,
+			RetryCount: t.retryCount,
+			Reason:     reason,
+		},
+	})
+}
+
 func (t *turn) tool(id, name, args, status, output string) {
 	if id == "" || t.completed[id] {
 		return
 	}
+	t.clearReconnect()
 	call, exists := t.tools[id]
 	if !exists {
 		call = &providers.ToolCall{ID: id, Name: name, Arguments: args}

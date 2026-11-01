@@ -2,6 +2,7 @@ package codexengine
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -69,7 +70,8 @@ func TestTurnRecoveryNotifications(t *testing.T) {
 			} else if out.err != nil || out.result.Result.Content != tc.wantContent || out.result.Result.StopReason != "completed" {
 				t.Fatalf("outcome = %+v", out)
 			}
-			retries, connected, errors := 0, 0, 0
+			retries, connected, failed, errors := 0, 0, 0, 0
+			var lastReconnect, lastFailed providers.StreamLifecycle
 			for _, ev := range events {
 				if ev.Type == providers.EventError {
 					errors++
@@ -78,23 +80,55 @@ func TestTurnRecoveryNotifications(t *testing.T) {
 					switch ev.Lifecycle.Phase {
 					case providers.StreamPhaseReconnecting:
 						retries++
+						lastReconnect = *ev.Lifecycle
 						if ev.Lifecycle.ResetPartial {
 							t.Fatal("retry must preserve prior output")
 						}
 					case providers.StreamPhaseConnected:
 						connected++
+					case providers.StreamPhaseFailed:
+						failed++
+						lastFailed = *ev.Lifecycle
 					}
 				}
 			}
-			if retries != 2 {
-				t.Fatalf("retries = %d, want 2", retries)
+			if retries != 2 || lastReconnect.RetryCount != 2 || lastReconnect.MaxRetries != 5 {
+				t.Fatalf("retries = %d (last=%+v), want 2 with RetryCount=2 MaxRetries=5", retries, lastReconnect)
 			}
-			if tc.wantError == "" && (connected != 1 || errors != 0) {
-				t.Fatalf("connected=%d errors=%d", connected, errors)
+			if tc.wantError == "" && (connected != 1 || failed != 0 || errors != 0) {
+				t.Fatalf("connected=%d failed=%d errors=%d", connected, failed, errors)
 			}
-			if tc.wantError != "" && connected != 0 {
-				t.Fatal("reported recovery before failure")
+			if tc.wantError != "" && (connected != 0 || failed != 1 || lastFailed.RetryCount != 2 || !strings.Contains(lastFailed.Reason, tc.wantError)) {
+				t.Fatalf("failed lifecycle: connected=%d failed=%d lastFailed=%+v, want failed=1 with %q", connected, failed, lastFailed, tc.wantError)
 			}
 		})
+	}
+}
+
+func TestCodexTransportStderrPreservedOnExit(t *testing.T) {
+	if os.Getenv("WUU_CODEX_STDERR_HELPER") == "1" {
+		_, _ = os.Stderr.WriteString("codex fatal: invalid auth token\n")
+		os.Exit(1)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := NewTransport(TransportOptions{
+		BinaryPath: exe,
+		ExtraArgs:  []string{"-test.run=^TestCodexTransportStderrPreservedOnExit$"},
+		Env:        append(os.Environ(), "WUU_CODEX_STDERR_HELPER=1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	done := make(chan string, 1)
+	transport.OnClose(func(reason string) {
+		done <- reason
+	})
+	reason := <-done
+	if !strings.Contains(reason, "invalid auth token") {
+		t.Fatalf("close reason = %q, want stderr diagnostic preserved", reason)
 	}
 }

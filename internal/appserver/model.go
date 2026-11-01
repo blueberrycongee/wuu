@@ -1030,8 +1030,12 @@ func (th *threadState) settleStreamReconnectItemLocked(turnID string, lc *provid
 		return nil
 	}
 	item.Status = ThreadItemStatusFailed
-	item.Text = lc.Reason
-	item.Reason = lc.FailureCategory
+	if strings.TrimSpace(lc.Reason) != "" {
+		item.Text = lc.Reason
+	}
+	if strings.TrimSpace(lc.FailureCategory) != "" {
+		item.Reason = lc.FailureCategory
+	}
 	if lc.RetryCount > 0 {
 		item.RetryCount = lc.RetryCount
 	}

@@ -14,14 +14,27 @@ import (
 )
 
 type openCodeError struct {
-	Name string `json:"name"`
-	Data struct {
-		Message string `json:"message"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
+	Data    struct {
+		Message    string `json:"message"`
+		StatusCode int    `json:"statusCode"`
 	} `json:"data"`
 }
 
 func (e *openCodeError) Error() string {
-	return fmt.Sprintf("OpenCode %s: %s", e.Name, e.Data.Message)
+	msg := strings.TrimSpace(e.Data.Message)
+	if msg == "" {
+		msg = strings.TrimSpace(e.Message)
+	}
+	if e.Data.StatusCode > 0 && !strings.Contains(msg, fmt.Sprintf("HTTP %d", e.Data.StatusCode)) {
+		if msg != "" {
+			msg = fmt.Sprintf("HTTP %d: %s", e.Data.StatusCode, msg)
+		} else {
+			msg = fmt.Sprintf("HTTP %d", e.Data.StatusCode)
+		}
+	}
+	return fmt.Sprintf("OpenCode %s: %s", e.Name, msg)
 }
 
 type openCodeInfo struct {
@@ -168,6 +181,28 @@ func (s *Session) openCodeEvent(ctx context.Context, client *openCodeClient, sta
 		if exists && delta.SessionID == state.ref && delta.MessageID == part.MessageID && delta.Field == "text" {
 			part.Text += delta.Delta
 			return state.part(part)
+		}
+	case "session.status":
+		var status struct {
+			SessionID string `json:"sessionID"`
+			Status    struct {
+				Type    string `json:"type"`
+				Attempt int    `json:"attempt"`
+				Message string `json:"message"`
+				Next    int64  `json:"next"`
+			} `json:"status"`
+		}
+		if err := json.Unmarshal(event.Properties, &status); err != nil {
+			return err
+		}
+		if status.SessionID == state.ref && status.Status.Type == "retry" {
+			var retryIn time.Duration
+			if status.Status.Next > 0 {
+				if wait := time.Until(time.UnixMilli(status.Status.Next)); wait > 0 {
+					retryIn = wait
+				}
+			}
+			state.turn.startReconnect(status.Status.Attempt, status.Status.Message, retryIn)
 		}
 	case "session.error":
 		var failure struct {
