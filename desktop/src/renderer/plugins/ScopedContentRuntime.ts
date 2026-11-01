@@ -3,7 +3,7 @@ import type { ExtensionInventoryRecord, PluginScopeInitializeParams, WuuDesktopA
 import { PluginHost } from "./PluginHost";
 import { WorkbenchController } from "./Workbench";
 
-type Bridge = Pick<WuuDesktopApi, "initializePluginScope" | "onPluginScopeInvalidated" | "loadPluginDesktopModule" | "reportPluginDesktopActivation" | "requestPluginRuntime" | "cancelPluginRuntime">;
+type Bridge = Required<Pick<WuuDesktopApi, "initializePluginScope" | "onPluginScopeInvalidated" | "loadPluginDesktopModule" | "reportPluginDesktopActivation" | "requestPluginRuntime" | "cancelPluginRuntime">>;
 type ContentModule = { activateContent(api: unknown): void | Promise<void> };
 type Loader = (url: string) => Promise<unknown>;
 const importModule: Loader = url => import(/* @vite-ignore */ url);
@@ -133,7 +133,7 @@ export function useScopedContentRuntime(source: { id: string; fingerprint: strin
     if (!source || !scope || !key || !window.wuu?.initializePluginScope || !window.wuu.onPluginScopeInvalidated) return;
     let entry = scopes.get(key);
     if (!entry) {
-      const runtime = new ScopedContentRuntime({ ...source, user_space_id: scope.userSpaceId, product_domain: scope.productDomain, composition_profile: scope.compositionProfile || undefined }, window.wuu);
+      const runtime = new ScopedContentRuntime({ ...source, user_space_id: scope.userSpaceId, product_domain: scope.productDomain, composition_profile: scope.compositionProfile || undefined }, { ...window.wuu, initializePluginScope: window.wuu.initializePluginScope, onPluginScopeInvalidated: window.wuu.onPluginScopeInvalidated });
       entry = { runtime, count: 0 }; scopes.set(key, entry);
       void runtime.refresh().catch(error => console.error("Scoped content initialization failed", error));
     }

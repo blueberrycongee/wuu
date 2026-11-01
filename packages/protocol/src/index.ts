@@ -3360,8 +3360,8 @@ export type WuuDesktopApi = {
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
-  initializePluginScope: (params: PluginScopeInitializeParams) => Promise<readonly ExtensionInventoryRecord[]>;
-  onPluginScopeInvalidated: (handler: (event: PluginScopeInvalidation) => void) => () => void;
+  initializePluginScope?: (params: PluginScopeInitializeParams) => Promise<readonly ExtensionInventoryRecord[]>;
+  onPluginScopeInvalidated?: (handler: (event: PluginScopeInvalidation) => void) => () => void;
   cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
   readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
