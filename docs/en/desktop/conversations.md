@@ -16,6 +16,12 @@ Starting work or receiving a new result gives that conversation priority while p
 
 These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
 
+## Dictate a message
+
+On macOS, click the microphone in the desktop composer to start dictation. Allow microphone and Speech Recognition access on first use. The waveform follows microphone volume. Stop waits for the final transcription and appends it to your existing draft. Clicking Send during recording finishes transcription first, then submits through the conversation's normal send flow.
+
+Cancel or switch conversations to end dictation and keep the original draft. Recognition uses the interface language and requires on-device speech recognition support for that language on your Mac; unavailable recognition is reported in the composer.
+
 ## Continue after an interruption
 
 When a Wuu task stops or fails, leave the input empty and click **Continue** (the send button), or use **Continue** in the failure notice. This starts a new turn from saved active history without repeating your question. Reopening the conversation or restarting Wuu retains this action. Typing a new instruction still sends a normal message.

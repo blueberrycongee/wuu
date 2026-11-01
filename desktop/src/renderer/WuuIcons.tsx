@@ -28,6 +28,7 @@ function createIcon(name: IconName) {
   return Icon;
 }
 
+export const Mic = createIcon("Mic");
 export const Activity = createIcon("Activity");
 export const Volume2 = createIcon("Volume2");
 export const VolumeX = createIcon("VolumeX");

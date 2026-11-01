@@ -1,3 +1,4 @@
+import { DictationButton, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import { showActionErrorToast } from "./Toast";
 import { createPortal } from "react-dom";
 import { useComposerServices } from "./ComposerServicesContext";
@@ -503,6 +504,15 @@ export function Composer({
     pluginTranslate,
     variant,
   ]);
+  const dictation = useComposerDictation({
+    owner: JSON.stringify([services?.ownerTabId, queryHistorySessionID, commandScopeKey, sideThreadId]),
+    disabled: Boolean(readOnly || topAccessory), prompt, locale,
+    onText: (text, send) => {
+      setPrompt(text);
+      if (send && !effectiveSendDisabled && !readOnly) submitDraft(text);
+      focusComposerSoon();
+    },
+  });
   // The action button is a stop control ONLY while a turn runs AND the input
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
@@ -521,8 +531,8 @@ export function Composer({
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
-  const showComposerStopAction = showComposerStop;
-  const showContinue = continuation && !showComposerStopAction && !running && !submitting && !hasDraft && !readOnly;
+  const showComposerStopAction = showComposerStop && !dictation.active;
+  const showContinue = !dictation.active && continuation && !showComposerStopAction && !running && !submitting && !hasDraft && !readOnly;
   const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
     ? disabledReason
     : undefined;
@@ -881,6 +891,7 @@ export function Composer({
   }
 
   function submitComposer(): void {
+    if (dictation.active) { void dictation.stop(true); return; }
     // The textarea can be ahead of the deferred composer chrome when Send is clicked.
     const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
     const currentPrompt = hasCollapsedPromptBlocks
@@ -1379,6 +1390,7 @@ export function Composer({
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       {statusAccessory}
+      {dictation.error && <div className="composer-dictation-error" role="alert">{dictation.error}</div>}
       <div className="composer-above-input">
         <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>
@@ -1508,7 +1520,8 @@ export function Composer({
                 <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
               </div>
             </div>
-            <div className="composer-editor">
+            <div className={`composer-editor${dictation.active ? " is-dictating" : ""}`} onKeyDown={event => { if (dictation.active && event.key === "Escape") { event.stopPropagation(); dictation.cancel(); } }}>
+              {dictation.active && dictation.api && <DictationRecording api={dictation.api} sessionId={dictation.sessionId} phase={dictation.phase} stop={dictation.stop} cancel={dictation.cancel} />}
               <div className="composer-bar-left">
                 {!textOnly ? (
                   <ComposerPlusButton
@@ -1536,7 +1549,7 @@ export function Composer({
                 valueRevision={promptRevision}
                 submissionClearRevision={submissionClearRevision}
                 placeholder={composerPlaceholder}
-                disabled={readOnly}
+                disabled={readOnly || dictation.active}
                 pluginHost={services?.presentation ?? pluginHost}
                 inlineCompletionKind={inlineCompletionKind}
                 workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
@@ -1544,7 +1557,7 @@ export function Composer({
                 attachmentCount={files.length + images.length + selections.length}
                 queuedCount={queuedMessages.length}
                 pendingCount={guideMessages.length}
-                inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
+                inlineCompletionEnabled={!dictation.active && !hasCollapsedPromptBlocks && !disconnected && !topAccessory
                   && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
                 inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
                   inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
@@ -1572,6 +1585,7 @@ export function Composer({
                 onContextMenu={handleComposerContextMenu}
               />
               <div className="composer-input-actions">
+                {dictation.api && !dictation.active && <DictationButton disabled={readOnly || draftPending} start={dictation.start} />}
                 {controlsInRail ? createPortal(<>{workspaceControls}{runtimeControls}</>, runtimeControlsTarget!) : controlsBelowInput ? null : runtimeControls}
                 {showContinue ? (
                   <ComposerContinueButton
@@ -1598,7 +1612,7 @@ export function Composer({
                     aria-description={sendDisabledReason}
                     disabled={
                       stopState === "pending" || (!showComposerStopAction &&
-                      (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
+                      (effectiveSendDisabled || readOnly || (dictation.active ? dictation.phase !== "listening" : !hasDraft) || (handoffMode && !canConfirmHandoff)))
                     }
                   >
                     {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
