@@ -638,7 +638,7 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 ## 开发和分发
 
-`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 在实际宿主中声明契约；随后由 `prepare` 通过所选服务验证状态。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
+`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.13 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 在实际宿主中声明契约；随后由 `prepare` 通过所选服务验证状态。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
 
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
 

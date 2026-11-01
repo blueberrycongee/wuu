@@ -968,6 +968,30 @@ describe("DesktopPluginRuntime", () => {
       message: expect.stringContaining("is not declared in the manifest"),
     }));
   });
+
+  it("activates default-exported desktop plugin modules without initialize()", async () => {
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id,
+      fingerprint,
+      digest: "d".repeat(64),
+      url: "wuu-plugin://module/" + "d".repeat(64) + ".js",
+    })));
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(
+      host,
+      async () => ({
+        default: {
+          activate: (api: { registerCommand(contribution: { id: string; title: string; execute(): string }): void }) => {
+            api.registerCommand({ id: "default-cmd", title: "Default Cmd", execute: () => "ok" });
+          },
+        },
+      }),
+    );
+
+    const failures = await runtime.sync([inventoryPlugin()]);
+    expect(failures).toEqual([]);
+    expect(host.getCommands()[0]?.execute()).toBe("ok");
+  });
 });
 
 function inventoryPlugin(): ExtensionInventoryRecord {

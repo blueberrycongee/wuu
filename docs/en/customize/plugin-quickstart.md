@@ -1,6 +1,6 @@
 # Agent plugin quickstart
 
-Start with one TypeScript file and a Wuu CLI. Node.js 22.7 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching official TypeScript SDK; no checkout, npm install, manifest, or build command is needed.
+Start with one TypeScript file and a Wuu CLI. Node.js 22.13 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching official TypeScript SDK; no checkout, npm install, manifest, or build command is needed.
 
 ## Run one file
 
@@ -33,7 +33,16 @@ Run:
 wuu plugin dev ./hello.ts
 ```
 
-This authorizes that exact file and watches it. The default export is the public `RuntimePlugin` contract. Wuu snapshots the file, checks syntax, imports, and the default export without calling `initialize`, and publishes an isolated development generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. Publication can proceed while a turn is running; that turn and its outstanding workers or managed processes keep their existing generation. The conversation can adopt the update at an idle turn boundary after that work settles and the host finishes preparation and activation. The actual host collects the candidate's declarations in `initialize`, then calls `prepare` to validate state through the selected services. Preparation failure keeps the old runtime; native activation follows the runtime change's commit. If activation fails after that point, the new generation remains published with failure diagnostics rather than rolling back. Publication does not prove activation in every open conversation; check the plugin's actual status and the [generation contract](plugin-system.md#runtime-generations).
+This authorizes that exact file and watches it. A single `.ts` file can default-export a `RuntimePlugin`, export `activate(api)` / `activatePresentation(api)` for Wuu Desktop UI, or export **both** to define a unified full-stack plugin in one file. You can also export an optional `export const manifest = { version, description, permissions, contributes, interface }` object when you want to declare desktop contributions or metadata inline without a `plugin.json` file. Wuu snapshots the file, checks syntax, imports, and exports without calling `initialize`, and publishes an isolated generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. Publication can proceed while a turn is running; that turn and its outstanding workers or managed processes keep their existing generation. The conversation can adopt the update at an idle turn boundary after that work settles and the host finishes preparation and activation. The actual host collects the candidate's declarations in `initialize`, then calls `prepare` to validate state through the selected services. Preparation failure keeps the old runtime; native activation follows the runtime change's commit. If activation fails after that point, the new generation remains published with failure diagnostics rather than rolling back. Publication does not prove activation in every open conversation; check the plugin's actual status and the [generation contract](plugin-system.md#runtime-generations).
+
+You can also inspect, install, or update a single `.ts` file directly without creating a directory or `.zip` archive:
+
+```bash
+wuu plugin inspect ./hello.ts
+wuu plugin install ./hello.ts
+```
+
+Installing a local `.ts` file grants trust to that canonical file path and enables it immediately; editing `./hello.ts` and re-running `wuu plugin install ./hello.ts` (or `wuu plugin update <id> ./hello.ts`) performs a same-source update without an extra approval step.
 
 Use a regular `.ts` file, not a symlink. Only Node builtins and `@wuu/plugin-sdk` imports are supported in this single-file path. Other local files, npm dependencies, JSX, and custom `tsconfig` transforms need the package workflow below. TypeScript execution does not type-check your code. Keep stdout for the protocol; use `console.error` for diagnostics. Importing a module runs its top-level code, even during validation. Development authorization grants trust to this source; it does not sandbox code or approve a distributed package.
 

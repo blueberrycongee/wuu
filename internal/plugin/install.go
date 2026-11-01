@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ type PackageSourceKind string
 const (
 	PackageSourceDirectory PackageSourceKind = "directory"
 	PackageSourceZip       PackageSourceKind = "zip"
+	PackageSourceFile      PackageSourceKind = "file"
 )
 
 // PackageInspection contains stable package metadata. Paths in this value are
@@ -100,7 +102,7 @@ type stagedPackage struct {
 	distribution *DistributionLock
 }
 
-// InspectPackage validates a local plugin directory or .zip without installing
+// InspectPackage validates a local plugin directory, .zip, or .ts file without installing
 // it. Inspection performs the same manifest, tree, and expansion checks used by
 // InstallPackage.
 func InspectPackage(source string) (PackageInspection, error) {
@@ -117,6 +119,19 @@ func InspectPackage(source string) (PackageInspection, error) {
 		return inspectionFromStaged(item, absSource, PackageSourceDirectory), nil
 	}
 
+	if strings.EqualFold(filepath.Ext(absSource), ".ts") {
+		root, cleanup, err := PrepareSingleFile(context.Background(), absSource)
+		if err != nil {
+			return PackageInspection{}, fmt.Errorf("inspect TypeScript plugin: %w", err)
+		}
+		defer cleanup()
+		item, err := inspectPackageTree(root)
+		if err != nil {
+			return PackageInspection{}, fmt.Errorf("inspect TypeScript plugin: %w", err)
+		}
+		return inspectionFromStaged(item, absSource, PackageSourceFile), nil
+	}
+
 	temp, err := os.MkdirTemp("", "wuu-plugin-inspect-")
 	if err != nil {
 		return PackageInspection{}, fmt.Errorf("create plugin inspection directory: %w", err)
@@ -130,7 +145,7 @@ func InspectPackage(source string) (PackageInspection, error) {
 	return inspectionFromStaged(item, absSource, PackageSourceZip), nil
 }
 
-// InstallPackage validates and installs a local plugin directory or .zip under
+// InstallPackage validates and installs a local plugin directory, .zip, or .ts file under
 // <wuuHome>/plugins/<plugin-id>. A complete generation is staged beside the
 // destination before publication. If replacement cannot be published, the old
 // generation is restored.
@@ -168,6 +183,18 @@ func InstallPackage(wuuHome, source string) (InstallResult, error) {
 		content := filepath.Join(container, "package")
 		if err := copyPackageTree(absSource, content); err != nil {
 			return InstallResult{}, fmt.Errorf("stage plugin directory: %w", err)
+		}
+		item, err = inspectPackageTree(content)
+	} else if strings.EqualFold(filepath.Ext(absSource), ".ts") {
+		kind = PackageSourceFile
+		root, cleanup, prepErr := PrepareSingleFile(context.Background(), absSource)
+		if prepErr != nil {
+			return InstallResult{}, fmt.Errorf("stage TypeScript plugin: %w", prepErr)
+		}
+		defer cleanup()
+		content := filepath.Join(container, "package")
+		if err := copyPackageTree(root, content); err != nil {
+			return InstallResult{}, fmt.Errorf("stage TypeScript plugin: %w", err)
 		}
 		item, err = inspectPackageTree(content)
 	} else {
@@ -325,8 +352,9 @@ func localPackageSource(source string) (string, os.FileInfo, error) {
 	if info.IsDir() {
 		return absSource, info, nil
 	}
-	if !info.Mode().IsRegular() || !strings.EqualFold(filepath.Ext(absSource), ".zip") {
-		return "", nil, fmt.Errorf("plugin package must be a directory or .zip: %s", absSource)
+	ext := strings.ToLower(filepath.Ext(absSource))
+	if !info.Mode().IsRegular() || (ext != ".zip" && ext != ".ts") {
+		return "", nil, fmt.Errorf("plugin package must be a directory, .zip, or .ts: %s", absSource)
 	}
 	return absSource, info, nil
 }
