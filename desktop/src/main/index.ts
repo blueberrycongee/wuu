@@ -1,3 +1,5 @@
+import { DictationService } from "./dictation";
+import { spawn as spawnDictationHelper } from "node:child_process";
 import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
 import { RegisteredSessionTransport, REGISTERED_SESSION_REVERSE_METHODS } from "./registeredSessionTransport";
 import { resolveUserHostContext } from "./userHost";
@@ -532,6 +534,14 @@ const appContextCapture = new AppContextCapture((reveal, owner) => {
   else send();
 }, appContextOwner);
 const systemPermissions = new SystemPermissions(appContextCapture);
+const dictation = new DictationService({
+  askForMicrophoneAccess: () => systemPreferences.askForMediaAccess("microphone"),
+  spawn: locale => spawnDictationHelper(
+    process.env.WUU_SPEECH_MAC_HELPER || join(process.resourcesPath, "bin", "wuu-speech-mac"),
+    ["--locale", locale], { stdio: ["pipe", "pipe", "pipe"] },
+  ),
+});
+
 
 function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
   const host = windowRegistry.mainWindow();
@@ -541,6 +551,12 @@ function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
 function requireAppContextSender(event: IpcMainInvokeEvent): void {
   if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
+  }
+}
+
+function requireDictationSender(event: IpcMainInvokeEvent): void {
+  if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error("Dictation is available from Wuu windows only.");
   }
 }
 
@@ -3425,6 +3441,30 @@ app.whenReady().then(async () => {
     if (!browserExtensionWindows) throw new Error("Embedded browser extensions are unavailable.");
     await browserExtensionWindows.openOptions(id, host);
   });
+  ipcMain.handle("wuu:dictation-start", async (event, id: unknown, locale: unknown) => {
+    requireDictationSender(event);
+    if (process.platform !== "darwin" || typeof id !== "string" || !id || typeof locale !== "string" || !/^[a-zA-Z-]{2,35}$/.test(locale)) {
+      throw new Error("Invalid dictation request.");
+    }
+    const sessionId = `${event.sender.id}:${id}`;
+    const cancel = (): void => dictation.cancel(sessionId);
+    event.sender.once("destroyed", cancel);
+    event.sender.once("render-process-gone", cancel);
+    const navigated = (_event: unknown, _url: string, _inPlace: boolean, mainFrame: boolean): void => { if (mainFrame) cancel(); };
+    event.sender.on("did-start-navigation", navigated);
+    // Each recording owns its cleanup; replacing or completing it removes
+    // these listeners rather than accumulating them over a long session.
+    const cleanup = (): void => {
+      event.sender.removeListener("destroyed", cancel);
+      event.sender.removeListener("render-process-gone", cancel);
+      event.sender.removeListener("did-start-navigation", navigated);
+    };
+    await dictation.start(sessionId, locale, message => {
+      if (!event.sender.isDestroyed()) event.sender.send("wuu:dictation-event", { ...message, sessionId: id });
+    }, cleanup);
+  });
+  ipcMain.handle("wuu:dictation-stop", (event, id: string) => { requireDictationSender(event); dictation.stop(`${event.sender.id}:${id}`); });
+  ipcMain.handle("wuu:dictation-cancel", (event, id: string) => { requireDictationSender(event); dictation.cancel(`${event.sender.id}:${id}`); });
   systemPermissions.start();
   ipcMain.handle("wuu:system-permissions", event => {
     requireAppContextSender(event);
@@ -3483,6 +3523,7 @@ app.whenReady().then(async () => {
 let quitCleanup: Promise<void> | undefined;
 let quitCleanupFinished = false;
 app.on("before-quit", (event) => {
+  dictation.cancel();
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;

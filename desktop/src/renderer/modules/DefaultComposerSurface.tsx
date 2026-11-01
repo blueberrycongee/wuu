@@ -285,7 +285,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       continuation={threadContinuationTarget(view.conversationWorkspace.threads.find(thread => thread.id === presentation.threadId), application.invoke)}
       stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy)}
       telemetryTurnID={presentation.turnId} contextUsage={presentation.contextUsage} status={presentation.status}
-      readOnly={presentation.readOnly} interactionDisabled={switching} initialized={configuration}
+      readOnly={presentation.readOnly} interactionDisabled={switching || !visible} initialized={configuration}
       engines={structuredClone(runtime.engines) as EngineInfo[]} activeEngine={selection.engine === "wuu" ? "" : selection.engine}
       engineLocked={runtime.engineLocked} engineModel={selection.model} engineEffort={selection.effort} engineSpeed={selection.speed} engineModelOptions={{ ...selection.modelOptions }}
       onSelectSpeed={async speed => (await controls.chooseRuntime({ kind: "speed", speed })).accepted}

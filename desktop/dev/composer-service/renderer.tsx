@@ -11,6 +11,20 @@ import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { ToastViewport } from "../../src/renderer/Toast";
 import "../../src/renderer/styles.css";
 
+if (new URLSearchParams(location.search).has("dictation")) await import("./dictation");
+
+const nativeDictationPreview = new URLSearchParams(location.search).has("nativeDictation");
+if (nativeDictationPreview) {
+  const notice = document.createElement("div");
+  notice.textContent = "本机听写预览 · 使用真实麦克风，发送结果仅展示在此窗口";
+  notice.style.cssText = "position:fixed;top:48px;left:24px;right:24px;text-align:center;color:var(--ink-muted);font:15px system-ui";
+  document.body.append(notice);
+  const sent = document.createElement("div");
+  sent.id = "dictation-preview-sent";
+  sent.style.cssText = "position:absolute;top:160px;left:10%;right:10%;white-space:pre-wrap;line-height:1.7;color:var(--ink);font-size:var(--font-body)";
+  document.body.append(sent);
+}
+
 const base = createPreviewApplication();
 const source = "draft-one";
 let state = { ...base.getSnapshot(),
@@ -44,6 +58,9 @@ const application = { ...base, composerPresentation: presentation, getSnapshot: 
   invoke: async (action: string, input: any) => {
     calls.push({ action, input });
     if (action === "composer.set-draft") { state = { ...state, drafts: { ...state.drafts, primary: { ...state.drafts.primary, text: input.text } } }; publish(); }
+    if (action === "composer.submit" && nativeDictationPreview) {
+      document.getElementById("dictation-preview-sent")!.textContent = "已发送（预览）\n" + input.text;
+    }
     if (action === "composer.submit") { state = { ...state, drafts: { ...state.drafts, primary: { ...state.drafts.primary, text: "", revision: state.drafts.primary.revision + 1 } } }; publish(); return { accepted: true }; }
     return { accepted: true };
   },

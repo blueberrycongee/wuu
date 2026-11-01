@@ -3201,7 +3201,24 @@ export type DesktopUpdateState =
   | { kind: "available" | "ready" | "error"; version: string }
   | { kind: "downloading"; version: string; percent: number };
 
+export type DictationEvent = { sessionId: string } & (
+  | { type: "cancelled" }
+  | { type: "state"; state: "requesting_microphone_permission" | "requesting_speech_permission" | "listening" | "finalizing" }
+  | { type: "level"; level: number }
+  | { type: "result"; text: string; is_final: boolean }
+  | { type: "error"; code: string; message?: string }
+);
+
+/** Optional local microphone and speech recognition capability. */
+export type DesktopDictationAPI = {
+  start(sessionId: string, locale: string): Promise<void>;
+  stop(sessionId: string): Promise<void>;
+  cancel(sessionId: string): Promise<void>;
+  onEvent(listener: (event: DictationEvent) => void): () => void;
+};
+
 export type WuuDesktopApi = {
+  dictation?: DesktopDictationAPI;
   readPluginVisibleHistory?: (request: PluginVisibleHistoryRequest) => Promise<PluginVisibleHistoryResult>;
   /** Desktop release updates; absent on remote and mobile hosts. */
   getDesktopUpdateState?: () => Promise<DesktopUpdateState>;
