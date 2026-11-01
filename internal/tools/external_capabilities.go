@@ -7,8 +7,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// ConfigureExternalCapabilities limits a private toolkit to the embedded
-// browser and locally bound CUA MCP servers. It preserves permission and tool
+// ConfigureExternalCapabilities limits a private toolkit to workspace discovery,
+// the embedded browser and locally bound CUA MCP servers. It preserves permission and tool
 // policy gates while removing native-worker and provider presentation state.
 // Call before publishing the toolkit to an external engine.
 func (t *Toolkit) ConfigureExternalCapabilities() {
@@ -27,8 +27,8 @@ func (t *Toolkit) ConfigureExternalCapabilities() {
 	t.SetActiveProfile(modelprofile.Profile{}, true)
 }
 
-// ExternalCapabilityDefinitions returns the current directly callable browser
-// and CUA catalog. Admission uses trusted local activity bindings, never MCP
+// ExternalCapabilityDefinitions returns the directly callable workspace discovery,
+// browser and CUA catalog. Admission uses trusted local activity bindings, never MCP
 // descriptions, name prefixes, or server-declared capabilities.
 func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 	if t == nil || t.registry == nil {
@@ -39,6 +39,9 @@ func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 	if browser := t.registry.Lookup(browserToolName); browser != nil && !t.IsToolDisabled(browserToolName) {
 		definitions = append(definitions, browser.Definition())
 	}
+	if catalog := t.registry.Lookup("list_workspaces"); catalog != nil && !t.IsToolDisabled(catalog.Name()) {
+		definitions = append(definitions, catalog.Definition())
+	}
 	for _, tool := range t.mcpToolsSnapshot() {
 		if t.externalCapabilityAllowed(tool.Name()) && !t.IsToolDisabled(tool.Name()) {
 			definitions = append(definitions, tool.Definition())
@@ -48,7 +51,7 @@ func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 }
 
 func (t *Toolkit) externalCapabilityAllowed(name string) bool {
-	if name == browserToolName {
+	if name == browserToolName || name == "list_workspaces" {
 		return true
 	}
 	for _, tool := range t.mcpToolsSnapshot() {

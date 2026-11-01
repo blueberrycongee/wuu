@@ -7,17 +7,18 @@ const EngineGatewayService = "host.engine.session"
 // EngineBinding transports only data. References identify callback resources
 // owned by a captured execution; possession alone does not authorize calls.
 type EngineBinding struct {
-	ThreadID       string            `json:"thread_id"`
-	RootDir        string            `json:"root_dir"`
-	Model          string            `json:"model,omitempty"`
-	Effort         string            `json:"effort,omitempty"`
-	Speed          string            `json:"speed,omitempty"`
-	ModelOptions   map[string]string `json:"model_options,omitempty"`
-	PermissionMode string            `json:"permission_mode,omitempty"`
-	Instructions   string            `json:"instructions,omitempty"`
-	MCPServers     []EngineMCPServer `json:"mcp_servers,omitempty"`
-	ExternalRef    string            `json:"external_ref,omitempty"`
-	GatewayID      string            `json:"gateway_id"`
+	ThreadID              string            `json:"thread_id"`
+	RootDir               string            `json:"root_dir"`
+	AdditionalDirectories []string          `json:"additional_directories,omitempty"`
+	Model                 string            `json:"model,omitempty"`
+	Effort                string            `json:"effort,omitempty"`
+	Speed                 string            `json:"speed,omitempty"`
+	ModelOptions          map[string]string `json:"model_options,omitempty"`
+	PermissionMode        string            `json:"permission_mode,omitempty"`
+	Instructions          string            `json:"instructions,omitempty"`
+	MCPServers            []EngineMCPServer `json:"mcp_servers,omitempty"`
+	ExternalRef           string            `json:"external_ref,omitempty"`
+	GatewayID             string            `json:"gateway_id"`
 }
 type EngineMCPServer struct {
 	Name string `json:"name"`

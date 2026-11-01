@@ -678,11 +678,6 @@ export function AppSidebar({
       && (folderDragThread?.pinned || organization.folderByThreadID[folderDragThreadID]),
   );
   const hasRuntimeContext = activeContextKind !== undefined;
-  // The scratch pseudo project is "active" when the runtime context is in
-  // no-project mode (i.e. the user is viewing a scratch conversation).
-  // Active state is passed into WorkspaceList so the row highlights even though
-  // it has no DesktopProject entry in the workspace registry.
-  const sidebarScratchPseudoActive = activeContextKind === "no_project";
   const declaredPluginNavigationEntries = useSyncExternalStore(
     (listener) => navigation ? () => {} : pluginHost.subscribe(listener),
     () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
@@ -703,6 +698,7 @@ export function AppSidebar({
   const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && catalogActive;
   const conversationsActive = !settingsActive && !activeWebsiteId && !activePluginMainView && !pluginCatalogActive;
   const activeThreadID = conversationsActive ? nativeActiveThreadID : undefined;
+  const [selectionOrigin, setSelectionOrigin] = useState<{ id: string; section: string }>();
   const pluginNavigationEntries = useMemo(
     () => navigation ? navigation.view.destinations : workbenchSnapshot ? primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot) : [],
     [declaredPluginNavigationEntries, workbenchSnapshot, navigation],
@@ -733,10 +729,12 @@ export function AppSidebar({
   }, [workbenchController, navigation]);
   // The navigation surface owns thread selection across provider handoffs.
   const onSelectThread = useCallback((id: string) => {
+    setSelectionOrigin({ id, section: "organization" });
     if (navigation) selectNativeThread(id);
     else activateNative(() => selectNativeThread(id));
   }, [activateNative, navigation, selectNativeThread]);
   const onSelectWorkspaceThread = useCallback((workspaceID: string, threadID: string) => {
+    setSelectionOrigin({ id: threadID, section: workspaceID });
     if (navigation) selectNativeWorkspaceThread(workspaceID, threadID);
     else activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
   }, [activateNative, navigation, selectNativeWorkspaceThread]);
@@ -1252,6 +1250,20 @@ export function AppSidebar({
     }
     return next;
   }, [allSidebarThreads, organization.folderByThreadID, projectIndex, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  const selectedConversationID = activeThreadID ?? activeSessionTabID;
+  const recentSelectionVisible = !recentsCollapsed && (recentConversations.some(thread => thread.id === activeThreadID)
+    || draftConversations.some(draft => draft.id === activeSessionTabID));
+  const originVisible = selectionOrigin?.section === "recent" ? recentSelectionVisible
+    : selectionOrigin?.section === "organization" ? !recentSelectionVisible || Boolean(organization.folderByThreadID[activeThreadID ?? ""])
+    : expandedSidebarSectionIDs.has(selectionOrigin?.section ?? "")
+      && (visibleWorkspaceThreadsByWorkspaceID[selectionOrigin?.section ?? ""]?.some(thread => thread.id === activeThreadID)
+        || pendingConversations.some(draft => draft.id === activeSessionTabID && (draft.context.kind === "project"
+          ? draft.context.project_id === selectionOrigin?.section : selectionOrigin?.section === SCRATCH_PSEUDO_PROJECT_ID)));
+  const selectionSection = !conversationsActive || onFocusWorkspace ? undefined
+    : selectionOrigin?.id === selectedConversationID && originVisible ? selectionOrigin.section
+    : recentSelectionVisible ? "recent"
+    : sidebarWorkspaces.find(project => expandedSidebarSectionIDs.has(project.id)
+      && visibleWorkspaceThreadsByWorkspaceID[project.id]?.some(thread => thread.id === activeThreadID))?.id ?? "organization";
   const hoverFacts = useMemo<SidebarHoverFacts>(() => {
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const threadsByWorkspaceID: Record<string, ThreadSummary[]> = {};
@@ -1544,6 +1556,7 @@ export function AppSidebar({
               threads={folderThreads}
               projectSummaries={projectIndex.summaries}
               activeID={activeThreadID}
+              selectedID={selectionSection === "organization" ? activeThreadID : null}
               pendingThreadID={pendingThreadID}
               lastViewedTurnByThreadID={lastViewedTurnByThreadID}
               onSelect={onSelectThread}
@@ -1586,18 +1599,19 @@ export function AppSidebar({
           pendingConversations={pendingConversations.filter((pending) => pending.context.kind === "project"
             ? pending.context.project_id === project.id
             : isScratchPseudo)}
-          activeSessionTabID={activeSessionTabID}
-          onSelectPendingConversation={onSelectPendingConversation}
-          activeID={activeWorkspaceID ?? selectedWorkspaceID}
+          activeSessionTabID={selectionSection === project.id ? activeSessionTabID : undefined}
+          onSelectPendingConversation={id => { setSelectionOrigin({ id, section: project.id }); onSelectPendingConversation?.(id); }}
+          activeID={conversationsActive && onFocusWorkspace ? activeWorkspaceID ?? selectedWorkspaceID : undefined}
           pendingWorkspaceID={pendingWorkspaceID}
           expandedSidebarSectionIDs={expandedSidebarSectionIDs}
           loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
           threadsByWorkspaceID={visibleWorkspaceThreadsByWorkspaceID}
           activeThreadID={activeThreadID}
+          selectedThreadID={selectionSection === project.id ? activeThreadID : null}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
           scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={sidebarScratchPseudoActive}
+          scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
           onFocusWorkspace={onFocusWorkspace}
           onStartNewThread={onStartNewThreadInWorkspace}
@@ -1939,6 +1953,7 @@ export function AppSidebar({
                         threads={projectRows}
                         projectSummaries={projectIndex.summaries}
                         activeID={activeThreadID}
+                        selectedID={selectionSection === "organization" ? activeThreadID : null}
                         pendingThreadID={pendingThreadID}
                         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                         onSelect={onSelectThread}
@@ -2020,6 +2035,7 @@ export function AppSidebar({
                                 threads={[thread]}
                                 projectSummaries={projectIndex.summaries}
                                 activeID={activeThreadID}
+                                selectedID={selectionSection === "organization" ? activeThreadID : null}
                                 pendingThreadID={pendingThreadID}
                                 lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                                 onSelect={onSelectThread}
@@ -2263,15 +2279,15 @@ export function AppSidebar({
                     <div className="sidebar-functional-group-body">
                       {draftConversations.map(draft => (
                         <div key={draft.id} className="motion-height-reveal sidebar-draft-reveal" data-enter={(draft.entering && !presentedDraftIDs.current.has(draft.id)) || undefined}>
-                          <div data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${draft.id === activeSessionTabID ? " active" : ""}`}>
+                          <div data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${selectionSection === "recent" && draft.id === activeSessionTabID ? " active" : ""}`}>
                             {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
                             <button
                               className="thread-row-main"
                               type="button"
-                              aria-current={draft.id === activeSessionTabID ? "page" : undefined}
+                              aria-current={selectionSection === "recent" && draft.id === activeSessionTabID ? "page" : undefined}
                               aria-busy={draft.pending || undefined}
                               aria-label={draft.title}
-                              onClick={() => activateNative(() => onSelectPendingConversation?.(draft.id))}
+                              onClick={() => { setSelectionOrigin({ id: draft.id, section: "recent" }); activateNative(() => onSelectPendingConversation?.(draft.id)); }}
                             >
                               <ThreadRowTitle title={draft.title} />
                             </button>
@@ -2282,9 +2298,10 @@ export function AppSidebar({
                         threads={recentConversations}
                         onReorder={reorderRecentConversations}
                         activeID={activeThreadID}
+                        selectedID={selectionSection === "recent" ? activeThreadID : null}
                         pendingThreadID={pendingThreadID}
                         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-                        onSelect={onSelectThread}
+                        onSelect={id => { onSelectThread(id); setSelectionOrigin({ id, section: "recent" }); }}
                         onTogglePinned={onTogglePinned}
                         onArchive={onArchiveThread}
                         onDelete={onDeleteThread}

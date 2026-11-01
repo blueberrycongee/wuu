@@ -433,7 +433,7 @@ func (c *nativeEngineCallbacks) event(ctx context.Context, event providers.Strea
 	return c.call(ctx, "event", pluginprotocol.EngineGatewayParams{Event: &wire}, nil)
 }
 func (c *nativeEngineCallbacks) binding(in pluginprotocol.EngineBinding) agentengine.ThreadBinding {
-	result := agentengine.ThreadBinding{ThreadID: in.ThreadID, RootDir: in.RootDir, Model: in.Model, Effort: in.Effort, Speed: in.Speed, ModelOptions: in.ModelOptions, PermissionMode: in.PermissionMode, Instructions: in.Instructions, ExternalRef: in.ExternalRef}
+	result := agentengine.ThreadBinding{ThreadID: in.ThreadID, RootDir: in.RootDir, AdditionalDirectories: in.AdditionalDirectories, Model: in.Model, Effort: in.Effort, Speed: in.Speed, ModelOptions: in.ModelOptions, PermissionMode: in.PermissionMode, Instructions: in.Instructions, ExternalRef: in.ExternalRef}
 	for _, server := range in.MCPServers {
 		result.MCPServers = append(result.MCPServers, agentengine.MCPServer{Name: server.Name, URL: server.URL})
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 func currentExecutionPath(env *Env) string {
@@ -212,7 +213,8 @@ type Env struct {
 	// the user's registered workspaces, and the system temp directory.
 	// Reads are rejected the same as writes. Empty keeps the ordinary
 	// workspace-confinement behavior for named-agent runs.
-	FileScopeRoots []string
+	FileScopeRoots       []string
+	RegisteredWorkspaces []workspaces.Workspace
 	// ProtectedPaths are mandatory domain exclusions for reads and writes, even
 	// when ordinary workspace confinement is disabled.
 	ProtectedPaths []string

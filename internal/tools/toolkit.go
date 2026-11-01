@@ -31,6 +31,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 const (
@@ -287,6 +288,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		ExecutionEnvironment:        t.env.ExecutionEnvironment,
 		RootDir:                     abs,
 		WorkspaceID:                 t.env.WorkspaceID,
+		RegisteredWorkspaces:        append([]workspaces.Workspace(nil), t.env.RegisteredWorkspaces...),
 		StateDir:                    t.env.StateDir,
 		RuntimeHome:                 t.env.RuntimeHome,
 		Unconfined:                  t.env.Unconfined,
@@ -412,6 +414,7 @@ func (t *Toolkit) rebuildRegistry() {
 		// back to the full conversation via this tool).
 		NewThreadGetTool(t.sessionStore),
 		NewSetSessionWorkspaceTool(e),
+		&ListWorkspacesTool{env: e},
 		NewNewContextTool(e),
 		NewNotesTool(e),
 		NewHistoryReadTool(e, t.sessionStore),
@@ -2098,4 +2101,17 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 		return codemode.RunResult{}, err
 	}
 	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy, SandboxProvider: t.env.ProcessSandboxProvider})
+}
+
+// SetRegisteredWorkspaces captures the catalog permitted by this runtime scope.
+func (t *Toolkit) SetRegisteredWorkspaces(list []workspaces.Workspace) {
+	t.env.RegisteredWorkspaces = append([]workspaces.Workspace(nil), list...)
+}
+
+// RegisteredWorkspaces returns this local execution scope's discoverable projects.
+func (t *Toolkit) RegisteredWorkspaces() []workspaces.Workspace {
+	if t.env.ExecutionEnvironment != nil {
+		return nil
+	}
+	return append([]workspaces.Workspace(nil), t.env.RegisteredWorkspaces...)
 }

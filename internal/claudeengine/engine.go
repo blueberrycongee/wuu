@@ -89,30 +89,32 @@ func (e *Engine) Resume(ctx context.Context, req agentengine.ResumeRequest) (age
 // SessionForThread binds the claude engine to an existing thread runtime.
 func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.ThreadBinding) (agentengine.Session, error) {
 	return e.newSession(ctx, sessionOptions{
-		threadID:       binding.ThreadID,
-		rootDir:        firstNonEmpty(binding.RootDir, e.rootDir),
-		model:          binding.Model,
-		effort:         binding.Effort,
-		speed:          binding.Speed,
-		permissionMode: binding.PermissionMode,
-		instructions:   binding.Instructions,
-		mcpServers:     binding.MCPServers,
-		externalRef:    binding.ExternalRef,
-		persistRef:     binding.PersistRef,
+		threadID:              binding.ThreadID,
+		rootDir:               firstNonEmpty(binding.RootDir, e.rootDir),
+		additionalDirectories: append([]string(nil), binding.AdditionalDirectories...),
+		model:                 binding.Model,
+		effort:                binding.Effort,
+		speed:                 binding.Speed,
+		permissionMode:        binding.PermissionMode,
+		instructions:          binding.Instructions,
+		mcpServers:            binding.MCPServers,
+		externalRef:           binding.ExternalRef,
+		persistRef:            binding.PersistRef,
 	})
 }
 
 type sessionOptions struct {
-	threadID       string
-	rootDir        string
-	model          string
-	effort         string
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
-	externalRef    string
-	persistRef     func(string) error
+	threadID              string
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                string
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
+	externalRef           string
+	persistRef            func(string) error
 }
 
 func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengine.Session, error) {
@@ -120,17 +122,18 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		return nil, errors.New("claude engine is not configured")
 	}
 	return &Session{
-		engine:         e,
-		rootDir:        opts.rootDir,
-		model:          opts.model,
-		effort:         opts.effort,
-		speed:          opts.speed,
-		permissionMode: opts.permissionMode,
-		instructions:   opts.instructions,
-		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
-		ref:            opts.externalRef,
-		persistedRef:   opts.externalRef,
-		persist:        opts.persistRef,
+		engine:                e,
+		rootDir:               opts.rootDir,
+		additionalDirectories: opts.additionalDirectories,
+		model:                 opts.model,
+		effort:                opts.effort,
+		speed:                 opts.speed,
+		permissionMode:        opts.permissionMode,
+		instructions:          opts.instructions,
+		mcpServers:            append([]agentengine.MCPServer(nil), opts.mcpServers...),
+		ref:                   opts.externalRef,
+		persistedRef:          opts.externalRef,
+		persist:               opts.persistRef,
 	}, nil
 }
 
@@ -138,14 +141,15 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 // child is spawned lazily on the first turn and resumed on later turns via
 // --resume <session-id>.
 type Session struct {
-	engine         *Engine
-	rootDir        string
-	model          string
-	effort         string
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
+	engine                *Engine
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                string
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
 
 	mu           sync.Mutex
 	ref          string
@@ -278,6 +282,9 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 		"--verbose",
 		"--include-partial-messages",
 		"--permission-mode", claudePermissionMode(s.permissionMode),
+	}
+	for _, directory := range s.additionalDirectories {
+		args = append(args, "--add-dir", directory)
 	}
 	if instructions := strings.TrimSpace(s.instructions); instructions != "" {
 		args = append(args, "--append-system-prompt", instructions)
