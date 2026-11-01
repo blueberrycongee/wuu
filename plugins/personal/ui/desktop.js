@@ -2,7 +2,7 @@ import { createSettingsPanels } from "./settings-panels.js";
 import { sendMotionStyles, useSendMotion } from "./send-motion.js";
 export async function activate(api) {
   const React = api.react, h = React.createElement;
-  const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+  const { Page, Section, Card, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
   const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
   const call = async (method, input) => {
     if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -67,6 +67,7 @@ export async function activate(api) {
       "quietFrom": "From",
       "quietTo": "Until",
       "timezone": "Time zone",
+      "notificationsTitle": "Notifications",
       "notifyToggle": "Useful updates",
       "quietToggle": "Pause notifications overnight",
       "completed": "Completed",
@@ -168,6 +169,7 @@ export async function activate(api) {
       "quietFrom": "开始",
       "quietTo": "结束",
       "timezone": "时区",
+      "notificationsTitle": "通知",
       "notifyToggle": "接收有用的进展",
       "quietToggle": "在指定时段保持安静",
       "completed": "已完成",
@@ -417,8 +419,9 @@ export async function activate(api) {
     .mosaic-routines summary.mosaic-task::-webkit-details-marker { display:none; }
     .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
-    .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
-    .mosaic-settings p { color:var(--ink-muted); }
+    .mosaic-settings { display:flex;flex-direction:column;gap:var(--section-gap);min-width:0; }
+    .mosaic-settings p { margin:0;color:var(--ink-soft);font-size:var(--font-sm);line-height:1.5; }
+    .mosaic-settings-actions { justify-content:flex-end; }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -681,13 +684,13 @@ export async function activate(api) {
     const [preferences, setPreferences] = React.useState(null), [error, setError] = React.useState(""), [saving, setSaving] = React.useState(false);
     React.useEffect(() => { let active = true; call("settings.get").then(result => { if (active) setPreferences(result.settings); }).catch(cause => { if (active) setError(String(cause)); }); return () => { active = false; }; }, []);
     const save = async () => { if (saving) return; setSaving(true); setError(""); try { const result = await call("settings.update", { expected_revision: preferences.revision, notifications: preferences.notifications, quiet_hours: preferences.quiet_hours, notification_batch_seconds: preferences.notification_batch_seconds ?? 0 }); setPreferences(result.settings); } catch (cause) { setError(String(cause)); } finally { setSaving(false); } };
-    return h("section", { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(React.Fragment, null,
+    return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(Section, { title: t("notificationsTitle") }, h(Card, null,
       h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: event => setPreferences({ ...preferences, notifications: event.target.checked }) }),
       h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: event => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
       h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-      h("div", { className: "mosaic-actions" }, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
+      h(React.Fragment, null, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
       h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) }),
-      h(Button, { "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")), h("p", null, t("memoryHint"))), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
+      ), h(Row, { className: "mosaic-settings-actions" }, h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save"))), h("p", null, t("memoryHint"))), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
   }
   let identityAgent;
   const identityListeners = new Set();

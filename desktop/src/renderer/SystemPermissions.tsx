@@ -1,7 +1,7 @@
 import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { AppLocale, SystemPermission, SystemPermissionPresentation, SystemPermissionsState } from "../shared/protocol";
-import { AlertCircle, Check, Hand, LoaderCircle, Monitor, RefreshCw } from "./WuuIcons";
+import { AlertCircle, Check, ChevronRight, Hand, LoaderCircle, Monitor, RefreshCw } from "./WuuIcons";
 import { SettingsSection } from "./SettingsSection";
 import { translate, useI18n } from "./i18n";
 import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
@@ -26,9 +26,10 @@ export function SystemPermissionRow({ permission, locale, granted, pending = fal
     </div>
     <div className="system-permission-action">
       {granted ? <span className="system-permission-granted" role="status"><Check className="icon" aria-hidden="true" />{t("permissions.granted")}</span>
-        : <button className="settings-button system-permission-enable" type="button" disabled={disabled} onClick={onEnable}
-            aria-label={t("permissions.enableNamed", { permission: t(`permissions.${permission}`) })} aria-busy={pending || undefined} tabIndex={onEnable ? undefined : -1}>
-            {pending ? <LoaderCircle className="icon settings-spin" aria-hidden="true" /> : t("permissions.enable")}
+        : <button className="settings-button settings-button-ghost system-permission-enable" type="button" disabled={disabled} onClick={onEnable}
+            aria-label={t("permissions.openSettingsNamed", { permission: t(`permissions.${permission}`) })} aria-busy={pending || undefined} tabIndex={onEnable ? undefined : -1}>
+            {t("permissions.openSettings")}
+            {pending ? <LoaderCircle className="icon settings-spin" aria-hidden="true" /> : <ChevronRight className="icon" aria-hidden="true" />}
           </button>}
     </div>
   </div>;

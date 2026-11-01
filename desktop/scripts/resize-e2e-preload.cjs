@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
 const liveLayout = process.env.WUU_RESIZE_LIVE_E2E === "1";
+let languagePreference = process.env.WUU_RESIZE_E2E_LOCALE || "system";
+const languageListeners = new Set();
 let generalSettings = { git_attribution_enabled: true, ptc: { enabled: true } };
 const now = new Date().toISOString();
 const terminalListeners = new Set();
@@ -132,7 +134,17 @@ if (liveLayout) {
 let submittedTurns = 0;
 
 const desktopAPI = {
-  initialLanguagePreference: process.env.WUU_RESIZE_E2E_LOCALE,
+  initialLanguagePreference: languagePreference,
+  getLanguagePreference: async () => languagePreference,
+  setLanguagePreference: async (language) => {
+    languagePreference = ["system", "zh-CN", "en-US"].includes(language) ? language : "system";
+    for (const listener of languageListeners) listener(languagePreference);
+    return { ok: true, language: languagePreference };
+  },
+  onLanguagePreferenceChange: (listener) => {
+    languageListeners.add(listener);
+    return () => languageListeners.delete(listener);
+  },
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),

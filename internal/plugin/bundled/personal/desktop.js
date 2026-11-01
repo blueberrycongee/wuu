@@ -129,31 +129,34 @@ var personalDesktop = (() => {
       };
       return h(
         "section",
-        { "data-personal-share": true },
-        h("h3", null, "\u5206\u4EAB\u4E0E\u6536\u85CF"),
-        h("p", null, "\u53EA\u63A5\u6536\u4F60\u4E3B\u52A8\u5206\u4EAB\u7684\u6587\u5B57\u3001\u94FE\u63A5\u6216\u5F53\u524D\u9875\uFF1B\u4E0D\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\uFF0C\u4E0D\u81EA\u52A8\u6253\u5F00\u94FE\u63A5\u3002"),
-        h("label", null, "\u94FE\u63A5", h("input", { type: "url", value: url, disabled: busy, onChange: (e) => {
-          edit();
-          setURL(e.target.value);
-        }, placeholder: "https://\u2026" })),
-        h("label", null, "\u6587\u5B57", h("textarea", { value: body, disabled: busy, maxLength: 65536, rows: 3, onChange: (e) => {
-          edit();
-          setBody(e.target.value);
-        } })),
-        h("label", null, "\u5BFC\u5165\u6D4F\u89C8\u5668\u5F53\u524D\u9875\u6587\u4EF6", h("input", { type: "file", accept: ".json,application/json", disabled: busy, onChange: load })),
-        h("div", null, h("button", { type: "button", disabled: busy || !url.trim() && !body.trim(), onClick: submit }, busy ? "\u6B63\u5728\u63A5\u6536\u2026" : "\u4FDD\u5B58\u5230\u4E3B\u804A\u5929"), h("button", { type: "button", disabled: busy, onClick: () => {
+        { "data-personal-share": true, className: "plugin-ui-section" },
+        h("header", { className: "plugin-ui-section-header" }, h("h2", null, "\u5206\u4EAB\u4E0E\u6536\u85CF"), h("p", null, "\u53EA\u63A5\u6536\u4F60\u4E3B\u52A8\u5206\u4EAB\u7684\u6587\u5B57\u3001\u94FE\u63A5\u6216\u5F53\u524D\u9875\uFF1B\u4E0D\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\uFF0C\u4E0D\u81EA\u52A8\u6253\u5F00\u94FE\u63A5\u3002")),
+        h(
+          "div",
+          { className: "plugin-ui-card" },
+          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, "\u94FE\u63A5"), h("input", { className: "plugin-ui-input", type: "url", value: url, disabled: busy, onChange: (e) => {
+            edit();
+            setURL(e.target.value);
+          }, placeholder: "https://\u2026" })),
+          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, "\u6587\u5B57"), h("textarea", { className: "plugin-ui-textarea", value: body, disabled: busy, maxLength: 65536, rows: 3, onChange: (e) => {
+            edit();
+            setBody(e.target.value);
+          } })),
+          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, "\u5BFC\u5165\u6D4F\u89C8\u5668\u5F53\u524D\u9875\u6587\u4EF6"), h("input", { className: "plugin-ui-input", type: "file", accept: ".json,application/json", disabled: busy, onChange: load }))
+        ),
+        h("div", { className: "plugin-ui-row personal-share-actions" }, h("button", { className: "plugin-ui-button", "data-wuu-variant": "secondary", type: "button", disabled: busy, onClick: () => {
           generation.current++;
           setCapture(null);
           setURL("");
           setBody("");
           setMessage("");
-        } }, "\u6E05\u7A7A")),
+        } }, "\u6E05\u7A7A"), h("button", { className: "plugin-ui-button", "data-wuu-variant": "primary", type: "button", disabled: busy || !url.trim() && !body.trim(), onClick: submit }, busy ? "\u6B63\u5728\u63A5\u6536\u2026" : "\u4FDD\u5B58\u5230\u4E3B\u804A\u5929")),
         message && h("p", { role: "status" }, message),
         h("p", null, "\u666E\u901A\u6587\u4EF6\u53EF\u901A\u8FC7\u4E3B\u804A\u5929\u9644\u4EF6\u6309\u94AE\u9009\u62E9\uFF1B\u9644\u4EF6\u4E0D\u4F1A\u4ECE\u7535\u8111\u8DEF\u5F84\u81EA\u52A8\u8BFB\u53D6\u3002")
       );
     };
   }
-  var shareCaptureStyles = "[data-personal-share]{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline)}[data-personal-share] h3{font:inherit;font-weight:600}[data-personal-share] label{display:flex;flex-direction:column;gap:var(--space-2);margin-block:var(--space-3)}[data-personal-share] input,[data-personal-share] textarea{font:inherit;max-width:100%;box-sizing:border-box}[data-personal-share]>div{display:flex;flex-wrap:wrap;gap:var(--space-3)}";
+  var shareCaptureStyles = ".personal-share-actions{justify-content:flex-end;flex-wrap:wrap;}[data-personal-share] input[type=file]{height:auto;white-space:normal;}[data-personal-share] input::file-selector-button{font:inherit;color:var(--ink);background:var(--surface-hover);border:0;border-radius:var(--radius-xs);padding:var(--space-1) var(--space-2);margin-inline-end:var(--space-2);}";
 
   // plugins/personal/ui/connector-oauth.ts
   var permissions = {
@@ -260,16 +263,16 @@ var personalDesktop = (() => {
       return h(
         "div",
         { className: "personal-connector-oauth" },
-        h("label", null, "\u4EC5\u6388\u6743\u8FD9\u4E9B\u8D44\u6E90 ID\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF09", h("textarea", { value: resource, disabled: busy, rows: 2, onChange: (e) => setResource(e.target.value) })),
+        h("label", null, "\u4EC5\u6388\u6743\u8FD9\u4E9B\u8D44\u6E90 ID\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF09", h("textarea", { className: "plugin-ui-textarea", value: resource, disabled: busy, rows: 2, onChange: (e) => setResource(e.target.value) })),
         h("fieldset", { disabled: busy }, h("legend", null, provider === "notion" ? "\u9700\u6838\u5B9E\u7684\u96C6\u6210\u80FD\u529B\uFF08\u987B\u5728 Notion \u96C6\u6210\u8BBE\u7F6E\u914D\u7F6E\uFF09" : provider === "github" ? "\u9700\u6838\u5B9E\u7684\u4ED3\u5E93\u6743\u9650" : "\u6240\u9700\u6743\u9650"), ...(permissions[provider] ?? []).map(([label, scope]) => h("label", { key: scope }, h("input", { type: "checkbox", checked: selected.includes(scope), onChange: () => setSelected((previous) => previous.includes(scope) ? previous.filter((s) => s !== scope) : [...previous, scope]) }), label))),
-        ["slack", "feishu"].includes(provider) ? h("label", null, h("input", { type: "checkbox", checked: allowWork, disabled: busy, onChange: () => setAllowWork((v) => !v) }), "\u5141\u8BB8 Personal \u4EFB\u52A1\u8BFB\u53D6\u6240\u9009\u5DE5\u4F5C\u9891\u9053\uFF1B\u4E0D\u81EA\u52A8\u7EB3\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002\u672A\u52FE\u9009\u5219\u9010\u6B21\u786E\u8BA4\u3002") : null,
-        h("div", { className: "personal-connectors-controls" }, h("button", { "data-oauth-start": true, disabled: busy, onClick: () => void begin() }, existing ? "\u91CD\u65B0\u6388\u6743" : "\u5F00\u59CB\u6388\u6743"), busy ? h("button", { onClick: () => void cancel() }, "\u53D6\u6D88\u6388\u6743") : null),
+        ["slack", "feishu"].includes(provider) ? h("label", { className: "personal-connector-work-scope" }, h("input", { type: "checkbox", checked: allowWork, disabled: busy, onChange: () => setAllowWork((v) => !v) }), "\u5141\u8BB8 Personal \u4EFB\u52A1\u8BFB\u53D6\u6240\u9009\u5DE5\u4F5C\u9891\u9053\uFF1B\u4E0D\u81EA\u52A8\u7EB3\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002\u672A\u52FE\u9009\u5219\u9010\u6B21\u786E\u8BA4\u3002") : null,
+        h("div", { className: "personal-connectors-controls" }, h("button", { className: "plugin-ui-button", "data-wuu-variant": "primary", "data-oauth-start": true, disabled: busy, onClick: () => void begin() }, existing ? "\u91CD\u65B0\u6388\u6743" : "\u5F00\u59CB\u6388\u6743"), busy ? h("button", { className: "plugin-ui-button", "data-wuu-variant": "secondary", onClick: () => void cancel() }, "\u53D6\u6D88\u6388\u6743") : null),
         message ? h("p", { role: "status" }, message) : null,
         cancellationUnknown ? h("p", { role: "alert", "data-oauth-cancellation-unknown": true }, "\u5148\u524D\u6388\u6743\u7684\u53D6\u6D88\u5C1A\u672A\u6838\u5B9E\uFF1B\u8BF7\u5728\u6388\u6743\u9875\u505C\u6B62\u64CD\u4F5C\uFF0C\u5E76\u5237\u65B0\u8FDE\u63A5\u72B6\u6001\u6838\u5BF9\u662F\u5426\u5DF2\u63A5\u901A\u3002") : null
       );
     };
   }
-  var connectorOAuthStyles = ".personal-connector-oauth{margin-top:var(--space-3)}.personal-connector-oauth>label{display:flex;flex-direction:column;gap:var(--space-2)}.personal-connector-oauth textarea{font:inherit;width:100%;box-sizing:border-box}.personal-connector-oauth fieldset{border:0;padding:0;margin:var(--space-3) 0;display:flex;gap:var(--space-3);flex-wrap:wrap}.personal-connector-oauth fieldset label{display:flex;align-items:center;gap:var(--space-2)}.personal-connector-oauth button{font:inherit}";
+  var connectorOAuthStyles = ".personal-connector-oauth{margin-top:var(--space-3)}.personal-connector-oauth>label{display:flex;flex-direction:column;gap:var(--space-2)}.personal-connector-oauth textarea{font:inherit;width:100%;box-sizing:border-box}.personal-connector-oauth fieldset{border:0;padding:0;margin:var(--space-3) 0;display:flex;gap:var(--space-3);flex-wrap:wrap}.personal-connector-oauth fieldset label{display:flex;align-items:center;gap:var(--space-2)}.personal-connector-oauth>.personal-connector-work-scope{flex-direction:row;align-items:flex-start}.personal-connector-oauth input[type=checkbox]{accent-color:var(--ink-strong);flex:none}.personal-connector-oauth legend{margin-bottom:var(--space-2)}";
 
   // plugins/personal/ui/connectors-panel.ts
   var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["github", "GitHub", "PR\u3001Issue\u3001CI \u4E0E Release"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
@@ -368,9 +371,8 @@ var personalDesktop = (() => {
       return h(
         "section",
         { className: "personal-connectors", "data-personal-connectors": conversation ? "conversation" : "settings" },
-        h("div", { className: "personal-connectors-heading" }, h("h3", null, conversation ? "\u8FDE\u63A5\u5668\u52A8\u4F5C" : "\u8D26\u53F7\u4E0E\u8D44\u6599"), h(Button, { disabled: busy || loading, onClick: () => void load(), "data-connector-refresh": true }, loading ? "\u6B63\u5728\u6838\u5BF9\u2026" : "\u5237\u65B0\u72B6\u6001")),
+        h("div", { className: "personal-connectors-heading" }, h("div", { className: "plugin-ui-section-header" }, h("h3", null, conversation ? "\u8FDE\u63A5\u5668\u52A8\u4F5C" : "\u8D26\u53F7\u4E0E\u8D44\u6599"), !conversation ? h("p", null, "\u8BFB\u53D6\u4EC5\u9650\u5DF2\u6388\u6743\u8303\u56F4\uFF1B\u5916\u90E8\u5199\u5165\u5148\u6838\u5BF9\u7CBE\u786E\u5185\u5BB9\u3002\u5DE5\u4F5C\u8D44\u6599\u5355\u72EC\u9694\u79BB\uFF0C\u4E0D\u81EA\u52A8\u52A0\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002") : null), h(Button, { disabled: busy || loading, onClick: () => void load(), "data-connector-refresh": true }, loading ? "\u6B63\u5728\u6838\u5BF9\u2026" : "\u5237\u65B0\u72B6\u6001")),
         error ? h("p", { role: "alert" }, error) : null,
-        !conversation ? h("p", null, "\u8BFB\u53D6\u4EC5\u9650\u5DF2\u6388\u6743\u8303\u56F4\uFF1B\u5916\u90E8\u5199\u5165\u5148\u6838\u5BF9\u7CBE\u786E\u5185\u5BB9\u3002\u5DE5\u4F5C\u8D44\u6599\u5355\u72EC\u9694\u79BB\uFF0C\u4E0D\u81EA\u52A8\u52A0\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002") : null,
         !conversation ? h("div", { className: "personal-connectors-list" }, ...providers.map(([provider, title, description]) => {
           const matching = rows.filter((c) => c.provider === provider || provider === "calendar" && c.provider === "google-calendar" || provider === "drive" && c.provider === "google-drive");
           return h(
@@ -390,7 +392,7 @@ var personalDesktop = (() => {
                 setDisconnectID("");
                 return value;
               }) }, "\u786E\u8BA4\u65AD\u5F00"), h(Button, { disabled: busy, onClick: () => setDisconnectID("") }, "\u53D6\u6D88")) : h(Button, { disabled: busy || uncertain, onClick: () => setDisconnectID(c.connection_id) }, "\u65AD\u5F00\u8FDE\u63A5")
-            )) : h("p", { className: "personal-connectors-muted" }, "\u9700\u5148\u5728\u5BBF\u4E3B\u5B89\u5168\u914D\u7F6E\u8D26\u53F7\u548C\u8D44\u6E90\u8303\u56F4\uFF1B\u5C1A\u672A\u8FDB\u884C\u771F\u5B9E\u8D26\u53F7\u9A8C\u6536\u3002"),
+            )) : h("p", { className: "personal-connectors-muted" }, "\u8FDE\u63A5\u8D26\u53F7\u540E\uFF0C\u9009\u62E9\u5141\u8BB8\u8BBF\u95EE\u7684\u8D44\u6599\u8303\u56F4\u3002"),
             service.oauth ? h("details", null, h("summary", null, matching.length ? "\u7BA1\u7406\u6388\u6743\u8303\u56F4" : "\u914D\u7F6E\u8D26\u53F7\u6388\u6743"), h(OAuth, { provider: provider === "calendar" ? "google-calendar" : provider, service: service.oauth, onConnected: () => void load(), existing: matching[0] })) : null
           );
         })) : null,
@@ -1159,13 +1161,39 @@ var personalDesktop = (() => {
         });
         return () => mounted.destroy();
       }, []);
-      return h("section", { "data-personal-connections": true }, h("h2", null, "\u8FDE\u63A5\u4E0E\u5DE5\u5177"), h("div", { ref: root }), h(ConnectorsPanel, { service: connectorService }), h(ShareCapturePanel));
+      return h("div", { "data-personal-connections": true }, h("div", { ref: root }), h(ConnectorsPanel, { service: connectorService }), h(ShareCapturePanel));
     }
     return { Connections, ConnectorConversation: () => h(ConnectorsPanel, { service: connectorService, conversation: true }), ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${shareCaptureStyles}
 ${connectorsStyles}
 ${connection_view_default}
 ${personalReviewStyles}
-.mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
+
+.mosaic-settings>[data-personal-connections]{display:flex;flex-direction:column;gap:var(--section-gap);min-width:0;}
+.mosaic-settings .gcal-view{max-width:none;margin:0;font-family:inherit;}
+.mosaic-settings .gcal-heading{margin-bottom:var(--section-heading-gap);gap:var(--space-3);}
+.mosaic-settings .gcal-icon{display:none;}
+.mosaic-settings .gcal-view h2{font-size:var(--font-title);font-weight:var(--weight-medium);margin:0 0 var(--space-1);}
+.mosaic-settings .gcal-connection{padding:var(--settings-row-pad-block) var(--card-padding);background:var(--settings-card);border:1px solid var(--hairline-soft);border-radius:var(--settings-group-radius);gap:var(--space-4);flex-wrap:wrap;}
+.mosaic-settings .gcal-button{min-height:var(--control-field-height);padding:var(--control-padding-block) var(--control-padding-inline);border:0;border-radius:var(--wuu-radius-control,var(--radius-sm));font-weight:var(--weight-medium);box-shadow:var(--shadow-soft);}
+.mosaic-settings .gcal-notice{padding:var(--space-3) 0 0;}
+.mosaic-settings .personal-connectors{margin:0;display:flex;flex-direction:column;gap:var(--section-heading-gap);}
+.mosaic-settings .personal-connectors-heading{align-items:flex-start;flex-wrap:nowrap;}
+.mosaic-settings .personal-connectors-heading>.plugin-ui-section-header{min-width:0;}
+.mosaic-settings .personal-connectors-heading>.plugin-ui-button{flex:none;}
+.mosaic-settings .personal-connectors-heading .plugin-ui-section-header p{margin:0;}
+.mosaic-settings .personal-connectors-heading h3{font-size:var(--font-title);font-weight:var(--weight-medium);}
+.mosaic-settings .personal-connectors-list{grid-template-columns:minmax(0,1fr);gap:0;margin:0;padding:0 var(--card-padding);background:var(--settings-card);border:1px solid var(--hairline-soft);border-radius:var(--settings-group-radius);}
+.mosaic-settings .personal-connector-provider{padding:var(--settings-row-pad-block) 0;border-top:0;border-bottom:1px solid var(--hairline-soft);}
+.mosaic-settings .personal-connector-provider:last-child{border-bottom:0;}
+.mosaic-settings .personal-connector-title h4{font-weight:var(--weight-regular);}
+.mosaic-settings .personal-connector-title>span{font-size:var(--font-sm);color:var(--ink-soft);}
+.mosaic-settings .personal-connector-provider p{margin:var(--space-1) 0;}
+.mosaic-settings .personal-connector-provider details{margin-top:var(--space-3);}
+.mosaic-settings .personal-review-overview{padding:var(--card-padding);background:var(--settings-card);border:1px solid var(--hairline-soft);border-radius:var(--settings-group-radius);}
+.mosaic-settings .personal-review-heading h3{font-weight:var(--weight-regular);}
+.mosaic-settings .personal-review-overview>[role=switch]{justify-self:end;}
+@container settings-page (max-width:32em){.mosaic-settings .gcal-agenda-form{grid-template-columns:minmax(0,1fr);}.mosaic-settings .gcal-event{grid-template-columns:minmax(0,1fr);}}
+` };
   }
 
   // plugins/personal/ui/send-motion.js
@@ -1343,7 +1371,7 @@ ${personalReviewStyles}
   // plugins/personal/ui/desktop.js
   async function activate(api) {
     const React = api.react, h = React.createElement;
-    const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+    const { Page, Section, Card, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
     const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
     const call = async (method, input) => {
       if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -1412,6 +1440,7 @@ ${personalReviewStyles}
         "quietFrom": "From",
         "quietTo": "Until",
         "timezone": "Time zone",
+        "notificationsTitle": "Notifications",
         "notifyToggle": "Useful updates",
         "quietToggle": "Pause notifications overnight",
         "completed": "Completed",
@@ -1530,6 +1559,7 @@ ${personalReviewStyles}
         "quietFrom": "\u5F00\u59CB",
         "quietTo": "\u7ED3\u675F",
         "timezone": "\u65F6\u533A",
+        "notificationsTitle": "\u901A\u77E5",
         "notifyToggle": "\u63A5\u6536\u6709\u7528\u7684\u8FDB\u5C55",
         "quietToggle": "\u5728\u6307\u5B9A\u65F6\u6BB5\u4FDD\u6301\u5B89\u9759",
         "completed": "\u5DF2\u5B8C\u6210",
@@ -1790,8 +1820,9 @@ ${personalReviewStyles}
     .mosaic-routines summary.mosaic-task::-webkit-details-marker { display:none; }
     .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
-    .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
-    .mosaic-settings p { color:var(--ink-muted); }
+    .mosaic-settings { display:flex;flex-direction:column;gap:var(--section-gap);min-width:0; }
+    .mosaic-settings p { margin:0;color:var(--ink-soft);font-size:var(--font-sm);line-height:1.5; }
+    .mosaic-settings-actions { justify-content:flex-end; }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -2208,17 +2239,15 @@ ${personalReviewStyles}
           setSaving(false);
         }
       };
-      return h("section", { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(
-        React.Fragment,
+      return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(Section, { title: t("notificationsTitle") }, h(
+        Card,
         null,
         h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: (event) => setPreferences({ ...preferences, notifications: event.target.checked }) }),
         h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: (event) => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
         h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-        h("div", { className: "mosaic-actions" }, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
-        h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) }),
-        h(Button, { "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")),
-        h("p", null, t("memoryHint"))
-      ), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
+        h(React.Fragment, null, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
+        h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })
+      ), h(Row, { className: "mosaic-settings-actions" }, h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save"))), h("p", null, t("memoryHint"))), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
     }
     let identityAgent;
     const identityListeners = /* @__PURE__ */ new Set();

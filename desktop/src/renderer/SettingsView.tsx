@@ -1339,11 +1339,11 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
         <ThemePreferenceControl />
         <ContentThemeControl inventory={inventory} />
       </SettingsSection>
-      {isTouchWebShell() ? null : (
-        <SettingsSection title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")} testID="settings-background">
-          <ShellSkinSettings />
-        </SettingsSection>
-      )}
+      <SettingsSection title={t("settings.interfaceAndConversation")} testID="settings-background">
+        {isTouchWebShell()
+          ? <SettingsGroup><AppearanceTypography section="conversation" /></SettingsGroup>
+          : <ShellSkinSettings><AppearanceTypography section="conversation" /></ShellSkinSettings>}
+      </SettingsSection>
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
       {controls.capabilities.pets ? <CodexPetSection {...petProps} /> : null}

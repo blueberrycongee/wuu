@@ -1,3 +1,4 @@
+import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 import { Tooltip } from "./Tooltip";
 import { useSettingsOperationScope } from "./SettingsOperationScope";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
@@ -7,7 +8,7 @@ import type {
   BrowserExtensionRecord,
   BrowserProfile,
 } from "../shared/protocol";
-import { ChevronDown, Folder, Globe, Loader2, RefreshCw, Settings, Trash2 } from "./WuuIcons";
+import { Folder, Globe, Loader2, MoreHorizontal, RefreshCw, Settings, Trash2 } from "./WuuIcons";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
@@ -26,8 +27,10 @@ export function BrowserSettingsSection(): JSX.Element | null {
   const [extensionError, setExtensionError] = useState("");
   const [busy, setBusy] = useState("");
   const [expandedExtension, setExpandedExtension] = useState("");
+  const [actionMenu, setActionMenu] = useState<{ id: string; x: number; y: number }>();
   const [result, setResult] = useState<BrowserCookieImportResult>();
   const revision = useRef(0);
+  const menuOpener = useRef<HTMLButtonElement | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!scope.active || !supported) return;
@@ -47,7 +50,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
   }, [scope, supported]);
 
   useEffect(() => {
-    setLoadedScope(undefined); setProfiles([]); setExtensions([]); setBusy(""); setResult(undefined); setExpandedExtension("");
+    setActionMenu(undefined); setLoadedScope(undefined); setProfiles([]); setExtensions([]); setBusy(""); setResult(undefined); setExpandedExtension("");
     setProfileError(""); setExtensionError("");
     if (supported) void refresh();
     else setLoading(false);
@@ -150,8 +153,31 @@ export function BrowserSettingsSection(): JSX.Element | null {
     }
   };
 
+  const menuExtension = extensions.find(extension => extension.id === actionMenu?.id);
+  const menuItems: ThreadContextMenuItem[] = menuExtension ? [
+    {
+      label: t(expandedExtension === menuExtension.id ? "settings.browserExtensionsHideDetails" : "settings.browserExtensionsDetails", { name: menuExtension.name }),
+      onSelect: () => setExpandedExtension(expandedExtension === menuExtension.id ? "" : menuExtension.id),
+    },
+    ...(controls.capabilities.browserReload ? [{
+      label: t("settings.browserExtensionsReload", { name: menuExtension.name }),
+      icon: <RefreshCw size={16} />,
+      disabled: unavailable || Boolean(busy) || !menuExtension.enabled,
+      onSelect: () => reloadExtension(menuExtension),
+    }] : []),
+    { separator: true },
+    {
+      label: t("settings.browserExtensionsRemove", { name: menuExtension.name }),
+      icon: <Trash2 size={16} />,
+      danger: true,
+      disabled: unavailable || Boolean(busy),
+      onSelect: () => removeExtension(menuExtension),
+    },
+  ] : [];
+
   return (
     <>
+      {actionMenu && menuExtension ? <ThreadContextMenu x={actionMenu.x} y={actionMenu.y} items={menuItems} onClose={() => { setActionMenu(undefined); menuOpener.current?.focus(); }} /> : null}
       <SettingsPageHeader
         title={t("settings.browser")}
         actions={
@@ -270,22 +296,19 @@ export function BrowserSettingsSection(): JSX.Element | null {
                     <button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"
-                      aria-label={t("settings.browserExtensionsDetails", { name: extension.name })}
-                      aria-expanded={expandedExtension === extension.id}
-                      aria-controls={`browser-extension-${extension.id}`}
-                      onClick={() => setExpandedExtension(expandedExtension === extension.id ? "" : extension.id)}
+                      aria-label={t("settings.browserExtensionsMore", { name: extension.name })}
+                      aria-haspopup="menu"
+                      aria-expanded={actionMenu?.id === extension.id}
+                      disabled={unavailable || Boolean(busy)}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        menuOpener.current = event.currentTarget;
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        setActionMenu({ id: extension.id, x: rect.right, y: rect.bottom });
+                      }}
                     >
-                      <ChevronDown size={16} aria-hidden="true" />
+                      <MoreHorizontal size={16} aria-hidden="true" />
                     </button>
-                    {controls.capabilities.browserReload ? <Tooltip asChild content={extension.enabled ? t("settings.browserExtensionsReload", { name: extension.name }) : t("settings.browserExtensionsEnableToReload")}><button
-                      className="settings-button settings-button-ghost settings-icon-button"
-                      type="button"
-                      aria-label={t("settings.browserExtensionsReload", { name: extension.name })}
-                      disabled={unavailable || Boolean(busy) || !extension.enabled}
-                      onClick={() => void reloadExtension(extension)}
-                    >
-                      <RefreshCw size={16} className={busy === `reload:${extension.id}` ? "settings-spin" : undefined} aria-hidden="true" />
-                    </button></Tooltip> : null}
                     <button
                       className="settings-switch"
                       type="button"
@@ -298,17 +321,6 @@ export function BrowserSettingsSection(): JSX.Element | null {
                       onClick={() => void toggleExtension(extension)}
                     >
                       <span className="settings-switch-thumb" aria-hidden="true" />
-                    </button>
-                    <button
-                      className="settings-button settings-button-ghost settings-icon-button"
-                      type="button"
-                      aria-label={t("settings.browserExtensionsRemove", { name: extension.name })}
-                      disabled={unavailable || Boolean(busy)}
-                      onClick={() => void removeExtension(extension)}
-                    >
-                      {busy === `remove:${extension.id}`
-                        ? <Loader2 className="icon settings-spin" aria-hidden="true" />
-                        : <Trash2 size={16} aria-hidden="true" />}
                     </button>
                   </div>
                 </SettingsRow>

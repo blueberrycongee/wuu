@@ -496,7 +496,8 @@ describe("SettingsView shell", () => {
 
     expect(scroll.scrollTop).toBe(0);
     expect(container.querySelector(".settings-page")).not.toBe(providersPage);
-    expect(container.querySelector(".settings-page-title")?.textContent).toBe("内置 Agent");
+    expect(container.querySelector(".settings-page > .settings-page-header .settings-page-title")?.textContent).toBe("内置 Agent");
+    expect(container.querySelector(".settings-titlebar .settings-page-title")).toBeNull();
   });
 });
 

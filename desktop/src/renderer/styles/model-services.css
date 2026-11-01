@@ -772,7 +772,7 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-summary-secondary { min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.5; overflow-wrap: anywhere; text-align: end; }
 .connection-summary-secondary > .connection-summary-status { display: block; }
 .connection-summary-status { color: var(--ink-soft); }
-.connection-summary-status[data-ready] { color: var(--success); }
+.connection-summary-status[data-ready] { color: var(--ink-soft); }
 .connection-summary-status[data-attention] { color: var(--warning); }
 @container settings-page (max-width: 34em) {
   .connection-summary-copy { grid-template-columns: minmax(0, 1fr); }

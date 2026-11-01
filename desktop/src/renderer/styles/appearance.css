@@ -134,17 +134,56 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .rich-code-header {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
 }
-/* Font-only and font/size rows share the same control column. */
-.settings-row-control:has(.appearance-font-picker) {
-  width: var(--settings-control-width);
-  max-width: 100%;
+/* Font and size share fixed column tracks rather than intrinsic text widths. */
+.settings-section:has(.appearance-font-controls) {
+  --appearance-font-controls-width: 22em;
+  --appearance-font-size-width: 5em;
 }
-.appearance-font-picker { flex: 1; min-width: 0; }
+.settings-row:has(.appearance-font-controls) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--appearance-font-controls-width));
+}
+.settings-row-control:has(.appearance-font-controls) { width: 100%; }
+.appearance-font-controls,
+.appearance-font-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--appearance-font-size-width);
+  gap: var(--space-3);
+  min-width: 0;
+}
+.appearance-font-controls { width: 100%; }
+.appearance-font-columns {
+  width: var(--appearance-font-controls-width);
+  max-width: 100%;
+  margin-inline-start: auto;
+  padding-top: var(--space-2);
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+}
+.appearance-font-columns > span { font-size: var(--font-sm); }
+.appearance-font-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.appearance-font-field-label { display: none; color: var(--ink-tertiary); font-size: var(--font-sm); }
+.appearance-font-picker { min-width: 0; }
+.appearance-font-size-field .settings-input-num {
+  width: 100%;
+  border-radius: var(--radius-xs);
+  background: transparent;
+}
+.appearance-font-size-inherited {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-field-height);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
 @container settings-page (max-width: 32em) {
-  .settings-row-control:has(.appearance-font-picker) { width: 100%; }
+  .settings-row:has(.appearance-font-controls) { grid-template-columns: minmax(0, 1fr); }
+  .appearance-font-columns { display: none; }
+  .appearance-font-field-label { display: block; }
+}
+@container settings-page (max-width: 20em) {
+  .appearance-font-controls { grid-template-columns: minmax(0, 1fr); }
 }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
-.appearance-font-picker .select-menu-value,
 .appearance-font-menu .select-menu-item-label {
   white-space: normal;
   overflow-wrap: anywhere;
