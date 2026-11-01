@@ -101,10 +101,15 @@ it("ends browser reload recovery on proven retirement but displays real reload f
   const pending = deferred<Awaited<ReturnType<Controls["reloadBrowserExtension"]>>>(); const extension = { id: "fixture", name: "Fixture", version: "1", path: "/fixture", enabled: true, loaded: true };
   const base = source({ listBrowserProfiles: vi.fn().mockResolvedValue([]), listBrowserExtensions: vi.fn().mockResolvedValue([extension]), reloadBrowserExtension: vi.fn(() => pending.promise) }); const old = scoped(base);
   await act(async () => root.render(<SettingsControlsProvider controls={old.controls}><BrowserSettingsSection /></SettingsControlsProvider>));
-  const reload = () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => /Reload|重新加载/.test(button.getAttribute("aria-label") ?? ""))!;
-  expect(reload()).toBeDefined(); await act(async () => reload().click()); await act(async () => old.abort()); expect(container.querySelector('[role="alert"]')).toBeNull(); expect(base.listBrowserExtensions).toHaveBeenCalledTimes(1);
+  const reload = async () => {
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click());
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => /Reload|重新加载/.test(button.textContent ?? ""));
+    expect(item).toBeDefined();
+    await act(async () => item!.click());
+  };
+  await reload(); await act(async () => old.abort()); expect(container.querySelector('[role="alert"]')).toBeNull(); expect(base.listBrowserExtensions).toHaveBeenCalledTimes(1);
   const next = source({ listBrowserProfiles: vi.fn().mockResolvedValue([]), listBrowserExtensions: vi.fn().mockResolvedValue([extension]), reloadBrowserExtension: vi.fn().mockRejectedValue(new Error("real reload failure")) });
-  await act(async () => root.render(<SettingsControlsProvider controls={next}><BrowserSettingsSection /></SettingsControlsProvider>)); await act(async () => reload().click()); expect(container.textContent).toContain("real reload failure");
+  await act(async () => root.render(<SettingsControlsProvider controls={next}><BrowserSettingsSection /></SettingsControlsProvider>)); await reload(); expect(container.textContent).toContain("real reload failure");
 });
 it("ignores proven engine-discovery retirement while preserving real authentication errors", async () => {
   const pending = deferred<Awaited<ReturnType<Controls["listEngineAuthMethods"]>>>(); const old = scoped(source({ listEngineAuthMethods: vi.fn(() => pending.promise), cancelEngineAuth: vi.fn().mockResolvedValue(undefined) }));
