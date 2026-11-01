@@ -677,8 +677,11 @@ async function chromeToggleGeometry(win) {
     const glyph = icon.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     const settingsOpen = document.querySelector('.app-shell').hasAttribute('data-settings-open');
-    const activeHeader = document.querySelector(settingsOpen ? '.settings-titlebar' : '.conversation-pane .titlebar');
-    const headers = [activeHeader];
+    const chromeHeader = document.querySelector(settingsOpen ? '.settings-titlebar' : '.conversation-pane .titlebar');
+    // Settings owns its title/actions in the scrolling reading column, not
+    // the window chrome. Keep hit/clipping coverage at their actual location.
+    const activeHeader = settingsOpen ? document.querySelector('.settings-page-header') : chromeHeader;
+    const headers = [...new Set([chromeHeader, activeHeader])];
     const clippedChrome = [];
     for (const header of headers) {
       const bounds = header.getBoundingClientRect();
@@ -702,7 +705,7 @@ async function chromeToggleGeometry(win) {
           button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit),
           coveredByDrawer: Boolean(document.querySelector(settingsOpen ? '.sidebar-drawer-open .settings-sidebar' : '.sidebar-drawer-open .sidebar')?.contains(hit)) };
       });
-    const shellRow = document.querySelector('.mac-window-controls') ? activeHeader : document.querySelector('.workbench-window-chrome');
+    const shellRow = document.querySelector('.mac-window-controls') ? chromeHeader : document.querySelector('.workbench-window-chrome');
     const shellBounds = shellRow.getBoundingClientRect();
     const shellStyle = getComputedStyle(shellRow);
     const shellControls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-right-sidebar-toggle')]
@@ -718,6 +721,7 @@ async function chromeToggleGeometry(win) {
     const visible = element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true });
     const guardElements = [...new Set([
       ...document.querySelectorAll('.section-sidebar-toggle, .sidebar-notifications-button, .sidebar-brand .conversation-search-trigger'),
+      ...chromeHeader.querySelectorAll('h1, button'),
       ...activeHeader.querySelectorAll('h1, button'),
     ])].filter(visible);
     const drawer = shell.classList.contains('sidebar-drawer-open')
@@ -739,6 +743,7 @@ async function chromeToggleGeometry(win) {
     });
     return {
       header: header.toJSON(), peers, separationTargets, drawerBounds,
+      clipBounds: (settingsOpen ? activeHeader.closest('.settings-scroll') : activeHeader).getBoundingClientRect().toJSON(),
       toggleState: { expectedSuppressed: !!document.querySelector('.mac-window-controls') && !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), hidden: button.hidden, inert: button.inert },
       contentAxis: (header.top + parseFloat(headerStyle.paddingTop) + header.bottom - parseFloat(headerStyle.paddingBottom)) / 2,
       shellRow: shellBounds.toJSON(), shellControls,
@@ -852,8 +857,10 @@ function assertTopRow(geometry, context) {
   }
   assertControlSeparation(geometry, context);
   for (const peer of geometry.peers) {
-    assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);
-    assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
+    // The settings page header can stack its description/actions on narrow
+    // columns; conversation chrome still requires a single titlebar axis.
+    if (context.page !== "settings") assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);
+    assert.ok(peer.bounds.top >= geometry.clipBounds.top - 0.1 && peer.bounds.bottom <= geometry.clipBounds.bottom + 0.1,
       `Chrome must not be vertically clipped: ${details}`);
     // A hover drawer overlays the canvas without shifting its header. Its
     // covered controls cannot receive clicks until the drawer closes.
