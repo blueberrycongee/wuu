@@ -1409,6 +1409,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-pill);
+  /* Native button chrome is platform-dependent; state rules paint the disc. */
+  background: transparent;
   transition:
     background-color var(--motion-base) var(--ease-out),
     color var(--motion-base) var(--ease-out),
@@ -1554,11 +1556,16 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   transition: background-color var(--motion-base) var(--ease-out);
 }
 
-.composer-plus-button::before,
+.composer-plus-button::before {
+  /* Keep the utility glyph's hover chrome compact inside its full hit target. */
+  inset: 4px;
+  border-radius: var(--radius-pill);
+}
+
 .composer-send-button::before,
 .composer-stop-button::before {
-  /* Match the compact discs while preserving the full hit targets. */
-  inset: 4px;
+  /* Send and Stop are peer discs with the adjacent dictation control. */
+  inset: 0;
   border-radius: var(--radius-pill);
 }
 
