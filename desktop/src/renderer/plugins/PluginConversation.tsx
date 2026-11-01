@@ -18,6 +18,7 @@ import { AssistantTurnShell } from "../AssistantTurnShell";
 import { buildAssistantTurnDisplay } from "../AssistantTurnDisplay";
 import { ConversationFlow } from "../ConversationFlow";
 import { useAutoFollowScrollContainer } from "../AutoFollowScroll";
+import { syncDockComposerCssProperties } from "../ConversationScrollState";
 import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "../ConversationReadingAnchor";
 import { JumpToLatestPill } from "../JumpToLatestPill";
 import { Modal } from "../Modal";
@@ -99,13 +100,32 @@ export function PluginConversationView({ presentation = "standard", conversation
   useLayoutEffect(() => {
     if (!composerNode || !rootRef.current) return;
     const root = rootRef.current;
-    const measure = () => root.style.setProperty("--plugin-composer-height", `${composerNode.getBoundingClientRect().height}px`);
+    const measure = () => {
+      if (syncDockComposerCssProperties(root, composerNode).changed) {
+        controller.scheduleScrollToBottom();
+      }
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
-    observer.observe(composerNode);
-    return () => observer.disconnect();
-  }, [composerNode]);
+    const observeTargets = () => {
+      observer.observe(composerNode);
+      const input = composerNode.querySelector<HTMLElement>(".composer-frame");
+      if (input) observer.observe(input);
+    };
+    observeTargets();
+    const childObserver = typeof MutationObserver !== "undefined"
+      ? new MutationObserver(() => {
+          observeTargets();
+          measure();
+        })
+      : undefined;
+    childObserver?.observe(composerNode, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    return () => {
+      childObserver?.disconnect();
+      observer.disconnect();
+    };
+  }, [composerNode, controller.scheduleScrollToBottom]);
   return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>

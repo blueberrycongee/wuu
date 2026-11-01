@@ -280,14 +280,14 @@ export async function activate(api) {
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
     /* Only the identity's halo covers history; its initial clearance scrolls away. */
-    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    .mosaic-main > .plugin-conversation { --conversation-composer-clearance:calc(var(--mosaic-message-tail-space) - var(--conversation-dock-top-space));grid-template-rows:0 minmax(0,1fr); }
     .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;justify-self:center;max-width:100%;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
     .mosaic .mosaic-main > .plugin-conversation > .plugin-conversation-scroll > .plugin-conversation-flow { padding-top:calc(var(--mosaic-identity-height,0px) + var(--conversation-flow-top-gap)); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
     .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none;-webkit-app-region:no-drag; }
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
-    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { mask-image:none; }
+    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { animation-name:none,scroll-fade-bottom; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
     .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
@@ -368,7 +368,7 @@ export async function activate(api) {
     .mosaic-routine-link { display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);width:100%;margin-top:var(--space-3);font:inherit;color:var(--ink);cursor:pointer;text-align:left; }
     .mosaic-routine-link { padding-block:var(--space-3); }
     .mosaic-routine-link:hover { background:var(--field-hover-bg); }
-    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:var(--mosaic-message-tail-space); }
+    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:max(var(--mosaic-message-tail-space),var(--conversation-flow-bottom-space)); }
     .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
     .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
     .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
