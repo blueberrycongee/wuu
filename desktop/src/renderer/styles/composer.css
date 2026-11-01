@@ -1071,6 +1071,13 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   line-height: var(--conversation-reading-line-height);
 }
 
+/* The Plus button's hit box and one grid gap already separate it from the
+ * draft. Dropping the textarea's leading inset keeps the visible icon-to-text
+ * gap at one card inset instead of adding a second inset inside the field. */
+.composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+  padding-inline-start: 0;
+}
+
 /* Keep an empty editor's hint on one line in narrow panes. */
 .composer textarea::placeholder {
   white-space: nowrap;
@@ -2321,6 +2328,11 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   .composer-editor > textarea {
     grid-column: 1 / -1;
     grid-row: 1;
+  }
+
+  /* The draft has the full row to itself once the toolbar wraps below. */
+  .composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+    padding-inline-start: var(--space-2);
   }
 
   .composer-editor > .composer-bar-left {
