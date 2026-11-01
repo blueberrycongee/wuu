@@ -125,7 +125,15 @@ function joinTranscript(left: string, right: string): string {
   // partial result cheap even after several minutes of dictation.
   const limit = Math.min(left.length, right.length, 200);
   for (let length = limit; length > 0; length--) {
-    if (left.endsWith(right.slice(0, length))) return left + right.slice(length);
+    if (!left.endsWith(right.slice(0, length))) continue;
+    // A shared letter is not a repeated word ("release" + "every").
+    // Keep Latin overlaps only at word boundaries; CJK phrase overlaps
+    // deliberately remain character-based because words have no spaces.
+    const splitsStart = /[A-Za-z0-9]/.test(right[0])
+      && /[A-Za-z0-9]/.test(left[left.length - length - 1] ?? "");
+    const splitsEnd = /[A-Za-z0-9]/.test(right[length - 1])
+      && /[A-Za-z0-9]/.test(right[length] ?? "");
+    if (!splitsStart && !splitsEnd) return left + right.slice(length);
   }
   const last = left.at(-1) ?? "";
   const first = right[0] ?? "";

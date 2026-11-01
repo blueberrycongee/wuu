@@ -44,6 +44,21 @@ describe('dictation session lifecycle', () => {
     expect(results.every(event => event.text.startsWith(firstWindow))).toBe(true);
     expect(results.at(-1)?.text).toBe(correctedWindow + finalWindow);
   });
+  it.each([
+    ['Please prepare the release', 'every', 'every morning', 'Please prepare the release every morning'],
+    ['Please prepare the release', 'release', 'release every morning', 'Please prepare the release every morning'],
+    ['Please preserve the database', 'base', 'base configuration', 'Please preserve the database base configuration'],
+    ['今天我们来测试这段很长的语音识别', '识别', '识别结果正确', '今天我们来测试这段很长的语音识别结果正确'],
+  ])('joins recognition windows without splitting words: %s / %s', async (previous, partial, final, expected) => {
+    const { service, child, events } = fixture();
+    await service.start('boundary', 'en-US', events);
+    for (const [text, is_final] of [[previous, false], [partial, false], [final, true]] as const) {
+      child.stdout.write(JSON.stringify({ type: 'result', text, is_final }) + '\n');
+    }
+    const results = events.mock.calls.map(([event]) => event).filter(event => event.type === 'result');
+    expect(results.at(-1)?.text).toBe(expected);
+    child.emit('close', 0);
+  });
   it('does not start recording after cancellation during permission access', async () => {
     let allow!: (value: boolean) => void;
     const { service, spawn, events } = fixture(new Promise(resolve => { allow = resolve; }));
