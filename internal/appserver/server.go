@@ -1700,6 +1700,10 @@ func sanitizeStreamEvent(ev providers.StreamEvent) StreamEventPayload {
 	if ev.Message != nil && !ev.Message.Hidden {
 		out.Message = ev.Message
 	}
+	if ev.Notice != nil {
+		notice := *ev.Notice
+		out.Notice = &notice
+	}
 	if ev.ToolCall != nil {
 		out.ToolCall = ev.ToolCall
 	}

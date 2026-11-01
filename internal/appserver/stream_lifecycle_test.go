@@ -9,6 +9,26 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+func TestSanitizeStreamEventIncludesNotice(t *testing.T) {
+	got := sanitizeStreamEvent(providers.StreamEvent{
+		Type: providers.EventNotice,
+		Notice: &providers.StreamNotice{
+			Code:    "mcp_unavailable",
+			Message: "host tools unavailable",
+		},
+	})
+	if got.Notice == nil || got.Notice.Code != "mcp_unavailable" || got.Notice.Message != "host tools unavailable" {
+		t.Fatalf("unexpected notice payload: %+v", got.Notice)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal stream event: %v", err)
+	}
+	if !strings.Contains(string(raw), `"notice":{"code":"mcp_unavailable","message":"host tools unavailable"}`) {
+		t.Fatalf("notice missing from wire payload: %s", raw)
+	}
+}
+
 func TestSanitizeStreamEventIncludesLifecycle(t *testing.T) {
 	got := sanitizeStreamEvent(providers.StreamEvent{
 		Type: providers.EventLifecycle,

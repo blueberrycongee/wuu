@@ -1,14 +1,15 @@
 import type { ApplicationEnvironmentV1 } from "../../../../packages/plugin-sdk/src/ui-environment";
-import type { ServerEvent, UserQuestionRequest } from "../../shared/protocol";
-import { serverEventShouldRefreshGit, serverEventTargetsActiveContext, type AppState } from "../AppState";
+import type { ServerEvent, StreamNotice, TurnEventNotification, UserQuestionRequest } from "../../shared/protocol";
+import { activeThreadIDForState, serverEventShouldRefreshGit, serverEventTargetsActiveContext, type AppState } from "../AppState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
 import { externalAgentActivityStore } from "../ExternalAgentActivityStore";
-import { showErrorToast } from "../Toast";
+import { showErrorToast, showToast } from "../Toast";
 import { translateCurrent } from "../i18n";
 
 /** Effects share the controller's event ordering, without another subscriber or reducer. */
 export class ApplicationEventEffects {
   private readonly lifetime = new AbortController();
+  private readonly shownNotices = new Set<string>();
 
   constructor(private readonly host: {
     getState: () => AppState;
@@ -53,6 +54,8 @@ export class ApplicationEventEffects {
       } else if (event.kind === "notification" && event.message.method === "config/error") {
         const message = (event.message.params as { message?: unknown } | undefined)?.message;
         if (typeof message === "string") showErrorToast(message, "", "app-server:config-error");
+      } else if (event.kind === "notification" && event.message.method === "turn/event") {
+        this.showEngineNotice(event.message.params as TurnEventNotification | undefined, state);
       }
     }
     // The existing predicate only accepts completed/error turns, never stream
@@ -62,6 +65,16 @@ export class ApplicationEventEffects {
     }
   }
 
+  private showEngineNotice(params: TurnEventNotification | undefined, state: AppState): void {
+    const notice = params?.event.notice;
+    const threadID = params?.thread_id;
+    if (!notice || !threadID || threadID !== activeThreadIDForState(state)) return;
+    const key = `${threadID}:${notice.code || notice.message}`;
+    if (this.shownNotices.has(key)) return;
+    this.shownNotices.add(key);
+    showToast({ message: engineNoticeText(notice), dedupeKey: `engine-notice:${key}` });
+  }
+
   private async notify(input: { title: string; body: string }): Promise<void> {
     try {
       await this.host.notify?.(input);
@@ -69,4 +82,9 @@ export class ApplicationEventEffects {
       if (!this.lifetime.signal.aborted) this.host.reportError(error);
     }
   }
+}
+
+function engineNoticeText(notice: StreamNotice): string {
+  if (notice.code === "mcp_unavailable") return translateCurrent("runtime.mcpUnavailable");
+  return notice.message;
 }

@@ -365,6 +365,7 @@ export const enUS = {
   "runtime.modelsEmpty": "This engine reports no available models.",
   "runtime.modelsPartial": "Some model options could not be discovered.",
   "runtime.engineDefaultModelHint": "Switch models in {engine}",
+  "runtime.mcpUnavailable": "Wuu browser and computer tools are unavailable for this agent; its native tools still work.",
   "settings.engineBinaryPath": "Binary path",
   "settings.engineBinaryPathPlaceholder": "Leave empty to look up on PATH",
   "settings.engineAutoBinary": "Auto-detected",

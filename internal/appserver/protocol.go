@@ -2822,6 +2822,7 @@ type StreamEventPayload struct {
 	Type             providers.StreamEventType        `json:"type"`
 	Content          string                           `json:"content,omitempty"`
 	Message          *providers.ChatMessage           `json:"message,omitempty"`
+	Notice           *providers.StreamNotice          `json:"notice,omitempty"`
 	ToolCall         *providers.ToolCall              `json:"tool_call,omitempty"`
 	ToolResult       string                           `json:"tool_result,omitempty"`
 	ToolResultDetail *toolresult.Result               `json:"tool_result_detail,omitempty"`

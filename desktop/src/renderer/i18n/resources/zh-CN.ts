@@ -362,6 +362,7 @@ export const zhCN = {
   "runtime.modelsEmpty": "引擎当前没有报告可用模型。",
   "runtime.modelsPartial": "部分模型选项未能完成读取。",
   "runtime.engineDefaultModelHint": "在 {engine} 中切换模型",
+  "runtime.mcpUnavailable": "此 Agent 无法使用 Wuu 的浏览器和电脑工具，原生工具仍可使用。",
   "settings.engineBinaryPath": "二进制路径",
   "settings.engineBinaryPathPlaceholder": "留空自动从 PATH 查找",
   "settings.engineAutoBinary": "自动检测",

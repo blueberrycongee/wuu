@@ -69,7 +69,7 @@ ACP image attachments are written to local files and included as paths in the pr
 
 ## Wuu browser and computer tools
 
-Codex, Claude Code and OpenCode receive Wuu's embedded browser and enabled CUA tools through a local HTTP MCP endpoint. ACP engines, including Pi and DeepSeek Harness, receive these tools only when their installed adapter advertises HTTP MCP support. An adapter without that capability continues the conversation with its native tools and displays a notice that Wuu browser and computer tools are unavailable.
+Codex, Claude Code and OpenCode receive Wuu's embedded browser and enabled CUA tools through a local HTTP MCP endpoint. ACP engines, including Pi and DeepSeek Harness, receive these tools only when their installed adapter advertises HTTP MCP support. An adapter without that capability continues the conversation with its native tools and shows a temporary notice that Wuu browser and computer tools are unavailable.
 
 The host creates a separate endpoint for each conversation turn and supplies it through the engine's launch or session configuration. It does not modify the CLI's global configuration. The browser is available only with a connected browser-capable desktop client; CUA requires an enabled, connected computer-control plugin. Other Wuu plugin tools are not exported. Wuu's provider-specific deferred loading and Code Mode settings do not apply to this MCP catalog; the external engine owns its tool-calling loop.
 
