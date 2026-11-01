@@ -251,10 +251,19 @@ jobs:
           retention-days: 14
 
   go-race:
-    name: Go race guards
+    name: Go race guards / ${{ matrix.suite }}${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: admission
+          - suite: runtime
+            shard: 0
+          - suite: runtime
+            shard: 1
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
     services:
@@ -284,7 +293,8 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-race-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          key: go-race-v2-${{ matrix.suite }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+
 
       - uses: actions/setup-node@v4
         with:
@@ -295,32 +305,34 @@ jobs:
           npm ci --prefix packages/plugin-sdk
           npm ci --prefix plugins
 
-      - name: Guard admission and authority under the race detector
-        id: race-guards
+      # These guards remain required, but no longer serialize the full Go suite.
+      - name: Guard generation admission under race detector
+        if: matrix.suite == 'admission'
         timeout-minutes: 10
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/race-guards"
-          set -o pipefail
-          # Disjoint package sets share compilation objects, not test processes.
-          (go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver 2>&1 | tee "$RUNNER_TEMP/race-guards/admission.log") &
-          admission_pid=$!
-          (go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent 2>&1 | tee "$RUNNER_TEMP/race-guards/authority.log") &
-          authority_pid=$!
-          admission_result=0
-          authority_result=0
-          wait "$admission_pid" || admission_result=$?
-          wait "$authority_pid" || authority_result=$?
-          test "$admission_result" -eq 0 && test "$authority_result" -eq 0
+        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
 
-      - name: Upload race guard evidence
-        if: always()
+      - name: Guard runtime authority and receipts under race detector
+        if: matrix.suite == 'runtime'
+        timeout-minutes: 10
+        env:
+          WUU_GO_TEST_RACE: 'true'
+          WUU_GO_SHARD_WEIGHTS: '{"TestConcurrentCompletedModelReceiptsSettleWithinOwnerDeadline":200,"TestModelShutdownPersistsBeforeProcessExit":50}'
+          WUU_GO_TEST_PATTERN: '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))'
+          WUU_GO_SHARD_EVIDENCE: ${{ runner.temp }}/go-race-shard/manifest.json
+        run: node .github/scripts/go-test-shard.mjs ./internal/runtime ${{ matrix.shard }} 2
+
+      - name: Guard supporting receipt and model packages under race detector
+        if: matrix.suite == 'admission'
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
+
+      - name: Upload race test inventory
+        if: always() && matrix.suite == 'runtime'
         uses: actions/upload-artifact@v4
         with:
-          name: go-race-evidence
-          path: ${{ runner.temp }}/race-guards/
+          name: go-race-runtime-${{ matrix.shard }}-inventory
+          path: ${{ runner.temp }}/go-race-shard/manifest.json
           if-no-files-found: warn
-          retention-days: 14
 
   architecture-conformance:
     name: Public provider conformance / ${{ matrix.suite }}
@@ -652,10 +664,55 @@ jobs:
             test "$ARCHITECTURE_RESULT" = skipped
           fi
 
+  desktop-build:
+    name: Desktop / shared immutable build
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true' && needs.changes.outputs.desktop_suites != '["unit","unit-extra"]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+      - name: Install build dependencies
+        run: |
+          npm ci --prefix desktop --ignore-scripts
+          npm ci --prefix clients/core
+      - uses: actions/setup-go@v5
+        if: contains(needs.changes.outputs.desktop_suites, 'corpus') || contains(needs.changes.outputs.desktop_suites, 'session')
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build this run's renderer and core once
+        run: |
+          mkdir -p .tmp/desktop-ci-build
+          git rev-parse HEAD > .tmp/desktop-ci-build/source-commit.txt
+          (cd desktop && node_modules/.bin/electron-vite build)
+          if [[ '${{ needs.changes.outputs.desktop_suites }}' == *corpus* || '${{ needs.changes.outputs.desktop_suites }}' == *session* ]]; then
+            fixture_version="$(make -s print-version)"
+            go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/desktop-ci-build/wuu-session-switch-core ./cmd/wuu
+          fi
+          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > .tmp/desktop-ci-build/bundle.sha256
+          if [ -f .tmp/desktop-ci-build/wuu-session-switch-core ]; then
+            sha256sum .tmp/desktop-ci-build/wuu-session-switch-core >> .tmp/desktop-ci-build/bundle.sha256
+          fi
+          tar -cf "$RUNNER_TEMP/desktop-ci-build.tar" desktop/out .tmp/desktop-ci-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-ci-build
+          path: ${{ runner.temp }}/desktop-ci-build.tar
+          compression-level: 0
+          retention-days: 1
+
+
   desktop-suite:
     name: Desktop / ${{ matrix.suite }}
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true'
+    needs: [changes, desktop-build]
+    if: ${{ !cancelled() && needs.changes.outputs.desktop == 'true' && (needs.desktop-build.result == 'success' || needs.desktop-build.result == 'skipped') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -704,16 +761,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - uses: actions/download-artifact@v4
+        if: ${{ !startsWith(matrix.suite, 'unit') }}
+        with:
+          name: desktop-ci-build
+          path: ${{ runner.temp }}/desktop-ci-build
+
       - name: Build
-        # Source-based unit tests and renderer recovery do not consume a bundle.
-        if: ${{ matrix.suite != 'unit' }}
+        # Every consumer verifies immutable output from this exact workflow run.
+        if: ${{ !startsWith(matrix.suite, 'unit') }}
         id: build-renderer
         shell: bash
         run: |
-          # These fixtures keep phone access disabled. Clients check builds the
-          # Web shell; macOS/Windows packaging still builds its bundled copy.
-          (cd desktop && node_modules/.bin/electron-vite build)
-          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
+          tar -xf "$RUNNER_TEMP/desktop-ci-build/desktop-ci-build.tar"
+          test "$(cat .tmp/desktop-ci-build/source-commit.txt)" = "$(git rev-parse HEAD)"
+          sha256sum --check .tmp/desktop-ci-build/bundle.sha256
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/wuu-initial-renderer.sha256"
 
       - name: Install fonts for multilingual selection captures
         id: install-desktop-fonts
@@ -1115,7 +1178,7 @@ jobs:
           retention-days: 14
 
       - uses: actions/setup-go@v5
-        if: ${{ contains(fromJSON('["corpus","session","session-lifecycle","shell"]'), matrix.suite) }}
+        if: ${{ matrix.suite == 'shell' }}
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -1124,8 +1187,8 @@ jobs:
         if: ${{ contains(fromJSON('["corpus","session","session-lifecycle"]'), matrix.suite) }}
         id: build-fixture-core
         run: |
-          fixture_version="$(make -s print-version)"
-          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+          cp .tmp/desktop-ci-build/wuu-session-switch-core "$RUNNER_TEMP/wuu-session-switch-core"
+          chmod +x "$RUNNER_TEMP/wuu-session-switch-core"
 
       - name: Validate shareable conversation corpus
         if: ${{ matrix.suite == 'corpus' }}
@@ -1141,19 +1204,8 @@ jobs:
           WUU_TOUR_CORE: ${{ runner.temp }}/wuu-session-switch-core
           WUU_TOUR_OUTPUT: ${{ runner.temp }}/wuu-conversation-corpus
         run: |
-          mkdir -p "$WUU_TOUR_OUTPUT"
-          set -o pipefail
-          (xvfb-run --server-num=90 npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/run.log") &
-          corpus_pid=$!
-          mkdir -p "$WUU_TOUR_OUTPUT/text-only"
-          (WUU_CORPUS_TEXT_ONLY=1 WUU_TOUR_ONLY=sample-02 WUU_TOUR_OUTPUT="$WUU_TOUR_OUTPUT/text-only" \
-            xvfb-run --server-num=91 npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/text-only/run.log") &
-          text_pid=$!
-          corpus_result=0
-          text_result=0
-          wait "$corpus_pid" || corpus_result=$?
-          wait "$text_pid" || text_result=$?
-          test "$corpus_result" -eq 0 && test "$text_result" -eq 0
+          node --test desktop/scripts/ci-corpus.test.mjs
+          node desktop/scripts/ci-corpus.mjs
 
       - name: Upload conversation corpus acceptance evidence
         if: ${{ matrix.suite == 'corpus' && (always()) }}
@@ -1230,19 +1282,20 @@ jobs:
 
       - name: Verify unit dependency selection
         if: ${{ matrix.suite == 'unit' }}
-        run: node --test desktop/scripts/ci-unit-dependencies.test.mjs
+        run: node --test desktop/scripts/ci-unit-dependencies.test.mjs desktop/scripts/ci-unit-plan.test.mjs
 
       - name: Test
-        if: ${{ matrix.suite == 'unit' }}
+        if: ${{ startsWith(matrix.suite, 'unit') }}
         env:
           WUU_CI_RELATED: ${{ needs.changes.outputs.desktop_related }}
+          WUU_CI_UNIT_SHARD: ${{ matrix.suite == 'unit' && '1/2' || '2/2' }}
         run: node desktop/scripts/test-ci-unit.mjs
 
       - name: Upload unit dependency selection evidence
-        if: ${{ always() && matrix.suite == 'unit' }}
+        if: ${{ always() && startsWith(matrix.suite, 'unit') }}
         uses: actions/upload-artifact@v4
         with:
-          name: unit-dependency-selection
+          name: unit-dependency-selection-${{ matrix.suite }}
           path: desktop/out/ci/unit-related.json
           if-no-files-found: ignore
           retention-days: 14
@@ -1927,23 +1980,42 @@ jobs:
       - name: Check
         run: make check-clients check-plugins
 
-      - name: Test
-        run: make test-clients
-
-      - name: Build
-        run: make build-clients
-
-      - name: Build headless workspace acceptance prerequisites
+      - name: Test and build clients with headless prerequisites
+        shell: bash
         run: |
-          npm --prefix desktop run build:remote
-          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
-            fi
-          done
-          clients/mobile-web/node_modules/.bin/playwright install --with-deps chromium
-          sudo apt-get update
-          sudo apt-get install -y openssh-server
+          # Keep SDK's test compilation separate from Check's typecheck compilation.
+          make test-clients &
+          test_pid=$!
+          (
+            set -e
+            make build-clients
+            # Same checkout, process environment and Vite configuration as build-web;
+            # only --outDir differs. Use this run's fresh output, never a cache.
+            test -f clients/mobile-web/dist/index.html
+            rm -rf desktop/build/mobile-web
+            mkdir -p desktop/build/mobile-web
+            cp -R clients/mobile-web/dist/. desktop/build/mobile-web/
+            npm --prefix desktop run build:core
+            (cd desktop && node node_modules/vite/bin/vite.js build --config remote.vite.config.ts)
+          ) &
+          build_pid=$!
+          (
+            set -e
+            for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+              if [ -f "$apt_source" ]; then
+                sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+              fi
+            done
+            # Install packages once; Playwright's --with-deps normally runs a
+            # second apt update if SSH is installed in a separate later step.
+            clients/mobile-web/node_modules/.bin/playwright install --with-deps chromium
+            sudo apt-get install -y openssh-server
+          ) &
+          deps_pid=$!
+          status=0
+          for pid in "$test_pid" "$build_pid" "$deps_pid"; do wait "$pid" || status=1; done
+          exit "$status"
+
 
       - name: Verify SSH workspace lifecycle
         timeout-minutes: 6
@@ -2005,11 +2077,35 @@ jobs:
             clients/mobile-web/package-lock.json
 
       - name: Install
-        working-directory: desktop
+        shell: bash
         run: |
-          npm ci
-          node node_modules/electron/install.js
-          node -e 'require("electron")'
+          workspaces=(desktop)
+          if [ "${{ steps.native-packaging.outputs.required }}" = true ]; then
+            workspaces+=(clients/core clients/mobile-web plugins)
+          fi
+          pids=()
+          for workspace in "${workspaces[@]}"; do
+            npm ci --prefix "$workspace" &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          (cd desktop && node node_modules/electron/install.js && node -e 'require("electron")')
+
+      - name: Identify Swift cache toolchain
+        id: swift-toolchain
+        run: echo "digest=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            desktop/native/cua-mac/.build
+            desktop/native/app-context-mac/.build
+            desktop/native/speech-mac/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.swift-toolchain.outputs.digest }}-${{ hashFiles('desktop/native/**/Package.swift', 'desktop/native/**/Package.resolved', 'desktop/native/**/Sources/**', 'desktop/native/**/Tests/**', 'desktop/native/**/ProtocolTests/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.swift-toolchain.outputs.digest }}-
 
       - name: Test macOS process sandbox
         if: github.event_name != 'push'
@@ -2024,6 +2120,7 @@ jobs:
         run: |
           npm --prefix desktop run test:release-signing
           npm --prefix desktop run test:release-packaging
+          node --test desktop/scripts/build-package-prerequisites.test.cjs
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
       - name: Build read-only app snapshot helper
@@ -2036,16 +2133,6 @@ jobs:
       - name: Test native helper
         if: github.event_name != 'push'
         run: make test-native
-
-      - name: Install phone Web dependencies
-        if: steps.native-packaging.outputs.required == 'true'
-        run: |
-          npm ci --prefix clients/core
-          npm ci --prefix clients/mobile-web
-
-      - name: Install plugin build dependencies
-        if: steps.native-packaging.outputs.required == 'true'
-        run: npm ci --prefix plugins
 
       - name: Package macOS app
         if: steps.native-packaging.outputs.required == 'true'
@@ -2098,6 +2185,8 @@ jobs:
           cache-dependency-path: |
             desktop/package-lock.json
             clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
+            plugins/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -2109,13 +2198,17 @@ jobs:
               sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
             fi
           done
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2
-          npm ci --prefix desktop
-          npm ci --prefix plugins
-          npm ci --prefix clients/core
-          npm ci --prefix clients/mobile-web
+          (sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2) &
+          pids=("$!")
+          for workspace in desktop plugins clients/core clients/mobile-web; do
+            npm ci --prefix "$workspace" &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           node desktop/node_modules/electron/install.js
+          node --test desktop/scripts/build-package-prerequisites.test.cjs
       - name: Require a working Linux filesystem sandbox
         run: |
           go test -json ./internal/processsandbox -run '^TestLinuxFilesystemBoundary$' -count=1 > "$RUNNER_TEMP/linux-sandbox.json"

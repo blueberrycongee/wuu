@@ -1,6 +1,7 @@
 {
   "suites": [
     "unit",
+    "unit-extra",
     "selection",
     "corpus",
     "layout",
