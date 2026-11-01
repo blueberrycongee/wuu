@@ -671,7 +671,7 @@ function Fixture(): JSX.Element {
     });
   };
   return (
-    <div style={{ height: "100vh" }}>
+    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
       <SettingsView
         application={application}
         initialized={state}

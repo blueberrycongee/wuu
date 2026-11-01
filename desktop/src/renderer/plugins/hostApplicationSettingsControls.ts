@@ -52,7 +52,15 @@ export function createApplicationSettingsControls(options: {
       pets: hostSupports("listCodexPets"),
       diagnostics: typeof window.wuu?.getPluginDiagnostics === "function"
     }),
-    currentAppliedTheme, observeAppliedTheme, availableExtensionThemes: availableContentThemes, selectedExtensionThemeKey, selectExtensionTheme,
+    currentAppliedTheme, observeAppliedTheme, selectedExtensionThemeKey, selectExtensionTheme,
+    availableExtensionThemes: inventory => availableContentThemes(inventory).map(theme => ({
+      key: theme.key, legacyKeys: theme.legacyKeys, name: theme.name, base: theme.base,
+      preview: {
+        canvas: theme.tokens["--wuu-color-canvas"] ?? (theme.base === "dark" ? "#191a1c" : "#fcfcfd"),
+        ink: theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+        accent: theme.tokens["--wuu-color-accent"] ?? theme.tokens["--wuu-accent"] ?? theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+      },
+    })),
     observeContentThemeSelection: listener => {
       window.addEventListener("wuu-theme-selection", listener);
       window.addEventListener("storage", listener);

@@ -41,14 +41,14 @@
   --message-image-overflow-fg: #fff;
   --instruction-files-error-fallback: var(--wuu-color-danger, #d3524f);
   --stream-cursor-default-color: var(--ink);
-  --reasoning-stream-cursor-color: var(--gray-500);
+  --reasoning-stream-cursor-color: var(--theme-override-color-text-muted, var(--gray-500));
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
   /* Tool activity and standalone reasoning summaries share the quiet ink
      used by the composer placeholder, in every running/settled state. */
   --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
-  --activity-toggle-hover-color: var(--gray-650);
+  --activity-toggle-hover-color: var(--theme-override-color-text-muted, var(--gray-650));
   --activity-toggle-hover-color-alt: var(--theme-override-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--theme-override-color-text-muted, var(--gray-550));
   /* A tool row's target (file, query, command) sits between the row's
@@ -79,7 +79,7 @@
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--theme-override-color-text-muted, var(--gray-650));
-  --rich-rule-color: var(--wuu-border-subtle, var(--gray-250));
+  --rich-rule-color: var(--wuu-border-subtle, var(--hairline));
   --pre-text-color: var(--theme-override-color-text, var(--gray-700));
   --system-line-marker-color: var(--theme-override-color-text-muted, var(--gray-400));
   --empty-home-action-border: var(--wuu-border-subtle, var(--hairline));
@@ -90,7 +90,7 @@
   --empty-home-title-font: var(--appearance-ui-font, system-ui, sans-serif);
   --project-empty-content-color: var(--theme-override-color-text-muted, var(--gray-600));
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
-  --project-empty-actions-hover-bg: var(--gray-50);
+  --project-empty-actions-hover-bg: var(--surface-1);
   --diff-insert-bg: color-mix(in srgb, var(--success) 8%, transparent);
   --diff-delete-bg: color-mix(in srgb, var(--danger) 8%, transparent);
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
