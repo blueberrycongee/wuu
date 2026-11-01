@@ -1,5 +1,5 @@
 .PHONY: setup dev docs-dev check repository-check repository-metadata-check version-check eval-check docs-policy-check test-policy-check theme-contract-check generate-theme-contract theme-surface-matrix-check generate-theme-surface-matrix check-go check-desktop check-clients check-docs test test-go \
-	build-plugins check-plugins test-plugins test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
+	build-plugins check-plugins test-plugins test-go-uncached test-go-packages test-desktop test-clients test-native build build-go build-desktop \
 	build-clients build-docs build-macos build-linux ci install vet clean release-check \
 	print-version tag-release version-check version-sync release-prepare
 
@@ -89,6 +89,12 @@ test: test-go test-desktop test-clients test-plugins
 
 test-go:
 	go test $(GO_PACKAGES)
+
+# CI runs appserver separately; keep the remaining inventory tied to the full gate.
+test-go-packages:
+	@packages="$$(go list $(GO_PACKAGES))" || exit $$?; \
+		packages="$$(printf '%s\n' "$$packages" | sed '\|^github.com/blueberrycongee/wuu/internal/appserver$$|d')"; \
+		go test $$packages
 
 test-go-uncached:
 	go test $(GO_PACKAGES) -count=1

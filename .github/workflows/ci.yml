@@ -57,16 +57,29 @@ jobs:
           node-version-file: .node-version
 
       - name: Verify CI selection contracts
-        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs .github/scripts/go-check-contract.test.mjs
+        run: node --test .github/scripts/*.test.mjs
 
       - name: Check repository metadata
         run: make repository-check
 
   go-validation:
-    name: Go validation
+    name: Go validation / ${{ matrix.suite }}${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: check
+          - suite: packages
+          - suite: appserver
+            shard: 0
+          - suite: appserver
+            shard: 1
+          - suite: appserver
+            shard: 2
+          - suite: plugins
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
     services:
@@ -98,12 +111,33 @@ jobs:
           npm ci --prefix plugins
 
       - name: Check
+        if: matrix.suite == 'check'
         run: make check-go check-plugins
 
-      - name: Test
-        run: make test-go test-plugins
+      - name: Test all other Go packages
+        if: matrix.suite == 'packages'
+        run: make test-go-packages
+
+      - name: Test appserver shard
+        if: matrix.suite == 'appserver'
+        env:
+          WUU_GO_SHARD_EVIDENCE: ${{ runner.temp }}/go-shard/manifest.json
+        run: node .github/scripts/go-test-shard.mjs ./internal/appserver ${{ matrix.shard }} 3
+
+      - name: Upload appserver test inventory
+        if: always() && matrix.suite == 'appserver'
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-appserver-${{ matrix.shard }}-inventory
+          path: ${{ runner.temp }}/go-shard/manifest.json
+          if-no-files-found: warn
+
+      - name: Test plugins
+        if: matrix.suite == 'plugins'
+        run: make test-plugins
 
       - name: Guard single-file plugins under desktop CSP
+        if: matrix.suite == 'plugins'
         run: |
           export CHROMIUM_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$CHROMIUM_BIN"
@@ -111,7 +145,7 @@ jobs:
           go test ./internal/plugin -run '^TestPrepareSingleFileDesktopAndFullStack$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/single-file-plugin-csp.log"
 
       - name: Upload single-file plugin CSP evidence
-        if: always()
+        if: always() && matrix.suite == 'plugins'
         uses: actions/upload-artifact@v4
         with:
           name: single-file-plugin-csp-evidence
@@ -119,13 +153,14 @@ jobs:
           if-no-files-found: ignore
 
       - name: Guard retained historical plugin packages against current host
+        if: matrix.suite == 'plugins'
         timeout-minutes: 4
         env:
           WUU_COMPATIBILITY_EVIDENCE: ${{ runner.temp }}/wuu-plugin-compatibility
         run: make test-plugin-compatibility
 
       - name: Upload historical plugin compatibility evidence
-        if: always()
+        if: always() && matrix.suite == 'plugins'
         uses: actions/upload-artifact@v4
         with:
           name: plugin-compatibility-evidence
@@ -138,6 +173,7 @@ jobs:
           retention-days: 14
 
       - name: Build plugin model acceptance prerequisites
+        if: matrix.suite == 'plugins'
         run: |
           npm --prefix packages/plugin-sdk run build
           mkdir -p .tmp/bin
@@ -145,6 +181,7 @@ jobs:
           go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/wuu ./cmd/wuu
 
       - name: Guard one-shot plugin model requests
+        if: matrix.suite == 'plugins'
         timeout-minutes: 3
         shell: bash
         env:
@@ -156,7 +193,7 @@ jobs:
           node scripts/plugin-model-request-e2e.mjs 2>&1 | tee "$WUU_MODEL_E2E_OUTPUT/run.log"
 
       - name: Upload one-shot plugin model evidence
-        if: always()
+        if: always() && matrix.suite == 'plugins'
         uses: actions/upload-artifact@v4
         with:
           name: plugin-model-request-evidence
@@ -168,6 +205,7 @@ jobs:
           retention-days: 14
 
       - name: Guard extensible model pipeline journeys
+        if: matrix.suite == 'plugins'
         timeout-minutes: 4
         shell: bash
         env:
@@ -180,7 +218,7 @@ jobs:
           node scripts/plugin-model-pipeline-e2e.mjs 2>&1 | tee "$WUU_PIPELINE_E2E_OUTPUT/run.log"
 
       - name: Upload extensible model pipeline evidence
-        if: always()
+        if: always() && matrix.suite == 'plugins'
         uses: actions/upload-artifact@v4
         with:
           name: plugin-model-pipeline-evidence
@@ -192,15 +230,17 @@ jobs:
           retention-days: 14
 
       - name: Build
+        if: matrix.suite == 'plugins'
         run: make build-go
 
       - name: Verify live plugin generation replacement
+        if: matrix.suite == 'plugins'
         env:
           WUU_SELF_EXTENSION_EVIDENCE: ${{ runner.temp }}/wuu-plugin-generation-evidence
         run: WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" go test -count=1 -run '^TestAgentSelfExtensionProcess$' ./cmd/wuu
 
       - name: Upload plugin acceptance evidence
-        if: always()
+        if: always() && matrix.suite == 'plugins'
         uses: actions/upload-artifact@v4
         with:
           name: plugin-runtime-evidence
@@ -255,11 +295,15 @@ jobs:
         run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
 
   architecture-conformance:
-    name: Public provider conformance
+    name: Public provider conformance / ${{ matrix.suite }}
     needs: changes
     if: needs.changes.outputs.architecture == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [controller, authority, cooperation]
     steps:
       - uses: actions/checkout@v4
 
@@ -303,7 +347,7 @@ jobs:
       # Independent suites continue after a peer fails so one broken boundary
       # does not hide the others. Every failed step still fails this job.
       - name: Verify registered existing-session controller loop
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'controller' }}
         timeout-minutes: 6
         shell: bash
         env:
@@ -315,7 +359,7 @@ jobs:
           node scripts/registered-session-transport-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/registered-session.log
 
       - name: Verify independent state authority
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'authority' }}
         timeout-minutes: 8
         shell: bash
         run: |
@@ -323,7 +367,7 @@ jobs:
           node scripts/state-authority-acceptance/run.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/state-authority.log
 
       - name: Verify independent restricted session sharing
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'authority' }}
         timeout-minutes: 6
         shell: bash
         run: |
@@ -331,7 +375,7 @@ jobs:
           node scripts/session-sharing-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-sharing.log
 
       - name: Verify selected artifact provider through the Go boundary
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'authority' }}
         timeout-minutes: 6
         shell: bash
         # Rendered preview and native open-with remain separate UI acceptance.
@@ -342,7 +386,7 @@ jobs:
           node scripts/artifact-provider-acceptance.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/artifact-provider.log
 
       - name: Verify minimal composition through the public executable
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'controller' }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -353,7 +397,7 @@ jobs:
           node packages/plugin-sdk/test/minimal-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/minimal-composition.log
 
       - name: Verify independent identity and resource policy
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'controller' }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -364,7 +408,7 @@ jobs:
           node packages/plugin-sdk/test/resource-access-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/resource-access.log
 
       - name: Verify owned live progress through the public SDK
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'controller' }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -374,7 +418,7 @@ jobs:
           node packages/plugin-sdk/test/session-progress-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-progress.log
 
       - name: Verify partial provider delegation through the public SDK
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'authority' }}
         timeout-minutes: 6
         shell: bash
         env:
@@ -384,7 +428,7 @@ jobs:
           node scripts/provider-delegation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/provider-delegation.log
 
       - name: Verify selected-service continuation authority
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'authority' }}
         timeout-minutes: 5
         shell: bash
         run: |
@@ -392,7 +436,7 @@ jobs:
           node scripts/service-continuation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/service-continuation.log
 
       - name: Verify default native tools in product compositions
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'cooperation' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -402,7 +446,7 @@ jobs:
           node scripts/composition-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/native-composition.log
 
       - name: Verify public federated session routing
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'cooperation' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -414,7 +458,7 @@ jobs:
           node scripts/session-federation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/session-federation.log
 
       - name: Verify encrypted desktop delegation into the original core
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'cooperation' }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -425,7 +469,7 @@ jobs:
           node desktop/scripts/trusted-desktop-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/trusted-desktop.log
 
       - name: Verify independent additive packages across process and renderer
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'cooperation' }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -436,7 +480,7 @@ jobs:
           node packages/plugin-sdk/test/additive-package.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/additive-cooperation.log
 
       - name: Verify optional plugin failure isolation and recovery
-        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' && matrix.suite == 'cooperation' }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -447,72 +491,18 @@ jobs:
           node scripts/plugin-failure-isolation-e2e.mjs 2>&1 | tee .tmp/e2e/architecture-conformance/plugin-failure-isolation.log
 
       - name: Require executed boundary cases and passing reports
+        env:
+          WUU_CONFORMANCE_SUITE: ${{ matrix.suite }}
         if: ${{ !cancelled() && steps.conformance-build.outcome == 'success' }}
         run: |
           sha256sum --check .tmp/e2e/architecture-conformance/binary.sha256
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { readFileSync, readdirSync } from 'node:fs';
-          import { join } from 'node:path';
-          const run = base => {
-            const runs = readdirSync(base).filter(name => name.startsWith('run-'));
-            assert.equal(runs.length, 1, `${base}: expected exactly one fresh fixture`);
-            return join(base, runs[0]);
-          };
-          for (const [base, file, name] of [
-            ['.tmp/e2e/provider-authority', 'verification.log', 'TestProviderAuthorityHTTPProcess'],
-            ['.tmp/e2e/session-sharing', 'verification.log', 'TestSessionSharingExternalProcess'],
-            ['.tmp/artifact-provider-acceptance', 'verification.log', 'TestThreadArtifactSelectedProvider'],
-            ['.tmp/e2e/trusted-desktop', 'go-test.log', 'TestEncryptedDelegatedDesktopSharedCore'],
-            ['.tmp/e2e/provider-delegation', 'verification.log', 'TestProviderDelegationSDKProcess'],
-            ['.tmp/e2e/provider-delegation', 'verification.log', 'TestStateProviderDelegationAuthority'],
-            ['.tmp/e2e/service-continuation', 'verification.log', 'TestServiceContinuationSDKReplacementAndRemoval'],
-          ]) {
-            const log = readFileSync(join(run(base), file), 'utf8');
-            assert.match(log, new RegExp(`^--- PASS: ${name} [(]`, 'm'), `${name}: did not execute`);
-            assert.doesNotMatch(log, /^\s*--- SKIP:/m, `${name}: skipped coverage is not acceptance`);
-          }
-          for (const [base, file, key, expected] of [
-            ['.tmp/artifact-provider-acceptance', 'report.json', 'status', 'passed'],
-            ['.tmp/e2e/minimal-composition', 'result.json', 'passed', true],
-            ['.tmp/e2e/resource-access', 'result.json', 'passed', true],
-            ['.tmp/e2e/session-progress', 'report.json', 'passed', true],
-            ['.tmp/e2e/session-federation', 'results.json', 'status', 'passed'],
-            ['.tmp/e2e/trusted-desktop', 'result.json', 'passed', true],
-            ['.tmp/e2e/provider-delegation', 'report.json', 'passed', true],
-            ['.tmp/e2e/service-continuation', 'report.json', 'passed', true],
-            ['.tmp/e2e/composition', 'results.json', 'status', 'passed'],
-          ]) {
-            const report = JSON.parse(readFileSync(join(run(base), file), 'utf8'));
-            assert.equal(report[key], expected, `${base}: fixture did not pass`);
-          }
-          const additive = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/result.json', 'utf8'));
-          assert.equal(additive.passed, true, 'additive cooperation did not pass');
-          assert(Array.isArray(additive.cases) && additive.cases.length >= 11, 'additive boundary cases did not execute');
-          assert.equal(new Set(additive.cases).size, additive.cases.length, 'additive cases must be distinct');
-          // The runner emits its final marker only after the real renderer batch
-          // and report checks; renderer.log itself contains the Vitest output.
-          assert.match(readFileSync('.tmp/e2e/architecture-conformance/additive-cooperation.log', 'utf8'), /^PASS: independent additive packages cooperate through declared services and owned UI slots\.$/m);
-          const renderer = readFileSync('.tmp/e2e/additive-cooperation/renderer.log', 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
-          assert.match(renderer, /Tests\s+\d+ passed\b/);
-          assert.doesNotMatch(renderer, /\b[1-9]\d* skipped\b/);
-          const inputs = JSON.parse(readFileSync('.tmp/e2e/additive-cooperation/inputs.json', 'utf8'));
-          const binaryHash = readFileSync('.tmp/e2e/architecture-conformance/binary.sha256', 'utf8').trim().split(/\s+/)[0];
-          assert.equal(inputs.binarySHA256, binaryHash, 'additive fixture used a different executable');
-          const isolation = JSON.parse(readFileSync(join(run('.tmp/e2e/plugin-failure-isolation'), 'result.json'), 'utf8'));
-          assert.equal(isolation.status, 'passed', 'plugin failure isolation did not pass');
-          assert.equal(isolation.expectBlocked, false, 'negative control is not acceptance');
-          assert.equal(isolation.binary_sha256, binaryHash, 'isolation fixture used a different executable');
-          assert(Array.isArray(isolation.checks) && isolation.checks.length >= 15, 'isolation boundaries did not execute');
-          assert.equal(new Set(isolation.checks).size, isolation.checks.length, 'isolation cases must be distinct');
-          assert(isolation.checks.includes('new send completes while real additive plugin prepare is held; activation follows explicit barrier release'), 'held additive preparation admission was not verified');
-          NODE
+          node .github/scripts/verify-provider-evidence.mjs
 
       - name: Preserve public boundary evidence without fixture credentials
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: architecture-conformance-evidence
+          name: architecture-conformance-${{ matrix.suite }}-evidence
           # Never upload fixture directories, homes, config, key material or
           # token stores. Only these reports and fixture diagnostic logs leave
           # the runner, including on fixture failure.
@@ -554,10 +544,14 @@ jobs:
           retention-days: 14
 
   project-agent-check:
-    name: Project Agent check
+    name: Project Agent check / ${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
     services:
@@ -585,7 +579,17 @@ jobs:
 
       - name: Test experimental Project Agent
         # Keep the entire suite: this tag changes shared recovery and lifecycle paths.
-        run: go test -tags project_agent ./internal/appserver
+        env:
+          WUU_GO_SHARD_EVIDENCE: ${{ runner.temp }}/go-shard/manifest.json
+        run: node .github/scripts/go-test-shard.mjs ./internal/appserver ${{ matrix.shard }} 3 project_agent
+
+      - name: Upload Project Agent test inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-agent-${{ matrix.shard }}-inventory
+          path: ${{ runner.temp }}/go-shard/manifest.json
+          if-no-files-found: warn
 
   go-check:
     name: Go check

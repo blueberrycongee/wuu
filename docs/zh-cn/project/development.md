@@ -728,7 +728,11 @@ iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照�
 
 Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
-Desktop 验证拆为六个独立 Linux 任务并行运行：单元测试、类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；外壳、引导与设置。每组使用独立构建、Electron 配置、Xvfb 显示器和证据上传。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
+Go 验证拆分为静态及跨平台检查、其他 Go 包、插件验收，以及三个 appserver 测试分片。Project Agent 构建同样分三片运行完整的带标签 appserver 套件。每片通过 `go test -list` 枚举已编译包中的全部顶层测试、示例及 fuzz 种子测试，按名称分配，再用 `-count=1` 实际执行；清单随运行上传。可通过 `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3` 复现一个分片，最后可追加 `project_agent`；编号从零开始。CI 合约测试验证分配完整且能传递失败。
+
+公开 provider 验收分为独立的 controller、authority 和 cooperation 三组。每组构建被测版本，保留原有边界断言及证据，并检查自己的报告。所有 Go 矩阵组使用 `fail-fast: false`，汇总结果仍进入 `Go check`。拆分会增加 runner 需求，因此判断总耗时改善时必须同时检查排队与执行时间。
+
+Desktop 验证拆为七个独立 Linux 任务并行运行：单元测试、类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；会话生命周期；外壳、引导与设置。每组使用独立构建、Electron 配置、Xvfb 显示器和证据上传。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
 
 仅修改[分组映射](../../../.github/scripts/desktop-ci-suites.json)中独立 E2E 入口时，CI 运行所属组的并集，不触发无关 Clients/native 检查。共享 helper、preload、fixture、产品代码、样式、依赖、CI 配置和未知路径仍保守回退全部组，避免根据组件文件名猜测完整依赖关系。原有测试命令、断言、场景矩阵和证据上传均保留；手动运行执行全部组。扩展映射前应确认入口不是共享 helper。使用 `node --test .github/scripts/select-ci.test.mjs` 通过临时 Git 改动验证范围选择，包括删除文件和混合范围。
 
