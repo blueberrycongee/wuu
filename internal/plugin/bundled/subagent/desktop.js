@@ -29,18 +29,21 @@ export async function activate(api) {
   } });
   api.registerStyle({ id: "subagent-status", css: `
     .plugin-subagent-settings { min-width:0; }
-    .plugin-subagent-aliases { border:1px solid var(--hairline); border-radius:var(--radius-sm); padding:0 var(--card-padding); }
+    .plugin-subagent-aliases { border-top:1px solid var(--hairline-soft); }
     .plugin-subagent-alias { min-width:0; padding:var(--space-4) 0; border-bottom:1px solid var(--hairline-soft); }
-    .plugin-subagent-alias:last-child { border-bottom:0; }
     .plugin-subagent-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); }
-    .plugin-subagent-fields .plugin-ui-field-label { font-weight:var(--weight-regular); }
-    .plugin-subagent-options { margin-top:var(--space-3); color:var(--ink-soft); font-size:var(--font-sm); }
-    .plugin-subagent-options summary { cursor:pointer; margin-bottom:var(--space-3); }
-    .plugin-subagent-alias-footer { display:flex; justify-content:space-between; align-items:baseline; gap:var(--space-3); }
-    @container settings-page (max-width:560px) { .plugin-subagent-fields { grid-template-columns:minmax(0,1fr); } }
-    .plugin-subagent-actions { align-items:center; gap:var(--space-2); }
+    .plugin-subagent-fields .plugin-ui-field-label { font-size:var(--font-sm); color:var(--ink-soft); font-weight:var(--weight-medium); }
+    .plugin-subagent-options { flex:1; min-width:0; margin-top:var(--space-3); color:var(--ink-soft); font-size:var(--font-sm); }
+    .plugin-subagent-options summary { cursor:pointer; user-select:none; color:var(--ink-tertiary); font-weight:var(--weight-medium); }
+    .plugin-subagent-options[open] summary { margin-bottom:var(--space-3); color:var(--ink-soft); }
+    .plugin-subagent-options .plugin-ui-stack { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-3); }
+    .plugin-subagent-alias-footer { display:flex; justify-content:space-between; align-items:flex-start; gap:var(--space-3); }
+    @container settings-page (max-width:560px) {
+      .plugin-subagent-fields, .plugin-subagent-options .plugin-ui-stack { grid-template-columns:minmax(0,1fr); }
+    }
+    .plugin-subagent-actions { justify-content:flex-end; align-items:center; gap:var(--space-2); }
     .plugin-subagent-saved { color:var(--ink-tertiary); font-size:var(--font-sm); }
-    .plugin-subagent-settings-error { color:var(--danger); font-size:var(--font-ui); overflow-wrap:anywhere; }
+    .plugin-subagent-settings-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
   ` });
 
   const emptyStatusItems = Object.freeze([]);

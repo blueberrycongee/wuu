@@ -131,29 +131,32 @@ var personalDesktop = (() => {
         "section",
         { "data-personal-share": true },
         h("h3", null, "\u5206\u4EAB\u4E0E\u6536\u85CF"),
-        h("p", null, "\u53EA\u63A5\u6536\u4F60\u4E3B\u52A8\u5206\u4EAB\u7684\u6587\u5B57\u3001\u94FE\u63A5\u6216\u5F53\u524D\u9875\uFF1B\u4E0D\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\uFF0C\u4E0D\u81EA\u52A8\u6253\u5F00\u94FE\u63A5\u3002"),
-        h("label", null, "\u94FE\u63A5", h("input", { type: "url", value: url, disabled: busy, onChange: (e) => {
-          edit();
-          setURL(e.target.value);
-        }, placeholder: "https://\u2026" })),
-        h("label", null, "\u6587\u5B57", h("textarea", { value: body, disabled: busy, maxLength: 65536, rows: 3, onChange: (e) => {
-          edit();
-          setBody(e.target.value);
-        } })),
-        h("label", null, "\u5BFC\u5165\u6D4F\u89C8\u5668\u5F53\u524D\u9875\u6587\u4EF6", h("input", { type: "file", accept: ".json,application/json", disabled: busy, onChange: load })),
-        h("div", null, h("button", { type: "button", disabled: busy || !url.trim() && !body.trim(), onClick: submit }, busy ? "\u6B63\u5728\u63A5\u6536\u2026" : "\u4FDD\u5B58\u5230\u4E3B\u804A\u5929"), h("button", { type: "button", disabled: busy, onClick: () => {
+        h("p", { className: "personal-share-desc" }, "\u63A5\u6536\u4E3B\u52A8\u5206\u4EAB\u7684\u6587\u5B57\u3001\u94FE\u63A5\u6216\u5F53\u524D\u9875\u3002"),
+        h(
+          "div",
+          { className: "personal-share-fields" },
+          h("label", null, h("span", null, "\u94FE\u63A5"), h("input", { className: "plugin-ui-input", type: "url", value: url, disabled: busy, onChange: (e) => {
+            edit();
+            setURL(e.target.value);
+          }, placeholder: "https://\u2026" })),
+          h("label", null, h("span", null, "\u6587\u5B57"), h("textarea", { className: "plugin-ui-input plugin-ui-textarea", value: body, disabled: busy, maxLength: 65536, rows: 3, onChange: (e) => {
+            edit();
+            setBody(e.target.value);
+          } })),
+          h("label", null, h("span", null, "\u5BFC\u5165\u6D4F\u89C8\u5668\u5F53\u524D\u9875\u6587\u4EF6"), h("input", { className: "plugin-ui-input", type: "file", accept: ".json,application/json", disabled: busy, onChange: load }))
+        ),
+        h("div", { className: "personal-share-actions" }, h("button", { className: "plugin-ui-button plugin-ui-button-secondary", type: "button", disabled: busy, onClick: () => {
           generation.current++;
           setCapture(null);
           setURL("");
           setBody("");
           setMessage("");
-        } }, "\u6E05\u7A7A")),
-        message && h("p", { role: "status" }, message),
-        h("p", null, "\u666E\u901A\u6587\u4EF6\u53EF\u901A\u8FC7\u4E3B\u804A\u5929\u9644\u4EF6\u6309\u94AE\u9009\u62E9\uFF1B\u9644\u4EF6\u4E0D\u4F1A\u4ECE\u7535\u8111\u8DEF\u5F84\u81EA\u52A8\u8BFB\u53D6\u3002")
+        } }, "\u6E05\u7A7A"), h("button", { className: "plugin-ui-button plugin-ui-button-primary", type: "button", disabled: busy || !url.trim() && !body.trim(), onClick: submit }, busy ? "\u6B63\u5728\u63A5\u6536\u2026" : "\u4FDD\u5B58\u5230\u4E3B\u804A\u5929")),
+        message && h("p", { role: "status", className: "personal-share-status" }, message)
       );
     };
   }
-  var shareCaptureStyles = "[data-personal-share]{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline)}[data-personal-share] h3{font:inherit;font-weight:600}[data-personal-share] label{display:flex;flex-direction:column;gap:var(--space-2);margin-block:var(--space-3)}[data-personal-share] input,[data-personal-share] textarea{font:inherit;max-width:100%;box-sizing:border-box}[data-personal-share]>div{display:flex;flex-wrap:wrap;gap:var(--space-3)}";
+  var shareCaptureStyles = "[data-personal-share]{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline-soft)}[data-personal-share] h3{margin:0;color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em}[data-personal-share] .personal-share-desc{margin:4px 0 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px)}[data-personal-share] .personal-share-fields{display:flex;flex-direction:column;margin-top:var(--space-3);border-top:1px solid var(--hairline-soft)}[data-personal-share] label{display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);align-items:center;gap:var(--space-4);padding:var(--settings-row-pad-block,12px) 0;border-bottom:1px solid var(--hairline-soft);margin:0;color:var(--ink);font-size:var(--font-ui,15px)}[data-personal-share] label:has(textarea){align-items:start}[data-personal-share] input,[data-personal-share] textarea{font:inherit;width:100%;max-width:100%;box-sizing:border-box}[data-personal-share] .personal-share-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}[data-personal-share] .personal-share-status{margin:var(--space-2) 0 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px)}";
 
   // plugins/personal/ui/connector-oauth.ts
   var permissions = {
@@ -407,7 +410,7 @@ var personalDesktop = (() => {
       );
     };
   }
-  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3,.personal-connectors h4{font:inherit;font-weight:600;margin:0;}.personal-connectors p{margin:var(--space-2,8px) 0;overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connectors-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:var(--space-5,20px);margin-block:var(--space-5,20px);}.personal-connector-provider{padding-block:var(--space-3,12px);border-top:1px solid var(--hairline);min-width:0;}.personal-connectors-controls{display:flex;gap:var(--space-3,12px);align-items:center;flex-wrap:wrap;margin-top:var(--space-3,12px);}.personal-connectors-muted{color:var(--ink-muted);}.personal-connector-action{border-top:1px solid var(--hairline);padding-block:var(--space-4,16px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);}.personal-connectors [role=alert]{color:var(--ink);border-left:3px solid var(--ink-muted);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
+  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3{color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;margin:0;}.personal-connectors h4{color:var(--ink);font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);margin:0;}.personal-connectors p{margin:var(--space-1,4px) 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px);overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connector-title span{font-size:var(--font-xs,12px);color:var(--ink-tertiary);padding:1px 8px;border-radius:var(--radius-pill,999px);background:var(--surface-2);}.personal-connectors-list{display:flex;flex-direction:column;margin-block:var(--space-3,12px);border-top:1px solid var(--hairline-soft);}.personal-connector-provider{padding-block:var(--settings-row-pad-block,12px);border-bottom:1px solid var(--hairline-soft);min-width:0;}.personal-connector-provider details{margin-top:var(--space-2);font-size:var(--font-sm,14px);color:var(--ink-soft);}.personal-connector-provider summary{cursor:pointer;color:var(--ink-tertiary);font-weight:var(--weight-medium,500);}.personal-connectors-controls{display:flex;gap:var(--space-2,8px);align-items:center;flex-wrap:wrap;margin-top:var(--space-2,8px);}.personal-connectors-muted{color:var(--ink-tertiary);font-size:var(--font-xs,12px)!important;}.personal-connector-action{border-top:1px solid var(--hairline-soft);padding-block:var(--space-3,12px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);border-radius:var(--radius-sm,6px);}.personal-connectors [role=alert]{color:var(--danger);border-left:2px solid var(--danger);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
 
   // plugins/personal/ui/action-review-panel.ts
   var ReviewContractError = class extends Error {
@@ -1165,7 +1168,25 @@ var personalDesktop = (() => {
 ${connectorsStyles}
 ${connection_view_default}
 ${personalReviewStyles}
-.mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
+.mosaic-settings .mosaic-quiet-hours-row{display:flex;flex-wrap:nowrap;justify-content:flex-end;align-items:center;gap:var(--space-3);padding:var(--settings-row-pad-block,12px) 0;border-bottom:1px solid var(--hairline-soft);}
+.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field{display:inline-flex;align-items:center;gap:var(--space-2);padding:0;border:0;width:auto;}
+.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field:first-child{flex:1;min-width:0;justify-content:space-between;}
+.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-input{width:128px;}
+.mosaic-settings .mosaic-settings-save-row{justify-content:flex-end;}
+.mosaic-settings [data-personal-connections]{display:flex;flex-direction:column;gap:var(--space-4);}
+.mosaic-settings [data-personal-connections]>h2{font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;color:var(--ink);margin:0;}
+.mosaic-settings .gcal-view{margin:0;max-width:none;}
+.mosaic-settings .gcal-heading{margin-bottom:var(--space-2);gap:var(--space-3);}
+.mosaic-settings .gcal-icon{width:34px;height:34px;border-radius:var(--radius-sm);font-size:var(--font-sm);}
+.mosaic-settings .gcal-view h2{font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);}
+.mosaic-settings .gcal-muted{font-size:var(--font-sm,14px);color:var(--ink-tertiary);}
+.mosaic-settings .gcal-connection{padding:var(--settings-row-pad-block,12px) 0;border-top:1px solid var(--hairline-soft);border-bottom:1px solid var(--hairline-soft);}
+.mosaic-settings .gcal-button{min-height:var(--control-field-height,32px);padding:0 var(--control-padding-inline,12px);border-radius:var(--radius-sm,6px);font-size:var(--font-sm,14px);font-weight:var(--weight-medium,500);}
+.mosaic-settings .gcal-view fieldset{padding:var(--space-3) 0;}
+.mosaic-settings .gcal-view legend{padding:var(--space-2) 0 0;font-size:var(--font-sm,14px);color:var(--ink-soft);}
+.mosaic-settings .gcal-agenda-form{padding:var(--space-3) 0;border-top:1px solid var(--hairline-soft);}
+.mosaic-settings .gcal-view input:not([type=checkbox]){min-height:var(--control-field-height,32px);padding:0 var(--control-padding-inline,12px);border:1px solid var(--field-border);border-radius:var(--radius-sm,6px);font-size:var(--font-sm,14px);}
+.mosaic-settings .gcal-disconnect{padding:var(--space-3) 0;border-top:1px solid var(--hairline-soft);margin-top:var(--space-2);}` };
   }
 
   // plugins/personal/ui/send-motion.js
@@ -1343,7 +1364,7 @@ ${personalReviewStyles}
   // plugins/personal/ui/desktop.js
   async function activate(api) {
     const React = api.react, h = React.createElement;
-    const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+    const { Page, Section, Card, Stack, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
     const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
     const call = async (method, input) => {
       if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -2255,17 +2276,36 @@ ${personalReviewStyles}
           setSaving(false);
         }
       };
-      return h("section", { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(
-        React.Fragment,
-        null,
-        h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: (event) => setPreferences({ ...preferences, notifications: event.target.checked }) }),
-        h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: (event) => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
-        h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-        h("div", { className: "mosaic-actions" }, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
-        h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) }),
-        h(Button, { "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")),
-        h("p", null, t("memoryHint"))
-      ), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
+      return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, h(
+        Stack,
+        { gap: "large" },
+        error && h("p", { role: "alert" }, error),
+        !preferences ? h(LoadingState, { label: "twin" }) : h(
+          Section,
+          { title: locale?.startsWith("zh") ? "\u901A\u77E5\u4E0E\u514D\u6253\u6270" : "Notifications & Quiet Hours" },
+          h(
+            Card,
+            null,
+            h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: (event) => setPreferences({ ...preferences, notifications: event.target.checked }) }),
+            h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: (event) => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
+            h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
+            h(
+              "div",
+              { className: "mosaic-actions mosaic-quiet-hours-row" },
+              h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }),
+              h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })
+            ),
+            h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })
+          ),
+          h(
+            Row,
+            { className: "mosaic-settings-save-row" },
+            h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save"))
+          )
+        ),
+        h(settingsPanels.Connections),
+        h(settingsPanels.Review, { locale })
+      ));
     }
     let identityAgent;
     const identityListeners = /* @__PURE__ */ new Set();
