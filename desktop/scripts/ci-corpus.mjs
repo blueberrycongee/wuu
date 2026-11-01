@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url';
 // directory. Share only immutable binaries; never build inside the workers.
 export function corpusGroups(samples) {
   if (!samples.length || new Set(samples.map(s => s.id)).size !== samples.length) throw new Error('Invalid corpus inventory');
-  const groups = [{ weight: 0, samples: [] }, { weight: 0, samples: [] }];
+  const groups = Array.from({ length: 3 }, () => ({ weight: 0, samples: [] }));
   for (const sample of [...samples].sort((a, b) => b.steps.length - a.steps.length || a.id.localeCompare(b.id))) {
-    const group = groups[0].weight <= groups[1].weight ? groups[0] : groups[1];
+    const group = groups.reduce((least, candidate) => candidate.weight < least.weight ? candidate : least);
     group.samples.push(sample.id);
     group.weight += sample.steps.length;
   }

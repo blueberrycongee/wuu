@@ -8,6 +8,7 @@ on:
       - 'desktop/electron.vite.config.ts'
       - 'desktop/scripts/document-context-e2e.*'
       - 'desktop/scripts/file-selection-e2e*'
+      - 'desktop/scripts/file-selection-variants.cjs'
       - 'desktop/scripts/e2e/annotation-acceptance/**'
       - '.github/workflows/annotation-acceptance.yml'
 

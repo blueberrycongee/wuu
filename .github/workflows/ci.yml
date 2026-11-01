@@ -884,21 +884,38 @@ jobs:
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         run: dpkg-query -W fonts-noto-cjk fonts-noto-color-emoji xdotool
 
-      - name: Guard independent feature, inspection, and resize UI
+      - name: Guard bounded independent layout journeys
         id: feature-ui-rendering
-        if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success' && steps.install-desktop-fonts.outcome == 'success') }}
-        timeout-minutes: 8
+        if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 12
         shell: bash
         env:
           WUU_FEATURE_UI_VISUAL_OUTPUT: ${{ runner.temp }}/wuu-feature-ui-rendering-evidence
           WUU_ARTIFACT_E2E_ONLY: inspection
           WUU_ARTIFACT_OUTPUT: ${{ runner.temp }}/wuu-image-inspection-evidence
           WUU_RESIZE_OUTPUT: ${{ runner.temp }}/wuu-resize-live-evidence/results.json
+          WUU_SETTLEMENT_OUTPUT: ${{ runner.temp }}/wuu-stream-settlement-evidence
+          WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
+          WUU_LAYOUT_FONTS_READY: ${{ steps.install-desktop-fonts.outcome }}
         run: |
-          # Private profiles and displays; preserve each journey's original timeout.
+          echo 'Concurrent acceptance: do not compare timings to unloaded baselines.'
+          mkdir -p "$WUU_SETTLEMENT_OUTPUT" "$WUU_IMAGE_LAYOUT_OUTPUT"
+          (
+            timeout --kill-after=10s 4m bash -e -o pipefail <<'STREAM'
+          xvfb-run --server-num=90 npm --prefix desktop run test:e2e:stream-settlement -- --no-sandbox 2>&1 | tee "$WUU_SETTLEMENT_OUTPUT/run.log"
+          STREAM
+          ) &
+          stream_pid=$!
+          (
+            timeout --kill-after=10s 4m bash -e -o pipefail <<'IMAGE'
+          xvfb-run --server-num=91 desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log"
+          IMAGE
+          ) &
+          image_pid=$!
           (
             status=0
-            timeout --kill-after=10s 5m bash -e -o pipefail <<'FEATURE' || status=1
+            if [ "$WUU_LAYOUT_FONTS_READY" = success ]; then
+              timeout --kill-after=10s 5m bash -e -o pipefail <<'FEATURE' || status=1
           set -euo pipefail
           mkdir -p "$WUU_FEATURE_UI_VISUAL_OUTPUT"
           # Missing Chromium must fail this gate rather than silently skip pixels.
@@ -914,28 +931,27 @@ jobs:
           fi
           node scripts/external-composition-acceptance/ui/visual.mjs 2>&1 | tee "$WUU_FEATURE_UI_VISUAL_OUTPUT/run.log"
           FEATURE
-            timeout --kill-after=10s 3m bash -e -o pipefail <<'INSPECTION' || status=1
+              timeout --kill-after=10s 3m bash -e -o pipefail <<'INSPECTION' || status=1
           mkdir -p "$WUU_ARTIFACT_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
           INSPECTION
-            exit "$status"
-          ) &
-          feature_pid=$!
-          (
-            timeout --kill-after=10s 3m bash -e -o pipefail <<'RESIZE'
+              timeout --kill-after=10s 3m bash -e -o pipefail <<'RESIZE' || status=1
           mkdir -p "$(dirname "$WUU_RESIZE_OUTPUT")"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$(dirname "$WUU_RESIZE_OUTPUT")/run.log"
           RESIZE
+            fi
+            exit "$status"
           ) &
-          resize_pid=$!
+          feature_pid=$!
           status=0
+          wait "$stream_pid" || status=1
+          wait "$image_pid" || status=1
           wait "$feature_pid" || status=1
-          wait "$resize_pid" || status=1
           exit "$status"
       - name: Upload independent feature UI rendering evidence
-        if: ${{ matrix.suite == 'layout' && always() && steps.feature-ui-rendering.outcome != 'skipped' && steps.feature-ui-rendering.outcome != '' }}
+        if: ${{ matrix.suite == 'layout' && always() && steps.install-desktop-fonts.outcome == 'success' && steps.feature-ui-rendering.outcome != 'skipped' && steps.feature-ui-rendering.outcome != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: feature-ui-rendering-evidence
@@ -1020,11 +1036,6 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
           WUU_JOURNEY_1_1
-            run_journey 'Guard account quota behavior and layout' 5m 'WUU_QUOTA_OUTPUT=${{ runner.temp }}/wuu-subscription-quota-evidence' <<'WUU_JOURNEY_1_2'
-          mkdir -p "$WUU_QUOTA_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
-          WUU_JOURNEY_1_2
             run_journey 'Guard composer inline extension foundation' 3m 'WUU_INLINE_E2E_OUTPUT=${{ runner.temp }}/wuu-composer-inline-evidence' <<'WUU_JOURNEY_1_3'
           mkdir -p "$WUU_INLINE_E2E_OUTPUT"
           set -o pipefail
@@ -1045,14 +1056,6 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-new-tab-e2e.cjs 2>&1 | tee desktop/out/workspace-new-tab-e2e/run.log
           WUU_JOURNEY_2_1
-            run_journey 'Verify programmatic tool settings' 0  <<'WUU_JOURNEY_2_2'
-          mkdir -p desktop/out/e2e/ptc
-          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
-          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
-          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
-          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
-          WUU_JOURNEY_2_2
             run_journey 'Verify onboarding scroll-edge fades' 3m WUU_SCROLL_FADE_ONBOARDING=1 'WUU_SCROLL_FADE_OUTPUT=${{ runner.temp }}/wuu-onboarding-scroll-evidence' <<'WUU_JOURNEY_2_3'
           mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
           set -o pipefail
@@ -1064,16 +1067,34 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-overlay-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-overlay/run.log
           WUU_JOURNEY_2_4
-            run_journey 'Guard sidebar and streaming scroll-edge fades' 3m 'WUU_SCROLL_FADE_OUTPUT=${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence' <<'WUU_JOURNEY_2_5'
-          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
-          set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
-          WUU_JOURNEY_2_5
             run_journey 'Guard independently distributed conversation addons' 3m 'WUU_CONVERSATION_ADDONS_OUTPUT=${{ runner.temp }}/wuu-conversation-addons-evidence' <<'WUU_JOURNEY_2_6'
           mkdir -p "$WUU_CONVERSATION_ADDONS_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-addons-e2e.cjs 2>&1 | tee "$WUU_CONVERSATION_ADDONS_OUTPUT/run.log"
           WUU_JOURNEY_2_6
+            exit "$failed"
+          ) &
+          worker_2=$!
+          (
+            failed=0
+            run_journey 'Guard account quota behavior and layout' 5m 'WUU_QUOTA_OUTPUT=${{ runner.temp }}/wuu-subscription-quota-evidence' <<'WUU_JOURNEY_1_2'
+          mkdir -p "$WUU_QUOTA_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
+          WUU_JOURNEY_1_2
+            run_journey 'Verify programmatic tool settings' 0  <<'WUU_JOURNEY_2_2'
+          mkdir -p desktop/out/e2e/ptc
+          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
+          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
+          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
+          WUU_JOURNEY_2_2
+            run_journey 'Guard sidebar and streaming scroll-edge fades' 3m 'WUU_SCROLL_FADE_OUTPUT=${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence' <<'WUU_JOURNEY_2_5'
+          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
+          WUU_JOURNEY_2_5
             run_journey 'Guard disabled app snapshots and system permissions' 3m  <<'WUU_JOURNEY_2_7'
           mkdir -p desktop/out/app-context-e2e
           set -o pipefail
@@ -1086,10 +1107,11 @@ jobs:
           WUU_JOURNEY_2_8
             exit "$failed"
           ) &
-          worker_2=$!
+          worker_3=$!
           status=0
           wait "$worker_1" || status=1
           wait "$worker_2" || status=1
+          wait "$worker_3" || status=1
           # Cover every journey, including work finishing after the PTC block.
           sha256sum --quiet --check "${{ runner.temp }}/wuu-initial-renderer.sha256" || status=1
           exit "$status"
@@ -1120,28 +1142,6 @@ jobs:
           path: ${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Guard independent stream and image layouts
-        id: layout-journeys
-        if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 4
-        shell: bash
-        env:
-          WUU_SETTLEMENT_OUTPUT: ${{ runner.temp }}/wuu-stream-settlement-evidence
-          WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
-        run: |
-          mkdir -p "$WUU_SETTLEMENT_OUTPUT" "$WUU_IMAGE_LAYOUT_OUTPUT"
-          set -o pipefail
-          # Independent profiles and displays preserve focus and rAF assertions.
-          (xvfb-run --server-num=90 npm --prefix desktop run test:e2e:stream-settlement -- --no-sandbox 2>&1 | tee "$WUU_SETTLEMENT_OUTPUT/run.log") &
-          stream_pid=$!
-          (xvfb-run --server-num=91 desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log") &
-          image_pid=$!
-          stream_result=0
-          image_result=0
-          wait "$stream_pid" || stream_result=$?
-          wait "$image_pid" || image_result=$?
-          test "$stream_result" -eq 0 && test "$image_result" -eq 0
 
       - name: Upload streamed reply settlement evidence
         if: ${{ matrix.suite == 'layout' && (always()) }}
@@ -1229,7 +1229,8 @@ jobs:
         run: |
           mkdir -p "$WUU_E2E_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/file-selection-e2e.cjs 2>&1 | tee "$WUU_E2E_OUTPUT/run.log"
+          node --test desktop/scripts/file-selection-shards.test.cjs
+          node desktop/scripts/file-selection-shards.cjs 2>&1 | tee "$WUU_E2E_OUTPUT/run.log"
 
       - name: Guard response selections and native comment focus
         if: ${{ matrix.suite == 'selection' && (!cancelled() && steps.build-renderer.outcome == 'success') }}

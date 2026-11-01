@@ -142,3 +142,16 @@ test('E2E matrix partition preserves every non-unit member of the complete selec
     assert.deepEqual([...units, ...e2e].sort(), [...complete].sort());
   }
 });
+
+
+test('file-selection shard entry points retain selection-only coverage', () => {
+  for (const path of ['desktop/scripts/file-selection-shards.cjs', 'desktop/scripts/file-selection-shards.test.cjs']) {
+    const result = select([path]);
+    assert.deepEqual(JSON.parse(result.desktop_suites), ['selection'], path);
+    for (const job of ['go', 'architecture', 'clients', 'native']) assert.equal(result[job], 'false', `${path}: ${job}`);
+  }
+});
+
+test('shared file-selection variants retain conservative full Desktop coverage', () => {
+  assert.deepEqual(JSON.parse(select(['desktop/scripts/file-selection-variants.cjs']).desktop_suites), suites);
+});
