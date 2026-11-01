@@ -4220,12 +4220,17 @@
   display: none;
 }
 
+/* Reasoning folds share the process row's hover affordance: the label and
+ * chevron deepen together. An underline reads as a link. */
 .turn-reasoning-summary:hover,
 .turn-reasoning-summary:focus-visible {
-  text-decoration: underline;
-  text-decoration-color: var(--ink-overlay-18);
-  text-underline-offset: 3px;
-  outline: 0;
+  color: var(--activity-toggle-hover-color);
+}
+
+.turn-reasoning-summary:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .turn-reasoning-summary-text {
