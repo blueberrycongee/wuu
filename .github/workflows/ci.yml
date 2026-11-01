@@ -272,9 +272,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
+        id: go
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false
+
+      # Ordinary build caches can be saved before any race objects are compiled.
+      # Give the race detector one complete cache instead of competing for that key.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-race-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
 
       - uses: actions/setup-node@v4
         with:
@@ -285,14 +295,32 @@ jobs:
           npm ci --prefix packages/plugin-sdk
           npm ci --prefix plugins
 
-      # These guards remain required, but no longer serialize the full Go suite.
-      - name: Guard generation admission under race detector
+      - name: Guard admission and authority under the race detector
+        id: race-guards
         timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/race-guards"
+          set -o pipefail
+          # Disjoint package sets share compilation objects, not test processes.
+          (go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver 2>&1 | tee "$RUNNER_TEMP/race-guards/admission.log") &
+          admission_pid=$!
+          (go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent 2>&1 | tee "$RUNNER_TEMP/race-guards/authority.log") &
+          authority_pid=$!
+          admission_result=0
+          authority_result=0
+          wait "$admission_pid" || admission_result=$?
+          wait "$authority_pid" || authority_result=$?
+          test "$admission_result" -eq 0 && test "$authority_result" -eq 0
 
-      - name: Guard shared authority and model receipt lifecycle under race detector
-        timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
+      - name: Upload race guard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-race-evidence
+          path: ${{ runner.temp }}/race-guards/
+          if-no-files-found: warn
+          retention-days: 14
 
   architecture-conformance:
     name: Public provider conformance / ${{ matrix.suite }}
