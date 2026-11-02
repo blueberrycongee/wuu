@@ -184,7 +184,7 @@ func (b *Broker) Start(ctx context.Context, a Actor, r ConnectRequest) (Authoriz
 		scopes = append(scopes, "openid", "email")
 	}
 	q := url.Values{"client_id": {c.ClientID}, "redirect_uri": {redirect}, "response_type": {"code"}, "state": {p.state}, "scope": {strings.Join(scopes, " ")}}
-	if r.Provider == "notion" || r.Provider == "github" {
+	if r.Provider == "notion" {
 		q.Del("scope")
 	}
 	if r.Provider == "slack" {
@@ -317,7 +317,7 @@ func (b *Broker) oauthCallback(p *oauthPending, w http.ResponseWriter, r *http.R
 	if e == nil && p.request.AccountID != "" && token.AccountID != p.request.AccountID {
 		e = fault("account_identity_mismatch")
 	}
-	if e == nil && p.request.Provider != "notion" && p.request.Provider != "github" {
+	if e == nil && p.request.Provider != "notion" {
 		for _, scope := range p.request.Scopes {
 			if !slices.Contains(token.Scopes, scope) {
 				e = fault("scope_mismatch")
@@ -337,7 +337,7 @@ func (b *Broker) oauthCallback(p *oauthPending, w http.ResponseWriter, r *http.R
 		http.Error(w, "Authorization failed", 400)
 		return
 	}
-	grant := Grant{ActivationID: nonce(), NonExpiring: token.ExpiresIn == 0 && slices.Contains([]string{"notion", "github", "slack"}, p.request.Provider), Connection: Connection{ID: p.request.ConnectionID, Provider: p.request.Provider, AccountID: token.AccountID, AccountLabel: token.AccountLabel, WorkspaceID: token.WorkspaceID, WorkReadPolicy: p.request.WorkReadPolicy, ScopeVerification: "provider_enforced_per_request", Domain: p.request.Domain, Scopes: p.request.Scopes, Resources: p.request.Resources, Revision: nonce(), State: "connected"}, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, OAuthProvider: p.client.Provider, ExpiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)}
+	grant := Grant{ActivationID: nonce(), NonExpiring: token.ExpiresIn == 0 && slices.Contains([]string{"notion", "slack"}, p.request.Provider), Connection: Connection{ID: p.request.ConnectionID, Provider: p.request.Provider, AccountID: token.AccountID, AccountLabel: token.AccountLabel, WorkspaceID: token.WorkspaceID, WorkReadPolicy: p.request.WorkReadPolicy, ScopeVerification: "provider_enforced_per_request", Domain: p.request.Domain, Scopes: p.request.Scopes, Resources: p.request.Resources, Revision: nonce(), State: "connected"}, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, OAuthProvider: p.client.Provider, ExpiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)}
 	if isGoogle(p.request.Provider) || p.request.Provider == "slack" || p.request.Provider == "feishu" {
 		grant.Connection.ScopeVerification = "provider_verified"
 	}
@@ -450,7 +450,7 @@ func ValidateAuthorizationURL(raw string) error {
 	if e != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || u.Query().Get("state") == "" || u.Query().Get("client_id") == "" {
 		return fault("authorization_url_rejected")
 	}
-	for _, provider := range []string{"gmail", "notion", "github", "slack", "feishu"} {
+	for _, provider := range []string{"gmail", "notion", "slack", "feishu"} {
 		def, e := definition(provider)
 		if e != nil {
 			continue
@@ -465,7 +465,7 @@ func ValidateAuthorizationURL(raw string) error {
 
 func (b *Broker) identityRequest(ctx context.Context, provider, token string, p Plan) (json.RawMessage, error) {
 	u, e := url.Parse(p.URL)
-	hosts := map[string]string{"notion": "api.notion.com", "github": "api.github.com", "slack": "slack.com", "feishu": "open.feishu.cn"}
+	hosts := map[string]string{"notion": "api.notion.com", "slack": "slack.com", "feishu": "open.feishu.cn"}
 	if e != nil || u.Scheme != "https" || u.Host != hosts[provider] || u.User != nil || u.Fragment != "" || p.Method != "GET" {
 		return nil, fault("identity_endpoint_rejected")
 	}

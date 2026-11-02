@@ -11,7 +11,7 @@ import (
 )
 
 func TestOtherOAuthTokenProtocolAndErrors(t *testing.T) {
-	for _, provider := range []string{"notion", "github", "slack", "feishu"} {
+	for _, provider := range []string{"notion", "slack", "feishu"} {
 		if _, err := decodeOtherOAuthToken(provider, []byte(`{"error":"secret provider details","access_token":"must-not-save"}`)); err == nil {
 			t.Fatalf("%s accepted error token", provider)
 		}
@@ -40,7 +40,6 @@ func TestOtherOAuthTokenProtocolAndErrors(t *testing.T) {
 func TestOtherOAuthIdentityBindsWorkspaceAndUser(t *testing.T) {
 	for _, tc := range []struct{ provider, body, account, workspace string }{
 		{"notion", `{"object":"user","type":"bot","id":"bot-1"}`, "bot-1", "workspace-1"},
-		{"github", `{"id":42,"login":"synthetic"}`, "42", ""},
 		{"slack", `{"ok":true,"team_id":"T1","user_id":"U1"}`, "T1:U1", "T1"},
 		{"feishu", `{"code":0,"data":{"tenant_key":"tenant-1","open_id":"ou_user"}}`, "tenant-1:ou_user", "tenant-1"},
 	} {
