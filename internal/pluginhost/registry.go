@@ -979,6 +979,13 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 	active := r.active
 	open := r.open
 	var declaredMajor *int
+	optional := false
+	for _, requirement := range r.requirements[consumerPluginID] {
+		if strings.TrimSpace(requirement.Name) == service {
+			optional = !requirement.Required
+			break
+		}
+	}
 	if requirements, ok := r.consumers[consumerPluginID]; ok {
 		for consumerKey := range requirements {
 			if consumerKey.name == service {
@@ -1008,11 +1015,25 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 				break
 			}
 		}
+		for resolution := range r.ambiguous {
+			if resolution.name == service {
+				nameExists = true
+			}
+		}
+		for resolution := range r.bindings {
+			if resolution.name == service {
+				nameExists = true
+			}
+		}
 	}
 	r.mu.RUnlock()
 	if !found {
 		if !nameExists {
-			return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s", service)}
+			code := "service_unavailable"
+			if optional {
+				code = "service_optional_absent"
+			}
+			return nil, &HostServiceError{Code: code, Message: fmt.Sprintf("no provider for service %s", service)}
 		}
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s major version %d (provided majors: %v)", service, key.major, r.ProviderMajors(service))}
 	}
@@ -1069,11 +1090,19 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 	if err != nil {
 		var hostErr *HostServiceError
 		if errors.As(err, &hostErr) && hostErr.Code != "" {
+			if hostErr.Code == "service_optional_absent" || hostErr.Code == "WUU_PLUGIN_SCOPE_RETIRED" {
+				// Absence and retirement are host facts, not provider error claims.
+				return nil, &HostServiceError{Code: "service_unavailable", Message: hostErr.Message}
+			}
 			return nil, hostErr
 		}
 		var remoteErr *remoteCallError
 		if errors.As(err, &remoteErr) && remoteErr.code != "" {
-			return nil, &HostServiceError{Code: remoteErr.code, Message: remoteErr.message}
+			code := remoteErr.code
+			if code == "service_optional_absent" || code == "WUU_PLUGIN_SCOPE_RETIRED" {
+				code = "service_unavailable"
+			}
+			return nil, &HostServiceError{Code: code, Message: remoteErr.message}
 		}
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s call failed: %v", service, err)}
 	}

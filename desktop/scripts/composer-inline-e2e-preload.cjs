@@ -39,7 +39,7 @@ module.exports = (api) => {
       return response;
     },
     getPluginConflictPreferences: async () => ({}),
-    requestPluginRuntime: (params) => ipcRenderer.invoke("test:inline-runtime", params),
+    requestPluginRuntime: async (params) => ({ ok: true, value: await ipcRenderer.invoke("test:inline-runtime", params) }),
     cancelPluginRuntime: (params) => ipcRenderer.invoke("test:inline-runtime-cancel", params),
     loadPluginDesktopModule: async ({ id, fingerprint }) => id !== "user:inline-completion-e2e"
       ? api.loadPluginDesktopModule({ id, fingerprint }) : ({
