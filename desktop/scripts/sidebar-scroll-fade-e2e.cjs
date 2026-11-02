@@ -206,6 +206,29 @@ app.whenReady().then(async () => {
     await waitFor(() => !document.querySelector('[data-sidebar-recents]').matches(':hover'));
     assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "releasing the hold preserves arrival order");
     results.push({ label: "recent-held-consecutive-creation", before: heldBefore, admitted, after: await recentTitles() });
+    const captureVisibleRecent = async name => {
+      await waitFor(() => !document.querySelector('[data-wuu-component="launch-view"]')
+        && !document.querySelector('.thread-list-collapse[data-state="closing"]'));
+      await evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        await Promise.all(document.getAnimations().filter(animation => animation.timeline instanceof DocumentTimeline
+          && animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+          .map(animation => animation.finished.catch(() => {})));
+        document.querySelector('[data-sidebar-recents]').scrollIntoView({ block: "start" });
+        await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      });
+      await waitFor(titles => titles.every(title => {
+        const row = [...document.querySelectorAll('[data-sidebar-recents] .thread-row')]
+          .find(row => row.querySelector('.thread-row-title')?.textContent === title);
+        if (!row || row.closest('[inert], [aria-hidden="true"]')) return false;
+        const rect = row.getBoundingClientRect(), viewport = document.querySelector('.sidebar-main').getBoundingClientRect();
+        return rect.height > 0 && rect.top >= Math.max(0, viewport.top) && rect.bottom <= Math.min(innerHeight, viewport.bottom)
+          && row.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      }), admitted);
+      results.push({ label: `${name}-visible`, contentSize: win.getContentSize(), titles: admitted });
+      await capture(name);
+    };
     const nativeThreads = (await evaluate(() => window.wuu.listAllThreads())).threads.filter(thread => thread.id.startsWith("thread-"));
     assert.equal(nativeThreads.length, 2, "two Recent submissions reached the synthetic backend");
     const settled = nativeThreads.map((thread, index) => {
@@ -218,7 +241,7 @@ app.whenReady().then(async () => {
       return snapshot;
     });
     await waitFor(() => document.querySelectorAll('[data-sidebar-recents] .thread-row.running').length === 0);
-    await capture("recent-before-catalog-refresh");
+    await captureVisibleRecent("recent-before-catalog-refresh");
     const olderHistory = Array.from({ length: 60 }, (_, index) => ({ ...template,
       id: `late-history-${index}`, title: `Older catalog conversation ${index + 1}`, status: "in_progress",
       created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z", turns: [] }));
@@ -240,15 +263,15 @@ app.whenReady().then(async () => {
     });
     await waitFor(() => document.querySelectorAll('.project-thread-list .thread-row').length === 110);
     await evaluate(() => document.querySelector('.project-row').click());
-    await capture("recent-after-catalog-refresh");
+    await captureVisibleRecent("recent-after-catalog-refresh");
     assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "older catalog arrivals do not displace newly created Recent rows");
     const beforeReload = await recentTitles();
-    await capture("recent-before-page-reload");
+    await captureVisibleRecent("recent-before-page-reload");
     // No drag here: the automatically established order must survive a new
     // renderer and initialize/list responses from the still-running backend.
     await new Promise(resolve => { win.webContents.once("did-finish-load", resolve); win.reload(); });
     await waitFor(() => document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])').length === 50);
-    await capture("recent-after-page-reload");
+    await captureVisibleRecent("recent-after-page-reload");
     assert.deepEqual(await recentTitles(), beforeReload, "real page reload preserves automatic Recent order beyond the cap");
     results.push({ label: "recent-catalog-and-page-reload", catalogCount: recentCatalog.length,
       created: admitted, beforeReload, afterReload: await recentTitles() });
