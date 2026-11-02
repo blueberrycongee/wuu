@@ -10,18 +10,28 @@ import (
 
 type Actor struct{ ProductDomain, UserSpaceID, SessionID string }
 type Connection struct {
-	AccountLabel      string   `json:"account_label,omitempty"`
-	WorkReadPolicy    string   `json:"work_read_policy,omitempty"`
-	ScopeVerification string   `json:"scope_verification,omitempty"`
-	ID                string   `json:"connection_id"`
-	Provider          string   `json:"provider"`
-	WorkspaceID       string   `json:"workspace_id,omitempty"`
-	AccountID         string   `json:"account_id"`
-	Domain            string   `json:"domain"`
-	Scopes            []string `json:"scopes"`
-	Resources         []string `json:"resources"`
-	Revision          string   `json:"revision"`
-	State             string   `json:"state"`
+	Tools             []Operation `json:"tools,omitempty"`
+	AccountLabel      string      `json:"account_label,omitempty"`
+	WorkReadPolicy    string      `json:"work_read_policy,omitempty"`
+	ScopeVerification string      `json:"scope_verification,omitempty"`
+	ID                string      `json:"connection_id"`
+	Provider          string      `json:"provider"`
+	WorkspaceID       string      `json:"workspace_id,omitempty"`
+	AccountID         string      `json:"account_id"`
+	Domain            string      `json:"domain"`
+	Scopes            []string    `json:"scopes"`
+	Resources         []string    `json:"resources"`
+	Revision          string      `json:"revision"`
+	State             string      `json:"state"`
+}
+
+// Operation is discovered from an authenticated shared connection. ReadOnly
+// comes from the admitted package's override, never a remote safety hint.
+type Operation struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
+	ReadOnly    bool            `json:"read_only"`
 }
 type Request struct {
 	ConnectionID string          `json:"connection_id"`
@@ -30,6 +40,7 @@ type Request struct {
 	RequestID    string          `json:"request_id,omitempty"`
 }
 type Plan struct {
+	Operation      string
 	AcceptGone     bool
 	Preflight      []Plan
 	Method         string

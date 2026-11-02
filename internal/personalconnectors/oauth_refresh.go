@@ -4,12 +4,18 @@ import (
 	"context"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 )
 
 // ensureFresh is called with the broker execution lock held. The secure-store
 // lease additionally serializes rotating refresh tokens across host processes.
 func (b *Broker) ensureFresh(ctx context.Context, a Actor, id string) error {
+	if strings.HasPrefix(id, "mcp:") {
+		if err := b.syncShared(ctx, a); err != nil {
+			return err
+		}
+	}
 	var g Grant
 	lease := ""
 	leaseID := nonce()

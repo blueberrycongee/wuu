@@ -61,7 +61,7 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 	}}}
 	if version >= 2 {
 		personal := bundles["wuu.personal"]
-		personal.OptionalModules = []string{"generative-ui"}
+		personal.OptionalModules = []string{"generative-ui", "account-connectors"}
 		bundles["wuu.personal"] = personal
 	}
 	profiles["personal"] = Profile{Bundles: []string{"wuu.base", "wuu.desktop", "wuu.personal"}}

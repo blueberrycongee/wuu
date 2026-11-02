@@ -128,9 +128,22 @@ func TestMCPConnectorManagementUsesSelectedConfigurationAndFencesOwnership(t *te
 			t.Fatalf("native metadata changed ordinary MCP behavior: %+v", entry)
 		}
 	}
-	// User-bound hosts cannot borrow shared Coding preferences. Restart/runtime
-	// filtering and list/read/write use the same unavailable management boundary.
+	// The local Personal owner shares account preferences; other user spaces
+	// cannot borrow the installation owner's credentials.
 	srv.rt.UserSpaceID, srv.rt.ProductDomain = "local", "personal"
+	shared := remarshal[MCPListResult](t, call("shared-personal-list", MethodMCPList, nil)["result"])
+	for _, entry := range shared.Servers {
+		if entry.Name == name && (!entry.Configurable || entry.ConfigurationEnabled == nil || !*entry.ConfigurationEnabled) {
+			t.Fatalf("local account not shared: %+v", entry)
+		}
+		if entry.Name == "coding-only" {
+			t.Fatal("Personal inherited project MCP")
+		}
+	}
+	if response := call("shared-personal-read", MethodMCPDefinitionRead, map[string]any{"name": name}); response["error"] != nil {
+		t.Fatalf("local preference inaccessible: %+v", response)
+	}
+	srv.rt.UserSpaceID = "other-owner"
 	personal := remarshal[MCPListResult](t, call("personal-list", MethodMCPList, nil)["result"])
 	for _, entry := range personal.Servers {
 		if entry.Name == name && (entry.Configurable || entry.ConfigurationUnavailableReason == "" || entry.ConfigurationEnabled == nil || *entry.ConfigurationEnabled) {
@@ -143,7 +156,7 @@ func TestMCPConnectorManagementUsesSelectedConfigurationAndFencesOwnership(t *te
 	if response := call("personal-enable", MethodMCPConfigure, map[string]any{"servers": map[string]any{name: map[string]any{"enabled": true}}, "revision": definition.Revision}); response["error"] == nil || provider.writes != 0 {
 		t.Fatalf("user-bound enable accepted: %+v", response)
 	}
-	if response := call("personal-auth", MethodMCPAuthStart, map[string]any{"name": name}); response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "domain-scoped") {
+	if response := call("personal-auth", MethodMCPAuthStart, map[string]any{"name": name}); response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "local installation owner") {
 		t.Fatalf("user-bound host started auth from shared preference: %+v", response)
 	}
 	for _, method := range []string{MethodMCPAuthStatus, MethodMCPAuthCancel, MethodMCPAuthRemove, MethodMCPDisconnect} {
@@ -152,7 +165,7 @@ func TestMCPConnectorManagementUsesSelectedConfigurationAndFencesOwnership(t *te
 			params["state"] = "coding-attempt"
 		}
 		response := call("personal-cleanup-"+method, method, params)
-		if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "domain-scoped") {
+		if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "local installation owner") {
 			t.Fatalf("user-bound host reached shared connector credentials: %s %+v", method, response)
 		}
 	}

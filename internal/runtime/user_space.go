@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
+	"github.com/blueberrycongee/wuu/internal/mcp"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
@@ -92,10 +94,38 @@ func userHostConfig(cfg config.Config, binding userspace.Binding) config.Config 
 		return cfg
 	}
 	cfg.Hooks = nil
-	cfg.MCPServers = nil
+	preferences := make(map[string]config.MCPServerConfig)
+	if binding.LocalAccounts() {
+		for name, definition := range cfg.MCPServers {
+			if IsPluginMCPServerName(name) {
+				preferences[name] = config.MCPServerConfig{Enabled: definition.Enabled}
+			}
+		}
+	}
+	cfg.MCPServers = preferences
 	cfg.MCPJson = nil
 	cfg.ExecutionEnvironments = executionenv.Config{}
 	return cfg
+}
+
+// User hosts expose account tools through their product's effect broker. Only
+// package-owned account connectors enter this manager; project MCP stays out.
+func startUserMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, oauth *mcp.OAuthManager, binding userspace.Binding) (*mcp.Manager, error) {
+	if !binding.LocalAccounts() {
+		return nil, nil
+	}
+	accounts := make([]pluginpkg.Plugin, 0, len(plugins))
+	for _, item := range plugins {
+		servers := make(map[string]config.MCPServerConfig)
+		for name, definition := range item.MCPServers {
+			if definition.Connector != nil {
+				servers[name] = definition
+			}
+		}
+		item.MCPServers = servers
+		accounts = append(accounts, item)
+	}
+	return startMCPManager(userHostConfig(cfg, binding), accounts, nil, oauth)
 }
 
 // ProductDataRoot owns histories, summaries, records, artifacts and caches.

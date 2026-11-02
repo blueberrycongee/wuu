@@ -25,6 +25,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	runtimepkg "github.com/blueberrycongee/wuu/internal/runtime"
@@ -32,6 +33,7 @@ import (
 
 type connectorChainModel struct {
 	background bool
+	sharedMCP  bool
 	done       chan string
 	once       sync.Once
 	faults     chan string
@@ -50,6 +52,9 @@ func (c *connectorChainModel) Chat(_ context.Context, req providers.ChatRequest)
 	}
 	name := ""
 	for _, tool := range req.Tools {
+		if c.sharedMCP && strings.HasPrefix(tool.Name, "mcp_") {
+			return providers.ChatResponse{}, fmt.Errorf("Personal exposed raw MCP bypass: %s", tool.Name)
+		}
 		properties, _ := tool.InputSchema["properties"].(map[string]any)
 		if strings.Contains(tool.Name, "personal_connector") && properties["connection_id"] != nil && properties["operation"] != nil && properties["arguments"] != nil && properties["request_id"] != nil {
 			name = tool.Name
@@ -70,7 +75,11 @@ func (c *connectorChainModel) Chat(_ context.Context, req providers.ChatRequest)
 		}
 		return providers.ChatResponse{}, err
 	}
-	return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "connector-chain-write", Name: name, Arguments: `{"connection_id":"chain-gmail","operation":"gmail.send","request_id":"same-exact-write","arguments":{"to":["synthetic@example.invalid"],"subject":"Synthetic chain","body":"No actual email is sent."}}`}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
+	arguments := `{"connection_id":"chain-gmail","operation":"gmail.send","request_id":"same-exact-write","arguments":{"to":["synthetic@example.invalid"],"subject":"Synthetic chain","body":"No actual email is sent."}}`
+	if c.sharedMCP {
+		arguments = strings.ReplaceAll(arguments, "chain-gmail", "mcp:plugin.account-connectors.fixture")
+	}
+	return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "connector-chain-write", Name: name, Arguments: arguments}}, StopReason: "tool_calls", FinishReason: providers.FinishReasonToolCalls}, nil
 }
 
 type connectorChainHTTP func(*http.Request) (*http.Response, error)
@@ -86,6 +95,8 @@ func TestPersonalConnectorRealBundleOwnerReceiptChain(t *testing.T) {
 	}
 }
 func connectorChain(t *testing.T, scenario string) {
+	sharedMCP := strings.HasPrefix(scenario, "mcp_")
+	scenario = strings.TrimPrefix(scenario, "mcp_")
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "CODEX_HOME", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, filepath.Join(home, key))
@@ -99,6 +110,11 @@ func connectorChain(t *testing.T, scenario string) {
 	}
 	store := credentialstore.NewFileStore(filepath.Join(home, "synthetic-secure-store.json"))
 	var effects atomic.Int32
+	var discovered *[]pluginpkg.Plugin
+	if sharedMCP {
+		items := sharedConnectorChainFixture(t, home, cfgPath, scenario, cfg, store, &effects)
+		discovered = &items
+	}
 	transport := &http.Client{Transport: connectorChainHTTP(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Host != "gmail.googleapis.com" || r.URL.Path != "/gmail/v1/users/me/messages/send" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer synthetic-connector-secret" {
 			return nil, fmt.Errorf("fixture rejected unexpected provider request")
@@ -113,7 +129,7 @@ func connectorChain(t *testing.T, scenario string) {
 		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	newRuntime := func() (*runtimepkg.Session, *UserHost, *personalconnectors.Broker, *connectorChainModel) {
-		model := &connectorChainModel{done: make(chan string, 1), faults: make(chan string, 1), background: scenario == "background"}
+		model := &connectorChainModel{done: make(chan string, 1), faults: make(chan string, 1), background: scenario == "background", sharedMCP: sharedMCP}
 		endpoint := newTestOpenAIEndpoint(t, "connector-fake", "connector-fixture-title", model.Chat)
 		provider := cfg.Providers["connector-fake"]
 		provider.BaseURL = endpoint.URL + "/v1"
@@ -136,7 +152,7 @@ func connectorChain(t *testing.T, scenario string) {
 			return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) { return store, nil }), nil
 		}}
 		factories := append(bindings.NativeProviders(), credentials)
-		rt, e := runtimepkg.NewSession(runtimepkg.Options{RootDir: filepath.Join(home, "unused"), HomeDir: home, ConfigPath: cfgPath, ConfigLoadMode: runtimepkg.ConfigLoadFile, Config: cfg, Overrides: runtimepkg.ConfigOverrides{CompositionProfile: "personal"}, UserSpaceID: "local", ProductDomain: "personal", NonInteractive: true, NativeProviders: factories, MCPOAuth: mcp.NewOAuthManager(credentialstore.NewFileStore(filepath.Join(home, "mcp-fixture.json")), nil)})
+		rt, e := runtimepkg.NewSession(runtimepkg.Options{RootDir: filepath.Join(home, "unused"), HomeDir: home, ConfigPath: cfgPath, ConfigLoadMode: runtimepkg.ConfigLoadFile, Config: cfg, Overrides: runtimepkg.ConfigOverrides{CompositionProfile: "personal"}, UserSpaceID: "local", ProductDomain: "personal", NonInteractive: true, NativeProviders: factories, DiscoveredPlugins: discovered, MCPOAuth: mcp.NewOAuthManager(credentialstore.NewFileStore(filepath.Join(home, "mcp-fixture.json")), nil)})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -149,15 +165,22 @@ func connectorChain(t *testing.T, scenario string) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = host.personal.Call(owner, "connectors.list", json.RawMessage(`{}`), ""); e != nil {
-			t.Fatal(e)
+		listed, listErr := host.personal.Call(owner, "connectors.list", json.RawMessage(`{}`), "")
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if sharedMCP && (!strings.Contains(string(listed), "mcp:plugin.account-connectors.fixture") || !strings.Contains(string(listed), `"state":"connected"`)) {
+
+			t.Fatalf("shared connection not available: %s", listed)
 		}
 		return rt, host, broker, model
 	}
 	rt, host, broker, model := newRuntime()
 	defer func() { host.Close(); rt.Cleanup() }()
-	if err := broker.RegisterVerified(context.Background(), personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: "local", SessionID: "trusted-test-setup"}, personalconnectors.Grant{Connection: personalconnectors.Connection{ID: "chain-gmail", Provider: "gmail", AccountID: "me", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.send"}, Resources: []string{"me"}}, AccessToken: "synthetic-connector-secret", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
+	if !sharedMCP {
+		if err := broker.RegisterVerified(context.Background(), personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: "local", SessionID: "trusted-test-setup"}, personalconnectors.Grant{Connection: personalconnectors.Connection{ID: "chain-gmail", Provider: "gmail", AccountID: "me", Domain: "personal", Scopes: []string{"https://www.googleapis.com/auth/gmail.send"}, Resources: []string{"me"}}, AccessToken: "synthetic-connector-secret", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	owner, err := clientauthority.AdmitDesktop(personalTestOwner(context.Background()), rt.UserBinding(), strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
 	if err != nil {
@@ -381,6 +404,42 @@ func connectorChain(t *testing.T, scenario string) {
 		t.Log("PASS cancelled main invalidates exact pending connector authority")
 		return
 	}
+	if scenario == "revoked" || scenario == "disabled" {
+		if scenario == "revoked" {
+			if err := mcp.NewOAuthManager(store, nil).Remove(context.Background(), "plugin.account-connectors.fixture"); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			services, release, err := rt.RetainStateServices()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			view, err := services.Config.Read(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			off := false
+			cfg.MCPServers = map[string]config.MCPServerConfig{"plugin.account-connectors.fixture": {Enabled: &off}}
+			encoded, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = services.Config.CompareExchange(context.Background(), view.Revision, encoded); err != nil {
+				t.Fatal(err)
+			}
+		}
+		result, err := invoke("connectors.decide", decision)
+		if err == nil && !strings.Contains(string(result), `"ok":false`) {
+			t.Fatalf("%s authorization accepted: %s", scenario, result)
+		}
+		rows, err := broker.Actions(personalTestOwner(context.Background()), actor)
+		if err != nil || len(rows) != 1 || rows[0].State != "awaiting_confirmation" || effects.Load() != 0 {
+			t.Fatalf("%s changed receipt or submitted effect: %+v, effects=%d, err=%v", scenario, rows, effects.Load(), err)
+		}
+		t.Logf("PASS %s shared connection blocked pending effect without losing its receipt", scenario)
+		return
+	}
 	decided := must("connectors.decide", decision)
 	if strings.Contains(string(decided), "synthetic-connector-secret") {
 		t.Fatal("host credential escaped")
@@ -466,7 +525,17 @@ func connectorChain(t *testing.T, scenario string) {
 		t.Fatalf("restart receipt=%+v error=%v", rows, e)
 	}
 	original := personalconnectors.Request{ConnectionID: "chain-gmail", Operation: "gmail.send", RequestID: "same-exact-write", Arguments: json.RawMessage(`{"to":["synthetic@example.invalid"],"subject":"Synthetic chain","body":"No actual email is sent."}`)}
-	again, e := broker.Call(personalTestOwner(context.Background()), actor, original)
+	callContext := personalTestOwner(context.Background())
+	if sharedMCP {
+		original.ConnectionID = "mcp:plugin.account-connectors.fixture"
+		state, err := rt.RetainState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer state.Close()
+		callContext = runtimepkg.WithInvocationState(callContext, state)
+	}
+	again, e := broker.Call(callContext, actor, original)
 	if scenario == "background" {
 		if e == nil || effects.Load() != expectedEffects {
 			t.Fatalf("terminal task replay was not fenced: %v effects=%d", e, effects.Load())
@@ -530,7 +599,12 @@ func (c *connectorChainModel) backgroundChat(req providers.ChatRequest) (provide
 	task := regexp.MustCompile(`Work on Personal task (task-[a-f0-9]+), requirements revision (\d+)`).FindStringSubmatch(all)
 	if len(task) > 1 {
 		if !seen("connector-chain-write") {
-			return call("connector-chain-write", "personal_connector_call", map[string]any{"connection_id": "chain-gmail", "operation": "gmail.send", "request_id": "same-exact-write", "arguments": map[string]any{"to": []string{"synthetic@example.invalid"}, "subject": "Synthetic chain", "body": "No actual email is sent."}})
+			return call("connector-chain-write", "personal_connector_call", map[string]any{"connection_id": func() string {
+				if c.sharedMCP {
+					return "mcp:plugin.account-connectors.fixture"
+				}
+				return "chain-gmail"
+			}(), "operation": "gmail.send", "request_id": "same-exact-write", "arguments": map[string]any{"to": []string{"synthetic@example.invalid"}, "subject": "Synthetic chain", "body": "No actual email is sent."}})
 		}
 		for _, m := range req.Messages {
 			if m.Role == "tool" && m.ToolCallID == "connector-chain-write" {

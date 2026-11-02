@@ -14,13 +14,15 @@ Wuu、Codex 和 Claude Code 支持插件引用。其他引擎适配器需要明�
 
 ## 连接账号
 
-这套插件连接流程目前**仅支持 Coding / 当前项目宿主**。绑定用户的 Personal/twin 宿主不会载入共享 MCP 配置，而是显示配置不可用，避免修改跨域共享的偏好或凭据。现有 Personal 专用连接器不受影响；此入口在这些宿主中可用之前，需要按域隔离连接身份、偏好和凭据存储。
+账号连接器在 Coding 与本机拥有者的 Personal/twin 空间（`local`）之间共享已保存授权，两者使用同一连接器目录、配置提供方和凭据提供方。其他用户空间不能读取这些本机账号授权。项目 MCP、本地命令和钩子仍不进入 Personal。显式组合必须选中连接器插件；禁用后停止使用，不会自动替换实现。
 
 打开**插件 → Account Connectors**。内置插件默认启用，以便发现连接器卡片，但所有服务初始均为禁用状态，直到你主动选择连接才会开始账号连接。禁用插件会停止其服务，并移除其连接器行为。
 
 - **Notion：**点击**连接**，启用服务并开始浏览器授权。在 Notion 页面确认工作区和申请的权限后再批准。官方端点为 `https://mcp.notion.com/mcp`，支持公共客户端动态注册与 PKCE，不需要内部集成 token 或客户端密钥。详见 [Notion MCP 客户端指南（英文）](https://developers.notion.com/guides/mcp/build-mcp-client)。
 - **GitHub：**需要配置，卡片只提供说明，不提供连接按钮。Wuu 必须先注册并配置自己的 GitHub App 或 OAuth 客户端，才能提供账号授权。仅有官方 `https://api.githubcopilot.com/mcp/` 地址并不足够。详见 [GitHub MCP 服务文档（英文）](https://github.com/github/github-mcp-server)。
 - **Google Drive：**需要配置，不提供连接按钮。官方预览端点为 `https://drivemcp.googleapis.com/mcp/v1`，并非通用 Google 连接器。需要 Workspace Developer Preview 资格、已启用 Drive 与 MCP API 的 Cloud 项目，以及用于 AI agent 的已注册 Desktop OAuth 客户端，并配置同意屏幕与权限范围。详见 Google 的 [MCP 配置](https://developers.google.com/workspace/guides/configure-mcp-servers)和[客户端注册](https://developers.google.com/workspace/guides/create-credentials)文档。
+- **Gmail 与 Google Calendar：**官方远程端点分别是 `https://gmailmcp.googleapis.com/mcp/v1` 和 `https://calendarmcp.googleapis.com/mcp/v1`。两者都要求 Workspace Developer Preview 资格、Cloud 项目的产品 API 与 MCP API，以及标记为 AI agent 使用的 OAuth 客户端。还需配置同意屏幕、权限范围与 Wuu 回调地址。内置卡片保持**需要配置**。管理员可安装带有实际 OAuth 配置的连接器插件，并移除其配置门槛；启用偏好不能绕过门槛。详见官方 [Gmail 配置（英文）](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server)与 [Calendar 配置（英文）](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server)。
+- **飞书：**官方远程端点是 `https://mcp.feishu.cn/mcp`，Wuu 支持其公布的动态客户端注册与 S256 授权流程。实际访问取决于登录账号、授权范围和租户策略。详见[远程 MCP 文档](https://open.feishu.cn/document/mcp_open_tools/developers-call-remote-mcp-server)。另一个[官方 OpenAPI MCP 包](https://github.com/larksuite/lark-openapi-mcp)需要部署进程、创建飞书或 Lark 应用、配置应用权限与用户 OAuth；它的凭据不能替代托管远程服务的授权。
 
 连接操作通过当前选中的配置提供方保存启用偏好，并检查配置版本。若其他窗口已修改配置，请重新加载后再试。授权复用[远程 OAuth 流程](#远程-oauth)，支持取消和到期；取消或失败不会授予访问权限。服务商的账号和工作区策略仍可能阻止授权。
 
@@ -37,6 +39,14 @@ Wuu、Codex 和 Claude Code 支持插件引用。其他引擎适配器需要明�
 身份暂不可用时，已成功建立的连接和授权仍然可用。点击**验证身份**可重试读取，无需重新登录；浏览目录或读取状态不会运行探测。重新连接会清除身份缓存，但保留已有凭据，直到新授权成功替换。旧登录记录保持身份未知，直到主动连接或验证身份。名称仅用于展示，不授予权限或归属权。资源 URL 标识远程服务，不决定卡片显示在哪里，也不决定连接归属于哪个个人或工作域。
 
 可选的 [Notion 工作区插件](notion-workspace.md)是另一条路径：它使用单独配置的 REST 集成 token，也可以打开 Notion 网站。网站登录不会授予 MCP 或 REST API 访问权限。自定义插件可通过同一[连接器元数据契约](plugin-authoring.md#mcp-连接器卡片)提供卡片，无需另一套连接器注册表。
+
+### Personal 调用与旧连接
+
+twin 设置的**连接与工具 → 管理共享连接器**会打开同一目录。`personal_connector_list` 按需发现工具与输入 schema。共享调用使用 `mcp:` 连接 ID 和准确的工具名。Personal 保留持久确认流程：插件明确声明只读的工具可以直接读取或轮询；其他工具需要用户核对并确认准确参数。远程服务的只读提示本身不免除确认。共享来源保持工作域标记，不自动加入个人记忆。
+
+待处理动作绑定授权、插件定义、工具目录和任务权限。授权或插件身份变化后，旧确认失效。崩溃后的执行中或结果未知动作不会自动重发，也不能换一个请求 ID 重发。轮询只比较同一执行会话中的有界读取快照，不建立订阅或全邮箱同步。不同宿主可以打开各自的传输连接，同时复用同一份 OAuth 授权。
+
+原有 Personal REST 与日历连接、待确认动作和回执仍保存在**已有授权与历史回执**，继续遵守原操作名与资源范围。新增连接使用共享目录。旧 REST token 的 OAuth 客户端、资源对象、权限范围与资源选择规则和 MCP 不同，不能直接导入。请在目录重新授权，再把例行任务改为已发现的 MCP 连接和工具名；结果未知的旧动作应先核对来源，再断开旧账号。迁移不会重发操作或删除回执。
 
 ## 添加服务
 

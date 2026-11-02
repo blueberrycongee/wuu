@@ -87,6 +87,7 @@ type Toolkit struct {
 	// tools. MCP tools are appended after built-ins to preserve prompt
 	// cache stability (the built-in prefix stays constant).
 	mcpManager           *mcp.Manager
+	mcpToolsBrokered     bool
 	mcpCatalogMu         sync.RWMutex
 	mcpCatalogGeneration uint64
 	mcpTools             []*mcp.MCPTool
@@ -352,6 +353,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		reviewer:                t.reviewer,
 		approveForMe:            t.approveForMe,
 		mcpManager:              t.mcpManager,
+		mcpToolsBrokered:        t.mcpToolsBrokered,
 		activityRegistry:        t.activityRegistry,
 		mcpActivityBindings:     cloneMCPActivityBindings(t.mcpActivityBindings),
 	}
@@ -739,6 +741,13 @@ func (t *Toolkit) MCPManager() *mcp.Manager {
 		return nil
 	}
 	return t.mcpManager
+}
+
+// SetMCPToolsBrokered keeps connection management available while requiring all
+// model calls to use the product's durable effect and confirmation boundary.
+func (t *Toolkit) SetMCPToolsBrokered(brokered bool) {
+	t.mcpToolsBrokered = brokered
+	t.refreshMCPToolSnapshot(true)
 }
 
 // SetBoundary installs the single authority gate for this runtime. It also
@@ -1646,7 +1655,7 @@ func (t *Toolkit) refreshMCPToolSnapshot(force bool) {
 		return
 	}
 	manager := t.mcpManager
-	if manager == nil {
+	if manager == nil || t.mcpToolsBrokered {
 		t.mcpCatalogMu.Lock()
 		t.mcpCatalogGeneration = 0
 		t.mcpTools = nil

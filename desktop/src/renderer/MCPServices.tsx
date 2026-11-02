@@ -379,6 +379,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
 
   if (!visible.length && !loginAvailable && !preparing) return null;
   return <SettingsSection testID="mcp-connectors" title={t("connector.title")}>
+    <p className="mcp-service-status">{t("connector.sharedHint")}</p>
     <SettingsGroup>{visible.map(server => {
       const connector = server.connector!;
       const setupRequired = connector.setup_required?.trim();

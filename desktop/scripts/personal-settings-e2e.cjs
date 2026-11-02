@@ -1,16 +1,18 @@
 // Actual App settings navigation and shipped Personal entry; synthetic transport.
 const {app,BrowserWindow}=require('electron');
 const fs=require('node:fs'), path=require('node:path'), assert=require('node:assert/strict');
+const branch=require('node:child_process').execFileSync('git',['branch','--show-current'],{cwd:path.resolve(__dirname,'../..'),encoding:'utf8'}).trim();
 const output=path.resolve(process.env.WUU_PERSONAL_SETTINGS_OUTPUT || path.join(__dirname,'../out/personal-settings-e2e'));fs.mkdirSync(output,{recursive:true});
 app.setPath('userData',fs.mkdtempSync(path.join(output,'profile-')));
 let win;
 const watchdog=setTimeout(()=>{fs.writeFileSync(path.join(output,"timeout.txt"),"Fixture exceeded 45 seconds");app.exit(2);},45000);
 app.whenReady().then(async()=>{
   win=new BrowserWindow({width:1280,height:1000,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  win.webContents.on('console-message',event=>fs.appendFileSync(path.join(output,'renderer.log'),`${event.level}: ${event.message}\n`));
   win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:!details.url.startsWith('file:')&&!details.url.startsWith('data:')}));
   const evaluate=fn=>win.webContents.executeJavaScript(`(${fn})()`,true);
   const until=async fn=>{const end=Date.now()+10000;while(Date.now()<end){if(await win.webContents.executeJavaScript(`Boolean((${fn})())`,true))return;await new Promise(r=>setTimeout(r,30));}throw new Error(`Timed out: ${fn}`);};
-  const capture=async name=>{await new Promise(r=>setTimeout(r,300));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());};
+  const capture=async name=>{await win.webContents.executeJavaScript(`document.querySelector('.mosaic-fixture-label span').textContent=${JSON.stringify(branch+' · Actual production UI · Synthetic data')}`);await new Promise(r=>setTimeout(r,300));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   await win.loadFile(path.resolve(__dirname,'../out/personal-fixture/index.html'));
   await until(()=>document.querySelector('.sidebar-account-trigger'));
   await evaluate(()=>document.querySelector('.sidebar-account-trigger').click());
@@ -30,7 +32,23 @@ app.whenReady().then(async()=>{
   await capture('settings-dark-large-narrow');
   const geometry=await evaluate(()=>{const el=document.querySelector('[data-personal-preferences]');return{width:el.clientWidth,scrollWidth:el.scrollWidth,text:el.textContent,reviewButtons:el.querySelectorAll('[data-review-choice]').length};});
   assert.ok(geometry.scrollWidth<=geometry.width+1,JSON.stringify(geometry));
+  await evaluate(()=>document.querySelector('[data-personal-connections]').scrollIntoView({block:'start'}));
+  await capture('connections-dark-large-narrow');
+  await evaluate(()=>[...document.querySelectorAll('[data-personal-connections] button')].find(n=>n.textContent==='管理共享连接器').click());
+  await until(()=>document.querySelector('[data-connector="plugin.account-connectors.gmail"]')?.checkVisibility());
+  const shared=await evaluate(()=>({visible:document.querySelector('.catalog-section-pane')?.checkVisibility(),cards:[...document.querySelectorAll('[data-connector]')].map(n=>({server:n.getAttribute('data-connector'),connect:!!n.querySelector('[data-connector-action="connect"]'),text:n.textContent})),scrollWidth:document.documentElement.scrollWidth,width:innerWidth}));
+  assert.equal(shared.visible,true);
+  for(const name of ['gmail','google-calendar'])assert.equal(shared.cards.find(n=>n.server==='plugin.account-connectors.'+name)?.connect,false);
+  assert.equal(shared.cards.find(n=>n.server==='plugin.account-connectors.feishu')?.connect,true);
+  assert.ok(shared.scrollWidth<=shared.width+1);
+  await capture('shared-catalog-dark-large-narrow');
   win.setContentSize(1280,1000);
+  await evaluate(()=>Array.from(document.querySelectorAll('.mosaic-fixture-label button')).find(el=>el.textContent==='明 / 暗').click());
+  await capture('shared-catalog-light-wide');
+  await evaluate(()=>document.querySelector('[data-connector="plugin.account-connectors.feishu"]').scrollIntoView({block:'center'}));
+  await capture('shared-catalog-google-feishu');
+  await evaluate(()=>{const row=document.querySelector('[data-connector="plugin.account-connectors.gmail"]');row.querySelector('[data-connector-details-toggle]').click();row.scrollIntoView({block:'start'});});
+  await capture('shared-gmail-prerequisites');
   await win.loadFile(path.resolve(__dirname,'../out/personal-fixture/index.html'),{query:{calendar:'stale'}});
   await until(()=>document.querySelector('.sidebar-account-trigger'));
   await evaluate(()=>document.querySelector('.sidebar-account-trigger').click());
@@ -38,6 +56,7 @@ app.whenReady().then(async()=>{
   await evaluate(()=>document.querySelector('[data-settings-page="providers"]').click());
   await until(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]'));
   await evaluate(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]').click());
+  await evaluate(()=>{document.querySelector('[data-personal-connections] details').open=true;});
   await until(()=>document.querySelector('form.gcal-agenda-form'));
   await until(()=>document.querySelector('[data-calendar-attempt-diagnostic]'));
   await evaluate(()=>document.querySelector('[data-calendar-attempt-diagnostic]').scrollIntoView({block:'center'}));
@@ -50,7 +69,7 @@ app.whenReady().then(async()=>{
   await capture('settings-stale-calendar');
   const stale=await evaluate(()=>({alert:document.querySelector('.gcal-view > .gcal-notice')?.textContent,event:document.querySelector('.gcal-event')?.textContent}));
   assert.ok(stale.event.includes('合成日程'));
-  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI; synthetic transport, no Google/account/model',route:'Account menu → Settings → Plugins → twin',cases:['existing account menu entry','exact plugin view','notification fields retained','Calendar unavailable','review unavailable with no approval buttons','light wide','dark 20px narrow','actual CAS error/stale retains old event and alerts','old attempt diagnostic separate from connected Calendar'],geometry,stale},null,2));
+  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI; synthetic transport, no Google/account/model',route:'Account menu → Settings → Plugins → twin',cases:['existing account menu entry','exact plugin view','notification fields retained','Calendar unavailable','review unavailable with no approval buttons','light wide','dark 20px narrow','actual CAS error/stale retains old event and alerts','old attempt diagnostic separate from connected Calendar','Personal shared button opens actual account connector catalog','Google setup gate and Feishu connect action'],branch,shared,geometry,stale},null,2));
   clearTimeout(watchdog);app.exit(0);
 }).catch(async error=>{
   fs.writeFileSync(path.join(output,'error.txt'),String(error.stack||error));

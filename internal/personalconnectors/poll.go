@@ -52,7 +52,8 @@ func (b *Broker) Poll(ctx context.Context, a Actor, q PollRequest) (PollResult, 
 		return PollResult{}, fault("invalid_source_id")
 	}
 	allowed := []string{"gmail.search", "gmail.thread", "notion.search", "notion.page", "notion.blocks", "notion.database", "notion.query", "drive.search", "drive.file", "drive.export", "calendar.agenda", "slack.history", "slack.search", "slack.mentions", "feishu.history", "feishu.search", "feishu.mentions"}
-	if !slices.Contains(allowed, q.Operation) {
+	shared := strings.HasPrefix(q.ConnectionID, "mcp:")
+	if !shared && !slices.Contains(allowed, q.Operation) {
 		return PollResult{}, fault("poll_operation_not_supported")
 	}
 	arguments, e := pollCanonical(q.Arguments)
@@ -61,6 +62,16 @@ func (b *Broker) Poll(ctx context.Context, a Actor, q PollRequest) (PollResult, 
 	}
 	definition := hash(q.ConnectionID + "\x00" + q.Operation + "\x00" + arguments)
 	key := hash(a.SessionID + "\x00" + q.SourceID)
+	// Refresh only metadata; the shared transport owns credentials and rechecks
+	// the frozen authorization immediately before the actual read.
+	if shared {
+		b.mu.Lock()
+		e = b.ensureFresh(ctx, a, q.ConnectionID)
+		b.mu.Unlock()
+		if e != nil {
+			return PollResult{}, e
+		}
+	}
 	var prior pollState
 	var existed bool
 	var revision string

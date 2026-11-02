@@ -47,6 +47,38 @@
         "documentation_url": "https://developers.google.com/workspace/guides/configure-mcp-servers",
         "setup_required": "Requires Workspace Developer Preview membership, a Cloud project with the Drive and MCP APIs enabled, and a registered Desktop OAuth client for an AI-powered agent with consent and scopes configured."
       }
+    },
+    "gmail": {
+      "url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Gmail",
+        "description": "Gmail official remote MCP, in Google Workspace Developer Preview.",
+        "documentation_url": "https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server",
+        "setup_required": "Requires Workspace Developer Preview membership, a Cloud project with the product and MCP APIs enabled, and an OAuth client registered for an AI-powered agent with consent, scopes and Wuu redirect URI configured. Configure these in an installed connector package before enabling; a server URL does not grant access."
+      }
+    },
+    "google-calendar": {
+      "url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Google Calendar",
+        "description": "Google Calendar official remote MCP, in Google Workspace Developer Preview.",
+        "documentation_url": "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
+        "setup_required": "Requires Workspace Developer Preview membership, a Cloud project with the product and MCP APIs enabled, and an OAuth client registered for an AI-powered agent with consent, scopes and Wuu redirect URI configured. Configure these in an installed connector package before enabling; a server URL does not grant access."
+      }
+    },
+    "feishu": {
+      "url": "https://mcp.feishu.cn/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Feishu",
+        "description": "Feishu official remote MCP for documents and authorized chat resources.",
+        "documentation_url": "https://open.feishu.cn/document/mcp_open_tools/developers-call-remote-mcp-server"
+      }
     }
   },
   "interface": {

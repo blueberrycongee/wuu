@@ -45,6 +45,7 @@ type Options struct {
 	HTTPClient        *http.Client
 }
 type Broker struct {
+	shared            SharedConnections
 	stateDir          string
 	httpsCallbacks    HTTPSCallbackTransport
 	mu                sync.Mutex
@@ -192,6 +193,9 @@ func (b *Broker) RegisterVerified(ctx context.Context, a Actor, g Grant) error {
 func (b *Broker) List(ctx context.Context, a Actor) ([]Connection, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if err := b.syncShared(ctx, a); err != nil {
+		return nil, err
+	}
 	out := []Connection{}
 	e := b.update(ctx, a, func(s *stored) error {
 		out = []Connection{}
@@ -215,6 +219,17 @@ func (b *Broker) List(ctx context.Context, a Actor) ([]Connection, error) {
 }
 func build(c Connection, op string, args json.RawMessage) (Plan, error) {
 	switch c.Provider {
+	case "mcp":
+		for _, tool := range c.Tools {
+			if tool.Name == op {
+				var object map[string]json.RawMessage
+				if json.Unmarshal(args, &object) != nil || object == nil {
+					return Plan{}, fault("invalid_arguments")
+				}
+				return Plan{Operation: op, Body: args, Write: !tool.ReadOnly, Summary: c.AccountLabel + ": " + op, Resource: strings.Join(c.Resources, ", ")}, nil
+			}
+		}
+		return Plan{}, fault("unsupported_operation")
 	case "gmail":
 		return buildGmail(c, op, args)
 	case "google-calendar":
@@ -532,6 +547,9 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 	return result, err
 }
 func (b *Broker) Disconnect(ctx context.Context, a Actor, id string) error {
+	if strings.HasPrefix(id, "mcp:") {
+		return fault("manage_shared_connection_in_catalog")
+	}
 	if err := validateActor(a); err != nil {
 		return err
 	}
@@ -563,6 +581,12 @@ func (b *Broker) Disconnect(ctx context.Context, a Actor, id string) error {
 	return b.update(ctx, a, func(s *stored) error { delete(s.Grants, id); s.Epochs[id] = epoch; return nil })
 }
 func (b *Broker) request(ctx context.Context, a Actor, g Grant, p Plan) (json.RawMessage, bool, error) {
+	if g.Connection.Provider == "mcp" {
+		if b.shared == nil {
+			return nil, false, fault("connector_unavailable")
+		}
+		return b.shared.Call(ctx, a, g.Connection, p.Operation, p.Body)
+	}
 	u, e := url.Parse(p.URL)
 	hosts := map[string][]string{"gmail": {"gmail.googleapis.com"}, "google-calendar": {"www.googleapis.com"}, "drive": {"www.googleapis.com", "docs.googleapis.com"}, "notion": {"api.notion.com"}, "slack": {"slack.com"}, "feishu": {"open.feishu.cn", "open.larksuite.com"}}
 	if e != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || !slices.Contains(hosts[g.Connection.Provider], u.Host) {

@@ -1,6 +1,7 @@
 /** In-memory bridge for the production desktop shell. No real accounts or writes. */
 import type { WuuDesktopApi } from "../../src/shared/protocol";
 import type { PluginHostOptions } from "../../src/renderer/plugins/PluginHost";
+import accountConnectors from "../../../internal/plugin/bundled/account-connectors/plugin.json";
 
 export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invokeRuntime"]>): void {
   const scoped = (window as unknown as {__scopedFixture?: {call(method:string, params?:unknown):Promise<any>}}).__scopedFixture;
@@ -19,11 +20,17 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
     getPluginStorage: async ({id,key,scope}: {id:string;key:string;scope:string}) => ({value: localStorage.getItem(`fixture:${id}:${scope}:${key}`)}),
     setPluginStorage: async ({id,key,scope,value}: {id:string;key:string;scope:string;value:string}) => { localStorage.setItem(`fixture:${id}:${scope}:${key}`, value); },
     getBuildInfo: async () => ({ desktop: { version: "synthetic-fixture" } }),
-    listMCPServers: async () => ({ servers: [] }),
+    listMCPServers: async () => ({ servers: Object.entries(accountConnectors.mcp_servers).map(([name, definition]) => ({
+      name: `plugin.account-connectors.${name}`, plugin_id: 'account-connectors', plugin_active: true, configurable: true,
+      connector: definition.connector, resource_url: definition.url, configuration_enabled: false,
+      state: 'disabled', connected: false, tool_count: 0,
+    })) }),
+    getMCPAuthStatus: async ({name}: {name:string}) => ({name, authenticated:false}),
+    listSkills: async () => ({skills:[]}),
     listEngines: async () => ({ engines: [] }),
     listProjects: async () => projects,
     selectNoProject: async () => projects,
-    initialize: async () => ({ protocol_version: "wuu-app-server/v0.1", provider: "synthetic", model: "synthetic", workspace_root: workspace, permissions: { mode: "standard" }, providers: [{ name: "synthetic", type: "openai-compatible", model: "synthetic", api_key_configured: true }], extension_inventory: ["personal", "personal-calendar", "automations", ...(new URLSearchParams(location.search).has("genui") ? ["generative-ui"] : [])].map(id => ({id, name:id, kind:"plugin", enabled:true, state:"active", approval_state:"official", fingerprint:id === "generative-ui" ? "fixture" : "synthetic-ui-fixture", provenance:{kind:"plugin",source:"fixture",scope:"user",plugin_id:id}})), advanced_settings: { max_steps: 64, max_context_tokens: 0, temperature: 0, disable_auto_compact: false } }),
+    initialize: async () => ({ protocol_version: "wuu-app-server/v0.1", provider: "synthetic", model: "synthetic", workspace_root: workspace, permissions: { mode: "standard" }, providers: [{ name: "synthetic", type: "openai-compatible", model: "synthetic", api_key_configured: true }], extension_inventory: ["personal", "personal-calendar", "automations", "account-connectors", ...(new URLSearchParams(location.search).has("genui") ? ["generative-ui"] : [])].map(id => ({id:id === "account-connectors" ? "plugin:bundled:account-connectors" : id, name:id, kind:"plugin", enabled:true, state:"active", approval_state:"official", fingerprint:id === "generative-ui" ? "fixture" : "synthetic-ui-fixture", provenance:{kind:"plugin",source:"fixture",scope:"user",plugin_id:id}})), advanced_settings: { max_steps: 64, max_context_tokens: 0, temperature: 0, disable_auto_compact: false } }),
     listThreads: async () => ({ threads: [] }),
     listArchivedThreads: async () => ({ threads: [] }),
     resumeThread: async () => ({ thread: undefined }),
@@ -34,6 +41,7 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
     answerUserQuestion: async () => ({ resolved: true }),
     cancelUserQuestion: async () => ({ resolved: true }),
     onServerEvent: () => () => {},
+    onRemoteControlEvent: () => () => {},
     onWindowResizeState: () => () => {},
     onTerminalEvent: () => () => {},
     requestPluginRuntime: async (request: Parameters<WuuDesktopApi["requestPluginRuntime"]>[0]) => ({ ok: true as const, value: await (scoped && request.method.startsWith("view-state.") ? scoped.call("plugin/client/request", request) : ({ result: await invoke({ pluginId: request.id, generation: request.fingerprint, graphGeneration:request.graph_generation, service:request.service, method: request.method, input: request.input, userSpaceId: request.user_space_id, productDomain: request.product_domain, compositionProfile: request.composition_profile, userInput: request.user_input && { requestId: request.user_input.request_id, prompt: request.user_input.prompt, resumeReceiptId: request.user_input.resume_receipt_id, relation: request.user_input.relation, attachments: request.user_input.attachments } }) })) }),

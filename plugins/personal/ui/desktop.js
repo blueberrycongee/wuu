@@ -12,7 +12,7 @@ export async function activate(api) {
     const { agent } = await api.invokeRuntime("agents.ensure_default", {}, route);
     return api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: input.request_id, prompt: input.prompt }, { ...route, userInput: { requestId: input.request_id, prompt: input.prompt } });
   };
-  const settingsPanels = createSettingsPanels(React, api.ui, call);
+  const settingsPanels = createSettingsPanels(React, api.ui, call, api.application);
   api.registerStyle({ id: "personal-settings-panels", css: settingsPanels.styles });
   api.registerStyle({ id: "personal-send-motion", css: sendMotionStyles });
   const words = {

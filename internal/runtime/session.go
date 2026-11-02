@@ -769,6 +769,13 @@ func NewSession(opts Options) (*Session, error) {
 			toolkit = kit
 			if !binding.IsUser() {
 				connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+			} else {
+				manager, err := startUserMCPManager(cfg, activePlugins, mcpOAuth, binding)
+				if err != nil {
+					return toolservice.Backend{}, err
+				}
+				toolkit.SetMCPToolsBrokered(true)
+				toolkit.SetMCPManager(manager)
 			}
 
 			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
@@ -2816,19 +2823,7 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 		}
 	}
 	for name, mcpCfg := range servers {
-		serverConfigs[name] = mcp.ServerConfig{
-			Name:          name,
-			Command:       mcpCfg.Command,
-			Args:          mcpCfg.Args,
-			URL:           mcpCfg.URL,
-			Transport:     mcpCfg.Transport,
-			Env:           mcpCfg.Env,
-			Headers:       mcpCfg.Headers,
-			OAuth:         mcpOAuthConfig(mcpCfg.OAuth),
-			Enabled:       mcpCfg.Enabled,
-			ToolOverrides: mcpToolOverrides(mcpCfg.ToolOverrides),
-			ToolTimeoutMS: mcpCfg.ToolTimeoutMS,
-		}
+		serverConfigs[name] = MCPServerConfiguration(name, mcpCfg)
 	}
 	// Identity probes are package-owned declarations, never editable server metadata.
 	for _, item := range plugins {
@@ -2971,6 +2966,23 @@ func PluginMCPServerName(pluginID, serverName string) string {
 
 func IsPluginMCPServerName(name string) bool {
 	return strings.HasPrefix(strings.TrimSpace(name), "plugin.")
+}
+
+// MCPServerConfiguration translates the package/configuration contract for all MCP consumers.
+func MCPServerConfiguration(name string, mcpCfg config.MCPServerConfig) mcp.ServerConfig {
+	return mcp.ServerConfig{
+		Name:          name,
+		Command:       mcpCfg.Command,
+		Args:          mcpCfg.Args,
+		URL:           mcpCfg.URL,
+		Transport:     mcpCfg.Transport,
+		Env:           mcpCfg.Env,
+		Headers:       mcpCfg.Headers,
+		OAuth:         mcpOAuthConfig(mcpCfg.OAuth),
+		Enabled:       mcpCfg.Enabled,
+		ToolOverrides: mcpToolOverrides(mcpCfg.ToolOverrides),
+		ToolTimeoutMS: mcpCfg.ToolTimeoutMS,
+	}
 }
 
 func mcpToolOverrides(in map[string]config.MCPToolOverride) map[string]mcp.ToolOverride {

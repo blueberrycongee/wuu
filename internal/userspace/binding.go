@@ -35,6 +35,10 @@ func (b Binding) Domain() string {
 	return b.ProductDomain
 }
 func (b Binding) IsUser() bool { return b.UserSpaceID != "" }
+
+// LocalAccounts identifies the installation owner of the existing shared MCP
+// credential namespace. Other user hosts cannot borrow that owner's grants.
+func (b Binding) LocalAccounts() bool { return !b.IsUser() || b.UserSpaceID == "local" }
 func (b Binding) Matches(other Binding) bool {
 	return b.UserSpaceID == other.UserSpaceID && b.Domain() == other.Domain()
 }

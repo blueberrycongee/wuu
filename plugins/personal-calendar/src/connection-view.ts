@@ -15,7 +15,7 @@ export interface ConnectionViewHost {
 const labels: Record<string, string> = { unconnected: '尚未连接', connected: '已连接 · 只读', needs_reauth: '需要重新授权', disconnected: '已断开', unavailable: '连接状态暂时不可用' };
 /** Reusable actual view, mounted independently of the Coding page. All provider
  * text uses textContent; event titles are never markup or executable prompts. */
-export function mountCalendarConnection(root: HTMLElement, host: ConnectionViewHost, options: { now?: () => Date; timezone?: string } = {}) {
+export function mountCalendarConnection(root: HTMLElement, host: ConnectionViewHost, options: { now?: () => Date; timezone?: string; legacyOnly?: boolean } = {}) {
   const lifetime = new AbortController();
   let authorization: AbortController | undefined;
   let connection: CalendarConnection, choices: CalendarChoice[] = [], busy = false, generation = 0, notice = '', snapshot: (CalendarSnapshot & { freshness: 'fresh' | 'stale' }) | undefined;
@@ -71,11 +71,12 @@ export function mountCalendarConnection(root: HTMLElement, host: ConnectionViewH
     const text = node('div'); text.append(node('h2', 'Google Calendar'), node('p', '按需查看你选择的日历，不修改日程。', 'gcal-muted')); title.append(icon, text); root.append(title);
     const row = node('div', '', 'gcal-connection'); const status = node('span', labels[connection?.state] ?? '正在读取连接状态', 'gcal-status'); status.setAttribute('role', 'status'); row.append(status);
     if (connection?.state === 'unavailable') row.append(button('重试', reload));
-    else if (connection?.state !== 'connected') row.append(button(connection?.state === 'needs_reauth' ? '重新授权' : '连接 Google Calendar', async version => { authorization = new AbortController(); render(); try { await host.startAuthorization(AbortSignal.any([lifetime.signal, authorization.signal])); if (current(version)) await reload(version); } finally { authorization = undefined; } }, true));
+    else if (connection?.state !== 'connected' && !options.legacyOnly) row.append(button(connection?.state === 'needs_reauth' ? '重新授权' : '连接 Google Calendar', async version => { authorization = new AbortController(); render(); try { await host.startAuthorization(AbortSignal.any([lifetime.signal, authorization.signal])); if (current(version)) await reload(version); } finally { authorization = undefined; } }, true));
     else row.append(button('刷新状态', reload));
     if (authorization) { const cancel = node('button', '取消授权', 'gcal-button'); cancel.type = 'button'; cancel.addEventListener('click', () => authorization?.abort(), { signal: lifetime.signal }); row.append(cancel); }
     root.append(row);
-    if (connection?.error_code === 'oauth_client_not_configured') root.append(node('p', '尚未配置经你批准的 Google OAuth 客户端，当前不能连接账号。', 'gcal-muted'));
+    if(options.legacyOnly && connection?.state !== 'connected') root.append(node('p','请在共享连接器中连接 Google Calendar。旧授权不自动转换为 MCP 授权。','gcal-muted'));
+    if (!options.legacyOnly && connection?.error_code === 'oauth_client_not_configured') root.append(node('p', '尚未配置经你批准的 Google OAuth 客户端，当前不能连接账号。', 'gcal-muted'));
     if (connection?.error_code === 'authorization_already_completed') { const p=node('p','授权已经完成，自动取消未生效。可使用下方断开连接。','gcal-notice');p.setAttribute('role','alert');root.append(p); }
     if (['credential_cleanup_failed','cleanup_failed'].includes(connection?.error_code ?? '')) { const p=node('p','这次操作的本地凭据清理未完成。请重试清理。','gcal-notice');p.setAttribute('role','alert');root.append(p); }
     if (connection?.authorization_diagnostics?.length) {

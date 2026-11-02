@@ -41,7 +41,7 @@ func (s *Server) mcpConfiguration(ctx context.Context) (config.SourceView, map[s
 	return view, document.Servers, nil
 }
 
-const mcpConnectorConfigurationUnavailable = "Connector preferences are unavailable in this host until domain-scoped configuration is supported."
+const mcpConnectorConfigurationUnavailable = "Shared account connectors belong to the local installation owner; this user space cannot access them."
 
 // Active ownership is resolved from the admitted package, not from a namespaced
 // configuration key. A disabled or replaced package cannot be enabled here.
@@ -65,11 +65,11 @@ func (s *Server) activePluginMCPDefinition(snapshot runtime.ExtensionSnapshot, n
 	return config.MCPServerConfig{}, false
 }
 
-// Domain-scoped hosts must not read or mutate the shared Coding connector's
-// credentials, including cleanup endpoints. Existing non-connector plugin
+// Only the local installation owner may share account credentials between products.
+// Other user spaces cannot read or mutate them, including cleanup endpoints. Existing non-connector plugin
 // services keep their own contracts; unknown names fail closed after removal.
 func (s *Server) checkMCPConnectorDomain(name string) error {
-	if s.rt == nil || !s.rt.UserBinding().IsUser() || !runtime.IsPluginMCPServerName(name) {
+	if s.rt == nil || s.rt.UserBinding().LocalAccounts() || !runtime.IsPluginMCPServerName(name) {
 		return nil
 	}
 	name = strings.TrimSpace(name)
@@ -101,7 +101,7 @@ func (s *Server) admitMCPConnectorAction(ctx context.Context, name string) error
 	if definition.Connector == nil {
 		return nil
 	}
-	if s.rt.UserBinding().IsUser() {
+	if !s.rt.UserBinding().LocalAccounts() {
 		return errors.New(mcpConnectorConfigurationUnavailable)
 	}
 	if strings.TrimSpace(definition.Connector.SetupRequired) != "" {
@@ -152,7 +152,7 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 			if enabled {
 				definition = admitted
 			}
-			if override, exists := view.Config.MCPServers[name]; !s.rt.UserBinding().IsUser() && exists && override.Enabled != nil {
+			if override, exists := view.Config.MCPServers[name]; s.rt.UserBinding().LocalAccounts() && exists && override.Enabled != nil {
 				definition.Enabled = override.Enabled
 			}
 			effective[name] = definition
@@ -198,8 +198,8 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 		if server.PluginID != "" {
 			enabled := active[server.Name]
 			server.PluginActive = &enabled
-			server.Configurable = enabled && server.Connector != nil && !s.rt.UserBinding().IsUser()
-			if server.Connector != nil && s.rt.UserBinding().IsUser() {
+			server.Configurable = enabled && server.Connector != nil && s.rt.UserBinding().LocalAccounts()
+			if server.Connector != nil && !s.rt.UserBinding().LocalAccounts() {
 				server.ConfigurationUnavailableReason = mcpConnectorConfigurationUnavailable
 			}
 		}
@@ -226,7 +226,7 @@ func (s *Server) handleMCPDefinitionRead(ctx context.Context, req Request) error
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if runtime.IsPluginMCPServerName(params.Name) {
-		if s.rt.UserBinding().IsUser() {
+		if !s.rt.UserBinding().LocalAccounts() {
 			return s.writeResponse(req.ID, nil, errors.New(mcpConnectorConfigurationUnavailable))
 		}
 		definition, active := s.activePluginMCPDefinition(s.rt.ExtensionSnapshot(), params.Name)
@@ -238,6 +238,9 @@ func (s *Server) handleMCPDefinitionRead(ctx context.Context, req Request) error
 		}
 		enabled := definition.ConnectorEnabled()
 		return s.writeResponse(req.ID, MCPDefinitionResult{Config: config.MCPServerConfig{Enabled: &enabled}, Revision: view.Revision}, nil)
+	}
+	if s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New("project MCP configuration is unavailable in a user host"))
 	}
 	definition, exists := definitions[params.Name]
 	if !exists || (definition.Command == "" && definition.URL == "") {
@@ -316,7 +319,7 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 	snapshot := s.rt.ExtensionSnapshot()
 	for name, definition := range params.Servers {
 		if runtime.IsPluginMCPServerName(name) {
-			if s.rt.UserBinding().IsUser() {
+			if !s.rt.UserBinding().LocalAccounts() {
 				return s.writeResponse(req.ID, nil, errors.New(mcpConnectorConfigurationUnavailable))
 			}
 			declared, active := s.activePluginMCPDefinition(snapshot, name)
@@ -327,6 +330,9 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 				return s.writeResponse(req.ID, nil, fmt.Errorf("MCP connector %q requires setup before it can be enabled", name))
 			}
 			continue
+		}
+		if s.rt.UserBinding().IsUser() {
+			return s.writeResponse(req.ID, nil, errors.New("project MCP configuration is unavailable in a user host"))
 		}
 		_, effectiveExists := view.Config.MCPServers[name]
 		original, editable := definitions[name]

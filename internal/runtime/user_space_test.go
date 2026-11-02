@@ -148,8 +148,8 @@ func TestUserHostConfigDoesNotInheritExecutableCodingExtensions(t *testing.T) {
 		t.Fatal("Coding lost saved connector preference after restart")
 	}
 	personalServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}), catalog)
-	if personalServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
-		t.Fatal("Personal imported Coding connector preference after restart")
+	if !personalServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
+		t.Fatal("Personal lost shared account connector preference after restart")
 	}
 	if _, exists := personalServers["coding"]; exists {
 		t.Fatal("Personal imported standalone Coding endpoint")
@@ -159,7 +159,7 @@ func TestUserHostConfigDoesNotInheritExecutableCodingExtensions(t *testing.T) {
 		t.Fatal("Coding config changed")
 	}
 	personal := userHostConfig(cfg, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"})
-	if personal.Hooks != nil || personal.MCPServers != nil || personal.MCPJson != nil {
+	if personal.Hooks != nil || len(personal.MCPServers) != 1 || personal.MCPJson != nil {
 		t.Fatal("Personal inherited Coding executable extensions")
 	}
 	if len(cfg.Hooks) != 1 || len(cfg.MCPServers) != 2 {

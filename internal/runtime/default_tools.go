@@ -49,10 +49,13 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		var manager *mcp.Manager
 		if !s.UserBinding().IsUser() {
 			manager, err = startMCPManager(cfg, generation.active, required, generation.mcpOAuth)
+		} else {
+			manager, err = startUserMCPManager(cfg, generation.active, generation.mcpOAuth, s.UserBinding())
 		}
 		if err != nil {
 			return toolservice.Backend{}, err
 		}
+		kit.SetMCPToolsBrokered(s.UserBinding().IsUser())
 		kit.SetMCPManager(manager)
 		codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
 		kit.ConfigurePTC(codeMode, cfg.PTC)
