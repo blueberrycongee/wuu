@@ -6,6 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const http = require('node:http');
 const { pathToFileURL } = require('node:url');
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_AVATAR_OUTPUT || path.join(desktop, '../artifacts/personal-avatar'));
@@ -17,7 +18,7 @@ if (!process.versions.electron) {
   for (const phase of ['edit', 'restart']) {
     const result = spawnSync(electron, [__filename], { env: { ...process.env, WUU_AVATAR_FIXTURE: fixture, WUU_AVATAR_PHASE: phase }, encoding: 'utf8', timeout: 180000 });
     fs.writeFileSync(path.join(output, `${phase}.log`), `${result.stdout || ''}\n${result.stderr || ''}`);
-    if (result.status !== 0) { console.error(result.error || result.stderr, `Evidence: ${output}`); process.exit(1); }
+    if (result.status !== 0) { console.error(result.error || result.stderr || `Electron exited: status=${result.status}, signal=${result.signal}`, `Evidence: ${output}`); process.exit(1); }
   }
   console.log(`Personal avatar E2E passed, including full app restart. Evidence: ${output}`);
   process.exit(0);
@@ -37,16 +38,34 @@ process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
-// No model operation is part of this test, and even an accidental request has
-// no external provider endpoint or real credential to use.
+// Every model request uses this process's loopback fixture; no external
+// provider, paid inference or real credential is available.
 if (phase === 'edit') {
   const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', engines, providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:9/v1', api_key: 'synthetic-not-a-credential', model: 'unused' } } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
 }
+let fixtureReply;
+const fixtureRequests = [];
+const server = http.createServer((request, response) => {
+  let raw = '';
+  request.on('data', chunk => { raw += chunk; });
+  request.on('end', () => {
+    if (request.method === 'GET') return response.end(JSON.stringify({ data: [{ id: 'unused' }] }));
+    const body = JSON.parse(raw);
+    fixtureRequests.push({ url: request.url, stream: Boolean(body.stream) });
+    if (!body.stream) return response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Avatar fixture' } }] }));
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const chunk = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ id: 'avatar-fixture', model: 'unused', choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+    const finish = () => { chunk({}, 'stop'); response.end('data: [DONE]\n\n'); };
+    chunk({ role: 'assistant' });
+    if (JSON.stringify(body.messages).includes('avatar-motion-fixture')) fixtureReply = { chunk, finish };
+    else { chunk({ content: 'Avatar fixture' }); finish(); }
+  });
+});
 const navigationSelector = 'button[data-wuu-plugin="plugin:bundled:personal"]';
 let win;
-const errors = [], checks = [];
+const errors = [], checks = [], limitations = [];
 app.on('browser-window-created', (_, window) => { win ||= window; window.webContents.on('render-process-gone', (_, details) => errors.push(details)); });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = (fn, arg) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
@@ -107,7 +126,146 @@ async function assertAvatar(key) {
   await until(key => (() => { const [, , accessory, hue] = key.split(':'); const svg = document.querySelector('.mosaic-profile-trigger [data-wuu-mascot-provider-hue]'); return svg?.getAttribute('data-wuu-mascot-provider-hue') === hue && svg?.getAttribute('data-wuu-mascot-accessory') === accessory; })(), key);
   await assertSynchronized();
 }
+// Observable motion contracts: frames must change only while paintable, preserve
+// the body/accessory relationship, and settle with both reduced-motion sources.
+async function sampleMotion(selector, count = 5) {
+  return evaluate(async ({ selector, count }) => {
+    const svg = document.querySelector(`${selector} [data-wuu-mascot-activity]`);
+    if (!svg) throw new Error(`Missing avatar: ${selector}`);
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      await new Promise(resolve => setTimeout(resolve, 120));
+      frames.push({
+        body: svg.querySelector('.mo-bob > g > path').getAttribute('d'),
+        breathe: getComputedStyle(svg.querySelector('.mo-breathe')).transform,
+        bob: getComputedStyle(svg.querySelector('.mo-bob')).transform,
+        eyes: [...svg.querySelectorAll('.mo-eye > path')].map(path => path.getAttribute('d')),
+        accessories: [...svg.querySelectorAll('.wuu-mascot-layer')].map(layer => {
+          const matrix = layer.getCTM(), bodyMatrix = svg.querySelector('.mo-bob').getCTM();
+          const relative = bodyMatrix.inverse().multiply(matrix);
+          return [relative.a, relative.b, relative.c, relative.d, relative.e, relative.f].map(n => Math.round(n * 10000) / 10000 || 0);
+        }),
+      });
+    }
+    return frames;
+  }, { selector, count });
+}
+async function assertMotion(selector, label) {
+  const frames = await sampleMotion(selector);
+  fs.writeFileSync(path.join(output, `${phase}-${label}-frames.json`), JSON.stringify(frames, null, 2));
+  assert.ok(new Set(frames.map(frame => JSON.stringify([frame.breathe, frame.bob]))).size > 1, `${label} did not move`);
+  for (const frame of frames) {
+    assert.equal(frame.body, frames[0].body, `${label} lost its chosen silhouette`);
+    assert.deepEqual(frame.accessories, frames[0].accessories, `${label} accessories drifted away from the body`);
+  }
+}
+async function assertStill(selector) {
+  const frames = await sampleMotion(selector);
+  assert.equal(new Set(frames.map(frame => JSON.stringify(frame))).size, 1, `${selector} kept moving while paused`);
+}
+async function assertBlink() {
+  const samples = await evaluate(async selectors => {
+    const samples = [];
+    const start = performance.now();
+    while (performance.now() - start < 7000) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      samples.push({ time: performance.now() - start, heights: selectors.map(selector =>
+        [...document.querySelectorAll(`${selector} .mo-eye > path`)].map(path => path.getBBox().height)) });
+    }
+    return samples;
+  }, ['.mosaic-profile-trigger', navigationSelector]);
+  fs.writeFileSync(path.join(output, 'blink-samples.json'), JSON.stringify(samples));
+  for (const index of [0, 1]) {
+    const heights = samples.map(sample => sample.heights[index][0]);
+    assert.ok(Math.min(...heights) < Math.max(...heights) * .5, `Avatar ${index} did not blink`);
+    const closed = heights.findIndex(height => height < Math.max(...heights) * .5);
+    assert.ok(heights.slice(closed + 1).some(height => height > Math.max(...heights) * .9), `Avatar ${index} stayed closed`);
+  }
+}
+async function assertHover() {
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: 600, y: 500 });
+  await delay(500);
+  const read = () => evaluate(() => {
+    const button = document.querySelector('.mosaic-profile-trigger');
+    return { button: button.getBoundingClientRect().toJSON(), transform: getComputedStyle(button.querySelector('.mo-root')).transform };
+  });
+  const before = await read();
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(before.button.x + before.button.width / 2), y: Math.round(before.button.y + before.button.height / 2) });
+  await until(previous => getComputedStyle(document.querySelector('.mosaic-profile-trigger .mo-root')).transform !== previous, before.transform);
+  await capture('header-hover');
+  const after = await read();
+  assert.deepEqual(after.button, before.button, 'Hover moved the click target');
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: 600, y: 500 });
+  await until(previous => getComputedStyle(document.querySelector('.mosaic-profile-trigger .mo-root')).transform === previous, before.transform);
+  checks.push('Hover responds and settles without moving the click target; header and sidebar blink');
+}
+async function startRecording(label) {
+  const directory = path.join(output, `${label}-motion-recording`);
+  fs.mkdirSync(directory, { recursive: true });
+  const frames = [];
+  const receive = (_event, method, params) => {
+    if (method !== 'Page.screencastFrame') return;
+    const file = `frame-${String(frames.length).padStart(5, '0')}.jpg`;
+    fs.writeFileSync(path.join(directory, file), Buffer.from(params.data, 'base64'));
+    frames.push({ file, time: params.metadata.timestamp });
+    void win.webContents.debugger.sendCommand('Page.screencastFrameAck', { sessionId: params.sessionId });
+  };
+  win.webContents.debugger.on('message', receive);
+  await win.webContents.debugger.sendCommand('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 1280, maxHeight: 920, everyNthFrame: 2 });
+  return async () => {
+    await win.webContents.debugger.sendCommand('Page.stopScreencast');
+    win.webContents.debugger.removeListener('message', receive);
+    assert.ok(frames.length > 10, 'Motion recording did not capture frames');
+    fs.writeFileSync(path.join(directory, 'frames.json'), JSON.stringify(frames));
+    fs.writeFileSync(path.join(directory, 'index.html'), `<!doctype html><meta charset="utf-8"><title>Twin avatar motion — isolated Electron fixture</title><style>body{margin:0;background:#222}img{max-width:100vw;max-height:95vh;display:block;margin:auto}button{position:fixed;bottom:0;left:0}</style><img id="frame"><button onclick="start=performance.now()">Replay</button><script>const frames=${JSON.stringify(frames)};let start=performance.now();function show(now){const elapsed=(now-start)/1000;const target=frames.findLast(f=>f.time-frames[0].time<=elapsed)||frames[0];document.querySelector('img').src=target.file;requestAnimationFrame(show)}requestAnimationFrame(show)</script>`);
+  };
+}
+async function exerciseLiveActivity(label) {
+  const finishRecording = await startRecording(label);
+  fixtureReply = undefined;
+  await assertBlink();
+  await assertHover();
+  await evaluate(() => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'avatar-motion-fixture');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+  });
+  await key('Return');
+  await until(() => document.querySelector('.mosaic-profile-trigger [data-wuu-mascot-activity]')?.dataset.wuuMascotActivity === 'thinking');
+  await assertMotion('.mosaic-profile-trigger', `${label}-thinking`);
+  await capture(`${label}-thinking`);
+  const thinking = (await sampleMotion('.mosaic-profile-trigger', 1))[0];
+  const deadline = Date.now() + 30000;
+  while (!fixtureReply && Date.now() < deadline) await delay(40);
+  assert.ok(fixtureReply, 'Local provider never received the real turn');
+  // Change activity while paused. The face must adopt the new expression even
+  // though contour frame reads and CSS loops have stopped.
+  await evaluate(() => { document.documentElement.dataset.appearanceMotion = 'reduce'; });
+  await delay(100);
+  const pausedThinking = (await sampleMotion('.mosaic-profile-trigger', 1))[0];
+  fixtureReply.chunk({ content: 'Your saved twin is responding.' });
+  await until(() => document.querySelector('.mosaic-profile-trigger [data-wuu-mascot-activity]')?.dataset.wuuMascotActivity === 'responding');
+  await assertStill('.mosaic-profile-trigger');
+  const pausedResponding = (await sampleMotion('.mosaic-profile-trigger', 1))[0];
+  assert.notDeepEqual(pausedResponding.eyes, pausedThinking.eyes, 'Paused expression ignored real activity');
+  await evaluate(() => { delete document.documentElement.dataset.appearanceMotion; });
+  await assertMotion('.mosaic-profile-trigger', `${label}-responding`);
+  await capture(`${label}-responding`);
+  const responding = (await sampleMotion('.mosaic-profile-trigger', 1))[0];
+  assert.notDeepEqual(thinking.eyes, responding.eyes, 'Thinking and responding have the same expression');
+  fixtureReply.finish();
+  await until(() => document.querySelector('.mosaic-profile-trigger [data-wuu-mascot-activity]')?.dataset.wuuMascotActivity === 'idle');
+  await assertMotion('.mosaic-profile-trigger', `${label}-settled-idle`);
+  await finishRecording();
+  fs.writeFileSync(path.join(output, 'fixture-requests.json'), JSON.stringify(fixtureRequests, null, 2));
+  checks.push('Real loopback SSE turn drives idle → thinking → responding → idle, including expression change while reduced; recording retained');
+}
 async function run() {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const config = JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8'));
+  config.providers.fixture.base_url = `http://127.0.0.1:${server.address().port}/v1`;
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(config));
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   while (!win) await delay(30);
   win.setContentSize(1280, 920);
@@ -132,6 +290,48 @@ async function run() {
     const defaultBody = defaultAvatar.body;
     assert.ok(defaultBody);
     checks.push('Legacy identity displays original default');
+    await assertMotion('.mosaic-profile-trigger', 'idle-header');
+    await evaluate(() => { document.documentElement.dataset.appearanceMotion = 'reduce'; });
+    await delay(100);
+    await assertStill('.mosaic-profile-trigger');
+    await evaluate(() => { delete document.documentElement.dataset.appearanceMotion; });
+    await assertMotion('.mosaic-profile-trigger', 'motion-restored');
+    // Some desktop capture environments keep Chromium visible even while the
+    // native window is hidden/minimized. Record that boundary rather than
+    // fabricating document.hidden or letting it block the independent checks.
+    const visibility = [];
+    const recordVisibility = async action => {
+      const state = { action, windowVisible: win.isVisible(), minimized: win.isMinimized(), backgroundThrottling: win.webContents.getBackgroundThrottling(), renderer: await evaluate(() => ({ hidden: document.hidden, visibility: document.visibilityState })) };
+      visibility.push(state);
+      return state.renderer.hidden;
+    };
+    win.hide();
+    assert.equal(win.isVisible(), false);
+    await delay(500);
+    let hidden = await recordVisibility('hide');
+    if (!hidden) {
+      win.show();
+      win.minimize();
+      await delay(1500);
+      hidden = await recordVisibility('minimize');
+    }
+    if (hidden) {
+      await assertStill('.mosaic-profile-trigger');
+      checks.push('Real hidden document pauses avatar frames');
+    } else limitations.push('This Electron/macOS session reports document.visibilityState=visible after native hide and minimize; hidden-document pause could not be exercised. Offscreen and reduced-motion pause are checked separately.');
+    fs.writeFileSync(path.join(output, 'visibility-audit.json'), JSON.stringify(visibility, null, 2));
+    win.restore();
+    win.show();
+    await until(() => !document.hidden);
+    win.webContents.debugger.attach('1.3');
+    await assertMotion('.mosaic-profile-trigger', 'visible-again');
+    await evaluate(() => { document.querySelector('.mosaic-profile-trigger').style.transform = 'translateY(-2000px)'; });
+    await delay(100);
+    await assertStill('.mosaic-profile-trigger');
+    await evaluate(() => { document.querySelector('.mosaic-profile-trigger').style.removeProperty('transform'); });
+    await assertMotion('.mosaic-profile-trigger', 'onscreen-again');
+    checks.push('Idle breathing resumes after in-app reduction and offscreen pause; accessory planes stay attached');
+    await exerciseLiveActivity('default');
     await openEditor();
     await click('[data-avatar-shape="diamond"]');
     await click('[data-avatar-accessory="leaf"]');
@@ -205,16 +405,26 @@ async function run() {
     await key('Tab');
     assert.equal(await evaluate(() => document.querySelector('.mosaic-avatar-dialog').contains(document.activeElement)), true);
     // All available shapes/accessories are real rendered options, including none.
-    for (const shape of ['round', 'rounded-square', 'capsule', 'triangle', 'diamond']) await click(`[data-avatar-shape="${shape}"]`);
-    for (const accessory of ['none', 'beanie', 'hard-hat', 'headset', 'leaf']) await click(`[data-avatar-accessory="${accessory}"]`);
+    for (const shape of ['round', 'rounded-square', 'capsule', 'triangle', 'diamond']) {
+      await click(`[data-avatar-shape="${shape}"]`);
+      for (const accessory of ['none', 'beanie', 'hard-hat', 'headset', 'leaf']) {
+        await click(`[data-avatar-accessory="${accessory}"]`);
+        await assertMotion('.mosaic-avatar-preview', `${shape}-${accessory}`);
+        await capture(`${shape}-${accessory}`);
+      }
+    }
+    for (const button of await evaluate(() => [...document.querySelectorAll('[data-avatar-hue]')].map(button => button.dataset.avatarHue))) {
+      await click(`[data-avatar-hue="${button}"]`);
+      assert.equal((await avatar('.mosaic-avatar-preview')).hue, button);
+    }
     await click('[data-avatar-hue="288"]');
     win.setContentSize(680, 900);
     nativeTheme.themeSource = 'dark';
     await evaluate(async () => { await window.wuu.setThemePreference('dark'); document.documentElement.style.setProperty('--conversation-message-font-size', '20px'); });
     await until(() => getComputedStyle(document.documentElement).getPropertyValue('color-scheme').includes('dark'));
-    win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     assert.equal(await evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches), true);
+    await assertStill('.mosaic-avatar-preview');
     await capture('dark-narrow-layout');
     const eyes = await evaluate(() => [...document.querySelectorAll('.mosaic-avatar-dialog [data-wuu-mascot-provider-hue], button[data-wuu-plugin="plugin:bundled:personal"] [data-wuu-mascot-provider-hue]')].map(svg => ({
       box: svg.getBoundingClientRect().toJSON(),
@@ -274,6 +484,9 @@ async function run() {
     checks.push('Unified editor rejects invalid names; name-only save preserves appearance');
     fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify({ avatar: await avatar(), defaultAvatar }));
     await capture('saved-renamed');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    win.setContentSize(1280, 920);
+    await exerciseLiveActivity('customized');
     const saved = await avatar(navigationSelector);
     win.webContents.once('dom-ready', () => {
       void evaluate(selector => {
@@ -297,7 +510,9 @@ async function run() {
     await capture('reloaded');
   }
   assert.deepEqual(errors, []);
-  fs.writeFileSync(path.join(output, `${phase}-report.json`), JSON.stringify({ passed: true, boundary: 'Production Electron/main/preload/Go/Personal runtime and disk; isolated profile; no inference or real accounts', checks, errors }, null, 2));
+  fs.writeFileSync(path.join(output, `${phase}-report.json`), JSON.stringify({ passed: true, boundary: 'Production Electron/main/preload/Go/Personal runtime and disk; isolated profile and loopback SSE provider; no paid inference or real accounts', checks, errors, limitations }, null, 2));
+  server.closeAllConnections();
+  server.close();
   app.quit();
 }
 const watchdog = setTimeout(() => { console.error('Avatar E2E timeout'); app.exit(2); }, 150000);

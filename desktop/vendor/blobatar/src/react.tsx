@@ -22,9 +22,9 @@ import { blobatarUri } from "./uri";
  * The union is deliberate: `onLoad` should stop type-checking the moment you
  * turn animation on, because it stops firing.
  */
-type StaticProps = { animate?: false } & Omit<ImgHTMLAttributes<HTMLImageElement>, "src">;
+type StaticProps = { animate?: false; motionPaused?: never } & Omit<ImgHTMLAttributes<HTMLImageElement>, "src">;
 
-type AnimatedProps = { animate: Animate } & Omit<
+type AnimatedProps = { animate: Animate; motionPaused?: boolean } & Omit<
   SVGProps<SVGSVGElement>,
   "children" | "dangerouslySetInnerHTML" | "viewBox"
 >;
@@ -56,6 +56,7 @@ export function Blobatar({
   contrast,
   title,
   animate,
+  motionPaused = false,
   expression,
   traits,
   perspective,
@@ -105,13 +106,14 @@ export function Blobatar({
   useLayoutEffect(() => {
     if (!animate || !perspective || !surfaceRoot.current) return;
     const { t } = resolve(seed, opts);
-    const controller = animateSurface(surfaceRoot.current, layout(t));
+    const controller = animateSurface(surfaceRoot.current, layout(t), motionPaused);
     surfaceMotion.current = controller;
     return () => { controller.dispose(); surfaceMotion.current = null; };
     // Camera and expression changes update numeric properties on the existing
     // tree. Only an identity/markup change needs to bind new path nodes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [html, !!animate, !!perspective]);
+  useLayoutEffect(() => { surfaceMotion.current?.setPaused(motionPaused); }, [motionPaused, html]);
   useLayoutEffect(() => { surfaceMotion.current?.flush(); }, [dep]);
 
   if (parts) {

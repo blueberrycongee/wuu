@@ -20,6 +20,8 @@ export function PluginAvatar({
       className={`plugin-ui-avatar${className ? ` ${className}` : ""}`}
       data-wuu-component="plugin-ui-avatar"
       data-plugin-avatar=""
+      data-plugin-avatar-motion={motion}
+      data-plugin-avatar-scale={size === undefined || size <= 24 ? "compact" : "full"}
       data-icon="mascot"
       aria-hidden="true"
       style={size === undefined ? undefined : { width: size, height: size }}

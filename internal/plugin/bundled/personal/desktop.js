@@ -3559,7 +3559,7 @@ ${personalReviewStyles}
       const displayName = agent?.name || "twin";
       const avatarStatus = running ? liveMessages.some((message) => message.streaming && message.content) ? "responding" : "thinking" : queuedCount > 0 ? "queued" : "idle";
       const statusText = running ? t(avatarStatus) : queuedCount > 0 ? `${queuedCount} \xB7 ${t("queued")}` : t("ready");
-      const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : 40, avatarKey: agent?.avatar_key, status: avatarStatus, motion: large && panelOpen ? "ambient" : "static" }));
+      const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : 40, avatarKey: agent?.avatar_key, status: avatarStatus, motion: !large || panelOpen ? "ambient" : "static" }));
       const editAvatar = () => h("button", { type: "button", className: "mosaic-avatar-edit", "data-action": "edit-personal", "aria-label": locale.startsWith("zh") ? "\u7F16\u8F91 twin" : "Edit twin", onClick: openIdentity }, h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: "m16 3 5 5M4 20l4-1L21 6a2.1 2.1 0 0 0-3-3L5 16l-1 4Z" })));
       const sidebar = h(
         "aside",

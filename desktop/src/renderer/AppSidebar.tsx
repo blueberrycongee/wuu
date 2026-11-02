@@ -1640,7 +1640,7 @@ export function AppSidebar({
           ...pluginNavigationEntries.map((entry) => ({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
-            icon: <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey ? <PluginAvatar avatarKey={entry.avatarKey} /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>,
+            icon: <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey || entry.icon && "name" in entry.icon && entry.icon.name === "mascot" ? <PluginAvatar avatarKey={entry.avatarKey} motion="ambient" /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>,
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
             pluginId: entry.pluginId,
@@ -1729,7 +1729,7 @@ export function AppSidebar({
                   aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
                   onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
                 >
-                  <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey ? <PluginAvatar avatarKey={entry.avatarKey} /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>
+                  <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey || entry.icon && "name" in entry.icon && entry.icon.name === "mascot" ? <PluginAvatar avatarKey={entry.avatarKey} motion="ambient" /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>
                   <span className="sidebar-section-label">{entry.title}</span>
                 </button>
               ))}
