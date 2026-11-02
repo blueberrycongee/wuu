@@ -1438,6 +1438,7 @@ jobs:
           WUU_JOURNEY_2_1
             run_journey 'Guard error message appearance and recovery' 7m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
           set -o pipefail
+          node --test desktop/scripts/error-message-style-provider.test.cjs || exit $?
           failed=0
           for font in 15 20; do
             export WUU_ERROR_STYLE_FONT="$font"
