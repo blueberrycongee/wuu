@@ -86,7 +86,9 @@ so they do not answer a question that is waiting for you.
 
 Monitor has no dedicated desktop panel. Ask the agent to inspect or stop a watch;
 `monitor_tasks` lists its status and reads retained output. Explicit stops tell the
-agent not to restart the watch unless asked. Events appear in the conversation.
+agent not to restart the watch unless asked. New event deliveries, including monitor
+completion, stay out of the chat transcript. The agent can report useful progress,
+results or failures; raw events remain in model history and retained monitor output.
 
 `monitor` accepts `command`, `description`, optional `timeout_ms` (up to 10 hours,
 the default), and `persistent`. A persistent watch has no deadline and lasts until
