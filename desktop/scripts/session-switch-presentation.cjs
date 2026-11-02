@@ -216,6 +216,7 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
             opacity: Number(getComputedStyle(node).opacity), transform: getComputedStyle(node).transform,
             moving: node.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().duration > 0) }));
         probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, composerGeometry, railControls, loading, animations, rasterChrome, messages,
+          appearanceMotion: document.documentElement.dataset.appearanceMotion,
           frame: native ? document.documentElement.getAttribute('data-wuu-compositor-frame') : image?.getAttribute('data-wuu-presentation-frame'), rootInert: !!document.querySelector('.app-shell')?.closest('[inert]'),
           imageAnimations: image?.getAnimations().length || 0, imageOpacity: imageStyle?.opacity, imageTransform: imageStyle?.transform, imageWidth: imageStyle?.width, imageHeight: imageStyle?.height,
           fullscreenLoading: !!document.querySelector('.view-switch-loading'), recovery: !!document.querySelector('[data-wuu-component="launch-view"]') });
@@ -275,6 +276,7 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     }
     const geometry = {};
     for (const frame of result.frames) {
+      if (name.startsWith('app-reduce-')) assert.equal(frame.appearanceMotion, 'reduce', `${name}: application motion preference was not retained`);
       for (const message of frame.messages) {
         assert.equal(message.transform, 'none', `${name}: message entry moved its reading position`);
         assert(message.opacity > 0 && message.opacity <= 1, `${name}: message entry hid ready content`);
@@ -330,7 +332,14 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
   }
   for (const motion of ['no-preference', 'reduce', 'app-reduce']) {
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion === 'app-reduce' ? 'no-preference' : motion }] });
-    await evaluate(win, motion => { document.documentElement.dataset.appearanceMotion = motion === 'app-reduce' ? 'reduce' : 'system'; }, motion);
+    await evaluate(win, motion => {
+      // Exercise the saved preference, not a transient root attribute that
+      // appearance synchronization legitimately replaces during navigation.
+      const preferences = JSON.parse(localStorage.getItem('wuu.appearance.v1') || '{}');
+      localStorage.setItem('wuu.appearance.v1', JSON.stringify({ ...preferences, motion: motion === 'app-reduce' ? 'reduce' : 'system' }));
+      window.dispatchEvent(new Event('wuu-appearance-change'));
+    }, motion);
+    await waitFor(win, motion => document.documentElement.dataset.appearanceMotion === (motion === 'app-reduce' ? 'reduce' : 'system'), motion);
     for (const index of [1, 0]) {
       const name = `${motion}-session-${index}`; await begin(name); await thread(index); await end(name);
     }
