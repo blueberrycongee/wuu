@@ -19,7 +19,7 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
   localOnly?: boolean;
   matchTriggerWidth?: boolean;
   onOpenAccount?: () => void;
-  onOpenSettings: (page: "providers" | "usage") => void;
+  onOpenSettings: (page?: "providers" | "usage") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const desktop = useDesktopControls();
@@ -74,7 +74,7 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
   }, [open]);
 
   const close = () => { setOpen(false); anchor.current?.focus(); };
-  const navigate = (page: "providers" | "usage") => { close(); onOpenSettings(page); };
+  const navigate = (page?: "providers" | "usage") => { close(); onOpenSettings(page); };
   const logout = async () => {
     if (!driver || busy) return;
     generation.current++;
@@ -103,7 +103,9 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
   };
   const action = (value: ChromeAccountAction) => {
     if (value === "logout") void logout();
-    else if (value === "usage" || value === "providers") navigate(value);
+    // The legacy chrome action names the Settings entry, not a page deep link.
+    else if (value === "providers") navigate();
+    else if (value === "usage") navigate(value);
     else if (value === "devices") { close(); phoneNavigation?.openDevices(); }
     else if (value === "account") { close(); onOpenAccount?.(); }
   };

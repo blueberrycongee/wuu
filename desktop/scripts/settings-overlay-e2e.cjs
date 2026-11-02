@@ -228,11 +228,22 @@ async function run() {
       const e = document.querySelector(".settings-main"), r = e?.getBoundingClientRect();
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
     }), "Settings page is visible and above the conversation");
+    await until(() => evaluate(win.webContents, () => document.querySelector('[data-testid="settings-general"]')), "Ordinary Settings entry opens General");
     await capture(`${name}-settings`);
+    for (const page of ["appearance", "archive"]) {
+      await evaluate(win.webContents, page => document.querySelector(`.settings-nav-item[data-wuu-page="${page}"]`).scrollIntoView({ block: "nearest" }), page);
+      await click(win.webContents, `.settings-nav-item[data-wuu-page="${page}"]`);
+      await until(() => evaluate(win.webContents, page => document.querySelector(`.settings-nav-item[data-wuu-page="${page}"][aria-current="page"]`), page), `Navigate within Settings to ${page}`);
+      await click(win.webContents, '[data-ribbon-id="conversations"]');
+      await until(() => evaluate(win.webContents, () => !document.querySelector(".settings-shell")), "Close Settings before reopening");
+      const reopened = await openMenu();
+      await click(reopened.view.webContents, '[data-settings-page="providers"]'); await closed();
+      await until(() => evaluate(win.webContents, () => document.querySelector('[data-testid="settings-general"]')), `Reopen General after ${page}`);
+    }
     await click(win.webContents, '[data-ribbon-id="conversations"]');
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");
     assert.ok(await evaluate(win.webContents, () => Boolean(document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="resize-thread"] [data-turn-status="in_progress"]'))), "Running conversation remains active after Settings");
-    scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings navigation and exact draft preservation");
+    scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "General on initial entry and reopen after Appearance/Archive", "Settings navigation and exact draft preservation");
     scenario.status = "passed"; save();
   }
   for (const cancel of ["escape", "outside"]) {

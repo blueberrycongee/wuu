@@ -1072,6 +1072,10 @@ describe("main composer focus continuity", () => {
     await vi.waitFor(async () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.settings-nav-item[data-wuu-page="providers"]')!.click());
+    await vi.waitFor(async () => {
+      await flushAsync();
       expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
     });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());

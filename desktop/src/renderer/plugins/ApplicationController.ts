@@ -1659,7 +1659,7 @@ export class ApplicationController implements HostApplicationService {
         signal?.throwIfAborted();
         this.updateState(state => ({ ...state, initialized: state.initialized ? { ...state.initialized, ...result } : state.initialized })); return;
       }
-      case "settings.open": this.setSettings(true, (input as ApplicationActionMapV1["settings.open"]["input"]).pageId); return;
+      case "settings.open": this.setSettings(true, (input as ApplicationActionMapV1["settings.open"]["input"]).pageId ?? "general"); return;
       case "settings.close": this.setSettings(false); return;
       case "settings.update-value": {
         const { key, value } = input as ApplicationActionMapV1["settings.update-value"]["input"];

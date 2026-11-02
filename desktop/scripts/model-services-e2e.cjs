@@ -197,6 +197,8 @@ async function run() {
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
+  await waitFor(main, () => document.querySelector('.settings-nav-item[data-wuu-page="providers"]'));
+  await click(main, '.settings-nav-item[data-wuu-page="providers"]');
   await waitFor(main, () => document.querySelector('[data-provider="fixture"][data-default]') && document.querySelector('[data-testid="settings-connection-add"]'));
   assert.equal(await evaluate(main, () => Boolean(document.querySelector('[data-catalog]'))), false, 'Inactive catalog is hidden until explicitly opened.');
   assert.equal(await evaluate(main, () => Boolean(document.querySelector('[data-testid="settings-engine-codex-status"]'))), false, 'Uninstalled inactive engines are hidden.');
@@ -323,6 +325,8 @@ async function run() {
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
+  await waitFor(main, () => document.querySelector('.settings-nav-item[data-wuu-page="providers"]'));
+  await click(main, '.settings-nav-item[data-wuu-page="providers"]');
   await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
   await click(main, '[data-provider="gateway"]');
   await waitFor(main, () => document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-extra"]'));

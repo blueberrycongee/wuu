@@ -600,6 +600,7 @@ describe("sidebar collapse-state independence", () => {
     // The account menu is portaled outside the mounted App container.
     await click('[data-settings-page="providers"]', document);
     await act(async () => { await import("./SettingsView"); });
+    await click('.settings-nav-item[data-wuu-page="providers"]');
     await click('[data-provider="codex-account"]');
     const sourceValue = () => container.querySelector('.connection-fields .model-service-status')?.textContent;
     expect(sourceValue()).toContain(translateCurrent("settings.codexSourceSaved"));
@@ -637,6 +638,7 @@ describe("sidebar collapse-state independence", () => {
     // The account menu is portaled outside the mounted App container.
     await click('[data-settings-page="providers"]', document);
     await act(async () => { await import("./SettingsView"); });
+    await click('.settings-nav-item[data-wuu-page="providers"]');
     await click('[data-provider="grok-account"]');
     expect(window.wuu.authenticateEngine).not.toHaveBeenCalled();
     await click('[data-testid="grok-login-start"]');

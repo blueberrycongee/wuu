@@ -38,6 +38,8 @@ app.whenReady().then(async () => {
     await until(() => document.querySelector('[data-settings-page="providers"]'));
     await evaluate(() => document.querySelector('[data-settings-page="providers"]').click());
     await until(() => document.querySelector('.app-shell[data-settings-open]'));
+    await until(() => document.querySelector('.settings-nav-item[data-wuu-page="providers"]'));
+    await evaluate(() => document.querySelector('.settings-nav-item[data-wuu-page="providers"]').click());
     const measurements = [];
     await until(() => document.querySelector('[data-testid="settings-connection-add"]'));
     for (const theme of ["light", "dark"]) {

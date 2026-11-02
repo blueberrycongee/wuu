@@ -19,6 +19,24 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it.each(["archive", "appearance", "providers", "plugin-view:fixture:preferences"])("opens ordinary settings on General after visiting %s, preserving drafts and explicit navigation", async pageId => {
+    const controller = new ApplicationController();
+    await controller.invoke("composer.set-draft", { text: "keep this draft" });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await controller.invoke("settings.open", { pageId });
+      expect(controller.getSnapshot().settings).toMatchObject({ open: true, activePageId: pageId });
+      await controller.invoke("settings.close", {});
+      await controller.invoke("settings.open", {});
+      expect(controller.getSnapshot().settings).toMatchObject({ open: true, activePageId: "general" });
+      expect(controller.getSnapshot().composer.draftText).toBe("keep this draft");
+    }
+    // Explicit in-settings navigation still wins, even while the surface is open.
+    await controller.invoke("settings.open", { pageId });
+    expect(controller.getSnapshot().settings.activePageId).toBe(pageId);
+    await controller.invoke("settings.open", {});
+    expect(controller.getSnapshot().settings.activePageId).toBe("general");
+    expect(controller.getSnapshot().composer.draftText).toBe("keep this draft");
+  });
   it.each(["conversations", "catalog"] as const)("leaves settings when navigating to %s without changing the draft", async section => {
     const controller = new ApplicationController();
     await controller.invoke("composer.set-draft", { text: "keep this draft" });
