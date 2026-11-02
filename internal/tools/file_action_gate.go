@@ -80,6 +80,13 @@ func (t *Toolkit) PrepareFileAction(ctx context.Context, call providers.ToolCall
 		if len(data) <= 32*1024 && utf8.Valid(data) {
 			content := string(data)
 			a.BeforeContent = &content
+			encoded, err := json.Marshal(a)
+			if err != nil {
+				return FileAction{}, err
+			}
+			if len(encoded) > 64*1024 {
+				a.BeforeContent = nil
+			}
 		}
 	}
 	return a, nil
