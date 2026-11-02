@@ -286,6 +286,14 @@ export interface UICompositionV1 {
   /** Nested contributions use the same component; recursive slot cycles fail visibly. */
   readonly Slot: ComponentType<UISlotProps>;
 }
+/** Context for the default conversation's welcome slot. Render each part at most once.
+ * Each node includes its own independently replaceable slot and native fallback. */
+export interface ConversationWelcomeContextV1 extends Readonly<Record<string, unknown>> {
+  readonly projectDraft: boolean;
+  readonly greeting: ReactNode;
+  readonly mascot: ReactNode;
+  readonly usage: ReactNode;
+}
 export interface UISlotRenderProps {
   readonly locale: string;
   readonly translate: (key: string, values?: Readonly<Record<string, string | number>>) => string;
