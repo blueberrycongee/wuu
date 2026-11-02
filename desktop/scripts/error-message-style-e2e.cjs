@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const http = require('node:http');
+const { createErrorStyleProvider } = require('./error-message-style-provider.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain } = require('electron');
@@ -19,7 +19,7 @@ app.setPath('userData', path.join(fixture, 'profile'));
 Object.assign(process.env, { WUU_HOME: home, HOME: userHome, WUU_DESKTOP_CORE: process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'), WUU_SAFE_MODE: '0', WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_ENABLE_CUA_LINUX: '0', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1' });
 delete process.env.ELECTRON_RENDERER_URL;
 const report = { status: 'running', source: process.env.WUU_E2E_SOURCE_COMMIT, font, checks: [], requests: [], ipc: [], samples: [], screenshots: [], errors: [], limitations: ['Real Linux Electron product with a loopback synthetic provider; not physical macOS acceptance.', 'Appearance modes are applied through the production saved-preference observer; message submission and disclosure/recovery use native input.'] };
-let win, providerMode = 'auth', blockedRetry;
+let win;
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
@@ -35,22 +35,8 @@ app.on('browser-window-created', (_event, created) => {
   win.webContents.on('console-message', event => { if (event.level === 'error') report.errors.push(event.message); });
 });
 const diagnostic = 'Synthetic authentication failure. ' + 'A long diagnostic must wrap without hiding the recovery actions or crossing the message frame. '.repeat(4) + 'reference=' + '0123456789abcdef'.repeat(18);
-const server = http.createServer((req, res) => {
-  let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
-    if (req.method === 'GET') return res.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
-    const body = JSON.parse(raw); report.requests.push({ path: req.url, stream: body.stream, mode: providerMode });
-    if (!body.stream) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Recovery appearance fixture' }, finish_reason: 'stop' }] })); }
-    if (providerMode === 'auth') { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: diagnostic, type: 'authentication_error' } })); }
-    if (providerMode === 'retry-blocked') { blockedRetry = res; return; }
-    if (providerMode === 'retry') { providerMode = 'retry-blocked'; res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '2' }); return res.end(JSON.stringify({ error: { message: 'Synthetic service interruption before retry.' } })); }
-    reply(res);
-  });
-});
-function reply(res) {
-  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-  res.write(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'Recovery completed through the local provider.' }, finish_reason: null }] })}\n\n`);
-  res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
-}
+const provider = createErrorStyleProvider(report.requests, diagnostic);
+const { server } = provider;
 const composer = '[data-main-conversation-composer] textarea:not(.composer-response-selection-comment)';
 function key(keyCode, modifiers = []) { win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); }
 async function nativeTarget(selector) {
@@ -101,7 +87,7 @@ async function measure() {
 }
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])), providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture' } } }));
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', agent: { model_roles: { title: { provider: 'fixture', model: 'fixture-title' } } }, engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])), providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture' } } }));
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'fixture', name: 'Error appearance fixture', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }], active_context: { kind: 'project', project_id: 'fixture', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'zh-CN', theme: 'light', message_flow_font_size: font }));
   report.coreSHA256 = createHash('sha256').update(fs.readFileSync(process.env.WUU_DESKTOP_CORE)).digest('hex');
@@ -112,7 +98,7 @@ async function run() {
   win.setBounds({ x: 0, y: 0, width: 1280, height: 1000 }); win.show(); win.focus(); win.webContents.setBackgroundThrottling(false);
   await type('请检查这条错误消息的气泡外观。Synthetic product acceptance; no live model.');
   await until(() => evaluate(() => Boolean(document.querySelector('.turn-failure[role="alert"]'))), 'real provider failure');
-  assert.equal(report.requests.filter(item => item.stream && item.mode === 'auth').length, 1, 'authentication failure is not retried automatically');
+  assert.equal(report.requests.filter(item => item.stream && item.role === 'turn' && item.mode === 'auth').length, 1, 'authentication failure is not retried automatically');
   const persisted = await evaluate(id => window.wuu.resumeThread(id), report.ipc.find(item => item.channel === 'wuu:turn-start').thread);
   const expectedDiagnostic = persisted.thread.turns.at(-1).error.message;
   report.expectedDiagnostic = expectedDiagnostic;
@@ -146,17 +132,17 @@ async function run() {
     report.samples.push({ width, theme, messageStyle, closed, expanded }); save();
   }
   report.checks.push('IM and regular bubble, light/dark, wide/narrow: readable saved font, no clipping, native expandable details and visible keyboard focus');
-  providerMode = 'success';
-  const before = report.requests.filter(item => item.stream).length;
+  provider.mode = 'success';
+  const before = report.requests.filter(item => item.stream && item.role === 'turn').length;
   await click('.turn-failure-action:not(.is-primary)');
-  await until(() => report.requests.filter(item => item.stream).length > before, 'native recovery reached the real core/provider');
+  await until(() => report.requests.filter(item => item.stream && item.role === 'turn').length > before, 'native recovery reached the real core/provider');
   await until(() => evaluate(() => document.body.innerText.includes('Recovery completed through the local provider.')), 'recovery answer');
   await capture('recovered');
   report.checks.push('Native recovery action submits through production preload/main/Go and displays the local provider answer');
   await until(() => evaluate(() => !document.querySelector('[data-latest-turn="true"][data-turn-status="in_progress"]')), 'recovery settled');
-  providerMode = 'retry';
+  provider.mode = 'retry';
   await type('检查自动重试期间的消息外观。Synthetic retry state.');
-  await until(() => blockedRetry && evaluate(() => Boolean(document.querySelector('[data-latest-turn="true"] .turn-failure.is-retrying'))), 'real provider retry remains pending');
+  await until(() => provider.blockedRetry && evaluate(() => Boolean(document.querySelector('[data-latest-turn="true"] .turn-failure.is-retrying'))), 'real provider retry remains pending');
   for (const [width, theme] of [[1280, 'light'], [640, 'dark']]) {
     win.setBounds({ x: 0, y: 0, width, height: 1000 });
     await evaluate(async theme => { await window.wuu.setThemePreference(theme); const key = 'wuu.appearance.v1'; localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key) || '{}'), messageStyle: 'im' })); window.dispatchEvent(new StorageEvent('storage', { key })); }, theme);
@@ -166,7 +152,7 @@ async function run() {
     report.samples.push({ width, theme, messageStyle: 'im', retrying });
     await capture(`im-${width}-${font}-${theme}-retrying`);
   }
-  providerMode = 'success'; reply(blockedRetry);
+  provider.mode = 'success'; provider.reply(provider.blockedRetry);
   await until(() => evaluate(() => !document.querySelector('[data-latest-turn="true"] .turn-failure.is-retrying') && document.querySelector('[data-latest-turn="true"]')?.innerText.includes('Recovery completed through the local provider.')), 'automatic retry completed');
   report.checks.push('Real 503 retry preserves status/countdown and completes without a manual retry');
   report.status = 'passed'; save(); console.log(`PASS error message style ${font}: ${output}`);
