@@ -4,7 +4,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 
 const desktop = path.resolve(__dirname, "..");
 const output = process.env.WUU_SCROLL_FADE_OUTPUT || fs.mkdtempSync(path.join(desktop, "out", "sidebar-scroll-fade-e2e-"));
@@ -14,6 +14,11 @@ app.setPath("userData", path.join(output, "profile"));
 process.env.WUU_STREAM_E2E_CWD = path.resolve(desktop, "..");
 process.env.WUU_STREAM_E2E_SIDEBAR_THREADS = "48";
 const results = [];
+// Synthetic server state stays in the main process across actual page reloads.
+process.env.WUU_RECENT_CATALOG_E2E = "1";
+let recentCatalog;
+let catalogReads = 0;
+ipcMain.handle("test:recent-catalog", () => { catalogReads++; return recentCatalog; });
 
 app.whenReady().then(async () => {
   const timeout = setTimeout(() => { console.error("Scroll fade E2E timed out"); app.exit(1); }, 60000);
@@ -201,9 +206,154 @@ app.whenReady().then(async () => {
     await waitFor(() => !document.querySelector('[data-sidebar-recents]').matches(':hover'));
     assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "releasing the hold preserves arrival order");
     results.push({ label: "recent-held-consecutive-creation", before: heldBefore, admitted, after: await recentTitles() });
+    const captureVisibleRecent = async name => {
+      await waitFor(() => !document.querySelector('[data-wuu-component="launch-view"]')
+        && !document.querySelector('.thread-list-collapse[data-state="closing"]'));
+      await evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        await Promise.all(document.getAnimations().filter(animation => animation.timeline instanceof DocumentTimeline
+          && animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+          .map(animation => animation.finished.catch(() => {})));
+        document.querySelector('[data-sidebar-recents]').scrollIntoView({ block: "start" });
+        await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      });
+      await waitFor(titles => titles.every(title => {
+        const row = [...document.querySelectorAll('[data-sidebar-recents] .thread-row')]
+          .find(row => row.querySelector('.thread-row-title')?.textContent === title);
+        if (!row || row.closest('[inert], [aria-hidden="true"]')) return false;
+        const rect = row.getBoundingClientRect(), viewport = document.querySelector('.sidebar-main').getBoundingClientRect();
+        return rect.height > 0 && rect.top >= Math.max(0, viewport.top) && rect.bottom <= Math.min(innerHeight, viewport.bottom)
+          && row.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      }), admitted);
+      results.push({ label: `${name}-visible`, contentSize: win.getContentSize(), titles: admitted });
+      await capture(name);
+    };
+    const nativeThreads = (await evaluate(() => window.wuu.listAllThreads())).threads.filter(thread => thread.id.startsWith("thread-"));
+    assert.equal(nativeThreads.length, 2, "two Recent submissions reached the synthetic backend");
+    const settled = nativeThreads.map((thread, index) => {
+      const title = admitted[admitted.length - 1 - index];
+      const turn = { id: `turn-${thread.id}`, status: "completed", started_at: thread.created_at,
+        completed_at: new Date().toISOString(), items_view: "full", items: [{ id: `user-${thread.id}`, type: "user_message", status: "completed", text: title }] };
+      emit("turn/completed", { thread_id: thread.id, turn });
+      const snapshot = { ...thread, title, status: "idle", turns: [turn], turn_count: 1 };
+      emit("thread/updated", { thread: snapshot });
+      return snapshot;
+    });
+    await waitFor(() => document.querySelectorAll('[data-sidebar-recents] .thread-row.running').length === 0);
+    await captureVisibleRecent("recent-before-catalog-refresh");
+    const olderHistory = Array.from({ length: 60 }, (_, index) => ({ ...template,
+      id: `late-history-${index}`, title: `Older catalog conversation ${index + 1}`, status: "in_progress",
+      created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z", turns: [] }));
+    recentCatalog = [...initialThreads, ...settled, ...olderHistory];
+    const readsBefore = catalogReads;
+    // Expanding the workspace performs the production catalog refresh, rather
+    // than pretending that renderer notifications are a list RPC response.
+    await evaluate(() => { const row = document.querySelector('.project-row'); if (row.getAttribute('aria-expanded') === 'true') row.click(); });
+    await waitFor(() => document.querySelector('.project-row').getAttribute('aria-expanded') !== 'true');
+    await evaluate(() => document.querySelector('.project-row').click());
+    await waitFor(() => document.querySelector('.project-row').getAttribute('aria-expanded') === 'true');
+    while (catalogReads === readsBefore) await new Promise(resolve => setTimeout(resolve, 25));
+    await evaluate(async () => {
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      while (document.querySelector('[data-functional-group-id="workspace"] .thread-list-more')) {
+        document.querySelector('[data-functional-group-id="workspace"] .thread-list-more').click();
+        await new Promise(requestAnimationFrame);
+      }
+    });
+    await waitFor(() => document.querySelectorAll('.project-thread-list .thread-row').length === 110);
+    await evaluate(() => document.querySelector('.project-row').click());
+    await captureVisibleRecent("recent-after-catalog-refresh");
+    assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "older catalog arrivals do not displace newly created Recent rows");
+    const beforeReload = await recentTitles();
+    await captureVisibleRecent("recent-before-page-reload");
+    // No drag here: the automatically established order must survive a new
+    // renderer and initialize/list responses from the still-running backend.
+    await new Promise(resolve => { win.webContents.once("did-finish-load", resolve); win.reload(); });
+    await waitFor(() => document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])').length === 50);
+    await captureVisibleRecent("recent-after-page-reload");
+    assert.deepEqual(await recentTitles(), beforeReload, "real page reload preserves automatic Recent order beyond the cap");
+    results.push({ label: "recent-catalog-and-page-reload", catalogCount: recentCatalog.length,
+      created: admitted, beforeReload, afterReload: await recentTitles() });
+    recentCatalog = undefined;
     // The remaining scroll scenarios start with their own default ordering.
-    await evaluate(() => localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace"));
+    await evaluate(() => {
+      localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
+      localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
+    });
     console.log("PASS: new Recent conversations stay first through admission, completion, focus release, manual reordering, reload, and the 50-row cap.");
+  };
+  const checkWorkspaceCompletion = async () => {
+    await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+    await waitFor(() => Boolean(document.querySelector(".project-row")));
+    await evaluate(() => {
+      const workspace = document.querySelector(".project-row");
+      if (workspace.getAttribute("aria-expanded") !== "true") workspace.click();
+      const recent = document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle');
+      if (recent?.getAttribute("aria-expanded") === "true") recent.click();
+    });
+    await waitFor(() => document.querySelectorAll('.project-thread-list .thread-row').length === 5);
+    const turns = [1, 2].map(index => ({ id: `workspace-completion-${index}`, status: "in_progress",
+      started_at: new Date().toISOString(), items_view: "full", items: [] }));
+    for (let index = 0; index < turns.length; index++) {
+      emit("turn/started", { thread_id: `sidebar-fade-${index + 1}`, turn: turns[index] });
+    }
+    await waitFor(() => document.querySelectorAll('.project-thread-list .thread-row.running').length === 2);
+    const point = await evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise(requestAnimationFrame);
+      // Measure completion only after the intentional workspace/Recent folds.
+      await Promise.all(document.getAnimations()
+        .filter(animation => animation.timeline instanceof DocumentTimeline
+          && animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+        .map(animation => animation.finished.catch(() => {})));
+      const rows = [...document.querySelectorAll('.project-thread-list .thread-row')];
+      const focused = rows[4].querySelector('.thread-row-main');
+      focused.focus({ preventScroll: true });
+      const rect = focused.getBoundingClientRect();
+      return { x: Math.round(rect.left + 20), y: Math.round(rect.top + rect.height / 2) };
+    });
+    win.webContents.sendInputEvent({ type: "mouseMove", ...point });
+    await waitFor(() => document.querySelectorAll('.project-thread-list .thread-row')[4].matches(':hover'));
+    await evaluate(() => {
+      const rows = [...document.querySelectorAll('.project-thread-list .thread-row')];
+      const state = { rows, tops: rows.map(row => row.getBoundingClientRect().top),
+        focused: document.activeElement, removed: 0, stable: true, frames: 0, monitoring: true };
+      state.observer = new MutationObserver(records => records.forEach(record => record.removedNodes.forEach(node => {
+        if (rows.some(row => node === row || node.contains?.(row))) state.removed++;
+      })));
+      state.observer.observe(document.querySelector('.project-thread-list'), { childList: true, subtree: true });
+      const sample = () => {
+        if (!state.monitoring) return;
+        const current = [...document.querySelectorAll('.project-thread-list .thread-row')];
+        state.stable &&= current.length === rows.length && current.every((row, index) => row === rows[index]
+          && Math.abs(row.getBoundingClientRect().top - state.tops[index]) < 0.5);
+        state.stable &&= document.activeElement === state.focused && rows[4].matches(':hover');
+        state.frames++;
+        requestAnimationFrame(sample);
+      };
+      window.__workspaceCompletion = state;
+      requestAnimationFrame(sample);
+    });
+    for (let index = 0; index < turns.length; index++) {
+      emit("turn/completed", { thread_id: `sidebar-fade-${index + 1}`,
+        turn: { ...turns[index], status: "completed", completed_at: new Date().toISOString() } });
+      await waitFor(count => document.querySelectorAll('.project-thread-list .thread-row.running').length === count, 1 - index);
+    }
+    const completion = await evaluate(async () => {
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      const state = window.__workspaceCompletion;
+      state.monitoring = false;
+      state.observer.disconnect();
+      return { stable: state.stable, removed: state.removed, frames: state.frames,
+        completed: state.rows.every(row => row.querySelector('.thread-row-main').getAttribute('aria-busy') === 'false') };
+    });
+    results.push({ label: "workspace-consecutive-completion", ...completion });
+    await capture("workspace-consecutive-completion");
+    assert.ok(completion.frames > 0 && completion.stable, "workspace completion preserves row positions, keyboard focus, and pointer target");
+    assert.equal(completion.removed, 0, "workspace completion never detaches existing rows");
+    assert.equal(completion.completed, true, "workspace execution indicators still settle");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 600, y: 20 });
   };
   try {
     await win.loadURL("about:blank");
@@ -483,6 +633,7 @@ app.whenReady().then(async () => {
       await checkRecentOrder();
     } else {
     await checkRecentOrder();
+    await checkWorkspaceCompletion();
     const threadID = "sidebar-fade-0";
     const now = new Date().toISOString();
     const turn = {

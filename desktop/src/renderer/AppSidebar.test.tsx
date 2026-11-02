@@ -25,6 +25,8 @@ const desktop: ApplicationDesktopControlsV1 = { hostKind: "desktop", popOut: { k
 beforeEach(() => {
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
+  window.localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
+  window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
   unreadViewOpen = false;
   attentionStickyIDs = new Set();
   container = document.createElement("div");
@@ -33,6 +35,8 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
+  window.localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
+  window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   desktopPluginHost.unload("test:app-sidebar-view");
@@ -258,10 +262,56 @@ describe("AppSidebar layout", () => {
     expect(titles()).toEqual(["older"]);
   });
 
+  it.each(["reload", "late catalog"])("keeps newly created Recent conversations reachable after %s with more than 50 older rows", (refresh) => {
+    window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
+    const old = Array.from({ length: 60 }, (_, index): ThreadSummary => ({
+      id: `old-${index}`, title: `Older conversation ${index}`, cwd: "/repo/wuu", workspace_id: "project-1",
+      status: "in_progress", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    }));
+    const fresh: ThreadSummary = { ...old[0], id: "new", title: "Newly created conversation", status: "idle",
+      created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" };
+    const render = (threads: ThreadSummary[]) => renderSidebar({ activeThreadID: fresh.id,
+      workspaceThreadsByWorkspaceID: { "project-1": threads } });
+    const visible = () => [...container.querySelectorAll('[data-sidebar-recents] .thread-row-title')].map(row => row.textContent);
+    if (refresh === "reload") render(old);
+    render(refresh === "reload" ? [...old, fresh] : [fresh]);
+    expect(visible()).toContain(fresh.title);
+    if (refresh === "reload") {
+      act(() => root?.unmount()); root = null;
+      render([]);
+    }
+    render([...old, fresh]);
+    expect(visible()).toContain(fresh.title);
+  });
+
+  it("migrates manual Recent order and does not rewrite it for unchanged activity", () => {
+    const rows = ["first", "second"].map((id): ThreadSummary => ({ id, title: id, cwd: "/repo/wuu", workspace_id: "project-1",
+      status: "idle", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0 }));
+    window.localStorage.setItem("wuu.desktop.sidebarThreadOrderByWorkspace", JSON.stringify({ __wuu_recent_threads__: ["second", "first"] }));
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    const render = (threads: ThreadSummary[]) => renderSidebar({ workspaceThreadsByWorkspaceID: { "project-1": threads } });
+    const titles = () => [...container.querySelectorAll('[data-sidebar-recents] .thread-row-title')].map(row => row.textContent);
+    try {
+      render(rows);
+      expect(titles()).toEqual(["second", "first"]);
+      const saved = window.localStorage.getItem("wuu.desktop.recentThreadArrivalOrder.v1");
+      writes.mockClear();
+      render(rows.map(row => ({ ...row, updated_at: "2026-09-01T00:00:00Z" })));
+      expect(writes.mock.calls.filter(([key]) => key === "wuu.desktop.recentThreadArrivalOrder.v1")).toHaveLength(0);
+      act(() => root?.unmount()); root = null;
+      render([]);
+      expect(window.localStorage.getItem("wuu.desktop.recentThreadArrivalOrder.v1")).toBe(saved);
+      render([rows[0], { ...rows[1], archived: true }]);
+      expect(titles()).toEqual(["first"]);
+    } finally { writes.mockRestore(); }
+  });
+
   it.each(["pointer", "keyboard"])("keeps newly visited conversations in Recent across repeated navigation during a %s hold", (interaction) => {
     const thread = (id: string, day: number): ThreadSummary => ({
       id, title: id, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle",
-      created_at: "2026-09-01T00:00:00Z", updated_at: `2026-09-${day}T00:00:00Z`,
+      created_at: `2026-09-${day}T00:00:00Z`, updated_at: `2026-09-${day}T00:00:00Z`,
       preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
     });
     const older = thread("older", 11);
