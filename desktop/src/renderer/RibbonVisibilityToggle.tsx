@@ -2,13 +2,14 @@ import { flushSync } from "react-dom";
 import { PanelLeftClose, PanelLeftOpen } from "./WuuIcons";
 import { readNavigationRibbonPreferences, saveNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { showActionErrorToast } from "./Toast";
+import { TruncatedText } from "./TruncatedText";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 
-export function RibbonVisibilityToggle({ collapsed, nativeTooltip = false }: { collapsed: boolean; nativeTooltip?: boolean }): JSX.Element {
+export function RibbonVisibilityToggle({ collapsed, nativeTooltip = false, labelVisible = false }: { collapsed: boolean; nativeTooltip?: boolean; labelVisible?: boolean }): JSX.Element {
   const { t } = useI18n();
   const label = t(collapsed ? "ribbon.expand" : "ribbon.collapse");
-  return <Tooltip content={label} native={nativeTooltip}>
+  return <Tooltip content={label} native={nativeTooltip} disabled={labelVisible}>
     <button type="button"
       className={collapsed ? "icon-button ribbon-restore-toggle" : "sidebar-ribbon-button ribbon-collapse-toggle"}
       aria-label={label}
@@ -27,7 +28,7 @@ export function RibbonVisibilityToggle({ collapsed, nativeTooltip = false }: { c
       }}
     >
       {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
-      {!collapsed ? <span className="sidebar-ribbon-label">{label}</span> : null}
+      {!collapsed ? <TruncatedText className="sidebar-ribbon-label" text={label} nativeTooltip={nativeTooltip} /> : null}
     </button>
   </Tooltip>;
 }

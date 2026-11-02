@@ -77,7 +77,9 @@ describe("application shell assembly", () => {
     try {
       await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "owner", generation: "one", id: "shell" }}
         surfaceBindings={{ "ui.surface": { pluginId: "owner", generation: "one", id: "surface" } }} />));
-      expect(container.textContent).toBe("Unaffected UI");
+      expect(container.textContent).toContain("Unaffected UI");
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("No implicit fallback");
       expect(host.getGenerationDiagnostics("one", "one").some(item => item.message.includes("UI slot conflict"))).toBe(true);
       expect(host.getGenerationDiagnostics("two", "one").some(item => item.message.includes("UI slot conflict"))).toBe(true);
       await act(async () => host.disable("two"));
@@ -124,11 +126,12 @@ describe("application shell assembly", () => {
     const skins = Object.freeze({ skins: [], selected: "default" });
     const make = (mode: "light" | "dark", size: number) => {
       const lifetime = new AbortController();
+      const observeContentThemeSelection = vi.fn(() => vi.fn());
       const source = { ...base, capabilities: { ...base.capabilities, themeChanges: true, appContext: true, appContextChanges: true, appContextRecording: true },
         currentAppliedTheme: () => mode, getThemePreference: vi.fn(async () => mode), getMessageFlowFontSize: vi.fn(async () => size),
         readAppearance: () => ({ ...base.appearanceDefaults, motion: mode === "dark" ? "reduce" as const : "system" as const }),
         getShellSkins: () => skins, readBackground: async () => null,
-        observeAppliedTheme: vi.fn(() => vi.fn()), observeContentThemeSelection: vi.fn(() => vi.fn()),
+        observeAppliedTheme: vi.fn(() => vi.fn()), observeContentThemeSelection,
         onThemePreferenceChange: vi.fn(() => vi.fn()), observeAppearance: vi.fn(() => vi.fn()),
         observeBackground: vi.fn(() => vi.fn()), subscribeShellSkins: vi.fn(() => vi.fn()),
         onAppContextChanged: vi.fn(() => vi.fn()),
@@ -137,7 +140,7 @@ describe("application shell assembly", () => {
       } as unknown as ReturnType<typeof createApplicationSettingsControls> & { setAppContextShortcutRecording: ReturnType<typeof vi.fn> };
       const scoped = scopeApplicationSettingsControls(() => source, lifetime.signal, () => lifetime.signal.throwIfAborted());
       const controls = retainPresentationReads({ settingsControls: scoped } as ApplicationServiceV1, lifetime.signal).settingsControls;
-      return { source, controls, lifetime };
+      return { source, controls, lifetime, observeContentThemeSelection };
     };
     const old = make("light", 14), next = make("dark", 18), third = make("light", 20);
     const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
@@ -149,12 +152,18 @@ describe("application shell assembly", () => {
       await act(async () => render(old.controls));
       const theme = container.querySelector('[data-testid="settings-theme-dark"]');
       const font = container.querySelector<HTMLInputElement>('[data-testid="settings-message-flow-font-size-input"]')!;
+      // The palette selector and mode previews each own a selection observer.
+      expect(old.observeContentThemeSelection).toHaveBeenCalledTimes(2);
       old.lifetime.abort(new PluginLifecycleCancellationError());
+      for (const subscription of old.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
       await act(async () => window.dispatchEvent(new Event("blur")));
       expect(container.querySelector('[role="alert"]')).toBeNull();
       await act(async () => render(next.controls));
       expect(next.source.observeAppliedTheme).toHaveBeenCalledTimes(2);
-      expect(next.source.observeContentThemeSelection).toHaveBeenCalledOnce();
+      expect(next.observeContentThemeSelection).toHaveBeenCalledTimes(2);
+      expect(old.observeContentThemeSelection).toHaveBeenCalledTimes(2);
+      for (const subscription of old.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
+      for (const subscription of next.observeContentThemeSelection.mock.results) expect(subscription.value).not.toHaveBeenCalled();
       expect(next.source.onThemePreferenceChange).toHaveBeenCalledOnce();
       expect(next.source.observeAppearance).toHaveBeenCalledOnce();
       expect(next.source.onAppContextChanged).toHaveBeenCalledOnce();
@@ -173,9 +182,14 @@ describe("application shell assembly", () => {
       });
       expect(font.value).toBe("1");
       await act(async () => render(third.controls));
+      expect(third.observeContentThemeSelection).toHaveBeenCalledTimes(2);
+      for (const subscription of next.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
       expect(third.source.getMessageFlowFontSize).toHaveBeenCalledOnce();
       expect(font.value).toBe("1");
     } finally { act(() => root.unmount()); next.lifetime.abort(); third.lifetime.abort(); container.remove(); }
+    for (const generation of [old, next, third]) {
+      for (const subscription of generation.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
+    }
   });
 
   it("keeps explicit recovery usable while a successor shell registers late", async () => {
@@ -258,6 +272,41 @@ describe("application shell assembly", () => {
       await act(async () => { host.unload("content"); host.unload("frame"); });
       expect(container.textContent).toBe("native");
     } finally { act(() => root.unmount()); host.unload("shell"); host.unload("content"); host.unload("frame"); logging.mockRestore(); }
+  });
+
+  // A failed selected surface remains visible, retries locally, and never chooses
+  // the slot fallback or remounts unrelated shell state.
+  it("recovers a selected surface without remounting its shell", async () => {
+    const { host } = fixture();
+    let broken = true;
+    const shellMount = vi.fn();
+    await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "body", cardinality: "one", service: "ui.body" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => {
+        React.useEffect(shellMount, []);
+        return <main><span>Still usable</span><slots.Slot name="shell/body" fallback={<span>Forbidden fallback</span>} /></main>;
+      } });
+    } });
+    await host.activateGeneration({ pluginId: "body", generation: "one", register: api => {
+      api.registerUIContribution({ id: "content", target: "shell/body", render: () => {
+        if (broken) throw new Error("private render details");
+        return <span>Recovered content</span>;
+      } });
+    } });
+    const container = document.createElement("div"), root = createRoot(container);
+    const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "one", id: "shell" }}
+        surfaceBindings={{ "ui.body": { pluginId: "body", generation: "one", id: "content" } }} />));
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("private render details");
+      expect(container.textContent).not.toContain("Forbidden fallback");
+      broken = false;
+      await act(async () => container.querySelector('button')!.click());
+      expect(container.textContent).toBe("Still usableRecovered content");
+      expect(shellMount).toHaveBeenCalledOnce();
+      expect(host.getGenerationDiagnostics("body", "one").some(item => item.kind === "render")).toBe(true);
+    } finally { act(() => root.unmount()); host.unload("body"); host.unload("shell"); logging.mockRestore(); }
   });
 
   it("rejects wrappers for graph-selected surfaces without displacing the active contribution", async () => {
@@ -470,7 +519,7 @@ describe("application shell assembly", () => {
     render("default");
     expect(container.textContent).toBe("default navigation");
     act(() => host.unload("default"));
-    expect(container.textContent).toBe("");
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
     expect(container.textContent).not.toContain("Implicit default");
     act(() => host.unload("shell"));
     expect(container.textContent).toContain(translateCurrent("plugins.applicationUnavailable"));

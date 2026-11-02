@@ -47,7 +47,7 @@ When the user asks to compile or update the local CLI to the latest source:
 When the user asks to publish a release, carry it through in this order and stop only where noted:
 
 1. Work in a clean detached worktree from the latest `origin/main`; leave the user's checkout alone.
-2. On a `chore/release-<version>` branch, run `make release-prepare` (UTC CalVer), then rewrite the dated `CHANGELOG.md` section in the short Contributors + Highlights format from `docs/en/project/release.md`. Check that `node scripts/release-version.mjs notes <version>` prints the intended notes and `make version-check` passes.
+2. On a `chore/release-<version>` branch, collect changes from the previous release tag to the intended release source commit and write `docs/releases/<version>.md` in the short format from `docs/en/project/release.md`, including any compatibility or migration requirements. Review the notes before running `make release-prepare RELEASE_VERSION=<version>` (UTC CalVer). Do not append to the frozen `CHANGELOG.md`. Check that `node scripts/release-version.mjs notes <version>` prints the intended notes and `make version-check` passes.
 3. Before writing highlights, confirm with the user that each headline feature is visible in production builds; hide immature features behind a production flag in the same PR rather than advertising them.
 4. Commit only the release files, push the branch, and open a `chore(release): prepare <version>` PR.
 5. If CI fails, read the failed log. Rerun the failed job only when the failure is unrelated to the PR and shown to be flaky; otherwise fix it on the branch. Report the cause either way.

@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 import {
   analyzeSurfaceMatrix,
   formatBaseline,
+  scanDeclarations,
+  findVarCalls,
   listProductionSources,
   type SurfaceMatrix,
 } from "../desktop/src/renderer/styles/themeCoverage";
@@ -38,6 +40,25 @@ const cssFiles = readdirSync(stylesDir)
 const anchorSources = listProductionSources(rendererDir).map((path) => readFileSync(path, "utf8"));
 const contract = JSON.parse(readFileSync(contractPath, "utf8"));
 
+// Geometry and typography are outside the paint matrix. Trace all ordinary
+// declarations for the token reference, including private alias dependencies.
+const definitions = new Map<string, string[]>();
+const pendingReferences: string[] = [];
+for (const file of cssFiles) {
+  for (const { prop, value } of scanDeclarations(file.source)) {
+    const references = findVarCalls(value).flatMap(call => call.name ? [call.name] : []);
+    if (prop.startsWith("--")) {
+      definitions.set(prop, [...(definitions.get(prop) ?? []), ...references]);
+    } else pendingReferences.push(...references);
+  }
+}
+const referencedTokens = new Set<string>();
+while (pendingReferences.length) {
+  const name = pendingReferences.pop()!;
+  if (referencedTokens.has(name)) continue;
+  referencedTokens.add(name);
+  pendingReferences.push(...(definitions.get(name) ?? []));
+}
 const matrix = analyzeSurfaceMatrix(cssFiles, anchorSources);
 const outputs = new Map([
   [resolve(repoRoot, "config/desktop-theme-surface-matrix.json"), renderMatrixJson(matrix)],
@@ -45,8 +66,8 @@ const outputs = new Map([
     resolve(stylesDir, "themeCoverage.baseline.txt"),
     renderCoverageBaseline(formatBaseline(cssFiles)),
   ],
-  [resolve(repoRoot, "docs/en/customize/theme-surface-matrix.md"), renderDoc(matrix, contract, "en")],
-  [resolve(repoRoot, "docs/zh-cn/customize/theme-surface-matrix.md"), renderDoc(matrix, contract, "zh")],
+  [resolve(repoRoot, "docs/en/customize/theme-surface-matrix.md"), renderDoc(contract, "en")],
+  [resolve(repoRoot, "docs/zh-cn/customize/theme-surface-matrix.md"), renderDoc(contract, "zh")],
 ]);
 
 let stale = false;
@@ -98,26 +119,8 @@ function renderMatrixJson(matrix: SurfaceMatrix): string {
     .join(",\n")}\n  ]\n}\n`;
 }
 
-/** Reverse view: public token -> the (anchor, state, paint property) cells it reaches. */
-function tokenSurfaces(matrix: SurfaceMatrix): Map<string, string[]> {
-  const cellsByToken = new Map<string, Set<string>>();
-  for (const row of matrix.rows) {
-    for (const token of row.tokens) {
-      const cells = cellsByToken.get(token) ?? new Set<string>();
-      cells.add(`${row.anchor}|${row.state}|${row.prop}`);
-      cellsByToken.set(token, cells);
-    }
-  }
-  const sorted = new Map<string, string[]>();
-  for (const [token, cells] of cellsByToken) {
-    sorted.set(token, [...cells].sort());
-  }
-  return sorted;
-}
-
-function renderDoc(matrix: SurfaceMatrix, contract, locale: "en" | "zh"): string {
-  const surfaces = tokenSurfaces(matrix);
-  const isWired = (token: string) => (surfaces.get(token) ?? []).length > 0;
+function renderDoc(contract, locale: "en" | "zh"): string {
+  const isWired = (token: string) => referencedTokens.has(token);
   const zh = locale === "zh";
 
   const categoryLabels: Record<string, Record<string, string>> = {
@@ -213,8 +216,9 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 
 合同共定义 **${contract.tokens.length} 个公开 token**（其中 **${legacyCount} 个**
 旧名称兼容别名）与 **${contract.syntax.length} 个语法高亮 token**；当前 **${wiredCount} 个**
-已接入宿主界面。「已接入」表示宿主样式已在引用该 token，覆盖会立即生效；
-「未接入（预留）」表示 token 已声明但宿主尚未引用，覆盖暂不改变任何界面。
+有宿主样式引用路径。「已接入」包括颜色、排版和几何属性，沿样式变量依赖计算；
+这不是所有主题和状态下的渲染保证，用户保存的外观设置及 CSS 层叠仍可能覆盖它。
+「未接入（预留）」表示在宿主样式中未找到引用路径；插件自己的样式不在此统计内。
 
 ${sections}
 
@@ -259,10 +263,12 @@ token, so anything you do not override keeps the built-in appearance:
 
 The contract defines **${contract.tokens.length} public tokens** (**${legacyCount}**
 legacy compatibility aliases) and **${contract.syntax.length} syntax-highlighting
-tokens**; **${wiredCount}** of them are currently wired into host surfaces.
-"Wired" means host styles already reference the token and overrides take effect;
-"Not wired (reserved)" means the token is declared but the host does not consume
-it yet, so overrides do not change anything.
+tokens**; **${wiredCount}** have a reference path in host styles.
+"Wired" traces CSS variable dependencies from color, typography, and geometry
+properties. It is not a rendering guarantee for every theme or state: saved
+appearance preferences and the CSS cascade can still override a value.
+"Not wired (reserved)" means no host-style reference path was found; plugin-owned
+styles are outside this count.
 
 ${sections}
 

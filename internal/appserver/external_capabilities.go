@@ -228,7 +228,7 @@ func (b *externalCapabilities) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		result = map[string]any{
 			"protocolVersion": version, "capabilities": map[string]any{"tools": map[string]any{}},
 			"serverInfo":   map[string]string{"name": "wuu-host-capabilities", "version": "1"},
-			"instructions": "These Wuu browser and computer tools are bound to this conversation and turn. User takeover or stop revokes control. Use their native image results to inspect screenshots.",
+			"instructions": "These Wuu workspace discovery, browser and computer tools are bound to this conversation and turn. User takeover or stop revokes control. Use their native image results to inspect screenshots.",
 		}
 	case "ping":
 		result = map[string]any{}

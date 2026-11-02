@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
 import { ArtifactSources } from "./artifactSources";
+import { AppServerResponseError } from "./appServerErrors";
 import { RemoteAppServerClient } from "./remoteAppServerClient";
 import { AppServerClientPool } from "./appServerClients";
 import { requestTrustedRemote, type TrustedRemotePeer } from "./trustedRemoteTransport";
@@ -40,6 +42,21 @@ function fixture(select: (context: RuntimeContext) => SessionRoute = () => remot
 async function sent(peer: () => Peer | undefined) { await vi.waitFor(() => expect(peer()?.sent.length).toBeGreaterThan(0)); return peer()!; }
 
 describe("desktop remote session routing", () => {
+  it("preserves explicit protocol refusal codes across the remote adapter",async()=>{
+    const {pool,peers}=fixture();const request=pool.request("turn/steer",{thread_id:"original",expected_turn_id:"review",client_id:"same",prompt:"question"});
+    const rejected=expect(request).rejects.toMatchObject({code:"isolated_turn_requires_queue"});
+    const peer=await sent(()=>peers[0]);peer.proto.feed({id:peer.sent.at(-1)!.id,error:{code:"isolated_turn_requires_queue",message:"isolated"}});
+    await rejected;await expect(request).rejects.toBeInstanceOf(AppServerResponseError);
+  });
+  it("never moves the isolated-turn queue fallback to a replacement receiver",async()=>{
+    let host="host-a";const {pool,peers}=fixture(()=>remote(host));
+    const request=pool.bindSessionRequest(context,"original");
+    const pending=steerOrQueueIsolatedTurn(request,{thread_id:"original",expected_turn_id:"review",client_id:"same",prompt:"question"});
+    const rejected=expect(pending).rejects.toThrow(/changed|available/);
+    const peer=await sent(()=>peers[0]);host="host-b";
+    peer.proto.feed({id:peer.sent.at(-1)!.id,error:{code:"isolated_turn_requires_queue",message:"isolated"}});
+    await rejected;expect(peers).toHaveLength(1);expect(peer.sent.map(item=>item.method)).toEqual(["turn/steer"]);
+  });
   it("fails closed for disabled/invalid routes and missing credentials", async () => {
     expect(() => parseSessionRoutes({ version: 2 })).toThrow();
     expect(() => parseSessionRoutes({ version: 1, default: { kind: "remote", execution_host: "local" } })).toThrow();

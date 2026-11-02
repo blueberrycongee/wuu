@@ -1,33 +1,28 @@
 import { useSettingsControls } from "../SettingsControlsContext";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { useI18n } from "../i18n";
+import { SettingsRow } from "../SettingsRow";
 import { SettingsGroup } from "../SettingsSection";
 import { BackgroundSettings } from "./BackgroundSettings";
 import { useBackground } from "./useBackground";
 import { useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
 
-function SkinCard({ skin, mode, selected, choose, title, image }: {
+function SkinChip({ skin, mode, selected, choose, title }: {
   skin?: AvailableShellSkin; mode: "light" | "dark"; selected: boolean; choose: () => void;
-  title: string; image?: string;
+  title: string;
 }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
   const loaded = useSkinImage(skin, mode, controls);
-  const variant = skin?.[mode];
-  const url = loaded.url || image;
-  const style: CSSProperties = {
-    backgroundColor: variant?.background ?? "var(--sidebar-material-fill)",
-    color: variant?.foreground ?? (mode === "light" ? "#171719" : "#f5f5f7"),
-    backgroundImage: url ? `linear-gradient(${variant?.overlay ?? "transparent"}, ${variant?.overlay ?? "transparent"}), url(${JSON.stringify(url)})` : undefined,
-    backgroundPosition: variant?.position ?? "center",
-  };
-  return <button type="button" role="radio" aria-checked={selected} className="shell-skin-card" onClick={choose}>
-    <span className="shell-skin-preview" style={style} aria-hidden="true">
-      <span className="shell-skin-preview-rail"><i /><i /><i /></span>
-      <span className="shell-skin-preview-page"><i /><i /><i /></span>
-    </span>
+  return <button
+    type="button"
+    role="radio"
+    aria-checked={selected}
+    className={`shell-skin-chip${selected ? " active" : ""}`}
+    onClick={choose}
+    title={skin ? (loaded.error ? t("settings.skinImageFailed") : skin.pluginName) : undefined}
+  >
     <span>{title}</span>
-    {skin && <small>{loaded.error ? t("settings.skinImageFailed") : skin.pluginName}</small>}
   </button>;
 }
 
@@ -37,35 +32,38 @@ export function ShellSkinSettings(): JSX.Element {
   const { skins, selected } = useShellSkins(controls);
   const { preferences } = useBackground(controls);
   const [mode, setMode] = useState(controls.currentAppliedTheme);
-  const [image, setImage] = useState("");
   const [error, setError] = useState(false);
   useEffect(() => {
     setMode(controls.currentAppliedTheme());
     return controls.observeAppliedTheme(setMode);
   }, [controls]);
   useEffect(() => {
-    if (!preferences) { setImage(""); return; }
+    if (!preferences) return;
     const controller = new AbortController();
-    let url = "";
-    setImage("");
-    void controls.processBackground(preferences.image, mode, controller.signal).then(blob => {
-      if (controller.signal.aborted) return;
-      url = URL.createObjectURL(blob); setImage(url);
-    }).catch(() => {});
-    return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
+    void controls.processBackground(preferences.image, mode, controller.signal).catch(() => {});
+    return () => { controller.abort(); };
   }, [controls, preferences?.image, mode]);
   const choose = (key: string) => {
     try { controls.selectShellSkin(key); setError(false); } catch { setError(true); }
   };
   const unavailable = !["default", "custom"].includes(selected) && !skins.some(skin => skin.key === selected);
-  return <>
-    <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
-      <SkinCard mode={mode} selected={selected === "default" || (selected === "custom" && !preferences)} choose={() => choose("default")} title={t("settings.skinDefault")} />
-      {skins.map(skin => <SkinCard key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
-      {preferences && <SkinCard mode={mode} selected={selected === "custom"} choose={() => choose("custom")} title={t("settings.skinCustom")} image={image} />}
-    </div>
+  const hasMultipleSkins = skins.length > 0 || Boolean(preferences) || unavailable;
+  return <SettingsGroup>
+    {hasMultipleSkins ? (
+      <SettingsRow title={t("settings.shellSkin")}>
+        <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
+          <SkinChip mode={mode} selected={selected === "default" || (selected === "custom" && !preferences)} choose={() => choose("default")} title={t("settings.skinDefault")} />
+          {skins.map(skin => <SkinChip key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
+          {preferences && <SkinChip mode={mode} selected={selected === "custom"} choose={() => choose("custom")} title={t("settings.skinCustom")} />}
+        </div>
+      </SettingsRow>
+    ) : (
+      <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")} hidden>
+        <SkinChip mode={mode} selected={true} choose={() => choose("default")} title={t("settings.skinDefault")} />
+      </div>
+    )}
     {unavailable && <p className="settings-description" role="status">{t("settings.skinUnavailable")}</p>}
     {error && <p role="alert">{t("settings.saveFailed")}</p>}
-    <SettingsGroup><BackgroundSettings /></SettingsGroup>
-  </>;
+    <BackgroundSettings />
+  </SettingsGroup>;
 }

@@ -47,6 +47,16 @@ func moveStatePrefix(wuuHome, workspaceRoot string, transfer StateTransfer, chec
 }
 
 func moveStatePrefixContext(ctx context.Context, wuuHome, workspaceRoot string, transfer StateTransfer, checkpoint func(stateTransferStage) error) error {
+	return runStateTransfer(ctx, wuuHome, workspaceRoot, transfer, false, checkpoint)
+}
+
+// CheckStateTransfer validates the same documents and limits as commit without
+// fencing a writer or changing data. Commit rechecks under the same store lock.
+func CheckStateTransfer(ctx context.Context, wuuHome, workspaceRoot string, transfer StateTransfer) error {
+	return runStateTransfer(ctx, wuuHome, workspaceRoot, transfer, true, nil)
+}
+
+func runStateTransfer(ctx context.Context, wuuHome, workspaceRoot string, transfer StateTransfer, checkOnly bool, checkpoint func(stateTransferStage) error) error {
 	if err := validateStateTransfer(transfer); err != nil {
 		return err
 	}
@@ -92,6 +102,9 @@ func moveStatePrefixContext(ctx context.Context, wuuHome, workspaceRoot string, 
 		if !sourceFenced {
 			return errors.New("plugin storage transfer receipt has no matching source fence")
 		}
+		if checkOnly {
+			return nil
+		}
 		// Confirm durability without rewriting the inspected bytes or replacing
 		// the file. An earlier rename may have succeeded before its durability
 		// confirmation failed; the receipt must never replay source backups.
@@ -128,6 +141,9 @@ func moveStatePrefixContext(ctx context.Context, wuuHome, workspaceRoot string, 
 	targetBytes, err := encodeStateRecord(target, transfer.TargetSubjectID)
 	if err != nil {
 		return err
+	}
+	if checkOnly {
+		return nil
 	}
 	if checkpoint != nil {
 		if err := checkpoint(beforeStateTransferFence); err != nil {
@@ -225,7 +241,7 @@ func matchStateTransfer(record stateRecord, transfer StateTransfer) (bool, error
 			if previous == transfer {
 				matched = true
 			} else if stateTransfersConflict(previous, transfer) {
-				return false, errors.New("plugin storage transfer conflicts with existing ownership metadata")
+				return false, fmt.Errorf("plugin storage transfer conflicts with existing ownership metadata: transfer %q (%s -> %s, prefix %q) cannot replace transfer %q (%s -> %s, prefix %q); existing data and ownership are unchanged; restore the previous storage identities before retrying", transfer.ID, transfer.SourceSubjectID, transfer.TargetSubjectID, transfer.KeyPrefix, previous.ID, previous.SourceSubjectID, previous.TargetSubjectID, previous.KeyPrefix)
 			}
 		}
 	}

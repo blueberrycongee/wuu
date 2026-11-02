@@ -1,7 +1,7 @@
 package providers
 
 // ClientInputReceipt describes durable acceptance independently of execution.
-// InHistory means local history admission, never model consumption or reading.
+// InHistory means local history admission; ReadAt records inclusion in an agent model context.
 type ClientInputReceipt struct {
 	RequestID      string `json:"request_id"`
 	ReceiptID      string `json:"receipt_id"`
@@ -19,6 +19,7 @@ type ClientInputReceipt struct {
 	ReceiptState   string `json:"receipt_state"`
 	ExecutionState string `json:"execution_state"`
 	AcceptedAt     string `json:"accepted_at"`
+	ReadAt         string `json:"read_at,omitempty"`
 	Revision       int64  `json:"revision"`
 	ErrorStage     string `json:"error_stage,omitempty"`
 	Error          string `json:"error,omitempty"`

@@ -3,23 +3,27 @@ import type { ApplicationServiceV1, UICompositionV1 } from "../../../../packages
 import { BrowserControlsProvider } from "../BrowserControlsContext";
 import { ConversationControlsProvider } from "../ConversationControlsContext";
 
+const Source = createContext<{ id: string; fingerprint: string; graph_generation: string } | undefined>(undefined);
 const Lifetime = createContext<AbortSignal | undefined>(undefined);
 // Independent transports reuse native message presentation, not the selected
 // Coding conversation's contributed actions, completions or history authority.
 const presentationOnly: UICompositionV1 = { Slot: ({ fallback }) => fallback ?? null };
 
-export function PluginConversationScope({ application, signal, children }: {
+export function PluginConversationScope({ application, signal, source, children }: {
   application: ApplicationServiceV1;
   signal: AbortSignal;
+  source?: { id: string; fingerprint: string; graph_generation: string };
   children: ReactNode;
 }): JSX.Element {
-  return <Lifetime.Provider value={signal}>
+  return <Source.Provider value={source}><Lifetime.Provider value={signal}>
     <BrowserControlsProvider service={application.browser}>
       <ConversationControlsProvider application={application} slots={presentationOnly} slotOwner="independent-conversation">
         {children}
       </ConversationControlsProvider>
     </BrowserControlsProvider>
-  </Lifetime.Provider>;
+  </Lifetime.Provider></Source.Provider>;
 }
 
 export function usePluginConversationLifetime(): AbortSignal | undefined { return useContext(Lifetime); }
+
+export function usePluginConversationSource() { return useContext(Source); }

@@ -1,6 +1,7 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ConversationAttachmentPreview, ConversationAttachmentPreviewContext, type ConversationAttachmentRequest } from "../ConversationAttachmentPreview";
 import { useConversationAttachmentTabs } from "../ConversationAttachmentTabs";
+import { TruncatedText } from "../TruncatedText";
 import { useI18n } from "../i18n";
 import { Maximize2, Minimize2, X } from "../WuuIcons";
 
@@ -36,12 +37,12 @@ export function PluginViewAttachmentPreviews({ children }: { children: ReactNode
           <div className="plugin-view-attachment-tabs" role="tablist" aria-label={t("plugins.viewTabs")}>
             {tabs.state.tabs.map((tab, index) => <div key={tab.id} className="plugin-view-attachment-tab">
               <button type="button" role="tab" id={`${contentId}-tab-${index}`} aria-selected={tab.id === active.id} tabIndex={tab.id === active.id ? 0 : -1} aria-controls={contentId}
-                title={tab.name} onClick={() => tabs.focusTab(tab.id)} onKeyDown={event => {
+                onClick={() => tabs.focusTab(tab.id)} onKeyDown={event => {
                   const next = event.key === "ArrowRight" ? (index + 1) % tabs.state.tabs.length : event.key === "ArrowLeft" ? (index + tabs.state.tabs.length - 1) % tabs.state.tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.state.tabs.length - 1 : undefined;
                   if (next === undefined) return;
                   event.preventDefault(); tabs.focusTab(tabs.state.tabs[next].id);
                   event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
-                }}>{tab.name}</button>
+                }}><TruncatedText text={tab.name} className="plugin-view-attachment-tab-label" /></button>
               <button type="button" className="icon-button" aria-label={`${t("common.close")} ${tab.name}`} onClick={() => { tabs.closeTab(tab.id); if (tabs.state.tabs.length === 1) close(); }}><X /></button>
             </div>)}
           </div>

@@ -43,7 +43,7 @@ function Fixture() {
           {open && <WorkspacePickerMenu projects={projects}
             activeContext={{ kind: "project", project_id: workspace, cwd: `/projects/${workspace}` }}
             query={query} setQuery={setQuery} onSelectWorkspace={setWorkspace}
-            onSelectNoProject={() => setWorkspace("")} onCreateWorkspace={() => {}} onOpenWorkspace={() => {}}
+            onCreateWorkspace={() => {}} onOpenWorkspace={() => {}}
             onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), undefined)} />}
         </div>
         <div className="composer-workspace-bar">

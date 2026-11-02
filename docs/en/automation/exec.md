@@ -96,7 +96,10 @@ intended. SIGINT and SIGTERM cancel input collection or the active execution and
 return exit code `5`; expiration of the deadline returns `4`.
 
 Cancellation attempts to settle the active Run and performs bounded cleanup, so
-process exit can follow the deadline by a short cleanup interval. Keep draining
+process exit can follow the deadline by a cleanup interval: up to 2 seconds for
+the interrupt request, then up to 10 seconds for controller shutdown and durable
+result persistence. Cleanup failures are reported on stderr and retained in the
+returned error; a prior cancellation or output-failure exit code is preserved. Keep draining
 stdout and stderr until exit. If stdout stops accepting data, cancellation does
 not wait indefinitely for it: the final JSONL result is best effort and may be
 missing or incomplete. A disconnected output pipe cancels execution and returns

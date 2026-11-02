@@ -399,7 +399,9 @@ func (r *ReliableStreamClient) forwardAttempt(
 		if !ok {
 			return streamErr, sawDone, forwardedEvents, finalizedToolCalls
 		}
+		beforeWhitespace := argumentWhitespace
 		if err := argumentWhitespace.observe(ev); err != nil {
+			argumentWhitespace.logFailure(ev, beforeWhitespace, operation.ID, attempt.ID)
 			return err, sawDone, forwardedEvents, finalizedToolCalls
 		}
 		if err := r.observeAttemptEvent(attempt, ev); err != nil {

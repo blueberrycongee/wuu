@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -146,5 +148,91 @@ func TestActivatedPluginsEnforcesMinimumWuuVersion(t *testing.T) {
 	devCompatible.MinimumWuuVersion = "0.15.0"
 	if got := activatedPlugins(cfg, []pluginpkg.Plugin{devCompatible}); len(got) != 1 {
 		t.Fatalf("dev host did not satisfy base-version constraint: %+v", got)
+	}
+}
+
+// A product may suggest an optional default without granting trust or turning a
+// user's explicit disable into a startup failure.
+func TestOptionalCompositionPluginDefaults(t *testing.T) {
+	defaultOff := false
+	plugin := pluginpkg.Plugin{
+		Manifest:  pluginpkg.Manifest{ID: "fixture.optional", DefaultEnabled: &defaultOff},
+		SubjectID: "plugin:bundled:optional", Official: true,
+	}
+	selection := &composition.Config{Version: composition.Version, Profile: "fixture", Profiles: map[string]composition.Profile{
+		"fixture": {Bundles: []string{"fixture"}},
+	}, Bundles: map[string]composition.Bundle{
+		"fixture": {Patches: []composition.Patch{}, OptionalModules: []string{plugin.ID}},
+	}}
+	cfg := config.Config{Composition: selection}
+	plan, err := ResolvePluginActivationPlan(cfg, []pluginpkg.Plugin{plugin})
+	if err != nil || len(plan.Plugins) != 1 {
+		t.Fatalf("optional default did not activate: %+v, %v", plan.Plugins, err)
+	}
+	settings := &extensions.Settings{}
+	settings.SetDisabled(plugin.SubjectID, true)
+	cfg.Extensions = settings
+	plan, err = ResolvePluginActivationPlan(cfg, []pluginpkg.Plugin{plugin})
+	if err != nil || len(plan.Plugins) != 0 {
+		t.Fatalf("explicit disable must leave optional plugin inactive without blocking the product: %+v, %v", plan.Plugins, err)
+	}
+	cfg.Extensions = nil
+	plan, err = ResolvePluginActivationPlan(cfg, nil)
+	if err != nil || len(plan.Plugins) != 0 {
+		t.Fatalf("missing optional plugin blocked the product: %+v, %v", plan.Plugins, err)
+	}
+	selection.Patches = []composition.Patch{{Modules: map[string]bool{plugin.ID: false}}}
+	plan, err = ResolvePluginActivationPlan(cfg, []pluginpkg.Plugin{plugin})
+	if err != nil || len(plan.Plugins) != 0 {
+		t.Fatalf("composition exclusion ignored: %+v, %v", plan.Plugins, err)
+	}
+	selection.Patches = nil
+	plugin.Official = false
+	plan, err = ResolvePluginActivationPlan(cfg, []pluginpkg.Plugin{plugin})
+	if err != nil || len(plan.Plugins) != 0 {
+		t.Fatalf("optional default granted trust: %+v, %v", plan.Plugins, err)
+	}
+}
+
+func TestPersonalProductEnablesGenerativeUIDefault(t *testing.T) {
+	disabled := false
+	plugin := pluginpkg.Plugin{
+		Manifest:  pluginpkg.Manifest{ID: "generative-ui", DefaultEnabled: &disabled},
+		SubjectID: "plugin:bundled:generative-ui", Official: true,
+	}
+	personal := config.Config{Composition: composition.DefaultConfig("personal")}
+	if got := activatedPlugins(personal, []pluginpkg.Plugin{plugin}); len(got) != 1 {
+		t.Fatalf("personal default did not enable GenUI: %+v", got)
+	}
+	desktop := config.Config{Composition: composition.DefaultConfig("desktop")}
+	if got := activatedPlugins(desktop, []pluginpkg.Plugin{plugin}); len(got) != 0 {
+		t.Fatalf("desktop default unexpectedly enabled GenUI: %+v", got)
+	}
+}
+
+func TestExistingPersonalHostCompositionEnablesGenerativeUI(t *testing.T) {
+	disabled := false
+	plugin := pluginpkg.Plugin{
+		Manifest:  pluginpkg.Manifest{ID: "generative-ui", DefaultEnabled: &disabled},
+		SubjectID: "plugin:bundled:generative-ui", Official: true,
+	}
+	for _, version := range []int{2, 3, 4, composition.Version} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			cfg := config.Config{Composition: &composition.Config{Version: version, Profile: "desktop"}}
+			owner := &Session{configOverrides: ConfigOverrides{CompositionProfile: "personal"}}
+			effective, err := owner.applyRuntimeConfig(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := activatedPlugins(effective, []pluginpkg.Plugin{plugin}); len(got) != 1 {
+				t.Fatalf("personal host did not enable GenUI with existing v%d composition: %+v", version, got)
+			}
+			settings := &extensions.Settings{}
+			settings.SetDisabled(plugin.SubjectID, true)
+			effective.Extensions = settings
+			if got := activatedPlugins(effective, []pluginpkg.Plugin{plugin}); len(got) != 0 {
+				t.Fatalf("personal host ignored explicit disable: %+v", got)
+			}
+		})
 	}
 }

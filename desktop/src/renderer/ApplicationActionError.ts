@@ -1,6 +1,6 @@
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { translateCurrent } from "./i18n";
-import { showErrorToast } from "./Toast";
+import { showActionErrorToast } from "./Toast";
 
 /** Retirement is normal navigation, not a failed action in the new workspace. */
 export function showApplicationActionError(error: unknown): void {
@@ -9,8 +9,8 @@ export function showApplicationActionError(error: unknown): void {
   // details in diagnostics rather than presenting an opaque browser exception.
   if ((error instanceof Error || error instanceof DOMException) && error.name === "AbortError") {
     console.error("Application action interrupted", error);
-    showErrorToast(translateCurrent("common.actionInterrupted"));
+    showActionErrorToast(translateCurrent("common.actionInterrupted"));
     return;
   }
-  showErrorToast(error);
+  showActionErrorToast(error);
 }

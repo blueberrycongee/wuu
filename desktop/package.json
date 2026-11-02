@@ -24,9 +24,11 @@
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
     "build:ripgrep": "node scripts/fetch-ripgrep.cjs",
     "build:ripgrep:win": "node scripts/fetch-ripgrep.cjs --platform=win32",
-    "build": "node scripts/build-web.cjs && electron-vite build",
-    "pack:mac": "npm run build:core && npm run build:ripgrep && npm run build:cua-mac && npm run build:app-context-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish=never --config.electronDist=node_modules/electron/dist",
-    "dist:mac": "npm run build:core && npm run build:ripgrep && npm run build:cua-mac && npm run build:app-context-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
+    "build:web": "node scripts/build-web.cjs",
+    "build:renderer": "electron-vite build",
+    "build": "npm run build:web && npm run build:renderer",
+    "pack:mac": "node scripts/build-package-prerequisites.cjs && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:mac": "node scripts/build-package-prerequisites.cjs && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
     "pack:win": "npm run build:core:win && npm run build:ripgrep:win && npm run build && electron-builder --win dir --publish=never",
     "dist:win": "npm run build:core:win && npm run build:ripgrep:win && npm run build && electron-builder --win nsis zip --publish=never",
     "release:desktop": "node scripts/release-desktop.cjs",
@@ -86,6 +88,7 @@
     "test:e2e:project-agent": "electron-vite build && electron scripts/project-agent-gate-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
     "test:e2e:settings-overlay": "electron scripts/settings-overlay-e2e.cjs",
+    "test:e2e:font-picker": "electron scripts/font-picker-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
     "typecheck": "tsc --noEmit",
     "test:release-signing": "node --test scripts/test-release-signing.cjs",
@@ -93,14 +96,15 @@
     "build:app-context-mac": "node scripts/build-app-context-mac.cjs",
     "test:e2e:app-context": "electron-vite build && electron scripts/app-context-e2e.cjs",
     "build:cua-linux": "node scripts/build-cua-linux.cjs",
-    "pack:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux dir --x64 --publish=never --config.electronDist=node_modules/electron/dist",
-    "dist:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux AppImage deb --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "pack:linux": "node scripts/build-package-prerequisites.cjs && electron-builder --linux dir --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:linux": "node scripts/build-package-prerequisites.cjs && electron-builder --linux AppImage deb --x64 --publish=never --config.electronDist=node_modules/electron/dist",
     "release:linux": "node scripts/release-linux.cjs",
     "test:e2e:linux-package": "node scripts/linux-package-e2e.cjs",
     "test:release-packaging": "node --experimental-strip-types --test scripts/bundled-dependency-licenses.test.mjs scripts/packaged-worker-observer.test.cjs",
     "test:e2e:packaged": "node scripts/packaged-runtime-smoke.cjs",
     "test:e2e:generative-ui": "electron scripts/generative-ui-e2e.cjs",
-    "test:e2e:generative-ui-app": "npm run build:core && npm run build && electron scripts/generative-ui-app-e2e.cjs"
+    "test:e2e:generative-ui-app": "npm run build:core && npm run build && electron scripts/generative-ui-app-e2e.cjs",
+    "build:speech-mac": "node scripts/build-speech-mac.cjs"
   },
   "dependencies": {
     "electron-updater": "6.8.10",
@@ -163,7 +167,8 @@
       "extendInfo": {
         "NSScreenCaptureUsageDescription": "Wuu uses screen capture to observe apps during computer-use tasks.",
         "NSMicrophoneUsageDescription": "Wuu uses the microphone when you dictate text or allow a website to use it.",
-        "NSCameraUsageDescription": "Wuu uses the camera only when you allow a website to use it."
+        "NSCameraUsageDescription": "Wuu uses the camera only when you allow a website to use it.",
+        "NSSpeechRecognitionUsageDescription": "Wuu transcribes your voice into text when you start dictation."
       },
       "extraResources": [
         {
@@ -174,6 +179,10 @@
             "capture-target.node",
             "LICENSE.node-api-headers.txt"
           ]
+        },
+        {
+          "from": "build/bin/wuu-speech-mac",
+          "to": "bin/wuu-speech-mac"
         }
       ]
     },

@@ -514,6 +514,7 @@ export type ExtensionCommandDescriptor = {
 
 export interface ExtensionDesktopDescriptor {
   entry: string;
+  content_renderers?: Array<{ category: "tool-result"; match: string }>;
 }
 
 export interface ExtensionThemeDescriptor {
@@ -715,7 +716,7 @@ export type ConfigChangedNotification = {
   providers?: ProviderSummary[];
 };
 
-export type PluginPackageSourceKind = "directory" | "zip";
+export type PluginPackageSourceKind = "directory" | "zip" | "file";
 
 export type PluginPackageDistribution = {
   lock_version: 1;
@@ -728,7 +729,7 @@ export type PluginPackageDistribution = {
 };
 
 export type PluginPackageSourceParams = {
-  /** Local directory/ZIP, npm:name@exact-version, or lock:path. */
+  /** Local directory/ZIP/.ts file, npm:name@exact-version, or lock:path. */
   path: string;
   registry?: string;
   integrity?: string;
@@ -780,6 +781,7 @@ export interface PluginDesktopActivationParams {
 export interface PluginDesktopModuleReadParams {
   id: string;
   fingerprint: string;
+  graph_generation?: string;
 }
 
 export interface PluginDesktopModuleReadResult {
@@ -871,6 +873,19 @@ export interface PluginStorageResult {
   scope: PluginValueScope;
   key: string;
   value: string | null;
+}
+export interface PluginScopeInitializeParams extends PluginIdentityParams {
+  graph_generation: string;
+  user_space_id: string;
+  product_domain: "personal" | "coding";
+  composition_profile?: string;
+}
+export interface PluginScopeInvalidation {
+  id: string;
+  fingerprint: string;
+  graph_generation: string;
+  scope: string;
+  epoch: number;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
   /** Exact client-authored message, bound to this live plugin invocation by the host. */
@@ -2746,11 +2761,16 @@ export type ProviderStatePayload = {
 };
 
 export type ModelStepSummary = { provider: string; model: string; api_model?: string; revision?: number; step_index: number; operation_id: string; context_window_tokens?: number };
+export type StreamNotice = {
+  code?: string;
+  message: string;
+};
 export type StreamEventPayload = {
   model_step?: ModelStepSummary;
   type: string;
   agent_activity?: ExternalAgentActivity;
   lifecycle?: StreamLifecyclePayload;
+  notice?: StreamNotice;
   provider_state?: ProviderStatePayload;
 };
 
@@ -2889,6 +2909,8 @@ export type ThreadResumeResult = {
 export type ServerEvent = {
   workdir: string;
   session_locator?: SessionLocatorV1;
+  /** Scope verified by the main process for the event's owning user host. */
+  user_scope?: { user_space_id: string; product_domain: "personal" | "coding"; composition_profile?: string };
 } & (
   | {
       kind: "notification";
@@ -3218,7 +3240,24 @@ export type DesktopUpdateState =
   | { kind: "available" | "ready" | "error"; version: string }
   | { kind: "downloading"; version: string; percent: number };
 
+export type DictationEvent = { sessionId: string } & (
+  | { type: "cancelled" }
+  | { type: "state"; state: "requesting_microphone_permission" | "requesting_speech_permission" | "listening" | "finalizing" }
+  | { type: "level"; level: number }
+  | { type: "result"; text: string; is_final: boolean }
+  | { type: "error"; code: string; message?: string }
+);
+
+/** Optional local microphone and speech recognition capability. */
+export type DesktopDictationAPI = {
+  start(sessionId: string, locale: string): Promise<void>;
+  stop(sessionId: string): Promise<void>;
+  cancel(sessionId: string): Promise<void>;
+  onEvent(listener: (event: DictationEvent) => void): () => void;
+};
+
 export type WuuDesktopApi = {
+  dictation?: DesktopDictationAPI;
   readPluginVisibleHistory?: (request: PluginVisibleHistoryRequest) => Promise<PluginVisibleHistoryResult>;
   /** Desktop release updates; absent on remote and mobile hosts. */
   getDesktopUpdateState?: () => Promise<DesktopUpdateState>;
@@ -3258,6 +3297,8 @@ export type WuuDesktopApi = {
   discoverRecentWorkspaces?: () => Promise<RecentWorkspacesResult>;
   chooseWorkspaceDirectory?: () => Promise<string | null>;
   importWorkspaces?: (paths: string[]) => Promise<ProjectListResult>;
+  /** Recover a missing selected desktop workspace during initial bootstrap. */
+  recoverUnavailableProject?: () => Promise<ProjectRuntimeIssue | undefined>;
   listProjects: () => Promise<ProjectListResult>;
   createBlankProject: () => Promise<ProjectListResult>;
   chooseProjectFolder: () => Promise<ProjectListResult>;
@@ -3356,7 +3397,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: (options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;
@@ -3380,6 +3421,8 @@ export type WuuDesktopApi = {
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
+  initializePluginScope?: (params: PluginScopeInitializeParams) => Promise<readonly ExtensionInventoryRecord[]>;
+  onPluginScopeInvalidated?: (handler: (event: PluginScopeInvalidation) => void) => () => void;
   cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
   readMCPDefinition: (name: string) => Promise<MCPDefinitionResult>;
   configureMCPServers: (params: MCPConfigureParams) => Promise<MCPListResult>;
@@ -3600,7 +3643,12 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
-  ) => Promise<{ turn_id: string; delivery?: "active_turn" | "queued" }>;
+  ) => Promise<{
+    turn_id: string;
+    delivery?: "active_turn" | "queued";
+    /** Present only when an isolated-turn refusal was safely queued as independent user input. */
+    queued?: QueuedTurn;
+  }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
     threadId: string,

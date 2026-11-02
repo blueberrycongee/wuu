@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
-import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { UIRegisterFocusTargetV1, ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps, ConversationWelcomeContextV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
 import { ArtifactsProvider } from "../ArtifactsContext";
@@ -11,7 +11,7 @@ import { CachedConversationPanes } from "../CachedConversationPanes";
 import { ConversationSplitPane } from "../ConversationSplitPane";
 import { retainCachedConversationPaneThreads, selectCachedConversationPaneIDs } from "../ConversationPaneCache";
 import { ConversationForkDialog } from "../ConversationForkDialog";
-import { EmptyConversationHome, RuntimeLoading } from "../LoadingViews";
+import { EmptyConversationHome, EmptyHomeMascot, RuntimeLoading } from "../LoadingViews";
 import { EmptyHomeOverview } from "../EmptyHomeOverview";
 import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "../ComposerFloatingMenu";
 import { WorkbenchConnectionContext } from "../WorkbenchConnectionContext";
@@ -32,6 +32,7 @@ type Pane = "primary" | "secondary";
 export interface DefaultConversationLayout {
   scrollRef?: RefObject<HTMLDivElement | null>;
   contentRef?: RefObject<HTMLDivElement | null>;
+  composerFocusTargets?: Readonly<Record<Pane, UIRegisterFocusTargetV1>>;
   splitPaneRefs?: MutableRefObject<Record<Pane, HTMLElement | null>>;
   visible?: boolean;
   restoring?: boolean;
@@ -46,10 +47,10 @@ export interface DefaultConversationLayout {
 const noop = () => {};
 
 export function DefaultConversationSurface({ application, slots, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
-  return <ConversationControlsProvider application={application} slots={slots} slotOwner="wuu.default-conversation"><ArtifactsProvider application={application}><PreviewContentProvider service={application.previewContent} slots={slots}><BrowserControlsProvider service={application.browser}><ImagePreviewProvider><ConversationSurface application={application} {...layout} /></ImagePreviewProvider></BrowserControlsProvider></PreviewContentProvider></ArtifactsProvider></ConversationControlsProvider>;
+  return <ConversationControlsProvider application={application} slots={slots} slotOwner="wuu.default-conversation"><ArtifactsProvider application={application}><PreviewContentProvider service={application.previewContent} slots={slots}><BrowserControlsProvider service={application.browser}><ImagePreviewProvider><ConversationSurface application={application} slots={slots} {...layout} /></ImagePreviewProvider></BrowserControlsProvider></PreviewContentProvider></ArtifactsProvider></ConversationControlsProvider>;
 }
 
-function ConversationSurface({ application, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1 }): JSX.Element {
+function ConversationSurface({ application, slots, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const presentNavigation = usePresentedNavigation();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const { t } = useI18n(), hour = useCurrentHour();
@@ -135,6 +136,26 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
   >{selectedWorkspace!.name}</button>{greeting[1]}</> : greetingFor(hour, { kind: "wuu" });
   const activeDraft = view.drafts[view.drafts.activePane];
   const activeTab = view.tabs.items.find(tab => tab.id === view.tabs.activeTabId);
+  const projectDraft = Boolean(activeTab?.project);
+  const activity = activeDraft.text.trim() || activeDraft.imageIds.length || activeDraft.fileIds.length || activeDraft.selections.length ? "compose" : "idle";
+  const welcomeTitle = activeTab?.kind === "draft" && projectDraft ? t("projects.newProject") : title;
+  const welcomeContext = { projectDraft };
+  const mascot = <slots.Slot name="wuu.default-conversation/welcome.mascot" context={welcomeContext} fallback={<EmptyHomeMascot activity={activity} />} />;
+  const greetingPart = <slots.Slot name="wuu.default-conversation/welcome.greeting" context={welcomeContext} fallback={<>
+    <h2>{welcomeTitle}</h2>
+    {workspaceMenu && greeting && !projectDraft ? <FloatingMenuPortal anchorRef={workspaceTriggerRef} owner="conversation-workspace" placement="below" align="left" width={composerMenuWidth(244)} flip>
+      <div ref={workspaceMenuRef} role="menu" className="composer-context-menu"
+        style={{ width: "var(--floating-menu-available-width)", maxHeight: "min(340px, var(--floating-menu-available-height))" }}
+        onKeyDown={event => handleFloatingMenuKeyDown(event, () => setWorkspaceMenu(false), workspaceTriggerRef.current)}>
+        {view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => {
+          setWorkspaceMenu(false); workspaceTriggerRef.current?.focus();
+          run(presentNavigation(() => application.invoke("workspace.retarget-draft", { workspaceId: workspace.id })));
+        }}>{workspace.name}</button>)}
+      </div>
+    </FloatingMenuPortal> : null}
+  </>} />;
+  const usage = <slots.Slot name="wuu.default-conversation/welcome.usage" context={welcomeContext} fallback={projectDraft ? null : <EmptyHomeOverview application={application} />} />;
+  const welcome: ConversationWelcomeContextV1 = { projectDraft, mascot, greeting: greetingPart, usage };
   if (view.phase === "starting" || view.conversation.loading) return <RuntimeLoading status={view.connection.message ?? "connecting"} />;
   if (view.phase === "error" && !primary) return <RuntimeLoading status={view.conversation.error ?? view.connection.message ?? t("sideThread.unavailable")} />;
   return <WorkbenchConnectionContext.Provider value={view.connection.status === "connected"}>
@@ -146,23 +167,12 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
         {view.conversation.error ? <div role="alert">{view.conversation.error}</div> : null}
         {split ? <div className="conversation-split" style={{ "--conversation-split-left": `${layout.splitLeftPercent ?? 50}%` } as CSSProperties}>
           {(["primary", "secondary"] as const).map(pane => <SplitConversation key={pane} pane={pane} thread={pane === "primary" ? primary! : secondary!} application={application} onStreamFrame={onStreamFrame}
-            onScroll={layout.onScroll} onBodyRef={node => { if (layout.splitPaneRefs) layout.splitPaneRefs.current[pane] = node; }}
+            registerComposerFocusTarget={layout.composerFocusTargets?.[pane]} onScroll={layout.onScroll} onBodyRef={node => { if (layout.splitPaneRefs) layout.splitPaneRefs.current[pane] = node; }}
             fork={fork} edit={edit} submitEdit={submitEdit} cancelEdit={cancelEdit} canEdit={canEdit} openFile={openFile} openURL={openURL} openAgent={openAgent} openDiff={openDiff}
             separator={pane === "primary" ? <div className="conversation-split-resizer" role="separator" aria-orientation="vertical" aria-label={t("shell.resizeSplit")} aria-valuemin={CONVERSATION_SPLIT_MIN_PERCENT} aria-valuemax={CONVERSATION_SPLIT_MAX_PERCENT} aria-valuenow={Math.round(layout.splitLeftPercent ?? 50)} tabIndex={0} onPointerDown={layout.onSplitResizeStart} onDoubleClick={layout.onSplitSeparatorDoubleClick} onKeyDown={layout.onSplitSeparatorKey} /> : undefined} />)}
         </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={pending.turn as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
-          : empty ? layout.visible === false ? null : <EmptyConversationHome title={activeTab?.kind === "draft" && activeTab.project ? t("projects.newProject") : title} activity={activeDraft.text.trim() || activeDraft.imageIds.length || activeDraft.fileIds.length || activeDraft.selections.length ? "compose" : "idle"}>
-            <>{workspaceMenu && greeting && !activeTab?.project ? <FloatingMenuPortal anchorRef={workspaceTriggerRef} owner="conversation-workspace" placement="below" align="left" width={composerMenuWidth(244)} flip>
-              <div ref={workspaceMenuRef} role="menu" className="composer-context-menu"
-                style={{ width: "var(--floating-menu-available-width)", maxHeight: "min(340px, var(--floating-menu-available-height))" }}
-                onKeyDown={event => handleFloatingMenuKeyDown(event, () => setWorkspaceMenu(false), workspaceTriggerRef.current)}>
-                {view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => {
-                  setWorkspaceMenu(false); workspaceTriggerRef.current?.focus();
-                  run(presentNavigation(() => application.invoke("workspace.retarget-draft", { workspaceId: workspace.id })));
-                }}>{workspace.name}</button>)}
-              </div>
-            </FloatingMenuPortal> : null}
-            {activeTab?.project ? null : <EmptyHomeOverview application={application} />}</>
-          </EmptyConversationHome>
+          : empty ? layout.visible === false ? null : <slots.Slot name="wuu.default-conversation/welcome" context={welcome}
+            fallback={<EmptyConversationHome title={welcomeTitle} mascot={mascot} heading={greetingPart}>{usage}</EmptyConversationHome>} />
           : <CachedConversationPanes threadIDs={ids} threadsByID={cached} activeThreadID={primary?.id} restoring={layout.restoring} activeContextCwd={view.workspaces.activeRoot}
             contextCompositionEntries={contexts} instructionFilesEntries={instructions} historyMessageEdit={editState} onStreamFrame={onStreamFrame} onCollapseComplete={onCollapseComplete}
             onDismissContextComposition={dismiss} onDismissInstructions={dismiss} canEditThreadMessage={canEdit} onForkMessage={fork} onOpenFile={openFile} onOpenURL={openURL} onOpenAgent={openAgent}
@@ -174,7 +184,8 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
   </WorkbenchConnectionContext.Provider>;
 }
 
-function SplitConversation({ pane, thread, application, separator, onBodyRef, onScroll, onStreamFrame, fork, edit, submitEdit, cancelEdit, canEdit, openFile, openURL, openAgent, openDiff }: {
+function SplitConversation({ pane, thread, application, registerComposerFocusTarget, separator, onBodyRef, onScroll, onStreamFrame, fork, edit, submitEdit, cancelEdit, canEdit, openFile, openURL, openAgent, openDiff }: {
+  registerComposerFocusTarget?: UIRegisterFocusTargetV1;
   pane: Pane; thread: Thread; application: ApplicationServiceV1; separator?: import("react").ReactNode;
   onBodyRef: (node: HTMLElement | null) => void; onScroll?: (node: HTMLElement) => void; onStreamFrame: () => void;
   fork: (thread: Thread, turnId: string, itemId: string) => void;
@@ -189,7 +200,7 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
   const editing = view.conversationActions.editing?.threadId === thread.id ? view.conversationActions.editing : undefined;
   const question = view.conversationActions.questions.find(row => row.thread_id === thread.id && row.mode !== "offer");
   return <><ConversationSplitPane pane={pane} thread={thread} active={view.conversationWorkspace.activePane === pane}
-    ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
+    registerComposerFocusTarget={registerComposerFocusTarget} ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
     streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]}
     editingMessage={editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined}
     onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showApplicationActionError); }}
@@ -205,6 +216,7 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
 
 export function activatePresentation(api: ApplicationPresentationAPI): void {
   registerConversationSlots(api);
+  for (const id of ["welcome", "welcome.greeting", "welcome.mascot", "welcome.usage"]) api.registerUISlot({ id, cardinality: "one" });
   api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
   api.registerUIContribution({ id: "ui.conversation", target: "wuu.default-shell/application.conversation",
     render: ({ application, slots, context }: UISlotRenderProps) => <DefaultConversationSurface application={application} slots={slots} {...context as DefaultConversationLayout} /> });

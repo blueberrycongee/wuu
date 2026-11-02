@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -330,9 +331,18 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 }
 
 func marshalResponsesRequest(payload responsesRequest) ([]byte, error) {
+	object, err := responsesRequestObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(object)
+}
+
+func responsesRequestObject(payload responsesRequest) (map[string]any, error) {
 	// Always serialize through the sorted-key map form so the body's key
 	// order cannot flip between requests when options appear or disappear —
-	// automatic prefix caching matches raw bytes.
+	// automatic prefix caching matches raw bytes. Keep the assembled object
+	// available for transport fields without serializing and parsing it again.
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -354,7 +364,7 @@ func marshalResponsesRequest(payload responsesRequest) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return json.Marshal(object)
+	return object, nil
 }
 
 func mergeResponsesProviderOptions(object map[string]any, options map[string]any) {
@@ -1206,13 +1216,15 @@ func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool, eventType 
 }
 
 type responsesPendingTool struct {
-	itemID      string
-	outputIndex int
-	id          string
-	name        string
-	kind        providers.ToolCallKind
-	args        strings.Builder
-	ended       bool
+	itemID                                 string
+	outputIndex                            int
+	id                                     string
+	name                                   string
+	kind                                   providers.ToolCallKind
+	args                                   strings.Builder
+	ended                                  bool
+	deltaCount, rawBytes, rawWhitespaceRun int
+	loggedWhitespace                       bool
 }
 
 type responsesPendingReasoning struct {
@@ -1336,12 +1348,20 @@ func (p *responsesPendingTools) start(item responsesOutputItem, outputIndex int,
 	if args := item.argumentsString(); args != "" {
 		pt.args.WriteString(args)
 	}
+	providers.DebugLogf("responses_tool_start call=%q item=%q name=%q kind=%q output_index=%d initial_bytes=%d", pt.id, pt.itemID, pt.name, pt.kind, outputIndex, pt.args.Len())
 	p.items = append(p.items, pt)
 	if item.ID != "" {
 		p.byItemID[item.ID] = pt
 	}
 	if outputIndex >= 0 {
 		p.byIndex[outputIndex] = pt
+	}
+	// The guard and downstream consumers must see the same prefix as args.
+	// A custom tool's wire input is a string inside the normalized JSON object;
+	// leave that string open for subsequent escaped deltas.
+	initialArguments := pt.args.String()
+	if initialArguments != "" && pt.kind == providers.ToolCallKindCustom {
+		initialArguments = strings.TrimSuffix(normalizedResponsesToolArguments(pt.kind, initialArguments), `"}`)
 	}
 	emit.Send(providers.StreamEvent{
 		Type: providers.EventToolUseStart,
@@ -1350,6 +1370,7 @@ func (p *responsesPendingTools) start(item responsesOutputItem, outputIndex int,
 			ProviderItemID: pt.itemID,
 			Name:           pt.name,
 			Kind:           pt.kind,
+			Arguments:      initialArguments,
 		},
 	})
 	return pt
@@ -1359,6 +1380,22 @@ func (p *responsesPendingTools) appendDelta(event responsesStreamEvent, emit *pr
 	pt := p.find(event)
 	delta := event.Delta
 	if pt != nil {
+		pt.deltaCount++
+		pt.rawBytes += len(event.Delta)
+		for i := 0; i < len(event.Delta); i++ {
+			switch event.Delta[i] {
+			case ' ', '\t', '\r', '\n':
+				pt.rawWhitespaceRun++
+			default:
+				pt.rawWhitespaceRun = 0
+			}
+			// A single bounded metadata record catches the raw boundary before
+			// normalized JSON scanning can abort delivery. No argument text.
+			if pt.rawWhitespaceRun >= 4096 && !pt.loggedWhitespace {
+				pt.loggedWhitespace = true
+				providers.DebugLogf("responses_tool_raw_whitespace call=%q item=%q kind=%q event=%q delta_index=%d raw_delta_bytes=%d raw_bytes=%d run=%d chunk_offset=%d buffered_before=%d raw_chunk_sha256=%x", pt.id, pt.itemID, pt.kind, event.Type, pt.deltaCount, len(event.Delta), pt.rawBytes, pt.rawWhitespaceRun, i, pt.args.Len(), sha256.Sum256([]byte(event.Delta)))
+			}
+		}
 		if pt.kind == providers.ToolCallKindCustom {
 			encoded, _ := json.Marshal(delta)
 			delta = string(encoded[1 : len(encoded)-1])

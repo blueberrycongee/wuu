@@ -205,6 +205,7 @@ func addSessionTools(b *surfaceBuilder) {
 
 func addSessionWorkspaceTool(b *surfaceBuilder) {
 	b.addDeferred("set_session_workspace", capability.CapabilitySessionWorkspace)
+	b.addVisible("list_workspaces", capability.CapabilitySessionWorkspace)
 }
 
 func addContextWindowTools(b *surfaceBuilder) {

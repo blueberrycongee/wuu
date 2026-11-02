@@ -151,6 +151,8 @@ worker 与页面渲染，以及 Mermaid。证据目录保存归档哈希、日�
 
 ### 实时活动预览验收
 
+macOS 预览画布是随主进程构建的本地资源，解码器随沙箱 preload 发布，不依赖 `ELECTRON_RENDERER_URL`。工具再次访问已确定的目标时，会把对应卡片提到最前。活动仍可产生画面时，采集故障会按设有间隔上限的退避自动重试，界面显示连接状态，无需手动重试。不可用的画面会隐藏，直到新画面到达。
+
 安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查同一会话的独立目标、最多 5 张可见卡片及候补补位、提到最前、会话可见性、对话框遮挡、单张隐藏与重新打开、多个保留目标的原生控制状态更新、旧回调拒绝、画面确认、捕获错误恢复和关闭清理。结果、传输日志、出现动画帧采样、堆叠几何信息和截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。macOS 还会保存浅色默认字号和深色大字号布局的堆叠合成截图。无图形会话的 Linux 自动使用软件渲染和合成显示器。
 
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
@@ -397,6 +399,24 @@ DNS/TLS 与 HTTP 时间、HTTP 暴露 Content-Length 时的请求体大小、连
 时间，失败和未执行回合按完整期限计入。基线为标签 `baseline` 的未压缩 SSE，按负载和
 回合匹配，全部通过正确性检查后才输出指数。高于 100 表示该样本更快；同时检查成功样本
 的 P50/P90、完成时间及失败。小样本不能证明尾延迟或整体产品分数。
+
+用 `-loop-workload short|long|tools|many-tools` 通过默认 driver 运行精确短回答、
+128 行长输出，或 8/64 次依赖前一步结果的合成工具调用。每次工具结果才会揭示下一次
+调用需要的 token。例如：
+
+```sh
+go run ./scripts/provider-latency-e2e -provider openai-codex \
+  -model gpt-6.1-terra -reuse-codex-credentials -transport auto \
+  -loop-workload many-tools -records 320 -repeats 4 -timeout 600s \
+  -label candidate > .tmp/provider-latency/loop-candidate.jsonl
+```
+
+`-model` 只覆盖当前进程的模型。`-reuse-codex-credentials` 为循环负载显式选择本机
+只读 Codex CLI 凭证源。这些负载固定 low 推理档位，关闭自动压缩，不包含运行时持久存储。
+报告记录请求准备完成与模型完成的时间、服务商续接状态、内存分配、工具定义读取次数和
+重试次数。恢复产生额外提交时，即使任务正确完成，严格的 `passed` 检查仍为失败；应保留
+该样本及其全部耗时。传输评分脚本不为 `loop_sample` 记录评分，应按负载、历史规模和
+传输方式比较完整任务，并记录同时运行多个版本时的并发度。
 
 用 `-list-providers` 列出已配置的名称和模型，不输出凭证。测试命令调度时，
 对已配置的 DeepSeek 或 Codex 增加 `-shell-workload -repeats 3 -timeout 120s`。
@@ -716,13 +736,25 @@ iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照�
 
 ## CI 覆盖范围
 
+iOS 的核心集成、模拟器构建和设备构建在三个独立任务中运行，分别上传证据。CI 通过 `bash clients/native/verify.sh ios-core` 运行真实服务器集成；独立使用的 `ios` 和 `all` 模式仍包含模拟器构建。一组失败不会取消另外两组。
+
 [Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
-[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 始终执行轻量仓库元数据检查。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
+[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 中的仓库契约与元数据检查必须在共享构建前通过；选中非单元 Desktop 套件时，依赖安装与这些检查在同一 runner 上并行，所有分支均等待结束，任一失败仍会阻止构建。该 runner 随后生成校验源码提交和文件哈希的只读 renderer/core 构建产物，避免独立构建任务再次排队。纯文档或仅单元测试改动不安装构建依赖。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
 
 Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
-Desktop 验证拆为六个独立 Linux 任务并行运行：单元测试、类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；外壳、引导与设置。每组使用独立构建、Electron 配置、Xvfb 显示器和证据上传。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
+Go 验证拆分为静态及跨平台检查、其他 Go 包、插件验收，以及三个 appserver 测试分片。Project Agent 构建同样分三片运行完整的带标签 appserver 套件。每片通过 `go test -list` 枚举已编译包中的全部顶层测试、示例及 fuzz 种子测试，按名称分配，再用 `-count=1` 实际执行；清单随运行上传。可通过 `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3` 复现一个分片，最后可追加 `project_agent`；编号从零开始。CI 合约测试验证分配完整且能传递失败。
+
+其他 Go 包验证保留 Makefile 中的包发现与测试调用，仅增加 JSON 报告以记录逐测试耗时。`go-package-timings` 产物保留原始 stdout／stderr、结构化事件和汇总；缓存结果标记为重放，不当作本次实测。测试和构建失败仍会使该任务失败。
+
+公开 provider 验收分为独立的 controller、authority 和 cooperation 三组。每组构建被测版本，保留原有边界断言及证据，并检查自己的报告。所有 Go 矩阵组使用 `fail-fast: false`，汇总结果仍进入 `Go check`。拆分会增加 runner 需求，因此判断总耗时改善时必须同时检查排队与执行时间。
+
+Windows PR 打包显式启用 CI 验证模式，归档使用快速 level-1 压缩，并关闭安装器外层重复压缩。NSIS 内部差分更新归档也使用快速压缩，但格式与更新设置不变。安装包和 ZIP 格式、文件内容、原生模块重建、打包后 PTY／运行时验证与证据不变。产物仅用于验证，不作为正式发布；其体积和压缩性能不能代表正式发行包。main／标签推送和手动运行继续使用原有发布压缩默认值。
+
+Linux 拉取请求打包将 xz 压缩限制为四个线程，保留现有压缩级别、归档格式、文件内容和包验证。仅打包子进程接收此验证设置；其他事件保留继承的默认配置。压缩后的字节和大小可能与发布产物不同。阶段时间戳分别记录前置构建、打包和验证，避免将整个打包步骤的耗时都归因于压缩。
+
+Desktop 验证拆为八个独立 Linux 任务并行运行：两个单元测试分片，包含类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；会话生命周期；外壳、引导与设置。单元分片在选择完成后直接启动，不等待其不使用的构建产物。非单元组校验并复用同次运行的构建产物；各条验收旅程保留独立 Electron 配置、Xvfb 显示器和证据上传。session 与 shell 组各以三个隔离 worker 有界并发运行，保留全部十一条 session 和十二条 shell 旅程。lifecycle 组保留全部六条旅程，拆为三个隔离通道：presentation 独立运行；switch 后接 archive；request lifecycle 后接 footer 和 terminal handoff。所有 worker（包括失败的 worker）结束后才上传证据。layout 组保留两个批次以限制动画连续性检查的资源争用：独立界面／图片检查与缩放并行，完成后再并行运行流式输出和图片布局；保留独立显示器和原有旅程时限。文件选择 CI 用两个隔离进程运行原有四种视觉变体，并汇总校验恰好 24 个不重复用例；只上传明确声明的平铺 PNG／JSON／日志证据，不上传子进程配置目录。Annotation 验收保留不分片的四变体命令。语料回放将全部十二个样例均衡分配给三个隔离 worker，等待全部结果后仍执行独立的 sample-02 纯文本回放，即使某个 worker 失败也不省略。稳定 Desktop 门禁要求所有选中的单元和 E2E 分组成功。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
 
 仅修改[分组映射](../../../.github/scripts/desktop-ci-suites.json)中独立 E2E 入口时，CI 运行所属组的并集，不触发无关 Clients/native 检查。共享 helper、preload、fixture、产品代码、样式、依赖、CI 配置和未知路径仍保守回退全部组，避免根据组件文件名猜测完整依赖关系。原有测试命令、断言、场景矩阵和证据上传均保留；手动运行执行全部组。扩展映射前应确认入口不是共享 helper。使用 `node --test .github/scripts/select-ci.test.mjs` 通过临时 Git 改动验证范围选择，包括删除文件和混合范围。
 

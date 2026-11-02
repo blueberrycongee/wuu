@@ -6,9 +6,34 @@
   "icon": "layout-grid",
   "version": "0.1.0",
   "defaultEnabled": false,
-  "author": { "name": "Wuu" },
+  "author": {
+    "name": "Wuu"
+  },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
-  "desktop": { "entry": "desktop.js" },
-  "interface": { "displayName": "Generative UI (Experimental)", "shortDescription": "Interactive tables, charts and local forms.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Interaction"] }
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "runtime.mjs"
+    ],
+    "timeout": 15
+  },
+  "desktop": {
+    "entry": "desktop.js",
+    "content_renderers": [
+      {
+        "category": "tool-result",
+        "match": "application/vnd.wuu.ui+json"
+      }
+    ]
+  },
+  "interface": {
+    "displayName": "Generative UI (Experimental)",
+    "shortDescription": "Interactive tables, charts and local forms.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Interaction"
+    ]
+  }
 }

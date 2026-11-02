@@ -23,9 +23,10 @@ func (s *Server) handleEngineList(req Request) error {
 	defer binding.Close()
 
 	var params struct {
-		IncludeQuota  bool   `json:"include_quota"`
-		RefreshModels bool   `json:"refresh_models"`
-		CWD           string `json:"cwd"`
+		IncludeQuota    bool   `json:"include_quota"`
+		IncludeActivity *bool  `json:"include_activity"`
+		RefreshModels   bool   `json:"refresh_models"`
+		CWD             string `json:"cwd"`
 	}
 	if len(req.Params) > 0 {
 		if err := decodeParams(req.Params, &params); err != nil {
@@ -51,10 +52,10 @@ func (s *Server) handleEngineList(req Request) error {
 	}
 	if params.IncludeQuota {
 		result.SubscriptionProviders = append([]ProviderSummary(nil), s.providerSummaries()...)
-		// Historical statistics belong to the opt-in dashboard request, not
-		// navigation or the composer inventory. Copy providers before enriching
-		// them so cached configuration summaries remain history-free.
-		s.attachSubscriptionActivity(binding, result.Engines, result.SubscriptionProviders)
+		// Existing clients receive activity with quota unless they opt out.
+		if params.IncludeActivity == nil || *params.IncludeActivity {
+			s.attachSubscriptionActivity(binding, result.Engines, result.SubscriptionProviders)
+		}
 		s.attachSubscriptionQuotasForState(binding, result.Engines, result.SubscriptionProviders)
 	}
 	return s.writeResponse(req.ID, result, nil)

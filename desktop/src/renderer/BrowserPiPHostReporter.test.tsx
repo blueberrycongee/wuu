@@ -69,6 +69,53 @@ describe("browser preview host layout", () => {
     });
   });
 
+  it("updates the reported host when obstacles and dialogs are added or removed", async () => {
+    document.body.innerHTML = `<div data-pip-anchor-host="conversation" id="host"></div><div id="reporter"></div>`;
+    const host = document.getElementById("host")!;
+    const report = vi.fn();
+    const originalWuu = window.wuu;
+    Object.assign(window, { wuu: { reportBrowserPiPHostLayout: report } });
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameID = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++frameID, callback);
+      return frameID;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    const flush = () => { for (const [id, callback] of frames) { frames.delete(id); callback(0); } };
+    const root = createRoot(document.getElementById("reporter")!);
+    try {
+      viRect(host, { x: 10, y: 20, width: 400, height: 300 });
+      act(() => root.render(<BrowserPiPHostReporter />));
+      flush();
+      const obstacle = document.createElement("div");
+      obstacle.dataset.pipObstacle = "composer";
+      viRect(obstacle, { x: 10, y: 280, width: 400, height: 40 });
+      await act(async () => { document.body.appendChild(obstacle); });
+      flush();
+      expect(report).toHaveBeenLastCalledWith({
+        host: { x: 10, y: 20, width: 400, height: 300 },
+        obstacles: [{ x: 10, y: 280, width: 400, height: 40 }],
+      });
+      const dialog = document.createElement("div");
+      dialog.setAttribute("aria-modal", "true");
+      viRect(dialog, { x: 20, y: 20, width: 100, height: 100 });
+      await act(async () => { document.body.appendChild(dialog); });
+      flush();
+      expect(report).toHaveBeenLastCalledWith(null);
+      await act(async () => { dialog.remove(); obstacle.remove(); });
+      flush();
+      expect(report).toHaveBeenLastCalledWith({
+        host: { x: 10, y: 20, width: 400, height: 300 }, obstacles: [],
+      });
+    } finally {
+      act(() => root.unmount());
+      Object.assign(window, { wuu: originalWuu });
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("ignores message mutations that do not touch the column or an obstacle", () => {
     document.body.innerHTML = `<div data-pip-anchor-host="conversation" id="host"></div>`;
     const message = document.createElement("p");

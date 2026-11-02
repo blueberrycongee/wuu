@@ -366,3 +366,30 @@ func TestLoadManifestPreservesAndValidatesConnectorMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestDesktopContentRendererManifestContract(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "desktop.js"), "export function activateContent() {}")
+	path := filepath.Join(root, ManifestFilename)
+	for _, field := range []string{"contentRenderers", "content_renderers"} {
+		t.Run(field, func(t *testing.T) {
+			writeFile(t, path, fmt.Sprintf(`{"id":"renderer","desktop":{"entry":"desktop.js",%q:[{"category":"tool-result","match":"application/vnd.wuu.ui+json"}]}}`, field))
+			got, err := LoadManifest(path, "user")
+			if err != nil || got.Desktop == nil || len(got.Desktop.ContentRenderers) != 1 || got.Desktop.ContentRenderers[0].Match != "application/vnd.wuu.ui+json" {
+				t.Fatalf("content renderers = %+v, %v", got.Desktop, err)
+			}
+		})
+	}
+	for _, invalid := range []string{
+		`[{"category":"message","match":"text/plain"}]`,
+		`[{"category":"tool-result","match":"image/*"}]`,
+		`[{"category":"tool-result","match":"text/plain; charset=utf-8"}]`,
+		`[{"category":"tool-result","match":"not-a-mime"}]`,
+		`[{"category":"tool-result","match":"text/plain"},{"category":"tool-result","match":"text/plain"}]`,
+	} {
+		writeFile(t, path, fmt.Sprintf(`{"id":"renderer","desktop":{"entry":"desktop.js","contentRenderers":%s}}`, invalid))
+		if _, err := LoadManifest(path, "user"); err == nil {
+			t.Fatalf("accepted invalid renderer declaration %s", invalid)
+		}
+	}
+}

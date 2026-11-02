@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"time"
 
@@ -307,36 +308,38 @@ type UserHostIsolationSummary struct {
 }
 
 type InitializeResult struct {
-	UserHostIsolation   *UserHostIsolationSummary                  `json:"user_host_isolation,omitempty"`
-	UserSpaceID         string                                     `json:"user_space_id,omitempty"`
-	ProductDomain       string                                     `json:"product_domain,omitempty"`
-	ResourceAccess      ResourceAccessCapabilities                 `json:"resource_access"`
-	ApplicationShell    *runtime.ApplicationShellBinding           `json:"application_shell"`
-	ApplicationSurfaces map[string]runtime.ApplicationShellBinding `json:"application_surfaces"`
-	Status              string                                     `json:"status"`
-	Issues              []RuntimeIssue                             `json:"issues,omitempty"`
-	ProtocolVersion     string                                     `json:"protocol_version"`
-	Core                CoreBuildInfo                              `json:"core"`
-	Provider            string                                     `json:"provider"`
-	Model               string                                     `json:"model"`
-	Effort              string                                     `json:"effort,omitempty"`
-	Variant             string                                     `json:"variant,omitempty"`
-	MaxParallel         int                                        `json:"max_parallel"`
-	RuntimeHost         RuntimeHostSummary                         `json:"runtime_host"`
-	WorkspaceRoot       string                                     `json:"workspace_root"`
-	Permissions         PermissionSummary                          `json:"permissions"`
-	ExtensionTrust      ExtensionTrustSummary                      `json:"extension_trust"`
-	ExtensionInventory  []ExtensionInventoryRecord                 `json:"extension_inventory,omitempty"`
-	ModelProfile        *ModelProfileSummary                       `json:"model_profile,omitempty"`
-	ToolSurface         *ToolSurfaceSummary                        `json:"tool_surface,omitempty"`
-	ModelRoles          []ModelRoleSummary                         `json:"model_roles,omitempty"`
-	ModelAliases        map[string]ModelAliasSummary               `json:"model_aliases,omitempty"`
-	ProjectModels       config.ProjectModelsConfig                 `json:"project_models,omitempty"`
-	Providers           []ProviderSummary                          `json:"providers,omitempty"`
-	AdvancedSettings    AdvancedSettingsSummary                    `json:"advanced_settings"`
-	GeneralSettings     GeneralSettingsSummary                     `json:"general_settings"`
-	CatalogProviders    []CatalogProviderSummary                   `json:"catalog_providers"`
-	Features            FeatureFlags                               `json:"features"`
+	OwnerLocalSessionControl *pluginhost.SessionLocatorV1               `json:"owner_local_session_control,omitempty"`
+	SessionFederation        *pluginhost.SessionLocatorV1               `json:"session_federation,omitempty"`
+	UserHostIsolation        *UserHostIsolationSummary                  `json:"user_host_isolation,omitempty"`
+	UserSpaceID              string                                     `json:"user_space_id,omitempty"`
+	ProductDomain            string                                     `json:"product_domain,omitempty"`
+	ResourceAccess           ResourceAccessCapabilities                 `json:"resource_access"`
+	ApplicationShell         *runtime.ApplicationShellBinding           `json:"application_shell"`
+	ApplicationSurfaces      map[string]runtime.ApplicationShellBinding `json:"application_surfaces"`
+	Status                   string                                     `json:"status"`
+	Issues                   []RuntimeIssue                             `json:"issues,omitempty"`
+	ProtocolVersion          string                                     `json:"protocol_version"`
+	Core                     CoreBuildInfo                              `json:"core"`
+	Provider                 string                                     `json:"provider"`
+	Model                    string                                     `json:"model"`
+	Effort                   string                                     `json:"effort,omitempty"`
+	Variant                  string                                     `json:"variant,omitempty"`
+	MaxParallel              int                                        `json:"max_parallel"`
+	RuntimeHost              RuntimeHostSummary                         `json:"runtime_host"`
+	WorkspaceRoot            string                                     `json:"workspace_root"`
+	Permissions              PermissionSummary                          `json:"permissions"`
+	ExtensionTrust           ExtensionTrustSummary                      `json:"extension_trust"`
+	ExtensionInventory       []ExtensionInventoryRecord                 `json:"extension_inventory,omitempty"`
+	ModelProfile             *ModelProfileSummary                       `json:"model_profile,omitempty"`
+	ToolSurface              *ToolSurfaceSummary                        `json:"tool_surface,omitempty"`
+	ModelRoles               []ModelRoleSummary                         `json:"model_roles,omitempty"`
+	ModelAliases             map[string]ModelAliasSummary               `json:"model_aliases,omitempty"`
+	ProjectModels            config.ProjectModelsConfig                 `json:"project_models,omitempty"`
+	Providers                []ProviderSummary                          `json:"providers,omitempty"`
+	AdvancedSettings         AdvancedSettingsSummary                    `json:"advanced_settings"`
+	GeneralSettings          GeneralSettingsSummary                     `json:"general_settings"`
+	CatalogProviders         []CatalogProviderSummary                   `json:"catalog_providers"`
+	Features                 FeatureFlags                               `json:"features"`
 }
 
 type FeatureFlags struct {
@@ -791,7 +794,8 @@ type ExtensionCommandDescriptor struct {
 }
 
 type ExtensionDesktopDescriptor struct {
-	Entry string `json:"entry"`
+	Entry            string                             `json:"entry"`
+	ContentRenderers []pluginpkg.DesktopContentRenderer `json:"content_renderers,omitempty"`
 }
 
 type ExtensionThemeDescriptor struct {
@@ -984,6 +988,7 @@ type PluginPackageSourceKind string
 const (
 	PluginPackageSourceDirectory PluginPackageSourceKind = "directory"
 	PluginPackageSourceZip       PluginPackageSourceKind = "zip"
+	PluginPackageSourceFile      PluginPackageSourceKind = "file"
 )
 
 type PluginPackageMetadata struct {
@@ -1040,8 +1045,9 @@ type PluginPackageRemoveResult struct {
 }
 
 type PluginDesktopModuleReadParams struct {
-	ID          string `json:"id"`
-	Fingerprint string `json:"fingerprint"`
+	ID              string `json:"id"`
+	Fingerprint     string `json:"fingerprint"`
+	GraphGeneration string `json:"graph_generation,omitempty"`
 }
 
 type PluginDesktopModuleReadResult struct {
@@ -2826,6 +2832,7 @@ type StreamEventPayload struct {
 	Type             providers.StreamEventType        `json:"type"`
 	Content          string                           `json:"content,omitempty"`
 	Message          *providers.ChatMessage           `json:"message,omitempty"`
+	Notice           *providers.StreamNotice          `json:"notice,omitempty"`
 	ToolCall         *providers.ToolCall              `json:"tool_call,omitempty"`
 	ToolResult       string                           `json:"tool_result,omitempty"`
 	ToolResultDetail *toolresult.Result               `json:"tool_result_detail,omitempty"`

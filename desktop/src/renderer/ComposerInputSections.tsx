@@ -1,5 +1,6 @@
 import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
+import { DictationButton, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import type { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
@@ -204,7 +205,7 @@ export function SplitPaneComposer({
   onInterrupt: () => void;
 }): JSX.Element {
   const readOnly = sessionReadOnly || interactionDisabled;
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const connected = useWorkbenchConnected();
   const sendDisabled = requestedSendDisabled || draftPending || Boolean(stopState) || !connected;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -237,11 +238,20 @@ export function SplitPaneComposer({
   const submittedDraftRef = useRef<string | undefined>(undefined);
   useEffect(() => () => { submittedDraftRef.current = undefined; }, []);
   useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
+  const dictation = useComposerDictation({
+    owner: JSON.stringify([queryHistorySessionID, workspaceId, turnId]),
+    disabled: Boolean(readOnly || cameraOpen), prompt, locale,
+    onText: (text, send) => {
+      setPrompt(text);
+      if (send && !sendDisabled && !readOnly) submitDraft(text);
+      focusComposerSoon();
+    },
+  });
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
-  const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
-  const showContinue = continuation && !running && !submitting && !hasDraft && !readOnly;
+  const showStop = !dictation.active && (Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft));
+  const showContinue = !dictation.active && continuation && !running && !submitting && !hasDraft && !readOnly;
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
 
   function focusComposerSoon(): void {
@@ -372,9 +382,14 @@ export function SplitPaneComposer({
     onPasteAttachmentFiles(dropped);
   }
 
-  function submitComposer(): void {
-    const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
-    const currentPrompt = hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt;
+  function submitComposer(promptOverride?: string): void {
+    if (dictation.active) { void dictation.stop(true); return; }
+    submitDraft(promptOverride);
+  }
+
+  function submitDraft(promptOverride?: string): void {
+    const visiblePrompt = promptOverride ?? textareaRef.current?.value ?? visiblePromptValue;
+    const currentPrompt = promptOverride ?? (hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt);
     const currentSignature = JSON.stringify([currentPrompt, images.map(image => image.id), files.map(file => file.id), selections]);
     if (readOnly || sendDisabled || submittedDraftRef.current === currentSignature) return;
     resetQueryHistoryNavigation();
@@ -446,6 +461,7 @@ export function SplitPaneComposer({
   return (
     <footer className="composer-wrap dock-composer-wrap split-composer" data-pip-obstacle="composer">
       <div className="composer-stack">
+        {dictation.error && <div className="composer-dictation-error" role="alert">{dictation.error}</div>}
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">
             {cameraOpen && !readOnly ? (
@@ -508,7 +524,9 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                <div className={`${framed ? "composer-editor" : "composer-bar"} split-composer-bar`}>
+                <div className={`${framed ? "composer-editor" : "composer-bar"} split-composer-bar${dictation.active ? " is-dictating" : ""}`}
+                  onKeyDown={event => { if (dictation.active && event.key === "Escape") { event.stopPropagation(); dictation.cancel(); } }}>
+                  {dictation.active && dictation.api && <DictationRecording api={dictation.api} sessionId={dictation.sessionId} phase={dictation.phase} stop={dictation.stop} cancel={dictation.cancel} />}
                   <div className="composer-bar-left">
                     {framed ? (
                       <ComposerPlusButton variant="dock" disabled={readOnly} commands={[]} menuAnchorRef={shellRef}
@@ -541,8 +559,8 @@ export function SplitPaneComposer({
                     data-wuu-component="composer-input"
                     value={visiblePromptValue}
                     placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : (placeholder ?? t("composer.continueBranch"))}
-                    disabled={readOnly}
-                    aria-readonly={readOnly}
+                    disabled={readOnly || dictation.active}
+                    aria-readonly={readOnly || dictation.active}
                     aria-describedby={inline.text ? inline.descriptionId : undefined}
                     onFocus={() => inline.observe()}
                     onBlur={() => inline.observe()}
@@ -568,6 +586,7 @@ export function SplitPaneComposer({
                     {t("composer.inlineCompletionAvailable", { text: inline.text })}
                   </span> : null}
                   <div className="composer-bar-right">
+                    {dictation.api && !dictation.active && <DictationButton disabled={readOnly || draftPending || cameraOpen} start={dictation.start} />}
                     {showStop ? (
                       <Tooltip asChild content={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}><button
                         className="composer-action-button composer-stop-button"
@@ -598,9 +617,9 @@ export function SplitPaneComposer({
                           }
                         }}
                         type="button"
-                        onClick={submitComposer}
+                        onClick={() => submitComposer()}
                         aria-label={sendLabel}
-                        disabled={readOnly || sendDisabled || !hasDraft}
+                        disabled={readOnly || sendDisabled || (dictation.active ? dictation.phase !== "listening" : !hasDraft)}
                       >
                         {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
                       </button></Tooltip>
@@ -823,7 +842,7 @@ function ComposerQueueItem({
             getText={() => message.text || queuedMessageFullPreview(message)}
           />
         ) : (
-          <Tooltip asChild content={t("common.edit")}><button
+          <button
             type="button"
             className="composer-queue-action composer-input-header-action edit"
             aria-label={editLabel}
@@ -831,7 +850,7 @@ function ComposerQueueItem({
             disabled={Boolean(message.operationState)}
           >
             <PencilLine className="icon-sm" aria-hidden="true" />
-          </button></Tooltip>
+          </button>
         )}
         {onGuide ? (
           <Tooltip asChild content={
@@ -860,7 +879,7 @@ function ComposerQueueItem({
             )}
           </button></Tooltip>
         ) : null}
-        <Tooltip asChild content={t("common.remove")}><button
+        <button
           type="button"
           className="composer-queue-action composer-input-header-action danger"
           aria-label={t("composer.removeQueuedMessage", { position })}
@@ -868,7 +887,7 @@ function ComposerQueueItem({
           disabled={message.operationState === "switching" || message.deliveryUnconfirmed}
         >
           <X className="icon-sm" aria-hidden="true" />
-        </button></Tooltip>
+        </button>
       </div>
     </li>
   );

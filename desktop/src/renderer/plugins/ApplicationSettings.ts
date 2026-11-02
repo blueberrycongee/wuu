@@ -36,6 +36,8 @@ export class ApplicationSettings {
   private engineConfiguration?: AppState["initialized"];
   private engineConnectionGeneration?: number;
   private engineRevision = 0;
+  private engineContextKey?: string;
+  private engineContextRevision = 0;
   private configurationSource?: AppState["initialized"];
   private configuration?: ApplicationSettingsViewV1["configuration"];
   private snapshot?: ApplicationSettingsViewV1;
@@ -52,12 +54,14 @@ export class ApplicationSettings {
     unarchiveThread: (threadId: string) => Promise<void>;
   }) {}
 
-  private engineContext(): { key: string; cwd?: string } {
+  private engineContext(): { key: string; cwd?: string; revision: number } {
     const state = this.host.getState();
     const cwd = activeThreadForState(state)?.cwd || state.activeContext?.cwd;
     if (this.engineConfiguration?.extension_inventory !== state.initialized?.extension_inventory || this.engineConnectionGeneration !== state.runtimeConnectionGeneration) this.engineRevision++;
     this.engineConfiguration = state.initialized; this.engineConnectionGeneration = state.runtimeConnectionGeneration;
-    return { key: JSON.stringify([state.activeContext, cwd, this.engineRevision]), cwd };
+    const key = JSON.stringify([state.activeContext, cwd, this.engineRevision]);
+    if (this.engineContextKey !== key) { this.engineContextKey = key; this.engineContextRevision++; }
+    return { key, cwd, revision: this.engineContextRevision };
   }
 
   getSnapshot(): ApplicationSettingsViewV1 {
@@ -88,17 +92,18 @@ export class ApplicationSettings {
       return { id: thread.id, title: thread.title, updated_at: thread.updated_at,
         archive_project_id: project?.id ?? "", archive_project_name: project?.name ?? translateCurrent("appState.noWorkspace") };
     });
-    const context = this.engineContext().key;
+    const { key: context, revision: engineInventoryRevision } = this.engineContext();
     const engineInventory = this.engines?.context === context ? this.engines.value : undefined;
     const engineInventoryError = this.engineError.context === context ? this.engineError.message : "";
     const runtimeSwitchPending = this.host.isNavigationPending();
     const rows = JSON.stringify([runningProviderNames, archivedThreads]);
     const previous = this.snapshot;
     if (previous && previous.configuration === configuration && previous.engineInventory === engineInventory
-      && previous.engineInventoryError === engineInventoryError && previous.runtimeSwitchPending === runtimeSwitchPending
+      && previous.engineInventoryError === engineInventoryError && previous.engineInventoryRevision === engineInventoryRevision
+      && previous.runtimeSwitchPending === runtimeSwitchPending
       && rows === this.snapshotRows) return previous;
     this.snapshotRows = rows;
-    this.snapshot = Object.freeze({ configuration, engineInventory, engineInventoryError, runtimeSwitchPending,
+    this.snapshot = Object.freeze({ configuration, engineInventory, engineInventoryError, engineInventoryRevision, runtimeSwitchPending,
       runningProviderNames: Object.freeze(runningProviderNames), archivedThreads: Object.freeze(archivedThreads.map(thread => Object.freeze(thread))),
     });
     return this.snapshot;

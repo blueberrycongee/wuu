@@ -17,9 +17,11 @@ Codex 和 Claude Code 的详情会在限时 `--version` 检查成功时显示已
 | `hermes` | `hermes acp` | ACP v1；[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
 | `pi` | `pi-acp` | 通过[社区适配器](https://github.com/svkozak/pi-acp)使用 ACP v1，不是直接运行 `pi` |
 | `opencode` | `opencode serve --hostname 127.0.0.1 --port 0` | 原生 HTTP/SSE，要求 OpenCode 1.x；[OpenCode](https://opencode.ai/docs) |
-| `antigravity` | `agy_acp_server` | ACP v1；需另行安装兼容服务端；[Antigravity 扩展](https://antigravity.google/docs/ide/extensions) |
+| `antigravity` | `agy_acp_server` 或 `agy acp` | ACP v1；使用兼容的[独立服务端](https://antigravity.google/docs/ide/extensions)或 [Antigravity CLI](https://antigravity.google/docs/cli/overview) |
 
-Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`。这些命令描述适配器要求，不代表每个 CLI 版本都兼容。ACP 必须协商为协议版本 1；OpenCode 必须报告健康的 1.x 服务。不兼容时会明确报错。
+Antigravity 按 `agy_acp_server`、`agy_acp_server.par`、`agy` 的顺序检测。Wuu 使用 `agy acp` 启动 CLI；Linux 下仅为独立服务端附加 `--uid=`。指定的可执行文件名为 `agy` 或 `agy.exe` 时也使用 CLI 命令，其他名称沿用独立服务端的启动参数。CLI 和独立服务端的登录状态及原生会话可能各自保存，切换时可能需要重新登录，也可能无法恢复已有原生会话。
+
+这些命令描述适配器要求，不代表每个 CLI 版本都兼容。ACP 必须协商为协议版本 1；OpenCode 必须报告健康的 1.x 服务。不兼容时会明确报错。
 
 这些引擎依次使用 `engines.<id>.binary_path`、`WUU_<ID>_BINARY`（如 `WUU_DEVIN_BINARY`）、`PATH` 查找可执行文件。指定路径无效时直接报错，不会悄悄换用其他程序。路径应指向程序，不要填写带参数的命令。检测只查找可执行文件，不验证凭据，也不创建对话。
 
@@ -67,7 +69,7 @@ ACP 图片附件会写成本地文件，并把路径写进提示词，让 Agent 
 
 ## Wuu 浏览器和电脑工具
 
-Codex、Claude Code 和 OpenCode 通过本地 HTTP MCP 端点使用 Wuu 内嵌浏览器和已启用的 CUA 工具。包括 Pi 和 DeepSeek Harness 在内的 ACP 引擎，只有在已安装的适配器声明支持 HTTP MCP 时才会获得这些工具。不支持该能力的适配器仍可使用自身工具继续对话，Wuu 会显示浏览器和电脑工具不可用的提示。
+Codex、Claude Code 和 OpenCode 通过本地 HTTP MCP 端点使用 Wuu 内嵌浏览器和已启用的 CUA 工具。包括 Pi 和 DeepSeek Harness 在内的 ACP 引擎，只有在已安装的适配器声明支持 HTTP MCP 时才会获得这些工具。不支持该能力的适配器仍可使用自身工具继续对话，Wuu 会以临时提示说明浏览器和电脑工具不可用。
 
 宿主为每个会话轮次创建独立端点，通过引擎的启动参数或会话配置传入，不会修改 CLI 的全局配置。浏览器需要已连接且支持浏览器操作的桌面客户端；CUA 需要已启用并连接的电脑控制插件。其他 Wuu 插件工具不会导出。Wuu 模型服务的延迟加载和 Code Mode 设置不影响这个 MCP 工具目录，工具调用循环由外部引擎负责。
 

@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -23,6 +24,8 @@ import { useI18n } from "./i18n";
 export type SelectMenuOption = {
   value: string;
   label: string;
+  // Decorative preview shared by the selected value and its menu option.
+  preview?: ReactNode;
   // Optional dimmed secondary line (e.g. the provider a model belongs to).
   hint?: string;
   // Additional terms used only for filtering a searchable menu.
@@ -67,6 +70,8 @@ export function SelectMenu({
   id,
   className,
   triggerClassName,
+  panelClassName,
+  minMenuWidthEm,
   dataTestid,
   dataField,
   placement = "below",
@@ -91,6 +96,9 @@ export function SelectMenu({
   id?: string;
   className?: string;
   triggerClassName?: string;
+  panelClassName?: string;
+  /** Minimum panel width in em, relative to the trigger's font size. */
+  minMenuWidthEm?: number;
   dataTestid?: string;
   dataField?: string;
   placement?: FloatingMenuPlacement;
@@ -162,14 +170,14 @@ export function SelectMenu({
     return from;
   }
 
-  // Measure the trigger so the panel matches the field width — this is a
-  // form control, not a floating chip, so a panel narrower/wider than its
-  // trigger would read as a different, misaligned element.
+  // Match the field width unless the caller needs more room for labels.
   useLayoutEffect(() => {
     if (open && anchorRef.current) {
-      setMenuWidth(Math.max(anchorRef.current.offsetWidth, 160));
+      const minimumWidth = minMenuWidthEm === undefined ? 0
+        : minMenuWidthEm * (Number.parseFloat(getComputedStyle(triggerRef.current ?? anchorRef.current).fontSize) || 16);
+      setMenuWidth(Math.max(anchorRef.current.offsetWidth, 160, minimumWidth));
     }
-  }, [open]);
+  }, [open, minMenuWidthEm]);
 
   // On open, seed the keyboard cursor on the current selection (or the
   // first selectable option) and move DOM focus onto it.
@@ -318,6 +326,7 @@ export function SelectMenu({
         }}
         onKeyDown={handleTriggerKeyDown}
       >
+        {selected?.preview}
         <span className="select-menu-value">{triggerLabel}</span>
         <ChevronDown className="select-menu-chevron icon" aria-hidden="true" />
       </button>
@@ -332,7 +341,7 @@ export function SelectMenu({
         >
           <div
             ref={menuRef}
-            className="select-menu-panel"
+            className={panelClassName ? `select-menu-panel ${panelClassName}` : "select-menu-panel"}
             role="menu"
             aria-label={ariaLabel}
             style={{ width: menuWidth }}
@@ -393,6 +402,7 @@ export function SelectMenu({
                           }
                         }}
                       >
+                        {option.preview}
                         <span className="select-menu-item-text">
                           <span className="select-menu-item-label">{option.label}</span>
                           {option.hint ? (

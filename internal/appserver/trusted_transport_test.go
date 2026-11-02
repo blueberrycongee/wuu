@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -93,5 +94,42 @@ func TestTrustedTransportRequiresExplicitLocalPipe(t *testing.T) {
 			t.Fatal("untrusted transport gained owner")
 		}
 		s.Close()
+	}
+}
+
+// A new controller cannot revoke another run merely by exhausting the peer
+// table. Release is explicit; durable command receipts remain independent.
+func TestTrustedTransportCapacityDoesNotEvictActivePeers(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	s := New(rt, out, WithTrustedLocalTransport())
+	defer s.Close()
+	validation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer validation.Close()
+	input := trustedTransportEnvelope{Version: 1, Principal: principal.Identity{Kind: "agent", Issuer: "fixture", Tenant: "tenant", Subject: "controller"}, Validation: trustedTransportValidator{Address: strings.TrimPrefix(validation.URL, "http://"), Token: strings.Repeat("a", 32)}}
+	var first principal.Verified
+	for i := 0; i < 256; i++ {
+		input.PeerID = fmt.Sprintf("live-%d", i)
+		p, err := s.bindTrustedTransport(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = p
+		}
+	}
+	input.PeerID = "overflow"
+	if _, err := s.bindTrustedTransport(input); err == nil {
+		t.Fatal("capacity overflow admitted")
+	}
+	if err := first.Check(context.Background()); err != nil {
+		t.Fatalf("overflow revoked existing live run: %v", err)
+	}
+	raw, _ := json.Marshal(Request{ID: mustJSON("release"), Method: "transport/release", Params: mustJSON(map[string]any{"version": 1, "peer_id": "live-1"})})
+	if err := s.handleLine(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.bindTrustedTransport(input); err != nil {
+		t.Fatalf("released slot did not become available: %v", err)
 	}
 }

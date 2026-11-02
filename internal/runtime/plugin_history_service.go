@@ -12,7 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
-func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginID string, binding userspace.Binding, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
+func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginID string, binding userspace.Binding, receiptsSelected bool, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
 	if err := pluginhost.ValidateSessionHistoryReadParams(params); err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
@@ -20,7 +20,7 @@ func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginI
 	if err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
-	receiptEnabled := binding.IsUser() && binding.ProductDomain == "personal"
+	receiptEnabled := receiptsSelected && binding.IsUser()
 	if receiptEnabled && (binding.Validate() != nil || !binding.Matches(userspace.Binding{UserSpaceID: meta.UserSpaceID, ProductDomain: meta.ProductDomain})) {
 		return pluginhost.SessionHistoryPage{}, serviceError("domain_denied", "receipt history belongs to another user space")
 	}

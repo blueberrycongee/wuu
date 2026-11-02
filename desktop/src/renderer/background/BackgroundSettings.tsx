@@ -56,7 +56,7 @@ export function BackgroundSettings(): JSX.Element {
     }
   }
   return <>
-    <SettingsRow title={t("settings.backgroundImage")} description={preferences?.name}>
+    <SettingsRow title={t("settings.backgroundImage")}>
       <label className={`settings-button background-file-picker${busy || loading ? " disabled" : ""}`}>
         {t(busy ? "settings.backgroundLoading" : "settings.backgroundChoose")}
         <input type="file" accept="image/png,image/jpeg,image/webp" aria-label={t("settings.backgroundChoose")} disabled={busy || loading}

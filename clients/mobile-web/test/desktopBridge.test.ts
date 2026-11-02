@@ -60,6 +60,8 @@ describe("browser host contract", () => {
     expect(host.reportBrowserBounds).toBeUndefined();
     expect(host.openSideThread).toBeUndefined();
     expect(host.onBrowserInvalidate).toBeUndefined();
+    expect(host.initializePluginScope).toBeUndefined();
+    expect(host.onPluginScopeInvalidated).toBeUndefined();
     expect(host.unsupportedMethods).toContain("getRemoteControlSnapshot");
     await expect(host.getRemoteControlSnapshot()).rejects.toBeInstanceOf(UnavailableHostOperationError);
     await expect(host.getRemoteControlSnapshot()).rejects.toMatchObject({ code: "host_operation_unavailable" });

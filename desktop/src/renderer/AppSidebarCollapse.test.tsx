@@ -98,14 +98,22 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(): void {
+  const project = {
+    id: "collapse-project",
+    name: "Collapse Project",
+    path: workspace,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  window.localStorage.setItem(
+    "wuu.desktop.expandedSidebarSectionIDs",
+    JSON.stringify([project.id]),
+  );
   // Fresh arrays on every call — mirrors production, where each
   // project-state reload replaces state.projects with a new identity.
-  const workspaceState = (): {
-    projects: never[];
-    active_context: { kind: "no_project"; cwd: string };
-  } => ({
-    projects: [],
-    active_context: { kind: "no_project", cwd: workspace },
+  const workspaceState = () => ({
+    projects: [project],
+    active_context: { kind: "project" as const, project_id: project.id, cwd: workspace },
   });
   const pinnedThread: Thread = {
     id: "thread-pinned-collapse",
@@ -113,7 +121,8 @@ function installWuuApi(): void {
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
-    workspace_kind: "scratch",
+    workspace_id: "collapse-project",
+    workspace_kind: "project",
     status: "idle",
     read_only: false,
     pinned: true,
@@ -173,7 +182,7 @@ async function flushAsync(): Promise<void> {
 
 function conversationSectionHeader(): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(
-    'button[aria-label="收起 对话 的对话"], button[aria-label="展开 对话 的对话"]',
+    'button[aria-label="收起 Collapse Project 的对话"], button[aria-label="展开 Collapse Project 的对话"]',
   );
 }
 
@@ -229,7 +238,8 @@ describe("sidebar collapse-state independence", () => {
     expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
     act(() => host.unload("alternate-settings"));
     expect(container.textContent).not.toContain("Selected UI surface is unavailable");
-    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternate-settings:fixture");
+      expect(container.querySelector('[role="status"]')).not.toBeNull();
+      expect(notice).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
   });
 
@@ -511,7 +521,7 @@ describe("sidebar collapse-state independence", () => {
     ['folder', '[data-section-id="__wuu_folder_sort__:folder-collapse"] button[aria-expanded]'],
     ['pinned', '[data-functional-group-id="pinned"] button[aria-expanded]'],
     ['workspace', '[data-functional-group-id="workspace"] button[aria-expanded]'],
-    ['scratch', 'button[aria-label="收起 对话 的对话"], button[aria-label="展开 对话 的对话"]'],
+    ['project', 'button[aria-label="收起 Collapse Project 的对话"], button[aria-label="展开 Collapse Project 的对话"]'],
   ])("preserves the %s fold across settings visits and theme changes", async (_section, selector) => {
     installWuuApi();
     await act(async () => {
@@ -548,7 +558,7 @@ describe("sidebar collapse-state independence", () => {
     expect(header()?.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("collapses the active 对话 section on the first header click", async () => {
+  it("collapses the active project section on the first header click", async () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);

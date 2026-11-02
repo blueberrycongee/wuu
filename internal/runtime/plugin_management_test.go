@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -39,16 +40,9 @@ func TestPluginManagementKeepsConversationGenerationPinned(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings.SetEnabled(item.SubjectID, true)
-	policy, err := json.Marshal(map[string]any{"extensions": settings})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "config.json"), policy, 0600); err != nil {
-		t.Fatal(err)
-	}
 	old := item
 	old.Fingerprint = "previous-generation"
-	s := &Session{RootDir: root, WuuHome: home}
+	s := pluginManagementTestSession(t, root, home, &settings)
 	generation := &PluginGeneration{active: []pluginpkg.Plugin{old}}
 	manager := s.pluginManager(generation, func(context.Context, string, string, []string) (string, error) {
 		t.Fatal("status executed command")
@@ -88,7 +82,7 @@ func TestPluginManagementFixedCommand(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "extension.ts")
 	var got []string
-	s := &Session{RootDir: root, WuuHome: home}
+	s := pluginManagementTestSession(t, root, home, nil)
 	manager := s.pluginManager(nil, func(_ context.Context, gotHome, gotCWD string, args []string) (string, error) {
 		if gotHome != home || gotCWD != root {
 			t.Fatalf("home=%s cwd=%s", gotHome, gotCWD)
@@ -108,7 +102,7 @@ func TestPluginManagementFixedCommand(t *testing.T) {
 func TestPluginManagementCatalogBusyAndCommandFailure(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
-	s := &Session{RootDir: root, WuuHome: home}
+	s := pluginManagementTestSession(t, root, home, nil)
 	calls := 0
 	manager := s.pluginManager(nil, func(context.Context, string, string, []string) (string, error) {
 		calls++
@@ -128,4 +122,19 @@ func TestPluginManagementCatalogBusyAndCommandFailure(t *testing.T) {
 	if err == nil || result != nil || calls != 1 {
 		t.Fatalf("result=%v calls=%d err=%v", result, calls, err)
 	}
+}
+
+func pluginManagementTestSession(t *testing.T, root, home string, settings *extensions.Settings) *Session {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Extensions = settings
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "config.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return &Session{RootDir: root, WuuHome: home, ConfigPath: path, ConfigLoadMode: ConfigLoadFile}
 }

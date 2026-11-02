@@ -1,7 +1,7 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
-import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
 import { AccountScreen } from "./AccountScreen";
-import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
+import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { SideConversationAvailableContext } from "./ResponseSelection";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
@@ -50,11 +50,7 @@ import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
 import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
 import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
 import { isForegroundControlled } from "./BrowserVisibility";
-import { createComposerControls } from "./ComposerControls";
-import {
-  isInsideFloatingMenu,
-  type ComposerVariant
-} from "./ComposerView";
+import { isInsideFloatingMenu } from "./ComposerView";
 import { ContextChatCapsule } from "./ContextChatCapsule";
 import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import {
@@ -107,10 +103,8 @@ import {
   conversationHeadingTitle
 } from "./ThreadTitles";
 import { showErrorToast, showToast } from "./Toast";
-import { TopNotice } from "./TopNotice";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
-import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { WebWorkspacePanel } from "./WebWorkspace";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
@@ -122,7 +116,6 @@ import {
 } from "./WorkspaceBrowserOpen";
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
-import { CircleAlert } from "./WuuIcons";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
@@ -171,7 +164,6 @@ function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
 }
 
 type MainComposerFocusRequest = {
-  target: ComposerVariant;
   origin: Element | null;
   interactionVersion: number;
   matchesDestination?: (snapshot: ApplicationSnapshotV1) => boolean;
@@ -186,7 +178,6 @@ export function App({ application, slots, shellPluginId }: {
   const presentNavigation = usePresentedNavigation();
   const popOutInit = application.desktop.popOut.kind && application.desktop.popOut.context ? application.desktop.popOut : null;
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
-  const recoveryNotices = useSyncExternalStore(application.subscribe, () => application.getSnapshot().drafts.recoveryNotices);
   const workspaceSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().workspaces);
   const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
   const configuration = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.configuration);
@@ -201,26 +192,6 @@ export function App({ application, slots, shellPluginId }: {
       : { kind: "no_project", cwd: workspaceSnapshot.activeRoot }
     : undefined, [workspaceSnapshot.activeRoot, workspaceSnapshot.activeWorkspaceId]);
   const projectAgentEnabled = configuration?.features?.project_agent === true;
-  useEffect(() => {
-    const addSelection = (event: Event) => {
-      const selection = (event as CustomEvent<ResponseSelection>).detail;
-      const snapshot = application.getSnapshot();
-      const pane = snapshot.conversationWorkspace.primaryThreadId === selection.source.thread_id ? "primary"
-        : snapshot.conversationWorkspace.secondaryThreadId === selection.source.thread_id ? "secondary" : undefined;
-      if (!pane || snapshot.conversationWorkspace.threads.find(thread => thread.id === selection.source.thread_id)?.read_only) return;
-      const draft = snapshot.drafts[pane];
-      if (!draft.ownerTabId) return;
-      void createComposerControls(application, { ownerTabId: draft.ownerTabId, pane })
-        .setSelections([...draft.selections, selection]).then(() => {
-          const owner = snapshot.drafts.split
-            ? [...document.querySelectorAll<HTMLElement>(".conversation-split-pane[data-thread-id]")].find(element => element.dataset.threadId === selection.source.thread_id)
-            : document.querySelector<HTMLElement>("[data-main-conversation-composer]");
-          focusComposerTextarea(owner?.querySelector<HTMLTextAreaElement>("textarea") ?? null);
-        }).catch(showErrorToast);
-    };
-    window.addEventListener("wuu:add-response-selection", addSelection);
-    return () => window.removeEventListener("wuu:add-response-selection", addSelection);
-  }, [application]);
   // Conversation notices share the latest settings navigation callback.
   useEffect(() => {
     const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
@@ -236,27 +207,6 @@ export function App({ application, slots, shellPluginId }: {
   const primaryThread = primarySource as Thread | undefined;
   const secondaryThread = secondarySource as Thread | undefined;
   const activeThread = conversationWorkspace.activePane === "secondary" ? secondaryThread : primaryThread;
-  const composerRuntimeView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
-  const composerNavigationPending = Boolean(tabs.pending);
-  useEffect(() => {
-    const ownerTabId = composerRuntimeView.activeOwnerTabId;
-    if (!ownerTabId || composerNavigationPending) return;
-    const cancellation = new AbortController();
-    const refresh = () => {
-      const snapshot = application.getSnapshot();
-      if (snapshot.tabs.pending || snapshot.composerRuntime.activeOwnerTabId !== ownerTabId) return;
-      void application.invoke("composer.refresh-engine-models", { ownerTabId }, { signal: cancellation.signal }).catch(error => {
-        if (cancellation.signal.aborted || error?.name === "AbortError") return;
-        showErrorToast(error);
-      });
-    };
-    refresh();
-    window.addEventListener("focus", refresh);
-    return () => {
-      cancellation.abort();
-      window.removeEventListener("focus", refresh);
-    };
-  }, [application, composerRuntimeView.activeOwnerTabId, composerNavigationPending]);
   const activities = useSyncExternalStore(application.subscribe, () => application.getSnapshot().activities);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
@@ -287,6 +237,25 @@ export function App({ application, slots, shellPluginId }: {
   const embeddedSettings = !poppedOutMode && nativeRibbonPresent;
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
+  const [surfaceFocusTargets, setSurfaceFocusTargets] = useState<Partial<Record<"primary" | "secondary" | "preview", UIFocusTargetV1>>>({});
+  // Child layout effects publish before the shell coordinates focus. The ref
+  // exposes that current handle; state retries pending focus when a surface mounts.
+  const liveSurfaceFocusTargets = useRef(surfaceFocusTargets);
+  const registerSurfaceFocusTarget = useCallback((region: "primary" | "secondary" | "preview", target: UIFocusTargetV1) => {
+    liveSurfaceFocusTargets.current = { ...liveSurfaceFocusTargets.current, [region]: target };
+    setSurfaceFocusTargets(liveSurfaceFocusTargets.current);
+    return () => {
+      if (liveSurfaceFocusTargets.current[region] !== target) return;
+      const next = { ...liveSurfaceFocusTargets.current }; delete next[region];
+      liveSurfaceFocusTargets.current = next; setSurfaceFocusTargets(next);
+    };
+  }, []);
+  const composerFocusTargets = useMemo(() => ({
+    primary: (target: UIFocusTargetV1) => registerSurfaceFocusTarget("primary", target),
+    secondary: (target: UIFocusTargetV1) => registerSurfaceFocusTarget("secondary", target),
+  }), [registerSurfaceFocusTarget]);
+  const registerPreviewFocusTarget = useCallback((target: UIFocusTargetV1) => registerSurfaceFocusTarget("preview", target), [registerSurfaceFocusTarget]);
+  const conversationHeadingRef = useRef<HTMLHeadingElement>(null);
   const userInteractionVersionRef = useRef(0);
   const {
     sidebarWidth,
@@ -557,7 +526,6 @@ export function App({ application, slots, shellPluginId }: {
     useState<EnvironmentDialog | null>(null);
   const conversationDetails = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationDetails);
   const contextCompositionEntries = useMemo(() => structuredClone(conversationDetails.filter(entry => entry.kind === "context")) as ContextCompositionEntry[], [conversationDetails]);
-  const [settingsNoticeVisible, setSettingsNoticeVisible] = useState(false);
   const pendingFork = conversationActions.pendingFork;
   const cancelPendingFork = (): void => { void application.invoke("history.cancel-fork", {}).catch(showErrorToast); };
   const {
@@ -609,10 +577,9 @@ export function App({ application, slots, shellPluginId }: {
   useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
-      const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
       if (
         target instanceof HTMLElement &&
-        !workspacePanel?.contains(target) &&
+        !liveSurfaceFocusTargets.current.preview?.contains(target) &&
         // Closing via window chrome must not replace the reading position's
         // focus target. When it opens the panel, the toggle is a valid owner.
         !(rightPanelOpen && target.closest('[data-wuu-component="right-sidebar-toggle"]'))
@@ -622,23 +589,15 @@ export function App({ application, slots, shellPluginId }: {
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, [rightPanelOpen, workspaceFocusOwner]);
+  }, [rightPanelOpen, workspaceFocusOwner, surfaceFocusTargets.preview]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
     const previous = previousWorkspaceFocusModeRef.current;
     previousWorkspaceFocusModeRef.current = { fullPanel, open: rightPanelOpen };
 
-    const sidebar = appShellRef.current?.querySelector<HTMLElement>(".sidebar");
-    sidebar?.toggleAttribute("inert", fullPanel && sidebarDrawerMode && !sidebarDrawerVisible
-      && !sidebar.querySelector(".sidebar-ribbon"));
-
     if (fullPanel && !previous.fullPanel) {
-      appShellRef.current
-        ?.querySelector<HTMLButtonElement>(
-          '.workspace-right-panel [role="tab"][aria-selected="true"]',
-        )
-        ?.focus({ preventScroll: true });
+      liveSurfaceFocusTargets.current.preview?.focus({ preventScroll: true });
       return;
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
@@ -651,18 +610,14 @@ export function App({ application, slots, shellPluginId }: {
       if (
         previousFocus?.owner === workspaceFocusOwner &&
         previousFocus.element.isConnected &&
-        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"], .conversation-split-pane:not(.active)')
+        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"]')
       ) {
         previousFocus.element.focus({ preventScroll: true });
         return;
       }
-      appShellRef.current
-        ?.querySelector<HTMLHeadingElement>(
-          ".conversation-title-heading h1",
-        )
-        ?.focus({ preventScroll: true });
+      conversationHeadingRef.current?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, mainComposerFocusRequest]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, mainComposerFocusRequest, surfaceFocusTargets.preview]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from activeContext — the
@@ -1177,7 +1132,6 @@ export function App({ application, slots, shellPluginId }: {
   });
   const focusMainComposer = useCallback(
     (
-      target: ComposerVariant,
       origin: Element | null,
       interactionVersion: number,
     ): boolean => {
@@ -1188,36 +1142,28 @@ export function App({ application, slots, shellPluginId }: {
       if (isTouchWebShell() || !conversationVisible) {
         return false;
       }
-      // Empty and populated sessions share the same bottom composer.
-      const visibleTarget = target === "hero" ? "dock" : target;
-      const composer = conversationPaneRef.current?.querySelector<HTMLElement>(
-        `[data-main-conversation-composer="${visibleTarget}"]`,
-      );
-      const textarea = composer?.querySelector<HTMLTextAreaElement>("textarea");
-      if (!textarea || textarea.disabled) {
-        return false;
-      }
+      const pane = application.getSnapshot().conversationWorkspace.activePane;
+      const focusTarget = liveSurfaceFocusTargets.current[pane];
+      if (!focusTarget) return false;
 
       const activeElement = document.activeElement;
       if (
         userInteractionVersionRef.current === interactionVersion &&
         (activeElement === document.body || activeElement === origin)
       ) {
-        textarea.focus();
+        return focusTarget.focus();
       }
       return true;
     },
-    [conversationPaneRef, conversationVisible],
+    [application, surfaceFocusTargets, conversationVisible],
   );
   const requestMainComposerFocus = useCallback(
     (
-      target: ComposerVariant,
       origin: Element | null = document.activeElement,
       interactionVersion: number = userInteractionVersionRef.current,
       matchesDestination?: (snapshot: ApplicationSnapshotV1) => boolean,
     ): MainComposerFocusRequest => {
       const request = {
-        target,
         origin,
         interactionVersion,
         matchesDestination,
@@ -1240,15 +1186,7 @@ export function App({ application, slots, shellPluginId }: {
     else setRightPanelOpenWithMotion(false);
     if (isTouchWebShell()) return;
     const interactionVersion = userInteractionVersionRef.current;
-    if (snapshot.drafts.split) {
-      const frame = window.requestAnimationFrame(() => {
-        if (application.getSnapshot().tabs.activeTabId !== request.tabId
-          || userInteractionVersionRef.current !== interactionVersion) return;
-        focusComposerTextarea(document.querySelector<HTMLTextAreaElement>(".conversation-split-pane.active textarea"));
-      });
-      return () => window.cancelAnimationFrame(frame);
-    }
-    requestMainComposerFocus("dock", document.activeElement, interactionVersion,
+    requestMainComposerFocus(document.activeElement, interactionVersion,
       current => current.tabs.activeTabId === request.tabId);
   }, [application, publicComposerFocusRequest, requestMainComposerFocus, rightPanelGlobalized, focusWorkspaceConversation, setRightPanelOpenWithMotion]);
 
@@ -1264,7 +1202,6 @@ export function App({ application, slots, shellPluginId }: {
     }
     if (
       !focusMainComposer(
-        mainComposerFocusRequest.target,
         mainComposerFocusRequest.origin,
         mainComposerFocusRequest.interactionVersion,
       )
@@ -1544,7 +1481,6 @@ export function App({ application, slots, shellPluginId }: {
     });
   }, [application, revealWebsite]);
 
-  const selectSessionTab = (tabId: string): Promise<void> => presentNavigation(() => application.invoke("tab.select", { tabId })).catch(reportPresentedNavigationError);
 
   function closePrimaryPluginView(): void {
     setActiveWebsiteID(undefined);
@@ -1616,28 +1552,6 @@ export function App({ application, slots, shellPluginId }: {
     return application.invoke("context-chat.submit", { text, page, context, sessionId });
   }
 
-  const failedDraftTabID = submissionView.failedDraftTabIds.find((id) => tabs.items.some((tab) => tab.id === id));
-  const failedDraftNotice = failedDraftTabID ? (
-    <UILayerPortal layer="notice">
-      <TopNotice
-        key={failedDraftTabID}
-        message={t(recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)
-          ? "composer.recoveredInterruptedDraft" : "composer.failedDraftSaved")}
-        icon={CircleAlert}
-        isError
-        persistent
-        action={{ label: t("composer.openFailedDraft"), onClick: () => {
-          revealConversationFromFocusedWorkspace();
-          void selectSessionTab(failedDraftTabID);
-        } }}
-        dismissAriaLabel={t("composer.discardFailedDraft")}
-        onDismiss={() => {
-          void application.invoke("tab.close", { tabId: failedDraftTabID }).catch(showErrorToast);
-        }}
-      />
-    </UILayerPortal>
-  ) : null;
-
   useEffect(() => {
     const back = (event: Event): void => {
       if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
@@ -1685,7 +1599,6 @@ export function App({ application, slots, shellPluginId }: {
       <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split
         ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
         : application.getSnapshot().drafts.activeTabId }}>
-      {!settingsNoticeVisible && failedDraftNotice}
       <ImagePreviewProvider>
       <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
@@ -1821,7 +1734,7 @@ export function App({ application, slots, shellPluginId }: {
                 <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
-            <ConversationTitleContent application={application} slots={slots} slotOwner={shellPluginId} />
+            <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
           </div>
           <ConversationTitleActions
             thread={activeThread}
@@ -1889,6 +1802,7 @@ export function App({ application, slots, shellPluginId }: {
           scrollRef: conversationScrollRef,
           contentRef: scrollContentRef,
           splitPaneRefs,
+          composerFocusTargets,
           visible: conversationVisible,
           restoring: conversationRestoring,
           onScroll: handleConversationScroll,
@@ -1900,7 +1814,7 @@ export function App({ application, slots, shellPluginId }: {
           onSplitSeparatorDoubleClick: resetSplitPercent,
         }} />
 
-        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", visible: !settingsOpen, containerRef: dockComposerRef, runtimeControlsTarget }} /> : null}
+        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", registerFocusTarget: composerFocusTargets.primary, visible: !settingsOpen, containerRef: dockComposerRef, runtimeControlsTarget }} /> : null}
 
         <ConversationStatusCluster
           application={application}
@@ -1941,6 +1855,7 @@ export function App({ application, slots, shellPluginId }: {
       ) : null}
       {poppedOutMode ? null : (
         <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
+          registerFocusTarget: registerPreviewFocusTarget,
           covered: settingsOpen || showingWebsite || userSpaceViewActive,
           toolsVisible: workspaceControlsVisible,
           runtimeControlsRef: setRuntimeControlsTarget,
@@ -1978,7 +1893,6 @@ export function App({ application, slots, shellPluginId }: {
         />
       ) : null}
       <slots.Slot name={`${shellPluginId}/application.settings`} context={{ layout: {
-        onNoticeVisibilityChange: setSettingsNoticeVisible,
         browserSettingsAllowed: !poppedOutMode,
         embedded: embeddedSettings,
         embeddedDrawerPhase: sidebarDrawerPhase,

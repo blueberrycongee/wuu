@@ -2,6 +2,8 @@
 
 桌面插件是加载到 Wuu renderer 中的受信任 JavaScript 模块，通过宿主的 React 实例和 UI Kit，在定义好的边界上添加控件、页面和展示方式。可先用[快速上手](desktop-plugin-quickstart.md)创建可运行的包。
 
+使用 `application` 的插件必须在 `desktop.required_services` 中声明 `{ "name": "ui.application", "major_version": 1, "required": true }`，使其在工作区切换时与 application provider 按依赖顺序完成生命周期切换。
+
 ## 选择扩展点
 
 | 目标 | API |
@@ -29,6 +31,7 @@ Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`、`wuu.default-navigation/sidebar.footer` | 侧栏内容和底部 |
 | `wuu.default-shell/workspace.header`、`wuu.default-shell/conversation.header` | 对应的标题区域 |
+| `wuu.default-conversation/welcome`、`welcome.greeting`、`welcome.mascot`、`welcome.usage` | 空会话欢迎页及其独立部分 |
 | `wuu.default-conversation/conversation.turn.after`、`wuu.default-preview/conversation.turn.after` | 每个已展示回合之后；展示已报告的耗时和用量 |
 | `wuu.default-conversation/conversation.tool-activity.after`、`wuu.default-preview/conversation.tool-activity.after` | 已展开的过程详情中，单项工具活动之后 |
 | `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
@@ -47,6 +50,28 @@ api.registerUIContribution({
 ```
 
 省略 `mode`（或使用 `content`）可提供内容，替换调用方的 fallback。单内容 Slot 在准备阶段拒绝冲突注册，并保留当前 generation。包装按 `order`、插件 ID、贡献 ID 升序组合，后面的包装位于外层。包装渲染失败会报告诊断并保留内层内容。卸载 Slot 所有者会移除该区域；卸载贡献者只移除其贡献。provider 清理会等待已挂载视图释放 effect。由服务图选择的区域继续使用精确的 provider 绑定，并拒绝包装。本地 SDK 预览采用相同的内容／包装顺序与冲突规则；包装渲染失败会记录到浏览器控制台。
+
+### 新对话欢迎页
+
+默认会话 provider 仅在会话为空时渲染 `wuu.default-conversation/welcome`；输入框和消息流位于该 Slot 之外。内容贡献可替换整个欢迎页，也可分别替换 `wuu.default-conversation/welcome.greeting`、`welcome.mascot` 或 `welcome.usage`。返回 `null` 可隐藏某一部分。每个 Slot 只接受一个内容提供方，并遵循上述冲突、包装和卸载规则。
+
+欢迎页的 context 为 `ConversationWelcomeContextV1`：包含 `projectDraft` 和三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。各部分的 context 包含 `projectDraft`；项目草稿或没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
+
+例如，以下布局将用量摘要移到问候上方并隐藏吉祥物：
+
+```js
+export function activatePresentation(api) {
+  const h = api.react.createElement;
+  api.registerUIContribution({
+    id: "welcome-layout",
+    target: "wuu.default-conversation/welcome",
+    render: ({ context }) => h("section", { style: { padding: 32, display: "grid", gap: 24 } },
+      context.usage, context.greeting),
+  });
+}
+```
+
+如只需更改问候，目标改为 `wuu.default-conversation/welcome.greeting`；使用相同所有者前缀的 `welcome.mascot` / `welcome.usage` 可分别替换其余部分。替换布局负责自身的响应式样式和无障碍支持。TypeScript 插件可从 `@wuu/plugin-sdk/ui` 导入 `ConversationWelcomeContextV1` 并将欢迎页 context 转换为该类型。
 
 增加指标、注释或上下文操作时，优先使用 `conversation.turn.after` 和 `conversation.tool-activity.after`，不要为了追加内容而包裹原有界面。两个槽位都支持按顺序组合多个插件，在气泡和 IM 样式下使用同一契约。回合追加内容位于原有回合的测量边界内。完整替换 `conversation.turn` 的实现自行拥有其内容，需要自行渲染所需槽位。新增、移除或渲染失败的追加贡献不会重新挂载原有回合和工具详情，保留展开状态与焦点。替换或包裹内容会改变 React 层级，不提供这种状态保留保证。
 
@@ -96,7 +121,11 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 ## 交互内容渲染器
 
+桌面模块可以在 `plugin.json` 的 `desktop.content_renderers`（也支持 `contentRenderers`）声明作用域内的内容渲染器，例如 `[{"category":"tool-result","match":"application/vnd.example+json"}]`。声明只接受小写、精确的 MIME 类型，不接受参数或通配符。模块导出 `activateContent(api)`，接收 SDK 的 `ContentRendererActivationAPI`：React、UI 基础组件、取消信号，以及渲染器、样式和清理注册接口；它不会收到应用的其他插件贡献接口。注册的渲染器必须与声明的类别和 MIME 类型一致。宿主为所选来源图单独加载该入口，并在作用域结束或插件被禁用时清理。
+
 内容渲染器也接收 `host.actions` 和 `host.invoke`。已完成的会话资源公布 `conversation.composer.submit` 时，接受 `{ text, context? }`：文本最多 8,000 字符，可选 JSON 上下文最多 16,384 字符。必须在真实按钮点击或该点击引发的原生表单提交中同步调用，键盘激活按钮同样有效。表单提交必须匹配该次点击的表单与提交按钮；单独调用 `requestSubmit()` 不构成动作授权。宿主一次性消费交互凭据，绑定来源会话和产物，再通过普通轮次准入与权限流程提交。会话运行中、来源被替换或卸载、插件被禁用时会拒绝动作，并保留输入框草稿和附件。`metadata.interaction` 提供 `running`、`readOnly` 和可选 `disabledReason`；调用时仍会重新检查。此输入契约仅用于内容渲染器；输入框 Presenter 提交现有草稿，仍不接受动作输入。
+
+内容渲染器可以调用 `host.reportState?.(values)`，向所属会话提供当前 JSON 草稿。报告是绑定当前挂载来源的不可信数据，不会发送消息或授权动作。超过 16 KiB 的报告会被忽略。宿主可以不提供这一能力；渲染器在缺少该能力时仍需正常工作。不要报告尚未完成的预览状态。来源被替换、卸载或渲染器被禁用时，宿主会丢弃报告。
 
 需要预览工具参数流时，`tool-result` 注册可声明 `toolInput: { capability }`，并使用字面 MIME `match`。只有当前实际负责该 MIME 的渲染器会收到预览。`content.preview` 标识临时输出；`metadata.toolInput` 提供累计且可能合并的 `argumentsText`、`turnId`、`status` 和可选 `error`。只解析完整且有界的数据单元，保留最近有效预览，不要执行动作或持久化尚未完成的状态。首个匹配的最终资源会沿用预览的 part 标识。
 
@@ -195,3 +224,9 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 ### 运行时导航显示名称
 
 `api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。入口未声明时返回 `false`；无效标题及已卸载代次的调用会报错。这只是显示覆盖，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。
+
+### 界面焦点与恢复
+
+默认外壳通过已挂载界面注册的能力协调焦点，不依赖提供者的 CSS 类名或输入框结构。编辑器槽位接收 `context.registerFocusTarget`；预览槽位接收 `context.layout.registerFocusTarget`。在布局 effect 中注册 `UIFocusTargetV1`，并返回注册提供的清理函数。`focus(options)` 聚焦界面自己的可用控件，尚未准备好时返回 `false`；`contains(element)` 判断元素是否属于该界面。聚焦时应遵守 `preventScroll`。分栏会话提供者将外壳的 `context.composerFocusTargets[pane]` 作为对应编辑器的 `registerFocusTarget` 继续传入。外壳负责导航时机，并避免覆盖用户之后的交互；提供者负责自己的 DOM、就绪状态和清理。替代实现可以使用 input 或其他编辑器，无需模仿默认编辑器的类名。
+
+选定界面失败后保留持续的不可用状态，并可提供局部渲染重试。缺失或冲突的提供者需要在设置中修正选择；重试不得静默切换到内置提供者。可选包装器保留子内容，诊断仍记录真实失败。编辑器拥有的选区接收和模型刷新订阅在其卸载时停止，不再作为外壳的副作用运行。

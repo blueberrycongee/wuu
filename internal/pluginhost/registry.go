@@ -96,6 +96,7 @@ type serviceExecution struct {
 	cancel       context.CancelFunc
 	refs         int
 	participants map[string]struct{}
+	invocations  map[string]int // Accepted calls targeting each provider, not caller-only participation.
 	autonomous   bool
 }
 
@@ -191,6 +192,8 @@ type ServiceRegistry struct {
 	cleanupOwners        map[string]int
 	preparing            map[string]bool
 	retiringProviders    map[string]bool
+	retirementCleanups   map[string]map[*retirementCleanup]struct{}
+	retirementClosed     bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
 	graphGeneration      string
 	composition          *CompositionSnapshot
@@ -421,6 +424,19 @@ func (r *ServiceRegistry) Activate() {
 // execution contexts are canceled before process shutdown continues.
 func (r *ServiceRegistry) Close(ctx context.Context) {
 	r.mu.Lock()
+	r.retirementClosed = true
+	owners := make(map[string]bool)
+	for owner := range r.retirementCleanups {
+		owners[owner] = true
+	}
+	r.mu.Unlock()
+	for owner := range owners {
+		r.stopProviderAdmission(owner)
+	}
+	for owner := range owners {
+		_ = r.waitRetirementCleanup(owner)
+	}
+	r.mu.Lock()
 	if !r.open {
 		r.mu.Unlock()
 		return
@@ -466,6 +482,8 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 	if pluginID == "" {
 		return
 	}
+	r.stopProviderAdmission(pluginID)
+	_ = r.waitRetirementCleanup(pluginID)
 	r.mu.Lock()
 	var revoked []serviceKey
 	for key, provider := range r.providers {
@@ -497,7 +515,6 @@ func (r *ServiceRegistry) stopProviderAdmission(pluginID string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.retiringProviders == nil {
 		r.retiringProviders = make(map[string]bool)
 	}
@@ -507,6 +524,7 @@ func (r *ServiceRegistry) stopProviderAdmission(pluginID string) {
 			execution.cancel()
 		}
 	}
+	r.mu.Unlock()
 }
 
 func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool {
@@ -601,12 +619,13 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		}
 		execution.refs++
 		execution.participants[provider] = struct{}{}
+		execution.invocations[provider]++
 		r.mu.Unlock()
 		// A callback's transport can disappear while its shared root remains live.
 		// Cancel this invocation without revoking the other chain participants.
 		callContext, cancel := context.WithCancel(execution.ctx)
 		stopCaller := context.AfterFunc(callerContext, cancel)
-		release := r.releaseExecution(id)
+		release := r.releaseExecution(id, provider)
 		return callContext, id, func() error { stopCaller(); cancel(); return release() }, nil
 	}
 	scoped := false
@@ -654,13 +673,14 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	r.executions[id] = &serviceExecution{
 		retained: ctx.Value(retainedServiceScopeAdmissionKey{}) == true, ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
+		invocations:  map[string]int{provider: 1},
 		autonomous:   !scoped && !cleanup,
 	}
 	r.mu.Unlock()
-	return execCtx, id, r.releaseExecution(id), nil
+	return execCtx, id, r.releaseExecution(id, provider), nil
 }
 
-func (r *ServiceRegistry) releaseExecution(id string) func() error {
+func (r *ServiceRegistry) releaseExecution(id, provider string) func() error {
 	var once sync.Once
 	var releaseErr error
 	return func() error {
@@ -670,11 +690,15 @@ func (r *ServiceRegistry) releaseExecution(id string) func() error {
 			execution := r.executions[id]
 			if execution != nil {
 				execution.refs--
+				execution.invocations[provider]--
+				if execution.invocations[provider] == 0 {
+					delete(execution.invocations, provider)
+				}
+				close(r.executionChanged)
+				r.executionChanged = make(chan struct{})
 				if execution.refs == 0 {
 					delete(r.executions, id)
 					execution.cancel()
-					close(r.executionChanged)
-					r.executionChanged = make(chan struct{})
 					completion, _ = execution.ctx.Value(serviceCompletionKey{}).(*serviceCompletion)
 				}
 			}
@@ -747,9 +771,10 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 	r.executions[executionID] = &serviceExecution{
 		ctx: callbackCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{provider.pluginID: {}},
+		invocations:  map[string]int{provider.pluginID: 1},
 	}
 	r.mu.Unlock()
-	release := r.releaseExecution(executionID)
+	release := r.releaseExecution(executionID, provider.pluginID)
 	defer func() {
 		tracker.End(executionID)
 		cancel()

@@ -1,6 +1,7 @@
 const { execFileSync } = require("node:child_process");
 const { rmSync } = require("node:fs");
 const { join } = require("node:path");
+const { runLinuxBuild, runPhase } = require("./build-linux-ci.cjs");
 
 if (process.platform !== "linux" || process.arch !== "x64") {
   throw new Error("Linux releases require a native Linux x64 builder");
@@ -14,9 +15,6 @@ if (process.env.WUU_RELEASE_SOURCE_COMMIT && process.env.WUU_RELEASE_SOURCE_COMM
 run(process.execPath, ["../scripts/release-version.mjs", "check", process.env.RELEASE_TAG || ""]);
 // Experimental Linux packages remain separate from the macOS release workflow.
 rmSync("release", { recursive: true, force: true });
-for (const script of ["build:core", "build:cua-linux", "build:ripgrep", "build"]) run("npm", ["run", script]);
-run("node_modules/.bin/electron-builder", [
-  "--linux", "AppImage", "deb", "--x64",
-  "--publish=never", "--config.electronDist=node_modules/electron/dist",
-]);
-run(process.execPath, [join(__dirname, "verify-linux-release.cjs")]);
+runPhase("prerequisites", () => run(process.execPath, [join(__dirname, "build-package-prerequisites.cjs")]));
+runPhase("builder", () => runLinuxBuild(process.env.GITHUB_EVENT_NAME, { env }));
+runPhase("verification", () => run(process.execPath, [join(__dirname, "verify-linux-release.cjs")]));

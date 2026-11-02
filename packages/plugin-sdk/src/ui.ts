@@ -152,8 +152,8 @@ export interface ApplicationAppearanceV1 {
 export interface ApplicationActionMapV1 extends ApplicationSideConversationActionMapV1, ApplicationSearchActionMapV1, ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   /** Open an existing worktree in a draft, importing its workspace when needed. */
   "workspace.open-worktree": { input: { readonly path: string }; result: void };
-  "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
-  "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
+  "workspace.retarget-draft": { input: { readonly workspaceId: string }; result: void };
+  "workspace.start-draft": { input: { readonly workspaceId: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };
   /** Remove a workspace after the caller has confirmed the user's intent. */
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };
@@ -247,6 +247,15 @@ export type ConversationToolActivitySlotContextV1 = {
 };
 
 /** Slots are qualified as `${ownerPluginId}/${localId}`. */
+/** A surface owns focusable controls; containing layouts never inspect its DOM. */
+export interface UIFocusTargetV1 {
+  /** Returns false while no enabled focus target is ready. Must preserve scroll when requested. */
+  focus(options?: FocusOptions): boolean;
+  contains(element: Element): boolean;
+}
+/** Register during a mounted surface's layout effect and release on cleanup. */
+export type UIRegisterFocusTargetV1 = (target: UIFocusTargetV1) => () => void;
+
 export interface UISlotDefinition {
   readonly id: string;
   readonly cardinality: "one" | "many";
@@ -276,6 +285,14 @@ export interface UISlotProps {
 export interface UICompositionV1 {
   /** Nested contributions use the same component; recursive slot cycles fail visibly. */
   readonly Slot: ComponentType<UISlotProps>;
+}
+/** Context for the default conversation's welcome slot. Render each part at most once.
+ * Each node includes its own independently replaceable slot and native fallback. */
+export interface ConversationWelcomeContextV1 extends Readonly<Record<string, unknown>> {
+  readonly projectDraft: boolean;
+  readonly greeting: ReactNode;
+  readonly mascot: ReactNode;
+  readonly usage: ReactNode;
 }
 export interface UISlotRenderProps {
   readonly locale: string;

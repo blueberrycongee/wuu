@@ -1,10 +1,10 @@
 import { ArchiveTip } from "../ArchiveTip";
 import { UILayerPortal } from "../ui/layers/UILayerHost";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
 import type { ApplicationPresentationAPI, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
-import { SCRATCH_PSEUDO_PROJECT_ID, isScratchThread, threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
+import { threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
 import type { DesktopProject } from "../../shared/protocol";
 import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
@@ -35,6 +35,15 @@ function useStoredIDs(key: string, fallback: string[] = []) {
 export function DefaultNavigationSurface({ application, slots, workspaceSelectionEnabled = false, ...layout }: DefaultNavigationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const presentNavigation = usePresentedNavigation();
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  // Compare the complete tab inventory, not just visible drafts: selecting an
+  // existing draft must not look like creation. Initial/restored tabs stay still.
+  const previousTabs = useRef({ application, items: snapshot.tabs.items, phase: snapshot.phase });
+  const previousTabIDs = new Set(previousTabs.current.items.map(tab => tab.id));
+  const canAnimateNewTabs = previousTabs.current.application === application
+    && previousTabs.current.phase === "ready" && snapshot.phase === "ready";
+  useLayoutEffect(() => {
+    previousTabs.current = { application, items: snapshot.tabs.items, phase: snapshot.phase };
+  }, [application, snapshot.tabs.items, snapshot.phase]);
   // The controller owns this SDK extension; no private state or reducer is accepted.
   const view = (snapshot as ApplicationSnapshotV1 & { navigationWorkspace: ApplicationNavigationViewV1 }).navigationWorkspace;
   const invoke = useMemo(() => application.invoke.bind(application) as SidebarNavigationService["invoke"], [application]);
@@ -59,12 +68,11 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       await invoke("navigation.focus-composer", { tabId });
     }
   };
-  type DraftTarget = { kind: "active" } | { kind: "workspace"; workspaceId: string };
+  type DraftTarget = { workspaceId: string };
   type DraftIntent = { application: ApplicationServiceV1; context: string; target: DraftTarget; targetContext: string; gesture: { origin: Element | null; version: number } };
   const [deferredDraft, setDeferredDraft] = useState<DraftIntent>();
   const draftContext = JSON.stringify([view.activeContextKind, snapshot.workspaces.activeWorkspaceId, snapshot.workspaces.activeRoot]);
   const targetContext = (target: DraftTarget): string => {
-    if (target.kind === "active" || target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID) return target.kind === "active" ? "active" : "scratch";
     const workspace = snapshot.workspaces.workspaces.find(row => row.id === target.workspaceId);
     return JSON.stringify([target.workspaceId, workspace?.root, workspace?.available]);
   };
@@ -72,8 +80,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     const intent = { application, context: draftContext, target, targetContext: targetContext(target), gesture };
     void focusAfterNavigation(async () => {
       try {
-        if (target.kind === "active") return (await application.invoke("draft.start", {})).tabId;
-        const result = await application.invoke("workspace.start-draft", { workspaceId: target.workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : target.workspaceId });
+        const result = await application.invoke("workspace.start-draft", { workspaceId: target.workspaceId });
         return result.activated ? result.tabId : undefined;
       } catch (error) {
         // Retry only when the draft request itself never reached a writer.
@@ -93,7 +100,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   type ThreadIntent = { application: ApplicationServiceV1; target: ThreadTarget; targetContext?: string; version: number };
   const [deferredThread, setDeferredThread] = useState<ThreadIntent>();
   const threadTargetContext = (target: ThreadTarget): string | undefined => target.workspaceId
-    ? targetContext({ kind: "workspace", workspaceId: target.workspaceId }) : undefined;
+    ? targetContext({ workspaceId: target.workspaceId }) : undefined;
   const selectThread = (target: ThreadTarget, version = interactionVersion.current): void => {
     const intent = { application, target, targetContext: threadTargetContext(target), version };
     run(presentNavigation(async () => {
@@ -136,13 +143,16 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState(new Set<string>());
   const [collapsed, setCollapsed] = useStoredIDs("wuu.desktop.collapsedSidebarSectionIDs");
-  const [expanded, setExpanded] = useStoredIDs("wuu.desktop.expandedSidebarSectionIDs", collapsed.has(SCRATCH_PSEUDO_PROJECT_ID) ? [] : [SCRATCH_PSEUDO_PROJECT_ID]);
+  const [expanded, setExpanded] = useStoredIDs("wuu.desktop.expandedSidebarSectionIDs", []);
   const [collapsedFolders, setCollapsedFolders] = useState(new Set<string>());
   const [order, setOrder] = useState(() => [...readIDs("wuu.desktop.sidebarSectionOrder")]);
   const rows = useMemo(() => structuredClone(view.threads) as ThreadSummary[], [view.threads]);
-  const workspaces = useMemo<DesktopProject[]>(() => [{ id: SCRATCH_PSEUDO_PROJECT_ID, name: t("sidebar.conversations"), path: "", created_at: "", updated_at: "" }, ...view.workspaces.map(row => ({ ...row }))], [view.workspaces, t]);
+  const workspaces = useMemo<DesktopProject[]>(() => view.workspaces.map(row => ({ ...row })), [view.workspaces]);
   const sectionOrder = useMemo(() => reconcileSidebarSectionOrder(order, workspaces.map(row => row.id)), [order, workspaces]);
-  const workspaceRows = useMemo(() => Object.fromEntries(workspaces.map(workspace => [workspace.id, rows.filter(row => !row.archived && (workspace.id === SCRATCH_PSEUDO_PROJECT_ID ? isScratchThread(row, [...view.workspaces]) : threadBelongsToWorkspace(row, workspace)))])), [rows, workspaces, view.workspaces]);
+  const workspaceRows = useMemo(() => Object.fromEntries(workspaces.map(workspace => [workspace.id, rows.filter(row => !row.archived && threadBelongsToWorkspace(row, workspace))])), [rows, workspaces]);
+  const defaultDraftWorkspaceID = view.selectedWorkspaceId && view.workspaces.some(row => row.id === view.selectedWorkspaceId && !row.missing)
+    ? view.selectedWorkspaceId
+    : view.workspaces.find(row => !row.missing)?.id;
   useEffect(() => { if (!view.initialized) return; const lifetime = new AbortController(); void invoke("navigation.refresh", {}, { signal: lifetime.signal }).catch(error => { if (!lifetime.signal.aborted) showApplicationActionError(error); }); return () => lifetime.abort(); }, [invoke, view.initialized]);
   const navigation = useMemo<SidebarNavigationService>(() => ({ view, invoke, slots, organization: {
     folders: view.folders.map(folder => ({ ...folder })),
@@ -157,10 +167,10 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     const opening = !expanded.has(id);
     setExpanded(current => { const next = new Set(current); if (opening) next.add(id); else next.delete(id); return next; });
     setCollapsed(current => { const next = new Set(current); if (opening) next.delete(id); else next.add(id); return next; });
-    if (opening && id !== SCRATCH_PSEUDO_PROJECT_ID) run(invoke("navigation.load-workspace", { workspaceId: id }));
+    if (opening) run(invoke("navigation.load-workspace", { workspaceId: id }));
   };
   const createProject = async (workspaceId?: string) => {
-    const targetId = workspaceId ?? (view.activeContextKind === "project" ? view.selectedWorkspaceId : undefined) ?? view.workspaces.find(row => !row.missing)?.id;
+    const targetId = workspaceId ?? defaultDraftWorkspaceID;
     const workspace = view.workspaces.find(row => row.id === targetId);
     if (!workspace || workspace.missing) throw new Error(t("projects.needsWorkspace"));
     const result = await application.invoke("workspace.start-draft", { workspaceId: workspace.id });
@@ -196,7 +206,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       && (tab.id === snapshot.tabs.activeTabId || view.pendingConversations.some(row => row.id === tab.id))).map(tab => {
       const pending = view.pendingConversations.find(row => row.id === tab.id);
       // Draft input is not a session title; wait for the created thread's title.
-      return { id: tab.id, title: t("tabs.newConversation"), pending: Boolean(pending) };
+      return { id: tab.id, title: t("tabs.newConversation"), pending: Boolean(pending), entering: canAnimateNewTabs && !previousTabIDs.has(tab.id) };
     })}
     onSelectPendingConversation={tabId => run(presentNavigation(() => application.invoke("tab.select", { tabId })))}
     pinnedThreads={rows.filter(row => row.pinned && !row.archived)} activeThreadID={snapshot.conversation.threadId}
@@ -205,11 +215,11 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     collapsedSidebarSectionIDs={collapsed} expandedSidebarSectionIDs={expanded} collapsedFolderIDs={collapsedFolders} setCollapsedFolderIDs={setCollapsedFolders}
     loadingWorkspaceThreadIDs={new Set(view.loadingWorkspaceIds)} workspaceThreadsByWorkspaceID={workspaceRows}
     workspaceMenuOpen={workspaceMenuOpen} workspaceMenuRef={workspaceMenuRef} searchOpen={view.searchOpen} sectionOrder={sectionOrder}
-    onStartNewThread={() => startDraft({ kind: "active" })}
+    onStartNewThread={() => { if (defaultDraftWorkspaceID) startDraft({ workspaceId: defaultDraftWorkspaceID }); }}
     onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
     onSelectThread={threadId => selectThread({ threadId })}
-    onSelectWorkspaceThread={(workspaceId, threadId) => selectThread({ threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId })}
+    onSelectWorkspaceThread={(workspaceId, threadId) => selectThread({ threadId, workspaceId })}
     onTogglePinned={thread => run(invoke("navigation.pin-thread", { threadId: thread.id, pinned: !thread.pinned }))}
     onArchiveThread={thread => run(archiveThread(thread))}
     onDeleteThread={thread => run(invoke("navigation.delete-thread", { threadId: thread.id }))}
@@ -219,7 +229,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onOpenWorkspaceFolder={() => { setWorkspaceMenuOpen(false); run(application.invoke("workspace.create", { kind: "folder" })); }}
     onToggleSidebarSectionCollapsed={toggleSection} onLoadWorkspaceThreads={workspace => invoke("navigation.load-workspace", { workspaceId: workspace.id })}
     onFocusWorkspace={workspaceSelectionEnabled ? workspaceId => run(presentNavigation(() => invoke("navigation.focus-workspace", { workspaceId }))) : undefined}
-    onStartNewThreadInWorkspace={workspaceId => startDraft({ kind: "workspace", workspaceId })}
+    onStartNewThreadInWorkspace={workspaceId => startDraft({ workspaceId })}
     onRemoveWorkspace={workspaceId => run((async () => { if (await confirmAction({ title: t("workspace.removeTitle", { name: view.workspaces.find(row => row.id === workspaceId)?.name ?? workspaceId }), message: t("workspace.removeConfirm"), confirmLabel: t("common.remove") })) await application.invoke("workspace.remove", { workspaceId }); })())}
     onRelocateWorkspace={workspaceId => run(application.invoke("workspace.relocate", { workspaceId }))}
     onCreateProject={view.projectAgentEnabled ? workspaceId => run(focusAfterNavigation(() => createProject(workspaceId))) : undefined}

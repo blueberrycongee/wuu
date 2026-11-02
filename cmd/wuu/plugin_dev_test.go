@@ -11,13 +11,66 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/plugincontrol"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+func TestDevPublicationChecksEveryHostBeforeReplacingPackage(t *testing.T) {
+	home, source := t.TempDir(), t.TempDir()
+	writePluginDevTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"host-fixture","version":"1","desktop":{"entry":"desktop.js"}}`)
+	writePluginDevTestFile(t, filepath.Join(source, "desktop.js"), "export function activate() {}")
+	writePluginDevTestFile(t, filepath.Join(source, "package.json"), `{"scripts":{"build":"fixture"}}`)
+	manager := writePluginDevTestManager(t, "true")
+	devDir := filepath.Join(home, "dev", "plugins")
+	if err := os.MkdirAll(devDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorizeDevDirectory(devDir, "host-fixture", source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refreshDevGeneration(context.Background(), home, source, manager); err != nil {
+		t.Fatal(err)
+	}
+	before, err := session.ReadPluginGenerationEpoch(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocked atomic.Bool
+	blocked.Store(true)
+	host, err := plugincontrol.Register(home, plugincontrol.HostInfo{ProductDomain: "personal"}, func(_ context.Context, request plugincontrol.Request) plugincontrol.Response {
+		if request.Operation == "prepare" && blocked.Load() {
+			return plugincontrol.Response{Error: "storage transfer conflicts with existing ownership metadata"}
+		}
+		return plugincontrol.Response{Plugins: []plugincontrol.PluginStatus{{ID: "host-fixture", State: "active", Fingerprint: request.Fingerprint}}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	writePluginDevTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"host-fixture","version":"2","desktop":{"entry":"desktop.js"}}`)
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, source, manager); err == nil || diagnostic.Level != "fail" {
+		t.Fatalf("published rejected candidate: %+v %v", diagnostic, err)
+	}
+	after, err := session.ReadPluginGenerationEpoch(home)
+	if err != nil || after != before {
+		t.Fatalf("failed preflight advanced publication: %d %d %v", before, after, err)
+	}
+	for _, item := range pluginpkg.Discover("", home) {
+		if item.ID == "host-fixture" && item.Version != "1" {
+			t.Fatal("failed preflight replaced last good package")
+		}
+	}
+	blocked.Store(false)
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, source, manager); err != nil || len(diagnostic.Hosts) != 1 || diagnostic.Hosts[0].Host.ProductDomain != "personal" {
+		t.Fatalf("repair did not report actual host: %+v %v", diagnostic, err)
+	}
+}
 
 func TestPluginCreateProducesDistinctStandaloneTemplates(t *testing.T) {
 	for _, pluginType := range []string{"agent", "desktop", "full"} {

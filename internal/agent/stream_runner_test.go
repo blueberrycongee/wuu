@@ -3260,3 +3260,45 @@ func TestStreamRunnerContinuesFromCompletedItem(t *testing.T) {
 		}
 	}
 }
+
+// The renderer must see the first arguments immediately, not only the final
+// authoritative tool result. Providers may put a prefix in the start event.
+func TestStreamRunnerPreservesInitialToolArgumentsForPreview(t *testing.T) {
+	const prefix = `{"spec":{"version":3,"title":"Preview",`
+	const suffix = `"fallback":"Answer","source":"<Text>Answer</Text>"}}`
+	client := &mockStreamClient{attempts: []mockStreamAttempt{
+		{events: []providers.StreamEvent{
+			{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: "ui", Name: "render_ui", Arguments: prefix}},
+			{Type: providers.EventToolUseDelta, ToolCall: &providers.ToolCall{ID: "ui"}, Content: suffix},
+			{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: "ui", Name: "render_ui", Arguments: prefix + suffix}},
+			{Type: providers.EventDone},
+		}},
+		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "done"}, {Type: providers.EventDone}}},
+	}}
+	tools := &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "render_ui"}}, results: map[string]string{"ui": "ok"}}
+	var initial, preview string
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test-model", Tools: tools,
+		OnEvent: func(event providers.StreamEvent) {
+			switch event.Type {
+			case providers.EventToolUseStart:
+				if event.ToolCall != nil && event.ToolCall.ID == "ui" {
+					initial = event.ToolCall.Arguments
+					preview = initial
+				}
+			case providers.EventToolUseDelta:
+				if event.ToolCall != nil && event.ToolCall.ID == "ui" {
+					preview += event.Content
+				}
+			}
+		},
+	}
+	if _, err := runner.Run(context.Background(), "Build a view"); err != nil {
+		t.Fatal(err)
+	}
+	if initial != prefix {
+		t.Fatalf("start arguments = %q, want %q", initial, prefix)
+	}
+	if preview != prefix+suffix {
+		t.Fatalf("incremental preview = %q, want complete input", preview)
+	}
+}

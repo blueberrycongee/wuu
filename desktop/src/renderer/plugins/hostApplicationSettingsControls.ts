@@ -7,7 +7,7 @@ import { readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory }
 import { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } from "../AppearancePreferences";
 import { listLocalFonts, isMonospaceFont } from "../LocalFonts";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
+import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableContentThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import type { InitializeResult } from "../../shared/protocol";
 import { createElement } from "react";
@@ -62,7 +62,15 @@ export function createApplicationSettingsControls(options: {
       pets: hostSupports("listCodexPets"),
       diagnostics: typeof window.wuu?.getPluginDiagnostics === "function"
     }),
-    currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme,
+    currentAppliedTheme, observeAppliedTheme, selectedExtensionThemeKey, selectExtensionTheme,
+    availableExtensionThemes: inventory => availableContentThemes(inventory).map(theme => ({
+      key: theme.key, legacyKeys: theme.legacyKeys, name: theme.name, base: theme.base,
+      preview: {
+        canvas: theme.tokens["--wuu-color-canvas"] ?? (theme.base === "dark" ? "#191a1c" : "#fcfcfd"),
+        ink: theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+        accent: theme.tokens["--wuu-color-accent"] ?? theme.tokens["--wuu-accent"] ?? theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+      },
+    })),
     observeContentThemeSelection: listener => {
       window.addEventListener("wuu-theme-selection", listener);
       window.addEventListener("storage", listener);
@@ -237,7 +245,16 @@ export function createApplicationSettingsControls(options: {
     },
     listEngines: async (...args) => {
       if (typeof window.wuu?.listEngines !== "function") throw new Error("Settings operation unavailable: listEngines");
-      return window.wuu.listEngines(...args);
+      try { return await window.wuu.listEngines(...args); }
+      catch (error) {
+        const options = args[0];
+        if (options?.include_activity !== false || !(error instanceof Error)
+          || !error.message.includes('json: unknown field "include_activity"')) throw error;
+        // Remove this fallback when supported app-server versions accept include_activity.
+        const { include_activity: _includeActivity, ...legacyOptions } = options;
+        args[0] = legacyOptions;
+        return window.wuu.listEngines(...args);
+      }
     },
     getPluginSetting: async (...args) => {
       if (typeof window.wuu?.getPluginSetting !== "function") throw new Error("Settings operation unavailable: getPluginSetting");

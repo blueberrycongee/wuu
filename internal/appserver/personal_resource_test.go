@@ -121,7 +121,7 @@ func TestPersonalAuthorityRejectsRetiredInvocation(t *testing.T) {
 	}
 	scope := personalreview.Scope{SessionID: f.id, TaskID: "conversation:" + f.id + ":" + strconv.Itoa(f.sourceSeq)}
 	called := false
-	err = f.host.actions.withAuthority(ctx, scope, func(personalreview.Authority) error { called = true; return nil })
+	err = f.host.actionsForTest(t).withAuthority(ctx, scope, func(personalreview.Authority) error { called = true; return nil })
 	if err == nil || called {
 		t.Fatal("closed action capture silently rebound to current authority")
 	}

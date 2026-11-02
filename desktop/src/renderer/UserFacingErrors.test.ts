@@ -57,6 +57,68 @@ describe("userFacingErrorForMessage", () => {
     expect(live.diagnostic).toBe(message);
   });
 
+  it.each(["zh-CN", "en-US"] as const)("consolidates external CLI engine errors into unified categories and preserves diagnostics in %s", (locale) => {
+    setActiveLocale(locale);
+    const cases = [
+      {
+        message: 'request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": EOF',
+        category: "network",
+        title: t("error.connectionInterrupted"),
+      },
+      {
+        message: "Antigravity exited: exit status 1: Error: 401 Unauthorized",
+        category: "auth",
+        title: `401 ${t("error.http401")}`,
+      },
+      {
+        message: "Not logged in · Please run /login",
+        category: "auth",
+        title: t("error.authTitle"),
+      },
+      {
+        message: "Credit balance is too low",
+        category: "provider",
+        title: t("error.providerTitle"),
+      },
+      {
+        message: "OpenCode server exited: exit status 1: rate limit exceeded",
+        category: "provider",
+        title: t("error.rateLimited"),
+      },
+      {
+        message: "engine stopped: max_tokens",
+        category: "provider",
+        title: t("error.tokenLimitExceeded"),
+      },
+      {
+        message: "engine stopped: refusal",
+        category: "provider",
+        title: t("error.contentPolicy"),
+      },
+      {
+        message: "agent execution terminated due to error",
+        category: "provider",
+        title: t("error.responseFailed"),
+      },
+      {
+        message: "claude exited: exit status 1: unknown option '--foo'",
+        category: "provider",
+        title: t("error.responseFailed"),
+      },
+    ] as const;
+
+    for (const tc of cases) {
+      const live = userFacingErrorForMessage({ message: tc.message, category: tc.category }, "turn");
+      const resumed = userFacingErrorForMessage(tc.message, "turn");
+      expect(live.category, tc.message).toBe(tc.category);
+      expect(resumed.category, tc.message).toBe(tc.category);
+      expect(live.title, tc.message).toBe(tc.title);
+      expect(resumed.title, tc.message).toBe(tc.title);
+      expect(live.title, tc.message).not.toBe(t("error.internalTitle"));
+      expect(live.diagnostic, tc.message).toBe(tc.message);
+    }
+  });
+
   it.each(["zh-CN", "en-US"] as const)("distinguishes empty replies from generic provider errors in %s", (locale) => {
     setActiveLocale(locale);
     const message = "model returned empty answer (stop_reason=completed)";

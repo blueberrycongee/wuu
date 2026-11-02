@@ -74,43 +74,14 @@
   --ink-overlay-8: rgba(224, 224, 227, 0.09);
   --ink-overlay-12: rgba(224, 224, 227, 0.13);
   --ink-overlay-18: rgba(224, 224, 227, 0.2);
-  /* Fine inset highlights give dark surfaces depth without an outer glow.
-     Overlays retain black ambient shadows to separate overlapping content.
-     Keep the complete recipe inside the public override, including `none`. */
-  --shadow-inset-color: rgba(255, 255, 255, 0.06);
-  --shadow-inset: inset 0 0 0 1px var(--shadow-inset-color);
-  --shadow-color-medium: rgba(0, 0, 0, 0.2);
-  --shadow-color-strong: rgba(0, 0, 0, 0.24);
-  --shadow-color-heavy: rgba(0, 0, 0, 0.3);
-  --shadow-soft: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 1px 3px var(--shadow-color-medium));
-  --shadow-card: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 3px 10px -4px var(--shadow-color-strong));
-  --shadow-message: var(
-    --wuu-elevation-panel,
-    inset 0 1px 0 color-mix(in srgb, var(--shadow-inset-color) 50%, transparent),
-    0 1px 2.5px color-mix(in srgb, var(--shadow-color-medium) 75%, transparent)
-  );
-  --shadow-composer: var(
-    --wuu-elevation-panel,
-    inset 0 1px 0 color-mix(in srgb, var(--shadow-inset-color) 50%, transparent),
-    0 3px 9px -3px color-mix(in srgb, var(--shadow-color-medium) 80%, transparent)
-  );
-  --shadow-tray: var(--wuu-elevation-panel, var(--shadow-inset));
-  --shadow-pop: var(
-    --wuu-elevation-overlay,
-    var(--shadow-inset), 0 8px 24px -6px var(--shadow-color-strong), 0 2px 6px -2px var(--shadow-color-medium)
-  );
-  --shadow-modal: var(
-    --wuu-elevation-overlay,
-    var(--shadow-inset), 0 16px 48px -12px var(--shadow-color-heavy), 0 4px 12px -4px var(--shadow-color-medium)
-  );
-  --shadow-drawer-left: var(
-    --wuu-elevation-overlay,
-    var(--shadow-inset), -6px 0 20px -8px var(--shadow-color-strong)
-  );
-  --shadow-drawer-right: var(
-    --wuu-elevation-overlay,
-    var(--shadow-inset), 6px 0 20px -8px var(--shadow-color-strong)
-  );
+  /* Keep the shared light direction and falloff. A faint inset highlight and
+     raised surface colors carry dark-mode depth without a dense black halo. */
+  --shadow-surface-edge: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  --shadow-inset: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  --shadow-color-subtle: rgba(0, 0, 0, 0.08);
+  --shadow-color-medium: rgba(0, 0, 0, 0.12);
+  --shadow-color-strong: rgba(0, 0, 0, 0.16);
+  --shadow-color-heavy: rgba(0, 0, 0, 0.2);
   --modal-backdrop-bg: var(--wuu-color-overlay-backdrop, rgba(0, 0, 0, 0.5));
 
   /* --- Status colors: brighter hues, deep soft backgrounds --- */
@@ -309,20 +280,27 @@
 /* --- 外观 segmented control (settings page) --- */
 .theme-segmented {
   display: inline-flex;
+  align-items: center;
+  min-height: var(--control-field-height);
   gap: 2px;
   padding: 2px;
-  background: var(--surface-2);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+  border-radius: 6px;
 }
 
 .theme-segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--control-field-height) - 6px);
   border: 0;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  font-size: var(--font-ui);
-  padding: 4px 12px;
-  border-radius: var(--radius-xs);
+  font-size: var(--font-sm);
+  padding: 0 12px;
+  border-radius: 4px;
   cursor: pointer;
 }
 
@@ -332,7 +310,7 @@
 
 .theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) {
   background: var(--paper);
-  color: var(--ink);
+  color: var(--ink-strong);
   font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 1px 2px var(--shadow-color-subtle);
 }

@@ -35,6 +35,8 @@ export interface ApplicationSettingsViewV1 {
   readonly configuration?: ApplicationSettingsConfigurationV1;
   readonly engineInventory?: SettingsReadonly<ApplicationSettingsEngineListResultV1>;
   readonly engineInventoryError: string;
+  /** Changes when the runtime context owning engine inventory changes. */
+  readonly engineInventoryRevision?: number;
   readonly runningProviderNames: readonly string[];
   readonly archivedThreads: readonly ApplicationArchivedThreadV1[];
   readonly runtimeSwitchPending: boolean;
@@ -61,7 +63,7 @@ export interface ApplicationSettingsActionMapV1 {
 
 /** Layout-owned geometry and interactions; contains no settings domain state. */
 export interface ApplicationSettingsLayoutV1 {
-  /** Allows a layout to arbitrate overlapping transient notices. */
+  /** @deprecated Default settings now uses the shared notice queue; layouts need not arbitrate notices. */
   readonly onNoticeVisibilityChange?: (visible: boolean) => void;
   readonly browserSettingsAllowed: boolean;
   readonly embedded: boolean;

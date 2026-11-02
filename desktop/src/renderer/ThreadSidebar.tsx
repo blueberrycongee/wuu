@@ -1,7 +1,7 @@
 import { Tooltip } from "./Tooltip";
 import { hostSupports } from "./HostCapabilities";
 import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
-import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Project } from "./WuuIcons";
+import { Archive, Folder, FolderOpen, MessageSquarePlus, Pin, Split, Project } from "./WuuIcons";
 import {
   type DragEvent as ReactDragEvent,
   useEffect,
@@ -39,6 +39,14 @@ import {
   WorkspaceHoverCardContent,
 } from "./SidebarHoverCard";
 
+import {
+  moveThreadInOrder,
+  persistThreadOrder,
+  reconcileThreadOrder,
+  storedThreadOrder,
+  type ThreadDropPosition,
+} from "./SidebarThreadOrder";
+
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
 }
@@ -47,68 +55,7 @@ const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 5;
 const PROJECT_THREAD_BATCH_SIZE = 5;
 const RECENTLY_READ_THREAD_LIMIT = 3;
 const RECENTLY_READ_THREAD_RETENTION_MS = 2 * 60 * 1000;
-const SIDEBAR_THREAD_ORDER_KEY = "wuu.desktop.sidebarThreadOrderByWorkspace";
 const PINNED_THREAD_ORDER_ID = "__wuu_pinned_threads__";
-
-type SidebarThreadOrderByWorkspace = Record<string, string[]>;
-
-function storedThreadOrder(workspaceID: string): string[] {
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_THREAD_ORDER_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : {};
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return [];
-    }
-    const order = (parsed as SidebarThreadOrderByWorkspace)[workspaceID];
-    return Array.isArray(order)
-      ? order.filter((id): id is string => typeof id === "string" && id.length > 0)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistThreadOrder(workspaceID: string, order: string[]): void {
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_THREAD_ORDER_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : {};
-    const current = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as SidebarThreadOrderByWorkspace
-      : {};
-    window.localStorage.setItem(
-      SIDEBAR_THREAD_ORDER_KEY,
-      JSON.stringify({ ...current, [workspaceID]: order }),
-    );
-  } catch {
-    // A blocked or full localStorage should not prevent in-memory reordering.
-  }
-}
-
-type ThreadDropPosition = "before" | "after";
-
-function moveThreadInOrder(
-  order: string[],
-  activeThreadID: string,
-  targetThreadID: string,
-  position: ThreadDropPosition,
-): string[] {
-  if (activeThreadID === targetThreadID) return order;
-  const withoutActive = order.filter((id) => id !== activeThreadID);
-  const targetIndex = withoutActive.indexOf(targetThreadID);
-  if (targetIndex < 0 || withoutActive.length === order.length) return order;
-  withoutActive.splice(targetIndex + (position === "after" ? 1 : 0), 0, activeThreadID);
-  return withoutActive.every((id, index) => id === order[index]) ? order : withoutActive;
-}
-
-function reconcileThreadOrder(threads: ThreadSummary[], storedOrder: string[]): string[] {
-  const threadIDs = new Set(threads.map((thread) => thread.id));
-  const known = storedOrder.filter((id) => threadIDs.has(id));
-  const knownIDs = new Set(known);
-  const newIDs = threads
-    .map((thread) => thread.id)
-    .filter((id) => !knownIDs.has(id));
-  return [...newIDs, ...known];
-}
 
 export function WorkspaceList({
   projects,
@@ -119,8 +66,6 @@ export function WorkspaceList({
   activeThreadID,
   pendingThreadID,
   lastViewedTurnByThreadID,
-  scratchPseudoWorkspaceID,
-  scratchPseudoActive,
   onToggleSidebarSectionCollapsed,
   onStartNewThread,
   onSelectThread,
@@ -137,15 +82,6 @@ export function WorkspaceList({
   activeThreadID?: string;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
-  // The scratch pseudo project lives at the top of the sidebar tree and
-  // groups all no-project (scratch) conversations under one collapsible
-  // header, just like a real project. App.tsx injects a synthetic
-  // DesktopProject with this id; AppSidebar passes it down so the row can
-  // render a chat-bubble icon instead of a folder and so the row's
-  // "active" highlight can be driven by the runtime context kind
-  // (no_project), which is not represented in DesktopProject itself.
-  scratchPseudoWorkspaceID: string;
-  scratchPseudoActive: boolean;
   onToggleSidebarSectionCollapsed: (id: string) => void;
   onStartNewThread: (id: string) => void;
   onSelectThread: (workspaceID: string, threadID: string) => void;
@@ -167,8 +103,6 @@ export function WorkspaceList({
           activeThreadID={activeThreadID}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-          scratchPseudoWorkspaceID={scratchPseudoWorkspaceID}
-          scratchPseudoActive={scratchPseudoActive}
           onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
           onStartNewThread={onStartNewThread}
           onSelectThread={onSelectThread}
@@ -189,9 +123,9 @@ export type PendingConversation = {
 };
 
 /**
- * Single project (or scratch pseudo) collapsible group. AppSidebar renders
- * one of these per reorderable section key. Visual/behavioral parity with
- * the legacy `WorkspaceList` map: the same `project-row` anatomy, the same
+ * Single project collapsible group. AppSidebar renders one of these per
+ * reorderable section key. Visual/behavioral parity with the legacy
+ * `WorkspaceList` map: the same `project-row` anatomy, the same
  * `thread-list-collapse` unfurl animation, the same unread/active classes.
  */
 export function WorkspaceGroup({
@@ -205,10 +139,9 @@ export function WorkspaceGroup({
   loadingWorkspaceThreadIDs,
   threadsByWorkspaceID,
   activeThreadID,
+  selectedThreadID = activeThreadID,
   pendingThreadID,
   lastViewedTurnByThreadID,
-  scratchPseudoWorkspaceID,
-  scratchPseudoActive,
   onToggleSidebarSectionCollapsed,
   onFocusWorkspace,
   onStartNewThread,
@@ -233,10 +166,9 @@ export function WorkspaceGroup({
   loadingWorkspaceThreadIDs?: ReadonlySet<string>;
   threadsByWorkspaceID: Record<string, ThreadSummary[]>;
   activeThreadID?: string;
+  selectedThreadID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
-  scratchPseudoWorkspaceID: string;
-  scratchPseudoActive: boolean;
   onToggleSidebarSectionCollapsed: (id: string) => void;
   onFocusWorkspace?: (id: string) => void;
   onStartNewThread: (id: string) => void;
@@ -245,14 +177,13 @@ export function WorkspaceGroup({
   onArchiveThread: (thread: ThreadSummary) => void;
   onDeleteThread: (thread: ThreadSummary) => void;
   onRenameThread?: (thread: ThreadSummary, title: string) => void;
-  // Remove a real workspace from the sidebar. Absent for the 对话 scratch
-  // pseudo project (and never wired for 群聊 / Agents, which are separate
-  // sections), so those can never be removed.
+  // Remove a real workspace from the sidebar. Never wired for 群聊 / Agents,
+  // which are separate sections, so those can never be removed.
   onRemoveWorkspace?: (id: string) => void;
   // Point a real workspace at a new folder (keeping its stable id, so its
   // state and history reconnect). The remedy for a moved/deleted directory.
   onRelocateWorkspace?: (id: string) => void;
-  // Open a project draft in a registered workspace; absent for the scratch workspace.
+  // Open a project draft in a registered workspace.
   onCreateProject?: (workspaceID: string) => void;
   workspacePinned?: boolean;
   onToggleWorkspacePinned?: (id: string) => void;
@@ -266,33 +197,26 @@ export function WorkspaceGroup({
 
   const pendingWorkspace = pendingWorkspaceID === project.id;
   const loadingWorkspaceThreads = loadingWorkspaceThreadIDs?.has(project.id) ?? false;
-  const isScratchPseudo = project.id === scratchPseudoWorkspaceID;
-  // A real workspace whose directory was moved away or deleted. Its "新建对话"
+  // A workspace whose directory was moved away or deleted. Its "新建对话"
   // affordance is disabled so no session can be created in a cwd that is gone.
-  const isMissing = !isScratchPseudo && project.missing === true;
+  const isMissing = project.missing === true;
   const workspaceSelectionMode =
-    !isScratchPseudo && !isMissing && Boolean(onFocusWorkspace);
-  const activeWorkspace = isScratchPseudo
-    ? scratchPseudoActive
-    : project.id === activeID;
+    !isMissing && Boolean(onFocusWorkspace);
+  const activeWorkspace = project.id === activeID;
   // Expansion is purely manual: only the header toggle mutates it.
   // Selecting a session (from anywhere — 置顶 included) or switching the
   // active context never expands or collapses a section; `activeWorkspace`
   // above is kept solely for the header highlight.
   const expanded = expandedSidebarSectionIDs.has(project.id);
-  // The scratch pseudo project trusts the threadsByWorkspaceID entry
-  // directly: App.tsx already filtered scratch threads. Real
-  // projects use stable workspace identity, falling back to paths for legacy
+  // Projects use stable workspace identity, falling back to paths for legacy
   // sessions, so local forks inside worktrees remain in their owning project.
   const sourceWorkspaceThreads = threadsByWorkspaceID[project.id];
   const unorderedWorkspaceThreads = useMemo(
     () =>
       unpinnedThreads(
-        isScratchPseudo
-          ? sourceWorkspaceThreads ?? []
-          : (sourceWorkspaceThreads ?? []).filter((thread) => threadBelongsToWorkspace(thread, project)),
+        (sourceWorkspaceThreads ?? []).filter((thread) => threadBelongsToWorkspace(thread, project)),
       ),
-    [isScratchPseudo, project.id, project.path, sourceWorkspaceThreads],
+    [project.id, project.path, sourceWorkspaceThreads],
   );
   const [threadOrder, setThreadOrder] = useState<string[]>(() =>
     storedThreadOrder(project.id),
@@ -331,8 +255,6 @@ export function WorkspaceGroup({
   const workspaceHasRunning = pendingConversations.length > 0 || workspaceThreads.some((thread) =>
     isThreadExecuting(thread),
   );
-  const CollapsedIcon = isScratchPseudo ? MessageSquare : Folder;
-  const ExpandedIcon = isScratchPseudo ? MessagesSquare : FolderOpen;
   return (
     <div
       className={`project-group${isMissing ? " project-group-missing" : ""}`}
@@ -341,9 +263,9 @@ export function WorkspaceGroup({
     >
       <SidebarSection
         expanded={workspaceSelectionMode ? false : expanded}
-        iconKind={isScratchPseudo ? "conversation" : "project"}
-        CollapsedIcon={CollapsedIcon}
-        ExpandedIcon={ExpandedIcon}
+        iconKind="project"
+        CollapsedIcon={Folder}
+        ExpandedIcon={FolderOpen}
         label={project.name}
         ariaLabel={
           workspaceSelectionMode
@@ -371,30 +293,24 @@ export function WorkspaceGroup({
         onContextMenu={
           !onRemoveWorkspace && !onRelocateWorkspace && !onToggleWorkspacePinned && !onCreateProject
             ? undefined
-            : isScratchPseudo && !onToggleWorkspacePinned
-              ? undefined
-              : (event) => {
-                  event.preventDefault();
-                  setContextMenu({ x: event.clientX, y: event.clientY });
-                }
+            : (event) => {
+                event.preventDefault();
+                setContextMenu({ x: event.clientX, y: event.clientY });
+              }
         }
         newItemButton={
-          <Tooltip asChild content={
-              isMissing
-                ? t("threadSidebar.missingWorkspace")
-                : t("sidebar.newConversation")
-            }><button
+          <Tooltip asChild content={isMissing ? t("threadSidebar.missingWorkspace") : undefined}><button
             className="sidebar-row-icon-button project-row-new-thread"
             type="button"
             aria-label={t("threadSidebar.newInWorkspace", { name: project.name })}
-            disabled={isMissing || (isScratchPseudo && !hostSupports("createBlankProject"))}
+            disabled={isMissing}
             onClick={() => onStartNewThread(project.id)}
           >
             <MessageSquarePlus className="icon" />
           </button></Tooltip>
         }
         hoverCard={() => (
-          <WorkspaceHoverCardContent workspace={project} scratch={isScratchPseudo} />
+          <WorkspaceHoverCardContent workspace={project} />
         )}
       >
         {pendingConversations.length > 0 || workspaceThreads.length > 0 ? (
@@ -404,6 +320,7 @@ export function WorkspaceGroup({
             activeSessionTabID={activeSessionTabID}
             onSelectPendingConversation={onSelectPendingConversation}
             activeID={activeThreadID}
+            selectedID={selectedThreadID}
             pendingThreadID={pendingThreadID}
             lastViewedTurnByThreadID={lastViewedTurnByThreadID}
             visibleCount={historyVisibleCount}
@@ -423,7 +340,7 @@ export function WorkspaceGroup({
           x={contextMenu.x}
           y={contextMenu.y}
           items={[
-            ...(onCreateProject && !isScratchPseudo ? [{
+            ...(onCreateProject ? [{
               label: t("projects.newProject"),
               disabled: isMissing,
               onSelect: () => onCreateProject(project.id),
@@ -431,8 +348,8 @@ export function WorkspaceGroup({
             ...(onToggleWorkspacePinned ? [{
               label: t(workspacePinned ? "sidebar.unpin" : "sidebar.pin"),
               onSelect: () => onToggleWorkspacePinned(project.id),
-            }, ...(!isScratchPseudo ? [{ separator: true } as const] : [])] : []),
-            ...(!isScratchPseudo ? [{
+            }, { separator: true } as const] : []),
+            {
               label: t("threadSidebar.relocate"),
               disabled: !onRelocateWorkspace || !hostSupports("relocateProject"),
               onSelect: () => onRelocateWorkspace?.(project.id),
@@ -440,7 +357,7 @@ export function WorkspaceGroup({
               label: t("threadSidebar.removeWorkspace"),
               disabled: !onRemoveWorkspace || !hostSupports("removeProject"),
               onSelect: () => onRemoveWorkspace?.(project.id),
-            }] : []),
+            },
           ]}
           onClose={() => setContextMenu(null)}
         />
@@ -451,16 +368,15 @@ export function WorkspaceGroup({
 
 /**
  * Renders the dual collapsed/expanded icon pair that lives inside every
- * section header (project, 对话/chat scratch, pinned, agents). The pair is
- * always rendered together; CSS crossfades between them via
- * `.project-row-icon-state` rules in sidebar.css. We render both icons
- * unconditionally rather than swapping them so the cross-fade transition stays
- * smooth without a mount/unmount flicker.
+ * section header (project, pinned, agents). The pair is always rendered
+ * together; CSS crossfades between them via `.project-row-icon-state` rules in
+ * sidebar.css. We render both icons unconditionally rather than swapping them
+ * so the cross-fade transition stays smooth without a mount/unmount flicker.
  *
  * Every pair follows the same single → many / closed → open metaphor:
- * Agents uses UserRound → UsersRound, 对话 uses MessageSquare →
- * MessagesSquare, projects use Folder → FolderOpen; the pinned section
- * keeps one Pin glyph and rotates the expanded state -45deg via CSS.
+ * Agents uses UserRound → UsersRound, projects use Folder → FolderOpen; the
+ * pinned section keeps one Pin glyph and rotates the expanded state -45deg via
+ * CSS.
  */
 export function SectionRowIcon({
   collapsed,
@@ -498,6 +414,7 @@ function ThreadList({
   activeSessionTabID,
   onSelectPendingConversation,
   activeID,
+  selectedID = activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   visibleCount,
@@ -515,6 +432,7 @@ function ThreadList({
   activeSessionTabID?: string;
   onSelectPendingConversation?: (id: string) => void;
   activeID?: string;
+  selectedID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   visibleCount: number;
@@ -617,6 +535,7 @@ function ThreadList({
         <ThreadRows
           threads={limitedThreads}
           activeID={activeID}
+        selectedID={selectedID}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
           onSelect={onSelect}
@@ -720,6 +639,7 @@ function ThreadRows({
   threads,
   projectSummaries,
   activeID,
+  selectedID = activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   onSelect,
@@ -734,6 +654,7 @@ function ThreadRows({
   // What a project row shows for its sessions, which the sidebar does not list.
   projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
+  selectedID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   onSelect: (id: string) => void;
@@ -962,12 +883,12 @@ function ThreadRows({
         return (
           <div
             key={thread.id}
-            className={`thread-row sidebar-session-row ${thread.id === activeID ? "active" : ""}${running ? " running" : ""}${
+            className={`thread-row sidebar-session-row ${thread.id === selectedID ? "active" : ""}${running ? " running" : ""}${
               pendingSwitch ? " pending-switch" : ""
             }${unread ? " has-unread" : ""}${draggingThreadID === thread.id ? " dragging" : ""}${project ? " project-thread-row" : ""}${
               sessionDropTargetID === thread.id ? " drop-active" : ""
             }`}
-            aria-current={thread.id === activeID ? "page" : undefined}
+            aria-current={thread.id === selectedID ? "page" : undefined}
             draggable={Boolean(organization || onReorder)}
             data-draggable={Boolean(organization || onReorder) || undefined}
             data-sortable={Boolean(onReorder) || undefined}
@@ -1195,6 +1116,7 @@ export function OrganizationThreadList({
   threads,
   projectSummaries,
   activeID,
+  selectedID = activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
   onSelect,
@@ -1203,10 +1125,12 @@ export function OrganizationThreadList({
   onDelete,
   onRename,
   onDropSession,
+  onReorder,
 }: {
   threads: ThreadSummary[];
   projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
+  selectedID?: string | null;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
   onSelect: (id: string) => void;
@@ -1215,6 +1139,7 @@ export function OrganizationThreadList({
   onDelete: (thread: ThreadSummary) => void;
   onRename?: (thread: ThreadSummary, title: string) => void;
   onDropSession?: (project: ThreadSummary, threadID: string) => void;
+  onReorder?: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
 }): JSX.Element {
   return (
     <div className="pinned-thread-list">
@@ -1222,6 +1147,7 @@ export function OrganizationThreadList({
         threads={threads}
         projectSummaries={projectSummaries}
         activeID={activeID}
+        selectedID={selectedID}
         pendingThreadID={pendingThreadID}
         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
         onSelect={onSelect}
@@ -1230,6 +1156,7 @@ export function OrganizationThreadList({
         onDelete={onDelete}
         onRename={onRename}
         onDropSession={onDropSession}
+        onReorder={onReorder}
       />
     </div>
   );

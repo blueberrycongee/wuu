@@ -202,7 +202,7 @@ export class ApplicationSubmission {
     if (!message || stringValue(message, "origin") !== "queue") return;
     const id = stringValue(message, "id");
     const operation = id ? this.operations.get(id) : undefined;
-    if (!operation || operation.view.mode !== "queue" || operation.view.phase !== "sending"
+    if (!operation || !["queue", "steer"].includes(operation.view.mode ?? "") || operation.view.phase !== "sending"
       || operation.thread?.id !== stringValue(message, "thread_id") || operation.context.cwd !== event.workdir) return;
     // This receipt follows queue admission, not execution. A delayed bridge RPC
     // must not keep already-owned input in the draft or revive it after timeout.
@@ -242,7 +242,7 @@ export class ApplicationSubmission {
   private async deliverPending(operation: Operation, kind: "queue" | "guide", shouldHold: () => boolean): Promise<boolean> {
     operation.view = { ...operation.view, mode: kind === "queue" ? "queue" : "steer" };
     this.publish();
-    const thread = operation.thread!; const message = operation.message; const list = kind === "queue" ? "queued" : "guides";
+    const thread = operation.thread!; const message = operation.message; let list: "queued" | "guides" = kind === "queue" ? "queued" : "guides";
     const exists = () => this.options.pending.pendingComposerMessagesForThread(thread.id)[list].some(candidate => candidate.id === message.id);
     try {
       const attachments = await Promise.race([Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]), operation.cancelled]);
@@ -253,18 +253,35 @@ export class ApplicationSubmission {
       this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, operationState: "sending" } : candidate) }));
       this.phase(operation, "sending"); operation.sent = true;
       let acceptedID = message.id;
-      if (kind === "queue") {
-        const accepted = new Promise<{ queued: { id: string } }>(resolve => {
-          operation.acceptQueue = () => resolve({ queued: { id: message.id } });
-        });
-        try {
+      const accepted = new Promise<{ queued: { id: string } }>(resolve => {
+        operation.acceptQueue = () => resolve({ queued: { id: message.id } });
+      });
+      try {
+        if (kind === "queue") {
           const result = await Promise.race([
             window.wuu.queueTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), thread.permission_mode, message.activeDocument, message.contentParts, operation.context, shouldHold()),
             accepted,
           ]);
           acceptedID = result.queued.id || message.id;
-        } finally { operation.acceptQueue = undefined; }
-      } else await window.wuu.steerTurn(thread.id, activeTurnIDForThread(thread)!, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), message.activeDocument, message.contentParts, operation.context);
+        } else {
+          const result = await Promise.race([
+            window.wuu.steerTurn(thread.id, activeTurnIDForThread(thread)!, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), message.activeDocument, message.contentParts, operation.context),
+            accepted,
+          ]);
+          if (result.queued) {
+            // The main process used a definitely-unadmitted refusal to queue
+            // the same input on its captured connection. Do not submit again.
+            acceptedID = result.queued.id || message.id;
+            kind = "queue"; list = "queued";
+            operation.view = { ...operation.view, mode: "queue" };
+            if (!this.disposed) this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({
+              ...previous,
+              guides: previous.guides.filter(candidate => candidate.id !== message.id),
+              queued: previous.queued.some(candidate => candidate.id === acceptedID) ? previous.queued : [...previous.queued, { ...message, id: acceptedID, origin: "queue", operationState: "sending" }],
+            }));
+          }
+        }
+      } finally { operation.acceptQueue = undefined; }
       if (this.disposed) return true;
       operation.view = { ...operation.view, messageID: acceptedID };
       this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, id: acceptedID, images, files, operationState: undefined } : candidate) }));

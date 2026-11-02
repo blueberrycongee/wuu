@@ -341,7 +341,7 @@ export class ApplicationController implements HostApplicationService {
   private readonly applicationPreview: ApplicationPreview;
   private readonly applicationNavigation: ApplicationNavigation;
   private readonly conversationDetails = new ApplicationConversationDetails({ getState: () => this.state, getThread: id => this.knownThread(id), changed: () => this.publish() });
-  private settings = { open: false, pageId: "providers" };
+  private settings = { open: false, pageId: "general" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
   private load?: Promise<LoadedRuntimeState>;
@@ -1007,13 +1007,14 @@ export class ApplicationController implements HostApplicationService {
         return false;
       } } : {}),
       getActiveThreadID: () => activeThreadIDForState(this.state),
-      getSidebarThreads: () => [...this.state.threads, ...this.sidebarCache.getSnapshot().cachedScratchThreads],
+      getSidebarThreads: () => this.state.threads,
       getSidebarWorkspaceThreadsByWorkspaceID: () => this.sidebarCache.getSnapshot().workspaceThreadsByWorkspaceID,
       getRunningThreadIDs: () => new Set(this.state.threads.filter(isThreadRunning).map(thread => thread.id)),
       isCurrentViewSwitchRequest: isCurrent,
     });
     const tabs = createSessionTabActions({ ...common, selectThread: threads.selectThread, selectContextThread: threads.selectContextThread });
     const workspaces = createWorkspaceRuntimeActions({ ...common,
+      isCurrentViewSwitchRequest: isCurrent,
       loadRuntime: (workspace, options) => {
         const pending = this.pendingNavigation;
         if (retargetDraft && workspace.active_context && pending?.intentId && viewSwitchRequest !== undefined
@@ -1046,7 +1047,7 @@ export class ApplicationController implements HostApplicationService {
 
   private knownThread(id: string): Thread | undefined {
     const cache = this.sidebarCache.getSnapshot();
-    return threadForTab(this.state, id) ?? cache.cachedScratchThreads.find(thread => thread.id === id)
+    return threadForTab(this.state, id)
       ?? Object.values(cache.workspaceThreadsByWorkspaceID).flat().find(thread => thread.id === id);
   }
 
@@ -1331,14 +1332,13 @@ export class ApplicationController implements HostApplicationService {
       case "workspace.retarget-draft": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.retarget-draft"]["input"];
         const { workspaces } = this.navigationActions(signal, true);
-        if (workspaceId) await workspaces.selectWorkspaceForNewThread(workspaceId);
-        else await workspaces.useNoProject(false);
+        await workspaces.selectWorkspaceForNewThread(workspaceId);
         return;
       }
       case "workspace.start-draft": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.start-draft"]["input"];
         const { workspaces } = this.navigationActions(signal);
-        const activated = await (workspaceId ? workspaces.startNewThreadInWorkspace(workspaceId) : workspaces.useNoProject(true));
+        const activated = await workspaces.startNewThreadInWorkspace(workspaceId);
         return { activated, tabId: activated ? this.state.activeSessionTabID : undefined };
       }
       case "workspace.create": {

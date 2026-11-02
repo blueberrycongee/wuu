@@ -2,6 +2,8 @@
 
 A desktop plugin is a trusted JavaScript module loaded into Wuu's renderer. It uses the host's React instance and UI Kit to add controls, pages, and presentation at defined boundaries. Start with the [quickstart](desktop-plugin-quickstart.md) for a working package.
 
+Plugins that use `application` must declare `{ "name": "ui.application", "major_version": 1, "required": true }` in `desktop.required_services`. This keeps their lifecycle ordered with the application provider during workspace changes.
+
 ## Choose an extension point
 
 | Goal | API |
@@ -29,6 +31,7 @@ When a primary plugin page is active, its contextual sidebar also renders that p
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`, `wuu.default-navigation/sidebar.footer` | Sidebar content and footer |
 | `wuu.default-shell/workspace.header`, `wuu.default-shell/conversation.header` | Corresponding headers |
+| `wuu.default-conversation/welcome`, `welcome.greeting`, `welcome.mascot`, `welcome.usage` | Empty-conversation welcome and its independent parts |
 | `wuu.default-conversation/conversation.turn.after`, `wuu.default-preview/conversation.turn.after` | After each presented turn; reported timing and usage |
 | `wuu.default-conversation/conversation.tool-activity.after`, `wuu.default-preview/conversation.tool-activity.after` | After an individual tool activity inside its disclosed process details |
 | `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
@@ -47,6 +50,28 @@ api.registerUIContribution({
 ```
 
 Omit `mode` (or use `content`) to supply content instead of the caller’s fallback. Single-content slots reject conflicting registrations during preparation, preserving the active generation. Wrappers surround the composed content in ascending `order`, then plugin ID and contribution ID; later wrappers are outermost. A failed wrapper reports a render diagnostic and preserves its children. Removing the slot owner removes the region; unloading a contribution removes only that contribution. Provider cleanup waits for mounted views to release their effects. Graph-selected service slots retain their exact provider binding and reject wrappers. The local SDK preview uses the same content/wrapper ordering and conflict rules; wrapper failures remain visible in its browser console.
+
+### New conversation welcome
+
+The default conversation provider renders `wuu.default-conversation/welcome` only while its conversation is empty. The composer and message flow remain outside this slot. A content contribution can replace the whole welcome, or replace `wuu.default-conversation/welcome.greeting`, `welcome.mascot`, or `welcome.usage` independently. Return `null` to hide a part. Each slot has one content provider; the normal conflict, wrapper, and unload rules above apply.
+
+The welcome context is `ConversationWelcomeContextV1`: `projectDraft` and the React nodes `greeting`, `mascot`, and `usage`. Each node includes its own slot and default fallback, so a replacement layout can arrange or omit them without importing private components. Render each node at most once. Each part's context contains `projectDraft`; the default usage summary is absent for a project draft or when there is no usage. The default greeting includes the workspace switcher where applicable. Replacing it also replaces that control. The default mascot's idle interaction with the usage card requires both defaults inside the default welcome container.
+
+For example, this layout moves the usage summary above the greeting and hides the mascot:
+
+```js
+export function activatePresentation(api) {
+  const h = api.react.createElement;
+  api.registerUIContribution({
+    id: "welcome-layout",
+    target: "wuu.default-conversation/welcome",
+    render: ({ context }) => h("section", { style: { padding: 32, display: "grid", gap: 24 } },
+      context.usage, context.greeting),
+  });
+}
+```
+
+Use `wuu.default-conversation/welcome.greeting` instead to customize only the greeting, or target `welcome.mascot` / `welcome.usage` with the same owner prefix to replace those parts. A replacement layout owns its responsive styling and accessibility. With a TypeScript plugin, cast the welcome context to `ConversationWelcomeContextV1` from `@wuu/plugin-sdk/ui`.
 
 For additive metrics, annotations, or contextual controls, prefer `conversation.turn.after` and `conversation.tool-activity.after` over wrapping the native content. Both accept multiple contributions in order, in bubble and IM styles. Turn addons stay inside the native turn’s measured bounds. A complete replacement of `conversation.turn` owns its contents and must render any desired slots itself. Adding, removing, or failing an additive contribution leaves the native turn and tool details mounted, preserving their disclosure state and focus. Replacing or wrapping the content changes its React ancestry and does not offer that state-preservation guarantee.
 
@@ -96,7 +121,11 @@ Rich result bodies have separate host-owned placement: `inline` output precedes 
 
 ## Interactive content renderers
 
+A desktop module can opt into scoped content rendering by declaring `desktop.content_renderers` (or `contentRenderers`) in `plugin.json`, for example `[{"category":"tool-result","match":"application/vnd.example+json"}]`. Declarations accept exact lowercase MIME types without parameters or wildcards. The module exports `activateContent(api)` and receives the SDK's `ContentRendererActivationAPI`: React, UI primitives, a cancellation signal, renderer and style registration, and cleanup registration. It does not receive the application's other plugin contributions. Register only renderers matching a declared category and MIME type. The host loads this entry separately for the selected source graph and cleans it up when that scope is retired or the plugin is disabled.
+
 Content renderers also receive `host.actions` and `host.invoke`. When a completed conversation resource advertises `conversation.composer.submit`, it accepts `{ text, context? }`: up to 8,000 text characters and optional JSON context of up to 16,384 characters. Invoke it synchronously from a real button click or its native form submission, including keyboard activation. Form submission must match that click’s exact form and submit button; a standalone `requestSubmit()` does not authorize an action. The host consumes that interaction once, binds the source conversation and artifact, and submits through normal turn admission and permissions. The action rejects during a running turn, after source replacement or unmounting, or when its plugin is disabled. It leaves the composer draft and attachments intact. `metadata.interaction` reports `running`, `readOnly`, and an optional `disabledReason`; action availability must still be checked at invocation. This input contract is specific to content renderers; the composer presenter submits its existing draft without input.
+
+A content renderer may call `host.reportState?.(values)` to provide its current JSON draft to the owning conversation. This untrusted data is scoped to the mounted source; it does not send a message or authorize an action. Reports over 16 KiB are ignored. Hosts may omit this capability; renderers must work without it. Do not report speculative preview state. The host discards reports when the source is replaced or unmounted, or the renderer is disabled.
 
 To preview streamed tool arguments, a `tool-result` registration may declare `toolInput: { capability }` with a literal MIME `match`. Only the current winning renderer for that MIME receives previews. `content.preview` marks transient output; `metadata.toolInput` contains cumulative/coalesced `argumentsText`, `turnId`, `status`, and optional `error`. Parse only complete bounded units, keep the last valid preview, and do not execute actions or persist speculative state. The first matching final resource retains the preview's part identity.
 
@@ -195,3 +224,9 @@ Registrations belong to a plugin generation and are removed when it unloads. On 
 ### Runtime navigation display names
 
 `api.setNavigationTitle(id, title)` updates only a navigation entry declared by the calling plugin generation. The title is trimmed and must contain 1–64 Unicode characters. It returns `false` for an undeclared entry; invalid titles and calls from an unloaded generation fail. The override is presentation-only, resets on reload, and never changes routes, settings-page labels, or other plugins. Persist user preferences through the plugin's existing runtime service, then republish the stored title after loading or saving it.
+
+### Surface focus and recovery
+
+The default shell coordinates focus through mounted surface capabilities, not a provider's CSS classes or input markup. Its composer slot receives `context.registerFocusTarget`; its preview slot receives `context.layout.registerFocusTarget`. Register a `UIFocusTargetV1` in a layout effect and return the registration's cleanup function. `focus(options)` focuses the surface's own enabled control and returns `false` when it is not ready; `contains(element)` reports whether an element belongs to that surface. Respect `preventScroll`. Split-conversation providers forward the shell's `context.composerFocusTargets[pane]` as the corresponding composer's `registerFocusTarget`. The shell owns navigation timing and avoids overriding a later user interaction; the provider owns its DOM, readiness, and cleanup. A replacement may use an input or another editor without imitating the default composer's classes.
+
+A failed selected surface stays visibly unavailable and may offer a local render retry. Missing or conflicting providers require fixing the selection in Settings; retry must not silently switch to a built-in provider. Optional wrappers preserve their children, while diagnostics retain the actual failure. Composer-owned selection intake and model refresh subscriptions stop when that composer unmounts; they are not shell side effects.

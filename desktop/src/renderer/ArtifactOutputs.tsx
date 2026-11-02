@@ -127,7 +127,7 @@ export function collectTurnArtifactsWithRenderers(
   return artifacts;
 }
 
-function toolInputRenderer(renderers: readonly RegisteredRendererV1[], capability: string): RegisteredRendererV1 | undefined {
+export function toolInputRenderer(renderers: readonly RegisteredRendererV1[], capability: string): RegisteredRendererV1 | undefined {
   const candidates = [...renderers].reverse().filter(renderer => renderer.category === "tool-result");
   return candidates.find(renderer => {
     if (renderer.toolInput?.capability !== capability || typeof renderer.match !== "string") return false;
@@ -824,11 +824,9 @@ export function ArtifactPreview({
                 </button>
               </Tooltip>
             ) : null}
-            <Tooltip content={t("common.close")}>
-              <button type="button" onClick={onClose} aria-label={t("common.close")}>
-                <X className="icon" aria-hidden="true" />
-              </button>
-            </Tooltip>
+            <button type="button" onClick={onClose} aria-label={t("common.close")}>
+              <X className="icon" aria-hidden="true" />
+            </button>
           </div>
         </header>
         {downloadError && <p role="alert">{downloadError}</p>}

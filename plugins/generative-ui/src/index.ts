@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { RuntimePlugin, ToolExecuteResult } from "@wuu/plugin-sdk";
+import { requireKernelService, type RuntimePlugin, type ToolExecuteResult } from "@wuu/plugin-sdk";
 import inputSchema from "../schema.json";
 import { parseSpec } from "../../../internal/plugin/bundled/generative-ui/desktop.js";
 
@@ -9,16 +9,40 @@ const MAX_INPUT_BYTES = 128 * 1024;
 const plugin: RuntimePlugin = {
   initialize() {
     return {
+      capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
+      required_services: [requireKernelService("host.storage.get"), requireKernelService("host.storage.set"), { name: "host.personal", major_version: 1, required: false }],
       tools: [{
         id: "render_ui",
         // Presentation resources must remain top-level results in PTC mode.
         direct_only: true,
-        description: "Render an experimental interactive UI in the conversation. Use version 2 for a composable program: declare keyed JSON state and a body of nested layouts, text, metrics, charts, tables, controlled inputs, conditionals and repeated nodes. Expressions compute values with bounded arithmetic, comparisons, map/filter, ranges and formatting. Events can update/reset state or copy text; an explicit button or native form submission can ask the user to continue the same conversation using sendMessage. No HTML, scripts, styles, arbitrary tool execution or network requests. Every spec needs a title and useful plain-text fallback. Declare state before body for incremental previews. Version 1 text/table/chart/form specs remain supported. Arguments must fit in 128 KiB; programs have at most 256 nodes, 12 node levels, 2048 expressions, 16 expression levels and 16 KiB of initial state.",
+        description: "Render an interactive explanation, calculator, diagram, or comparison in this conversation. Call this tool directly, including in PTC mode; do not call it through run_code. Use the current tool name and schema instead of obsolete names from conversation history. Use version 3 with DIL-style source: an optional {@body ...} block declares state and functions, followed by JSX components. Write ordinary expressions instead of JSON expression objects. Declare version, title, fallback, then source for progressive previews.\n\nDesign the smallest view that helps answer the user's question:\n- Explanations and processes: use an SVG relationship diagram with short labels, meaningful grouping, and arrows that meet shape edges. Put longer explanation in nearby Text; avoid converting the whole explanation into cards or tables.\n- Comparisons: align comparable values in a table or use bars with a common scale. Label units and meaningful axes. Use captions for assumptions that affect interpretation.\n- Calculators and scenarios: place a few labeled controls close to the result they change. Show useful initial values. Support resetting through setters when exploration benefits from it.\n- Diagrams: design for both wide and narrow windows. Keep labels legible when SVG scales; split dense diagrams into smaller sections. Prefer a neutral palette and one accent, using semantic colors. If color encodes categories or status, provide a text legend.\n- Composition: establish hierarchy with spacing and headings. Use cards only for real groups. Keep the default medium gap for peers, small for a heading and its explanation, and large between sections. Card tone can mark a meaningful category with a subtle theme-aware tint; leave most surfaces neutral. Chart category colors are not status indicators. Do not repeat the title, add ornamental status badges, or build a dashboard when one visual will explain the answer.\n- Streaming: place useful prose and the primary visual early, keep the main explanation expanded, and put optional detail later in Disclosure. Nested content can appear before its outer container closes. Use stable keys for repeated components.\n- Actions: keep ordinary exploration local. Label continuation buttons with the specific follow-up they send. DIL.sendMessage(text) continues this conversation only from an explicit Button or Form; DIL.copy(text) copies text.\n\nState persists per artifact. No imports, network, DOM access, arbitrary scripts, or external assets. Source is interpreted with bounded computation; supported syntax and components are documented in the source field.",
         input_schema: { ...inputSchema, type: "object" },
         activity: { read_only: true, concurrency_safe: true },
         display: { kind: "generative-ui", label: "Render UI", text: "Rendering interactive UI", capability: "generative-ui" },
       }],
     };
+  },
+  async invokeCapability(call, host, execution) {
+    if (call.capability !== "plugin.client.request" || !call.input || typeof call.input !== "object" || Array.isArray(call.input)) throw new Error("Invalid view state request");
+    const request = call.input as Record<string, unknown>;
+    if (request.method !== "view-state.get" && request.method !== "view-state.set") throw new Error("Unknown view state method");
+    if (!request.input || typeof request.input !== "object" || Array.isArray(request.input)) throw new Error("Invalid view state input");
+    const input = request.input as Record<string, unknown>;
+    const expected = request.method === "view-state.get" ? ["key"] : ["key", "value"];
+    if (Object.keys(input).length !== expected.length || expected.some(key => !Object.hasOwn(input, key)) || typeof input.key !== "string" || !/^ui-v[123]-[a-f0-9]{64}$/.test(input.key)) throw new Error("Invalid view state key or fields");
+    if (request.method === "view-state.set") {
+      if (typeof input.value !== "string" || Buffer.byteLength(input.value) > 16 * 1024 + 64) throw new Error("Invalid view state value");
+      try { JSON.parse(input.value); } catch { throw new Error("Invalid view state JSON"); }
+    }
+    const options = { signal: execution.signal };
+    const owner = await host.call("host.service.call", { service: "host.personal", method: "call", params: { operation: "owner.check", input: {} } }, options);
+    if (!owner || typeof owner !== "object" || !("ok" in owner) || owner.ok !== true) throw new Error("Owner authentication required");
+    if (request.method === "view-state.get") {
+      const result = await host.call("host.storage.get", { scope: "user", key: input.key }, options);
+      return { output: { result } };
+    }
+    await host.call("host.storage.set", { scope: "user", key: input.key, value: input.value as string }, options);
+    return { output: { result: {} } };
   },
   executeTool(call): ToolExecuteResult {
     if (call.tool_id !== "render_ui") throw new Error(`unknown generative UI tool ${JSON.stringify(call.tool_id)}`);
@@ -57,7 +81,7 @@ const plugin: RuntimePlugin = {
       const detail = error instanceof Error ? error.message : String(error);
       const characters = [...detail];
       const message = characters.length > 4000 ? characters.slice(0, 4000).join("") + "…" : detail;
-      return { result: { is_error: true, content: [{ type: "text", text: `UI was not rendered: ${message}. Correct the version 1 or 2 spec and retry render_ui, or provide the answer as plain text.` }] } };
+      return { result: { is_error: true, content: [{ type: "text", text: `UI was not rendered: ${message}. Correct the source spec and retry render_ui, or provide the answer as plain text.` }] } };
     }
   },
 };

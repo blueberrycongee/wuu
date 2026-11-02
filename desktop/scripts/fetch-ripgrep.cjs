@@ -104,17 +104,21 @@ async function main() {
 
 function extract(archivePath, extension, destination) {
   // bsdtar (macOS, Windows 10+) reads zip archives; GNU tar on Linux does not.
+  // Git Bash prepends GNU tar, which treats Windows drive letters as remote hosts.
+  // Select the native bsdtar explicitly rather than depending on the parent shell.
+  const tar = process.platform === "win32" ? join(process.env.SystemRoot, "System32", "tar.exe") : "tar";
   const [command, args] =
     extension === "zip" && process.platform === "linux"
       ? ["unzip", ["-q", archivePath, "-d", destination]]
-      : ["tar", ["-xf", archivePath, "-C", destination]];
+      : [tar, ["-xf", archivePath, "-C", destination]];
   const result = spawnSync(command, args, { stdio: "inherit" });
   if (result.status !== 0) {
     throw new Error(`extract ${archivePath} with ${command} failed`);
   }
 }
 
-main().catch((error) => {
+module.exports = { extract };
+if (require.main === module) main().catch((error) => {
   console.error(error.message);
   process.exit(1);
 });

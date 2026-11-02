@@ -28,6 +28,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
@@ -69,8 +70,18 @@ func (s *Server) handleInitialize(req Request) error {
 			isolation.Host = "verified"
 		}
 	}
+	var ownerLocalLocator *pluginhost.SessionLocatorV1
+	if s.trustedTransport.enabled && s.ConnectionPrincipal().IsOwner() && s.ConnectionPrincipal().Identity() == principal.LocalOwner().Identity() && !s.rt.UserBinding().IsUser() && s.rt.HostInfo().Kind == runtime.HostLocal {
+		locator := s.ownerLocalSessionLocator()
+		ownerLocalLocator = &locator
+	}
+	var federationLocator *pluginhost.SessionLocatorV1
+	if federation, err := s.currentSessionFederation(); err == nil && federation != nil {
+		federationLocator = &pluginhost.SessionLocatorV1{Version: 1, ExecutionHost: federation.config.HostID, StorageHost: federation.config.StorageHost}
+	}
 	shell, surfaces := s.rt.ApplicationBindings()
 	return s.writeResponse(req.ID, InitializeResult{
+		SessionFederation: federationLocator, OwnerLocalSessionControl: ownerLocalLocator,
 		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, UserHostIsolation: isolation,
 		ResourceAccess: resourceAccessCapabilities(), ApplicationShell: shell, ApplicationSurfaces: surfaces,
 		Status:          status,
@@ -419,7 +430,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		if item.SubjectID == "" {
 			item.SubjectID = extensions.SubjectID(scope, item.ID)
 		}
-		approval, state, grantScope, enabled := pluginPackageInventoryState(grants, item)
+		approval, state, grantScope, enabled := pluginPackageInventoryState(grants, item, runtime.PluginEnabledByDefault(cfg, item))
 		runtimeState := ExtensionRuntimeInactive
 		lastError := ""
 		if _, ok := activePluginSubjects[item.SubjectID]; ok {
@@ -552,7 +563,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			})
 		}
 		if item.Desktop != nil {
-			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry}
+			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry, ContentRenderers: append([]pluginpkg.DesktopContentRenderer(nil), item.Desktop.ContentRenderers...)}
 		}
 		if len(commands) > 0 || len(themes) > 0 || len(skins) > 0 || len(settings) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
 			packageRecord.Contributions = &ExtensionContributions{
@@ -769,8 +780,8 @@ func (s *Server) currentExtensionConfig() config.Config {
 	return config.Config{}
 }
 
-func pluginPackageInventoryState(settings extensions.Settings, item pluginpkg.Plugin) (ExtensionApprovalState, ExtensionState, extensions.GrantScope, bool) {
-	enabled := settings.IsEnabled(item.SubjectID, item.EnabledByDefault())
+func pluginPackageInventoryState(settings extensions.Settings, item pluginpkg.Plugin, defaultEnabled bool) (ExtensionApprovalState, ExtensionState, extensions.GrantScope, bool) {
+	enabled := settings.IsEnabled(item.SubjectID, defaultEnabled)
 	if item.AuthorizedDev {
 		if !enabled {
 			return ExtensionApprovalGranted, ExtensionStateRejected, "", false

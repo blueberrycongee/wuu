@@ -132,7 +132,7 @@ function PreviewComposer({ current, containerRef }: { current?: Thread; containe
     menuRef={{ current: null }} accessMenuRef={{ current: null }} workspaceFilter="" setWorkspaceFilter={noop}
     onToggleMenu={noop} onToggleAccessMenu={noop} onToggleBranchMenu={noop} onToggleCodexRuntimeMenu={noop}
     onSelectRuntimeModel={noop} onSelectRuntimeEffort={noop} onSelectPermissionMode={noop}
-    onOpenSettings={noop} onOpenSkillsCatalog={noop} onSelectWorkspace={noop} onSelectNoProject={noop}
+    onOpenSettings={noop} onOpenSkillsCatalog={noop} onSelectWorkspace={noop}
     onSelectGitBranch={noop} onCreateWorkspace={noop} onOpenWorkspace={noop} onStartNewThread={noop}
     onOpenWorkspaceTool={noop} onPasteAttachmentFiles={noop} onRemoveFile={noop} onRemoveImage={noop}
     onRemoveQueuedMessage={noop} onRemoveGuideMessage={noop} onGuideQueuedMessage={noop}

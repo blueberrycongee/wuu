@@ -136,14 +136,31 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 }
 /* Font-only and font/size rows share the same control column. */
 .settings-row-control:has(.appearance-font-picker) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
   width: var(--settings-control-width);
   max-width: 100%;
+}
+.settings-row-control:has(.appearance-font-picker):has(.settings-input-num) {
+  grid-template-columns: minmax(0, 1fr) 56px;
+}
+.settings-row-control:has(.appearance-font-picker) > .settings-input-num {
+  width: 56px;
+  min-height: var(--control-field-height);
+  padding: 0 6px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .appearance-font-picker { flex: 1; min-width: 0; }
 @container settings-page (max-width: 32em) {
   .settings-row-control:has(.appearance-font-picker) { width: 100%; }
 }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
+.appearance-font-menu .select-menu-item-label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .composer textarea, .workspace-markdown-reading {
   font-size: var(--font-ui);
 }

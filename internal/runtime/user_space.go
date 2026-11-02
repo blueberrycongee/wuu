@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
+	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 	"path/filepath"
@@ -108,4 +109,14 @@ func (s *Session) ProductDataRoot() string {
 
 func userHostWorkspaceStateDir(home, root string, binding userspace.Binding) (string, error) {
 	return resolveWorkspaceStateDir(binding.State(home), "", root)
+}
+
+// Discovery and file access share the owning runtime's user-space boundary.
+func configureToolkitWorkspaceScope(kit *tools.Toolkit, home string, binding userspace.Binding, extras ...string) {
+	kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), home, binding, extras...))
+	var catalog []workspaces.Workspace
+	if !binding.IsUser() {
+		catalog, _ = workspaces.Available(home)
+	}
+	kit.SetRegisteredWorkspaces(catalog)
 }

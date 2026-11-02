@@ -50,23 +50,87 @@ function blankGoal(id: string, threadID: string, status: string, now: string): G
 }
 
 export function createGoalPlugin(): RuntimePlugin {
-  let host: RuntimeHost, goals: Record<string, Goal> = {}, stopped = false;
+  let host: RuntimeHost, goals: Record<string, Goal> = {}, stopped = false, activated = false;
+  let persisted: string | null = null, owner = "";
   let queue: Promise<unknown> = Promise.resolve();
   function locked<T>(fn: () => T | Promise<T>): Promise<T> {
     const next = queue.then(fn);
     queue = next.catch(() => {});
     return next;
   }
-  async function save(host: RuntimeHost, id: string, goal: Goal): Promise<void> {
-    const next = { ...goals, [id]: structuredClone(goal) };
-    await host.call("host.storage.set", { scope: "workspace", key: storageKey, value: JSON.stringify(next) });
+  async function loadGoals(): Promise<{ goals: Record<string, Goal>; raw: string | null }> {
+    const loadedGoals: Record<string, Goal> = Object.create(null);
+    const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
+    if (result.value !== null) {
+      try {
+        let loaded = JSON.parse(result.value) ?? {};
+        if (loaded.version === 1) {
+          if (typeof loaded.owner !== "string" || !loaded.owner || !loaded.goals || typeof loaded.goals !== "object") throw new Error("invalid goals document");
+          loaded = loaded.goals;
+        }
+        if (typeof loaded !== "object" || Array.isArray(loaded)) throw new Error("expected a goals object");
+
+        for (const [id, value] of Object.entries(loaded)) {
+          if (value !== null && (typeof value !== "object" || Array.isArray(value))) throw new Error(`invalid goal ${id}`);
+          const goal = (value || {}) as Partial<Goal>;
+          for (const key of ["id", "thread_id", "objective", "status", "created_at", "updated_at", "active_since", "initial_turn_id", "error"] as const) {
+            if (goal[key] != null && typeof goal[key] !== "string") throw new Error(`invalid goal field ${key}`);
+          }
+          for (const key of ["tokens_used", "time_used_seconds"] as const) if (goal[key] != null && typeof goal[key] !== "number") throw new Error(`invalid goal field ${key}`);
+          if (goal.tokens_used != null && !Number.isInteger(goal.tokens_used)) throw new Error("invalid goal field tokens_used");
+          for (const key of ["settled_turns", "ignored_interruptions"] as const) {
+            const values = goal[key];
+            if (values != null && (typeof values !== "object" || Array.isArray(values) || Object.values(values).some(value => value != null && typeof value !== "boolean"))) throw new Error(`invalid goal field ${key}`);
+          }
+          if (goal.pending != null) {
+            if (typeof goal.pending !== "object" || Array.isArray(goal.pending)) throw new Error("invalid goal field pending");
+            for (const key of ["request_id", "turn_id", "queue_id"] as const) if (goal.pending[key] != null && typeof goal.pending[key] !== "string") throw new Error(`invalid pending field ${key}`);
+          }
+          for (const key of ["created_at", "updated_at", "active_since"] as const) if (goal[key] != null) timeSeconds(goal[key]);
+          // Go's persisted struct gives absent fields zero values and ignores
+          // legacy budget fields. Keep those migration semantics in TypeScript.
+          loadedGoals[id] = {
+            ...blankGoal(goal.id || "", goal.thread_id || "", goal.status || "", goal.updated_at || zeroTime),
+            objective: goal.objective || "", tokens_used: goal.tokens_used || 0, time_used_seconds: goal.time_used_seconds || 0,
+            created_at: goal.created_at || zeroTime, active_since: goal.active_since || zeroTime,
+            initial_turn_id: goal.initial_turn_id, settled_turns: goal.settled_turns,
+            ignored_interruptions: goal.ignored_interruptions, pending: goal.pending || undefined, error: goal.error,
+          };
+        }
+      } catch (error) { throw new Error(`load goals: ${String(error)}`); }
+    }
+    return { goals: loadedGoals, raw: result.value };
+  }
+
+  function retired(): Error {
+    stopped = true;
+    return new Error("goal state changed; this generation is retired, retry with the current Goal provider");
+  }
+  async function isCurrent(host: RuntimeHost): Promise<boolean> {
+    const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
+    return result.value === persisted;
+  }
+  async function saveState(host: RuntimeHost, next: Record<string, Goal>, expected = persisted): Promise<void> {
+    const value = JSON.stringify({ version: 1, owner, goals: next });
+    const result = await host.call("host.storage.compare_exchange", { scope: "workspace", key: storageKey, expected, value });
+    // Never refresh and replay a stale mutation: it may refer to a replaced goal
+    // or to work accepted by a different generation.
+    if (!result.swapped || result.value !== value) throw retired();
+    persisted = value;
     goals = next;
+  }
+  async function save(host: RuntimeHost, id: string, goal: Goal): Promise<void> {
+    await saveState(host, { ...goals, [id]: structuredClone(goal) });
   }
   async function cancelPending(host: RuntimeHost, goal: Goal): Promise<void> {
     if (!goal.pending) return;
+    if (!await isCurrent(host)) throw retired();
     for (let attempt = 0; attempt < 3; attempt++) {
       const { turn } = await host.call("host.session.inspect", { session_id: goal.thread_id, request_id: goal.pending.request_id });
-      if (!turn || (turn.state !== "running" && turn.state !== "queued")) { delete goal.pending; return; }
+      // An absent receipt does not prove a concurrent send was rejected. Keep
+      // its identity until the host can report an accepted or terminal outcome.
+      if (!turn) throw new Error("continuation request has not been observed; its outcome is uncertain, retry after the host records it");
+      if (turn.state !== "running" && turn.state !== "queued") { delete goal.pending; return; }
       const params: HostServiceContracts["host.session.cancel"]["params"] = { session_id: goal.thread_id };
       if (turn.state === "queued") params.queue_id = turn.queue_id;
       else params.turn_id = turn.turn_id;
@@ -82,6 +146,7 @@ export function createGoalPlugin(): RuntimePlugin {
     if (goal.status !== "active" || goal.pending || stopped) return;
     goal.pending = { request_id: `goal-${goal.id}-${randomBytes(16).toString("hex")}` };
     await save(host, goal.thread_id, goal);
+    if (!await isCurrent(host)) throw retired();
     let sent: HostServiceContracts["host.session.send"]["result"];
     try {
       sent = await host.call("host.session.send", {
@@ -89,8 +154,9 @@ export function createGoalPlugin(): RuntimePlugin {
         input: { prompt: continuation(goal) }, presentation: { kind: "query_bubble", text: "继续推进目标", name: "Goal" },
       });
     } catch (error) {
-      // A timeout can follow host acceptance. Keep its request identity so the
-      // next explicit user control reconciles it before creating another turn.
+      // The kernel rejects an unavailable session service before dispatch.
+      // Other errors can follow acceptance, so retain those request identities.
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "session_send_unavailable") delete goal.pending;
       goal.status = "paused"; goal.error = error instanceof Error ? error.message : String(error);
       try { await save(host, goal.thread_id, goal); } catch (saveError) { throw new AggregateError([error, saveError], `${goal.error}\n${String(saveError)}`); }
       throw error;
@@ -100,6 +166,7 @@ export function createGoalPlugin(): RuntimePlugin {
   }
   async function mutate(host: RuntimeHost, method: string, args: Mutation, turnID: string, client: boolean): Promise<unknown> {
     if (stopped) throw new Error("goal plugin is stopped");
+    if (!await isCurrent(host)) throw retired();
     const id = args.thread_id?.trim() || "";
     if (!id) throw new Error("thread_id is required");
     let goal = goals[id] ? structuredClone(goals[id]) : undefined;
@@ -130,9 +197,11 @@ export function createGoalPlugin(): RuntimePlugin {
     }
     const current = goal!;
     current.updated_at = now;
+    if (method === "resume") current.status = "paused";
     await save(host, id, current);
     if (client && (current.status !== "active" || method === "resume")) {
       await cancelPending(host, current);
+      if (method === "resume") current.status = "active";
       await save(host, id, current);
     }
     if (method === "clear") {
@@ -181,7 +250,7 @@ export function createGoalPlugin(): RuntimePlugin {
 
   return {
     initialize(_params, runtimeHost) {
-      host = runtimeHost; goals = {}; stopped = false;
+      host = runtimeHost; goals = {}; stopped = false; activated = false; persisted = null; owner = "";
       return {
         provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
@@ -194,58 +263,36 @@ export function createGoalPlugin(): RuntimePlugin {
           ...["agent.turn.completed", "agent.turn.interrupted", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })),
           { id: "plugin.client.request", kind: "decision" as const, version: 1 },
         ],
-        required_services: (["host.storage.get", "host.storage.set", "host.session.send", "host.session.cancel", "host.session.inspect"] as const).map(requireKernelService),
+        required_services: (["host.storage.get", "host.storage.compare_exchange", "host.session.send", "host.session.cancel", "host.session.inspect"] as const).map(requireKernelService),
       };
     },
+    prepare() { return locked(async () => { await loadGoals(); }); },
     activate() { return locked(async () => {
-      const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
-      if (result.value !== null) {
-        try {
-          const loaded = JSON.parse(result.value) ?? {};
-          if (typeof loaded !== "object" || Array.isArray(loaded)) throw new Error("expected a goals object");
-          goals = Object.create(null);
-          for (const [id, value] of Object.entries(loaded)) {
-            if (value !== null && (typeof value !== "object" || Array.isArray(value))) throw new Error(`invalid goal ${id}`);
-            const goal = (value || {}) as Partial<Goal>;
-            for (const key of ["id", "thread_id", "objective", "status", "created_at", "updated_at", "active_since", "initial_turn_id", "error"] as const) {
-              if (goal[key] != null && typeof goal[key] !== "string") throw new Error(`invalid goal field ${key}`);
-            }
-            for (const key of ["tokens_used", "time_used_seconds"] as const) if (goal[key] != null && typeof goal[key] !== "number") throw new Error(`invalid goal field ${key}`);
-            if (goal.tokens_used != null && !Number.isInteger(goal.tokens_used)) throw new Error("invalid goal field tokens_used");
-            for (const key of ["settled_turns", "ignored_interruptions"] as const) {
-              const values = goal[key];
-              if (values != null && (typeof values !== "object" || Array.isArray(values) || Object.values(values).some(value => value != null && typeof value !== "boolean"))) throw new Error(`invalid goal field ${key}`);
-            }
-            if (goal.pending != null) {
-              if (typeof goal.pending !== "object" || Array.isArray(goal.pending)) throw new Error("invalid goal field pending");
-              for (const key of ["request_id", "turn_id", "queue_id"] as const) if (goal.pending[key] != null && typeof goal.pending[key] !== "string") throw new Error(`invalid pending field ${key}`);
-            }
-            for (const key of ["created_at", "updated_at", "active_since"] as const) if (goal[key] != null) timeSeconds(goal[key]);
-            // Go's persisted struct gives absent fields zero values and ignores
-            // legacy budget fields. Keep those migration semantics in TypeScript.
-            goals[id] = {
-              ...blankGoal(goal.id || "", goal.thread_id || "", goal.status || "", goal.updated_at || zeroTime),
-              objective: goal.objective || "", tokens_used: goal.tokens_used || 0, time_used_seconds: goal.time_used_seconds || 0,
-              created_at: goal.created_at || zeroTime, active_since: goal.active_since || zeroTime,
-              initial_turn_id: goal.initial_turn_id, settled_turns: goal.settled_turns,
-              ignored_interruptions: goal.ignored_interruptions, pending: goal.pending || undefined, error: goal.error,
-            };
-          }
-        } catch (error) { throw new Error(`load goals: ${String(error)}`); }
-      }
+      // Preparation validates only: the live generation can still change state
+      // before commit. Never publish or save its earlier preparation snapshot.
+      const loaded = await loadGoals();
+      owner = randomBytes(16).toString("hex");
       // Reload never silently restarts autonomous work. Keep pending identities
-      // until explicit resume can reconcile the host's accepted turn.
-      for (const [id, existing] of Object.entries(goals)) {
-        if (existing.status === "active" || existing.status === "budget_limited") await save(host, id, { ...existing, status: "paused", updated_at: new Date().toISOString() });
+      // until explicit resume can reconcile the host's accepted turn. Claim even
+      // an empty/paused document so a retained writer cannot regain ownership.
+      for (const existing of Object.values(loaded.goals)) {
+        if (existing.status === "active" || existing.status === "budget_limited") {
+          existing.status = "paused";
+          existing.updated_at = new Date().toISOString();
+        }
       }
+      await saveState(host, loaded.goals, loaded.raw);
+      activated = true;
     }); },
     shutdown() { return locked(async () => {
       stopped = true;
+      // Discarding a prepared candidate must not mutate the live generation.
+      if (!activated || !await isCurrent(host)) return;
       const errors: unknown[] = [];
       for (const [id, existing] of Object.entries(goals)) {
         const goal = structuredClone(existing);
         if (goal.status === "active") { goal.status = "paused"; goal.updated_at = new Date().toISOString(); }
-        try { await save(host, id, goal); } catch (error) { errors.push(error); }
+        try { await save(host, id, goal); } catch (error) { errors.push(error); break; }
         if (goal.pending) {
           try { await cancelPending(host, goal); } catch (error) { errors.push(error); }
           try { await save(host, id, goal); } catch (error) { errors.push(error); }
@@ -274,7 +321,13 @@ export function createGoalPlugin(): RuntimePlugin {
       return locked(() => clientRequest(host, call.params));
     },
     async invokeCapability(call, host) { return locked(async () => {
-      if (stopped) throw new Error("goal plugin is stopped");
+      if (call.capability !== "agent.system_prompt.section" && (stopped || !await isCurrent(host))) {
+        const error = retired();
+        // A retained foreground generation may still run unrelated work. Stop
+        // supplying stale goal context without aborting its agent transform.
+        if (call.capability === "agent.pre_step") return { output: {} };
+        throw error;
+      }
       switch (call.capability) {
         case "agent.system_prompt.section": return { output: { text: "Use create_goal only when the user explicitly requests a persistent goal. Ordinary tasks do not create goals. get_goal reads the goal; update_goal may only mark verified completion or a blocker persisting for three consecutive goal turns. Goal controls belong to the user. Active goals continue across turns until completed, blocked, or paused." } };
         case "plugin.client.request": {

@@ -728,6 +728,7 @@ export interface SessionDomainMethods {
   "ChangeClientInput": { args: readonly [expected: SessionDomainAcceptedClientInput, state: string, owner: string, runtimeJSON: string | null, control: SessionDomainControl | null, baseline: SessionDomainControl | null]; values: readonly [SessionDomainAcceptedClientInput]; };
   "AppendAcceptedClientHistoryRecord": { args: readonly [id: string, record: SessionDomainHistoryRecord, accepted: SessionDomainAcceptedClientInput, turnID: string, control: SessionDomainControl | null, baseline: SessionDomainControl | null]; values: readonly [number]; };
   "SettleClientInputExecution": { args: readonly [scope: SessionDomainClientInputScope, hostRequestID: string, turnID: string, state: string, reason: string]; values: readonly []; };
+  "MarkClientInputsRead": { args: readonly [scope: SessionDomainClientInputScope, refs: ReadonlyArray<{ readonly ClientID: string; readonly MessageSeq: number }>]; values: readonly []; };
   "ListClientInputRecoveryCandidates": { args: readonly [scope: SessionDomainClientInputScope]; values: readonly [ReadonlyArray<SessionDomainAcceptedClientInput> | null]; };
   "RecoverClientInput": { args: readonly [scope: SessionDomainClientInputScope, expected: SessionDomainAcceptedClientInput]; values: readonly []; };
   "ClientInputHistoryReceipts": { args: readonly [scope: SessionDomainClientInputScope]; values: readonly [Readonly<Record<string, ClientInputReceipt>> | null]; };
@@ -890,6 +891,7 @@ const sessionDomainArity = {
   "ChangeClientInput": [6, 1],
   "AppendAcceptedClientHistoryRecord": [6, 1],
   "SettleClientInputExecution": [5, 0],
+  "MarkClientInputsRead": [2, 0],
   "ListClientInputRecoveryCandidates": [1, 1],
   "RecoverClientInput": [2, 0],
   "ClientInputHistoryReceipts": [1, 1],

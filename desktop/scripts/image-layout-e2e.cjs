@@ -137,7 +137,13 @@ app.whenReady().then(async () => {
       win = new BrowserWindow({ width, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true", webPreferences: {
         preload: path.join(__dirname, "image-layout-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
       } });
+      win.setContentSize(width, 820);
       await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+      await until(() => Boolean(document.querySelector(".project-row")));
+      await evaluate(() => {
+        const workspace = document.querySelector(".project-row");
+        if (workspace.getAttribute("aria-expanded") !== "true") workspace.click();
+      });
       await until(() => document.querySelectorAll(".project-thread-list .thread-row").length === 2);
       await select("pictures");
       if (width === 420) {

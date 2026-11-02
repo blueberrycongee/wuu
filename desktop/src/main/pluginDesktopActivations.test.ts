@@ -268,3 +268,81 @@ it("does not dispatch or rebind when a target plugin differs or initialization f
   expect(acquire).toHaveBeenCalledTimes(1);
   expect(target.calls).toHaveBeenCalledTimes(1);
 });
+
+it("routes a desktop module read only to its inventoried graph and exact source identity", async () => {
+  const coding = server("coding"), personal = server("personal"), owner = new PluginDesktopActivations(44);
+  await owner.initialize("/coding", coding.request, {});
+  await owner.initialize("/personal", personal.request, {});
+  await owner.readModule({ id: "shell", fingerprint: "source", graph_generation: "personal" });
+  expect(personal.calls.mock.calls.at(-1)).toEqual(["plugin/desktop-module/read", { id: "shell", fingerprint: "source", graph_generation: "personal" }]);
+  expect(coding.calls).toHaveBeenCalledTimes(1);
+  await expect(owner.readModule({ id: "shell", fingerprint: "wrong", graph_generation: "personal" })).rejects.toThrow(/identity/i);
+  await expect(owner.readModule({ id: "other", fingerprint: "source", graph_generation: "personal" })).rejects.toThrow(/identity/i);
+  await expect(owner.readModule({ id: "shell", fingerprint: "source", graph_generation: "unknown" })).rejects.toThrow(/graph/i);
+  await owner.disconnect();
+  await expect(owner.readModule({ id: "shell", fingerprint: "source", graph_generation: "personal" })).rejects.toThrow(/disconnected/i);
+});
+
+it("publishes scoped inventory only after source and target identities match and retires it with the document", async () => {
+  const owner = new PluginDesktopActivations(47), source = server("source-graph"), target = server("personal-graph");
+  await owner.initialize("/source", source.request, {});
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source-graph" };
+  const acquire = vi.fn(async () => ({ workdir: "/personal", request: target.request, params: {} }));
+  await expect(owner.scopedInventory({ ...identity, fingerprint: "forged" }, "personal", acquire)).rejects.toThrow(/identity/i);
+  expect(acquire).not.toHaveBeenCalled();
+  expect(await owner.scopedInventory(identity, "personal", acquire)).toEqual(inventory("personal-graph"));
+  expect(owner.runtimeRequest("personal-graph", "/personal")).toBe(target.request);
+  expect(await owner.scopedInventory(identity, "personal", acquire)).toEqual(inventory("personal-graph"));
+  expect(acquire).toHaveBeenCalledTimes(1);
+  await owner.disconnect();
+  await expect(owner.scopedInventory(identity, "personal", acquire)).rejects.toThrow(/disconnected/i);
+});
+
+it("does not publish an inventory or bind its graph when the scoped plugin identity differs", async () => {
+  const owner = new PluginDesktopActivations(48), source = server("source-graph"), target = server("personal-graph");
+  await owner.initialize("/source", source.request, {});
+  target.calls.mockImplementation(async () => ({ extension_inventory: [{ ...inventory("personal-graph")[0], fingerprint: "different" }] }));
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source-graph" };
+  const acquire = vi.fn(async () => ({ workdir: "/personal", request: target.request, params: {} }));
+  await expect(owner.scopedInventory(identity, "personal", acquire)).rejects.toThrow(/identity/i);
+  expect(() => owner.runtimeRequest("personal-graph")).toThrow(/graph/i);
+});
+
+it("invalidates the exact scoped inventory on target updates, then binds a fresh graph", async () => {
+  const owner = new PluginDesktopActivations(49), source = server("source"), target = server("personal-old");
+  await owner.initialize("/source", source.request, {});
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source" };
+  const acquire = vi.fn(async () => ({ workdir: "/personal", request: target.request, params: {} }));
+  await owner.scopedInventory(identity, "scope", acquire);
+  expect(owner.invalidateScopes("/elsewhere")).toEqual([]);
+  const events = owner.invalidateScopes("/personal");
+  expect(events).toEqual([{ ...identity, scope: "scope", epoch: 1 }]);
+  target.calls.mockImplementation(async method => method === "initialize" ? { extension_inventory: inventory("personal-new") } : {});
+  expect(await owner.scopedInventory(identity, "scope", acquire)).toEqual(inventory("personal-new"));
+  expect(owner.invalidateScopes("/personal")[0].epoch).toBe(2);
+});
+
+it("does not publish a scoped inventory from an invalidated in-flight handshake", async () => {
+  const owner = new PluginDesktopActivations(50), source = server("source"), target = server("personal");
+  await owner.initialize("/source", source.request, {});
+  let finish!: (result: InitializeResult) => void;
+  target.calls.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source" };
+  const acquire = async () => ({ workdir: "/personal", request: target.request, params: {} });
+  const pending = owner.scopedInventory(identity, "scope", acquire);
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  owner.invalidateScopes("/personal");
+  finish({ extension_inventory: inventory("personal") } as InitializeResult);
+  await expect(pending).rejects.toThrow(/superseded/i);
+  expect(() => owner.runtimeRequest("personal")).toThrow(/graph/i);
+});
+
+it("does not bind target events after scoped invalidation until a fresh handshake", async () => {
+  const owner = new PluginDesktopActivations(51), source = server("source"), target = server("old-target");
+  await owner.initialize("/source", source.request, {});
+  const identity = { id: "shell", fingerprint: "source", graph_generation: "source" };
+  await owner.scopedInventory(identity, "scope", async () => ({ workdir: "/personal", request: target.request, params: {} }));
+  owner.invalidateScopes("/personal");
+  owner.observeInventory("/personal", inventory("unverified-target"));
+  expect(() => owner.runtimeRequest("unverified-target")).toThrow(/graph/i);
+});

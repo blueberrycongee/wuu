@@ -175,7 +175,7 @@ function descriptor(name, methods, preparation = []) {
 }
 var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
-var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state", "check-transfer-state", "transfer-state", "acquire-inspection", "release-inspection", "list-inspections", "reconcile-inspection", "inspection-authority"], ["read", "read-state", "check-transfer-state"]);
 var ARTIFACT_STORE_DESCRIPTOR = {
   ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "read-range", "fork", "delete-thread"]),
   version: "1.2.0"
@@ -220,7 +220,7 @@ var TOOL_SERVICE = "agent.tools";
 var TOOL_SERVICE_DESCRIPTOR = {
   name: TOOL_SERVICE,
   version: "1.0.0",
-  methods: ["list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
+  methods: ["list", "resolve", "resolve-own", "execute", "freeze", "unfreeze", "prepare", "finalize"].map((name) => ({
     name,
     input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
     output_schema: `${TOOL_SERVICE}.${name}.output.v1`
@@ -257,6 +257,7 @@ var sessionDomainArity = {
   "ChangeClientInput": [6, 1],
   "AppendAcceptedClientHistoryRecord": [6, 1],
   "SettleClientInputExecution": [5, 0],
+  "MarkClientInputsRead": [2, 0],
   "ListClientInputRecoveryCandidates": [1, 1],
   "RecoverClientInput": [2, 0],
   "ClientInputHistoryReceipts": [1, 1],
@@ -903,7 +904,8 @@ function blankGoal(id, threadID, status, now) {
   return { id, thread_id: threadID, objective: "", status, tokens_used: 0, time_used_seconds: 0, created_at: zeroTime, updated_at: now, active_since: zeroTime };
 }
 function createGoalPlugin() {
-  let host, goals = {}, stopped = false;
+  let host, goals = {}, stopped = false, activated = false;
+  let persisted = null, owner = "";
   let queue = Promise.resolve();
   function locked(fn) {
     const next = queue.then(fn);
@@ -911,16 +913,79 @@ function createGoalPlugin() {
     });
     return next;
   }
-  async function save(host2, id, goal) {
-    const next = { ...goals, [id]: structuredClone(goal) };
-    await host2.call("host.storage.set", { scope: "workspace", key: storageKey, value: JSON.stringify(next) });
+  async function loadGoals() {
+    const loadedGoals = /* @__PURE__ */ Object.create(null);
+    const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
+    if (result.value !== null) {
+      try {
+        let loaded = JSON.parse(result.value) ?? {};
+        if (loaded.version === 1) {
+          if (typeof loaded.owner !== "string" || !loaded.owner || !loaded.goals || typeof loaded.goals !== "object") throw new Error("invalid goals document");
+          loaded = loaded.goals;
+        }
+        if (typeof loaded !== "object" || Array.isArray(loaded)) throw new Error("expected a goals object");
+        for (const [id, value] of Object.entries(loaded)) {
+          if (value !== null && (typeof value !== "object" || Array.isArray(value))) throw new Error(`invalid goal ${id}`);
+          const goal = value || {};
+          for (const key of ["id", "thread_id", "objective", "status", "created_at", "updated_at", "active_since", "initial_turn_id", "error"]) {
+            if (goal[key] != null && typeof goal[key] !== "string") throw new Error(`invalid goal field ${key}`);
+          }
+          for (const key of ["tokens_used", "time_used_seconds"]) if (goal[key] != null && typeof goal[key] !== "number") throw new Error(`invalid goal field ${key}`);
+          if (goal.tokens_used != null && !Number.isInteger(goal.tokens_used)) throw new Error("invalid goal field tokens_used");
+          for (const key of ["settled_turns", "ignored_interruptions"]) {
+            const values = goal[key];
+            if (values != null && (typeof values !== "object" || Array.isArray(values) || Object.values(values).some((value2) => value2 != null && typeof value2 !== "boolean"))) throw new Error(`invalid goal field ${key}`);
+          }
+          if (goal.pending != null) {
+            if (typeof goal.pending !== "object" || Array.isArray(goal.pending)) throw new Error("invalid goal field pending");
+            for (const key of ["request_id", "turn_id", "queue_id"]) if (goal.pending[key] != null && typeof goal.pending[key] !== "string") throw new Error(`invalid pending field ${key}`);
+          }
+          for (const key of ["created_at", "updated_at", "active_since"]) if (goal[key] != null) timeSeconds(goal[key]);
+          loadedGoals[id] = {
+            ...blankGoal(goal.id || "", goal.thread_id || "", goal.status || "", goal.updated_at || zeroTime),
+            objective: goal.objective || "",
+            tokens_used: goal.tokens_used || 0,
+            time_used_seconds: goal.time_used_seconds || 0,
+            created_at: goal.created_at || zeroTime,
+            active_since: goal.active_since || zeroTime,
+            initial_turn_id: goal.initial_turn_id,
+            settled_turns: goal.settled_turns,
+            ignored_interruptions: goal.ignored_interruptions,
+            pending: goal.pending || void 0,
+            error: goal.error
+          };
+        }
+      } catch (error) {
+        throw new Error(`load goals: ${String(error)}`);
+      }
+    }
+    return { goals: loadedGoals, raw: result.value };
+  }
+  function retired() {
+    stopped = true;
+    return new Error("goal state changed; this generation is retired, retry with the current Goal provider");
+  }
+  async function isCurrent(host2) {
+    const result = await host2.call("host.storage.get", { scope: "workspace", key: storageKey });
+    return result.value === persisted;
+  }
+  async function saveState(host2, next, expected = persisted) {
+    const value = JSON.stringify({ version: 1, owner, goals: next });
+    const result = await host2.call("host.storage.compare_exchange", { scope: "workspace", key: storageKey, expected, value });
+    if (!result.swapped || result.value !== value) throw retired();
+    persisted = value;
     goals = next;
+  }
+  async function save(host2, id, goal) {
+    await saveState(host2, { ...goals, [id]: structuredClone(goal) });
   }
   async function cancelPending(host2, goal) {
     if (!goal.pending) return;
+    if (!await isCurrent(host2)) throw retired();
     for (let attempt = 0; attempt < 3; attempt++) {
       const { turn } = await host2.call("host.session.inspect", { session_id: goal.thread_id, request_id: goal.pending.request_id });
-      if (!turn || turn.state !== "running" && turn.state !== "queued") {
+      if (!turn) throw new Error("continuation request has not been observed; its outcome is uncertain, retry after the host records it");
+      if (turn.state !== "running" && turn.state !== "queued") {
         delete goal.pending;
         return;
       }
@@ -939,6 +1004,7 @@ function createGoalPlugin() {
     if (goal.status !== "active" || goal.pending || stopped) return;
     goal.pending = { request_id: `goal-${goal.id}-${randomBytes(16).toString("hex")}` };
     await save(host2, goal.thread_id, goal);
+    if (!await isCurrent(host2)) throw retired();
     let sent;
     try {
       sent = await host2.call("host.session.send", {
@@ -950,6 +1016,7 @@ function createGoalPlugin() {
         presentation: { kind: "query_bubble", text: "\u7EE7\u7EED\u63A8\u8FDB\u76EE\u6807", name: "Goal" }
       });
     } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "session_send_unavailable") delete goal.pending;
       goal.status = "paused";
       goal.error = error instanceof Error ? error.message : String(error);
       try {
@@ -965,6 +1032,7 @@ ${String(saveError)}`);
   }
   async function mutate(host2, method, args, turnID, client) {
     if (stopped) throw new Error("goal plugin is stopped");
+    if (!await isCurrent(host2)) throw retired();
     const id = args.thread_id?.trim() || "";
     if (!id) throw new Error("thread_id is required");
     let goal = goals[id] ? structuredClone(goals[id]) : void 0;
@@ -1001,9 +1069,11 @@ ${String(saveError)}`);
     }
     const current = goal;
     current.updated_at = now;
+    if (method === "resume") current.status = "paused";
     await save(host2, id, current);
     if (client && (current.status !== "active" || method === "resume")) {
       await cancelPending(host2, current);
+      if (method === "resume") current.status = "active";
       await save(host2, id, current);
     }
     if (method === "clear") {
@@ -1055,6 +1125,9 @@ ${String(saveError)}`);
       host = runtimeHost;
       goals = {};
       stopped = false;
+      activated = false;
+      persisted = null;
+      owner = "";
       return {
         provided_services: [GOAL_CONTROL_SERVICE_DESCRIPTOR],
         tools: [
@@ -1068,60 +1141,32 @@ ${String(saveError)}`);
           ...["agent.turn.completed", "agent.turn.interrupted", "agent.turn.lifecycle"].map((id) => ({ id, kind: "observe", version: 1, error_policy: "isolate" })),
           { id: "plugin.client.request", kind: "decision", version: 1 }
         ],
-        required_services: ["host.storage.get", "host.storage.set", "host.session.send", "host.session.cancel", "host.session.inspect"].map(requireKernelService)
+        required_services: ["host.storage.get", "host.storage.compare_exchange", "host.session.send", "host.session.cancel", "host.session.inspect"].map(requireKernelService)
       };
+    },
+    prepare() {
+      return locked(async () => {
+        await loadGoals();
+      });
     },
     activate() {
       return locked(async () => {
-        const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
-        if (result.value !== null) {
-          try {
-            const loaded = JSON.parse(result.value) ?? {};
-            if (typeof loaded !== "object" || Array.isArray(loaded)) throw new Error("expected a goals object");
-            goals = /* @__PURE__ */ Object.create(null);
-            for (const [id, value] of Object.entries(loaded)) {
-              if (value !== null && (typeof value !== "object" || Array.isArray(value))) throw new Error(`invalid goal ${id}`);
-              const goal = value || {};
-              for (const key of ["id", "thread_id", "objective", "status", "created_at", "updated_at", "active_since", "initial_turn_id", "error"]) {
-                if (goal[key] != null && typeof goal[key] !== "string") throw new Error(`invalid goal field ${key}`);
-              }
-              for (const key of ["tokens_used", "time_used_seconds"]) if (goal[key] != null && typeof goal[key] !== "number") throw new Error(`invalid goal field ${key}`);
-              if (goal.tokens_used != null && !Number.isInteger(goal.tokens_used)) throw new Error("invalid goal field tokens_used");
-              for (const key of ["settled_turns", "ignored_interruptions"]) {
-                const values = goal[key];
-                if (values != null && (typeof values !== "object" || Array.isArray(values) || Object.values(values).some((value2) => value2 != null && typeof value2 !== "boolean"))) throw new Error(`invalid goal field ${key}`);
-              }
-              if (goal.pending != null) {
-                if (typeof goal.pending !== "object" || Array.isArray(goal.pending)) throw new Error("invalid goal field pending");
-                for (const key of ["request_id", "turn_id", "queue_id"]) if (goal.pending[key] != null && typeof goal.pending[key] !== "string") throw new Error(`invalid pending field ${key}`);
-              }
-              for (const key of ["created_at", "updated_at", "active_since"]) if (goal[key] != null) timeSeconds(goal[key]);
-              goals[id] = {
-                ...blankGoal(goal.id || "", goal.thread_id || "", goal.status || "", goal.updated_at || zeroTime),
-                objective: goal.objective || "",
-                tokens_used: goal.tokens_used || 0,
-                time_used_seconds: goal.time_used_seconds || 0,
-                created_at: goal.created_at || zeroTime,
-                active_since: goal.active_since || zeroTime,
-                initial_turn_id: goal.initial_turn_id,
-                settled_turns: goal.settled_turns,
-                ignored_interruptions: goal.ignored_interruptions,
-                pending: goal.pending || void 0,
-                error: goal.error
-              };
-            }
-          } catch (error) {
-            throw new Error(`load goals: ${String(error)}`);
+        const loaded = await loadGoals();
+        owner = randomBytes(16).toString("hex");
+        for (const existing of Object.values(loaded.goals)) {
+          if (existing.status === "active" || existing.status === "budget_limited") {
+            existing.status = "paused";
+            existing.updated_at = (/* @__PURE__ */ new Date()).toISOString();
           }
         }
-        for (const [id, existing] of Object.entries(goals)) {
-          if (existing.status === "active" || existing.status === "budget_limited") await save(host, id, { ...existing, status: "paused", updated_at: (/* @__PURE__ */ new Date()).toISOString() });
-        }
+        await saveState(host, loaded.goals, loaded.raw);
+        activated = true;
       });
     },
     shutdown() {
       return locked(async () => {
         stopped = true;
+        if (!activated || !await isCurrent(host)) return;
         const errors = [];
         for (const [id, existing] of Object.entries(goals)) {
           const goal = structuredClone(existing);
@@ -1133,6 +1178,7 @@ ${String(saveError)}`);
             await save(host, id, goal);
           } catch (error) {
             errors.push(error);
+            break;
           }
           if (goal.pending) {
             try {
@@ -1177,7 +1223,11 @@ ${String(saveError)}`);
     },
     async invokeCapability(call, host2) {
       return locked(async () => {
-        if (stopped) throw new Error("goal plugin is stopped");
+        if (call.capability !== "agent.system_prompt.section" && (stopped || !await isCurrent(host2))) {
+          const error = retired();
+          if (call.capability === "agent.pre_step") return { output: {} };
+          throw error;
+        }
         switch (call.capability) {
           case "agent.system_prompt.section":
             return { output: { text: "Use create_goal only when the user explicitly requests a persistent goal. Ordinary tasks do not create goals. get_goal reads the goal; update_goal may only mark verified completion or a blocker persisting for three consecutive goal turns. Goal controls belong to the user. Active goals continue across turns until completed, blocked, or paused." } };

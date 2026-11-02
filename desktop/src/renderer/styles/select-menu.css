@@ -313,13 +313,9 @@
   background: var(--menu-hover);
 }
 
-.select-menu-item:focus-visible {
+html[data-focus-modality="keyboard"] .select-menu-item:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
-  background: var(--menu-hover);
-}
-
-.select-menu-item[aria-checked="true"] {
   background: var(--menu-hover);
 }
 

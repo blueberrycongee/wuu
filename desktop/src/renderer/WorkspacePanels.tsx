@@ -1,3 +1,4 @@
+import type { UIRegisterFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -81,6 +82,7 @@ import { WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceFileViewTab, type Workspac
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
 import { translateCurrent, useI18n } from "./i18n";
+import { TruncatedText } from "./TruncatedText";
 import { Tooltip } from "./Tooltip";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
@@ -98,8 +100,10 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
 import { showErrorToast } from "./Toast";
+import { UIContributionErrorDisplayContext } from "./plugins/ApplicationShell";
 
 export interface WorkspacePanelLayout {
+  registerFocusTarget?: UIRegisterFocusTargetV1;
   open: boolean;
   covered?: boolean;
   toolsVisible?: boolean;
@@ -251,7 +255,7 @@ function WorkspacePanelContent({
   application, slots, open, covered = false, toolsVisible = true, present, prewarm = false,
   globalized, sheetPhase = "docked", onToggleGlobalize, canExitGlobalized = true,
   browserOverlaySuppressed = false, onDirtyFileTabsChange, conversationTabVisible = false,
-  documentComposer = false, pane, runtimeControlsRef,
+  documentComposer = false, pane, runtimeControlsRef, registerFocusTarget,
 }: WorkspacePanelLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const { t } = useI18n();
   const [toolRailCollapsed, setToolRailCollapsed] = useState(
@@ -262,6 +266,7 @@ function WorkspacePanelContent({
     setToolRailCollapsed(collapsed);
     window.localStorage.setItem(WORKSPACE_TOOL_RAIL_COLLAPSED_KEY, String(collapsed));
   };
+  const panelRef = useRef<HTMLElement>(null);
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const preview = snapshot.previewWorkspace;
   // Detach public immutable display data before using the existing mutable leaf renderers.
@@ -375,6 +380,14 @@ function WorkspacePanelContent({
     [...(conversationTab ? [WORKSPACE_CONVERSATION_TAB_ID] : []), ...visibleTabs.map((tab) => tab.id)],
     addButtonRef,
   );
+  useLayoutEffect(() => registerFocusTarget?.({
+    focus: options => {
+      const tab = tabListRef.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
+      if (!open || covered || !tab) return false;
+      tab.focus(options); return true;
+    },
+    contains: element => panelRef.current?.contains(element) ?? false,
+  }), [registerFocusTarget, open, covered, tabListRef]);
 
   useLayoutEffect(() => {
     const content = activeTab?.kind === "artifact" ? artifactContentRef.current : fileContentRef.current;
@@ -770,12 +783,15 @@ function WorkspacePanelContent({
         ))}
         <div className="workspace-composer-controls" ref={runtimeControlsRef} />
         <div className="workspace-tool-rail-contributions">
-          <slots.Slot name="wuu.default-preview/workspace.rail" />
+          <UIContributionErrorDisplayContext.Provider value={false}>
+            <slots.Slot name="wuu.default-preview/workspace.rail" />
+          </UIContributionErrorDisplayContext.Provider>
         </div>
         </> : null}
       </nav>
     ) : null}
     <aside
+      ref={panelRef}
       className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={conversationActive ? "conversation" : activeTab?.kind ?? "picker"}
@@ -831,21 +847,19 @@ function WorkspacePanelContent({
                   data-wuu-component="workspace-conversation-tab"
                   data-wuu-active={conversationActive ? "true" : "false"}
                 >
-                  <Tooltip content={conversationTab.title}>
-                    <button
-                      className="workspace-tool-tab-main"
-                      type="button"
-                      role="tab"
-                      aria-selected={conversationActive}
-                      aria-label={conversationTab.title}
-                      tabIndex={conversationActive ? 0 : -1}
-                      disabled={!open}
-                      onClick={conversationTab.onSelect}
-                    >
-                      <MessageCircle className="icon" />
-                      <span>{conversationTab.title}</span>
-                    </button>
-                  </Tooltip>
+                  <button
+                    className="workspace-tool-tab-main"
+                    type="button"
+                    role="tab"
+                    aria-selected={conversationActive}
+                    aria-label={conversationTab.title}
+                    tabIndex={conversationActive ? 0 : -1}
+                    disabled={!open}
+                    onClick={conversationTab.onSelect}
+                  >
+                    <MessageCircle className="icon" />
+                    <TruncatedText text={conversationTab.title} />
+                  </button>
                   {conversationTab.closable ? <button
                     className="workspace-tool-tab-close"
                     type="button"

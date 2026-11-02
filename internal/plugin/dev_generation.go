@@ -32,11 +32,31 @@ type DevAuthorization struct {
 }
 
 type devGenerationReceipt struct {
-	PluginID    string    `json:"plugin_id"`
-	Directory   string    `json:"directory"`
-	Fingerprint string    `json:"fingerprint"`
-	Signature   string    `json:"signature"`
-	PublishedAt time.Time `json:"published_at"`
+	PluginID         string    `json:"plugin_id"`
+	Directory        string    `json:"directory"`
+	Fingerprint      string    `json:"fingerprint"`
+	Signature        string    `json:"signature"`
+	PublishedAt      time.Time `json:"published_at"`
+	StorageSubjectID string    `json:"storage_subject_id,omitempty"`
+}
+
+// DevStorageSubject pins a home-wide development override to its installed
+// owner's data. Project identities are deliberately excluded: a home-wide grant
+// must not borrow a namespace from whichever workspace happens to publish it.
+func DevStorageSubject(wuuHome, pluginID string) string {
+	for _, item := range discoverAuthorizedDev(wuuHome) {
+		if item.ID == pluginID && item.StorageSubjectID != "" {
+			return item.StorageSubjectID
+		}
+	}
+	options := defaultDiscoverOptions()
+	options.ExcludeDev = true
+	for _, item := range DiscoverWithOptions("", wuuHome, options) {
+		if item.ID == pluginID {
+			return item.SubjectID
+		}
+	}
+	return "plugin:dev:" + pluginID
 }
 
 // DevAuthorizationPath returns the only authorization record consulted for a
@@ -131,10 +151,11 @@ func PublishDevGeneration(wuuHome, developerDirectory, source string, authorizat
 		return Plugin{}, fmt.Errorf("validate staged dev provenance: %w", err)
 	}
 	receipt := devGenerationReceipt{
-		PluginID:    authorization.PluginID,
-		Directory:   authorizedDirectory,
-		Fingerprint: stagedDev.Fingerprint,
-		PublishedAt: time.Now().UTC(),
+		PluginID:         authorization.PluginID,
+		Directory:        authorizedDirectory,
+		Fingerprint:      stagedDev.Fingerprint,
+		PublishedAt:      time.Now().UTC(),
+		StorageSubjectID: DevStorageSubject(wuuHome, authorization.PluginID),
 	}
 	receipt.Signature = signDevGenerationReceipt(receipt, authorization.Token)
 	data, err := json.MarshalIndent(receipt, "", "  ")
@@ -287,12 +308,17 @@ func loadAuthorizedDevGeneration(wuuHome, container string) (Plugin, error) {
 		return Plugin{}, errors.New("dev generation package does not match its authorization receipt")
 	}
 	item.AuthorizedDev = true
+	item.StorageSubjectID = receipt.StorageSubjectID
 	return item, nil
 }
 
 func signDevGenerationReceipt(receipt devGenerationReceipt, token string) string {
 	mac := hmac.New(sha256.New, []byte(token))
 	_, _ = fmt.Fprintf(mac, "%s\x00%s\x00%s", receipt.PluginID, receipt.Directory, receipt.Fingerprint)
+	// Preserve verification of pre-binding receipts until their next publication.
+	if receipt.StorageSubjectID != "" {
+		_, _ = fmt.Fprintf(mac, "\x00%s", receipt.StorageSubjectID)
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

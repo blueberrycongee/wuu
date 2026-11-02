@@ -70,6 +70,20 @@ const tasks = [
   {task_id:"dinner",agent_id:"mosaic",title:"周五和朋友吃饭",goal:"在三家安静的餐厅中选一家，确认后再预订。",state:"waiting_user",requirements_revision:1,revision:2,updated_at:now,result:{summary:"找到了三家合适的餐厅，等你选一个更方便的地点。"}},
   {task_id:"reading",agent_id:"mosaic",title:"这个月的阅读清单",goal:"整理最近提到的三本书。",state:"completed",requirements_revision:1,revision:4,updated_at:"2026-10-17T10:00:00Z",result:{summary:"三本书已整理好：先从你最感兴趣的城市生活开始，再读设计和自然。每本都保留了推荐来源。"}},
 ];
+// Existing-session control is synthetic here: no transport, grant or worker runs.
+const existingSessionScenario = new URLSearchParams(location.search).get("existingSession");
+if (existingSessionScenario) {
+  Object.assign(tasks[1], {
+    title: "Review an existing Coding session", goal: "Inspect the existing project context without replacing the session.",
+    state: existingSessionScenario === "unavailable" ? "waiting_external" : "awaiting_review",
+    existing_session: {version:1,execution_host:"registered-coding-host-with-a-long-stable-identity",session_id:"existing-user-session-2f629e5c"},
+    result: undefined,
+    ...(existingSessionScenario === "unavailable" ? {error:"The registered target is unavailable; no replacement was created."} : {
+      worker_result:{request_id:"worker-request",session_id:"existing-user-session-2f629e5c",execution_host:"registered-coding-host-with-a-long-stable-identity",text:"Which branch should I use for the requested follow-up?",received_at:now},
+      progress:"Worker response received; awaiting controller review",
+    }),
+  });
+}
 // Synthetic responsibilities never contact a scheduler or run external work.
 const routineFixtureParams = new URLSearchParams(location.search);
 const routineFixtureFaults = {
@@ -120,10 +134,11 @@ const receiptRows = new Map<string, {receipt: ClientInputReceipt; prompt:string;
 const fixtureReceipt = (request:string,state:ClientInputReceipt["execution_state"],seq?:number):ClientInputReceipt => ({request_id:request,receipt_id:`receipt-${request}`,host_request_id:`host-${request}`,client_id:`client-${request}`,queue_id:`queue-${request}`,session_id:"synthetic-main",plugin_id:"personal",owner:"plugin:personal",user_space_id:"local",product_domain:"personal",agent_id:"mosaic",receipt_state:seq?"in_history":"accepted",execution_state:state,accepted_at:now,revision:seq?4:2,...(seq?{message_seq:seq,hostturn_id:`turn-${request}`}:{})});
 if(new URLSearchParams(location.search).has("receipts")) {
  histories.mosaic = [
- {seq:1,role:"user",content:"这条已收到，处理已经完成。",receipt:fixtureReceipt("done","completed",1)},
+ {seq:1,role:"user",content:"这条消息已经进入助理的上下文。",receipt:{...fixtureReceipt("done","completed",1),read_at:now}},
  {seq:2,role:"assistant",content:"好的，已经整理完成。"},
  {seq:3,role:"user",content:"这条已收到，但处理遇到了错误。",receipt:fixtureReceipt("failed","failed",3)},
- {seq:4,role:"user",content:"宿主重启前已开始处理；结果未知，不会自动重放。",receipt:fixtureReceipt("unknown","unconfirmed",4)}
+ {seq:4,role:"user",content:"宿主重启前已开始处理；结果未知，不会自动重放。",receipt:fixtureReceipt("unknown","unconfirmed",4)},
+ {seq:5,role:"user",content:"这条消息已送达，正在等待进入上下文。",receipt:fixtureReceipt("waiting","running",5)}
  ];
  receiptRows.set("held",{receipt:fixtureReceipt("held","held"),prompt:"附件已经保存在宿主，等我明确继续。",attachments:[{filename:"合成附件.txt",media_type:"text/plain",sha256:"a".repeat(64)}]});
 }
@@ -139,13 +154,32 @@ type SendScenario = keyof typeof scenarioLabels;
 const requestedScenario = new URLSearchParams(location.search).get("sendScenario") || "default";
 const receiptScenario = {
   mode: (requestedScenario in scenarioLabels ? requestedScenario : "default") as SendScenario,
-  attempts: [] as Array<{request_id:string}>, accepted: 0, hidden: new Set<string>(),
+  attempts: [] as Array<{request_id:string}>, proofs: [] as unknown[], accepted: 0, hidden: new Set<string>(), statusOffline: false,
   release: undefined as (() => void) | undefined,
+  markRead(requestID: string) {
+    const row = receiptRows.get(requestID)!;
+    Object.assign(row.receipt, { read_at: new Date().toISOString(), revision: row.receipt.revision + 1 });
+    host.publishHostEvent({ type: "routine-state-changed" });
+  },
+  reply(requestID: string) {
+    const row = receiptRows.get(requestID)!;
+    histories.mosaic.push({ seq: histories.mosaic.at(-1)!.seq + 1, role: "assistant", content: "合成回复：这条消息已处理。", relation: row.relation });
+    host.publishHostEvent({ type: "routine-state-changed" });
+  },
+  admit(requestID: string) {
+    const row = receiptRows.get(requestID)!;
+    const seq = histories.mosaic.at(-1)!.seq + 1;
+    row.receipt = { ...row.receipt, receipt_state: "in_history", execution_state: "running", message_seq: seq, revision: row.receipt.revision + 1 };
+    histories.mosaic.push({ seq, role: "user", content: row.prompt, receipt: row.receipt, relation: row.relation });
+    host.publishHostEvent({ type: "routine-state-changed" });
+  },
+  refresh() { host.publishHostEvent({ type: "routine-state-changed" }); },
 };
 Object.assign(window, { __receiptScenario: receiptScenario });
 const refreshScenarioControls = () => window.dispatchEvent(new Event("receipt-scenario-change"));
 async function sendReceiptScenario(data:Record<string,any>, userInput?:{attachments?:ReadonlyArray<{filename:string;media_type:string;sha256:string}>}) {
   receiptScenario.attempts.push(structuredClone(data) as {request_id:string});
+  receiptScenario.proofs.push(structuredClone(userInput));
   refreshScenarioControls();
   if (receiptScenario.mode === "reject-before-accept") throw new Error("request_id_conflict: synthetic rejection before acceptance");
   if (receiptScenario.mode === "retry-same-id" && receiptScenario.attempts.length === 1) throw new Error("合成网络故障：送达状态暂时无法确认");
@@ -154,7 +188,7 @@ async function sendReceiptScenario(data:Record<string,any>, userInput?:{attachme
   if (prior) return {receipt:prior.receipt,state:prior.receipt.execution_state};
   const list=histories[data.agent_id], seq=(list.at(-1)?.seq ?? 0)+1;
   const processing=receiptScenario.mode === "processing";
-  const receipt=fixtureReceipt(data.request_id,processing?"running":"queued",processing?seq:undefined);
+  const receipt={...fixtureReceipt(data.request_id,processing?"running":"queued",processing?seq:undefined),accepted_at:new Date().toISOString()};
   receiptRows.set(data.request_id,{receipt,prompt:data.prompt,relation:data.relation,attachments:userInput?.attachments?.map(({filename,media_type,sha256})=>({filename,media_type,sha256}))});
   if(processing) list.push({seq,role:"user",at:now,content:data.prompt,receipt,relation:data.relation});
   receiptScenario.accepted++;
@@ -220,7 +254,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
       agent.name = name; agent.revision++; return { agent: { ...agent } };
     }
     case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"},pending_inputs:[...receiptRows.values()].filter(r=>r.receipt.receipt_state==="accepted"&&r.receipt.execution_state!=="cancelled"&&!receiptScenario.hidden.has(r.receipt.request_id))};
-    case "agents.messages.status": return {receipt:receiptScenario.hidden.has(data.request_id)?undefined:receiptRows.get(data.request_id)?.receipt};
+    case "agents.messages.status": if (receiptScenario.statusOffline) throw new Error("Synthetic status outage"); return {receipt:receiptScenario.hidden.has(data.request_id)?undefined:receiptRows.get(data.request_id)?.receipt};
     case "agents.messages.resume": {const row=receiptRows.get(data.request_id);if(!row||row.receipt.receipt_id!==data.receipt_id||userInput?.resumeReceiptId!==data.receipt_id)throw new Error("Synthetic receipt proof mismatch");row.receipt={...row.receipt,execution_state:"queued",revision:row.receipt.revision+1};return {receipt:row.receipt};}
     case "agents.messages.cancel": {const row=receiptRows.get(data.request_id);if(!row||row.receipt.receipt_id!==data.receipt_id)throw new Error("Synthetic identity mismatch");row.receipt={...row.receipt,execution_state:"cancelled",revision:row.receipt.revision+1};return {cancelled:true};}
     case "agents.history": {
@@ -341,6 +375,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
 };
 installFixtureBridge(invokeRuntime);
 const params=new URLSearchParams(location.search);
+
 if (!localStorage.getItem("wuu.fixture.reactions")) { reactionStore["3"] = {agent:"✅",revision:1}; persistReactions(); }
 // Normal preview stays representative; stress/error files remain opt-in for QA.
 if (!["all", "reference"].includes(params.get("attachments") || "")) histories.mosaic[3].attachments = histories.mosaic[3].attachments!.slice(0, 2);
@@ -385,6 +420,25 @@ if (params.get("grouping") === "1") histories.mosaic.push(
   {seq:7,role:"user",at:now,content:"安静、方便聊天就好。"},
 );
 if(params.has("receipts")) histories.mosaic[3].attachments = undefined;
+if (params.has("genui")) {
+  const spec = { version: 2, title: "旅行预算", fallback: "选择人数并查看预算", state: [{id:"people",value:2}], body: [
+    {id:"peopleInput",type:"input",inputType:"number",state:"people",label:"人数"},
+    {id:"total",type:"metric",label:"预算",value:{op:"multiply",args:[{op:"state",key:"people"},100]}},
+    {id:"send",type:"button",label:"提交选择",onClick:[{type:"sendMessage",text:"继续安排"}]},
+  ]};
+  const text = JSON.stringify(spec);
+  const part = { type:"resource", mime_type:"application/vnd.wuu.ui+json", name:spec.title, resource:{mimeType:"application/vnd.wuu.ui+json",text}, artifact:{placement:"inline",ref:`ui-v2-${"a".repeat(64)}`,sha256:"b".repeat(64),size_bytes:new TextEncoder().encode(text).length} };
+  histories.mosaic = [{seq:1,role:"assistant",at:now,content:spec.fallback,ui_text:"",ui_resources:[{part,part_index:1,tool_call_id:"synthetic-call",fallback_text:spec.fallback}]} as typeof histories.mosaic[number]];
+  const streamSpec = { version:2, title:"流式界面", fallback:"流式摘要", state:[{id:"count",value:2}], body:[{id:"streamText",type:"text",text:"第一段已生成"},{id:"streamInput",type:"input",inputType:"number",state:"count",label:"预览输入"}] };
+  Object.assign(window, { __streamFixture: {
+    spec: streamSpec,
+    emit: (method:string, payload:unknown, userScope = {user_space_id:"local",product_domain:"personal",composition_profile:"personal"}) => host.publishHostEvent({kind:"notification",user_scope:userScope,message:{method,params:payload}}),
+    finish: () => {
+      const raw=JSON.stringify(streamSpec), resource={type:"resource",mime_type:"application/vnd.wuu.ui+json",name:streamSpec.title,resource:{mimeType:"application/vnd.wuu.ui+json",text:raw},artifact:{placement:"inline",ref:`ui-v2-${"c".repeat(64)}`,sha256:"d".repeat(64),size_bytes:new TextEncoder().encode(raw).length}};
+      histories.mosaic.push({seq:100,role:"assistant",at:now,content:streamSpec.fallback,ui_text:"",ui_resources:[{part:resource,part_index:1,tool_call_id:"stream-call",fallback_text:streamSpec.fallback}]} as typeof histories.mosaic[number]);
+    },
+  } });
+}
 applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
@@ -405,6 +459,9 @@ function setActivity(status: "idle" | "thinking" | "responding") {
   }
 }
 async function start(){
+  const scoped = (window as unknown as {__scopedFixture?: {call(method:string):Promise<any>}}).__scopedFixture;
+  const personalSource = params.has("genui") && scoped ? (await scoped.call("personal-source")) : undefined;
+  const personalID = personalSource?.id ?? "personal";
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"wuu.default-application",generation:"fixture",register:activateApplication});
   await host.selectApplicationBinding({pluginId:"wuu.default-application",generation:"fixture",id:"ui.application"});
   for (const [pluginId, register] of [
@@ -415,10 +472,10 @@ async function start(){
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"fixture-controls",generation:"fixture",register(api){fixtureApplication=api.application;}});
   controller = fixtureApplication.workbench;
   window.addEventListener("pagehide", () => { fixtureLifetime.abort(); void host.selectApplicationBinding(undefined).finally(() => { for (const id of ["personal", "personal-calendar", "automations", "fixture-controls", "wuu.default-shell", "wuu.default-navigation", "wuu.default-composer", "wuu.default-conversation", "wuu.default-preview", "wuu.default-settings", "wuu.default-application"]) host.unload(id); }); }, {once:true});
-  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
+  await host.activateGeneration({graphGeneration:personalSource?.graph_generation ?? "fixture-graph",pluginId:personalID,manifestId:"personal",generation:personalSource?.fingerprint ?? "synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal-calendar",generation:"synthetic-ui-fixture",register:activateCalendar});
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
-  if (params.get("presentation") !== "standard") await controller.openPluginView("personal", "personal.home");
+  if (params.get("presentation") !== "standard") await controller.openPluginView(personalID, "personal.home");
   createRoot(document.getElementById("root")!).render(<FixtureSurface/>);
   (window as any).mosaicFixture={host,controller,setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),setActivity,synthetic:true};
 }

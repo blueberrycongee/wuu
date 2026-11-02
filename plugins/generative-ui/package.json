@@ -11,8 +11,7 @@
       "watch": [
         "../../packages/plugin-sdk/src",
         "../../scripts/build-bundled-plugins.mjs",
-        "../../internal/plugin/bundled/generative-ui/plugin.json",
-        "../../internal/plugin/bundled/generative-ui/desktop.js"
+        "../../internal/plugin/bundled/generative-ui/plugin.json"
       ]
     }
   }

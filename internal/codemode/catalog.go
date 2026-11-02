@@ -20,6 +20,7 @@ type toolCatalog struct {
 type catalogSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	DirectOnly  bool   `json:"direct_only,omitempty"`
 }
 type catalogSearchResult struct {
 	Tools      []catalogSummary `json:"tools"`
@@ -57,7 +58,17 @@ func newToolCatalog(definitions []ToolDefinition) (*toolCatalog, error) {
 	sort.Strings(catalog.names)
 	return catalog, nil
 }
-func (c *toolCatalog) Names() []string { return append([]string(nil), c.names...) }
+
+// BindingNames excludes tools that are discoverable but must be called by the model.
+func (c *toolCatalog) BindingNames() []string {
+	names := make([]string, 0, len(c.names))
+	for _, name := range c.names {
+		if !c.definitions[name].DirectOnly {
+			names = append(names, name)
+		}
+	}
+	return names
+}
 
 func (c *toolCatalog) Describe(name string) (ToolDefinition, error) {
 	definition, ok := c.definitions[name]
@@ -151,7 +162,7 @@ func (c *toolCatalog) Search(ctx context.Context, query string, limit, offset in
 		if len(description) > 240 {
 			description = append(description[:239], '…')
 		}
-		result.Tools = append(result.Tools, catalogSummary{Name: match.name, Description: string(description)})
+		result.Tools = append(result.Tools, catalogSummary{Name: match.name, Description: string(description), DirectOnly: c.definitions[match.name].DirectOnly})
 	}
 	if end < len(matches) {
 		result.NextOffset = &end

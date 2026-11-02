@@ -604,11 +604,12 @@ describe("shared application state", () => {
   });
 
   it("routes navigation through the shared cache and removes deleted sidebar rows", async () => {
-    const context = { kind: "no_project" as const, cwd: "/workspace" };
-    const thread = { id: "a", cwd: context.cwd, preview: "cached", status: "idle", model_provider: "", model: "", created_at: "", updated_at: "", turns: [] } as never;
+    const project = { id: "workspace", name: "Workspace", path: "/workspace", created_at: "", updated_at: "" };
+    const context = { kind: "project" as const, project_id: project.id, cwd: project.path };
+    const thread = { id: "a", cwd: context.cwd, workspace_id: project.id, preview: "cached", status: "idle", model_provider: "", model: "", created_at: "", updated_at: "", turns: [] } as never;
     window.wuu = { listAllThreads: vi.fn().mockResolvedValue({ threads: [thread] }), getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
       deleteThread: vi.fn().mockResolvedValue({}) } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, activeContext: context });
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeProjectId: project.id, projects: [project] });
     await controller.invoke("navigation.refresh", {});
     expect(controller.getSnapshot().navigationWorkspace.threads.map(thread => thread.id)).toEqual(["a"]);
     await controller.invoke("settings.delete-archived", { threadId: "a" });

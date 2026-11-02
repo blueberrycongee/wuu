@@ -138,6 +138,7 @@ func threadWorktreeInfo(path, baseHEAD, baseRepo string) *WorktreeInfo {
 func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMessage, now time.Time) Turn {
 	th.agentStream = nil
 	th.currentTurn = turnID
+	th.currentTurnIsolated = false
 	th.currentTurnKind = TurnKindUser
 	th.currentTurnResumed = false
 	th.running = true
@@ -199,6 +200,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 		}
 		th.Turns[i] = turn
 		th.currentTurn = turn.ID
+		th.currentTurnIsolated = false
 		th.currentTurnKind = TurnKindUser
 		th.currentTurnResumed = true
 		th.running = true
@@ -265,6 +267,7 @@ func (th *threadState) startCompactTurnLocked(turnID string, displayMsg provider
 func (th *threadState) startInternalTurnWithKindLocked(turnID string, kind TurnKind, now time.Time) Turn {
 	th.agentStream = nil
 	th.currentTurn = turnID
+	th.currentTurnIsolated = false
 	th.currentTurnKind = kind
 	th.currentTurnResumed = false
 	th.running = true
@@ -318,6 +321,7 @@ func (th *threadState) startAgentTurnLocked(now time.Time) (Turn, bool) {
 		}
 		th.Turns = append(th.Turns, turn)
 		th.currentTurn = turnID
+		th.currentTurnIsolated = false
 		th.currentTurnKind = TurnKindInternal
 		th.currentTurnResumed = false
 		th.running = true
@@ -345,6 +349,7 @@ func (th *threadState) startAgentTurnLocked(now time.Time) (Turn, bool) {
 	turn.Model = th.Model
 	th.Turns[index] = turn
 	th.currentTurn = turn.ID
+	th.currentTurnIsolated = false
 	th.currentTurnKind = TurnKindInternal
 	th.currentTurnResumed = false
 	th.running = true
@@ -452,6 +457,7 @@ func (th *threadState) releaseTurnExecutionLocked(turnID string) {
 	th.releaseThreadExecutionLeaseLocked()
 	th.running = false
 	th.currentTurn = ""
+	th.currentTurnIsolated = false
 	th.currentTurnKind = ""
 	th.currentExecutionRunID = ""
 	th.currentTurnResumed = false
@@ -1024,8 +1030,12 @@ func (th *threadState) settleStreamReconnectItemLocked(turnID string, lc *provid
 		return nil
 	}
 	item.Status = ThreadItemStatusFailed
-	item.Text = lc.Reason
-	item.Reason = lc.FailureCategory
+	if strings.TrimSpace(lc.Reason) != "" {
+		item.Text = lc.Reason
+	}
+	if strings.TrimSpace(lc.FailureCategory) != "" {
+		item.Reason = lc.FailureCategory
+	}
 	if lc.RetryCount > 0 {
 		item.RetryCount = lc.RetryCount
 	}

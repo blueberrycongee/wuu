@@ -35,6 +35,7 @@ type pluginHostServices struct {
 	open                   bool
 	pluginID               string
 	subjectID              string
+	storageSubjectID       string
 	fingerprint            string
 	projectRoot            string
 	wuuHome                string
@@ -67,11 +68,18 @@ func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, t
 	lockContext, lockCancel := context.WithCancel(context.Background())
 	services := &pluginHostServices{
 		open: true, pluginID: item.ID, subjectID: strings.TrimSpace(item.SubjectID),
-		fingerprint: item.Fingerprint, projectRoot: projectRoot, wuuHome: wuuHome,
+		storageSubjectID: item.StorageSubject(), fingerprint: item.Fingerprint, projectRoot: projectRoot, wuuHome: wuuHome,
 		settings: settings, turnRouter: turnRouter,
 		fileLocks: make(map[string]func()), lockContext: lockContext, lockCancel: lockCancel,
 	}
 	return services
+}
+
+func (s *pluginHostServices) storageSubject() string {
+	if s.storageSubjectID != "" {
+		return s.storageSubjectID
+	}
+	return s.subjectID
 }
 
 func (s *pluginHostServices) close() {
@@ -199,7 +207,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionSend:
 		if s.turnRouter == nil {
-			return nil, serviceError("service_unavailable", "session service is unavailable")
+			return nil, serviceError(sessionSendUnavailableCode, "session service is unavailable before dispatch")
 		}
 		var params pluginhost.SessionSendParams
 		if err := decodeServiceParams(raw, &params); err != nil {
@@ -272,7 +280,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if accessErr != nil {
 			return nil, accessErr
 		}
-		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, params)
+		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, s.binding, ClientInputReceiptsSelected(s.ownerHost), params)
 		if err != nil {
 			return nil, err
 		}
@@ -865,7 +873,7 @@ func (s *pluginHostServices) storageGet(ctx context.Context, params pluginhost.S
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	document, err := s.settingsClient.ReadState(ctx, s.subjectID, scope)
+	document, err := s.settingsClient.ReadState(ctx, s.storageSubject(), scope)
 	if err != nil {
 		return nil, err
 	}
@@ -887,7 +895,7 @@ func (s *pluginHostServices) storageSet(ctx context.Context, params pluginhost.S
 	if len([]byte(params.Value)) > pluginsettings.MaxStateValueBytes {
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
-	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.storageSubject(), scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})
@@ -905,7 +913,7 @@ func (s *pluginHostServices) storageDelete(ctx context.Context, params pluginhos
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.storageSubject(), scope, func(values map[string]string) error {
 		delete(values, params.Key)
 		return nil
 	})
@@ -920,7 +928,7 @@ func (s *pluginHostServices) storageKeys(ctx context.Context, params pluginhost.
 	if err != nil {
 		return nil, err
 	}
-	document, err := s.settingsClient.ReadState(ctx, s.subjectID, scope)
+	document, err := s.settingsClient.ReadState(ctx, s.storageSubject(), scope)
 	if err != nil {
 		return nil, err
 	}
@@ -944,7 +952,9 @@ func (s *pluginHostServices) storageCompareExchange(ctx context.Context, params 
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
 	result := pluginhost.StorageCompareExchangeResult{}
-	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.storageSubject(), scope, func(values map[string]string) error {
+		// A settings conflict discards this attempt and repeats the callback.
+		result = pluginhost.StorageCompareExchangeResult{}
 		current, exists := values[params.Key]
 		matches := params.Expected != nil && exists && current == *params.Expected
 		if params.Expected == nil {

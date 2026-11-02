@@ -6,7 +6,7 @@ import "github.com/blueberrycongee/wuu/internal/providers"
 // is maintained here; existing generated session methods remain untouched.
 var clientInputDomainMethods = []string{
 	"AppendAcceptedUserHistoryRecordWithControl", "ReadClientInput", "ListUnsettledClientInputs", "AcceptClientInput", "ChangeClientInput",
-	"AppendAcceptedClientHistoryRecord", "SettleClientInputExecution",
+	"AppendAcceptedClientHistoryRecord", "SettleClientInputExecution", "MarkClientInputsRead",
 	"ListClientInputRecoveryCandidates", "RecoverClientInput", "ClientInputHistoryReceipts",
 }
 
@@ -39,6 +39,9 @@ func (s *Store) AppendAcceptedClientHistoryRecord(id string, record HistoryRecor
 }
 func (s *Store) SettleClientInputExecution(scope ClientInputScope, hostRequestID, turnID, state, reason string) error {
 	return s.invoke("SettleClientInputExecution", []any{scope, hostRequestID, turnID, state, reason}, []any{})
+}
+func (s *Store) MarkClientInputsRead(scope ClientInputScope, refs []ClientInputContextRef) error {
+	return s.invoke("MarkClientInputsRead", []any{scope, refs}, []any{})
 }
 func (s *Store) ListClientInputRecoveryCandidates(scope ClientInputScope) ([]AcceptedClientInput, error) {
 	var result []AcceptedClientInput

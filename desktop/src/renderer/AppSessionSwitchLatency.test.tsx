@@ -86,6 +86,13 @@ let serverEventHandlers: Array<(event: ServerEvent) => void> = [];
 let animationFrames: ReturnType<typeof mockAnimationFrames>;
 
 const workspace = "/tmp/wuu-session-switch-latency-test";
+const project = {
+  id: "switch-project",
+  name: "Switch Project",
+  path: workspace,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
 const threadAID = "thread-switch-a";
 const threadBID = "thread-switch-b";
 
@@ -156,6 +163,8 @@ function completedThread({
     model_provider: provider,
     model,
     cwd: workspace,
+    workspace_id: project.id,
+    workspace_kind: "project",
     status: "idle",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: updatedAt,
@@ -246,6 +255,10 @@ function installWuuApi(): {
   startTurn: ReturnType<typeof vi.fn>;
   threadsByID: Map<string, Thread>;
 } {
+  window.localStorage.setItem(
+    "wuu.desktop.expandedSidebarSectionIDs",
+    JSON.stringify([project.id]),
+  );
   const threadsByID = new Map<string, Thread>([
     [threadAID, threadA()],
     [threadBID, threadB()],
@@ -266,13 +279,13 @@ function installWuuApi(): {
   const api = {
     reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue({
-      projects: [],
-      active_context: { kind: "no_project", cwd: workspace },
+      projects: [project],
+      active_context: { kind: "project", project_id: project.id, cwd: workspace },
     }),
-    selectNoProject: vi.fn().mockResolvedValue({
-      projects: [],
-      active_context: { kind: "no_project", cwd: workspace },
-    }),
+    selectProject: vi.fn().mockImplementation(async (projectId: string) => ({
+      projects: [project],
+      active_context: { kind: "project", project_id: projectId, cwd: workspace },
+    })),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockImplementation(async () => ({
       threads: Array.from(threadsByID.values(), thread => ({ ...thread, turns: [] })),
@@ -996,7 +1009,7 @@ describe("session tab switch latency", () => {
     await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(threadRowButton("first pending query")).toBeUndefined();
     expect(mainComposerTextarea().value).toBe("newer draft");
-    const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+    const recovery = document.querySelector<HTMLButtonElement>('[data-wuu-component="draft-recovery"] button');
     expect(recovery).not.toBeNull();
     await act(async () => { recovery!.click(); });
     expect(mainComposerTextarea().value).toBe("first pending query");

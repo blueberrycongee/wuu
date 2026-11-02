@@ -242,6 +242,11 @@ app.whenReady().then(async () => {
       // Full product shell with the existing synthetic IPC bridge; no user data.
       for (const theme of ["light", "dark"]) {
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+        await waitFor(() => Boolean(document.querySelector(".project-row")));
+        await evaluate(() => {
+          const row = document.querySelector(".project-row");
+          if (row.getAttribute("aria-expanded") !== "true") row.click();
+        });
         await waitFor(() => Boolean(document.querySelector(".thread-list-more")));
         await evaluate(() => document.querySelector(".thread-row-main").click());
         await waitFor(() => Boolean(document.querySelector(".thread-row.active")));
@@ -356,6 +361,11 @@ app.whenReady().then(async () => {
         const label = `${theme}-${size}`;
         win.setContentSize(size === 14 ? 1100 : 940, 820);
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+        await waitFor(() => Boolean(document.querySelector(".project-row")));
+        await evaluate(() => {
+          const row = document.querySelector(".project-row");
+          if (row.getAttribute("aria-expanded") !== "true") row.click();
+        });
         await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="workspace"] .thread-list-more'))
           && Boolean(document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle')));
         // Recent includes the workspace sessions and the current unsent draft.
@@ -395,6 +405,13 @@ app.whenReady().then(async () => {
         // pending row to clear before choosing an independent reading position.
         await waitFor(() => Boolean(document.querySelector(".project-thread-list .thread-row.active"))
           && !document.querySelector(".project-thread-list .thread-row.pending-switch"));
+        assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-main [aria-current="page"]').length), 1,
+          'opening a project session selects only its project occurrence');
+        // An unsent draft can still be retained for its exit animation.
+        await evaluate(() => document.querySelector('[data-sidebar-recents] .thread-row:not([data-draft-id]) .thread-row-main').click());
+        await waitFor(() => Boolean(document.querySelector('[data-sidebar-recents] .thread-row.active')));
+        assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-main [aria-current="page"]').length), 1,
+          'opening Recent clears the project occurrence and project header');
         app.focus({ steal: true });
         win.focus();
         await waitFor(() => document.hasFocus());
@@ -414,6 +431,12 @@ app.whenReady().then(async () => {
             .map(animation => animation.finished.catch(() => {})));
         }, { theme, size });
         assert.ok(await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().right > 200), "sidebar remains visible at the tested width");
+        await evaluate(async () => {
+          document.querySelector('[data-sidebar-recents] .thread-row.active').scrollIntoView({ block: "center" });
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+        });
+        await capture(`${label}-single-recent-selection`);
         await evaluate(() => { const node = document.querySelector(".sidebar-main"); node.scrollTop = node.scrollHeight / 2; });
         const idle = await sample(`${label}-idle`);
         assert.ok(idle.scrollTop > 0 && idle.top > 0 && idle.bottom > 0 && idle.mask !== "none", "overflow fades both edges");

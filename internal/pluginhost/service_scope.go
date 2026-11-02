@@ -127,10 +127,11 @@ func (s *ServiceScope) CallCleanup(ctx context.Context, service, method string, 
 	return result, nil
 }
 
-// waitRetainedServiceScopes is the same registry execution completion barrier
-// used by generation drain, limited to explicit resource scopes. Caller timeouts
-// never revoke cleanup authority while a physical resource remains admitted.
-func (r *ServiceRegistry) waitRetainedServiceScopes(plugin string) {
+// waitServiceDisposal waits for accepted calls targeting this provider and
+// explicit resource scopes involving it. Caller-only participation does not
+// delay consumer cleanup: that cleanup may cancel its outstanding delegate calls.
+// Logical cancellation never acknowledges a native callback's physical return.
+func (r *ServiceRegistry) waitServiceDisposal(plugin string) {
 	if r == nil {
 		return
 	}
@@ -138,6 +139,10 @@ func (r *ServiceRegistry) waitRetainedServiceScopes(plugin string) {
 		r.mu.RLock()
 		waiting := false
 		for _, execution := range r.executions {
+			if execution.invocations[plugin] > 0 {
+				waiting = true
+				break
+			}
 			if execution.retained {
 				if _, ok := execution.participants[plugin]; ok {
 					waiting = true

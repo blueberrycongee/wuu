@@ -455,6 +455,15 @@ async function run() {
     await evaluate(main, engine => [...document.querySelectorAll('.runtime-engine-option')].find(button => button.querySelector('.runtime-engine-option-name').textContent === engine).click(), engine);
     await waitFor(main, engine => document.querySelector('.runtime-panel-context button:has(.engine-icon)')?.textContent.includes(engine)
       && document.querySelector('.codex-effort-slider input'), engine);
+    // A project draft restores its own remembered model, not the last thread's.
+    // Choose the unsupported provider model explicitly for this reopen check.
+    if (engine === 'Wuu') {
+      await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
+      await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
+      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
+      await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
+        && !document.querySelector('.runtime-panel-fast'));
+    }
     const selection = await evaluate(main, () => ({
       model: document.querySelector('.runtime-panel-model-name').textContent,
       effort: document.querySelector('.codex-effort-slider input').value,

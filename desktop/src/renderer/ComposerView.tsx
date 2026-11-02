@@ -1,3 +1,5 @@
+import { DictationButton, DictationRecording, useComposerDictation } from "./ComposerDictation";
+import { showActionErrorToast } from "./Toast";
 import { createPortal } from "react-dom";
 import { useComposerServices } from "./ComposerServicesContext";
 import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
@@ -142,6 +144,7 @@ export function Composer({
   canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
+  statusAccessory,
   inlineSelection,
   permissionLocked = false,
   containerRef,
@@ -217,7 +220,6 @@ export function Composer({
   onOpenSettings,
   onOpenSkillsCatalog,
   onSelectWorkspace,
-  onSelectNoProject,
   onCreateWorkspace,
   onOpenWorkspace,
   onStartNewThread,
@@ -262,6 +264,7 @@ export function Composer({
   canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
+  statusAccessory?: ReactNode;
   inlineSelection?: ReactNode;
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
@@ -342,7 +345,6 @@ export function Composer({
   onOpenSettings: () => void;
   onOpenSkillsCatalog: () => void;
   onSelectWorkspace: (id: string) => void;
-  onSelectNoProject: () => void;
   onSelectGitBranch: (branch: string) => void | Promise<void>;
   onCreateWorkspace: () => void;
   onOpenWorkspace: () => void;
@@ -462,6 +464,12 @@ export function Composer({
     commitPrompt(value);
   }
   const services = useComposerServices();
+  const commandScopeKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
+  const commandLifetime = useRef(0);
+  useEffect(() => {
+    commandLifetime.current++;
+    return () => { commandLifetime.current++; };
+  }, [services?.presentation, services?.ownerTabId, pluginHost, queryHistorySessionID, commandScopeKey]);
   const catalog = services?.catalog;
   const statusText = composerStatusText(status);
   const className = `composer-wrap ${
@@ -494,6 +502,15 @@ export function Composer({
     pluginTranslate,
     variant,
   ]);
+  const dictation = useComposerDictation({
+    owner: JSON.stringify([services?.ownerTabId, queryHistorySessionID, commandScopeKey, sideThreadId]),
+    disabled: Boolean(readOnly || topAccessory), prompt, locale,
+    onText: (text, send) => {
+      setPrompt(text);
+      if (send && !effectiveSendDisabled && !readOnly) submitDraft(text);
+      focusComposerSoon();
+    },
+  });
   // The action button is a stop control ONLY while a turn runs AND the input
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
@@ -512,8 +529,8 @@ export function Composer({
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
-  const showComposerStopAction = showComposerStop;
-  const showContinue = continuation && !showComposerStopAction && !running && !submitting && !hasDraft && !readOnly;
+  const showComposerStopAction = showComposerStop && !dictation.active;
+  const showContinue = !dictation.active && continuation && !showComposerStopAction && !running && !submitting && !hasDraft && !readOnly;
   const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
     ? disabledReason
     : undefined;
@@ -872,6 +889,7 @@ export function Composer({
   }
 
   function submitComposer(): void {
+    if (dictation.active) { void dictation.stop(true); return; }
     // The textarea can be ahead of the deferred composer chrome when Send is clicked.
     const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
     const currentPrompt = hasCollapsedPromptBlocks
@@ -1009,9 +1027,6 @@ export function Composer({
       case "open-workspace":
         onOpenWorkspace();
         break;
-      case "no-workspace":
-        onSelectNoProject();
-        break;
       case "context":
         onOpenContextComposition();
         break;
@@ -1026,23 +1041,25 @@ export function Composer({
         onOpenInstructions();
         break;
       case "plugin": {
+        const owner = commandLifetime.current;
+        const reportFailure = (error: unknown): void => {
+          if (owner === commandLifetime.current) showActionErrorToast(error, t("error.commandFailed"));
+        };
         if (services) {
-          void services.presentation.executeCommand({ ownerTabId: services.ownerTabId, pluginId: command.pluginId!, id: command.pluginCommandId!, args: draft?.args ?? "" }).catch((error: unknown) => console.error("Plugin slash command failed", error));
+          void services.presentation.executeCommand({ ownerTabId: services.ownerTabId, pluginId: command.pluginId!, id: command.pluginCommandId!, args: draft?.args ?? "" }).catch(reportFailure);
           break;
         }
         const pluginCommand = pluginHost.getCommands().find((candidate) =>
           candidate.pluginId === command.pluginId
           && candidate.id === command.pluginCommandId);
         if (!pluginCommand) break;
-        void Promise.resolve(pluginCommand.execute(Object.freeze({
+        void Promise.resolve().then(() => pluginCommand.execute(Object.freeze({
           source: "slash-command",
           commandId: command.pluginCommandId,
           args: draft?.args ?? "",
           threadId: queryHistorySessionID,
           context: activeContext,
-        }))).catch((error: unknown) => {
-          console.error(`Plugin slash command ${command.pluginId}:${command.pluginCommandId} failed`, error);
-        });
+        }))).catch(reportFailure);
         break;
       }
       case "model":
@@ -1237,7 +1254,6 @@ export function Composer({
               query={workspaceFilter}
               setQuery={setWorkspaceFilter}
               onSelectWorkspace={onSelectWorkspace}
-              onSelectNoProject={onSelectNoProject}
               onCreateWorkspace={onCreateWorkspace}
               onOpenWorkspace={onOpenWorkspace}
               onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, menuTriggerRef?.current ?? workspacePillRef.current)}
@@ -1367,6 +1383,8 @@ export function Composer({
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
+      {statusAccessory}
+      {dictation.error && <div className="composer-dictation-error" role="alert">{dictation.error}</div>}
       <div className="composer-above-input">
         <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>
@@ -1496,7 +1514,8 @@ export function Composer({
                 <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
               </div>
             </div>
-            <div className="composer-editor">
+            <div className={`composer-editor${dictation.active ? " is-dictating" : ""}`} onKeyDown={event => { if (dictation.active && event.key === "Escape") { event.stopPropagation(); dictation.cancel(); } }}>
+              {dictation.active && dictation.api && <DictationRecording api={dictation.api} sessionId={dictation.sessionId} phase={dictation.phase} stop={dictation.stop} cancel={dictation.cancel} />}
               <div className="composer-bar-left">
                 {!textOnly ? (
                   <ComposerPlusButton
@@ -1524,7 +1543,7 @@ export function Composer({
                 valueRevision={promptRevision}
                 submissionClearRevision={submissionClearRevision}
                 placeholder={composerPlaceholder}
-                disabled={readOnly}
+                disabled={readOnly || dictation.active}
                 pluginHost={services?.presentation ?? pluginHost}
                 inlineCompletionKind={inlineCompletionKind}
                 workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
@@ -1532,7 +1551,7 @@ export function Composer({
                 attachmentCount={files.length + images.length + selections.length}
                 queuedCount={queuedMessages.length}
                 pendingCount={guideMessages.length}
-                inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
+                inlineCompletionEnabled={!dictation.active && !hasCollapsedPromptBlocks && !disconnected && !topAccessory
                   && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
                 inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
                   inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
@@ -1560,6 +1579,7 @@ export function Composer({
                 onContextMenu={handleComposerContextMenu}
               />
               <div className="composer-input-actions">
+                {dictation.api && !dictation.active && <DictationButton disabled={readOnly || draftPending} start={dictation.start} />}
                 {controlsInRail ? createPortal(<>{workspaceControls}{runtimeControls}</>, runtimeControlsTarget!) : controlsBelowInput ? null : runtimeControls}
                 {showContinue ? (
                   <ComposerContinueButton
@@ -1586,7 +1606,7 @@ export function Composer({
                     aria-description={sendDisabledReason}
                     disabled={
                       stopState === "pending" || (!showComposerStopAction &&
-                      (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
+                      (effectiveSendDisabled || readOnly || (dictation.active ? dictation.phase !== "listening" : !hasDraft) || (handoffMode && !canConfirmHandoff)))
                     }
                   >
                     {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
@@ -1943,10 +1963,8 @@ function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activ
     return activeWorkspace?.name ?? translate("composer.currentWorkspace");
   }
   if (activeContext?.kind === "no_project") {
-    // The no-project workspace is surfaced everywhere else — sidebar group,
-    // session tab — as "对话", so the draft's cwd control matches that name
-    // rather than the older, inconsistent "无工作区".
-    return translate("composer.conversation");
+    // No-project contexts only remain for legacy and CLI-owned sessions.
+    return translate("appState.noWorkspace");
   }
   return translate("composer.selectWorkspace");
 }

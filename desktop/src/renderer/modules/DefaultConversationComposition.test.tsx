@@ -122,7 +122,7 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
 
 it("does not report retired preview cleanup as an error when its presentation stays mounted", async () => {
   const base = createConversationTestApplication();
-  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  const notice = vi.spyOn(Notices, "showActionErrorToast").mockImplementation(() => undefined);
   let retired = false;
   const previous = { ...base, invoke: async () => { if (retired) throw new PluginLifecycleCancellationError(new Error("Rebound provider")); } } as typeof base;
   const next = { ...base, invoke: vi.fn(async () => undefined) } as unknown as typeof base;

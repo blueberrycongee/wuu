@@ -1,5 +1,5 @@
 import { Tooltip } from "./Tooltip";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi } from "../../../packages/plugin-sdk/src/ui-web-workspace";
 import { persistentWebWorkspaceURL } from "../shared/webWorkspaceLibrary";
 import type { WebWorkspaceLibraryStateV1 as WebWorkspaceLibraryState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
@@ -169,9 +169,15 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
     finally { setPending(false); }
   };
 
-  const entries = state?.[section] ?? [];
+  const entries = section === "history" ? [...(state?.history ?? [])].sort((a, b) => b.visitedAt - a.visitedAt) : state?.bookmarks ?? [];
   const needle = query.trim().toLowerCase();
   const matching = needle ? entries.filter((entry) => `${entry.title}\n${entry.url}`.toLowerCase().includes(needle)) : entries;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const historyGroup = (time: number): "today" | "yesterday" | "earlier" =>
+    time >= today.getTime() ? "today" : time >= yesterday.getTime() ? "yesterday" : "earlier";
   const bookmarkLabel = t(bookmarked ? "browserLibrary.removeBookmark" : "browserLibrary.addBookmark");
   return <>
     <Tooltip asChild content={safeURL ? bookmarkLabel : t("browserLibrary.privacy")} disabled={presentation === "menu" && Boolean(safeURL)}><button type="button" className={presentation === "menu" ? "web-workspace-menu-item browser-library-bookmark" : "icon-button workspace-browser-nav browser-library-bookmark"} data-browser-bookmark-current
@@ -213,7 +219,10 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
             <button type="button" className="settings-button" data-library-confirm-clear disabled={pending} onClick={() => void clearHistory()}>{t("browserLibrary.clearHistory")}</button></div>
         </div> : <div className="browser-library-results">
           {!state && !error ? <p className="browser-library-empty" role="status">{t("browserLibrary.loading")}</p>
-            : matching.length ? <ul>{matching.slice(0, limit).map((entry) => <li key={entry.id} data-library-entry>
+            : matching.length ? <ul>{matching.slice(0, limit).map((entry, index) => <Fragment key={entry.id}>
+              {"visitedAt" in entry && (index === 0 || !("visitedAt" in matching[index - 1]) || historyGroup(entry.visitedAt) !== historyGroup((matching[index - 1] as typeof entry).visitedAt))
+                ? <li className="browser-library-date-group">{t(`browserLibrary.${historyGroup(entry.visitedAt)}`)}</li> : null}
+              <li data-library-entry>
               {editing?.url === entry.url && section === "bookmarks" ? <form className="browser-library-edit" onSubmit={(event) => {
                 event.preventDefault();
                 void changeBookmark(entry.url, editing.title, true).then((saved) => { if (saved) setEditing(undefined); });
@@ -229,17 +238,17 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
                 <span className="browser-library-entry-url">{entry.url}</span>
                 {"visitedAt" in entry ? <time dateTime={new Date(entry.visitedAt).toISOString()}>{formatDate(entry.visitedAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time> : null}
               </button>
-              {section === "bookmarks" ? <Tooltip asChild content={t("browserLibrary.renameBookmark")}><button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
+              {section === "bookmarks" ? <button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
                 aria-label={`${t("browserLibrary.renameBookmark")}: ${entry.title || entry.url}`}
-                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button></Tooltip> : null}
-              {section === "bookmarks" ? <Tooltip asChild content={t("browserLibrary.removeBookmark")}><button type="button" className="icon-button browser-library-remove" disabled={pending}
+                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button> : null}
+              {section === "bookmarks" ? <button type="button" className="icon-button browser-library-remove" disabled={pending}
                 aria-label={`${t("browserLibrary.removeBookmark")}: ${entry.title || entry.url}`}
-                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button></Tooltip>
-                : <Tooltip asChild content={t("browserLibrary.removeHistory")}><button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
+                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button>
+                : <button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
                   aria-label={`${t("browserLibrary.removeHistory")}: ${entry.title || entry.url}`}
-                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button></Tooltip>}
+                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button>}
               </>}
-            </li>)}</ul>
+            </li></Fragment>)}</ul>
               : <p className="browser-library-empty">{t(needle ? "browserLibrary.noResults" : section === "history" ? "browserLibrary.emptyHistory" : "browserLibrary.emptyBookmarks")}</p>}
           {matching.length > limit ? <button type="button" className="settings-button settings-button-ghost browser-library-more" onClick={() => setLimit((value) => value + 100)}>{t("browserLibrary.showMore")}</button> : null}
         </div>}

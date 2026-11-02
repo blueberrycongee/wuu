@@ -1262,7 +1262,7 @@ public final class MacComputerBackend: ComputerBackend {
         let reader = AXSnapshotter()
         _ = reader.snapshot(application: application)
         guard let target = reader.uniqueElement(role: command.role, title: command.title, description: command.description) else {
-            throw ComputerError.operationFailed("activate_control selector did not match exactly one element; observe and refine role, title, or description")
+            throw ComputerError.operationFailed("activate_control requires a complete tree with exactly one match; observe, refine role/title/description, or use a fresh element_id")
         }
         try performAXAction(target, action: kAXPressAction as String)
     }

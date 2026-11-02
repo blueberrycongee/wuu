@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
+import * as Toast from "../Toast";
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/automation-ui/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 const task = { id: "one", title: "Review", prompt: "Review recent changes", cron: "0 9 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "worktree", next_run_at: "2026-09-16T01:00:00Z" };
@@ -13,9 +14,10 @@ const cleanups: Array<() => void> = [];
 it("rejects a host without selected-slot targeting before registering presentation", async () => {
   await expect(activate({} as PluginGenerationApi)).rejects.toThrow("ui.selected-slot-target.v1");
 });
-afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()); vi.useRealTimers(); });
-async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readError?: () => string | undefined; mutate?: (input: any) => Promise<unknown> } = {}) {
+afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()); Toast.clearToasts(); vi.restoreAllMocks(); vi.useRealTimers(); });
+async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readError?: () => string | undefined; workspaceError?: () => string | undefined; listWorkspaces?: () => Promise<any>; mutate?: (input: any) => Promise<unknown> } = {}) {
   vi.useFakeTimers();
+  const notices = vi.spyOn(Toast, "showToast");
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input, workspaceId }) => {
     const readError = options.readError?.();
     if (readError && (method === "automation.list" || method === "automation.run.list")) throw new Error(readError);
@@ -28,7 +30,7 @@ async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readErr
     const { method, input } = request.input as { method: string; input?: unknown };
     return invoke({ ...request, method, input });
   },
-    listWorkspaces: async () => ({ activeWorkspaceId: "wuu", workspaces: [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }] }),
+    listWorkspaces: async () => { if (options.listWorkspaces) return options.listWorkspaces(); const error = options.workspaceError?.(); if (error) throw new Error(error); return { activeWorkspaceId: "wuu", workspaces: [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }] }; },
     listThreads: async () => [{ id: "chat", title: "Existing investigation", pinned: true }],
   });
   await host.activateGeneration({ pluginId: "automation-ui", generation: "one", graphGeneration: "selected-graph", register: activate });
@@ -51,16 +53,18 @@ async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; readErr
     });
   };
   const open = async () => { await act(async () => container.querySelector<HTMLButtonElement>(".plugin-automation-list button")!.click()); };
-  return { container, invoke, click, edit, open };
+  return { container, invoke, click, edit, open, host, notices };
 }
 it("keeps presentation available with an explicit unavailable scheduler and recovers without fallback", async () => {
   let unavailable = true;
   const ui = await mount({ readError: () => unavailable ? "Selected automation.scheduler provider is unavailable" : undefined });
-  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("automation.scheduler");
+  expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(ui.container.textContent).not.toContain("automation.scheduler");
+  expect(ui.notices).not.toHaveBeenCalled();
   expect(ui.container.querySelector<HTMLButtonElement>(".plugin-automation-create")?.disabled).toBe(true);
   expect(ui.container.querySelector(".plugin-automation-list")).toBeNull();
   unavailable = false;
-  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  await act(async () => ui.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
   expect(ui.container.querySelector('[role="alert"]')).toBeNull();
   expect(ui.container.querySelector<HTMLButtonElement>(".plugin-automation-create")?.disabled).toBe(false);
   expect(ui.container.querySelector(".plugin-automation-list")?.textContent).toContain("Review");
@@ -79,7 +83,13 @@ it("preserves a custom schedule and draft after save failure and allows retry", 
   let fail = true;
   const ui = await mount({ tasks: [{ ...task, cron: "*/17 9-18 * * 1,3,5" }], mutate: async (input) => { if (fail) throw new Error("Storage unavailable"); return { ...task, ...input }; } });
   await ui.open(); await ui.edit("textarea", "A revised prompt"); await ui.click("保存修改");
-  expect(ui.container.querySelector('[role="alert"]')!.textContent).toContain("Storage unavailable");
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.textContent).not.toContain("Storage unavailable");
+  expect(ui.notices).toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));
+  const firstKey = ui.notices.mock.calls.at(-1)![0].dedupeKey;
+  await ui.click("保存修改");
+  expect(ui.notices).toHaveBeenCalledTimes(2);
+  expect(ui.notices.mock.calls.at(-1)![0].dedupeKey).not.toBe(firstKey);
   expect(ui.container.querySelector("textarea")!.value).toBe("A revised prompt");
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", input: expect.objectContaining({ schedule: "*/17 9-18 * * 1,3,5" }) }));
   fail = false; await ui.click("保存修改"); expect(ui.container.querySelector('[role="alert"]')).toBeNull();
@@ -212,4 +222,62 @@ it("shows execution overrides in place and preserves them on save", async () => 
   expect(ui.container.querySelector<HTMLInputElement>("input[value='Pacific/Honolulu']")).not.toBeNull();
   await ui.edit("textarea", "Updated instructions"); await ui.click("保存修改");
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", input: expect.objectContaining({ recurring: false, timezone: "Pacific/Honolulu", workspace: "worktree" }) }));
+});
+
+it("does not notify from an automation action after its generation retires", async () => {
+  let reject!: (reason: Error) => void;
+  const ui = await mount({ mutate: () => new Promise((_resolve, no) => { reject = no; }) });
+  await ui.open(); await ui.edit("textarea", "Keep my draft"); await ui.click("保存修改");
+  await act(async () => { ui.host.disable("automation-ui"); reject(new Error("late private failure")); });
+  expect(ui.notices).not.toHaveBeenCalled();
+});
+
+it("retains stale schedules during repeated refresh failures without background notices", async () => {
+  let unavailable = false;
+  const ui = await mount({ readError: () => unavailable ? "scheduler read failed" : undefined });
+  unavailable = true;
+  await act(async () => vi.advanceTimersByTimeAsync(30000));
+  expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-list")?.textContent).toContain("Review");
+  expect(ui.container.querySelector<HTMLInputElement>('.plugin-automation-list input[type="checkbox"]')?.disabled).toBe(true);
+  expect(ui.notices).not.toHaveBeenCalled();
+  expect(ui.host.getGenerationDiagnostics("automation-ui", "one")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "runtime" })]));
+  unavailable = false;
+  await act(async () => ui.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector<HTMLInputElement>('.plugin-automation-list input[type="checkbox"]')?.disabled).toBe(false);
+});
+it("keeps workspace discovery failure recoverable rather than presenting an empty catalog", async () => {
+  let unavailable = true;
+  const ui = await mount({ workspaceError: () => unavailable ? "workspace storage unreachable" : undefined });
+  expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-empty")).toBeNull();
+  expect(ui.container.querySelector("details:not([open])")?.textContent).toContain("workspace storage unreachable");
+  unavailable = false;
+  await act(async () => ui.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-list")?.textContent).toContain("Review");
+});
+
+it.each(["failure", "success"])("ignores an older workspace retry %s after a newer retry restores the catalog", async outcome => {
+  const pending: Array<{ resolve: (value: unknown) => void; reject: (reason: Error) => void }> = [];
+  let calls = 0;
+  const ui = await mount({ listWorkspaces: () => {
+    if (++calls === 1) return Promise.reject(new Error("offline"));
+    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  } });
+  const retry = ui.container.querySelector<HTMLButtonElement>('[role="alert"] button')!;
+  await act(async () => { retry.click(); retry.click(); });
+  expect(pending).toHaveLength(2);
+  expect(retry.disabled).toBe(true);
+  const workspaces = [{ id: "wuu", name: "Wuu", root: "/wuu", available: true }, { id: "other", name: "Other", root: "/other", available: true }];
+  await act(async () => pending[1].resolve({ activeWorkspaceId: "other", workspaces }));
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-workspace-picker")?.textContent).toContain("Other");
+  await act(async () => {
+    if (outcome === "failure") pending[0].reject(new Error("old workspace failure"));
+    else pending[0].resolve({ activeWorkspaceId: "wuu", workspaces });
+  });
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector(".plugin-automation-workspace-picker")?.textContent).toContain("Other");
 });

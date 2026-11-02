@@ -32,6 +32,7 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
     // Only known non-runtime documentation is exempt. Markdown under prompts,
     // plugins, or fixtures can be executable input and is not ignored globally.
     if (/^(docs\/|docs-site\/|landing\/|\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$))/.test(path)
+      || /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(path)
       || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
     // Desktop transport and additive plugin fixtures consume these boundaries
     // without Electron. Unrelated renderer edits do not rerun provider checks.
@@ -75,7 +76,12 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
   console.log(`Compared ${paths.length} changed paths`);
 }
 
+// Unit work retains one selected surface but executes both inventory shards.
+if (desktopSuites.has('unit')) desktopSuites.add('unit-extra');
+
 // Main pushes only check native packaging. PRs own validation and E2E suites.
+const desktopSelection = event !== 'push' && selected.desktop
+  ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : [];
 const outputs = {
   go: event !== 'push' && selected.go,
   architecture: event !== 'push' && (selected.go || desktopArchitecture),
@@ -83,8 +89,8 @@ const outputs = {
   clients: event !== 'push' && selected.clients,
   native: selected.native,
   desktop_related: JSON.stringify(event === 'pull_request' && relatedEligible ? relatedSources : []),
-  desktop_suites: JSON.stringify(event !== 'push' && selected.desktop
-    ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : []),
+  desktop_suites: JSON.stringify(desktopSelection),
+  desktop_e2e_suites: JSON.stringify(desktopSelection.filter(suite => !suite.startsWith('unit'))),
 };
 for (const [key, value] of Object.entries(outputs)) {
   const line = `${key}=${value}\n`;

@@ -235,6 +235,7 @@ describe("AppServerClientPool admission", () => {
           reply(4, { error: { code: "error", message: "fixture request failed" } });
           await rejected;
           await expect(fifth).rejects.toBeInstanceOf(AppServerResponseError);
+          await expect(fifth).rejects.toMatchObject({code:"error"});
         } else {
           const result = operation === "turn"
             ? { turn: { status: "in_progress" } }
@@ -1288,4 +1289,26 @@ it.each(["exit", "dispose"])("reports unacknowledged archive as unknown on %s wi
   await rejected;
   expect(writes.filter(line => JSON.parse(line).method === "thread/archive")).toHaveLength(1);
   expect(client.isBusy()).toBe(false);
+});
+
+it("attributes notifications to the verified user-host scope rather than the thread id alone", async () => {
+  vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  const user = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, composition_profile: "personal", cwd: join(tmpdir(), "preview-user-host") };
+  const project = { kind: "project" as const, project_id: "coding", cwd: join(tmpdir(), "preview-project") };
+  const children = new Map<string, FakeAppServerChild>(), events: ServerEvent[] = [];
+  const pool = new AppServerClientPool(() => project, () => project.cwd, event => events.push(event), (_command, _args, options) => {
+    const child = new FakeAppServerChild(); children.set(options.cwd, child);
+    child.stdin.on("data", data => { const request = JSON.parse(String(data)); queueMicrotask(() => request.method === "shutdown" ? child.emit("exit", 0, null) : child.stdout.write(`${JSON.stringify({ id: request.id, result: request.method === "initialize" && options.cwd === user.cwd ? { user_space_id: "local", product_domain: "personal" } : {} })}\n`)); });
+    return child.asChildProcess();
+  });
+  try {
+    await pool.requestInContext(user, "plugin/list"); await pool.requestInContext(project, "plugin/list");
+    const message = { method: "item/toolCall/delta", params: { thread_id: "same-session", turn_id: "turn", item_id: "item", delta: "{}" } };
+    children.get(user.cwd)!.stdout.write(`${JSON.stringify(message)}\n`);
+    children.get(project.cwd)!.stdout.write(`${JSON.stringify(message)}\n`);
+    await vi.waitFor(() => expect(events.filter(event => event.kind === "notification")).toHaveLength(2));
+    const notifications = events.filter(event => event.kind === "notification");
+    expect(notifications.find(event => event.workdir === user.cwd)).toMatchObject({ user_scope: { user_space_id: "local", product_domain: "personal", composition_profile: "personal" } });
+    expect(notifications.find(event => event.workdir === project.cwd)).not.toHaveProperty("user_scope");
+  } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
 });

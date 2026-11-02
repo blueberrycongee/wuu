@@ -58,7 +58,7 @@ func seedScopedReceipt(t *testing.T, documents *receiptScopeDocuments, space, do
 	receipt := providers.ClientInputReceipt{RequestID: "client-" + sess.ID, HostRequestID: "host-" + sess.ID, ReceiptID: "receipt-" + sess.ID, ClientID: "input-" + sess.ID, QueueID: "queue-" + sess.ID, SessionID: sess.ID, PluginID: "fixture", Owner: "plugin:fixture", UserSpaceID: space, ProductDomain: domain, AgentID: "assistant", ReceiptState: "accepted", ExecutionState: state, Revision: 1, AcceptedAt: "2026-10-23T00:00:00Z"}
 	key := base64.RawURLEncoding.EncodeToString([]byte(sess.ID)) + "/" + receipt.ClientID
 	// Seed intentionally foreign historical rows through the fixture's provider,
-	// not AcceptClientInput: production admission correctly rejects Coding rows.
+	// not AcceptClientInput: these rows intentionally bypass live host admission.
 	err = persistence.Update(context.Background(), documents.Documents, func(tx *persistence.Tx) error {
 		if err := tx.Put("wuu.client_input_receipts.v1", key, struct {
 			Receipt                providers.ClientInputReceipt
@@ -286,7 +286,35 @@ func TestBoundCodingHostDoesNotRecoverPersonalReceipts(t *testing.T) {
 		t.Fatal(peer.startupErr)
 	}
 	assertScopedState(t, db, personal, "queued")
-	if srv.clientInputReceiptsEnabled() {
-		t.Fatal("Coding enabled receipt entrypoints")
+	if !srv.clientInputReceiptsEnabled(testRuntimeState(t, rt)) {
+		t.Fatal("selected Coding receipt capability was ignored")
+	}
+}
+
+// Product identity is an isolation boundary, not capability selection.
+func TestClientInputReceiptsRequireSelectedConsumer(t *testing.T) {
+	for _, domain := range []string{"personal", "coding"} {
+		t.Run(domain, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.UserSpaceID, rt.ProductDomain = "alice", domain
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			db := receiptScopeStore(t, rt)
+			receipt := seedScopedReceipt(t, db, "alice", domain, "dead-owner", "queued")
+			if !srv.clientInputReceiptsEnabled(testRuntimeState(t, rt)) {
+				t.Fatal("selected observer unavailable")
+			}
+			// The next host has the same identity and persistence, but no observer.
+			next := &runtime.Session{SessionDir: rt.SessionDir, RootDir: rt.RootDir, StateDir: rt.StateDir, Documents: rt.Documents, Sessions: rt.Sessions, UserSpaceID: "alice", ProductDomain: domain, PluginHost: pluginhost.New()}
+			peer := New(next, &lockedBuffer{})
+			defer peer.Close()
+			if peer.startupErr != nil {
+				t.Fatal(peer.startupErr)
+			}
+			if peer.clientInputReceiptsEnabled(testRuntimeState(t, peer.rt)) {
+				t.Fatal("identity implicitly selected observer")
+			}
+			assertScopedState(t, db, receipt, "queued")
+		})
 	}
 }

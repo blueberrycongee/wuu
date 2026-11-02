@@ -228,6 +228,7 @@ export function ConversationSplitLayoutRenderer({
 }
 
 export type ConversationTitleContentProps = {
+  headingRef?: RefObject<HTMLHeadingElement | null>;
   application: ApplicationServiceV1;
   slots: UICompositionV1;
   slotOwner: string;
@@ -308,7 +309,7 @@ function ConversationTitleText({
           onKeyDown={handleKeyDown}
         />
       ) : editable ? (
-        <Tooltip asChild content={t("threadSidebar.rename")}><button
+        <button
           type="button"
           className="conversation-title-rename"
           aria-label={t("thread.rename.editNamed", { title })}
@@ -324,13 +325,13 @@ function ConversationTitleText({
           }}
         >
           {title}
-        </button></Tooltip>
+        </button>
       ) : title}
     </h1>
   );
 }
 
-export function ConversationTitleContent({ application, slots, slotOwner }: ConversationTitleContentProps): JSX.Element {
+export function ConversationTitleContent({ application, slots, slotOwner, headingRef: externalHeadingRef }: ConversationTitleContentProps): JSX.Element {
   const { t } = useI18n();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
   const activePrimaryView = view.navigationWorkspace.activePluginView;
@@ -341,8 +342,12 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
   const catalog = tab?.kind === "skills";
   const nativeTitle = catalog ? t("skills.title") : conversationHeadingTitle(thread, tab?.kind === "draft" ? tab.title : undefined, t("tabs.newConversation"));
   const title = activePrimaryView?.title ?? nativeTitle;
+  const startWorkspaceId = view.navigationWorkspace.workspaces.find(workspace =>
+    workspace.id === view.navigationWorkspace.selectedWorkspaceId && !workspace.missing)?.id
+    ?? view.navigationWorkspace.workspaces.find(workspace => !workspace.missing)?.id;
   const editable = !activePrimaryView && !catalog && Boolean(thread ? !thread.read_only && !thread.ephemeral : tab?.kind === "draft");
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  const localHeadingRef = useRef<HTMLHeadingElement>(null);
+  const headingRef = externalHeadingRef ?? localHeadingRef;
   const restoreFocus = useRef(false);
   useLayoutEffect(() => {
     if (!restoreFocus.current) return;
@@ -369,29 +374,30 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
   const snapshot = Object.freeze({ contractVersion: 1 as const, scope, title, canNavigateBack: navigateBack ? true : undefined, busy: busy || undefined });
   const context = Object.freeze({ snapshot, scope, threadId, ownerTabId: tab?.id, viewId: activePrimaryView?.id, hasSessionTabs: false, tabCount: 0, busy });
   const fallback = <div className="conversation-title-heading">
-    {navigateBack ? <Tooltip asChild content={t("common.back")}><button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} onClick={navigateBack}>
+    {navigateBack ? <button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} onClick={navigateBack}>
       <ArrowLeft aria-hidden="true" />
-    </button></Tooltip> : <Tooltip content={t("tabs.newConversation")} side="bottom"><button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
+    </button> : <button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!startWorkspaceId}
       onClick={event => {
+        if (!startWorkspaceId) return;
         const document = event.currentTarget.ownerDocument;
         let focusRequested = true;
         // A later focus choice takes precedence over this asynchronous creation.
         const cancelFocus = () => { focusRequested = false; };
         document.addEventListener("focusin", cancelFocus);
-        void application.invoke("workspace.start-draft", { workspaceId: view.navigationWorkspace.selectedWorkspaceId })
+        void application.invoke("workspace.start-draft", { workspaceId: startWorkspaceId })
           .then(({ activated, tabId }) => {
             if (activated && tabId && focusRequested) return application.invoke("navigation.focus-composer", { tabId });
           })
           .catch(showErrorToast)
           .finally(() => document.removeEventListener("focusin", cancelFocus));
-      }}><SquarePen aria-hidden="true" /></button></Tooltip>}
+      }}><SquarePen aria-hidden="true" /></button>}
     <ConversationTitleText title={title} editable={editable} editKey={activePrimaryView?.id ?? thread?.id ?? tab?.id} headingRef={headingRef} onRenameTitle={rename} />
   </div>;
   return <>
     <slots.Slot name={`${slotOwner}/${scope}.header`} context={context} />
     <slots.Slot name={`${slotOwner}/header.${scope}`} context={context} fallback={fallback} />
-    {activePrimaryView?.closable ? <Tooltip asChild content={t("workspace.closeTab", { label: title })}><button className="icon-button" data-wuu-component="primary-view-close" type="button" aria-label={t("workspace.closeTab", { label: title })}
-      onClick={() => { restoreFocus.current = true; runNavigation(application.invoke("navigation.close-plugin", { viewId: activePrimaryView.id })); }}><X aria-hidden="true" /></button></Tooltip> : null}
+    {activePrimaryView?.closable ? <button className="icon-button" data-wuu-component="primary-view-close" type="button" aria-label={t("workspace.closeTab", { label: title })}
+      onClick={() => { restoreFocus.current = true; runNavigation(application.invoke("navigation.close-plugin", { viewId: activePrimaryView.id })); }}><X aria-hidden="true" /></button> : null}
   </>;
 }
 

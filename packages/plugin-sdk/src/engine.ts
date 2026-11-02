@@ -9,6 +9,8 @@ export type EngineJSONValue = null | boolean | number | string | readonly Engine
 export interface EngineBinding {
  readonly thread_id: string;
  readonly root_dir: string;
+ /** Registered project roots available to this turn; permission_mode still governs writes. */
+ readonly additional_directories?: readonly string[];
  readonly model?: string;
  readonly effort?: string;
  readonly speed?: string;

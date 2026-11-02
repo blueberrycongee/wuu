@@ -89,7 +89,7 @@ func TestHistoryServicePreservesProviderAndEngineIdentities(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := readPluginSessionHistory(context.Background(), sessions, "demo", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "source", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "demo", userspace.Binding{}, false, pluginhost.SessionHistoryReadParams{SessionID: "source", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,12 +116,12 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 	home := t.TempDir()
 	dir := statepath.SessionsDir(home)
 	sessions := testSessionStore(t, dir)
-	_, err := sessions.CreateInitialized(session.Session{ID: "main", CWD: t.TempDir(), Owner: "plugin:personal", Visibility: "plugin", UserSpaceID: "alice", ProductDomain: "personal"}, nil)
+	_, err := sessions.CreateInitialized(session.Session{ID: "main", CWD: t.TempDir(), Owner: "plugin:personal", Visibility: "plugin", UserSpaceID: "alice", ProductDomain: "coding"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"one", "two"} {
-		row, _, err := sessions.AcceptClientInput(session.AcceptedClientInput{Receipt: providers.ClientInputReceipt{RequestID: id, HostRequestID: "host-" + id, ReceiptID: "receipt-" + id, ClientID: "client-" + id, QueueID: "queue-" + id, SessionID: "main", Owner: "plugin:personal", PluginID: "personal", UserSpaceID: "alice", ProductDomain: "personal"}, Fingerprint: "same-payload", MessageJSON: []byte(`{}`), RuntimeJSON: []byte(`{"ExecutionControlBaseline":{"session_id":"main"}}`), LiveOwner: "owner"}, nil, nil)
+		row, _, err := sessions.AcceptClientInput(session.AcceptedClientInput{Receipt: providers.ClientInputReceipt{RequestID: id, HostRequestID: "host-" + id, ReceiptID: "receipt-" + id, ClientID: "client-" + id, QueueID: "queue-" + id, SessionID: "main", Owner: "plugin:personal", PluginID: "personal", UserSpaceID: "alice", ProductDomain: "coding"}, Fingerprint: "same-payload", MessageJSON: []byte(`{}`), RuntimeJSON: []byte(`{"ExecutionControlBaseline":{"session_id":"main"}}`), LiveOwner: "owner"}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,11 +129,11 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := sessions.SettleClientInputExecution(session.ClientInputScope{Binding: userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}, SessionID: "main", PluginID: "personal"}, "host-"+id, "turn-"+id, "completed", ""); err != nil {
+		if err := sessions.SettleClientInputExecution(session.ClientInputScope{Binding: userspace.Binding{UserSpaceID: "alice", ProductDomain: "coding"}, SessionID: "main", PluginID: "personal"}, "host-"+id, "turn-"+id, "completed", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	page, err := readPluginSessionHistory(context.Background(), sessions, "personal", userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}, pluginhost.SessionHistoryReadParams{SessionID: "main", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "personal", userspace.Binding{UserSpaceID: "alice", ProductDomain: "coding"}, true, pluginhost.SessionHistoryReadParams{SessionID: "main", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 	}
 	for i, id := range []string{"one", "two"} {
 		r := page.Records[i].Receipt
-		if r == nil || r.RequestID != id || r.MessageSeq != page.Records[i].Seq || r.HostTurnID != "turn-"+id || r.ExecutionState != "completed" {
+		if r == nil || r.RequestID != id || r.MessageSeq != page.Records[i].Seq || r.HostTurnID != "turn-"+id || r.ExecutionState != "completed" || r.ReadAt != "" {
 			t.Fatalf("identity lost: %+v", page.Records[i])
 		}
 	}
@@ -151,7 +151,8 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 	handler := newPluginHostServices(serviceTestPlugin("personal", "plugin:user:personal", "generation"), t.TempDir(), home, nil)
 	defer handler.close()
 	handler.sessions = sessions
-	handler.binding = userspace.Binding{UserSpaceID: "alice", ProductDomain: "personal"}
+	handler.ownerHost = pluginhost.New(NewClientInputReceiptsConsumer())
+	handler.binding = userspace.Binding{UserSpaceID: "alice", ProductDomain: "coding"}
 	handler.turnRouter = NewPluginSessionRouter()
 	unbind := handler.turnRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, id string, ref *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
 		caller, ok := principal.FromContext(ctx)
@@ -165,15 +166,28 @@ func TestHistoryReplaysExactReceiptIdentityAfterSettlement(t *testing.T) {
 		t.Fatal("unverified receipt history read passed resource policy")
 	}
 	owner := principal.WithContext(context.Background(), principal.LocalOwner())
+	if _, err := handler.HandleHostService(owner, pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1,"read_at":"2026-10-31T00:00:00Z"}`)); err == nil {
+		t.Fatal("caller-supplied read assertion was accepted")
+	}
 	raw, err := handler.HandleHostService(owner, pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var viaHost pluginhost.SessionHistoryPage
-	if err = json.Unmarshal(raw, &viaHost); err != nil || len(viaHost.Records) != 2 || viaHost.Records[0].Receipt == nil {
+	if err = json.Unmarshal(raw, &viaHost); err != nil || len(viaHost.Records) != 2 || viaHost.Records[0].Receipt == nil || viaHost.Records[0].Receipt.ReadAt != "" {
 		t.Fatalf("host binding lost receipts: %s %v", raw, err)
 	}
-	handler.binding = userspace.Binding{UserSpaceID: "bob", ProductDomain: "personal"}
+	// A UI/plugin assertion cannot opt a host back into receipt projection.
+	handler.ownerHost = pluginhost.New()
+	raw, err = handler.HandleHostService(owner, pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`))
+	var withoutReceipts pluginhost.SessionHistoryPage
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &withoutReceipts); err != nil || len(withoutReceipts.Records) != 2 || withoutReceipts.Records[0].Receipt != nil {
+		t.Fatalf("unselected history projected receipts: %s %v", raw, err)
+	}
+	handler.binding = userspace.Binding{UserSpaceID: "bob", ProductDomain: "coding"}
 	if _, err = handler.HandleHostService(owner, pluginhost.HostServiceSessionHistoryRead, json.RawMessage(`{"session_id":"main","start_seq":1}`)); err == nil {
 		t.Fatal("foreign host read Personal receipt history")
 	}
@@ -200,7 +214,7 @@ func TestCodingHistoryDoesNotReadClientReceipts(t *testing.T) {
 		}
 		return provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "test", Method: method, Params: raw})
 	})
-	page, err := readPluginSessionHistory(context.Background(), sessions, "fixture", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "coding", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), sessions, "fixture", userspace.Binding{}, false, pluginhost.SessionHistoryReadParams{SessionID: "coding", StartSeq: 1})
 	if err != nil || len(page.Records) != 1 || page.Records[0].Receipt != nil {
 		t.Fatalf("ordinary history changed: %+v %v", page, err)
 	}

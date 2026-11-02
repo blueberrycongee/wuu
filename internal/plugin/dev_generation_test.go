@@ -1,12 +1,16 @@
 package plugin
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 )
 
 func TestDiscoverAuthorizedDevGenerationRejectsUnreceiptedAndTamperedPackages(t *testing.T) {
@@ -58,6 +62,59 @@ func TestPublishDevGenerationFailurePreservesPreviousGeneration(t *testing.T) {
 	found := findDevGenerationTestPlugin(Discover("", home), "dev-rollback")
 	if found == nil || found.Fingerprint != first.Fingerprint {
 		t.Fatalf("failed publish did not preserve previous generation: %+v", found)
+	}
+}
+
+func TestDevGenerationRetainsStorageOwnerWithoutBundledPrivileges(t *testing.T) {
+	home, source := t.TempDir(), t.TempDir()
+	installed := findDevGenerationTestPlugin(Discover("", home), "personal")
+	if installed == nil {
+		t.Fatal("bundled fixture unavailable")
+	}
+	writeDevGenerationTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"personal","version":"1"}`)
+	authorization := writeDevGenerationTestAuthorization(t, home, "personal", source)
+	for i := 0; i < 2; i++ {
+		published, err := PublishDevGeneration(home, source, source, authorization)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := findDevGenerationTestPlugin(Discover("", home), "personal")
+		if found == nil || found.StorageSubject() != installed.SubjectID || published.StorageSubject() != installed.SubjectID || found.SubjectID != "plugin:dev:personal" || found.Official || !found.AuthorizedDev || found.Source != "dev" {
+			t.Fatalf("lost storage continuity or elevated provenance: %+v", found)
+		}
+	}
+	path := filepath.Join(home, "dev", "generations", "personal", devGenerationReceiptFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt devGenerationReceipt
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt.StorageSubjectID = "plugin:bundled:memory"
+	raw, _ = json.Marshal(receipt)
+	writeDevGenerationTestFile(t, path, string(raw))
+	if found := findDevGenerationTestPlugin(Discover("", home), "personal"); found == nil || found.AuthorizedDev {
+		t.Fatalf("tampered ownership binding admitted: %+v", found)
+	}
+}
+
+func TestDevGenerationPinsOwnerAcrossInstalledPackageChanges(t *testing.T) {
+	home, source := t.TempDir(), t.TempDir()
+	writeDevGenerationTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"owner-fixture","version":"1"}`)
+	authorization := writeDevGenerationTestAuthorization(t, home, "owner-fixture", source)
+	first, err := PublishDevGeneration(home, source, source, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDevGenerationTestFile(t, filepath.Join(home, "plugins", "owner-fixture", "plugin.json"), `{"id":"owner-fixture","version":"2"}`)
+	next, err := PublishDevGeneration(home, source, source, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.StorageSubject() != first.SubjectID {
+		t.Fatalf("an installed namesake redirected existing development data: %+v", next)
 	}
 }
 
@@ -190,5 +247,98 @@ func writeDevGenerationTestFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Legacy development receipts predate persistent storage bindings. Recovery must
+// use a normal authenticated publication, never rewrite ownership journals or
+// reinterpret every historical development identity during discovery.
+func TestLegacyDevGenerationRepublishRecoversCompletedStorageTransfer(t *testing.T) {
+	home, source := t.TempDir(), t.TempDir()
+	writeDevGenerationTestFile(t, filepath.Join(source, "plugin.json"), `{"id":"personal","version":"1"}`)
+	authorization := writeDevGenerationTestAuthorization(t, home, "personal", source)
+	published, err := PublishDevGeneration(home, source, source, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(home, "dev", "generations", "personal", devGenerationReceiptFile)
+	raw, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt devGenerationReceipt
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt.StorageSubjectID = ""
+	receipt.Signature = signDevGenerationReceipt(receipt, authorization.Token)
+	raw, err = json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDevGenerationTestFile(t, receiptPath, string(raw))
+	legacy := findDevGenerationTestPlugin(Discover("", home), "personal")
+	if legacy == nil || !legacy.AuthorizedDev || legacy.StorageSubject() != "plugin:dev:personal" || legacy.Fingerprint != published.Fingerprint {
+		t.Fatalf("legacy fixture not admitted: %+v", legacy)
+	}
+	dataRoot := t.TempDir()
+	transfer := pluginsettings.StateTransfer{ID: "personal-records-v1-owner", SourceSubjectID: "plugin:bundled:memory", TargetSubjectID: "plugin:bundled:personal", KeyPrefix: "personal.records.v1.", Scope: pluginsettings.ScopeUser}
+	if _, err := pluginsettings.UpdateState(dataRoot, "", transfer.SourceSubjectID, transfer.Scope, func(values map[string]string) error {
+		values[transfer.KeyPrefix+"updated"] = "old"
+		values[transfer.KeyPrefix+"forgotten"] = "old"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginsettings.MoveStatePrefix(dataRoot, "", transfer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pluginsettings.UpdateState(dataRoot, "", transfer.TargetSubjectID, transfer.Scope, func(values map[string]string) error {
+		values[transfer.KeyPrefix+"updated"] = "new"
+		delete(values, transfer.KeyPrefix+"forgotten")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := transfer
+	candidate.TargetSubjectID = legacy.StorageSubject()
+	if err := pluginsettings.CheckStateTransfer(context.Background(), dataRoot, "", candidate); err == nil {
+		t.Fatal("legacy identity took existing ownership")
+	}
+	// The normal preflight uses the same intended owner as publication, while
+	// discovery of the old signed receipt remains unchanged until commit.
+	candidate.TargetSubjectID = DevStorageSubject(home, "personal")
+	if candidate.TargetSubjectID != transfer.TargetSubjectID {
+		t.Fatalf("republish owner: %q", candidate.TargetSubjectID)
+	}
+	if err := pluginsettings.CheckStateTransfer(context.Background(), dataRoot, "", candidate); err != nil {
+		t.Fatalf("republish preflight: %v", err)
+	}
+	repaired, err := PublishDevGeneration(home, source, source, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.StorageSubject() != transfer.TargetSubjectID || repaired.SubjectID != legacy.SubjectID || !repaired.AuthorizedDev || repaired.Official {
+		t.Fatalf("republication changed execution trust: %+v", repaired)
+	}
+	current := findDevGenerationTestPlugin(Discover("", home), "personal")
+	if current == nil || current.StorageSubject() != repaired.StorageSubject() {
+		t.Fatalf("signed binding was not retained: %+v", current)
+	}
+	candidate.TargetSubjectID = current.StorageSubject()
+	if err := pluginsettings.MoveStatePrefix(dataRoot, "", candidate); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := pluginsettings.ReadState(dataRoot, "", transfer.TargetSubjectID, transfer.Scope)
+	if err != nil || len(owner.Values) != 1 || owner.Values[transfer.KeyPrefix+"updated"] != "new" {
+		t.Fatalf("republication replayed backups: %+v %v", owner, err)
+	}
+	legacyState, err := pluginsettings.ReadState(dataRoot, "", legacy.SubjectID, transfer.Scope)
+	if err != nil || len(legacyState.Values) != 0 {
+		t.Fatalf("legacy namespace received data: %+v %v", legacyState, err)
+	}
+	receiptAfter, err := os.ReadFile(receiptPath)
+	if err != nil || bytes.Equal(raw, receiptAfter) {
+		t.Fatalf("legacy receipt not upgraded: %v", err)
 	}
 }

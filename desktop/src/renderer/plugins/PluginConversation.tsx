@@ -1,4 +1,8 @@
-import { usePluginConversationLifetime } from "./PluginConversationScope";
+import { usePluginConversationLifetime, usePluginConversationSource } from "./PluginConversationScope";
+import { useScopedContentRuntime } from "./ScopedContentRuntime";
+import { useConversationControls } from "../ConversationControlsContext";
+import { toolInputRenderer } from "../ArtifactOutputs";
+import { parseContentSubmission } from "../ContentSubmission";
 import { InteractiveAnswer } from "./personal-genui/InteractiveAnswer";
 import { ConversationReaction } from "./ConversationReaction";
 import { ConversationAttachmentPreviewContext } from "../ConversationAttachmentPreview";
@@ -14,6 +18,7 @@ import { AssistantTurnShell } from "../AssistantTurnShell";
 import { buildAssistantTurnDisplay } from "../AssistantTurnDisplay";
 import { ConversationFlow } from "../ConversationFlow";
 import { useAutoFollowScrollContainer } from "../AutoFollowScroll";
+import { syncDockComposerCssProperties } from "../ConversationScrollState";
 import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "../ConversationReadingAnchor";
 import { JumpToLatestPill } from "../JumpToLatestPill";
 import { Modal } from "../Modal";
@@ -95,17 +100,36 @@ export function PluginConversationView({ presentation = "standard", conversation
   useLayoutEffect(() => {
     if (!composerNode || !rootRef.current) return;
     const root = rootRef.current;
-    const measure = () => root.style.setProperty("--plugin-composer-height", `${composerNode.getBoundingClientRect().height}px`);
+    const measure = () => {
+      if (syncDockComposerCssProperties(root, composerNode).changed) {
+        controller.scheduleScrollToBottom();
+      }
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
-    observer.observe(composerNode);
-    return () => observer.disconnect();
-  }, [composerNode]);
+    const observeTargets = () => {
+      observer.observe(composerNode);
+      const input = composerNode.querySelector<HTMLElement>(".composer-frame");
+      if (input) observer.observe(input);
+    };
+    observeTargets();
+    const childObserver = typeof MutationObserver !== "undefined"
+      ? new MutationObserver(() => {
+          observeTargets();
+          measure();
+        })
+      : undefined;
+    childObserver?.observe(composerNode, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    return () => {
+      childObserver?.disconnect();
+      observer.disconnect();
+    };
+  }, [composerNode, controller.scheduleScrollToBottom]);
   return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>
-      <div className="title-actions">{status}{showHistorySearch && <button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} title={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>}{actions}</div>
+      <div className="title-actions">{status}{showHistorySearch && <button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>}{actions}</div>
     </header>
     <ConversationReadingBoundary conversationId={conversationId} loading={loading} controller={controller}>
       <div className="scroll-region plugin-conversation-scroll" ref={controller.scrollRef} onScroll={controller.handleScrollFrame} data-scroll-fade=""
@@ -191,7 +215,7 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
   </div>;
 }
 
-export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", onReply, replyLabel, replyPreview, reaction, attachments, footer, interactive, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
+export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", onReply, replyLabel, replyPreview, reaction, attachments, footer, interactive, resources, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
   const bubble = useContext(ConversationBubbleContext);
   const { formatDate } = useI18n();
   const validTime = timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
@@ -213,16 +237,56 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
         turnAnswerReadyAt={streaming ? undefined : timestamp} streaming={streaming} onStreamFrame={noop}
         actionableAgentMessageID={role === "assistant" ? id : undefined} latestAgentMessageID={latest ? id : undefined}
         messageActions={messageActions} messageAttachments={inlineAttachments} linkPolicy={linkPolicy} item={item} />;
-  const messageContent = interactive?.length ? <>{(content.trim() || process) && textMessageContent}{interactive.map((part, index) => <InteractiveAnswer key={index} {...part} fallback={part.fallbackText ?? content} />)}</> : textMessageContent;
+  const hasResources = Boolean(resources?.length);
+  const messageContent = interactive?.length || hasResources ? <>{(content.trim() || process) && textMessageContent}{interactive?.map((part, index) => <InteractiveAnswer key={index} {...part} fallback={part.fallbackText ?? content} />)}{resources?.map(resource => <ConversationResource key={`${resource.itemId}:${resource.partIndex}`} resource={resource} />)}</> : textMessageContent;
   return <ArtifactThreadContext.Provider value={undefined}><SideConversationAvailableContext.Provider value={false}>
     <div className={["plugin-conversation-message", className].filter(Boolean).join(" ")} data-wuu-component="plugin-ui-conversation-message" data-role={role}
-      data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined}>
+      data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined} data-has-resources={hasResources || undefined} data-preview-only={!content.trim() && !interactive?.length && resources?.every(resource => resource.preview) || undefined}>
       {bubble.enabled && validTime && <time className="bubble-message-time" dateTime={validTime} aria-hidden={!bubble.revealed} title={formatDate(validTime, { dateStyle: "medium", timeStyle: "short" })}>{formatDate(validTime, { hour: "2-digit", minute: "2-digit" })}</time>}
       {replyPreview}
-      {bubble.enabled ? <div className="bubble-message-body" data-has-reaction={!!reaction?.emoji || undefined} data-reactable={!!reaction?.onChange || undefined}>{reaction && <ConversationReaction reaction={reaction} />}{attachmentContent}{(content.trim() || process || interactive?.length) && <div className="bubble-message-content">{messageContent}</div>}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</div> : <>{messageContent}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</>}
+      {bubble.enabled ? <div className="bubble-message-body" data-has-reaction={!!reaction?.emoji || undefined} data-reactable={!!reaction?.onChange || undefined}>{reaction && <ConversationReaction reaction={reaction} />}{attachmentContent}{(content.trim() || process || interactive?.length || hasResources) && <div className="bubble-message-content">{messageContent}</div>}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</div> : <>{messageContent}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</>}
       {footer}
     </div>
   </SideConversationAvailableContext.Provider></ArtifactThreadContext.Provider>;
+}
+
+function ConversationResource({ resource }: { resource: import("../../shared/workbench").PluginUIConversationResourceProps }): React.ReactNode {
+  const { application } = useConversationControls();
+  const source = usePluginConversationSource();
+  const scoped = useScopedContentRuntime(source, resource.rendererScope);
+  const workbench = resource.rendererScope ? scoped?.controller : application.workbench;
+  if (!workbench) return resource.preview ? null : <p>{resource.fallbackText}</p>;
+  return <ResolvedConversationResource workbench={workbench} resource={resource} />;
+}
+
+function ResolvedConversationResource({ workbench, resource }: { workbench: import("../../../../packages/plugin-sdk/src/ui-contributions").ApplicationWorkbenchV1; resource: import("../../shared/workbench").PluginUIConversationResourceProps }): React.ReactNode {
+  const instanceId = useId();
+  const snapshot = React.useSyncExternalStore(workbench.subscribe, workbench.getSnapshot, workbench.getSnapshot);
+  const { part, itemId, partIndex, sessionId, fallbackText, running, onSubmit, preview } = resource;
+  const renderer = preview && toolInputRenderer(snapshot.renderers, preview.capability);
+  if (preview && (!renderer || typeof renderer.match !== "string")) return null;
+  const body = part.resource && typeof part.resource === "object" && "text" in part.resource && typeof part.resource.text === "string" ? part.resource.text : part.text;
+  const artifact = { id: `${itemId}:${partIndex}`, itemId, index: partIndex, type: part.type,
+    mimeType: preview && renderer && typeof renderer.match === "string" ? renderer.match : part.mime_type ?? "application/octet-stream", name: part.name ?? "",
+    resource: part.resource, text: body, placement: "inline", preview: Boolean(preview),
+    ref: part.artifact?.ref, sha256: part.artifact?.sha256, sizeBytes: part.artifact?.size_bytes, fallbackText };
+  const available = Boolean(!preview && onSubmit && !running);
+  return workbench.renderContent({
+    category: "tool-result", contentType: artifact.mimeType, content: artifact,
+    metadata: { threadId: sessionId, itemId, partId: artifact.id, artifactId: artifact.ref ?? artifact.id,
+      placement: "inline", variant: "inline", sourceRevision: artifact.sha256 ?? artifact.text,
+      ...(preview ? { toolInput: { turnId: preview.turnId, argumentsText: preview.argumentsText, status: preview.status, error: preview.error } } : {}),
+      interaction: { contractVersion: 1, threadId: sessionId, running: Boolean(running), readOnly: Boolean(preview || !onSubmit),
+        disabledReason: preview ? "Preview is read-only" : running ? "Wait for this conversation to finish" : onSubmit ? undefined : "Conversation actions are unavailable" } },
+    actions: available ? ["conversation.composer.submit"] : [],
+    onStateChange: preview ? undefined : value => resource.onStateChange?.(value, instanceId),
+    dispatchAction: async (action, input, isCurrent, signal) => {
+      if (preview || action !== "conversation.composer.submit" || !onSubmit || running || !isCurrent() || signal.aborted) throw new Error("Content action source is no longer active");
+      await onSubmit(parseContentSubmission(input));
+      return { accepted: true };
+    },
+    fallback: preview ? null : <p>{fallbackText}</p>,
+  });
 }
 
 // Compact attachment-specific artwork uses a 20-unit grid so its visible

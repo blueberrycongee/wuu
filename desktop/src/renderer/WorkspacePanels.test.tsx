@@ -25,6 +25,8 @@ import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { confirmAction } from "./ConfirmDialog";
 import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
 import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
+import { PluginHost } from "./plugins/PluginHost";
+import { createUIComposition } from "./plugins/ApplicationShell";
 import type { HeaderSnapshotV1 } from "../shared/workbench";
 import type { UICompositionV1, UISlotProps } from "../../../packages/plugin-sdk/src/ui";
 
@@ -289,6 +291,49 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
 vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
 
 describe("WorkspaceRightPanel", () => {
+  it("omits a failed rail contribution while retaining diagnostics and healthy controls", async () => {
+    const host = new PluginHost({ react: React });
+    const slots = createUIComposition(host);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "one", register(api) {
+      api.registerUISlot({ id: "workspace.rail", cardinality: "many" });
+    } });
+    await host.activateGeneration({ pluginId: "healthy", generation: "one", register(api) {
+      api.registerUIContribution({ id: "control", target: "wuu.default-preview/workspace.rail", render: () => <button>Healthy</button> });
+    } });
+    let broken = true;
+    const register = (api: Parameters<Parameters<PluginHost["activateGeneration"]>[0]["register"]>[0]) => {
+      api.registerUIContribution({ id: "meter", target: "wuu.default-preview/workspace.rail", render: () => {
+        if (broken) throw new Error("Synthetic rail failure");
+        return <button>Recovered</button>;
+      } });
+    };
+    try {
+      await host.activateGeneration({ pluginId: "broken", generation: "one", register });
+      mount(<WorkspaceRightPanel {...baseProps()} slots={slots} />);
+      const rail = container!.querySelector(".workspace-tool-rail-contributions")!;
+      const healthy = rail.querySelector("button");
+      expect(rail.textContent).toBe("Healthy");
+      expect(rail.children).toHaveLength(1);
+      expect(host.getGenerationDiagnostics("broken", "one")).toEqual([
+        expect.objectContaining({ kind: "render", message: expect.stringContaining("Synthetic rail failure") }),
+      ]);
+      expect(errorLog).toHaveBeenCalled();
+      broken = false;
+      await act(async () => { await host.activateGeneration({ pluginId: "broken", generation: "one", register }); });
+      expect(rail.textContent).toBe("RecoveredHealthy");
+      expect(rail.querySelectorAll("button")[1]).toBe(healthy);
+      broken = true;
+      await act(async () => { await host.activateGeneration({ pluginId: "broken", generation: "one", register }); });
+      expect(rail.textContent).toBe("Healthy");
+      act(() => host.unload("healthy"));
+      expect(rail.childElementCount).toBe(0);
+    } finally {
+      unmount();
+      for (const id of ["broken", "healthy", "wuu.default-preview"]) host.unload(id);
+      errorLog.mockRestore();
+    }
+  });
   it("keeps a legacy provider's conversation tab selectable without offering an unsupported close", () => {
     mount(<WorkspaceRightPanel {...baseProps()} globalized legacyPreview
       conversationTab={{ title: "Conversation", active: false, onSelect: vi.fn() }} />);

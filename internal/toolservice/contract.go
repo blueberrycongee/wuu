@@ -16,7 +16,7 @@ const DefaultModule = "wuu.tools.default"
 
 func Descriptor() pluginhost.ServiceDescriptor {
 	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 3)
-	for _, name := range []string{"list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"} {
+	for _, name := range []string{"list", "resolve", "resolve-own", "execute", "freeze", "unfreeze", "prepare", "finalize"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1"})
 	}
 	return pluginhost.ServiceDescriptor{Name: ServiceName, Version: "1.0.0", Methods: methods}
@@ -91,4 +91,15 @@ type PrepareResult struct {
 type FinalizeRequest struct {
 	Call   providers.ToolCall `json:"call"`
 	Result *toolresult.Result `json:"result"`
+}
+
+// ResolveOwnResult identifies a declaration in the selected provider generation.
+// It is not proof that a target session policy exposes or permits this tool.
+type ResolveOwnResult struct {
+	Found      bool   `json:"found"`
+	Name       string `json:"name,omitempty"`
+	DirectOnly bool   `json:"direct_only,omitempty"`
+}
+type ResolveOwnRequest struct {
+	ToolID string `json:"tool_id"`
 }

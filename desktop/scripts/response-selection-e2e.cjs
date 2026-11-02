@@ -167,9 +167,21 @@ async function add(text, last = false, physical = false, comment = "") {
   return result;
 }
 async function closeQuotePanel() {
-  await evaluate(() => document.querySelector(".composer-response-selection-popover").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  if (typeof win !== "undefined" && win.webContents?.debugger) {
+    // A pointer left over the Files rail can open its tooltip after resizing.
+    // Move into the quote first: the topmost tooltip consumes Escape by design.
+    const point = await evaluate(() => { const r = document.querySelector(".composer-response-selection-popover").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
+    await until(() => !document.querySelector('[role="tooltip"]'), "hover tooltip dismissed before quote Escape");
+    await evaluate(() => document.querySelector(".composer-response-selection-popover").focus());
+    await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  } else {
+    await evaluate(() => document.querySelector(".composer-response-selection-popover").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, composed: true })));
+  }
   await until(() => !document.querySelector(".composer-response-selection-popover"), "quote panel closed");
 }
+
 async function checkSource(expected) {
   await settle();
   await click(card);

@@ -87,11 +87,20 @@ func (c *Client) UpdateState(ctx context.Context, subject string, scope Scope, u
 // An uncertain result is never retried here: retrying the identical transfer is
 // safe only under the provider's durable fence-and-receipt contract.
 func (c *Client) MoveStatePrefix(ctx context.Context, transfer StateTransfer) error {
+	return c.stateTransfer(ctx, "transfer-state", transfer)
+}
+
+// CheckStateTransfer is read-only and is available during generation preparation.
+func (c *Client) CheckStateTransfer(ctx context.Context, transfer StateTransfer) error {
+	return c.stateTransfer(ctx, "check-transfer-state", transfer)
+}
+
+func (c *Client) stateTransfer(ctx context.Context, method string, transfer StateTransfer) error {
 	var result struct{}
-	err := c.invoke(ctx, "transfer-state", transfer, &result)
+	err := c.invoke(ctx, method, transfer, &result)
 	var hostErr *pluginhost.HostServiceError
 	if errors.As(err, &hostErr) && hostErr.Code == "method_not_found" {
-		return settingsError("storage_transfer_unsupported", "selected settings provider does not support ownership transfers")
+		return settingsError("storage_transfer_unsupported", "selected settings provider does not support ownership transfer preparation or commit")
 	}
 	return err
 }

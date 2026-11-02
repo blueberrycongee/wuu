@@ -1,3 +1,7 @@
+import { DictationService } from "./dictation";
+import { spawn as spawnDictationHelper } from "node:child_process";
+import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
+import { RegisteredSessionTransport, REGISTERED_SESSION_REVERSE_METHODS } from "./registeredSessionTransport";
 import { resolveUserHostContext } from "./userHost";
 import { PresentationFrameCapture } from "./presentationFrame";
 import { createDesktopRecovery } from "./desktopRecovery";
@@ -149,6 +153,7 @@ import type {
   PluginDesktopModuleLoadResult,
   PluginDesktopModuleReadParams,
   PluginDesktopActivationParams,
+  PluginScopeInitializeParams,
   ExtensionInventoryRecord,
   PluginDesktopModuleReadResult,
   PluginIconLoadResult,
@@ -337,6 +342,7 @@ const appServerClientPool = new AppServerClientPool(
   desktopInitializeParams,
   { appPath: app.getAppPath(), isPackaged: app.isPackaged },
 );
+const registeredSessionTransport = new RegisteredSessionTransport(appServerClientPool);
 // Cross-workdir running state (which sessions are actively turning in any
 // workspace) is aggregated in the main process from each client's own turn
 // lifecycle tracking and broadcast to the renderer on change. The renderer's
@@ -528,6 +534,14 @@ const appContextCapture = new AppContextCapture((reveal, owner) => {
   else send();
 }, appContextOwner);
 const systemPermissions = new SystemPermissions(appContextCapture);
+const dictation = new DictationService({
+  askForMicrophoneAccess: () => systemPreferences.askForMediaAccess("microphone"),
+  spawn: locale => spawnDictationHelper(
+    process.env.WUU_SPEECH_MAC_HELPER || join(process.resourcesPath, "bin", "wuu-speech-mac"),
+    ["--locale", locale], { stdio: ["pipe", "pipe", "pipe"] },
+  ),
+});
+
 
 function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
   const host = windowRegistry.mainWindow();
@@ -537,6 +551,12 @@ function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
 function requireAppContextSender(event: IpcMainInvokeEvent): void {
   if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
+  }
+}
+
+function requireDictationSender(event: IpcMainInvokeEvent): void {
+  if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error("Dictation is available from Wuu windows only.");
   }
 }
 
@@ -715,7 +735,7 @@ function desktopInitializeParams() {
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
     capabilities: {
-      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] },
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, ...REGISTERED_SESSION_REVERSE_METHODS] },
     },
   };
 }
@@ -824,6 +844,11 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 });
 
 function emitServerEvent(event: ServerEvent): void {
+  registeredSessionTransport.handleConnectionEvent(event);
+  if (event.kind === "server-request" && REGISTERED_SESSION_REVERSE_METHODS.includes(event.message.method)) {
+    void registeredSessionTransport.handleServerRequest(event);
+    return;
+  }
   remoteAppServerBridge.publish(event);
   codexPetActivity.handleServerEvent(event);
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
@@ -848,14 +873,23 @@ function emitServerEvent(event: ServerEvent): void {
   // down so respondSafe drops late replies, and broadcasts invalidation.
   // Idempotent with a later disposeClient.
   if (event.kind === "server-exit") {
-    for (const owner of desktopActivationOwners.values()) owner.invalidateWorkspace(event.workdir);
+    for (const [id, owner] of desktopActivationOwners) {
+      owner.invalidateWorkspace(event.workdir);
+      const window = windowRegistry.windowForID(id);
+      for (const invalidation of owner.invalidateScopes(event.workdir)) if (window) sendToWindow(window, "wuu:plugin-scope-invalidated", invalidation);
+    }
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
   if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
     const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
     if (params?.extension_inventory) {
-      for (const owner of desktopActivationOwners.values()) owner.observeInventory(event.workdir, params.extension_inventory);
+      for (const [id, owner] of desktopActivationOwners) {
+        const invalidations = owner.invalidateScopes(event.workdir);
+        if (!invalidations.length) owner.observeInventory(event.workdir, params.extension_inventory);
+        const window = windowRegistry.windowForID(id);
+        for (const invalidation of invalidations) if (window) sendToWindow(window, "wuu:plugin-scope-invalidated", invalidation);
+      }
     }
   }
   browserHostCoordinator.handleServerEvent(event);
@@ -1784,6 +1818,10 @@ app.whenReady().then(async () => {
     }
     return result;
   });
+  ipcMain.handle("wuu:project-recover-unavailable", (event) => {
+    if (windowRegistry.runtimeContextForWindow(event.sender.id)) return undefined;
+    return projectManager.recoverUnavailableProject();
+  });
   ipcMain.handle(
     "wuu:project-select",
     (_event, projectIDToSelect: string) => {
@@ -2235,9 +2273,10 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
     appServerRequest<EngineListResult>(event, "engine/list", {
       include_quota: options?.include_quota === true,
+      include_activity: options?.include_activity,
       refresh_models: options?.refresh_models === true,
       cwd: options?.cwd,
     }, context),
@@ -2280,7 +2319,7 @@ app.whenReady().then(async () => {
     const context = runtimeContextForEvent(event);
     const packagePath = await showProjectDirectoryDialog({
       properties: ["openFile", "openDirectory"],
-      filters: [{ name: "Wuu Plugin Package", extensions: ["zip"] }],
+      filters: [{ name: "Wuu Plugin Package", extensions: ["zip", "ts"] }],
     });
     if (!packagePath) {
       return undefined;
@@ -2304,11 +2343,19 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "wuu:plugin-desktop-module-load",
     async (event, params: PluginDesktopModuleReadParams): Promise<PluginDesktopModuleLoadResult> => {
-      const module = await appServerRequest<PluginDesktopModuleReadResult>(
-        event,
-        "plugin/desktop-module/read",
-        params,
-      );
+      let module: PluginDesktopModuleReadResult;
+      if (params.graph_generation) {
+        const owner = desktopActivationOwner(event);
+        const identity = { id: params.id, fingerprint: params.fingerprint, graph_generation: params.graph_generation };
+        try { module = await owner.readModule(identity); }
+        catch (error) {
+          if (!(error instanceof DesktopGraphOwnershipError)) throw error;
+          await owner.recoverGraph(params.graph_generation, () => initializeDesktopGraph(event, owner));
+          module = await owner.readModule(identity);
+        }
+      } else {
+        module = await appServerRequest<PluginDesktopModuleReadResult>(event, "plugin/desktop-module/read", params);
+      }
       if (module.entry.startsWith("wuu-builtin:")) {
         return { id: module.id, fingerprint: module.fingerprint, digest: module.digest, url: module.entry };
       }
@@ -2346,6 +2393,24 @@ app.whenReady().then(async () => {
     appServerRequest<PluginStorageResult>(event, "plugin/storage/get", params));
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
+  ipcMain.handle("wuu:plugin-scope-initialize", async (event, params: PluginScopeInitializeParams) => {
+    const owner = desktopActivationOwner(event);
+    const admissionContext = runtimeContextForEvent(event);
+    await owner.recoverRuntimeRequest(params.graph_generation, admissionContext.cwd, () => initializeDesktopGraph(event, owner));
+    const identity = { id: params.id, fingerprint: params.fingerprint, graph_generation: params.graph_generation };
+    await owner.readModule(identity);
+    const context = resolveUserHostContext(params.user_space_id, params.product_domain, params.composition_profile);
+    const scope = JSON.stringify([context.user_space_id, context.product_domain, context.composition_profile]);
+    const inventory = await owner.scopedInventory(identity, scope, async () => ({
+      workdir: context.cwd, request: appServerClientPool.bindContextRequest(context), params: desktopInitializeParams(),
+    }));
+    await owner.readModule(identity);
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame || desktopActivationOwners.get(event.sender.id) !== owner
+      || JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(admissionContext)) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin scope admission document was replaced"));
+    }
+    return inventory;
+  });
   ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
     if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
       throw new Error("User host and workspace routes cannot be combined");
@@ -3101,8 +3166,14 @@ app.whenReady().then(async () => {
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
       targetContext?: RuntimeContext,
-    ) =>
-      appServerRequest(event, "turn/steer", {
+    ) => {
+      const context = targetContext
+        ? targetContext.kind === "user"
+          ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain, targetContext.composition_profile)
+          : projectManager.resolveSubmissionContext(targetContext)
+        : runtimeContextForEvent(event);
+      const request = appServerClientPool.bindSessionRequest(context, threadId);
+      return steerOrQueueIsolatedTurn(request, {
         thread_id: threadId,
         expected_turn_id: expectedTurnId,
         prompt,
@@ -3111,7 +3182,8 @@ app.whenReady().then(async () => {
         client_id: clientId,
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }, targetContext),
+      });
+    },
   );
   ipcMain.handle("wuu:turn-unsteer", (event, threadId: string, steerId: string) =>
     appServerRequest<{ ok: boolean }>(event, "turn/unsteer", {
@@ -3372,6 +3444,30 @@ app.whenReady().then(async () => {
     if (!browserExtensionWindows) throw new Error("Embedded browser extensions are unavailable.");
     await browserExtensionWindows.openOptions(id, host);
   });
+  ipcMain.handle("wuu:dictation-start", async (event, id: unknown, locale: unknown) => {
+    requireDictationSender(event);
+    if (process.platform !== "darwin" || typeof id !== "string" || !id || typeof locale !== "string" || !/^[a-zA-Z-]{2,35}$/.test(locale)) {
+      throw new Error("Invalid dictation request.");
+    }
+    const sessionId = `${event.sender.id}:${id}`;
+    const cancel = (): void => dictation.cancel(sessionId);
+    event.sender.once("destroyed", cancel);
+    event.sender.once("render-process-gone", cancel);
+    const navigated = (_event: unknown, _url: string, _inPlace: boolean, mainFrame: boolean): void => { if (mainFrame) cancel(); };
+    event.sender.on("did-start-navigation", navigated);
+    // Each recording owns its cleanup; replacing or completing it removes
+    // these listeners rather than accumulating them over a long session.
+    const cleanup = (): void => {
+      event.sender.removeListener("destroyed", cancel);
+      event.sender.removeListener("render-process-gone", cancel);
+      event.sender.removeListener("did-start-navigation", navigated);
+    };
+    await dictation.start(sessionId, locale, message => {
+      if (!event.sender.isDestroyed()) event.sender.send("wuu:dictation-event", { ...message, sessionId: id });
+    }, cleanup);
+  });
+  ipcMain.handle("wuu:dictation-stop", (event, id: string) => { requireDictationSender(event); dictation.stop(`${event.sender.id}:${id}`); });
+  ipcMain.handle("wuu:dictation-cancel", (event, id: string) => { requireDictationSender(event); dictation.cancel(`${event.sender.id}:${id}`); });
   systemPermissions.start();
   ipcMain.handle("wuu:system-permissions", event => {
     requireAppContextSender(event);
@@ -3430,6 +3526,7 @@ app.whenReady().then(async () => {
 let quitCleanup: Promise<void> | undefined;
 let quitCleanupFinished = false;
 app.on("before-quit", (event) => {
+  dictation.cancel();
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;

@@ -575,12 +575,15 @@ const (
 	EventToolUseEnd      StreamEventType = "tool_use_end"
 	EventTodoUpdate      StreamEventType = "todo_update"
 	EventAgentActivity   StreamEventType = "agent_activity"
-	EventModelStep       StreamEventType = "model_step"
-	EventRequestContext  StreamEventType = "request_context"
-	EventProviderState   StreamEventType = "provider_state"
-	EventProviderItem    StreamEventType = "provider_item"
-	EventUsage           StreamEventType = "usage"
-	EventMessage         StreamEventType = "message"
+	// EventNotice carries a transient host notice for the client UI. It is not
+	// transcript content or model context.
+	EventNotice         StreamEventType = "notice"
+	EventModelStep      StreamEventType = "model_step"
+	EventRequestContext StreamEventType = "request_context"
+	EventProviderState  StreamEventType = "provider_state"
+	EventProviderItem   StreamEventType = "provider_item"
+	EventUsage          StreamEventType = "usage"
+	EventMessage        StreamEventType = "message"
 	// EventAssistantItemDone checkpoints a complete provider item without changing live UI projection.
 	EventAssistantItemDone StreamEventType = "assistant_item_done"
 	EventLifecycle         StreamEventType = "lifecycle"
@@ -762,6 +765,14 @@ func (u TokenUsage) TotalContextTokens() int {
 	return u.InputTokens + u.CacheCreationTokens + u.CacheReadTokens + u.OutputTokens
 }
 
+// StreamNotice is a short, non-transcript message from the host to the
+// client. Code identifies notices the client can localize; Message is the
+// fallback for clients that do not know it.
+type StreamNotice struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+}
+
 // StreamEvent is a single event from a streaming chat response.
 type ModelStepSummary = pluginprotocol.ModelStepSummaryV1
 type ModelStepUsage = pluginprotocol.ModelStepUsageV1
@@ -774,6 +785,7 @@ type StreamEvent struct {
 	Phase          MessagePhase
 	ProviderItemID string
 	Message        *ChatMessage
+	Notice         *StreamNotice
 	ReasoningBlock *ReasoningBlock
 	// ToolCall identifies the owner on argument deltas, as well as carrying
 	// the complete call on start/end. Legacy producers may omit delta owners.

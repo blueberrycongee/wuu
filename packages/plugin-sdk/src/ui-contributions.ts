@@ -95,6 +95,7 @@ export interface ApplicationWorkbenchV1 {
   renderLayers(input: { readonly settingsOnly?: boolean }): ReactNode;
   renderContent(input: { readonly category: RendererDefinition['category']; readonly contentType: string; readonly content: unknown; readonly metadata?: Readonly<Record<string, unknown>>; readonly fallback: ReactNode;
     readonly actions?: readonly string[];
+    readonly onStateChange?: (state: unknown) => void;
     readonly dispatchAction?: (action: string, input: unknown, isCurrent: () => boolean, signal: AbortSignal) => unknown | Promise<unknown> }): ReactNode;
   renderView(input: { readonly pluginId: string; readonly viewTypeId: string; readonly region?: ViewPlacementRegion; readonly context?: Readonly<Record<string, unknown>>; readonly settings?: import('./index.js').SettingsPageHostAPI; readonly onFailure?: () => void }): ReactNode;
 }

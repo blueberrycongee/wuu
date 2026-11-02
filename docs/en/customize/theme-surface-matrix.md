@@ -29,10 +29,12 @@ token, so anything you do not override keeps the built-in appearance:
 
 The contract defines **82 public tokens** (**7**
 legacy compatibility aliases) and **16 syntax-highlighting
-tokens**; **54** of them are currently wired into host surfaces.
-"Wired" means host styles already reference the token and overrides take effect;
-"Not wired (reserved)" means the token is declared but the host does not consume
-it yet, so overrides do not change anything.
+tokens**; **73** have a reference path in host styles.
+"Wired" traces CSS variable dependencies from color, typography, and geometry
+properties. It is not a rendering guarantee for every theme or state: saved
+appearance preferences and the CSS cascade can still override a value.
+"Not wired (reserved)" means no host-style reference path was found; plugin-owned
+styles are outside this count.
 
 ### Color
 
@@ -97,39 +99,39 @@ it yet, so overrides do not change anything.
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-font-family-ui` | UI font family | Not wired (reserved) |
-| `--wuu-font-family-mono` | Monospace font family (code) | Not wired (reserved) |
+| `--wuu-font-family-ui` | UI font family | Wired |
+| `--wuu-font-family-mono` | Monospace font family (code) | Wired |
 | `--wuu-font-size-ui` | UI font size | Wired |
 | `--wuu-font-size-body` | Font size for body text such as messages | Wired |
-| `--wuu-line-height-body` | Body text line height | Not wired (reserved) |
+| `--wuu-line-height-body` | Body text line height | Wired |
 
 ### Spacing
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-space-unit` | Base spacing unit | Not wired (reserved) |
+| `--wuu-space-unit` | Base spacing unit | Wired |
 | `--wuu-message-actions-block-gap` | Gap between message action blocks | Not wired (reserved) |
-| `--wuu-message-actions-overlay-gap` | Gap inside the message-actions overlay | Not wired (reserved) |
-| `--wuu-message-actions-control-gap` | Gap between message action controls | Not wired (reserved) |
-| `--wuu-message-actions-inline-offset` | Inline offset of message actions | Not wired (reserved) |
-| `--wuu-message-action-size` | Message action button size | Not wired (reserved) |
+| `--wuu-message-actions-overlay-gap` | Gap inside the message-actions overlay | Wired |
+| `--wuu-message-actions-control-gap` | Gap between message action controls | Wired |
+| `--wuu-message-actions-inline-offset` | Inline offset of message actions | Wired |
+| `--wuu-message-action-size` | Message action button size | Wired |
 
 ### Density
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-space-density` | UI density scale | Not wired (reserved) |
+| `--wuu-space-density` | UI density scale | Wired |
 
 ### Radius
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-message-action-radius` | Message action button radius | Not wired (reserved) |
-| `--wuu-message-user-radius` | User message bubble radius | Not wired (reserved) |
-| `--wuu-radius-inner` | Inner highlight and nested radius | Not wired (reserved) |
-| `--wuu-radius-control` | Control radius | Not wired (reserved) |
-| `--wuu-radius-panel` | Panel radius | Not wired (reserved) |
-| `--wuu-radius-overlay` | Overlay radius | Not wired (reserved) |
+| `--wuu-message-action-radius` | Message action button radius | Wired |
+| `--wuu-message-user-radius` | User message bubble radius | Wired |
+| `--wuu-radius-inner` | Inner highlight and nested radius | Wired |
+| `--wuu-radius-control` | Control radius | Wired |
+| `--wuu-radius-panel` | Panel radius | Wired |
+| `--wuu-radius-overlay` | Overlay radius | Wired |
 
 ### Border
 
@@ -151,15 +153,15 @@ it yet, so overrides do not change anything.
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-motion-duration-fast` | Fast motion duration | Not wired (reserved) |
-| `--wuu-motion-duration-normal` | Normal motion duration | Not wired (reserved) |
-| `--wuu-motion-easing-standard` | Standard easing curve | Not wired (reserved) |
+| `--wuu-motion-duration-fast` | Fast motion duration | Wired |
+| `--wuu-motion-duration-normal` | Normal motion duration | Wired |
+| `--wuu-motion-easing-standard` | Standard easing curve | Wired |
 
 ### Content
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-content-max-width` | Max width of the main content area | Not wired (reserved) |
+| `--wuu-content-max-width` | Max width of the main content area | Wired |
 
 ## Syntax highlighting
 

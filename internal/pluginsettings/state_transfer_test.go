@@ -1,6 +1,8 @@
 package pluginsettings
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,40 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestStateTransferCheckPreservesBytesAndRejectsChangedOwner(t *testing.T) {
+	home := t.TempDir()
+	transfer := testStateTransfer()
+	seedState(t, home, transfer.SourceSubjectID, map[string]string{"records.one": "original"})
+	sourcePath, _, _ := stateDocumentPath(home, "", transfer.SourceSubjectID, ScopeUser)
+	targetPath, _, _ := stateDocumentPath(home, "", transfer.TargetSubjectID, ScopeUser)
+	checkUnchanged := func(wantError bool) {
+		t.Helper()
+		beforeSource, _ := os.ReadFile(sourcePath)
+		beforeTarget, _ := os.ReadFile(targetPath)
+		err := CheckStateTransfer(context.Background(), home, "", transfer)
+		if (err != nil) != wantError {
+			t.Fatalf("check: %v", err)
+		}
+		afterSource, _ := os.ReadFile(sourcePath)
+		afterTarget, _ := os.ReadFile(targetPath)
+		if !bytes.Equal(beforeSource, afterSource) || !bytes.Equal(beforeTarget, afterTarget) {
+			t.Fatal("read-only transfer check changed ownership or data")
+		}
+	}
+	checkUnchanged(false)
+	seedState(t, home, transfer.TargetSubjectID, map[string]string{"records.one": "newer"})
+	checkUnchanged(true)
+	if _, err := UpdateState(home, "", transfer.TargetSubjectID, ScopeUser, func(values map[string]string) error { delete(values, "records.one"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveStatePrefix(home, "", transfer); err != nil {
+		t.Fatal(err)
+	}
+	checkUnchanged(false)
+	transfer.TargetSubjectID = "plugin:dev:target"
+	checkUnchanged(true)
+}
 
 // Persistence failures to protect: interrupted ownership changes; replay after
 // deletion; collisions or size failures fencing usable data; rollback readers

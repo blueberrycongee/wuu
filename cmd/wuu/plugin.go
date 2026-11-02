@@ -51,9 +51,11 @@ type pluginPackageOutput struct {
 
 func runPlugin(args []string) error {
 	if len(args) == 0 {
-		return pluginCLIError(errors.New("plugin subcommand is required (available: describe, inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev)"))
+		return pluginCLIError(errors.New("plugin subcommand is required (available: describe, inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev, hosts, reload)"))
 	}
 	switch args[0] {
+	case "hosts", "reload":
+		return runPluginHosts(args[0], args[1:])
 	case "describe":
 		return runPluginDescribe(args[1:])
 	case "inspect":
@@ -71,7 +73,7 @@ func runPlugin(args []string) error {
 	case "create", "validate", "build", "test", "pack", "dev":
 		return runPluginDev(args)
 	default:
-		return pluginCLIError(fmt.Errorf("unknown plugin subcommand %q (available: describe, inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev)", args[0]))
+		return pluginCLIError(fmt.Errorf("unknown plugin subcommand %q (available: describe, inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev, hosts, reload)", args[0]))
 	}
 }
 
@@ -82,7 +84,7 @@ func runPluginInspect(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
 	}
-	source, err := requiredPluginArgument(fs, "plugin inspect requires a directory, .zip, npm:name@version or lock:path")
+	source, err := requiredPluginArgument(fs, "plugin inspect requires a directory, .zip, .ts, npm:name@version or lock:path")
 	if err != nil {
 		return err
 	}
@@ -109,12 +111,12 @@ func runPluginPackageInstall(action string, args []string) (retErr error) {
 	source := ""
 	if action == "update" {
 		if fs.NArg() != 2 {
-			return pluginCLIError(errors.New("plugin update requires an installed plugin id and a directory, .zip, npm:name@version or lock:path"))
+			return pluginCLIError(errors.New("plugin update requires an installed plugin id and a directory, .zip, .ts, npm:name@version or lock:path"))
 		}
 		source = fs.Arg(1)
 	} else {
 		var err error
-		source, err = requiredPluginArgument(fs, "plugin install requires a directory, .zip, npm:name@version or lock:path")
+		source, err = requiredPluginArgument(fs, "plugin install requires a directory, .zip, .ts, npm:name@version or lock:path")
 		if err != nil {
 			return err
 		}

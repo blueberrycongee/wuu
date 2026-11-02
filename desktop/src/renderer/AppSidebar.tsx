@@ -2,6 +2,7 @@ import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
 import { PluginActionNotStartedError } from "../shared/PluginLifecycle";
 import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
+import { useTabExitRetention } from "./TabMotion";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { SessionOrganizationController } from "./SessionOrganization";
@@ -16,7 +17,6 @@ import {
   FolderMinus,
   FolderOpen,
   FolderPlus,
-  MessageSquare,
   MessageSquarePlus,
   MessagesSquare,
   Plus,
@@ -35,6 +35,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -64,14 +65,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDropAnimation, useSortableTransition } from "./SortableMotion";
 import type { DesktopProject, ExtensionInventoryRecord } from "../shared/protocol";
 import {
-  isScratchThread,
   threadBelongsToWorkspace,
   isThreadExecuting,
   isThreadUnread,
   sidebarThreadSortTime,
   type ThreadSummary,
 } from "./AppState";
-import { SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
 import { projectDirectory } from "./ProjectSessions";
 import {
   OrganizationThreadList,
@@ -122,13 +121,8 @@ import { Tooltip } from "./Tooltip";
 import { HoverRevealScopeContext, useRetainHoverOwner } from "./HoverReveal";
 
 /**
- * Stable section identity keys for the new sidebar tree.
- *
- * - `SIDEBAR_SECTION_PINNED` is the legacy persisted collapse key. The visible
- *   pinned functional group now keeps its own persisted order/collapse state.
- * - `SCRATCH_PSEUDO_PROJECT_ID` ("__wuu_scratch__") is the 对话
- *   pseudo-project entry. It belongs to the workspace functional group and
- *   can be reordered with real projects.
+ * Stable section identity key for the pinned functional group. The visible
+ * pinned group keeps its own persisted order/collapse state.
  */
 export const SIDEBAR_SECTION_PINNED = "__wuu_pinned__";
 
@@ -357,24 +351,20 @@ function persistSidebarRecentsCollapsed(collapsed: boolean): void {
  * project list. Pure function so it is directly testable.
  *
  * Rules:
- *   1. Drop any stored key that is neither a real project id nor
- *      `SCRATCH_PSEUDO_PROJECT_ID` (including stale fixed or legacy section
- *      ids) once `workspaceIDs` is known. When `workspaceIDs` is empty the real
- *      project list has not been loaded yet, so stored keys are preserved —
- *      pruning them against an empty list would destroy the user's persisted
- *      workspace order on every launch.
+ *   1. Drop any stored key that is not a real project id (including stale
+ *      fixed, legacy, or retired conversation-workspace ids) once
+ *      `workspaceIDs` is known. When `workspaceIDs` is empty the real project
+ *      list has not been loaded yet, so stored keys are preserved — pruning
+ *      them against an empty list would destroy the user's persisted workspace
+ *      order on every launch.
  *   2. Append newly-seen project ids in `workspaceIDs` order.
- *   3. Ensure the scratch entry is present while preserving workspace order.
  */
 export function reconcileSidebarSectionOrder(
   stored: string[] | undefined,
   workspaceIDs: string[],
 ): string[] {
   const workspaceIDsKnown = workspaceIDs.length > 0;
-  const knownIDs = new Set<string>([
-    SCRATCH_PSEUDO_PROJECT_ID,
-    ...workspaceIDs,
-  ]);
+  const knownIDs = new Set<string>(workspaceIDs);
   const out: string[] = [];
   if (Array.isArray(stored)) {
     for (const key of stored) {
@@ -389,9 +379,6 @@ export function reconcileSidebarSectionOrder(
     if (!out.includes(id)) {
       out.push(id);
     }
-  }
-  if (!out.includes(SCRATCH_PSEUDO_PROJECT_ID)) {
-    out.unshift(SCRATCH_PSEUDO_PROJECT_ID);
   }
   if (
     stored &&
@@ -524,13 +511,9 @@ export function AppSidebar({
   selectedWorkspaceID?: string;
   extensionInventory?: readonly ExtensionInventoryRecord[];
   lastViewedTurnByThreadID: Readonly<Record<string, string>>;
-  // The sidebar renders scratch conversations through the same WorkspaceList
-  // path as real projects, so App.tsx prepends a synthetic DesktopProject
-  // (id = SCRATCH_PSEUDO_PROJECT_ID) into this array. The workspace registry
-  // stays unchanged; sidebarWorkspaces is what the sidebar actually shows.
   sidebarWorkspaces: DesktopProject[];
   pendingConversations?: readonly PendingConversation[];
-  draftConversations?: readonly { id: string; title: string; pending: boolean }[];
+  draftConversations?: readonly { id: string; title: string; pending: boolean; entering?: boolean }[];
   onSelectPendingConversation?: (id: string) => void;
   activeWorkspaceID?: string;
   pinnedThreads: ThreadSummary[];
@@ -546,9 +529,8 @@ export function AppSidebar({
   workspaceMenuOpen: boolean;
   workspaceMenuRef: RefObject<HTMLDivElement | null>;
   searchOpen: boolean;
-  // Order of reorderable sections. The pinned section is rendered first
-  // (fixed position) and is NOT included. Each key maps to either
-  // SCRATCH_PSEUDO_PROJECT_ID or a real project id.
+  // Order of reorderable workspace sections. The pinned section is rendered
+  // first (fixed position) and is NOT included.
   sectionOrder: string[];
   onStartNewThread: () => void;
   onOpenSkillsTab: () => void;
@@ -645,6 +627,14 @@ export function AppSidebar({
   const [collapsedFunctionalGroupIDs, setCollapsedFunctionalGroupIDs] =
     useState<Set<SidebarFunctionalGroupID>>(loadCollapsedSidebarFunctionalGroups);
   const [recentsCollapsed, setRecentsCollapsed] = useState(loadSidebarRecentsCollapsed);
+  const draftEntries = useTabExitRetention(draftConversations, draft => draft.id)
+    .filter(entry => !entry.closing || !entry.tab.pending);
+  // Consume entrance eligibility even when the fold is closed. Its children
+  // can remount later without a new navigation snapshot.
+  const presentedDraftIDs = useRef(new Set<string>());
+  useLayoutEffect(() => {
+    presentedDraftIDs.current = new Set(draftConversations.map(draft => draft.id));
+  });
   const [draggingFunctionalGroupID, setDraggingFunctionalGroupID] =
     useState<SidebarFunctionalGroupID>();
   const [groupContextMenu, setGroupContextMenu] = useState<{
@@ -671,11 +661,7 @@ export function AppSidebar({
       && (folderDragThread?.pinned || organization.folderByThreadID[folderDragThreadID]),
   );
   const hasRuntimeContext = activeContextKind !== undefined;
-  // The scratch pseudo project is "active" when the runtime context is in
-  // no-project mode (i.e. the user is viewing a scratch conversation).
-  // Active state is passed into WorkspaceList so the row highlights even though
-  // it has no DesktopProject entry in the workspace registry.
-  const sidebarScratchPseudoActive = activeContextKind === "no_project";
+  const canStartNewThread = sidebarWorkspaces.some((project) => !project.missing);
   const declaredPluginNavigationEntries = useSyncExternalStore(
     (listener) => navigation ? () => {} : pluginHost.subscribe(listener),
     () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
@@ -696,6 +682,7 @@ export function AppSidebar({
   const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && catalogActive;
   const conversationsActive = !settingsActive && !activeWebsiteId && !activePluginMainView && !pluginCatalogActive;
   const activeThreadID = conversationsActive ? nativeActiveThreadID : undefined;
+  const [selectionOrigin, setSelectionOrigin] = useState<{ id: string; section: string }>();
   const pluginNavigationEntries = useMemo(
     () => navigation ? navigation.view.destinations : workbenchSnapshot ? primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot) : [],
     [declaredPluginNavigationEntries, workbenchSnapshot, navigation],
@@ -726,10 +713,12 @@ export function AppSidebar({
   }, [workbenchController, navigation]);
   // The navigation surface owns thread selection across provider handoffs.
   const onSelectThread = useCallback((id: string) => {
+    setSelectionOrigin({ id, section: "organization" });
     if (navigation) selectNativeThread(id);
     else activateNative(() => selectNativeThread(id));
   }, [activateNative, navigation, selectNativeThread]);
   const onSelectWorkspaceThread = useCallback((workspaceID: string, threadID: string) => {
+    setSelectionOrigin({ id: threadID, section: workspaceID });
     if (navigation) selectNativeWorkspaceThread(workspaceID, threadID);
     else activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
   }, [activateNative, navigation, selectNativeWorkspaceThread]);
@@ -1143,11 +1132,11 @@ export function AppSidebar({
   }
   const pinnedRows = pinnedThreads;
   const hasPinnedRows = validPinnedItems.length > 0;
-  // An empty Pinned group has nothing to say until something that can be
-  // pinned is picked up; then it appears as the drop target.
-  const pinnedGroupShown = hasPinnedRows
-    || folderDragThreadID !== undefined
-    || draggingSectionID !== undefined;
+  // Temporary destinations overlay the list: inserting a group here moves
+  // the native drag source while Chromium is capturing it and cancels the drag.
+  const showEmptyPinnedDropTarget = !hasPinnedRows
+    && (folderDragThreadID !== undefined || draggingSectionID !== undefined);
+  const showEmptyFolderDropTarget = visibleFolderSortableIDs.length === 0 && folderDragCanRemove;
   const pinnedHeadingDropTargetID = pinnedItemSortableIDs[0] ?? PINNED_APPEND_DROP_ID;
   const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread));
   const pinnedHasUnread = pinnedRows.some((thread) =>
@@ -1206,9 +1195,9 @@ export function AppSidebar({
   );
   const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
     (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
-      && (id !== "pinned" || pinnedGroupShown)
-      && (id !== "folders" || visibleFolderSortableIDs.length > 0 || folderDragCanRemove),
-  ), [functionalGroupOrder, onCreateProject, pinnedGroupShown, projectIndex, visibleFolderSortableIDs.length, folderDragCanRemove]);
+      && (id !== "pinned" || hasPinnedRows)
+      && (id !== "folders" || visibleFolderSortableIDs.length > 0),
+  ), [functionalGroupOrder, onCreateProject, hasPinnedRows, projectIndex, visibleFolderSortableIDs.length]);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1218,30 +1207,43 @@ export function AppSidebar({
     .filter((thread) => !thread.archived && !thread.pinned
       && !projectIndex.summaries.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id)),
   [allSidebarThreads, projectIndex]);
-  const { threads: recentConversations, interactionProps: conversationInteractionProps } =
-    useSidebarConversationActivity(
-      conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
-    );
+  const {
+    threads: recentConversations,
+    interactionProps: conversationInteractionProps,
+    onReorder: reorderRecentConversations,
+  } = useSidebarConversationActivity(
+    conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
+  );
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const projectIDs = new Set(projectIndex.projects.map((thread) => thread.id));
-    const projects = sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID);
     for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
-      const project = projects.find((candidate) => candidate.id === workspaceID);
+      const project = sidebarWorkspaces.find((candidate) => candidate.id === workspaceID);
       // Cached buckets can overlap while a fork's workspace metadata refreshes.
       // Classify the same session snapshot in every bucket before publishing nodes.
       next[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread).filter(
         (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] &&
-          !projectIDs.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id) && (
-          workspaceID === SCRATCH_PSEUDO_PROJECT_ID
-            ? isScratchThread(thread, projects)
-            : project !== undefined && threadBelongsToWorkspace(thread, project)
-        ),
+          !projectIDs.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id) &&
+          project !== undefined && threadBelongsToWorkspace(thread, project),
       );
     }
     return next;
   }, [allSidebarThreads, organization.folderByThreadID, projectIndex, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  const selectedConversationID = activeThreadID ?? activeSessionTabID;
+  const recentSelectionVisible = !recentsCollapsed && (recentConversations.some(thread => thread.id === activeThreadID)
+    || draftConversations.some(draft => draft.id === activeSessionTabID));
+  const originVisible = selectionOrigin?.section === "recent" ? recentSelectionVisible
+    : selectionOrigin?.section === "organization" ? !recentSelectionVisible || Boolean(organization.folderByThreadID[activeThreadID ?? ""])
+    : expandedSidebarSectionIDs.has(selectionOrigin?.section ?? "")
+      && (visibleWorkspaceThreadsByWorkspaceID[selectionOrigin?.section ?? ""]?.some(thread => thread.id === activeThreadID)
+        || pendingConversations.some(draft => draft.id === activeSessionTabID
+          && draft.context.kind === "project" && draft.context.project_id === selectionOrigin?.section));
+  const selectionSection = !conversationsActive || onFocusWorkspace ? undefined
+    : selectionOrigin?.id === selectedConversationID && originVisible ? selectionOrigin.section
+    : recentSelectionVisible ? "recent"
+    : sidebarWorkspaces.find(project => expandedSidebarSectionIDs.has(project.id)
+      && visibleWorkspaceThreadsByWorkspaceID[project.id]?.some(thread => thread.id === activeThreadID))?.id ?? "organization";
   const hoverFacts = useMemo<SidebarHoverFacts>(() => {
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const threadsByWorkspaceID: Record<string, ThreadSummary[]> = {};
@@ -1249,7 +1251,7 @@ export function AppSidebar({
       threadsByWorkspaceID[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread);
     }
     return {
-      workspaces: sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID),
+      workspaces: sidebarWorkspaces,
       threadsByWorkspaceID,
       sessionsByProjectID: projectIndex.sessionsByProjectID,
       activeThreadID,
@@ -1534,6 +1536,7 @@ export function AppSidebar({
               threads={folderThreads}
               projectSummaries={projectIndex.summaries}
               activeID={activeThreadID}
+              selectedID={selectionSection === "organization" ? activeThreadID : null}
               pendingThreadID={pendingThreadID}
               lastViewedTurnByThreadID={lastViewedTurnByThreadID}
               onSelect={onSelectThread}
@@ -1549,21 +1552,17 @@ export function AppSidebar({
   }
 
   function renderWorkspaceSection(project: DesktopProject, pinned: boolean): JSX.Element {
-    const isScratchPseudo = project.id === SCRATCH_PSEUDO_PROJECT_ID;
-    const sectionAriaLabel = isScratchPseudo
-      ? t("sidebar.workspace")
-      : t("sidebar.workspaceNamed", { name: project.name });
     return (
       <SortableSidebarSection
         key={project.id}
         id={project.id}
         className="project-section"
-        ariaLabel={sectionAriaLabel}
+        ariaLabel={t("sidebar.workspaceNamed", { name: project.name })}
         headerInfo={{
-          label: isScratchPseudo ? t("sidebar.conversations") : project.name,
-          iconKind: isScratchPseudo ? "conversation" : "project",
-          CollapsedIcon: isScratchPseudo ? MessageSquare : Folder,
-          ExpandedIcon: isScratchPseudo ? MessagesSquare : FolderOpen,
+          label: project.name,
+          iconKind: "project",
+          CollapsedIcon: Folder,
+          ExpandedIcon: FolderOpen,
         }}
         registerHeaderInfo={registerSectionHeaderInfo}
         sortIndicator={sidebarSortIndicator?.id === project.id
@@ -1574,20 +1573,18 @@ export function AppSidebar({
         <WorkspaceGroup
           project={project}
           pendingConversations={pendingConversations.filter((pending) => pending.context.kind === "project"
-            ? pending.context.project_id === project.id
-            : isScratchPseudo)}
-          activeSessionTabID={activeSessionTabID}
-          onSelectPendingConversation={onSelectPendingConversation}
-          activeID={activeWorkspaceID ?? selectedWorkspaceID}
+            && pending.context.project_id === project.id)}
+          activeSessionTabID={selectionSection === project.id ? activeSessionTabID : undefined}
+          onSelectPendingConversation={id => { setSelectionOrigin({ id, section: project.id }); onSelectPendingConversation?.(id); }}
+          activeID={conversationsActive && onFocusWorkspace ? activeWorkspaceID ?? selectedWorkspaceID : undefined}
           pendingWorkspaceID={pendingWorkspaceID}
           expandedSidebarSectionIDs={expandedSidebarSectionIDs}
           loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
           threadsByWorkspaceID={visibleWorkspaceThreadsByWorkspaceID}
           activeThreadID={activeThreadID}
+          selectedThreadID={selectionSection === project.id ? activeThreadID : null}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={sidebarScratchPseudoActive}
           onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
           onFocusWorkspace={onFocusWorkspace}
           onStartNewThread={onStartNewThreadInWorkspace}
@@ -1755,7 +1752,7 @@ export function AppSidebar({
           onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         >
-          <Tooltip asChild content={t("sidebar.searchConversations")}><button
+          <button
             className="icon-button conversation-search-trigger"
             type="button"
             aria-label={t("sidebar.searchConversations")}
@@ -1765,7 +1762,7 @@ export function AppSidebar({
             disabled={!hasRuntimeContext}
           >
             <Search className="icon-lg" />
-          </button></Tooltip>
+          </button>
         </SidebarBrand>
         {unreadViewOpen ? (
           <section
@@ -1844,7 +1841,7 @@ export function AppSidebar({
           <button
             className="nav-item"
             onClick={() => activateNative(onStartNewThread, true)}
-            disabled={!hasRuntimeContext}
+            disabled={!canStartNewThread}
           >
             <MessageSquarePlus className="icon-lg" />
             <span>{t("sidebar.newConversation")}</span>
@@ -1861,6 +1858,35 @@ export function AppSidebar({
             onDragEnd={handleSidebarDragEnd}
             onDragCancel={handleSidebarDragCancel}
           >
+            {showEmptyPinnedDropTarget || showEmptyFolderDropTarget ? (
+              <div className="sidebar-drag-targets">
+                <div className="sidebar-drag-targets-content">
+                  {showEmptyPinnedDropTarget ? (
+                    <SidebarDragTarget
+                      id={PINNED_APPEND_DROP_ID}
+                      group="pinned"
+                      label={t("sidebar.pinned")}
+                      active={folderDropTargetID === PINNED_SESSION_DROP_TARGET}
+                      containerProps={pinnedSessionDropProps(PINNED_APPEND_DROP_ID, "after")}
+                    />
+                  ) : null}
+                  {showEmptyFolderDropTarget ? (
+                    <SidebarDragTarget
+                      id="folders"
+                      group="folders"
+                      label={t(folderDragThread?.pinned ? "sidebar.unpin" : "sidebar.removeFromFolderDrop")}
+                      active={folderDropTargetID === FOLDER_REMOVE_DROP_TARGET}
+                      containerProps={{
+                        onDragEnter: dragSessionOverFolderRemoval,
+                        onDragOver: dragSessionOverFolderRemoval,
+                        onDragLeave: (event) => leaveSessionFolderTarget(event, FOLDER_REMOVE_DROP_TARGET),
+                        onDrop: dropSessionOutOfFolder,
+                      }}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             <SortableContext
               items={visibleFunctionalGroupOrder}
               strategy={verticalListSortingStrategy}
@@ -1900,6 +1926,7 @@ export function AppSidebar({
                         threads={projectRows}
                         projectSummaries={projectIndex.summaries}
                         activeID={activeThreadID}
+                        selectedID={selectionSection === "organization" ? activeThreadID : null}
                         pendingThreadID={pendingThreadID}
                         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                         onSelect={onSelectThread}
@@ -1930,25 +1957,22 @@ export function AppSidebar({
                   key={groupID}
                   id={groupID}
                   ariaLabel={t("sidebar.pinned")}
-                  headingClassName={!hasPinnedRows && folderDropTargetID === PINNED_SESSION_DROP_TARGET
-                    ? "drop-active"
-                    : ""}
                   headingProps={{
                     onDragEnter: (event) => dragSessionOverPinned(
                       event,
                       pinnedHeadingDropTargetID,
-                      hasPinnedRows ? "before" : "after",
+                      "before",
                     ),
                     onDragOver: (event) => dragSessionOverPinned(
                       event,
                       pinnedHeadingDropTargetID,
-                      hasPinnedRows ? "before" : "after",
+                      "before",
                     ),
                     onDragLeave: (event) => leavePinnedSessionTarget(event, pinnedHeadingDropTargetID),
                     onDrop: (event) => dropSessionIntoPinned(
                       event,
                       pinnedHeadingDropTargetID,
-                      hasPinnedRows ? "before" : "after",
+                      "before",
                     ),
                   }}
                   headingLabel={t("sidebar.pinned")}
@@ -1984,6 +2008,7 @@ export function AppSidebar({
                                 threads={[thread]}
                                 projectSummaries={projectIndex.summaries}
                                 activeID={activeThreadID}
+                                selectedID={selectionSection === "organization" ? activeThreadID : null}
                                 pendingThreadID={pendingThreadID}
                                 lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                                 onSelect={onSelectThread}
@@ -2019,7 +2044,6 @@ export function AppSidebar({
                     : undefined}
                   headingClassName={`sidebar-folder-heading${folderDragCanRemove ? " remove-drop-available" : ""}${folderDropTargetID === FOLDER_REMOVE_DROP_TARGET ? " drop-active" : ""}`}
                   headingProps={{
-                    "data-empty": visibleFolderSortableIDs.length === 0 || undefined,
                     "data-folder-remove-drop": folderDragCanRemove || undefined,
                     onDragEnter: dragSessionOverFolderRemoval,
                     onDragOver: dragSessionOverFolderRemoval,
@@ -2168,7 +2192,7 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
-            {recentConversations.length > 0 || draftConversations.length > 0 ? (
+            {recentConversations.length > 0 || draftEntries.length > 0 ? (
               <div className="sidebar-conversation-activity" {...conversationInteractionProps}>
                 <section
                   className="sidebar-functional-group"
@@ -2206,11 +2230,11 @@ export function AppSidebar({
                       />
                     </button>
                     <div className="sidebar-functional-heading-action">
-                      <Tooltip asChild content={t("sidebar.newConversation")}><button
+                      <button
                         className="sidebar-row-icon-button sidebar-recents-new-thread"
                         type="button"
                         aria-label={t("sidebar.newConversation")}
-                        disabled={!hasRuntimeContext}
+                        disabled={!canStartNewThread}
                         onClick={() => {
                           setRecentsCollapsed(false);
                           persistSidebarRecentsCollapsed(false);
@@ -2218,7 +2242,7 @@ export function AppSidebar({
                         }}
                       >
                         <SquarePen className="icon" aria-hidden="true" />
-                      </button></Tooltip>
+                      </button>
                     </div>
                   </div>
                   <SidebarCollapseBody
@@ -2226,27 +2250,31 @@ export function AppSidebar({
                     expanded={!recentsCollapsed}
                   >
                     <div className="sidebar-functional-group-body">
-                      {draftConversations.map(draft => (
-                        <div key={draft.id} data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${draft.id === activeSessionTabID ? " active" : ""}`}>
-                          {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
-                          <button
-                            className="thread-row-main"
-                            type="button"
-                            aria-current={draft.id === activeSessionTabID ? "page" : undefined}
-                            aria-busy={draft.pending || undefined}
-                            aria-label={draft.title}
-                            onClick={() => activateNative(() => onSelectPendingConversation?.(draft.id))}
-                          >
-                            <ThreadRowTitle title={draft.title} />
-                          </button>
+                      {draftEntries.map(({ tab: draft, closing }) => (
+                        <div key={draft.id} className="motion-height-reveal sidebar-draft-reveal" data-enter={(draft.entering && !presentedDraftIDs.current.has(draft.id)) || undefined} data-state={closing ? "closing" : undefined} aria-hidden={closing || undefined} inert={closing}>
+                          <div data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${selectionSection === "recent" && draft.id === activeSessionTabID ? " active" : ""}`}>
+                            {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
+                            <button
+                              className="thread-row-main"
+                              type="button"
+                              aria-current={!closing && selectionSection === "recent" && draft.id === activeSessionTabID ? "page" : undefined}
+                              aria-busy={draft.pending || undefined}
+                              aria-label={draft.title}
+                              onClick={closing ? undefined : () => { setSelectionOrigin({ id: draft.id, section: "recent" }); activateNative(() => onSelectPendingConversation?.(draft.id)); }}
+                            >
+                              <ThreadRowTitle title={draft.title} />
+                            </button>
+                          </div>
                         </div>
                       ))}
                       <OrganizationThreadList
                         threads={recentConversations}
+                        onReorder={reorderRecentConversations}
                         activeID={activeThreadID}
+                        selectedID={selectionSection === "recent" ? activeThreadID : null}
                         pendingThreadID={pendingThreadID}
                         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-                        onSelect={onSelectThread}
+                        onSelect={id => { onSelectThread(id); setSelectionOrigin({ id, section: "recent" }); }}
                         onTogglePinned={onTogglePinned}
                         onArchive={onArchiveThread}
                         onDelete={onDeleteThread}
@@ -2368,6 +2396,32 @@ export function AppSidebar({
       }}
       onPointerLeave={onPointerLeave}
     >{organizedSidebar}</aside>
+  );
+}
+
+function SidebarDragTarget({
+  id,
+  group,
+  label,
+  active,
+  containerProps,
+}: {
+  id: string;
+  group: "pinned" | "folders";
+  label: string;
+  active: boolean;
+  containerProps: HTMLAttributes<HTMLElement>;
+}): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <section ref={setNodeRef} className="sidebar-functional-group" data-functional-group-id={group}>
+      <div
+        {...containerProps}
+        className={`sidebar-functional-heading sidebar-drag-target${active || isOver ? " drop-active" : ""}`}
+      >
+        <span className="sidebar-functional-heading-label">{label}</span>
+      </div>
+    </section>
   );
 }
 

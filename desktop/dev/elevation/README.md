@@ -12,16 +12,18 @@ Focus rings must remain visible even when the theme disables elevation.
 
 ## Choosing a shadow
 
-Light recipes live in `src/renderer/styles/base.css`. Dark recipes in `theme.css`
-use a 0.5px inset highlight for small controls and a 1px inset highlight for
-other raised surfaces. Menus, dialogs and edge drawers also retain black ambient
-shadows to separate overlapping content. Shadows must not derive from text/ink
-colors or become an outer glow.
+Recipes live in `src/renderer/styles/base.css`, with shared geometry for both
+themes. Following [Beautiful Shadows](https://github.com/alexwidua/figma-beautiful-shadows),
+a soft overhead light produces a close contact shadow followed by wider, fainter
+layers. More elevated surfaces have a longer falloff, not a darker outer band.
+`theme.css` adjusts opacity and adds faint inset highlights for dark surfaces.
+Shadows must not derive from text/ink colors or become an outer glow.
 
 | Token | Use |
 | --- | --- |
 | `--shadow-soft` | Small controls |
-| `--shadow-composer` | Input frames with a faint ambient edge in light mode and an inset highlight in dark mode |
+| `--shadow-message` | Reading surfaces with minimal lift from the canvas |
+| `--shadow-composer` | Input frames with a faint contact shadow and soft falloff |
 | `--shadow-card` | Cards, tooltips, floating status controls |
 | `--shadow-pop` / `--menu-shadow` | Menus, popovers, dragged items |
 | `--shadow-modal` | Dialogs, command/search panels, immersive previews |

@@ -413,6 +413,87 @@ func TestPTCDirectOnlyPluginRouting(t *testing.T) {
 	}
 }
 
+func TestPTCGenerativeUIUsesDirectToolSurface(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for the plugin process")
+	}
+	root := t.TempDir()
+	kit, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetBoundary(tools.UnconfinedBoundary())
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	defer service.Close()
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	item := serviceTestPlugin("generative-ui", "plugin:generative-ui", "fixture-generation")
+	item.Root, err = filepath.Abs("../plugin/bundled/generative-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.Runtime = &pluginpkg.RuntimeSpec{Command: node, Args: []string{"runtime.mjs"}, Timeout: 5}
+	home, state := testWorkspaceState(t, root)
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, root, "workspace", home, state, map[string]bool{item.ID: true}, startPluginClient, nil, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	if err := activatePluginHost(context.Background(), host); err != nil {
+		t.Fatal(err)
+	}
+	executor := newPluginToolExecutor(kit, host, "thread", root)
+	name := ""
+	for _, definition := range executor.Definitions() {
+		if tool, ok := host.Tool(definition.Name); ok && tool.Registration.ID == "render_ui" {
+			name = definition.Name
+		}
+	}
+	if name == "" {
+		t.Fatal("render_ui was not exposed directly in PTC mode")
+	}
+	nested, err := kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range nested {
+		if definition.Name == name {
+			t.Fatal("render_ui unexpectedly exposed as a nested tool")
+		}
+	}
+	args := `{"spec":{"version":1,"title":"Example","fallback":"Example text","blocks":[{"id":"intro","type":"text","text":"Example text"}]}}`
+	ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "thread", ExecutionID: "turn"})
+	discover := func() toolresult.Result {
+		t.Helper()
+		code := `const found = await searchTools("generative render_ui"); const detail = await describeTool(` + strconv.Quote(name) + `); text({name: found.tools[0].name, direct: found.tools[0].direct_only, detailDirect: detail.direct_only, binding: typeof tools[detail.name]});`
+		bridge := nestedExecutorFunc(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+			return toolresult.Result{}, fmt.Errorf("discovery must not execute a tool")
+		})
+		arguments, _ := json.Marshal(map[string]string{"input": code})
+		result, err := executor.(agent.RichToolExecutor).ExecuteResult(toolctx.WithNestedExecutor(ctx, bridge), providers.ToolCall{ID: "discovery", Name: "run_code", Arguments: string(arguments)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	discovery := discover()
+	if discovery.IsError || !strings.Contains(discovery.TextProjection(), `"name":"`+name+`"`) || !strings.Contains(discovery.TextProjection(), `"direct":true`) || !strings.Contains(discovery.TextProjection(), `"detailDirect":true`) || !strings.Contains(discovery.TextProjection(), `"binding":"undefined"`) {
+		t.Fatalf("direct GenUI discovery failed: %+v", discovery)
+	}
+	result, err := executor.(agent.RichToolExecutor).ExecuteResult(ctx, providers.ToolCall{ID: "call", Name: name, Arguments: args})
+	if err != nil || result.IsError {
+		t.Fatalf("direct render_ui failed: %+v, %v", result, err)
+	}
+	if len(result.Content) != 2 || result.Content[1].MIMEType != "application/vnd.wuu.ui+json" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	kit.DisableTools(name)
+	if result := discover(); !result.IsError {
+		t.Fatalf("disabled tool remained discoverable: %+v", result)
+	}
+}
+
 func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
 	kit, err := tools.New(t.TempDir())
 	if err != nil {

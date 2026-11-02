@@ -13,9 +13,11 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -115,14 +117,13 @@ type Options struct {
 // Close must be called after all Serve calls return; it rejects an early close
 // instead of racing shared provider, plugin, and persistence resources.
 type Runtime struct {
-	mu             sync.Mutex
-	core           *runtime.Session
-	serviceRelease func()
-	userHost       *appserver.UserHost
-	bindings       *appserver.RuntimeBindings
-	serving        int
-	closed         bool
-	closeErr       error
+	mu       sync.Mutex
+	core     *runtime.Session
+	userHost *appserver.UserHost
+	bindings *appserver.RuntimeBindings
+	serving  int
+	closed   bool
+	closeErr error
 }
 
 // New builds the default Wuu host using the same composition path as the
@@ -207,6 +208,50 @@ func New(opts Options) (*Runtime, error) {
 	}
 
 	bindings := appserver.NewRuntimeBindings()
+	bindings.SetPersonalAccountsFactory(func(input runtime.NativeProviderContext) (personalhost.Options, error) {
+		personalOptions := personalhost.Options{}
+		if input.UserBinding.Domain() != "personal" || host.Kind != runtime.HostLocal || opts.SafeMode {
+			personalOptions.ConnectorsUnavailableCode = "local_personal_host_required"
+			return personalOptions, nil
+		}
+		credentials := credentialstore.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+			result, err := input.Registry.Call(ctx, appserver.PersonalAccountsModule, pluginhost.ServiceCallParams{Service: credentialstore.ServiceName, Method: method, Params: raw})
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		})
+		stateHome, pathErr := statepath.Home(homeDir)
+		if pathErr != nil {
+			return personalOptions, pathErr
+		}
+		connectorOptions := opts.PersonalConnectors
+		connectorOptions.StateDir = filepath.Join(input.UserBinding.State(stateHome), "connectors")
+		if connectorOptions.Store == nil {
+			connectorOptions.Store = credentials
+		}
+		personalOptions.Connectors = personalconnectors.New(connectorOptions)
+		personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
+		if opts.PersonalCalendar.ClientID != "" {
+			calendarOptions := opts.PersonalCalendar
+			calendarOptions.StateDir = filepath.Join(input.UserBinding.State(stateHome), "calendar")
+			if calendarOptions.Store == nil {
+				calendarOptions.Store = credentials
+			}
+			broker, calendarErr := personalcalendar.NewDesktop(calendarOptions)
+			if calendarErr != nil {
+				personalOptions.UnavailableCode = "secure_store_unavailable"
+				var failure *personalcalendar.Failure
+				if errors.As(calendarErr, &failure) {
+					personalOptions.UnavailableCode = failure.Code
+				}
+			} else {
+				personalOptions.Calendar = broker
+				personalOptions.OpenAuthorizationURL = opts.OpenPersonalCalendarAuthorizationURL
+			}
+		}
+		return personalOptions, nil
+	})
 	core, err := runtime.NewSession(runtime.Options{
 		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier, UserHostIsolationMode: opts.UserHostIsolationMode,
 		NativeProviders:          bindings.NativeProviders(),
@@ -230,76 +275,11 @@ func New(opts Options) (*Runtime, error) {
 	}
 	result := &Runtime{core: core, bindings: bindings}
 	if binding.IsUser() {
-		personalOptions := personalhost.Options{}
-		var selected *runtime.StateServices
-		if host.Kind == runtime.HostLocal && !opts.SafeMode {
-			selected, result.serviceRelease, err = core.RetainStateServices()
-			if err != nil {
-				_, _ = core.Cleanup()
-				return nil, err
-			}
-		}
-		initialized := false
-		defer func() {
-			if !initialized && result.serviceRelease != nil {
-				result.serviceRelease()
-			}
-		}()
-		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode {
-			connectorOptions := opts.PersonalConnectors
-			connectorHome, pathErr := statepath.Home(homeDir)
-			if pathErr != nil {
-				_, _ = core.Cleanup()
-				return nil, pathErr
-			}
-			connectorOptions.StateDir = filepath.Join(binding.State(connectorHome), "connectors")
-			if connectorOptions.Store == nil {
-				connectorOptions.Store = selected.Credentials
-			}
-			personalOptions.Connectors = personalconnectors.New(connectorOptions)
-			personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
-		} else {
-			personalOptions.ConnectorsUnavailableCode = "local_personal_host_required"
-		}
-
-		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode && opts.PersonalCalendar.ClientID != "" {
-			stateHome, pathErr := statepath.Home(homeDir)
-			if pathErr != nil {
-				if personalOptions.Connectors != nil {
-					_ = personalOptions.Connectors.Close()
-				}
-				_, _ = core.Cleanup()
-				return nil, pathErr
-			}
-			calendarOptions := opts.PersonalCalendar
-			calendarOptions.StateDir = filepath.Join(binding.State(stateHome), "calendar")
-			if calendarOptions.Store == nil {
-				calendarOptions.Store = selected.Credentials
-			}
-			broker, calendarErr := personalcalendar.NewDesktop(calendarOptions)
-			if calendarErr != nil {
-				personalOptions.UnavailableCode = "secure_store_unavailable"
-				var failure *personalcalendar.Failure
-				if errors.As(calendarErr, &failure) {
-					personalOptions.UnavailableCode = failure.Code
-				}
-			} else {
-				personalOptions.Calendar = broker
-				personalOptions.OpenAuthorizationURL = opts.OpenPersonalCalendarAuthorizationURL
-			}
-		}
-		result.userHost, err = appserver.NewUserHost(core, personalOptions, appserver.WithRuntimeBindings(bindings))
+		result.userHost, err = appserver.NewUserHost(core, personalhost.Options{}, appserver.WithRuntimeBindings(bindings))
 		if err != nil {
-			if personalOptions.Calendar != nil {
-				_ = personalOptions.Calendar.Close()
-			}
-			if personalOptions.Connectors != nil {
-				_ = personalOptions.Connectors.Close()
-			}
 			_, _ = core.Cleanup()
 			return nil, err
 		}
-		initialized = true
 	}
 	return result, nil
 }
@@ -380,6 +360,9 @@ func (r *Runtime) serve(ctx context.Context, in io.Reader, out io.Writer, creden
 		registrar = registrars[0]
 	}
 	if r.userHost != nil {
+		if trustedLocal {
+			return r.userHost.ServeTrustedLocal(ctx, in, out)
+		}
 		return r.userHost.Serve(ctx, in, out, registrar)
 	}
 	options := []appserver.ServerOption{appserver.WithRuntimeBindings(r.bindings)}
@@ -451,10 +434,7 @@ func (r *Runtime) Close() error {
 		r.closeErr = r.userHost.Close()
 		r.userHost = nil
 	}
-	if r.serviceRelease != nil {
-		r.serviceRelease()
-		r.serviceRelease = nil
-	}
+
 	if r.core != nil {
 		_, coreErr := r.core.Cleanup()
 		r.closeErr = errors.Join(r.closeErr, coreErr)

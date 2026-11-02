@@ -303,13 +303,14 @@ registry 的实际调用者，绝不接受请求 JSON 指定。重复同一声�
 使用 `sessionDomainProvider(handlers)` 声明已实现的方法，并分发类型化参数数组和结果数组；`sessionDomain(host).call(method, args)` 是绑定消费者。保留导出记录的字段名，包括明确规定的 Go 大小写。日志句柄属于认证调用者及提供者 generation。遇到 `session_outcome_unknown`，应先检查持久结果再决定是否重试，不能把它当作写入失败的证明。OS 锁和执行身份仍由宿主负责，原子成员变更与领域决策由提供者负责。
 
 新增回执方法（`AcceptClientInput`、`ReadClientInput`、`ChangeClientInput`、
-`AppendAcceptedClientHistoryRecord`、`SettleClientInputExecution` 及作用域内的
-列表/恢复方法）使用同一个所选 `session.domain` 权威。
+`AppendAcceptedClientHistoryRecord`、`SettleClientInputExecution`、
+`MarkClientInputsRead` 及作用域内的列表和恢复方法）使用所选 `session.domain` 权威。
 `SessionDomainAcceptedClientInput` 保留 Go 字段大小写及 base64 字节片段，区分
-`null` 与空字节。回执接收、执行状态与持久历史准入是不同事实，都不表示模型已看到
-或读过消息。宿主从不可变绑定生成 `SessionDomainClientInputScope`；恢复只核对
-回执状态，不重放工具或外部操作。不支持的方法明确失败，消费者不能重新打开
-原生回执存储。
+`null` 与空字节。接收、执行和历史准入都不表示消息已读。输入的客户端 ID 和历史序号
+出现在 Agent 组装的模型请求上下文时，宿主调用 `MarkClientInputsRead`。提供者记录首次
+`read_at`，并在重试和重启后保留。该时间不证明模型服务已收到请求或生成回复。
+宿主从不可变绑定生成 `SessionDomainClientInputScope`；恢复只核对回执状态，不重放
+工具或外部操作。提供者不支持已读标记时，消息仍显示为已送达，模型请求继续执行。
 
 `agent.tools@1` 替换工具注册表和执行流程。`list` 提供定义、发现目录和工具面事实，`resolve` 提供可用性与元数据，`execute` 执行所选实现；`freeze`、`unfreeze`、`prepare` 和 `finalize` 保持回合内的工具面与结果行为。贡献工具是另一种操作：贡献内容进入所选注册表的策略。原生提供者仅在被选中时初始化 Toolkit；外部选择不能隐式初始化原生 Toolkit 或合并其目录。通过 `toolService(host)`、`TOOL_SERVICE_DESCRIPTOR` 及认证宿主网关实现工具与 OS 操作。
 
@@ -513,7 +514,11 @@ target_subject_id, key_prefix, scope: "user" }`。准入宿主必须授权两个
 精确意图回执防止重试覆盖目标后续更新或删除。不确定结果需先核对，或显式重试
 完全相同的转移；SDK 不自动重试，也不通过读写序列模拟迁移。不支持的提供者
 必须返回明确的方法错误，不能回退到原生存储。完整的
-`PLUGIN_SETTINGS_STORE_DESCRIPTOR` 包含该方法；无法实现的提供者不得声明它。
+`PLUGIN_SETTINGS_STORE_DESCRIPTOR` 包含该方法以及准备阶段的只读
+`check-transfer-state`，SDK 通过 `checkStateTransfer(transfer)` 调用。预检使用相同的
+所有权、冲突和配额规则，不写数据、回执或源前缀隔离。正式迁移会再次检查，
+预检成功不代表预留了所有权。无法实现某方法的提供者不得声明它；依赖迁移的
+候选版本要求这两个方法，所选提供者无法预检时会明确失败。
 
 配置和设置 revision 都是不透明字符串，与文档存储的数字 revision 不同。这两个服务不提供文档事务回执协议。只有确定的 CAS 冲突可以在重读后重试；不可用或已取消的写入需要先核对结果。不要记录凭据字节、原始配置或包含秘密的有效配置。
 
@@ -725,6 +730,16 @@ Wuu 循环及外部 CLI 适配器；`wuu.engine-execution` 消费所选服务。
 `host.engine.session` 操作承载流事件、审批、用户输入及持久化原生引用；`run_loop`
 委托给所选的完整循环驱动，而非固定内置算法。宿主管理的继续执行、规范历史及转向
 行为由能力声明决定，不按引擎名称分支。
+
+可选的 `EngineBinding.additional_directories` 列出当前运行时可访问的已登记项目目录。
+它不修改 `root_dir`、原生会话恢复引用或权限模式。默认工具提供者向 Wuu 循环和外部
+engine 的 MCP 桥暴露 `list_workspaces`；外部 engine 的会话指令也包含项目名称和路径。
+Agent 根据用户请求找到项目，读取该项目的指令，再使用明确的命令工作目录和绝对文件路径。
+同一会话因此可以跨项目工作，不必迁移历史或改变侧栏选中位置。Codex 适配器将这些目录
+加入 `workspaceWrite` 回合，Claude 适配器传入 `--add-dir`；只读模式仍然只读。
+其他 engine 提供者需要遵守自己的原生访问规则，不支持的访问应明确报错。
+用户空间宿主和隔离执行环境不继承本地项目列表。不存在的目录会被省略；运行时作用域
+重新准备时读取登记变更。
 
 关闭绑定会话会先取消并排空活动执行，再释放提供方代际。关闭调用者取消只停止等待，
 不会中断清理；再次关闭等待同一次清理完成。原生 warm scope 保留跨回合复用的 CLI

@@ -44,7 +44,7 @@ func (s *pluginHostServices) readSettingsCandidate(ctx context.Context) (map[str
 			document, ok := documents[scope]
 			if !ok {
 				var err error
-				document, err = s.settingsClient.Read(ctx, s.subjectID, scope)
+				document, err = s.settingsClient.Read(ctx, s.storageSubject(), scope)
 				if err != nil {
 					return nil, nil, err
 				}

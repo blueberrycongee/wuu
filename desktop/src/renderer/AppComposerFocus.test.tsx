@@ -1,3 +1,4 @@
+import { ToastViewport, clearToasts } from "./Toast";
 import * as composerMessages from "./ComposerMessages";
 import * as React from "react";
 import { act, useEffect, useState, type ComponentProps } from "react";
@@ -47,6 +48,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
             props.mainConversation ? variant : undefined
           }
         >
+          {props.statusAccessory}
           {props.continuation && <button aria-label="continue-probe" onClick={() => props.continuation?.continue()}>continue</button>}
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           <button aria-label="select-wuu-engine-probe" onClick={() => props.onSelectEngine?.("wuu")}>Wuu</button>
@@ -110,12 +112,20 @@ import { activate as activateDefaultShell } from "./plugins/DefaultApplicationSh
 import { DesktopPluginRuntime } from "./plugins/DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
 
-const scratchCwd = "/tmp/wuu-composer-focus/scratch";
+const conversationCwd = "/tmp/wuu-composer-focus/project";
 const workspaceCwd = "/tmp/wuu-composer-focus/project";
+const sourceCwd = "/tmp/wuu-composer-focus/source";
 const project: DesktopProject = {
   id: "project-focus",
   name: "Focus Project",
   path: workspaceCwd,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+const sourceProject: DesktopProject = {
+  id: "project-source",
+  name: "Source Project",
+  path: sourceCwd,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
@@ -165,8 +175,9 @@ function persistedThread(): Thread {
     preview: "focus continuity",
     model_provider: "fake",
     model: "fake-model",
-    cwd: scratchCwd,
-    workspace_kind: "scratch",
+    cwd: conversationCwd,
+    workspace_id: project.id,
+    workspace_kind: "project",
     status: "idle",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
@@ -194,8 +205,9 @@ function newThread(): Thread {
     preview: "new query",
     model_provider: "fake",
     model: "fake-model",
-    cwd: scratchCwd,
-    workspace_kind: "scratch",
+    cwd: conversationCwd,
+    workspace_id: project.id,
+    workspace_kind: "project",
     status: "idle",
     created_at: "2026-01-03T00:00:00Z",
     updated_at: "2026-01-03T00:00:00Z",
@@ -240,19 +252,21 @@ function installWuuApi(
     projectAgentEnabled?: boolean;
     deferWorkspaceSelection?: boolean;
     rejectWorkspaceSelection?: boolean;
-    rejectNoProjectSelection?: boolean;
+    startInOtherProject?: boolean;
     deferThreadStart?: boolean;
     rejectThreadStart?: boolean;
     rejectTurnStart?: boolean;
   } = {},
 ): void {
-  let activeContext: RuntimeContext = { kind: "no_project", cwd: scratchCwd };
+  let activeContext: RuntimeContext = options.startInOtherProject
+    ? { kind: "project", project_id: sourceProject.id, cwd: sourceCwd }
+    : { kind: "project", project_id: project.id, cwd: conversationCwd };
   const thread = persistedThread();
   const api = {
     listProjects: vi.fn().mockImplementation(() =>
-      Promise.resolve({ projects: [project], active_context: activeContext }),
+      Promise.resolve({ projects: [project, sourceProject], active_context: activeContext }),
     ),
-    selectProject: vi.fn().mockImplementation(async () => {
+    selectProject: vi.fn().mockImplementation(async (projectId: string) => {
       if (options.deferWorkspaceSelection) {
         await new Promise<void>((resolve) => {
           releaseWorkspaceSelection = resolve;
@@ -261,19 +275,10 @@ function installWuuApi(
       if (options.rejectWorkspaceSelection) {
         throw new Error("project selection failed");
       }
-      activeContext = {
-        kind: "project",
-        project_id: project.id,
-        cwd: workspaceCwd,
-      };
-      return { projects: [project], active_context: activeContext };
-    }),
-    selectNoProject: vi.fn().mockImplementation(() => {
-      if (options.rejectNoProjectSelection) {
-        return Promise.reject(new Error("no-project selection failed"));
-      }
-      activeContext = { kind: "no_project", cwd: scratchCwd };
-      return Promise.resolve({ projects: [project], active_context: activeContext });
+      activeContext = projectId === sourceProject.id
+        ? { kind: "project", project_id: sourceProject.id, cwd: sourceCwd }
+        : { kind: "project", project_id: project.id, cwd: workspaceCwd };
+      return { projects: [project, sourceProject], active_context: activeContext };
     }),
     initialize: vi.fn().mockImplementation(() =>
       Promise.resolve({
@@ -281,10 +286,13 @@ function installWuuApi(
         features: { project_agent: options.projectAgentEnabled === true },
       }),
     ),
+    listEngines: vi.fn().mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
+    getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
+    listAllThreads: vi.fn().mockResolvedValue({ threads: [] }),
     listThreads: vi.fn().mockImplementation(() =>
       Promise.resolve({
         threads:
-          options.withThread && activeContext.kind === "no_project" ? [thread] : [],
+          options.withThread && activeContext.kind === "project" ? [thread] : [],
       }),
     ),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
@@ -357,7 +365,7 @@ async function renderApp(
     projectAgentEnabled?: boolean;
     deferWorkspaceSelection?: boolean;
     rejectWorkspaceSelection?: boolean;
-    rejectNoProjectSelection?: boolean;
+    startInOtherProject?: boolean;
     deferThreadStart?: boolean;
     rejectThreadStart?: boolean;
     rejectTurnStart?: boolean;
@@ -366,7 +374,7 @@ async function renderApp(
   installWuuApi({ withThread, ...options });
   await act(async () => {
     root = createRoot(container);
-    root.render(await createDefaultApplicationTestView());
+    root.render(<>{await createDefaultApplicationTestView()}<ToastViewport /></>);
   });
   await flushAsync();
   if (withThread) {
@@ -489,7 +497,7 @@ describe("main composer focus continuity", () => {
     window.sessionStorage.clear();
   });
 
-  afterEach(() => {
+  afterEach(() => { act(() => clearToasts());
     act(() => root?.unmount());
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWindowWidth });
     root = null;
@@ -497,6 +505,47 @@ describe("main composer focus continuity", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.restoreAllMocks();
+  });
+
+  it("retains editable split input focus across pane activation and public focus requests", async () => {
+    await renderApp(true);
+    const controller = applicationState.getDesktopApplication();
+    const related = newThread();
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread: related });
+    await act(async () => controller.invoke("conversation.open-split", { threadId: related.id }));
+    await flushAsync();
+    const inputFor = (id: string) => container.querySelector<HTMLTextAreaElement>(
+      `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`,
+    )!;
+    const primary = inputFor(persistedThread().id);
+    const secondary = inputFor(related.id);
+    expect(primary).not.toBeNull();
+    expect(secondary).not.toBeNull();
+    for (const [pane, input, id] of [
+      ["secondary", secondary, related.id], ["primary", primary, persistedThread().id],
+    ] as const) {
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      });
+      await flushAsync();
+      expect(controller.getSnapshot().conversationWorkspace.activePane).toBe(pane);
+      expect(inputFor(id)).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(input.disabled).toBe(false);
+      expect(input.readOnly).toBe(false);
+      expect(input.closest("[inert], [hidden]")).toBeNull();
+      expect(document.activeElement).toBe(input);
+      const trigger = document.createElement("button");
+      container.append(trigger);
+      trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", {
+        tabId: controller.getSnapshot().tabs.activeTabId,
+      }));
+      await flushAsync();
+      expect(document.activeElement).toBe(input);
+      trigger.remove();
+    }
   });
 
   it("rebinds global focus, settings and resize listeners without replacing the shell", async () => {
@@ -688,7 +737,7 @@ describe("main composer focus continuity", () => {
       await enterCommand(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer] textarea')!, "preserve this permission");
       expect.soft(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
         engine: "codex", model: "engine-model", permission_mode: mode,
-      }), { kind: "no_project", cwd: scratchCwd });
+      }), { kind: "project", project_id: project.id, cwd: conversationCwd });
       expect.soft(vi.mocked(window.wuu.startTurn).mock.calls[0]?.[4]).toBe(mode);
       // Entering a new draft after a real thread still uses the existing default.
       await click("button.session-tab-new");
@@ -915,7 +964,7 @@ describe("main composer focus continuity", () => {
   });
 
   it("waits for the destination dock before focusing across projects", async () => {
-    await renderApp(false, { deferWorkspaceSelection: true });
+    await renderApp(false, { startInOtherProject: true, deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建对话"]',
     );
@@ -939,7 +988,7 @@ describe("main composer focus continuity", () => {
     window.wuu.listEngines = vi.fn().mockRejectedValue(new Error("engine discovery unavailable"));
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(<>{await createDefaultApplicationTestView()}<ToastViewport /></>);
     });
     await flushAsync();
     expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("true");
@@ -951,7 +1000,34 @@ describe("main composer focus continuity", () => {
     await enterCommand(mainComposer("dock"), "first query");
     expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
       engine: "wuu", provider: "fake", model: "fake-model",
-    }), { kind: "no_project", cwd: scratchCwd });
+    }), { kind: "project", project_id: project.id, cwd: conversationCwd });
+  });
+
+  it("focuses a replacement composer through its public slot contract without default DOM", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+    await host.activateGeneration({ pluginId: "shell", generation: "fixture", register: activateDefaultShell });
+    await host.activateGeneration({ pluginId: "alternate", generation: "fixture", register: api => {
+      api.registerUIContribution({ id: "composer", target: "wuu.default-shell/application.composer", render: ({ context }) => {
+        const ref = React.useRef<HTMLInputElement>(null);
+        const register = context.registerFocusTarget as undefined | ((target: { focus(options?: FocusOptions): boolean; contains(element: Element): boolean }) => () => void);
+        React.useLayoutEffect(() => register?.({ focus: options => { ref.current?.focus(options); return !!ref.current; }, contains: element => ref.current === element }), [register]);
+        return <input ref={ref} aria-label="Alternate composer" />;
+      } });
+    } });
+    try {
+      await act(async () => { root = createRoot(container); root.render(<ApplicationShellOutlet host={host}
+        binding={{ pluginId: "shell", generation: "fixture", id: "ui.shell" }}
+        surfaceBindings={{ ...defaultSurfaceBindings, "ui.composer": { pluginId: "alternate", generation: "fixture", id: "composer" } }} />); });
+      await flushAsync();
+      const trigger = document.createElement("button"); container.append(trigger); trigger.focus();
+      await act(async () => controller.invoke("navigation.focus-composer", { tabId: controller.getSnapshot().tabs.activeTabId }));
+      await flushAsync();
+      expect(document.activeElement).toBe(container.querySelector('[aria-label="Alternate composer"]'));
+    } finally { await act(async () => root?.unmount()); root = null; for (const id of ["alternate", "shell", ...Object.values(defaultSurfaceBindings).map(binding => binding.pluginId)]) host.unload(id); }
   });
 
   it("honors a public composer focus request for the current draft", async () => {
@@ -966,7 +1042,7 @@ describe("main composer focus continuity", () => {
 
   it("keeps the new workspace sendable when an older engine settings save finishes", async () => {
     await import("./SettingsView");
-    installWuuApi();
+    installWuuApi({ startInOtherProject: true });
     window.wuu.getBuildInfo = vi.fn().mockResolvedValue({});
     window.wuu.listMCPServers = vi.fn().mockResolvedValue({ servers: [] });
     const inventory: EngineListResult = {
@@ -986,7 +1062,7 @@ describe("main composer focus continuity", () => {
     }));
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(<>{await createDefaultApplicationTestView()}<ToastViewport /></>);
     });
     await flushAsync();
 
@@ -1018,7 +1094,7 @@ describe("main composer focus continuity", () => {
   });
 
   it("does not focus the old dock when project selection fails", async () => {
-    await renderApp(false, { rejectWorkspaceSelection: true });
+    await renderApp(false, { startInOtherProject: true, rejectWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建对话"]',
     );
@@ -1031,22 +1107,8 @@ describe("main composer focus continuity", () => {
     expect(document.activeElement).toBe(button);
   });
 
-  it("does not focus the old dock when no-project selection fails", async () => {
-    await renderApp(false, { rejectNoProjectSelection: true });
-    const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 对话 中新建对话"]',
-    );
-    if (!button) throw new Error("scratch new-conversation button not rendered");
-    button.focus();
-
-    await act(async () => button.click());
-    await flushAsync();
-
-    expect(document.activeElement).toBe(button);
-  });
-
   it("does not steal focus changed during an asynchronous project switch", async () => {
-    await renderApp(false, { deferWorkspaceSelection: true });
+    await renderApp(false, { startInOtherProject: true, deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建对话"]',
     );
@@ -1068,7 +1130,7 @@ describe("main composer focus continuity", () => {
   });
 
   it("does not steal focus after a non-focusable user interaction", async () => {
-    await renderApp(false, { deferWorkspaceSelection: true });
+    await renderApp(false, { startInOtherProject: true, deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建对话"]',
     );
@@ -1099,11 +1161,11 @@ describe("main composer focus continuity", () => {
 
     await waitForSideComposerFocus();
     const updateSide = async (enabled: boolean) => {
-      const inventory = initialized(scratchCwd).extension_inventory!;
+      const inventory = initialized(conversationCwd).extension_inventory!;
       inventory[0].enabled = enabled;
       inventory[0].runtime_state = enabled ? "active" : "inactive";
       await act(async () => {
-        for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+        for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: conversationCwd,
           message: { method: "plugin/inventory/changed", params: { epoch: enabled ? 3 : 2, extension_inventory: inventory, skills: [] } } });
       });
       await flushAsync();
@@ -1167,7 +1229,7 @@ describe("main composer focus continuity", () => {
       speed: "",
       permission_mode: "standard",
       approve_for_me: false,
-    }, { kind: "no_project", cwd: scratchCwd });
+    }, { kind: "project", project_id: project.id, cwd: conversationCwd });
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
 
@@ -1219,7 +1281,7 @@ describe("main composer focus continuity", () => {
     await enterCommand(mainComposer("dock"), "third");
     expect(window.wuu.queueTurn).toHaveBeenCalledTimes(2);
     await act(async () => {
-      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: conversationCwd,
         message: { method: "turn/started", params: { thread_id: newThread().id,
           turn: { id: "accepted-second", status: "in_progress", items_view: "full", items: [
             { id: "second-user", type: "user_message", source_id: secondID, text: "second" },
@@ -1252,7 +1314,7 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(1);
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();
     await act(async () => {
-      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: conversationCwd,
         message: { method: "turn/completed", params: { thread_id: newThread().id,
           turn: { id: "late-first", status: "interrupted", items_view: "full", items: [] } } } });
     });
@@ -1265,7 +1327,7 @@ describe("main composer focus continuity", () => {
     ]);
     expect(mainComposer("dock").value).toBe("third after stop");
     await act(async () => {
-      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: conversationCwd,
         message: { method: "turn/held", params: { thread_id: newThread().id,
           messages: [{ id: vi.mocked(window.wuu.queueTurn).mock.calls[0][3], origin: "queue", prompt: "second" }] } } });
     });
@@ -1302,9 +1364,9 @@ describe("main composer focus continuity", () => {
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
     expect(mainComposer("dock").value).toBe(cleared ? "first retained" : "second retained");
-    const notices = document.querySelectorAll('[role="alert"][data-wuu-component="notice"]');
+    const notices = document.querySelectorAll(cleared ? '[role="alert"][data-wuu-component="notice"]' : '[data-wuu-component="draft-recovery"]');
     expect(notices).toHaveLength(1);
-    const actions = [...notices[0].querySelectorAll<HTMLButtonElement>(".archive-tip-action")];
+    const actions = [...notices[0].querySelectorAll<HTMLButtonElement>(cleared ? ".archive-tip-action" : "button")];
     expect(actions).toHaveLength(1);
     const recovery = actions.find(button => button.textContent?.trim() === translateCurrent("composer.openFailedDraft"));
     const retry = actions.find(button => button.textContent?.trim() === translateCurrent("appState.retryAction"));
@@ -1367,7 +1429,7 @@ describe("main composer focus continuity", () => {
     expect(mainComposer("dock").value).toBe(newerDraft || "query that fails before thread start");
     expect(container.querySelector(".turn-process-title")).toBeNull();
     if (newerDraft) {
-      const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+      const recovery = document.querySelector<HTMLButtonElement>('[data-wuu-component="draft-recovery"] button');
       expect(recovery).not.toBeNull();
       await act(async () => { recovery!.click(); });
       expect(mainComposer("dock").value).toBe("query that fails before thread start");
@@ -1417,7 +1479,7 @@ describe("main composer focus continuity", () => {
     window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
     await act(async () => {
       for (const handler of serverEventHandlers) handler({
-        kind: "notification", workdir: scratchCwd,
+        kind: "notification", workdir: conversationCwd,
         message: { method: "turn/held", params: { thread_id: "thread-focus", messages: [{ id: "held-skills", origin: "queue", prompt: "Recover queue after Skills" }] } },
       });
     });

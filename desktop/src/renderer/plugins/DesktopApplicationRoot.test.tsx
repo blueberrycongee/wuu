@@ -2,21 +2,37 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import type { ProjectRuntimeIssue } from "../../shared/protocol";
 
 const fixture = vi.hoisted(() => ({ current: true, pending: false, failure: undefined as string | undefined, revision: 1,
   initialized: { application_surfaces: {}, extension_inventory: [] }, notice: vi.fn(), dismiss: vi.fn(), settle: vi.fn() }));
 vi.mock("./DesktopBootstrap", () => ({ desktopBootstrap: { subscribe: () => () => {}, getSnapshot: () => snapshot, start: () => () => {}, settleRestoration: fixture.settle } }));
-const snapshot = { initialized: fixture.initialized, connectionGeneration: 0 };
+const snapshot = { initialized: fixture.initialized, connectionGeneration: 0, startupWorkspaceIssue: undefined as ProjectRuntimeIssue | undefined };
 vi.mock("./DesktopPluginRuntime", () => ({ useDesktopPluginRuntime: () => fixture.pending,
   desktopPluginHost: { subscribe: () => () => {}, getActivationReportFailure: () => undefined,
     selectApplicationBinding: async () => {}, applicationProviders: { subscribe: () => () => {}, getRevision: () => fixture.revision,
       getBindingRevision: () => fixture.revision, get current() { return fixture.current ? {} : undefined; }, get failure() { return fixture.failure; } } } }));
 vi.mock("./ApplicationShell", () => ({ ApplicationShellOutlet: () => <div>Working application</div> }));
 vi.mock("../Toast", () => ({ showErrorToast: fixture.notice, dismissToast: fixture.dismiss }));
-vi.mock("../i18n", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
+vi.mock("../i18n", () => ({ useI18n: () => ({ t: (key: string, values?: { name?: string }) => values ? `${key} ${values.name}` : key }) }));
 vi.mock("../LoadingViews", () => ({ RuntimeLoading: ({ status, onRecovery, onRetry }: {status:string; onRecovery?: () => void; onRetry?: () => void}) => <div>{status}{onRecovery && <button onClick={onRecovery} aria-label="recovery" />}{onRetry && <button onClick={onRetry} aria-label="retry" />}</div>, ViewSwitchLoading: () => <div data-switch="true" /> }));
 import { DesktopApplicationRoot } from "./DesktopApplicationRoot";
-afterEach(() => { fixture.current = true; fixture.pending = false; fixture.failure = undefined; fixture.notice.mockReset(); fixture.dismiss.mockReset(); fixture.settle.mockReset(); });
+afterEach(() => { fixture.current = true; fixture.pending = false; fixture.failure = undefined; snapshot.startupWorkspaceIssue = undefined; fixture.notice.mockReset(); fixture.dismiss.mockReset(); fixture.settle.mockReset(); });
+it("notifies about the unavailable workspace after the application becomes usable", async () => {
+  snapshot.startupWorkspaceIssue = { code: "active_project_unavailable", project_id: "offline", cwd: "/offline", message: "Workspace unavailable: /offline" };
+  fixture.pending = true;
+  const container = document.createElement("div"), root = createRoot(container);
+  try {
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(fixture.notice).not.toHaveBeenCalled();
+    fixture.pending = false;
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(container.textContent).toBe("Working application");
+    expect(fixture.notice).toHaveBeenCalledWith(expect.stringContaining("offline"), "", "workspace-startup-unavailable");
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(fixture.notice).toHaveBeenCalledTimes(1);
+  } finally { await act(async () => root.unmount()); }
+});
 it("offers explicit recovery without an unbounded window-switch animation when no retained frame is available", async () => {
   const container = document.createElement("div"); const root = createRoot(container);
   const render = async () => { fixture.revision++; await act(async () => root.render(<DesktopApplicationRoot />)); };

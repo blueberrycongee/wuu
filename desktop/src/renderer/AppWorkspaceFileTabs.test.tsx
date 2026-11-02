@@ -111,6 +111,8 @@ function completedThread(): Thread {
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
+    workspace_id: "project-artifact",
+    workspace_kind: "project",
     status: "idle",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -177,12 +179,15 @@ function installWuuApi(): void {
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
         },
+        {
+          id: "project-artifact",
+          name: "Artifact project",
+          path: workspace,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
       ],
-      active_context: { kind: "no_project", cwd: workspace },
-    }),
-    selectNoProject: vi.fn().mockResolvedValue({
-      projects: [],
-      active_context: { kind: "no_project", cwd: workspace },
+      active_context: { kind: "project", project_id: "project-artifact", cwd: workspace },
     }),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads: [thread] }),
@@ -644,7 +649,7 @@ describe("workspace file tabs", () => {
 
   it("restores file selection attachments after first turn failure with untouched draft", async () => {
     await openSelectionDocument();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 Artifact project 中新建对话"]')!.click());
     await flushAsync();
     vi.mocked(window.wuu.startThread).mockResolvedValueOnce({ thread: { ...completedThread(), id: "thread-review-new", turns: [] } });
     startTurnMock.mockRejectedValueOnce(new Error("offline"));
@@ -661,7 +666,7 @@ describe("workspace file tabs", () => {
 
   it.each(["thread", "turn"] as const)("preserves file comments after first %s failure without replacing a newer draft", async (failure) => {
     await openSelectionDocument();
-    const newConversation = container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]');
+    const newConversation = container.querySelector<HTMLButtonElement>('button[aria-label="在 Artifact project 中新建对话"]');
     expect(newConversation).not.toBeNull();
     await act(async () => newConversation!.click());
     await flushAsync();
@@ -690,7 +695,7 @@ describe("workspace file tabs", () => {
       .toBe("Next question");
     expect(selectionActions!.comments).toEqual([original, next]);
     if (failure === "thread") {
-      const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+      const recovery = document.querySelector<HTMLButtonElement>('[data-wuu-component="draft-recovery"] button');
       expect(recovery).not.toBeNull();
       await act(async () => recovery!.click());
       expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
@@ -796,7 +801,7 @@ describe("workspace file tabs", () => {
 
   it("keeps unrelated comments under their new owner when a first inline edit fails", async () => {
     await openSelectionDocument();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 Artifact project 中新建对话"]')!.click());
     await flushAsync();
     await typeMainPrompt("Keep this draft");
     act(() => selectionActions!.addComment(selectionSource, "Keep this comment"));
@@ -816,7 +821,7 @@ describe("workspace file tabs", () => {
 
   it("restores an attachment once when thread creation throws before draft state clears", async () => {
     await openSelectionDocument();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 Artifact project 中新建对话"]')!.click());
     await flushAsync();
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
     const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), result: attachment, restart: vi.fn() } });
@@ -997,7 +1002,7 @@ describe("workspace file tabs", () => {
   });
 
   it.each(["/repo/wuu", "/repo/wuu-other"])("keeps split document previews read-only instead of sending another draft (%s)", async (cwd) => {
-    const first = { ...completedThread(), cwd: "/repo/wuu" };
+    const first = { ...completedThread(), cwd: "/repo/wuu", workspace_id: "project-wuu" };
     const second = { ...first, id: "thread-other-worktree", cwd };
     vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [first] });
     vi.mocked(window.wuu.resumeThread).mockImplementation(async id => ({ thread: id === second.id ? second : first }));
@@ -1043,7 +1048,7 @@ describe("workspace file tabs", () => {
     await submitMainPrompt();
     expect(startTurnMock.mock.calls[0][0]).toBe("thread-artifact-tabs");
     expect(startTurnMock.mock.calls[0][5]).toEqual({ path: "report.pdf" });
-    expect(startTurnMock.mock.calls[0][7]).toEqual({ kind: "no_project", cwd: workspace });
+    expect(startTurnMock.mock.calls[0][7]).toEqual({ kind: "project", project_id: "project-artifact", cwd: workspace });
   });
 
   it.each(["success", "send", "read", "validation"])("submits a delivered PDF snapshot without inventing a path and recovers failures (%s)", async (failure) => {
@@ -1269,7 +1274,7 @@ describe("workspace file tabs", () => {
       undefined,
       { path: "README.md" },
       undefined,
-      { kind: "no_project", cwd: "/tmp/wuu-artifact-tab-test" },
+      { kind: "project", project_id: "project-artifact", cwd: "/tmp/wuu-artifact-tab-test" },
       expect.any(String),
     );
     expect(container.querySelector('[data-testid="workspace-document-turn-drawer"]')).not.toBeNull();

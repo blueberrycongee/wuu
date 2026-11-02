@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -762,7 +763,7 @@ func NewSession(opts Options) (*Session, error) {
 			kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 			kit.SetActivityRegistry(activityRegistry)
 			bindToolkitHooks(kit, hookDispatcher)
-			kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, binding))
+			configureToolkitWorkspaceScope(kit, wuuHome, binding)
 			toolkit = kit
 			if !binding.IsUser() {
 				connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
@@ -1521,7 +1522,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			// Rebase the file-scope whitelist on the thread root (the clone
 			// inherited the parent session's roots): thread root + registered
 			// workspaces + temp + artifact extras.
-			kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), fileScopeExtras...))
+			configureToolkitWorkspaceScope(kit, wuuHome, s.UserBinding(), fileScopeExtras...)
 			if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
 				return err
 			}
@@ -1772,6 +1773,34 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.BeginModelReceipts = beginModelReceipts
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
+	binding := s.UserBinding()
+	receiptHost, receiptSessions := s.PluginHost, s.Sessions
+	if generation != nil {
+		receiptHost = generation.host
+		if generation.state != nil {
+			receiptSessions = generation.state.sessions
+		}
+	}
+	if binding.IsUser() && binding.Validate() == nil && ClientInputReceiptsSelected(receiptHost) {
+		prior := runner.OnModelContext
+		runner.OnModelContext = func(ctx context.Context, messages []providers.ChatMessage) {
+			if prior != nil {
+				prior(ctx, messages)
+			}
+			refs := make([]session.ClientInputContextRef, 0)
+			for _, message := range messages {
+				if message.Role == "user" && message.ClientID != "" && message.Seq > 0 {
+					refs = append(refs, session.ClientInputContextRef{ClientID: message.ClientID, MessageSeq: message.Seq})
+				}
+			}
+			if len(refs) == 0 {
+				return
+			}
+			if err := receiptSessions.WithContext(ctx).MarkClientInputsRead(session.ClientInputScope{Binding: binding, SessionID: id}, refs); err != nil {
+				providers.DebugLogf("record model context read: %v", err)
+			}
+		}
+	}
 	runner.AcquireLoopDriver = s.driverResolver(generation)
 	runner.RequestContextStore = sessionRequestContextStore{sessions: s.Sessions, sessionID: id}
 	runner.CompactionNoteStore = sessionCompactionNoteStore{sessions: s.Sessions, sessionID: id}
@@ -2054,6 +2083,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		DriverBindingStore:          base.DriverBindingStore,
 		DriverCheckpointStore:       base.DriverCheckpointStore,
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
+		OnModelContext:              base.OnModelContext,
 		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
 		SelectedPolicy:              base.SelectedPolicy,
@@ -2510,19 +2540,28 @@ func discoverPlugins(rootDir, wuuHome string) []pluginpkg.Plugin {
 // minimum_wuu_version compatibility gate. Overridable in tests.
 var currentWuuVersion = func() string { return version.Info().Version }
 
+// PluginEnabledByDefault includes optional defaults from the selected product.
+// It does not grant trust and explicit user settings continue to take precedence.
+func PluginEnabledByDefault(cfg config.Config, item pluginpkg.Plugin) bool {
+	if cfg.Composition != nil {
+		if resolved, err := cfg.Composition.Resolve(); err == nil && slices.Contains(resolved.OptionalModules, item.ID) {
+			return true
+		}
+	}
+	return item.EnabledByDefault()
+}
+
 // activatedPlugins separates inert discovery from executable activation.
 // Community packages require an exact user-owned grant. Official bundled
 // packages and authenticated local development generations are trusted by
-// provenance. Every tier follows its package default unless the user has made
-// an explicit choice, and every tier
-// must satisfy its declared minimum_wuu_version against the running host:
-// the compatibility contract fails closed regardless of trust tier.
+// provenance. Every tier follows its package or product default unless the user
+// has made an explicit choice, and must satisfy its minimum Wuu version.
 func activatedPlugins(cfg config.Config, discovered []pluginpkg.Plugin) []pluginpkg.Plugin {
 	settings := cfg.Extensions
 	hostVersion := currentWuuVersion()
 	out := make([]pluginpkg.Plugin, 0, len(discovered))
 	for _, item := range discovered {
-		enabled := item.EnabledByDefault()
+		enabled := PluginEnabledByDefault(cfg, item)
 		if settings != nil {
 			enabled = settings.IsEnabled(item.SubjectID, enabled)
 		}
@@ -3157,7 +3196,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) (string,
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		s.Toolkit.ConfigurePTC(s.CodeMode, cfg.PTC)
-		s.Toolkit.SetFileScopeRoots(runtimeFileScopeRoots(s.Toolkit.RootDir(), s.WuuHome, s.UserBinding()))
+		configureToolkitWorkspaceScope(s.Toolkit, s.WuuHome, s.UserBinding())
 	}
 	apiModel := s.Model
 	if s.StreamRunner != nil && strings.TrimSpace(s.StreamRunner.APIModel) != "" {

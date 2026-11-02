@@ -89,30 +89,32 @@ func (e *Engine) Resume(ctx context.Context, req agentengine.ResumeRequest) (age
 // SessionForThread binds the claude engine to an existing thread runtime.
 func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.ThreadBinding) (agentengine.Session, error) {
 	return e.newSession(ctx, sessionOptions{
-		threadID:       binding.ThreadID,
-		rootDir:        firstNonEmpty(binding.RootDir, e.rootDir),
-		model:          binding.Model,
-		effort:         binding.Effort,
-		speed:          binding.Speed,
-		permissionMode: binding.PermissionMode,
-		instructions:   binding.Instructions,
-		mcpServers:     binding.MCPServers,
-		externalRef:    binding.ExternalRef,
-		persistRef:     binding.PersistRef,
+		threadID:              binding.ThreadID,
+		rootDir:               firstNonEmpty(binding.RootDir, e.rootDir),
+		additionalDirectories: append([]string(nil), binding.AdditionalDirectories...),
+		model:                 binding.Model,
+		effort:                binding.Effort,
+		speed:                 binding.Speed,
+		permissionMode:        binding.PermissionMode,
+		instructions:          binding.Instructions,
+		mcpServers:            binding.MCPServers,
+		externalRef:           binding.ExternalRef,
+		persistRef:            binding.PersistRef,
 	})
 }
 
 type sessionOptions struct {
-	threadID       string
-	rootDir        string
-	model          string
-	effort         string
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
-	externalRef    string
-	persistRef     func(string) error
+	threadID              string
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                string
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
+	externalRef           string
+	persistRef            func(string) error
 }
 
 func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengine.Session, error) {
@@ -120,17 +122,18 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		return nil, errors.New("claude engine is not configured")
 	}
 	return &Session{
-		engine:         e,
-		rootDir:        opts.rootDir,
-		model:          opts.model,
-		effort:         opts.effort,
-		speed:          opts.speed,
-		permissionMode: opts.permissionMode,
-		instructions:   opts.instructions,
-		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
-		ref:            opts.externalRef,
-		persistedRef:   opts.externalRef,
-		persist:        opts.persistRef,
+		engine:                e,
+		rootDir:               opts.rootDir,
+		additionalDirectories: opts.additionalDirectories,
+		model:                 opts.model,
+		effort:                opts.effort,
+		speed:                 opts.speed,
+		permissionMode:        opts.permissionMode,
+		instructions:          opts.instructions,
+		mcpServers:            append([]agentengine.MCPServer(nil), opts.mcpServers...),
+		ref:                   opts.externalRef,
+		persistedRef:          opts.externalRef,
+		persist:               opts.persistRef,
 	}, nil
 }
 
@@ -138,14 +141,15 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 // child is spawned lazily on the first turn and resumed on later turns via
 // --resume <session-id>.
 type Session struct {
-	engine         *Engine
-	rootDir        string
-	model          string
-	effort         string
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
+	engine                *Engine
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                string
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
 
 	mu           sync.Mutex
 	ref          string
@@ -278,6 +282,9 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 		"--verbose",
 		"--include-partial-messages",
 		"--permission-mode", claudePermissionMode(s.permissionMode),
+	}
+	for _, directory := range s.additionalDirectories {
+		args = append(args, "--add-dir", directory)
 	}
 	if instructions := strings.TrimSpace(s.instructions); instructions != "" {
 		args = append(args, "--append-system-prompt", instructions)
@@ -428,6 +435,10 @@ type turnSubscription struct {
 	continuationPending bool
 	segmentStart        int
 	assistantError      string
+	reconnecting        bool
+	retryCount          int
+	maxRetries          int
+	apiError            string
 	lastRawResult       json.RawMessage
 	finishOnce          sync.Once
 }
@@ -487,9 +498,44 @@ func (sub *turnSubscription) handleTransportClose(reason string) {
 		sub.finish(sub.loopResult(sub.text.String(), ""), err)
 		return
 	}
-	err := errors.New(firstNonEmpty(sub.assistantError, strings.TrimSpace(reason), "claude exited before completing the turn"))
+	err := errors.New(firstNonEmpty(sub.assistantError, sub.apiError, strings.TrimSpace(reason), "claude exited before completing the turn"))
+	sub.failReconnect(err)
 	sub.emit(providers.StreamEvent{Type: providers.EventError, Error: err})
 	sub.finish(sub.loopResult(sub.text.String(), ""), err)
+}
+
+func (sub *turnSubscription) clearReconnect() {
+	if !sub.reconnecting {
+		return
+	}
+	sub.reconnecting = false
+	sub.retryCount = 0
+	sub.maxRetries = 0
+	sub.apiError = ""
+	sub.emit(providers.StreamEvent{
+		Type:      providers.EventLifecycle,
+		Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseConnected},
+	})
+}
+
+func (sub *turnSubscription) failReconnect(err error) {
+	if !sub.reconnecting {
+		return
+	}
+	sub.reconnecting = false
+	reason := sub.apiError
+	if err != nil && !errors.Is(err, context.Canceled) && strings.TrimSpace(err.Error()) != "" {
+		reason = err.Error()
+	}
+	sub.emit(providers.StreamEvent{
+		Type: providers.EventLifecycle,
+		Lifecycle: &providers.StreamLifecycle{
+			Phase:      providers.StreamPhaseFailed,
+			RetryCount: sub.retryCount,
+			MaxRetries: sub.maxRetries,
+			Reason:     reason,
+		},
+	})
 }
 
 // claudeLine is the parsed top-level shape of one stdout line.
@@ -502,6 +548,9 @@ type claudeLine struct {
 	ContentBlock    json.RawMessage `json:"content_block"`
 	Error           json.RawMessage `json:"error"`
 	IsError         bool            `json:"is_error"`
+	Attempt         int             `json:"attempt"`
+	MaxRetries      int             `json:"max_retries"`
+	RetryInMS       int64           `json:"retry_in_ms"`
 	StopReason      string          `json:"stop_reason"`
 	Usage           json.RawMessage `json:"usage"`
 	SessionID       string          `json:"session_id"`
@@ -576,6 +625,7 @@ func (sub *turnSubscription) handleLine(line string) {
 			sub.observeSessionID(envelope.SessionID)
 		}
 		if !sub.inputPending {
+			sub.handleSystemEvent(envelope)
 			sub.handleTaskEvent(envelope)
 		}
 	case "assistant":
@@ -630,6 +680,7 @@ func (sub *turnSubscription) handleAssistant(envelope claudeLine) {
 	}
 	if len(msg.Content) > 0 {
 		sub.assistantError = ""
+		sub.clearReconnect()
 		sub.beginContinuation()
 	}
 	for index, block := range msg.Content {
@@ -711,6 +762,7 @@ func (sub *turnSubscription) handleStreamEvent(envelope claudeLine) {
 		return
 	}
 	if event.Type == "message_start" || event.Type == "content_block_start" || event.Type == "content_block_delta" {
+		sub.clearReconnect()
 		sub.beginContinuation()
 	}
 	switch event.Type {
@@ -896,6 +948,65 @@ func claudeToolResultText(raw json.RawMessage) string {
 		return out.String()
 	}
 	return string(raw)
+}
+
+func (sub *turnSubscription) handleSystemEvent(envelope claudeLine) {
+	if envelope.Subtype != "api_error" && envelope.Subtype != "retry" {
+		return
+	}
+	if envelope.Attempt > 0 {
+		sub.retryCount = envelope.Attempt
+	} else {
+		sub.retryCount++
+	}
+	if envelope.MaxRetries > 0 {
+		sub.maxRetries = envelope.MaxRetries
+	}
+	if reason := extractClaudeSystemError(envelope.Error, envelope.Message); reason != "" {
+		sub.apiError = reason
+	}
+	sub.reconnecting = true
+	var retryIn time.Duration
+	if envelope.RetryInMS > 0 {
+		retryIn = time.Duration(envelope.RetryInMS) * time.Millisecond
+	}
+	sub.emit(providers.StreamEvent{
+		Type: providers.EventLifecycle,
+		Lifecycle: &providers.StreamLifecycle{
+			Phase:      providers.StreamPhaseReconnecting,
+			RetryCount: sub.retryCount,
+			MaxRetries: sub.maxRetries,
+			RetryIn:    retryIn,
+			Reason:     sub.apiError,
+		},
+	})
+}
+
+func extractClaudeSystemError(rawErr, rawMsg json.RawMessage) string {
+	for _, candidate := range []json.RawMessage{rawErr, rawMsg} {
+		if len(candidate) == 0 {
+			continue
+		}
+		var text string
+		if json.Unmarshal(candidate, &text) == nil && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+		var nested struct {
+			Message string `json:"message"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(candidate, &nested) == nil {
+			if strings.TrimSpace(nested.Message) != "" {
+				return strings.TrimSpace(nested.Message)
+			}
+			if nested.Error != nil && strings.TrimSpace(nested.Error.Message) != "" {
+				return strings.TrimSpace(nested.Error.Message)
+			}
+		}
+	}
+	return ""
 }
 
 func (sub *turnSubscription) handleTaskEvent(envelope claudeLine) {
@@ -1164,15 +1275,19 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 			message = res.Result
 		} else if sub.assistantError != "" {
 			message = sub.assistantError
+		} else if sub.apiError != "" {
+			message = sub.apiError
 		} else if res.Subtype != "" {
 			message = "engine turn failed: " + res.Subtype
 		}
 		err := errors.New(message)
+		sub.failReconnect(err)
 		sub.emit(providers.StreamEvent{Type: providers.EventError, Error: err})
 		sub.finish(sub.loopResult(sub.text.String(), stopReason), err)
 		return
 	}
 	sub.assistantError = ""
+	sub.clearReconnect()
 	content := sub.reconcileResultText(res.Result)
 	for _, task := range sub.agentTasks {
 		if task.state == providers.AgentActivityRunning || task.needsWake {

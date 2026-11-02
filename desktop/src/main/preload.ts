@@ -163,6 +163,16 @@ const api: WuuDesktopApi = {
     ipcRenderer.on("wuu:desktop-update-changed", listener);
     return () => ipcRenderer.removeListener("wuu:desktop-update-changed", listener);
   },
+  ...(process.platform === "darwin" ? { dictation: {
+    start: (id: string, locale: string) => ipcRenderer.invoke("wuu:dictation-start", id, locale),
+    stop: (id: string) => ipcRenderer.invoke("wuu:dictation-stop", id),
+    cancel: (id: string) => ipcRenderer.invoke("wuu:dictation-cancel", id),
+    onEvent: (listener: (event: import("../shared/protocol").DictationEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: import("../shared/protocol").DictationEvent) => listener(event);
+      ipcRenderer.on("wuu:dictation-event", handler);
+      return () => { ipcRenderer.removeListener("wuu:dictation-event", handler); };
+    },
+  } } : {}),
   getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
   requestSystemPermission: (permission, presentation) => ipcRenderer.invoke("wuu:system-permission-request", permission, presentation),
   updateSystemPermissionGuide: presentation => ipcRenderer.send("wuu:system-permission-guide-update", presentation),
@@ -189,6 +199,7 @@ const api: WuuDesktopApi = {
   importWorkspaces: (paths) => ipcRenderer.invoke("wuu:onboarding-import-workspaces", paths),
   platform: desktopPlatform,
   listProjects: () => ipcRenderer.invoke("wuu:project-list"),
+  recoverUnavailableProject: () => ipcRenderer.invoke("wuu:project-recover-unavailable"),
   createBlankProject: () => ipcRenderer.invoke("wuu:project-create-blank"),
   chooseProjectFolder: () => ipcRenderer.invoke("wuu:project-choose-folder"),
   selectProject: (projectId: string) =>
@@ -331,6 +342,12 @@ const api: WuuDesktopApi = {
   getPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-get", params),
   setPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-set", params),
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
+  initializePluginScope: (params) => ipcRenderer.invoke("wuu:plugin-scope-initialize", params),
+  onPluginScopeInvalidated: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof handler>[0]) => handler(payload);
+    ipcRenderer.on("wuu:plugin-scope-invalidated", listener);
+    return () => ipcRenderer.removeListener("wuu:plugin-scope-invalidated", listener);
+  },
   readPluginVisibleHistory: (params) => ipcRenderer.invoke("wuu:plugin-visible-history", params),
   cancelPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-cancel", params),
   listSkills: (params) => ipcRenderer.invoke("wuu:skill-list", params),

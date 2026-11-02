@@ -64,6 +64,7 @@ async function run() {
     define: { 'process.env.WUU_RENDERER_E2E_EXTENSION': JSON.stringify(path.join(__dirname, 'conversation-restoration-e2e-preload.cjs')) } });
   await app.whenReady();
   win = new BrowserWindow({ width: 1280, height: 900, show: true, webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  win.setContentSize(1280, 900);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.session.webRequest.onBeforeRequest(({ url }, done) => done({ cancel: /^https?:/.test(url) }));
   win.webContents.on('console-message', event => { if (event.level === 'warning' || event.level === 'error') report.console.push(event.message); });

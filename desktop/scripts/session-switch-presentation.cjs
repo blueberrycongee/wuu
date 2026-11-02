@@ -186,7 +186,31 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
         });
         const layout = document.querySelector('.app-shell[data-web-workspace-open]') ? 'browser'
           : document.querySelector('.conversation-split') ? 'split' : 'conversation';
-        probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, railControls, loading, animations, rasterChrome,
+        // Keep inner editor evidence beside the outer dock sample: an upward
+        // growth offset and an actual textarea resize are different failures.
+        const input = nodes.composer?.querySelector('textarea');
+        const stack = input?.closest('.composer-stack');
+        const inputStyle = input && getComputedStyle(input);
+        const composerGeometry = input && {
+          input: bounds(input), inputInlineStyle: input.getAttribute('style'),
+          inputScrollHeight: input.scrollHeight, inputOffsetHeight: input.offsetHeight,
+          inputClientWidth: input.clientWidth, valueLength: input.value.length,
+          valueLines: input.value.split('\n').length, fontStatus: document.fonts.status,
+          inputFont: inputStyle.font, inputLineHeight: inputStyle.lineHeight,
+          inputMinHeight: inputStyle.minHeight, inputMaxHeight: inputStyle.maxHeight,
+          inputPadding: inputStyle.padding, inputBoxSizing: inputStyle.boxSizing,
+          stack: stack && bounds(stack), stackInlineStyle: stack?.getAttribute('style'),
+          multiline: stack?.dataset.multiline,
+          growth: stack && getComputedStyle(stack).getPropertyValue('--composer-input-growth'),
+          expandedOffset: stack && getComputedStyle(stack).getPropertyValue('--composer-expanded-offset'),
+          parts: Object.fromEntries(['.composer', '.composer-frame', '.composer-frame-shell', '.composer-editor', '.composer-footer-shell']
+            .map(selector => [selector, nodes.composer.querySelector(selector)])
+            .filter(([, node]) => node).map(([selector, node]) => [selector, {
+              ...bounds(node), inlineStyle: node.getAttribute('style'),
+              transform: getComputedStyle(node).transform, marginBottom: getComputedStyle(node).marginBottom,
+            }])),
+        };
+        probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, composerGeometry, railControls, loading, animations, rasterChrome,
           frame: native ? document.documentElement.getAttribute('data-wuu-compositor-frame') : image?.getAttribute('data-wuu-presentation-frame'), rootInert: !!document.querySelector('.app-shell')?.closest('[inert]'),
           imageAnimations: image?.getAnimations().length || 0, imageOpacity: imageStyle?.opacity, imageTransform: imageStyle?.transform, imageWidth: imageStyle?.width, imageHeight: imageStyle?.height,
           fullscreenLoading: !!document.querySelector('.view-switch-loading'), recovery: !!document.querySelector('[data-wuu-component="launch-view"]') });

@@ -271,6 +271,21 @@ type SessionToolPolicy struct {
 	Deny  []string `json:"deny,omitempty"`
 }
 
+// SessionTurnToolPolicy shares session attenuation rules, except an explicit
+// empty Allow denies all. Preserve that distinction across transport snapshots.
+type SessionTurnToolPolicy SessionToolPolicy
+
+func (p SessionTurnToolPolicy) MarshalJSON() ([]byte, error) {
+	var allow *[]string
+	if p.Allow != nil {
+		allow = &p.Allow
+	}
+	return json.Marshal(struct {
+		Allow *[]string `json:"allow,omitempty"`
+		Deny  []string  `json:"deny,omitempty"`
+	}{allow, p.Deny})
+}
+
 // ExecutionAuthorizationReference identifies opaque selected-provider authority.
 // It is not an owner claim and is revalidated before every restored operation.
 type ExecutionAuthorizationReference struct {
@@ -381,6 +396,9 @@ type SessionSendParams struct {
 	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
 	ResumeReceiptID        string                           `json:"resume_receipt_id,omitempty"`
 	ResumeAccepted         bool                             `json:"resume_accepted,omitempty"`
+	// ToolPolicy attenuates this turn only and isolates it from steering input.
+	// An explicit empty allow list disables every tool. Unsupported with steer or external engines.
+	ToolPolicy *SessionTurnToolPolicy `json:"tool_policy,omitempty"`
 	// DisableTools prohibits every tool for this turn. Unsupported with steer or external engines.
 	DisableTools bool                       `json:"disable_tools,omitempty"`
 	Relation     *providers.MessageRelation `json:"relation,omitempty"`
@@ -415,17 +433,18 @@ type SessionListParams struct {
 }
 
 type SessionSummary struct {
-	UserSpaceID     string `json:"user_space_id,omitempty"`
-	ProductDomain   string `json:"product_domain,omitempty"`
-	AgentID         string `json:"agent_id,omitempty"`
-	SessionID       string `json:"session_id"`
-	Name            string `json:"name,omitempty"`
-	ParentSessionID string `json:"parent_session_id,omitempty"`
-	Visibility      string `json:"visibility"`
-	State           string `json:"state"`
-	WorkspaceID     string `json:"workspace_id,omitempty"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
+	UserSpaceID       string `json:"user_space_id,omitempty"`
+	ProductDomain     string `json:"product_domain,omitempty"`
+	AgentID           string `json:"agent_id,omitempty"`
+	SessionID         string `json:"session_id"`
+	CreationRequestID string `json:"creation_request_id,omitempty"`
+	Name              string `json:"name,omitempty"`
+	ParentSessionID   string `json:"parent_session_id,omitempty"`
+	Visibility        string `json:"visibility"`
+	State             string `json:"state"`
+	WorkspaceID       string `json:"workspace_id,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
 }
 
 type SessionListResult struct {

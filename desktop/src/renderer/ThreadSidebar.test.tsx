@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { PinnedThreadList, WorkspaceGroup, WorkspaceList } from "./ThreadSidebar";
 import type { DesktopProject, Thread } from "../shared/protocol";
-import { SCRATCH_PSEUDO_PROJECT_ID, summarizeThreadsForSidebar } from "./AppState";
+import { summarizeThreadsForSidebar } from "./AppState";
 import { setActiveLocale, translateCurrent } from "./i18n";
 import { ConfirmDialogHost } from "./ConfirmDialog";
 
@@ -154,8 +154,6 @@ describe("WorkspaceList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
           onSelectThread={() => {}}
@@ -187,8 +185,6 @@ describe("WorkspaceList", () => {
           makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`),
         )) }}
         lastViewedTurnByThreadID={{}}
-        scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-        scratchPseudoActive={false}
         onToggleSidebarSectionCollapsed={() => {}}
         onStartNewThread={() => {}}
         onSelectThread={() => {}}
@@ -516,13 +512,9 @@ describe("WorkspaceList", () => {
 
   it("never auto-expands the active section — expansion is header-toggle only", () => {
     // Mental model regression: selecting a session (which makes its project
-    // or the 对话 pseudo section "active") must not expand anything. Both
-    // sections here are active yet absent from the expanded set, so both
-    // render collapsed.
-    const projects = [
-      makeWorkspace(SCRATCH_PSEUDO_PROJECT_ID, "对话", ""),
-      makeWorkspace("project-1", "wuu", "/repo/wuu"),
-    ];
+    // "active") must not expand anything. The section is active yet absent
+    // from the expanded set, so it renders collapsed.
+    const projects = [makeWorkspace("project-1", "wuu", "/repo/wuu")];
     act(() => {
       root = createRoot(container);
       root.render(
@@ -532,9 +524,6 @@ describe("WorkspaceList", () => {
           pendingWorkspaceID={undefined}
           expandedSidebarSectionIDs={new Set()}
           threadsByWorkspaceID={{
-            [SCRATCH_PSEUDO_PROJECT_ID]: summarizeThreadsForSidebar([
-              makeWorkspaceThread("thread-scratch", "/tmp/scratch", "Scratch talk"),
-            ]),
             "project-1": summarizeThreadsForSidebar([
               makeWorkspaceThread("thread-wuu", "/repo/wuu", "Wuu session"),
             ]),
@@ -543,8 +532,6 @@ describe("WorkspaceList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={true}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
           onSelectThread={() => {}}
@@ -560,7 +547,6 @@ describe("WorkspaceList", () => {
       expect(row.getAttribute("aria-expanded")).toBe("false");
     }
     expect(container.textContent).not.toContain("Wuu session");
-    expect(container.textContent).not.toContain("Scratch talk");
   });
 
   it("keeps pinned sessions out of project lists", () => {
@@ -585,8 +571,6 @@ describe("WorkspaceList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
           onSelectThread={() => {}}
@@ -624,8 +608,6 @@ describe("WorkspaceList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
           onSelectThread={() => {}}
@@ -680,8 +662,6 @@ describe("WorkspaceList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
           onSelectThread={() => {}}
@@ -725,8 +705,6 @@ describe("WorkspaceGroup remove workspace", () => {
     pendingThreadID: undefined,
     
     lastViewedTurnByThreadID: {},
-    scratchPseudoWorkspaceID: SCRATCH_PSEUDO_PROJECT_ID,
-    scratchPseudoActive: false,
     onToggleSidebarSectionCollapsed: () => {},
     onStartNewThread: () => {},
     onSelectThread: () => {},
@@ -828,21 +806,6 @@ describe("WorkspaceGroup remove workspace", () => {
     expect(relocated).toEqual(["project-1"]);
   });
 
-  it("offers no context menu on the 对话 scratch pseudo row", () => {
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <WorkspaceGroup
-          {...baseProps}
-          project={makeWorkspace(SCRATCH_PSEUDO_PROJECT_ID, "对话", "")}
-          onRemoveWorkspace={() => {}}
-        />,
-      );
-    });
-
-    openContextMenu();
-    expect(document.body.querySelector(".thread-row-context-menu")).toBeNull();
-  });
 });
 
 describe("WorkspaceGroup missing workspace", () => {
@@ -855,8 +818,6 @@ describe("WorkspaceGroup missing workspace", () => {
     pendingThreadID: undefined,
     
     lastViewedTurnByThreadID: {},
-    scratchPseudoWorkspaceID: SCRATCH_PSEUDO_PROJECT_ID,
-    scratchPseudoActive: false,
     onToggleSidebarSectionCollapsed: () => {},
     onStartNewThread: () => {},
     onSelectThread: () => {},
@@ -881,6 +842,20 @@ describe("WorkspaceGroup missing workspace", () => {
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     missing,
+  });
+
+  it.each([false, true])("only explains a new-conversation button when its workspace is missing (%s)", (missing) => {
+    vi.useFakeTimers();
+    try {
+      renderWorkspace(makeWorkspace(missing));
+      const button = container.querySelector<HTMLButtonElement>(".project-row-new-thread")!;
+      expect(button.getAttribute("aria-label")).toBeTruthy();
+      act(() => {
+        button.dispatchEvent(new Event("pointerover", { bubbles: true }));
+        vi.advanceTimersByTime(600);
+      });
+      expect(document.querySelector(".tooltip-layer") !== null).toBe(missing);
+    } finally { vi.useRealTimers(); }
   });
 
   it("dims a missing workspace and disables its 新建对话 button", () => {

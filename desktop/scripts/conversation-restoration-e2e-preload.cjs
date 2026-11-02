@@ -3,8 +3,9 @@ const { ipcRenderer } = require('electron');
 module.exports = api => {
   let graph = 'restoration-original', rootFailure = false, requestId = 0;
   const listeners = new Set();
-  const context = { kind: 'no_project', cwd: process.env.WUU_RESIZE_E2E_CWD };
+  const context = { kind: 'project', project_id: 'restoration-workspace', cwd: process.env.WUU_RESIZE_E2E_CWD };
   const now = '2026-01-01T00:00:00Z';
+  const project = { id: context.project_id, name: 'Restoration workspace', path: context.cwd, created_at: now, updated_at: now };
   const threads = ['unavailable', 'healthy'].map(id => ({ id, cwd: context.cwd,
     title: id === 'unavailable' ? 'Unavailable conversation' : 'Healthy conversation', preview: '',
     status: 'idle', model_provider: 'e2e', model: 'mock-resize', created_at: now, updated_at: now,
@@ -26,8 +27,8 @@ module.exports = api => {
   });
   return { ...api,
     openRecovery: async () => {},
-    listProjects: async () => ({ projects: [], active_context: context }),
-    selectNoProject: async () => ({ projects: [], active_context: context }),
+    listProjects: async () => ({ projects: [project], active_context: context }),
+    selectProject: async () => ({ projects: [project], active_context: context }),
     initialize: async () => {
       if (rootFailure) throw new Error('Synthetic selected application configuration unavailable');
       return configuration();

@@ -155,7 +155,7 @@ Generation 拥有的 `host.background` 任务与会话工作者的生命周期�
 }
 ```
 
-`profile` 选择 `profiles` 中的一项。每个 profile 提供 `modules`、有序的 `bundles` 或 `patches`，并显式包含所需依赖。模块顺序不决定服务选择或生命周期顺序。显式空数组不启动任何模块；同时省略 profile、`modules` 和 `patches` 时，保留已启用、受信任的默认发现结果。未知 profile 或 bundle、重复 bundle、重复模块、被模块集合排除的绑定目标、不可用的指定模块或指定运行时启动失败都会拒绝准备。模块选择不能安装、启用或授予包信任。筛选发生在运行时、hook、技能和 MCP 贡献加载之前。
+`profile` 选择 `profiles` 中的一项。每个 profile 提供 `modules`、有序的 `bundles` 或 `patches`，并显式包含所需依赖。模块顺序不决定服务选择或生命周期顺序。显式空数组不启动任何模块；同时省略 profile、`modules` 和 `patches` 时，保留已启用、受信任的默认发现结果。未知 profile 或 bundle、重复 bundle、重复模块、被模块集合排除的绑定目标、不可用的指定模块或指定运行时启动失败都会拒绝准备。普通模块选择不能安装、启用或授予包信任。筛选发生在运行时、hook、技能和 MCP 贡献加载之前。
 
 Bundle 是可复用的静态配置。例如，多个 profile 可以共享同一个分析能力：
 
@@ -183,7 +183,9 @@ Bundle 是可复用的静态配置。例如，多个 profile 可以共享同一�
 }
 ```
 
-解析从空模块集合开始，按列表顺序应用所选 profile 的 bundle，再应用其内联 `modules` / `services`，然后应用其 `patches`。之后应用顶层 `modules` / `services`，最后应用顶层 `patches`。每个内联 `modules` 数组替换完整集合；服务按名称和主版本逐项覆盖。只有 patches 的组合也从空集合开始。Bundle 只包含补丁，不执行代码，也不引用其他 bundle。
+解析从空模块集合开始，按列表顺序应用所选 profile 的 bundle，再应用其内联 `modules` / `services`，然后应用其 `patches`。之后应用顶层 `modules` / `services`，最后应用顶层 `patches`。每个内联 `modules` 数组替换完整集合；服务按名称和主版本逐项覆盖。只有 patches 的组合也从空集合开始。Bundle 包含补丁和可选模块默认值，不执行代码，也不引用其他 bundle。
+
+版本 2 及之后的 bundle 可以使用 `optional_modules` 数组声明包 ID。这些包在该 profile 中默认启用，并在可用时被选中；包缺失、不兼容、未受信任或被用户显式禁用时，不会阻止组合启动。此默认值不会授予信任。显式模块选择或 patch 优先于可选默认值；必需的服务绑定仍要求其 provider 可用。
 
 补丁中的 `modules` 将模块 ID 映射为 `true`（包含）或 `false`（排除）。`services` 替换指定绑定；`remove_services` 接受 `{ "service": "...", "major": 1 }` 条目以移除显式选择。移除绑定会恢复唯一提供者解析；若仍有多个提供者，准备仍然失败。排除模块不会悄悄删除指向它的绑定，须在同一组合中移除或替换这些绑定。同一补丁中的重复或冲突操作会失败，后续补丁可以有意覆盖之前的选择。配置保存会保留显式空数组。每次解析都会创建独立状态，一个 profile 不会修改另一个。
 
@@ -317,4 +319,4 @@ Presenter 接收快照，不获得可修改的宿主 store。即使动作被列�
 
 禁用或移除提交成功后，无需等待空闲轮次，就会撤销所有仍被引用的旧 generation 中该插件的行为：取消原生执行，阻止所属 MCP 服务重连，并移除后续旧式 hook 和请求转换。已经运行的旧式 hook 保留调用方生命周期；既有会话内容和已完成的外部操作不会被抹除。同 ID 更新则允许活动工作使用原实现完成。已被替代的空闲运行时无需等待下一条用户消息就会释放；未完成的会话工作者和受管进程仍可保留旧实现。拥有激活期后台行为的插件需要容忍工作结束前的新旧重叠。通常保留存储和设置，也不会撤销已经完成的外部操作。安全模式和默认 UI 恢复用于扩展失败后的恢复。Wuu 不审计或认证第三方包，详见[安全模型](../reference/security-model.md)。
 
-兼容性分为多个独立层面：产品 CalVer、包 schema、运行时能力协议、服务主版本和桌面快照版本。应使用与目标宿主匹配的 SDK。`wuu plugin dev ./extension.ts` 也支持直接加载一个默认导出运行时插件的 TypeScript 文件，无需 manifest、构建、包安装或安装 SDK 依赖。宿主把源文件和内嵌 SDK 快照到私有候选中，需要 Node.js 22.7 或更新版本。单文件仅支持导入 Node 内置模块及 `@wuu/plugin-sdk`；其他依赖请使用包目录，详见[快速开始](plugin-quickstart.md)。构建、包验证、运行时协商测试，以及实际功能或 UI 检查，分别验证这条路径的不同部分。
+兼容性分为多个独立层面：产品 CalVer、包 schema、运行时能力协议、服务主版本和桌面快照版本。应使用与目标宿主匹配的 SDK。`wuu plugin dev ./extension.ts` 也支持直接加载一个默认导出运行时插件的 TypeScript 文件，无需 manifest、构建、包安装或安装 SDK 依赖。宿主把源文件和内嵌 SDK 快照到私有候选中，需要 Node.js 22.13 或更新版本。单文件仅支持导入 Node 内置模块及 `@wuu/plugin-sdk`；其他依赖请使用包目录，详见[快速开始](plugin-quickstart.md)。构建、包验证、运行时协商测试，以及实际功能或 UI 检查，分别验证这条路径的不同部分。

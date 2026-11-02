@@ -115,6 +115,18 @@ export class ProjectManager {
     return context;
   }
 
+  recoverUnavailableProject(): ProjectRuntimeIssue | undefined {
+    this.load();
+    const active = this.store.active_context;
+    if (active?.kind !== "project") return undefined;
+    const project = this.store.projects.find(candidate => candidate.id === active.project_id);
+    if (!project || isDirectory(project.path)) return undefined;
+    const issue = activeProjectUnavailableIssue(project);
+    this.store.active_context = createNoProjectContext();
+    this.save();
+    return issue;
+  }
+
   resolveSubmissionContext(context: RuntimeContext): RuntimeContext {
     this.reload();
     if (context.kind === "project") {
@@ -506,14 +518,11 @@ export function createNoProjectContext(): RuntimeContext {
   return { kind: "no_project", cwd: allocateNoProjectCwd() };
 }
 
-// SCRATCH_WORKSPACE_DIRNAME is the single, stable directory backing the "对话"
-// workspace. Every no-project conversation shares this one cwd — one workspace,
-// many sessions — rather than getting its own dated directory. This keeps the
-// "对话" workspace always present (it can never be moved/deleted, so it is never
-// "unavailable"), and lets the draft-tab-per-context dedup collapse repeated
-// "新建对话" clicks onto a single shared draft. Legacy per-date scratch threads
-// keep their own recorded cwd and still list under 对话 via the isScratchThread
-// cwd check.
+// SCRATCH_WORKSPACE_DIRNAME is the single, stable directory for sessions that
+// are not bound to a registered project. The desktop no longer exposes this as
+// a "对话" workspace; it remains the runtime fallback for CLI-owned and legacy
+// no-project sessions. Shared cwd keeps those sessions in one place instead of
+// allocating a dated directory per conversation.
 const SCRATCH_WORKSPACE_DIRNAME = "default";
 
 function allocateNoProjectCwd(): string {

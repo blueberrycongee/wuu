@@ -1006,11 +1006,7 @@ func TestThreadStateSettlesStreamReconnectWhenProviderGivesUp(t *testing.T) {
 	settled := th.applyStreamEventLocked("turn", providers.StreamEvent{
 		Type: providers.EventLifecycle,
 		Lifecycle: &providers.StreamLifecycle{
-			Phase:           providers.StreamPhaseFailed,
-			Reason:          "connection reset by peer",
-			FailureCategory: "network",
-			RetryCount:      5,
-			MaxRetries:      5,
+			Phase: providers.StreamPhaseFailed,
 		},
 	}, now)
 	turn := th.ensureTurnLocked("turn", now)
@@ -1018,8 +1014,8 @@ func TestThreadStateSettlesStreamReconnectWhenProviderGivesUp(t *testing.T) {
 		t.Fatalf("giving up should freeze the row as failed, got %+v", turn.Items)
 	}
 	item := turn.Items[1]
-	if item.RetryCount != 5 || item.MaxRetries != 5 || item.RetryAtMS != 0 {
-		t.Fatalf("settled row keeps final counters and clears the deadline, got %+v", item)
+	if item.RetryCount != 5 || item.MaxRetries != 5 || item.RetryAtMS != 0 || item.Text != "connection reset by peer" {
+		t.Fatalf("settled row keeps final counters, reason text, and clears the deadline, got %+v", item)
 	}
 	if len(settled) != 1 || settled[0].method != NotificationItemCompleted {
 		t.Fatalf("settle notifications = %+v, want one item/completed", settled)

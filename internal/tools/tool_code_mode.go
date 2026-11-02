@@ -81,6 +81,13 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if err != nil {
 		return toolresult.Result{}, err
 	}
+	for _, tool := range e.toolkit.codeModeDirectOnlyDefinitions() {
+		definition, err := codeModeToolDefinition(tool)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		definitions = append(definitions, definition)
+	}
 	if remote, ok := e.toolkit.env.ExecutionEnvironment.(interface {
 		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
 	}); ok {
@@ -163,6 +170,13 @@ func (t *Toolkit) codeModeToolCatalog() string {
 	nested := t.codeModeNestedDefinitions()
 	sort.Slice(nested, func(i, j int) bool { return nested[i].Name < nested[j].Name })
 	var b strings.Builder
+	direct := t.codeModeDirectOnlyDefinitions()
+	if len(direct) > 0 {
+		b.WriteString("\n\nCall these tools directly outside run_code, using their current top-level schemas. They are searchable with direct_only:true but have no tools.* binding. Historical tool names and schemas may be obsolete:\n")
+		for _, tool := range direct {
+			fmt.Fprintf(&b, "- %s\n", tool.Name)
+		}
+	}
 	fmt.Fprintf(&b, "\n\nAvailable bindings: %d. Core bindings below include their complete arguments; invoke them directly without a discovery call. Other bindings have previews; use describeTool for their exact arguments and searchTools for further discovery.\n", len(nested))
 	var previews strings.Builder
 	coreBytes := 0
@@ -220,6 +234,27 @@ func (t *Toolkit) SetCodeModeAdditionalTools(provider func() []providers.ToolDef
 	t.codeModeMu.Unlock()
 }
 
+func (t *Toolkit) codeModeDirectOnlyDefinitions() []providers.ToolDefinition {
+	var out []providers.ToolDefinition
+	for _, definition := range t.registry.Definitions() {
+		if definition.DirectOnly && t.SupportsTool(definition.Name) {
+			out = append(out, definition)
+		}
+	}
+	t.codeModeMu.RLock()
+	additional := t.codeModeAdditionalTools
+	t.codeModeMu.RUnlock()
+	if additional != nil {
+		for _, definition := range additional() {
+			if definition.DirectOnly && !t.IsToolDisabled(definition.Name) {
+				out = append(out, definition)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // CodeModeNestedSurface preserves the active model family's edit primitives,
 // restrictions and live extension tools without recursively exposing run_code.
 func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
@@ -266,7 +301,7 @@ func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition
 	if err != nil {
 		return codemode.ToolDefinition{}, err
 	}
-	return codemode.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema}, nil
+	return codemode.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema, DirectOnly: d.DirectOnly}, nil
 }
 
 // CodeModeDirectCallAllowed is the shared top-level routing policy. Availability

@@ -1205,6 +1205,7 @@ export class PluginHost {
     const application = this.createApplicationService(state);
     const scopedConversation = <Props extends object>(Component: React.ComponentType<Props>): React.ComponentType<Props> =>
       props => this.react.createElement(PluginConversationScope, { application, signal: state.lifetime.signal,
+        source: state.graphGeneration ? { id: state.pluginId, fingerprint: state.generation, graph_generation: state.graphGeneration } : undefined,
         children: this.react.createElement(Component, props) });
     const conversationUI = {
       ConversationView: scopedConversation(this.ui.ConversationView),
@@ -1217,6 +1218,13 @@ export class PluginHost {
         throw new Error("Plugin runtime requests are unavailable");
       }
       this.assertActive(state);
+      const graphGeneration = state.graphGeneration;
+      // Committed inventory precedes asynchronous renderer replacement. A live
+      // React contribution can therefore still belong to an obsolete Go graph.
+      const graphRetired = () => state.graphGeneration !== graphGeneration
+        || (this.inventoryGraphs !== undefined
+          && (!this.inventoryGraphs.has(state.pluginId) || this.inventoryGraphs.get(state.pluginId) !== graphGeneration));
+      if (graphRetired()) throw new PluginLifecycleCancellationError();
       options?.signal?.throwIfAborted();
       const controller = new AbortController();
       const abort = () => controller.abort(options?.signal?.reason);
@@ -1226,7 +1234,7 @@ export class PluginHost {
         const result = await this.runtimeInvoker({
           pluginId: state.pluginId,
           generation: state.generation,
-          graphGeneration: state.graphGeneration,
+          graphGeneration,
           ...(service !== undefined ? { service } : {}),
           method: requireNonEmpty(method, "plugin runtime method"),
           input,
@@ -1239,12 +1247,13 @@ export class PluginHost {
           ...(options?.userInput ? { userInput: options.userInput } : {}),
         });
         this.assertActive(state);
+        if (graphRetired()) throw new PluginLifecycleCancellationError();
         controller.signal.throwIfAborted();
         return result;
       } catch (error) {
         // A retired invocation is not a failure in its successor's workspace.
         // Fence rejected results too: transport can reject before cleanup callbacks run.
-        if (state.disposed || state.lifetime.signal.aborted) throw new PluginLifecycleCancellationError(error);
+        if (state.disposed || state.lifetime.signal.aborted || graphRetired()) throw new PluginLifecycleCancellationError(error);
         if (controller.signal.aborted) throw controller.signal.reason;
         const operation = `${service ?? "runtime"}/${method}`.replace(/[^a-zA-Z0-9_.:/-]/g, "_").slice(0, 160);
         this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "runtime",

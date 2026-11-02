@@ -1,7 +1,7 @@
 import type { WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import type { AppServerResponse, ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams } from "../shared/protocol";
+import type { AppServerResponse, ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams, PluginDesktopModuleReadResult, PluginScopeInvalidation } from "../shared/protocol";
 import { AppServerResponseError } from "./appServerErrors";
 
 export class DesktopGraphOwnershipError extends Error {
@@ -20,6 +20,9 @@ export class PluginDesktopActivations {
   private readonly workdirs = new Map<string, ProcessRequest>();
   private readonly graphPlugins = new Map<string, Map<string, string>>();
   private readonly scopedBindings = new Map<string, Promise<ProcessRequest>>();
+  private readonly scopedInventories = new Map<string, readonly ExtensionInventoryRecord[]>();
+  private readonly scopedTargets = new Map<string, { workdir: string; identity: { id: string; fingerprint: string; graph_generation: string }; scope: string }>();
+  private scopeEpoch = 0;
   private readonly graphs = new Map<string, ProcessRequest>();
   private readonly graphWorkdirs = new Map<string, string>();
   private readonly processes = new Set<ProcessRequest>();
@@ -77,6 +80,14 @@ export class PluginDesktopActivations {
     return request;
   }
 
+  async readModule(identity: { id: string; fingerprint: string; graph_generation: string }): Promise<PluginDesktopModuleReadResult> {
+    const request = this.runtimeRequest(identity.graph_generation);
+    if (this.graphPlugins.get(identity.graph_generation)?.get(identity.id) !== identity.fingerprint) {
+      throw new Error("Plugin source identity does not match its activation graph");
+    }
+    return request<PluginDesktopModuleReadResult>("plugin/desktop-module/read", identity);
+  }
+
   /** Scope changes require a fresh authoritative handshake, not a copied graph ID.
    * Keep failed bindings failed for this activation: an uncertain admission must
    * never become a replay into a replacement host. */
@@ -95,11 +106,19 @@ export class PluginDesktopActivations {
       binding = (async () => {
         const target = await acquire();
         this.runtimeRequest(identity.graph_generation);
-        const result = await this.initialize(target.workdir, target.request, target.params);
+        if (this.scopedBindings.get(key) !== binding) throw new Error("Scoped plugin admission was superseded");
+        this.scopedTargets.set(key, { workdir: resolve(target.workdir), identity, scope });
+        this.initializationRevision++;
+        const result = await target.request<InitializeResult>("initialize", target.params);
+        this.runtimeRequest(identity.graph_generation);
+        if (this.scopedBindings.get(key) !== binding) throw new Error("Scoped plugin admission was superseded");
         const plugin = result.extension_inventory?.find(candidate => candidate.id === identity.id);
         if (!plugin?.graph_generation || plugin.fingerprint !== identity.fingerprint || plugin.enabled === false) {
           throw new Error("Plugin target identity does not match its activation graph");
         }
+        this.workdirs.set(resolve(target.workdir), target.request);
+        this.bindInventory(target.workdir, target.request, result.extension_inventory ?? []);
+        this.scopedInventories.set(key, result.extension_inventory ?? []);
         const request = this.runtimeRequest(plugin.graph_generation, target.workdir);
         // The target supplies runtime services only. UI activation and its
         // cleanup remain with the source graph; request cancellation is bound
@@ -116,7 +135,10 @@ export class PluginDesktopActivations {
             // This rejection occurs before the server admits the operation.
             // Retire only this binding; never replay an already dispatched call.
             if (error instanceof AppServerResponseError && error.message === "plugin graph generation is no longer active"
-              && this.scopedBindings.get(key) === binding) this.scopedBindings.delete(key);
+              && this.scopedBindings.get(key) === binding) {
+              this.scopedBindings.delete(key);
+              this.scopedInventories.delete(key);
+            }
             throw error;
           }
         };
@@ -124,6 +146,34 @@ export class PluginDesktopActivations {
       this.scopedBindings.set(key, binding);
     }
     return binding;
+  }
+
+  async scopedInventory(
+    identity: { id: string; fingerprint: string; graph_generation: string },
+    scope: string,
+    acquire: () => Promise<{ workdir: string; request: ProcessRequest; params: unknown }>,
+  ): Promise<readonly ExtensionInventoryRecord[]> {
+    await this.scopedRuntimeRequest(identity, scope, acquire);
+    this.runtimeRequest(identity.graph_generation);
+    const key = JSON.stringify([identity.graph_generation, identity.id, identity.fingerprint, scope]);
+    const inventory = this.scopedInventories.get(key);
+    if (!inventory) throw new Error("Scoped plugin inventory is no longer active");
+    return inventory;
+  }
+
+  invalidateScopes(workdir: string): PluginScopeInvalidation[] {
+    if (this.disconnected) return [];
+    const invalidated: PluginScopeInvalidation[] = [];
+    const targetWorkdir = resolve(workdir);
+    for (const [key, target] of this.scopedTargets) {
+      if (target.workdir !== targetWorkdir) continue;
+      this.scopedTargets.delete(key);
+      this.scopedBindings.delete(key);
+      this.scopedInventories.delete(key);
+      invalidated.push({ ...target.identity, scope: target.scope, epoch: ++this.scopeEpoch });
+    }
+    if (invalidated.length) this.workdirs.delete(targetWorkdir);
+    return invalidated;
   }
 
   /** Admission only: callers dispatch once after this returns; transport failures never enter recovery. */
@@ -179,6 +229,8 @@ export class PluginDesktopActivations {
       this.graphs.clear();
       this.graphPlugins.clear();
       this.scopedBindings.clear();
+      this.scopedInventories.clear();
+      this.scopedTargets.clear();
       this.graphWorkdirs.clear();
       this.workdirs.clear();
       this.processes.clear();

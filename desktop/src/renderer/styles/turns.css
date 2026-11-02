@@ -2,8 +2,9 @@
    theme overrides these in base.css theme blocks. */
 :root {
   --turn-collapsed-focus-ring: var(--focus-ring);
-  /* Sent queries and the composer share a raised surface above the canvas. */
-  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-raised));
+  /* A filled query separates the user from the open assistant response.
+     Keep the composer on its own raised surface. */
+  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-2));
   --user-message-radius: var(--wuu-message-user-radius, 16px);
   --user-message-max-width: min(516px, 80%);
   --user-message-fg-color: var(--ink);
@@ -40,14 +41,14 @@
   --message-image-overflow-fg: #fff;
   --instruction-files-error-fallback: var(--wuu-color-danger, #d3524f);
   --stream-cursor-default-color: var(--ink);
-  --reasoning-stream-cursor-color: var(--gray-500);
+  --reasoning-stream-cursor-color: var(--theme-override-color-text-muted, var(--gray-500));
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
   /* Tool activity and standalone reasoning summaries share the quiet ink
      used by the composer placeholder, in every running/settled state. */
   --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
-  --activity-toggle-hover-color: var(--gray-650);
+  --activity-toggle-hover-color: var(--theme-override-color-text-muted, var(--gray-650));
   --activity-toggle-hover-color-alt: var(--theme-override-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--theme-override-color-text-muted, var(--gray-550));
   /* A tool row's target (file, query, command) sits between the row's
@@ -78,7 +79,7 @@
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--theme-override-color-text-muted, var(--gray-650));
-  --rich-rule-color: var(--wuu-border-subtle, var(--gray-250));
+  --rich-rule-color: var(--wuu-border-subtle, var(--hairline));
   --pre-text-color: var(--theme-override-color-text, var(--gray-700));
   --system-line-marker-color: var(--theme-override-color-text-muted, var(--gray-400));
   --empty-home-action-border: var(--wuu-border-subtle, var(--hairline));
@@ -89,7 +90,7 @@
   --empty-home-title-font: var(--appearance-ui-font, system-ui, sans-serif);
   --project-empty-content-color: var(--theme-override-color-text-muted, var(--gray-600));
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
-  --project-empty-actions-hover-bg: var(--gray-50);
+  --project-empty-actions-hover-bg: var(--surface-1);
   --diff-insert-bg: color-mix(in srgb, var(--success) 8%, transparent);
   --diff-delete-bg: color-mix(in srgb, var(--danger) 8%, transparent);
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
@@ -270,8 +271,7 @@
 
 /* Placing a submission moves only what the user sent; the new turn's live
  * status enters as the bubble lands (ConversationScrollState). */
-.scroll-region-content[data-submit-placing] .session-flow > .turn:last-of-type > .assistant-turn-shell,
-.user-message-block:has(> [data-send-flight]) > .user-message-actions {
+.scroll-region-content[data-submit-placing] .session-flow > .turn:last-of-type > .assistant-turn-shell {
   opacity: 0;
 }
 
@@ -318,8 +318,8 @@
   );
   --user-message-background: var(--wuu-message-user-background, var(--user-message-bg-color));
   background: var(--user-message-background);
-  border: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
-  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
+  border: var(--wuu-message-user-border, 1px solid transparent);
+  box-shadow: var(--wuu-message-user-shadow, none);
   color: var(--wuu-message-user-color, var(--user-message-fg-color));
   border-radius: var(--user-message-radius);
   /* The same framed-text inset as the composer draft it was sent from. */
@@ -349,37 +349,6 @@
   gap: inherit;
   width: 100%;
   min-width: 0;
-}
-
-/* Cached panes and virtualized turns normally clip their children. A flight
- * paints outside its final row until it lands; the scrollport still clips it. */
-.cached-conversation-pane[data-active="true"]:has([data-send-flight]) {
-  overflow: visible;
-}
-
-.turn:has([data-send-flight]) {
-  content-visibility: visible;
-}
-
-/* The send surface narrows independently so glyphs retain their final wrapping. */
-.user-message[data-send-shaping] {
-  position: relative;
-  isolation: isolate;
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.user-message[data-send-shaping]::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: var(--send-inset);
-  border: var(--send-border);
-  border-radius: inherit;
-  background: var(--send-background);
-  box-shadow: var(--send-shadow);
-  pointer-events: none;
 }
 
 .session-message-source {
@@ -4252,12 +4221,17 @@
   display: none;
 }
 
+/* Reasoning folds share the process row's hover affordance: the label and
+ * chevron deepen together. An underline reads as a link. */
 .turn-reasoning-summary:hover,
 .turn-reasoning-summary:focus-visible {
-  text-decoration: underline;
-  text-decoration-color: var(--ink-overlay-18);
-  text-underline-offset: 3px;
-  outline: 0;
+  color: var(--activity-toggle-hover-color);
+}
+
+.turn-reasoning-summary:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .turn-reasoning-summary-text {
@@ -4407,6 +4381,12 @@ pre {
   /* Fixed gutters alone can exceed a narrow conversation beside both rails.
      Keep the shared rhythm when it fits, and let the grid shrink with its pane. */
   column-gap: min(var(--wuu-grid-gutter), calc(100% / var(--wuu-grid-cols) / 2));
+}
+
+/* Replacement content shares the welcome column without relying on private classes. */
+.empty-home-inner > :where(:not(.empty-home-header)) {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 /* The greeting follows the UI size between the display and hero roles, so
@@ -5416,6 +5396,7 @@ pre {
 }
 
 .turn-artifact-gallery-items {
+  container-type: inline-size;
   display: flex;
   gap: 10px;
   min-width: 0;
@@ -5431,12 +5412,45 @@ pre {
 
 .turn-artifact-gallery-items:not(.is-tiled) > * {
   flex: 0 0 auto;
-  width: min(240px, 85%);
+  width: auto;
   min-width: 0;
 }
 
 .turn-artifact-gallery-items > :only-child {
-  width: min(240px, 100%);
+  width: min(var(--conversation-image-width), 100%);
+}
+
+/* A single publication reads like an image in the answer. */
+.turn-artifact-gallery-items:has(> :only-child) {
+  padding: 4px 0;
+}
+
+/* Carousel height is known before decoding. Intrinsic image widths may settle
+ * horizontally without moving the following prose or remounting an image. */
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview {
+  width: auto;
+  min-width: min(120px, 85cqw);
+  max-width: 85cqw;
+  height: min(180px, 60cqw);
+  aspect-ratio: auto;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview > button {
+  position: relative;
+  width: auto;
+  min-width: inherit;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview img {
+  position: static;
+  width: auto;
+  height: auto;
+  max-width: 85cqw;
+  object-position: left top;
+}
+
+.turn-artifact-gallery-items.is-tiled .turn-artifact-image-preview {
+  aspect-ratio: 4 / 3;
 }
 
 .turn-artifact-gallery-items.is-tiled {
@@ -5468,7 +5482,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 .turn-artifact-inline-image {
   align-self: flex-start;
   margin: 0;
-  width: min(100%, 240px);
+  width: min(100%, var(--conversation-image-width));
   min-width: 0;
 }
 
@@ -5478,15 +5492,18 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 }
 
 .turn-artifact-inline-image img {
+  position: absolute;
+  inset: 0 auto auto 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   max-width: 100%;
+  max-height: 100%;
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
-  border: 0;
-  border-radius: var(--radius-media);
+  border: 1px solid var(--hairline);
+  border-radius: var(--conversation-image-radius);
   background: transparent;
   object-fit: scale-down;
 }

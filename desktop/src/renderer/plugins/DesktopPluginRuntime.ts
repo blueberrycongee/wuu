@@ -272,7 +272,7 @@ export class DesktopPluginRuntime {
       generation: plugin.fingerprint!, graphGeneration: plugin.graph_generation,
       contributions: desktopContributionDeclarations(plugin), signal: controller.signal,
       register: async (api: PluginGenerationApi) => {
-        const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint: plugin.fingerprint! });
+        const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint: plugin.fingerprint!, graph_generation: plugin.graph_generation });
         api.signal.throwIfAborted();
         if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== plugin.fingerprint) throw new Error("Desktop plugin module identity mismatch");
         const loadedModule = await this.loadModule(loaded.url);
@@ -495,8 +495,15 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
   const activatePresentation = Reflect.get(value, "activatePresentation");
   if (typeof activatePresentation === "function") return { activatePresentation: api => Reflect.apply(activatePresentation, value, [api]) as void | Promise<void> };
   const activate = Reflect.get(value, "activate");
-  if (typeof activate !== "function") throw new Error("Desktop plugin module must export activate(api) or activatePresentation(api)");
-  return { activate: api => Reflect.apply(activate, value, [api]) as void | Promise<void> };
+  if (typeof activate === "function") return { activate: api => Reflect.apply(activate, value, [api]) as void | Promise<void> };
+  const defaultExport = Reflect.get(value, "default");
+  if (typeof defaultExport === "object" && defaultExport !== null && typeof Reflect.get(defaultExport, "initialize") !== "function") {
+    const defaultPresentation = Reflect.get(defaultExport, "activatePresentation");
+    if (typeof defaultPresentation === "function") return { activatePresentation: api => Reflect.apply(defaultPresentation, defaultExport, [api]) as void | Promise<void> };
+    const defaultActivate = Reflect.get(defaultExport, "activate");
+    if (typeof defaultActivate === "function") return { activate: api => Reflect.apply(defaultActivate, defaultExport, [api]) as void | Promise<void> };
+  }
+  throw new Error("Desktop plugin module must export activate(api) or activatePresentation(api)");
 }
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {
