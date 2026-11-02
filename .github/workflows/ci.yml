@@ -1829,6 +1829,25 @@ jobs:
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           node desktop/node_modules/electron/install.js
           node -e 'require("./desktop/node_modules/electron")'
+      - name: Verify activity preview native window ordering
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ACTIVITY_ORDERING_REPORT_DIR: ${{ runner.temp }}/wuu-activity-preview-ordering
+        run: |
+          mkdir -p "$WUU_ACTIVITY_ORDERING_REPORT_DIR"
+          git rev-parse HEAD > "$WUU_ACTIVITY_ORDERING_REPORT_DIR/source-commit.txt"
+          set -o pipefail
+          desktop/node_modules/.bin/electron desktop/scripts/activity-preview-ordering-e2e.cjs 2>&1 | tee "$WUU_ACTIVITY_ORDERING_REPORT_DIR/run.log"
+      - name: Upload activity preview window ordering evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: activity-preview-ordering-macos-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/wuu-activity-preview-ordering/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build production renderer
         id: build-focused-renderer
         timeout-minutes: 6
