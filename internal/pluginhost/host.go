@@ -968,7 +968,8 @@ type hostShutdown struct {
 }
 
 // ShutdownDone closes only when consumers, their dependencies and the owning
-// lifecycle graph have actually finished cleanup. A Close deadline does not
+// lifecycle graph have drained. Drain alone does not confirm successful cleanup;
+// consult the shutdown outcomes. A Close deadline does not
 // close this channel. Generation owners must retain registry and package roots
 // until this barrier closes.
 func (h *Host) ShutdownDone() <-chan struct{} {
