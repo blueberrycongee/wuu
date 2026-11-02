@@ -1879,8 +1879,6 @@ export type ManagedProcessSummary = {
   trigger?: {
     status: "waiting" | "received" | "handled" | "cancelled" | "stopped";
     on_exit: boolean;
-    recheck_minutes?: number;
-    next_recheck_at?: string;
   };
 };
 

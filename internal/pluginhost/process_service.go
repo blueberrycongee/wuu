@@ -19,7 +19,7 @@ func HasProcessSessionDelivery(ctx context.Context, sessionID string) bool {
 // Monitors and command-driven automation share execution and cleanup semantics.
 func KernelProcessDescriptor() ServiceDescriptor {
 	return ServiceDescriptor{
-		Name: "host.process", Version: "1.1.0",
+		Name: "host.process", Version: "1.2.0",
 		Methods: []ServiceMethodDescriptor{
 			{Name: "environment", InputSchema: "host.process.environment.input.v1", OutputSchema: "host.process.environment.v1"},
 			{Name: "start", InputSchema: "host.process.start.input.v1", OutputSchema: "host.process.snapshot.v1"},

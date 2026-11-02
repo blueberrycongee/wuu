@@ -11,7 +11,7 @@ export interface TerminalManagedProcessV1 {
   readonly pid: number; readonly tty?: boolean; readonly command: string; readonly cwd: string;
   readonly started_at: string; readonly updated_at: string; readonly stopped_at?: string; readonly exit_code?: number;
   readonly last_error?: string; readonly input_available?: boolean;
-  readonly trigger?: { readonly status: "waiting" | "received" | "handled" | "cancelled" | "stopped"; readonly on_exit: boolean; readonly recheck_minutes?: number; readonly next_recheck_at?: string };
+  readonly trigger?: { readonly status: "waiting" | "received" | "handled" | "cancelled" | "stopped"; readonly on_exit: boolean };
 }
 export interface TerminalManagedReadV1 { readonly thread_id: string; readonly process_id: string; readonly offset_bytes?: number; readonly max_bytes?: number; readonly wait_ms?: number }
 export interface TerminalManagedOutputV1 { readonly process: TerminalManagedProcessV1; readonly output: string; readonly truncated: boolean; readonly start_offset: number; readonly end_offset: number; readonly total_bytes: number; readonly timed_out: boolean }

@@ -16,11 +16,11 @@ interface Task {
   id: string; thread_id: string; description: string; command: string; cwd: string;
   persistent: boolean; timeout_ms: number; started_at: string; ended_at?: string;
   status: "running" | "completed" | "failed" | "stopped" | "timed_out" | "overloaded" | "interrupted";
-  lines: number; events: number; suppressed: number; output: string; offset: number;
+  lines: number; events: number; suppressed: number; output: string; offset: number; diagnostics: string; diagnostic_offset: number;
   last_event?: string; error?: string; exit_code?: number; pending?: Pending;
 }
 interface Start { command: string; description: string; timeout_ms?: number; persistent?: boolean }
-interface Control { action: "list" | "read" | "stop"; task_id?: string; thread_id?: string; offset_bytes?: number }
+interface Control { action: "list" | "read" | "stop"; task_id?: string; thread_id?: string; offset_bytes?: number; stream?: "stdout" | "stderr" }
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object" as const, properties, required, additionalProperties: false });
 const result = (value: unknown, message?: string) => ({ result: {
   content: [{ type: "text" as const, text: message || JSON.stringify(value) }], structured_content: value,
@@ -30,7 +30,7 @@ export function createMonitorPlugin(): RuntimePlugin {
   let host: RuntimeHost;
   let tasks: Task[] = [];
   let active = false;
-  const userStops = new Set<string>();
+  const requestedStops = new Set<string>();
   let writes: Promise<void> = Promise.resolve();
   const persisted = new Map<string, string>();
 
@@ -100,7 +100,8 @@ export function createMonitorPlugin(): RuntimePlugin {
     const reason = task.status === "completed" ? `exited (code ${process.exit_code})`
       : task.status === "failed" ? `failed (code ${process.exit_code})${process.error ? `: ${process.error}` : ""}`
       : task.status === "timed_out" ? `timeout after ${task.timeout_ms}ms` : task.status;
-    const ended = `[monitor ended: ${reason}]${userStops.has(task.id) ? "\nThe user stopped this monitor; do not restart it unless asked." : ""}`;
+    const diagnostics = task.status === "failed" || task.status === "timed_out" ? task.diagnostics : "";
+    const ended = `[monitor ended: ${reason}]${diagnostics ? `\nDiagnostics (stderr):\n${diagnostics}` : ""}${requestedStops.has(task.id) ? "\nThis monitor was explicitly stopped; do not restart it unless asked." : ""}`;
     await emit(task, event ? `${event}\n${ended}` : ended, true);
   }
   async function watch(task: Task, signal: AbortSignal): Promise<void> {
@@ -119,7 +120,12 @@ export function createMonitorPlugin(): RuntimePlugin {
         if (task.ended_at) break;
         // Read at most one bounded batch per tick; quiet watches make no model calls.
         await delay(200, undefined, { signal });
-        const out = await readProcess(host, { process_id: task.id, offset_bytes: task.offset, max_bytes: 1_048_576 });
+        const [out, diagnostic] = await Promise.all([
+          readProcess(host, { process_id: task.id, stream: "stdout", offset_bytes: task.offset, max_bytes: 1_048_576 }),
+          readProcess(host, { process_id: task.id, stream: "stderr", offset_bytes: task.diagnostic_offset, max_bytes: 1_048_576 }),
+        ]);
+        task.diagnostic_offset = diagnostic.next_offset;
+        if (diagnostic.output) task.diagnostics = truncateTail(task.diagnostics + diagnostic.output, 8192);
         task.thread_id = out.process.session_id;
         task.offset = out.next_offset;
         if (out.process.reason === "session_closed") {
@@ -130,7 +136,7 @@ export function createMonitorPlugin(): RuntimePlugin {
           break;
         }
         if (out.output) task.output = truncateTail(task.output + out.output, 2048);
-        const ended = terminal.has(out.process.state) && out.next_offset >= out.total_bytes;
+        const ended = terminal.has(out.process.state) && terminal.has(diagnostic.process.state) && out.next_offset >= out.total_bytes && diagnostic.next_offset >= diagnostic.total_bytes;
         const event = events.push(out.output, ended);
         task.lines = events.lines;
         task.suppressed = events.suppressedTotal;
@@ -142,7 +148,7 @@ export function createMonitorPlugin(): RuntimePlugin {
           await finish(task, out.process, event.text);
         } else if (event.text) {
           await emit(task, event.text, false);
-        } else if (out.output) await save();
+        } else if (out.output || diagnostic.output) await save();
       }
     } catch (error) {
       if (active && !signal.aborted && error instanceof RuntimeHostServiceError && ["session_unavailable", "generation_closed", "service_unavailable"].includes(error.code)) {
@@ -169,7 +175,7 @@ export function createMonitorPlugin(): RuntimePlugin {
         task.ended_at = new Date().toISOString();
         await save();
       }
-      userStops.delete(task.id);
+      requestedStops.delete(task.id);
     }
   }
   async function start(params: ToolExecuteParams<Start>, scoped: RuntimeHost): Promise<unknown> {
@@ -196,7 +202,7 @@ export function createMonitorPlugin(): RuntimePlugin {
     const existing = tasks.find(task => task.id === process.id);
     if (existing) return publicTask(existing);
     const task: Task = { id: process.id, thread_id: threadID, command: args.command, description: args.description.trim(), cwd: process.environment?.root ?? environment.root,
-      persistent: !!args.persistent, timeout_ms: timeout, started_at: new Date().toISOString(), status: "running", lines: 0, events: 0, suppressed: 0, output: "", offset: 0 };
+      persistent: !!args.persistent, timeout_ms: timeout, started_at: new Date().toISOString(), status: "running", lines: 0, events: 0, suppressed: 0, output: "", offset: 0, diagnostics: "", diagnostic_offset: 0 };
     tasks.push(task);
     try {
       await save();
@@ -210,44 +216,47 @@ export function createMonitorPlugin(): RuntimePlugin {
     }
     return { task_id: task.id, timeout_ms: timeout, persistent: task.persistent };
   }
-  async function control(input: Control, scoped: RuntimeHost, user: boolean): Promise<unknown> {
+  async function control(input: Control, scoped: RuntimeHost): Promise<unknown> {
+    if (input.stream !== undefined && input.stream !== "stdout" && input.stream !== "stderr") throw new Error("stream must be stdout or stderr");
+    if (input.offset_bytes !== undefined && (!Number.isSafeInteger(input.offset_bytes) || input.offset_bytes < 0)) throw new Error("offset_bytes must be a non-negative integer");
     if (input.action === "list") return { tasks: tasks.filter(task => !input.thread_id || task.thread_id === input.thread_id).map(publicTask) };
     const task = tasks.find(task => task.id === input.task_id && (!input.thread_id || task.thread_id === input.thread_id));
     if (!task) throw new Error("monitor not found in this conversation");
     if (input.action === "stop") {
       if (task.status !== "running") return publicTask(task);
-      if (user) userStops.add(task.id);
+      requestedStops.add(task.id);
       await stopProcess(scoped, task.id);
       return { ...publicTask(task), stopping: true };
     }
     if (input.action === "read") {
       if (currentGeneration.has(task.id)) {
-        return { task: publicTask(task), ...await readProcess(scoped, { process_id: task.id, offset_bytes: input.offset_bytes || 0, max_bytes: 65536 }) };
+        return { task: publicTask(task), ...await readProcess(scoped, { process_id: task.id, stream: input.stream ?? "stdout", offset_bytes: input.offset_bytes || 0, max_bytes: 65536 }) };
       }
       const offset = input.offset_bytes || 0;
-      const retained = Buffer.from(task.output);
-      const start = Math.max(0, offset - (task.offset - retained.length));
-      return { task: publicTask(task), output: retained.subarray(start).toString(), truncated: offset < task.offset - retained.length, next_offset: Math.max(offset, task.offset), total_bytes: task.offset };
+      const stream = input.stream ?? "stdout";
+      const total = stream === "stderr" ? task.diagnostic_offset : task.offset;
+      const retained = Buffer.from(stream === "stderr" ? task.diagnostics : task.output);
+      const start = Math.max(0, offset - (total - retained.length));
+      return { task: publicTask(task), stream, output: retained.subarray(start).toString(), truncated: offset < total - retained.length, next_offset: total, total_bytes: total };
     }
     throw new Error("action must be list, read or stop");
   }
   const currentGeneration = new Set<string>();
   return {
     concurrentServices: [watchService],
-    concurrentCapabilities: ["plugin.client.request"],
     initialize(_params, initialHost) {
       host = initialHost;
       return {
         lifecycle_version: 2,
         required_services: [requireBackgroundService(), requireProcessService(), ...(["host.storage.get", "host.storage.set", "host.storage.delete"] as const).map(requireKernelService)],
         provided_services: [{ name: watchService, version: "1.0.0", methods: [{ name: "run", input_schema: "monitor.watch.input.v1", output_schema: "monitor.watch.output.v1" }] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
+        capabilities: [{ id: "agent.system_prompt.section", kind: "transform", version: 1 }],
         tools: [
-          { id: "monitor", name: "monitor", description: "Start a background monitor from a long-running shell script. Output lines (stdout and stderr) become events in this conversation while you keep working. Print only relevant changes such as DONE, FAILED or CANCELLED; progress lines wake the main agent. Notify immediately when any tracked item fails. Use grep --line-buffered in pipelines and handle transient network failures in the script. Set persistent=true for session-length watches; otherwise timeout_ms defaults to 10 hours. Use monitor_tasks to inspect output or stop a watch. An event is not a reply to a question you asked the user.",
+          { id: "monitor", name: "monitor", description: "Start a background monitor from a long-running shell script. Complete stdout lines become events in this conversation while you keep working. Send progress, retries and diagnostics to stderr; stderr alone never wakes the conversation. Print only relevant changes such as DONE, FAILED or CANCELLED; progress lines wake the main agent. Notify immediately when any tracked item fails. Use grep --line-buffered in pipelines and handle transient network failures in the script. Set persistent=true for session-length watches; otherwise timeout_ms defaults to 10 hours. Use monitor_tasks to inspect output or stop a watch. An event is not a reply to a question you asked the user.",
             input_schema: schema({ command: { type: "string" }, description: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: defaultTimeoutMS }, persistent: { type: "boolean" } }, ["command", "description"]),
             activity: { read_only: false, risk: "high", reason: "Runs a shell script continuously" } },
-          { id: "monitor_tasks", name: "monitor_tasks", description: "List this conversation's monitors, read their complete output with a byte cursor, or stop a monitor and its process tree. Events arrive automatically; do not poll this tool to wait for a monitor.",
-            input_schema: schema({ action: { type: "string", enum: ["list", "read", "stop"] }, task_id: { type: "string" }, offset_bytes: { type: "integer", minimum: 0 } }, ["action"]),
+          { id: "monitor_tasks", name: "monitor_tasks", description: "List this conversation's monitors, read stdout events or stderr diagnostics with independent byte cursors, or stop a monitor and its process tree. Events arrive automatically; do not poll this tool to wait for a monitor.",
+            input_schema: schema({ action: { type: "string", enum: ["list", "read", "stop"] }, task_id: { type: "string" }, offset_bytes: { type: "integer", minimum: 0 }, stream: { type: "string", enum: ["stdout", "stderr"] } }, ["action"]),
             activity: { read_only: false, concurrency_safe: true } },
         ],
       };
@@ -259,7 +268,11 @@ export function createMonitorPlugin(): RuntimePlugin {
         const record = await host.call("host.storage.get", { scope: "workspace", key: `${stateKey}.${id}` });
         if (!record.value) throw new Error(`Missing monitor record: ${id}`);
         persisted.set(id, record.value);
-        return JSON.parse(record.value) as Task;
+        const task = JSON.parse(record.value) as Task;
+        // Records from the former merged-output monitor have no diagnostic cursor.
+        task.diagnostics ??= "";
+        task.diagnostic_offset ??= 0;
+        return task;
       }));
     },
     async activate(activeHost) {
@@ -276,7 +289,7 @@ export function createMonitorPlugin(): RuntimePlugin {
         const value = await start(params as ToolExecuteParams<Start>, scoped);
         return result(value, `${JSON.stringify(value)}\nMonitor started. Keep working; events arrive automatically. Do not poll or sleep. Events are observations, not user replies.`);
       }
-      if (params.tool_id === "monitor_tasks") return result(await control({ ...(params.arguments as Control), thread_id: params.thread_id || params.session_id }, scoped, false));
+      if (params.tool_id === "monitor_tasks") return result(await control({ ...(params.arguments as Control), thread_id: params.thread_id || params.session_id }, scoped));
       throw new Error("unknown monitor tool");
     },
     async invokeService(params, scoped, execution) {
@@ -288,11 +301,9 @@ export function createMonitorPlugin(): RuntimePlugin {
       await watch(task, execution.signal);
       return {};
     },
-    async invokeCapability(params, scoped) {
-      if (params.capability !== "plugin.client.request") throw new Error("unknown monitor capability");
-      const request = params.input as { method: string; input: Control };
-      if (request.method !== "monitor.tasks") throw new Error("unknown monitor client method");
-      return { output: { result: await control(request.input, scoped, true) } };
+    async invokeCapability(params) {
+      if (params.capability !== "agent.system_prompt.section") throw new Error("unknown monitor capability");
+      return { output: { text: "For ongoing observation of CI, remote jobs, APIs or logs, use the Monitor extension. With Code Mode, discover its exact callable names with await searchTools('monitor'), inspect await describeTool(name), then await tools[name](args). Discover monitor_tasks the same way when inspection or cancellation is needed. Start a bounded observation script that owns polling intervals, transient retries, filtering and exit conditions. Print complete meaningful changes to stdout and progress or diagnostics to stderr. Events arrive automatically; continue independent work or return to the user. Ordinary builds and commands use the command tool and its exit notification. Monitor events are external observations, not user authorization." } };
     },
     async shutdown() { active = false; await writes; },
   };
