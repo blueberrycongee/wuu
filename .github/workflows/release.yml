@@ -116,7 +116,12 @@ jobs:
           node ../../release-tools/desktop/scripts/install-notary-key.cjs
           node ../../release-tools/desktop/scripts/import-release-signing.cjs
       - name: Check and test Go packages
-        run: make -C .. check-go test-go-uncached
+        run: |
+          # macOS exposes temporary paths through /var -> /private/var. Some
+          # path-containment tests compare unresolved test roots, so give the
+          # suite a canonical TMPDIR before running it.
+          export TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+          make -C .. check-go test-go-uncached
       - name: Install
         run: |
           npm ci
