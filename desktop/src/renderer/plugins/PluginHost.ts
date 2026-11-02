@@ -549,6 +549,7 @@ const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({}
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
 
 const ACTIVATION_TIMEOUT_MS = 30_000;
+let nextNoticeHostID = 1;
 
 export class PluginGenerationSupersededError extends Error {
   constructor(pluginId: string, generation: string) {
@@ -562,6 +563,7 @@ export class PluginGenerationSupersededError extends Error {
  * This lifecycle boundary provides cleanup and startup recovery, not strong isolation.
  */
 export class PluginHost {
+  private readonly noticeHostID = nextNoticeHostID++;
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
   readonly applicationProviders = new ApplicationProviders();
@@ -1295,7 +1297,8 @@ export class PluginHost {
       showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
         this.assertActive(state);
         const id = showToast({ message: input.message, tone: input.tone,
-          dedupeKey: `plugin:${state.pluginId}:${input.key ?? input.message}` });
+          // Code fingerprints can repeat after reload; notice ownership follows the activation.
+          dedupeKey: `plugin:${this.noticeHostID}:${state.pluginId}:${state.generation}:${state.activation}:${input.key ?? input.message}` });
         const dispose = () => { if (id !== undefined) dismissToast(id); state.lifetime.signal.removeEventListener("abort", dispose); };
         state.lifetime.signal.addEventListener("abort", dispose, { once: true });
         return createDisposable(dispose);
