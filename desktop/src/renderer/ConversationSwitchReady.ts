@@ -43,6 +43,7 @@ export function useConversationSwitchReady({
     let measuredFrames = 0;
     let mediaSettled = false;
     let cancelled = false;
+    const mediaController = new AbortController();
     let frame = 0;
     const startedAt = performance.now();
     const finish = (): void => {
@@ -76,7 +77,7 @@ export function useConversationSwitchReady({
         // an unavailable remote source cannot hold the conversation.
         mediaSettled = true;
         const discovery = Math.max(0, CONVERSATION_MEDIA_DISCOVERY_MS - (performance.now() - startedAt));
-        void waitForConversationMedia(viewport, discovery).then(() => {
+        void waitForConversationMedia(viewport, discovery, mediaController.signal).then(() => {
           if (cancelled) return;
           if (!hasPendingConversationMedia(viewport)) {
             settleLayoutRef.current();
@@ -84,7 +85,7 @@ export function useConversationSwitchReady({
             return;
           }
           const remaining = Math.max(0, CONVERSATION_MEDIA_SETTLE_MS - (performance.now() - startedAt));
-          void settleConversationMedia(viewport, remaining).then(() => {
+          void settleConversationMedia(viewport, remaining, mediaController.signal).then(() => {
             if (cancelled) return;
             settleLayoutRef.current();
             finish();
@@ -101,6 +102,7 @@ export function useConversationSwitchReady({
     frame = window.requestAnimationFrame(check);
     return () => {
       cancelled = true;
+      mediaController.abort();
       window.cancelAnimationFrame(frame);
     };
   }, [activeThreadID, finishViewSwitch, kind, mediaExpected, requestID, targetID, viewportRef, visible]);

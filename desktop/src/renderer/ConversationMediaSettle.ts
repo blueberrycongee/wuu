@@ -21,14 +21,14 @@ function remainingMs(deadline: number): number {
   return Math.max(0, deadline - performance.now());
 }
 
-function isRelevant(node: Element, viewport: HTMLElement): boolean {
+function isRelevant(node: Element, viewport: HTMLElement, marginScreens = NEAR_VIEWPORT_MARGIN): boolean {
   const pane = node.closest(".cached-conversation-pane");
   if (pane && pane.getAttribute("data-active") !== "true") return false;
   const rect = node.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return false;
   const viewportRect = viewport.getBoundingClientRect();
   if (viewportRect.height <= 0) return false;
-  const margin = viewportRect.height * NEAR_VIEWPORT_MARGIN;
+  const margin = viewportRect.height * marginScreens;
   return rect.bottom >= viewportRect.top - margin && rect.top <= viewportRect.bottom + margin;
 }
 
@@ -54,7 +54,8 @@ function decodeImage(image: HTMLImageElement): Promise<void> {
     : Promise.resolve();
 }
 
-function waitForImage(image: HTMLImageElement): Promise<void> {
+function waitForImage(image: HTMLImageElement, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
   if (image.complete) {
     return image.naturalWidth > 0 ? decodeImage(image) : Promise.resolve();
   }
@@ -63,18 +64,22 @@ function waitForImage(image: HTMLImageElement): Promise<void> {
     const finish = (): void => {
       image.removeEventListener("load", finish);
       image.removeEventListener("error", finish);
+      signal.removeEventListener("abort", finish);
       resolve();
     };
     image.addEventListener("load", finish);
     image.addEventListener("error", finish);
+    signal.addEventListener("abort", finish, { once: true });
     // A cached image can finish between the `complete` read and listener setup.
     if (image.complete) finish();
-  }).then(() => image.naturalWidth > 0 ? decodeImage(image) : undefined);
+  }).then(() => !signal.aborted && image.naturalWidth > 0 ? decodeImage(image) : undefined);
 }
 
 function relevantPlaceholders(viewport: HTMLElement): HTMLElement[] {
+  // Offscreen previews may not have crossed their lazy-loading intersection.
+  // Only visible placeholders can hold navigation; waiting cannot start a fetch.
   return Array.from(viewport.querySelectorAll<HTMLElement>("[data-conversation-image-pending]"))
-    .filter(node => isRelevant(node, viewport));
+    .filter(node => isRelevant(node, viewport, 0));
 }
 
 function relevantImages(viewport: HTMLElement): HTMLImageElement[] {
@@ -179,11 +184,20 @@ async function waitForImages(
   signal?: AbortSignal,
 ): Promise<void> {
   const images = relevantImages(viewport);
-  if (images.length === 0) return;
-  await Promise.race([
-    Promise.all(images.map(waitForImage)),
-    waitUntil(deadline, signal),
-  ]);
+  if (images.length === 0 || signal?.aborted) return;
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await Promise.race([
+      Promise.all(images.map(image => waitForImage(image, controller.signal))),
+      waitUntil(deadline, controller.signal),
+    ]);
+  } finally {
+    // Release listeners even if a remote image never emits load or error.
+    controller.abort();
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 export async function settleConversationMedia(

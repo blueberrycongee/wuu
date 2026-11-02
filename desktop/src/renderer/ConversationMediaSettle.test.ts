@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../shared/protocol";
 import {
   hasPendingConversationMedia,
@@ -10,6 +10,7 @@ import {
 const viewports: HTMLElement[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const node of viewports) node.remove();
   viewports.length = 0;
 });
@@ -127,4 +128,42 @@ describe("conversation media settling", () => {
     await waiting;
     expect(settled).toBe(true);
   });
+
+  it("does not wait for remote placeholders outside the visible viewport", async () => {
+    vi.useFakeTimers();
+    const node = viewport();
+    const placeholder = document.createElement("button");
+    placeholder.setAttribute("data-conversation-image-pending", "");
+    imageViewportRect(placeholder, rect(20, 900, 200, 50));
+    node.append(placeholder);
+    // Preview loading only begins near an intersection, not a full screen away.
+    expect(hasPendingConversationMedia(node)).toBe(false);
+    let settled = false;
+    void settleConversationMedia(node).then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+  });
+
+  it.each(["timeout", "abort"])("removes pending image listeners on %s", async reason => {
+    vi.useFakeTimers();
+    const node = viewport();
+    const image = document.createElement("img");
+    image.className = "rich-image";
+    imageViewportRect(image);
+    setImageState(image, false, 0);
+    node.append(image);
+    const add = vi.spyOn(image, "addEventListener");
+    const remove = vi.spyOn(image, "removeEventListener");
+    const controller = new AbortController();
+    const waiting = settleConversationMedia(node, 240, controller.signal);
+    await vi.advanceTimersByTimeAsync(0);
+    if (reason === "abort") controller.abort();
+    else await vi.advanceTimersByTimeAsync(240);
+    await waiting;
+    for (const [event, listener] of add.mock.calls) {
+      expect(remove).toHaveBeenCalledWith(event, listener);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
 });
