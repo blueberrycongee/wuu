@@ -36,6 +36,16 @@ describe('Personal connector owner surface',()=>{
   const next=service();next.actions=async()=>({actions:[]});await React.act(async()=>root?.render(<Panel service={next} conversation/>));
   await React.act(async()=>finish());expect(container.querySelector('[data-connector-approve]')).toBeNull();
  });
+ it('does not unlock a new space decision when an old rule save returns',async()=>{
+  let saved:(value:unknown)=>void=()=>{};
+  const old={...service(),rulePreview:async()=>({schema:'personal-review-rules.v1',revision:3,rules:[],preview:{description:'Exact message',operation:'gmail.send',target:'reader@example.invalid',decision:'allow'}}),ruleSave:()=>new Promise(resolve=>{saved=resolve})};
+  container=document.createElement('div');document.body.append(container);root=createRoot(container);const Panel=createConnectorsPanel(React,createPluginUIKit(React));
+  await React.act(async()=>root?.render(<Panel service={old} conversation/>));
+  await React.act(async()=>container.querySelector<HTMLButtonElement>('[data-connector-remember]')!.click());React.act(()=>container.querySelector<HTMLButtonElement>('[data-connector-save-rule]')!.click());
+  const next=service();next.decide.mockImplementation(()=>new Promise(()=>{}));await React.act(async()=>root?.render(<Panel service={next} conversation/>));React.act(()=>approve().click());
+  await React.act(async()=>saved({schema:'personal-review-rules.v1',revision:4,rules:[]}));
+  expect(approve().disabled).toBe(true);expect(old.decide).not.toHaveBeenCalled();expect(next.decide).toHaveBeenCalledTimes(1);
+ });
  it('empty configuration is not presented as connected and empty conversation is quiet',async()=>{const s=service();s.actions=async()=>({actions:[]});await render(s,true);expect(container.textContent).toBe('');});
  it('closing and reopening reloads saved state without auto-confirming',async()=>{const s=service();await render(s,true);await React.act(async()=>root?.unmount());root=undefined;container.remove();await render(s,true);expect(s.decide).not.toHaveBeenCalled();expect(approve().disabled).toBe(false);});
 

@@ -67,9 +67,9 @@ export function createConnectorsPanel(react:typeof React,ui:Parameters<typeof cr
     if(!alive.current||n!==generation.current)return;
     ruleSaved=true;setRulePreview(undefined);
     await service.decide({action_id:action.action_id,digest:action.digest,approve:true});
-    if(alive.current&&n===generation.current)await load();
+    if(alive.current&&n===generation.current){gate.current=false;setBusy(false);await load();}
    }catch{if(alive.current&&n===generation.current){setUncertain(true);setError(ruleSaved?'规则已保存，但这次操作的结果尚未确认。请刷新核对，不要重复执行。':'未能确认规则是否保存。请刷新核对；这次操作尚未批准。')}}
-   finally{gate.current=false;if(alive.current)setBusy(false)}
+   finally{if(alive.current&&n===generation.current){gate.current=false;setBusy(false)}}
   };
   const visible=conversation?saved.filter(a=>['awaiting_confirmation','uncertain','executing'].includes(a.state)):saved;
   if(conversation&&!visible.length)return null;

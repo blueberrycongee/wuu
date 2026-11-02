@@ -345,8 +345,8 @@ var personalDesktop = (() => {
   }
   function ruleDescription(rule, locale) {
     if (!locale.startsWith("zh")) return rule.description;
-    if (rule.operation === "write_file" || rule.operation === "edit_file") return `\u4EE5\u540E\u5141\u8BB8\u4FEE\u6539\u201C${rule.target.split(/[\\/]/).pop()}\u201D\u7684\u5185\u5BB9\uFF0C\u4EC5\u9650\u8FD9\u4E2A\u6587\u4EF6\u3002`;
-    if (["bash", "process", "process_start"].includes(rule.operation)) return "\u4EE5\u540E\u5141\u8BB8\u5728\u76F8\u540C\u4F4D\u7F6E\uFF0C\u4F7F\u7528\u76F8\u540C\u6743\u9650\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u3002";
+    if (rule.operation === "write_file" || rule.operation === "edit_file") return rule.decision === "ask" ? `\u4FEE\u6539\u201C${rule.target.split(/[\\/]/).pop()}\u201D\u524D\uFF0C\u6BCF\u6B21\u5148\u95EE\u6211\u3002` : `\u4EE5\u540E\u5141\u8BB8\u4FEE\u6539\u201C${rule.target.split(/[\\/]/).pop()}\u201D\u7684\u5185\u5BB9\uFF0C\u4EC5\u9650\u8FD9\u4E2A\u6587\u4EF6\u3002`;
+    if (["bash", "process", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "\u5728\u76F8\u540C\u4F4D\u7F6E\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u524D\uFF0C\u6BCF\u6B21\u5148\u95EE\u6211\u3002" : "\u4EE5\u540E\u5141\u8BB8\u5728\u76F8\u540C\u4F4D\u7F6E\uFF0C\u4F7F\u7528\u76F8\u540C\u6743\u9650\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u3002";
     return rule.description;
   }
   var copy = {
@@ -1030,15 +1030,21 @@ var personalDesktop = (() => {
           ruleSaved = true;
           setRulePreview(void 0);
           await service.decide({ action_id: action.action_id, digest: action.digest, approve: true });
-          if (alive.current && n === generation.current) await load();
+          if (alive.current && n === generation.current) {
+            gate.current = false;
+            setBusy(false);
+            await load();
+          }
         } catch {
           if (alive.current && n === generation.current) {
             setUncertain(true);
             setError(ruleSaved ? "\u89C4\u5219\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u8FD9\u6B21\u64CD\u4F5C\u7684\u7ED3\u679C\u5C1A\u672A\u786E\u8BA4\u3002\u8BF7\u5237\u65B0\u6838\u5BF9\uFF0C\u4E0D\u8981\u91CD\u590D\u6267\u884C\u3002" : "\u672A\u80FD\u786E\u8BA4\u89C4\u5219\u662F\u5426\u4FDD\u5B58\u3002\u8BF7\u5237\u65B0\u6838\u5BF9\uFF1B\u8FD9\u6B21\u64CD\u4F5C\u5C1A\u672A\u6279\u51C6\u3002");
           }
         } finally {
-          gate.current = false;
-          if (alive.current) setBusy(false);
+          if (alive.current && n === generation.current) {
+            gate.current = false;
+            setBusy(false);
+          }
         }
       };
       const visible = conversation ? saved.filter((a) => ["awaiting_confirmation", "uncertain", "executing"].includes(a.state)) : saved;
