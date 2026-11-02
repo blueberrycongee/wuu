@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -15,6 +16,12 @@ import (
 )
 
 func validateExecutionRouteBinding(binding *executionauth.SessionRouteBinding) error {
+	if binding != nil && binding.Creation != nil {
+		if binding.Locator.Version != 1 || strings.TrimSpace(binding.Locator.ExecutionHost) == "" || binding.Locator.SessionID != "" || !slices.Equal(binding.Operations, []string{"create"}) || binding.Creation.RequestID == "" || binding.Creation.ExecutionAuthorization != nil {
+			return errors.New("session creation route requires an exact workspace and creation intent")
+		}
+		return nil
+	}
 	if binding == nil || binding.Locator.Version != 1 || strings.TrimSpace(binding.Locator.ExecutionHost) == "" || strings.TrimSpace(binding.Locator.SessionID) == "" || len(binding.Operations) == 0 || len(binding.Operations) > 3 {
 		return errors.New("existing session route binding is incomplete")
 	}
@@ -46,6 +53,14 @@ func validateExecutionSessionRoute(binding *executionauth.SessionRouteBinding, r
 		return errors.New("execution authorization does not cover this session route")
 	}
 	switch request.Operation {
+	case "create":
+		var p pluginhost.SessionCreateParams
+		if err := decodeServiceParams(request.Params, &p); err != nil {
+			return err
+		}
+		if request.OperationID != runID || p.RequestID != runID || !reflect.DeepEqual(&p, binding.Creation) {
+			return errors.New("routed creation requires its exact admitted intent")
+		}
 	case "send":
 		var p pluginhost.SessionSendParams
 		if err := decodeServiceParams(request.Params, &p); err != nil {

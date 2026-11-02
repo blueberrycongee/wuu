@@ -53,8 +53,9 @@ type Scope struct {
 
 // SessionRouteBinding is observed business intent, not a target access grant.
 type SessionRouteBinding struct {
-	Locator    pluginhost.SessionLocatorV1 `json:"locator"`
-	Operations []string                    `json:"operations"`
+	Locator    pluginhost.SessionLocatorV1     `json:"locator"`
+	Operations []string                        `json:"operations"`
+	Creation   *pluginhost.SessionCreateParams `json:"creation,omitempty"`
 }
 
 // Lineage is returned by the selected task authority and carried only in

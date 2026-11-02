@@ -185,15 +185,15 @@ export class AppServerClientPool {
 
   /** Snapshot only currently registered local receivers; never start a replacement
    * core to satisfy a control request after registration or connection changes. */
-  registeredSessionReceivers(): { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation" }[] {
-    const receivers: { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation" }[] = [];
+  registeredSessionReceivers(): { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation"; workspaceRoot?: string }[] {
+    const receivers: { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation"; workspaceRoot?: string }[] = [];
     for (const client of this.clients.values()) {
       if (!this.isSelectedClient(client) || this.clientRoutes.get(client)?.route.kind !== "local") continue;
       let request=this.receiverBindings.get(client);
       if(!request){request=this.bindClientRequest(client,{localOnly:true});this.receiverBindings.set(client,request);}
       const ownerLocal = client.ownerLocalSessionLocator();
       const federation = client.federationLocator();
-      if (ownerLocal) receivers.push({locator:ownerLocal, request, routeKind:"owner-local"});
+      if (ownerLocal) receivers.push({locator:ownerLocal, request, routeKind:"owner-local", workspaceRoot:client.workdir});
       if (federation || !ownerLocal) receivers.push({locator:federation,request,routeKind:"federation"});
     }
     return receivers;

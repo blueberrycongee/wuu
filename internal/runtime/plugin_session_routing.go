@@ -32,11 +32,7 @@ func (r *PluginSessionRouter) Route(ctx context.Context, pluginID string, reques
 			return pluginhost.SessionRouteResult{}, callErr
 		}
 		var result pluginhost.SessionRouteResult
-		invalid := json.Unmarshal(output, &result) != nil || result.Version != 1 || result.Locator.Version != 1 || result.OperationID != request.OperationID || result.Locator.ExecutionHost != request.Locator.ExecutionHost
-		invalid = invalid || (result.Status != "completed" && result.Status != "pending" && result.Status != "unknown")
-		invalid = invalid || (request.Operation != "create" && result.Locator.SessionID != request.Locator.SessionID)
-		invalid = invalid || (request.Operation == "create" && result.Status == "completed" && result.Error == nil && result.Locator.SessionID == "")
-		if invalid {
+		if json.Unmarshal(output, &result) != nil || !result.Matches(request) {
 			return pluginhost.SessionRouteResult{Version: 1, OperationID: request.OperationID, Locator: request.Locator, Status: "unknown", Error: &pluginhost.SessionRouteError{Code: "session_invalid_receipt", Message: "selected transport returned an invalid receipt; reconcile before issuing new work"}}, nil
 		}
 		return result, nil

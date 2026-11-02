@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ServerEvent } from '../shared/protocol';
 import { AppServerClientPool, type BoundAppServerRequest } from './appServerClients';
 import { requestTrustedRemoteOnConnection, trustedRemotePeer, type TrustedRemotePeer } from './trustedRemoteTransport';
-import { validateSessionRoute, type RegisteredSessionTargetsV1, type SessionRouteRequest, type SessionRouteResult } from '../../../packages/plugin-sdk/src/session-transport';
+import { validateSessionRoute, isSessionRouteResult, type RegisteredSessionTargetsV1, type SessionRouteRequest, type SessionRouteResult } from '../../../packages/plugin-sdk/src/session-transport';
 
 export const REGISTERED_SESSION_REVERSE_METHODS = ['session/transport.dispatch', 'session/transport.list-targets', 'session/transport.release'];
 function record(value:unknown):value is Record<string,unknown>{return value!==null&&typeof value==='object'&&!Array.isArray(value);}
@@ -56,13 +56,12 @@ export class RegisteredSessionTransport {
 
    if(response.error)return {version:1,operation_id:request.operation_id,locator:{...request.locator},status:'completed',error:{code:response.error.code??'session_request_denied',message:response.error.message}};
    const value=response.result;
-   if(!record(value)||value.version!==1||value.operation_id!==request.operation_id||!record(value.locator)||value.locator.execution_host!==request.locator.execution_host||value.locator.session_id!==request.locator.session_id||!['completed','pending','unknown'].includes(String(value.status)))return unknown(request);
-   return value as unknown as SessionRouteResult;
+   return isSessionRouteResult(value,request)?value:unknown(request);
   }catch{return unknown(request);}finally{await readCleanup?.().catch(()=>{});}
  }
  async dispatch(peer:TrustedRemotePeer,request:SessionRouteRequest,source?:ServerEvent,controller?:unknown):Promise<SessionRouteResult>{
   validateSessionRoute(request);
-  if(!trustedRemotePeer(peer)||peer.owner||!['send','inspect','cancel'].includes(request.operation)||request.locator.execution_host==='local')throw new Error('Bound existing-session transport required');
+  if(!trustedRemotePeer(peer)||peer.owner||!['create','send','inspect','cancel'].includes(request.operation)||request.locator.execution_host==='local')throw new Error('Bound registered-session transport required');
   const matches=this.pool.registeredSessionReceivers().filter(receiver=>receiver.locator?.execution_host===request.locator.execution_host);
   if(matches.length!==1)return {version:1,operation_id:request.operation_id,locator:request.locator,status:'completed',error:{code:'session_host_unavailable',message:'Exact registered session receiver is unavailable or ambiguous'}};
   const target=matches[0];
@@ -71,7 +70,7 @@ export class RegisteredSessionTransport {
  }
  async listTargets(peer:TrustedRemotePeer):Promise<RegisteredSessionTargetsV1>{
   if(!trustedRemotePeer(peer)||peer.owner)throw new Error('Authenticated nonowner source transport required');
-  const result:RegisteredSessionTargetsV1={version:1,targets:[],unavailable:[]};
+  const result:RegisteredSessionTargetsV1={version:1,targets:[],workspaces:[],unavailable:[]};
   const receivers=this.pool.registeredSessionReceivers();
   for(const receiver of receivers){
    const locator=receiver.locator;
@@ -79,7 +78,8 @@ export class RegisteredSessionTransport {
    if(receivers.filter(candidate=>candidate.locator?.execution_host===locator.execution_host).length!==1){result.unavailable.push({execution_host:locator.execution_host,reason:'Receiver identity is ambiguous'});continue;}
    const receipt=await this.call(receiver.request,peer,{version:1,operation:'list',operation_id:randomUUID(),locator,params:{scope:'shared'}},undefined,receiver.routeKind==='owner-local'?'session/owner-local':'session/federation');
    if(receipt.status!=='completed'||receipt.error||!record(receipt.result)||!Array.isArray(receipt.result.sessions)){result.unavailable.push({execution_host:locator.execution_host,reason:'Receiver is unavailable or its policy does not permit discovery'});continue;}
-   for(const session of receipt.result.sessions){if(record(session)&&typeof session.session_id==='string'){result.targets.push({locator:{...locator,session_id:session.session_id},route_kind:receiver.routeKind??'federation',...(typeof session.name==='string'?{title:session.name}:{})});}}
+   if(receiver.routeKind==='owner-local')result.workspaces!.push({locator:{...locator},route_kind:'owner-local',workspace_root:receiver.workspaceRoot,title:receiver.workspaceRoot});
+   for(const session of receipt.result.sessions){if(record(session)&&typeof session.session_id==='string'){result.targets.push({locator:{...locator,session_id:session.session_id},route_kind:receiver.routeKind??'federation',...(receiver.workspaceRoot?{workspace_root:receiver.workspaceRoot}:{}),...(typeof session.name==='string'?{title:session.name}:{})});}}
   }
   return result;
  }

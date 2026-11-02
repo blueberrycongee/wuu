@@ -43,6 +43,21 @@ type SessionRouteResult struct {
 	Error       *SessionRouteError `json:"error,omitempty"`
 }
 
+// Matches checks the common receipt contract without treating command completion
+// as completion of an agent turn.
+func (r SessionRouteResult) Matches(request SessionRouteRequest) bool {
+	if r.Version != 1 || r.Locator.Version != 1 || r.OperationID != request.OperationID || r.Locator.ExecutionHost != request.Locator.ExecutionHost {
+		return false
+	}
+	if r.Status != "completed" && r.Status != "pending" && r.Status != "unknown" {
+		return false
+	}
+	if request.Operation == "create" {
+		return r.Status != "completed" || r.Error != nil || strings.TrimSpace(r.Locator.SessionID) != ""
+	}
+	return r.Locator.SessionID == request.Locator.SessionID
+}
+
 func (r SessionRouteRequest) Validate() error {
 	if r.Version != 1 || r.Locator.Version != 1 {
 		return errors.New("unsupported session routing version")

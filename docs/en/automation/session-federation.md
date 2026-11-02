@@ -103,7 +103,7 @@ descriptor (defaulting to its host ID), not a client-selected store or migration
 instruction. `display_host` is presentation metadata. A host-qualified session
 identity is the pair `(execution_host, session_id)`, never just `session_id`.
 
-## Personal tasks in an existing session
+## Personal tasks in workspace sessions
 
 The host grant gateway advertises `host_features: ["session-route.v1"]` from `executionGrants(host).describe()`. An absent feature means this routing operation is unavailable on an older host; ordinary Personal tasks remain supported and no replacement worker is created.
 
@@ -113,6 +113,22 @@ host-qualified session when names are ambiguous. `create_task` accepts an
 `existing_session` locator; `resume_task` and `update_task` retain that target and
 start a new queued request. They do not steer an unrelated active turn, fork the
 session, or create a replacement when its host disappears.
+
+For new work, `list_sessions.workspaces` lists available registered local Coding
+workspaces, including workspaces with no sessions. Pass the exact workspace
+locator to `create_session` with a stable `request_id` and `title`, then pass its
+returned `locator` to `create_task.existing_session` to start the work. Creation
+alone does not dispatch a turn. The new session is visible in the workspace and
+uses the receiver's default model and permissions. Session entries also include
+`workspace_root` on the local path to distinguish identically named sessions.
+Unopened or disconnected workspace runtimes are not started by discovery.
+
+Creation requires the host feature `session-route-create.v1`. Its separate
+create-only grant binds the exact workspace and saved creation parameters; it
+cannot send work or change model, permissions, parentage, or workspace paths.
+A repeated `request_id` returns the same saved locator; an uncertain response
+must be retried with the same ID. Changed parameters conflict. Once created,
+the ordinary task flow tracks results and appends follow-ups to that session.
 
 The source grant remains anchored to Personal's own controller conversation.
 Its selected task authority reports the existing locator and permitted operations;
@@ -236,7 +252,7 @@ checks local defaults, remote creation, narrowed permissions, idempotent retries
 disconnect/reconnect, final output, exact cancellation, and revocation. It does
 not validate physical-machine networking, installed engines, or GUI rendering.
 
-Existing-target delegation is text-only. The controller goal is labeled separately from the authenticated original user message, when one is bound to the task; routine or controller-origin tasks do not invent a human original. An attached original request leaves a revisable task with an explicit unavailable explanation before any worker send. Files are not copied between hosts and source paths are never converted into receiver-local paths. Handle required files at the target, then revise the task to continue without attachment transfer.
+All task dispatch paths—new workspace sessions, existing sessions, and Personal workers—include the verbatim host-bound user message alongside the controller's execution goal. User follow-ups retain their own original text and attachment references, and controller review receives the same source information. Routine or controller-origin tasks do not invent a human original. Attachment references retain their source session/message, digest, and persisted source-host address when available. The shared history API exposes these addresses only when `include_attachment_locations` is requested, under its existing scope checks; ordinary history and search omit them. Addresses refer to the host's original attachment working copy or artifact URI, not an unrecorded client-device path. Files are not copied between hosts, and paths are not translated into receiver-local paths. A receiver must report expired or inaccessible references.
 
 ### Registered desktop bridge acceptance
 

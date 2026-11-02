@@ -691,7 +691,11 @@ export interface ClientInputAttachment {
  readonly data: string;
 }
 export interface SessionInputAttachment { sha256: string; filename: string; media_type: string }
-export interface SessionHistoryAttachment { kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string }
+export interface SessionHistoryAttachment {
+  kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string;
+  /** Opt-in persisted source-host addresses; may expire or be inaccessible on other hosts. No file transfer is implied. */
+  local_path?: string; uri?: string;
+}
 /** Renderer request envelope. Major version comes from required_services;
  * routing and execution identity remain host-owned.
  */
@@ -1700,6 +1704,8 @@ export interface HostServiceContracts {
   "host.session.history.read": {
     params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
       session_id: string;
+      /** Include original attachment addresses after the same history scope checks. Defaults to false. */
+      include_attachment_locations?: boolean;
       start_seq?: number;
       end_seq?: number;
       snapshot_seq?: number;

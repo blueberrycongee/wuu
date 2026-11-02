@@ -23,6 +23,8 @@ type SessionHistoryReadParams struct {
 	SnapshotSeq            int                              `json:"snapshot_seq,omitempty"`
 	Limit                  int                              `json:"limit,omitempty"`
 	Cursor                 string                           `json:"cursor,omitempty"`
+	// IncludeAttachmentLocations returns persisted addresses on the source host; it does not transfer files.
+	IncludeAttachmentLocations bool `json:"include_attachment_locations,omitempty"`
 }
 
 type SessionHistorySearchParams struct {
@@ -47,6 +49,9 @@ type SessionHistoryAttachment struct {
 	MIMEType string `json:"mime_type"`
 	Size     int64  `json:"size"`
 	SHA256   string `json:"sha256"`
+	// Locations are opt-in and may expire or be inaccessible from another host.
+	LocalPath string `json:"local_path,omitempty"`
+	URI       string `json:"uri,omitempty"`
 }
 
 type SessionAttachmentReadParams struct {
