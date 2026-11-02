@@ -46,7 +46,7 @@ export function activate(api: PluginGenerationApi): void {
         // A pending destination performs its own selected-authority history read.
         // Do not first resume the checkpoint tab and then resume the intent again.
         await controller.initialize(api.signal, { resumeThread: !restored?.navigationIntent });
-        if (restored) controller.restorePresentation(restored);
+        if (restored) { controller.restoreSidebar(restored); controller.restorePresentation(restored); }
         if (restored?.navigationIntent) await controller.restoreNavigationIntent(restored.navigationIntent, api.signal);
         else if (restored?.presentationIntent) controller.restorePresentationIntent(restored.presentationIntent);
         stop = controller.start();

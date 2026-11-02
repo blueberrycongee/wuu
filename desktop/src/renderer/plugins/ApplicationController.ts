@@ -39,7 +39,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -529,8 +529,27 @@ export class ApplicationController implements HostApplicationService {
     // Refresh only its captured source, never whichever tab became active later.
     const presentationIntent = intent && carry ? { ...intent, draftCarry: source
       ? { ...carry, draft: cloneSessionTabDraft(source) } : undefined } : intent;
-    return { state, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent };
+    // Carry navigation metadata, not conversation histories, across writer replacement.
+    const sidebarThreads: Thread[] = this.applicationNavigation.getSnapshot().threads.map(thread => ({
+      ...thread, turns: thread.turns.map(turn => ({ ...turn, items: [], items_view: "conversation" as const })), child_agents: undefined,
+      worktree: thread.worktree && { ...thread.worktree, changed_files: thread.worktree.changed_files && [...thread.worktree.changed_files] },
+    }));
+    return { state, sidebarThreads, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent };
   }
+  restoreSidebar(checkpoint: { state: AppState; sidebarThreads?: Thread[] }): void {
+    // The newly loaded project catalog owns visibility. A removed/replaced
+    // workspace must not be reintroduced by a previous writer's checkpoint.
+    const projects = this.state.projects.filter(project => checkpoint.state.projects.some(previous =>
+      previous.id === project.id && previous.path === project.path));
+    const listedIDs = this.loaded?.threads && new Set(this.loaded.threads.map(thread => thread.id));
+    this.sidebarCache.cacheSidebarThreads((checkpoint.sidebarThreads ?? []).filter(thread =>
+      projects.some(project => threadBelongsToWorkspace(thread, project))
+      // Omission is deletion only within the catalog actually loaded by this
+      // writer. Other workspaces have not been read yet and retain summaries.
+      && (!listedIDs || !sameRuntimeContext(resolveThreadRuntimeContext(thread, this.state.projects), this.state.activeContext)
+        || listedIDs.has(thread.id))));
+  }
+
   /** Fulfill only a read-only destination on the new writer; never replay submissions. */
   async restoreNavigationIntent(intent: NonNullable<ReturnType<ApplicationController["exportCheckpoint"]>["navigationIntent"]>, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
