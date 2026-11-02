@@ -60,11 +60,19 @@ WUU_REVIEW_PLAYWRIGHT_PATH="$PWD/clients/mobile-web/node_modules/playwright" \
 ```
 
 两个渲染器均保留沙箱。检查覆盖明暗主题、宽窄窗口、大字号、服务不可用、
-同意与拒绝、撤回、响应丢失后的恢复，以及显式开启 Auto Review。CI 将截图、
+同意与拒绝、撤回、响应丢失后的恢复，以及自动审核开关和记住规则。CI 将截图、
 报告、日志、准确的检出与 PR 身份、夹具哈希和失败证据上传为
 `personal-desktop-hosted-macos-evidence-<PR head SHA>`，不上传浏览器配置目录，
 不使用真实账户、模型或外部操作。应同时检查截图与断言；这不代表手机端、
 原生宿主授权、真实提供商或实体设备验收。
+
+生产审批按钮还可直接连接真实 UserHost，在临时目录执行真实命令。先构建上述 fixture，再运行 `WUU_PERSONAL_BROWSER_E2E=1 go test ./internal/appserver -run '^TestPersonalApprovalBrowserToNativeEffect$' -count=1 -v`。截图和回执报告写入 `desktop/out/personal-approval-native/`；导航与模型仍使用测试替身。可用 `WUU_REVIEW_CHROMIUM` 指定已安装的 Chromium。macOS 设置 `TMPDIR=/private/tmp`，避免临时目录软链接别名。
+
+账号完整链路使用真实内置运行时与合成 HTTP 提供方：
+
+```bash
+WUU_CONNECTOR_CHAIN_E2E=1 go test -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)-dev" ./internal/appserver -run '^TestPersonalConnectorRealBundleOwnerReceiptChain$' -count=1 -v
+```
 
 只开发 CLI 时可以运行：
 
