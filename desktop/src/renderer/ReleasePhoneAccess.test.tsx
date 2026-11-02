@@ -62,7 +62,7 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     expect(menuItems.map(item => item.textContent)).toEqual([t("settings.usage"), t("sidebar.settings")]);
     expect(remoteAccount).not.toHaveBeenCalled();
     await act(async () => menuItems.find(item => item.textContent === t("sidebar.settings"))!.click());
-    expect(onOpenSettings).toHaveBeenCalledWith("providers");
+    expect(onOpenSettings).toHaveBeenCalledWith(undefined);
     expect(onOpenAccount).not.toHaveBeenCalled();
     expect(openDevices).not.toHaveBeenCalled();
 

@@ -49,7 +49,7 @@ describe("SidebarAccountMenu", () => {
       expect(document.activeElement).toBe(trigger());
       expect(tab.defaultPrevented).toBe(false);
     }
-    await open(); act(() => item("sidebar.settings").click()); expect(navigate).toHaveBeenLastCalledWith("providers");
+    await open(); act(() => item("sidebar.settings").click()); expect(navigate).toHaveBeenLastCalledWith(undefined);
     await open(); act(() => item("settings.usage").click()); expect(navigate).toHaveBeenLastCalledWith("usage");
   });
   it("refreshes identity after account changes and links to account management", async () => {
