@@ -131,3 +131,39 @@ describe("confirmAction", () => {
   });
 
 });
+
+// Preparation may settle after cancellation, after a successor, or with an error.
+it("keeps a prepared request disabled until ready without reviving a canceled request", async () => {
+  mountHost();
+  let finish!: (value: ReturnType<typeof request>) => void;
+  const preparation = new Promise<ReturnType<typeof request>>(resolve => { finish = resolve; });
+  let answer!: Promise<boolean>;
+  await act(async () => { answer = confirmAction({ ...request("Loading"), prepare: () => preparation }); });
+  expect(action("confirm").disabled).toBe(true);
+  expect(document.activeElement).toBe(action("cancel"));
+  await act(async () => action("cancel").click());
+  await expect(answer).resolves.toBe(false);
+  const { answer: successor } = await open("Successor");
+  await act(async () => finish(request("Stale")));
+  expect(dialog()?.textContent).toContain("Successor");
+  await act(async () => action("cancel").click());
+  await expect(successor).resolves.toBe(false);
+});
+
+it.each(["empty", "failure", "aborted"])("settles %s preparation without allowing confirmation", async outcome => {
+  mountHost();
+  let finish!: (value: ReturnType<typeof request> | null) => void;
+  let fail!: (reason: Error) => void;
+  const preparation = new Promise<ReturnType<typeof request> | null>((resolve, reject) => { finish = resolve; fail = reject; });
+  const owner = new AbortController();
+  let answer!: Promise<boolean>;
+  await act(async () => { answer = confirmAction({ ...request(), prepare: () => preparation }, owner.signal); });
+  const observed = answer.catch(error => error.message);
+  await act(async () => {
+    if (outcome === "aborted") { owner.abort(); fail(new Error("late failure")); }
+    else if (outcome === "failure") fail(new Error("read failed"));
+    else finish(null);
+  });
+  await expect(observed).resolves.toBe(outcome === "failure" ? "read failed" : false);
+  expect(dialog()).toBeNull();
+});

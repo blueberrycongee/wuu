@@ -8,11 +8,15 @@ import { useArchiveDeletion } from "./useArchiveDeletion";
 import { confirmAction } from "./ConfirmDialog";
 import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
-vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
+const confirmAnswer = vi.hoisted(() => vi.fn());
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn(async (request) => {
+  if (request.prepare && !await request.prepare()) return false;
+  return confirmAnswer();
+}) }));
 const archived = (id: string): Thread => ({ id, archived: true } as Thread);
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.resetAllMocks(); });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.clearAllMocks(); confirmAnswer.mockReset(); });
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -46,9 +50,9 @@ describe("archive deletion scope and recovery", () => {
     const oldGate = deferred<unknown>(); const nextGate = deferred<readonly Thread[]>();
     const previous = { list: vi.fn().mockResolvedValue([archived("old-one"), archived("old-two")]), remove: vi.fn().mockResolvedValue(undefined) };
     const next = { list: vi.fn().mockReturnValue(nextGate.promise), remove: vi.fn().mockResolvedValue(undefined) };
-    vi.mocked(confirmAction).mockResolvedValue(true);
+    confirmAnswer.mockResolvedValue(true);
     if (phase === "listing") previous.list.mockReturnValueOnce(oldGate.promise);
-    if (phase === "confirmation") vi.mocked(confirmAction).mockReturnValueOnce(oldGate.promise as Promise<boolean>);
+    if (phase === "confirmation") confirmAnswer.mockReturnValueOnce(oldGate.promise as Promise<boolean>);
     if (phase === "deleting") previous.remove.mockReturnValueOnce(oldGate.promise);
     if (phase === "reconciling") previous.list.mockResolvedValueOnce([archived("old-one")]).mockReturnValueOnce(oldGate.promise);
     let current!: ReturnType<typeof useArchiveDeletion>;
@@ -79,7 +83,7 @@ describe("archive deletion scope and recovery", () => {
   });
 
   it.each([true, false])("does not continue a retired deletion while keeping genuine failure recovery (retired: %s)", async retired => {
-    vi.mocked(confirmAction).mockResolvedValue(true);
+    confirmAnswer.mockResolvedValue(true);
     list([archived("one"), archived("two")], [archived("one"), archived("two")]);
     const cause = retired ? new PluginLifecycleCancellationError() : new Error("delete failed");
     const remove = vi.fn().mockRejectedValue(cause);
@@ -91,7 +95,7 @@ describe("archive deletion scope and recovery", () => {
   });
   it("uses a fresh complete snapshot and never adds conversations after confirmation", async () => {
     const prompt = deferred<boolean>();
-    vi.mocked(confirmAction).mockReturnValue(prompt.promise);
+    confirmAnswer.mockReturnValue(prompt.promise);
     list([archived("one"), archived("two"), archived("one")], [archived("new")]);
     const h = mount();
     let pending!: Promise<void>;
@@ -108,7 +112,7 @@ describe("archive deletion scope and recovery", () => {
 
   it("stops a confirmed batch when its settings module has been unloaded", async () => {
     const prompt = deferred<boolean>();
-    vi.mocked(confirmAction).mockReturnValue(prompt.promise);
+    confirmAnswer.mockReturnValue(prompt.promise);
     list([archived("one")]);
     const h = mount();
     let pending!: Promise<void>;
@@ -120,19 +124,19 @@ describe("archive deletion scope and recovery", () => {
   });
 
   it("does nothing when confirmation is canceled or authoritative listing fails", async () => {
-    vi.mocked(confirmAction).mockResolvedValue(false);
+    confirmAnswer.mockResolvedValue(false);
     list([archived("one")], new Error("catalog unavailable"));
     const h = mount();
     await act(async () => { await h.current.removeAll(); });
     await act(async () => { await h.current.removeAll(); });
     expect(h.deleteThread).not.toHaveBeenCalled();
-    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(confirmAnswer).toHaveBeenCalledTimes(1);
     expect(h.current.error).toContain("catalog unavailable");
     expect(h.current.pending).toBe(false);
   });
 
   it("continues after a failure and retries only remaining confirmed IDs", async () => {
-    vi.mocked(confirmAction).mockResolvedValue(true);
+    confirmAnswer.mockResolvedValue(true);
     list([archived("one"), archived("two"), archived("three")], [archived("two"), archived("new")],
       [archived("two"), archived("new")], [archived("new")]);
     const remove = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("busy"))
@@ -147,7 +151,7 @@ describe("archive deletion scope and recovery", () => {
   });
 
   it("holds the lock through pending deletion and preserves failures when refresh fails", async () => {
-    vi.mocked(confirmAction).mockResolvedValue(true);
+    confirmAnswer.mockResolvedValue(true);
     list([archived("one"), archived("two")], new Error("refresh failed"));
     const gate = deferred<void>();
     const remove = vi.fn().mockReturnValueOnce(gate.promise).mockRejectedValueOnce(new Error("busy"));
@@ -167,7 +171,7 @@ describe("archive deletion scope and recovery", () => {
     list([]);
     const h = mount();
     await act(async () => { await h.current.removeAll(); });
-    expect(confirmAction).not.toHaveBeenCalled();
+    expect(confirmAnswer).not.toHaveBeenCalled();
     expect(h.deleteThread).not.toHaveBeenCalled();
     expect(h.refresh).toHaveBeenCalledWith([]);
     expect(h.current.pending).toBe(false);

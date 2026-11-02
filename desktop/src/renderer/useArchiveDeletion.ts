@@ -16,16 +16,16 @@ export type ArchiveDeletionState = {
 /** Keep the destructive operation alive above settings-page navigation. */
 export function useArchiveDeletion(
   source: {
-    list: () => Promise<readonly { id: string; archived?: boolean }[]>;
+    list: (signal?: AbortSignal) => Promise<readonly { id: string; archived?: boolean }[]>;
     remove: (id: string) => Promise<void>;
   },
 ): ArchiveDeletionState & { removeAll: () => Promise<void>; retry: () => Promise<void> } {
   const { t } = useI18n();
-  const operation = useMemo(() => ({ active: true, locked: false, opener: null as HTMLElement | null }), [source]);
+  const operation = useMemo(() => ({ active: true, locked: false, confirmation: null as AbortController | null, opener: null as HTMLElement | null }), [source]);
   useLayoutEffect(() => {
     operation.active = true;
     setState({ pending: false, failedIDs: [], error: "" });
-    return () => { operation.active = false; operation.opener = null; };
+    return () => { operation.active = false; operation.confirmation?.abort(); operation.opener = null; };
   }, [operation]);
   const [state, setState] = useState<ArchiveDeletionState>({ pending: false, failedIDs: [], error: "" });
 
@@ -46,32 +46,43 @@ export function useArchiveDeletion(
     operation.opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setState(current => ({ ...current, pending: true, progress: undefined, error: "" }));
     try {
-      // Refresh before confirmation: the cached sidebar catalog can be stale,
-      // and search/workspace filters must never redefine “all archived”.
-      const listed = await source.list();
-      if (!operation.active) return;
-      const eligible = new Set(listed.filter(thread => thread.archived).map(thread => thread.id));
-      const ids = retryIDs ? [...new Set(retryIDs)].filter(id => eligible.has(id)) : [...eligible];
-      if (ids.length === 0) {
-        setState(current => ({ ...current, failedIDs: [], result: undefined }));
-        return;
-      }
+      // Show the dialog before the authoritative read, without making a stale
+      // cached count or filtered view the scope of an irreversible operation.
+      let ids: string[] | undefined;
+      const confirmation = new AbortController();
+      operation.confirmation = confirmation;
       const confirmed = await confirmAction({
-        title: t("settings.deleteArchivedConfirmTitle", { count: ids.length }),
+        title: t("settings.deleteAllArchived"),
         message: t("settings.deleteArchivedConfirmMessage"),
-        confirmLabel: t("settings.deleteArchivedConfirmAction", { count: ids.length }),
+        confirmLabel: t("common.loadingEllipsis"),
         tone: "danger",
-      });
-      if (!confirmed || !operation.active) return;
+        prepare: async () => {
+          const listed = await source.list(confirmation.signal);
+          if (!operation.active) return null;
+          const eligible = new Set(listed.filter(thread => thread.archived).map(thread => thread.id));
+          ids = retryIDs ? [...new Set(retryIDs)].filter(id => eligible.has(id)) : [...eligible];
+          return ids.length === 0 ? null : {
+            title: t("settings.deleteArchivedConfirmTitle", { count: ids.length }),
+            message: t("settings.deleteArchivedConfirmMessage"),
+            confirmLabel: t("settings.deleteArchivedConfirmAction", { count: ids.length }),
+            tone: "danger",
+          };
+        },
+      }, confirmation.signal);
+      if (operation.active && ids?.length === 0) {
+        setState(current => ({ ...current, failedIDs: [], result: undefined }));
+      }
+      if (!confirmed || !operation.active || !ids?.length) return;
 
+      const confirmedIDs = ids;
       let deleted = 0;
       let skipped = 0;
       let failedIDs: string[] = [];
       let firstError = "";
-      setState(current => ({ ...current, result: undefined, failedIDs: [], progress: { completed: 0, total: ids.length } }));
+      setState(current => ({ ...current, result: undefined, failedIDs: [], progress: { completed: 0, total: confirmedIDs.length } }));
       // IDs are fixed at confirmation. The server's transactional archived-only
       // guard preserves anything restored while this batch is in progress.
-      for (const id of ids) {
+      for (const id of confirmedIDs) {
         if (!operation.active) return;
         try {
           await source.remove(id);
@@ -82,7 +93,7 @@ export function useArchiveDeletion(
           firstError ||= toastErrorMessage(error, t("thread.deleteFailed"));
         }
         if (!operation.active) return;
-        setState(current => ({ ...current, progress: { completed: deleted + failedIDs.length, total: ids.length } }));
+        setState(current => ({ ...current, progress: { completed: deleted + failedIDs.length, total: confirmedIDs.length } }));
       }
       try {
         const remaining = await source.list();
@@ -102,6 +113,8 @@ export function useArchiveDeletion(
     } catch (error) {
       if (operation.active && !isPluginLifecycleCancellation(error)) setState(current => ({ ...current, error: toastErrorMessage(error, t("settings.archiveRefreshFailed")) }));
     } finally {
+      operation.confirmation?.abort();
+      operation.confirmation = null;
       operation.locked = false;
       if (operation.active) setState(current => ({ ...current, pending: false, progress: undefined }));
     }
