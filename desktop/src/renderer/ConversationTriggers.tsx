@@ -127,7 +127,7 @@ export function ConversationTriggers({ threadID }: { threadID: string }): JSX.El
 function ProcessTriggerRow({ threadID, process, busy, cancelling, onCancel }: {
   threadID: string; process: ManagedProcessSummary; busy: boolean; cancelling: boolean; onCancel: () => void;
 }): JSX.Element {
-  const { t, formatDate } = useI18n();
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [output, setOutput] = useState<string>();
   const [failed, setFailed] = useState(false);
@@ -146,9 +146,6 @@ function ProcessTriggerRow({ threadID, process, busy, cancelling, onCancel }: {
 
   const schedule = [
     trigger.on_exit ? t("triggers.onExit") : "",
-    trigger.recheck_minutes ? t("triggers.interval", { minutes: trigger.recheck_minutes }) : "",
-    trigger.recheck_minutes && trigger.next_recheck_at
-      ? t("triggers.next", { time: formatDate(trigger.next_recheck_at, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) }) : "",
   ].filter(Boolean);
   const metadata = pending && schedule.length > 0
     ? [...(trigger.status === "received" ? [t("triggers.received")] : []), ...schedule]

@@ -726,3 +726,52 @@ it("does not load an obsolete workspace or attach it to a newer request intent",
   expect(window.wuu.selectProject).toHaveBeenCalledTimes(2);
   expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
 });
+
+it.each(["retained", "removed", "replaced", "deleted", "archived", "moved"])("preserves only authorized sidebar identities across workspace provider handoff (%s)", async boundary => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const destination = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, destination].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  const thread = { id: "running-source", cwd: "/a", workspace_id: "a", preview: "Start the synthetic running task", status: "in_progress" as const, model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [{ id: "held-turn", status: "in_progress" as const, started_at: "", items_view: "full" as const, items: [{ id: "private-message", type: "user_message" as const, text: "private history" }] }] };
+  const initialized = { provider: "fixture", model: "fixture", providers: [], extension_inventory: [] } as never;
+  window.wuu = { listProjects: vi.fn().mockResolvedValue({ projects, active_context: source }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+    listAllThreads: vi.fn().mockResolvedValue({ threads: [{ ...thread, preview: "", status: "idle", turns: [] }] }),
+    getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
+  } as unknown as WuuDesktopApi;
+  const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: source, projects, threads: [thread], initialized, status: "ready" });
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+  const loadedProjects = boundary === "removed" ? projects.slice(1) : boundary === "replaced"
+    ? projects.map(project => project.id === "a" ? { ...project, path: "/replacement" } : project) : projects;
+  const loadedContext = boundary === "deleted" || boundary === "archived" ? source : destination;
+  const freshThreads = boundary === "archived" ? [{ ...thread, archived: true }]
+    : boundary === "moved" ? [{ ...thread, workspace_id: "b", cwd: "/b", title: "Moved conversation", title_revision: 2 }] : [];
+  load.mockResolvedValue({ activeContext: loadedContext, projects: loadedProjects, threads: freshThreads, initialized, status: "ready" });
+  vi.mocked(window.wuu.listProjects).mockResolvedValue({ projects: loadedProjects, active_context: loadedContext });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+  await host.activateGeneration({ pluginId: "business", generation: "two", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  if (boundary === "moved") {
+    expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining(
+      { id: thread.id, workspace_id: "b", cwd: "/b", title: "Moved conversation", title_revision: 2 },
+    )]));
+    return;
+  }
+  if (boundary !== "retained") {
+    expect(app.getSnapshot().navigationWorkspace.threads).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id })]));
+    return;
+  }
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+  await app.invoke("navigation.refresh", {});
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+  // This writer knows the source only through its sidebar cache, not active runtime state.
+  await host.selectApplicationBinding({ pluginId: "business", generation: "three", id: "ui.application" });
+  await host.activateGeneration({ pluginId: "business", generation: "three", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "three", register: api => { app = api.application; } });
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+});

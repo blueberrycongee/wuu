@@ -125,7 +125,7 @@ it("renders an unavailable service without crashing and recovers on the selected
 it("hides an absent optional provider, stops polling, and recovers after the plugin inventory changes", async () => {
   let available = false;
   const invoke = vi.fn(async () => {
-    if (!available) throw new Error("Error invoking remote method: no provider for service goal.control");
+    if (!available) throw Object.assign(new Error("no provider for service goal.control"), { code: "service_optional_absent" });
     return { goal: activeGoal };
   });
   const ui = await mount(invoke);
@@ -150,7 +150,7 @@ it("hides an open goal when its provider disappears and still reports unrelated 
   let mode: "available" | "missing" | "broken" = "available";
   const failure = new Error("no provider for service goal.control major version 1 (provided majors: [2])");
   const invoke = vi.fn(async () => {
-    if (mode === "missing") throw new Error("no provider for service goal.control");
+    if (mode === "missing") throw Object.assign(new Error("no provider for service goal.control"), { code: "service_optional_absent" });
     if (mode === "broken") throw failure;
     return { goal: activeGoal };
   });
@@ -361,4 +361,15 @@ it.each(["context canceled", "plugin graph generation is no longer active"])("ke
   expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: "runtime", cause: failure }),
   ]));
+});
+
+it("keeps a selected provider failure visible when its cause mentions a missing goal service", async () => {
+  // This is the registry wrapper for an admitted provider that throws; it is
+  // not the registry's no-provider outcome.
+  const failure = new Error("service goal.control call failed: no provider for service goal.control");
+  const ui = await mount(async () => { throw failure; });
+  expect(ui.host.getGenerationDiagnostics("goal-ui", "one")).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "runtime", cause: failure }),
+  ]));
+  expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
 });

@@ -499,10 +499,32 @@ async function run() {
   assert.equal(secondPagePart.source.quote, secondQuote);
   assert.equal(secondPagePart.source.pdf.start_page, 2);
   assert.equal(secondPagePart.source.pdf.end_page, 2);
-  // Keep the destination scrollable: at full height all three short fixture
-  // pages fit in the docked viewer, which cannot scroll page two to the top.
   main.setSize(1380, 650);
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'true')) await click('.workspace-panel-globalize');
+  // Docking can fit all three short fixture pages even at this window height.
+  // Finish fit-width layout, then use the real zoom control to make page two's
+  // top reachable before testing navigation (never retry the source-link click).
+  await fittedPdf();
+  const sourceDestinationGeometry = () => {
+    const root = document.querySelector('[data-workspace-pdf-preview]').shadowRoot;
+    const container = root.querySelector('.workspace-pdf-container');
+    const page = root.querySelector('.page[data-page-number="2"]');
+    return {
+      pageWidth: page.getBoundingClientRect().width,
+      destination: page.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop,
+      maxScroll: container.scrollHeight - container.clientHeight,
+    };
+  };
+  let sourceGeometry = await evaluate(sourceDestinationGeometry);
+  resizeEvidence.push({ state: 'sent-source-before-zoom', ...sourceGeometry });
+  for (let step = 0; sourceGeometry.maxScroll < sourceGeometry.destination && step < 20; step++) {
+    await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('button[aria-label="Zoom in"]').click());
+    await waitFor(width => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="2"]').getBoundingClientRect().width > width, sourceGeometry.pageWidth);
+    sourceGeometry = await evaluate(sourceDestinationGeometry);
+  }
+  assert.ok(sourceGeometry.destination > 0 && sourceGeometry.maxScroll >= sourceGeometry.destination,
+    `Page two must be scrollable to the top before source navigation: ${JSON.stringify(sourceGeometry)}`);
+  resizeEvidence.push({ state: 'sent-source-scrollable', ...sourceGeometry });
   await waitFor(() => [...document.querySelectorAll('.pdf-quote-pill')].some(button => !button.closest('[inert]')));
   await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '1 / 3');
@@ -524,6 +546,8 @@ async function run() {
   await waitFor(() => !document.querySelector('.pdf-quote-entry'));
   main.setSize(1380, 1000);
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'false')) await click('.workspace-panel-globalize');
+  await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-zoom-value').click());
+  await fittedPdf();
   await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '1 / 3');
   checks.push('a second-page quote survives send and opens page two from both its draft and sent reference');

@@ -43,7 +43,9 @@ function mockThread(id, source) {
 
 // Opt-in sidebar overflow for the scroll-fade regression using the same bridge.
 const sidebarSeedTime = Date.now();
-for (let index = 0; index < Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0); index++) {
+const sidebarSeedCount = new URLSearchParams(location.search).has("emptyRecent")
+  ? 0 : Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0);
+for (let index = 0; index < sidebarSeedCount; index++) {
   const thread = mockThread(`sidebar-fade-${index}`);
   thread.preview = `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`;
   thread.created_at = thread.updated_at = new Date(sidebarSeedTime - index * 1000).toISOString();
