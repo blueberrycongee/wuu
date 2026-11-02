@@ -300,7 +300,7 @@ var personalDesktop = (() => {
     const action = value.action;
     if (!exactObject(action, ["id", "digest", "operation", "scope", "effect", "summary", "arguments_json", "expires_at"]) || !nonempty(action.id) || typeof action.digest !== "string" || !/^[a-f0-9]{64}$/.test(action.digest) || !nonempty(action.operation) || typeof action.effect !== "string" || !Object.hasOwn(copy.en.effects, action.effect) || !parametersText(action.arguments_json) || action.expires_at !== null && (typeof action.expires_at !== "string" || !Number.isFinite(Date.parse(action.expires_at)))) return false;
     const scope = action.scope, summary = action.summary;
-    return exactObject(scope, ["space_id", "session_id", "task_id", "requirements_revision", ...typeof scope === "object" && scope !== null && Object.hasOwn(scope, "context_digest") ? ["context_digest"] : []]) && (scope.context_digest === void 0 || typeof scope.context_digest === "string" && /^[a-f0-9]{64}$/.test(scope.context_digest)) && nonempty(scope.space_id) && nonempty(scope.session_id) && nonempty(scope.task_id) && exactRevision(scope.requirements_revision) && exactObject(summary, ["title", "account", "target", "consequence"]) && typeof summary.title === "string" && typeof summary.account === "string" && typeof summary.target === "string" && typeof summary.consequence === "string";
+    return exactObject(scope, ["space_id", "session_id", "task_id", "requirements_revision", ...typeof scope === "object" && scope !== null && Object.hasOwn(scope, "context_digest") ? ["context_digest"] : []]) && (scope.context_digest === void 0 || typeof scope.context_digest === "string" && /^[a-f0-9]{64}$/.test(scope.context_digest)) && nonempty(scope.space_id) && nonempty(scope.session_id) && nonempty(scope.task_id) && exactRevision(scope.requirements_revision) && exactObject(summary, ["title", "account", "target", "consequence", ...typeof summary === "object" && summary !== null && Object.hasOwn(summary, "source") ? ["source"] : []]) && (summary.source === void 0 || typeof summary.source === "string") && typeof summary.title === "string" && typeof summary.account === "string" && typeof summary.target === "string" && typeof summary.consequence === "string";
   }
   function decodeReviewSnapshot(value) {
     if (exactObject(value, ["schema", "kind", "reason"]) && value.schema === "personal-review.v1" && value.kind === "unavailable" && typeof value.reason === "string") return { schema: value.schema, kind: value.kind, reason: value.reason };
@@ -463,6 +463,7 @@ var personalDesktop = (() => {
       commandBody: "Personal wants to run a program. Review its exact command and working folder in the details before allowing it.",
       reason: "Why confirmation is needed",
       pendingCount: "waiting for you",
+      fromRequest: "From your request: ",
       noExpiry: "Until this task changes or you cancel",
       states: { proposed: "Awaiting review", ready: "Authorized \xB7 awaiting execution", awaiting_confirmation: "Needs your decision", approved: "Allowed once \xB7 waiting to start", blocked: "Review unavailable \xB7 not executed", denied: "Denied \xB7 not executed", revoked: "Withdrawn \xB7 not executed", expired: "Expired \xB7 not executed", stale: "Task changed \xB7 not executed", executing: "Started \xB7 result pending", succeeded: "Completed", uncertain: "Result unknown \xB7 will not retry" },
       effects: { internal_bookkeeping: "Internal bookkeeping", read_only: "Read only", data_write: "Changes data", external_write: "Sends outside twin", sensitive_authority: "Account or lasting authority", unknown: "Unknown effect" }
@@ -537,6 +538,7 @@ var personalDesktop = (() => {
       commandBody: "\u8FD0\u884C\u4E00\u6BB5\u7A0B\u5E8F\uFF0C\u53EF\u80FD\u5728\u5DF2\u6388\u6743\u8303\u56F4\u5185\u8BFB\u53D6\u6216\u4FEE\u6539\u6587\u4EF6\u3002\u8BF7\u786E\u8BA4\u8FD9\u7B26\u5408\u5F53\u524D\u4EFB\u52A1\u3002",
       reason: "\u4E3A\u4EC0\u4E48\u9700\u8981\u786E\u8BA4",
       pendingCount: "\u9879\u7B49\u4F60\u786E\u8BA4",
+      fromRequest: "\u6765\u81EA\u4F60\u7684\u8BF7\u6C42\uFF1A",
       noExpiry: "\u76F4\u5230\u4EFB\u52A1\u53D8\u5316\u6216\u4F60\u53D6\u6D88",
       states: { proposed: "\u7B49\u5F85\u5BA1\u6838", ready: "\u6388\u6743\u5339\u914D\uFF0C\u7B49\u5F85\u6267\u884C", awaiting_confirmation: "\u9700\u8981\u4F60\u786E\u8BA4", approved: "\u5DF2\u5141\u8BB8\u8FD9\u6B21\uFF0C\u7B49\u5F85\u5F00\u59CB", blocked: "\u5BA1\u6838\u4E0D\u53EF\u7528\uFF0C\u672A\u6267\u884C", denied: "\u5DF2\u62D2\u7EDD\uFF0C\u672A\u6267\u884C", revoked: "\u5DF2\u64A4\u56DE\uFF0C\u672A\u6267\u884C", expired: "\u5DF2\u8FC7\u671F\uFF0C\u672A\u6267\u884C", stale: "\u4EFB\u52A1\u5DF2\u53D8\u5316\uFF0C\u672A\u6267\u884C", executing: "\u5DF2\u7ECF\u5F00\u59CB\uFF0C\u7B49\u5F85\u7ED3\u679C", succeeded: "\u5DF2\u5B8C\u6210", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5" },
       effects: { internal_bookkeeping: "\u5185\u90E8\u8BB0\u8D26", read_only: "\u53EA\u8BFB", data_write: "\u4FEE\u6539\u6570\u636E", external_write: "\u5411\u5916\u53D1\u9001", sensitive_authority: "\u8D26\u53F7\u6216\u957F\u671F\u6743\u9650", unknown: "\u672A\u77E5\u5F71\u54CD" }
@@ -800,6 +802,7 @@ var personalDesktop = (() => {
           { key: action.id, className: "personal-review-item", "data-review-id": action.id, "data-review-state": record2.status },
           h("h4", null, title),
           h("span", { className: "personal-review-status", role: "status" }, words.states[expired && canConfirm ? "expired" : record2.status]),
+          action.summary.source && h("p", { className: "personal-review-muted personal-review-consequence", "data-review-source": true }, `${words.fromRequest}${action.summary.source}`),
           h("p", { className: "personal-review-consequence" }, commandAction ? words.commandBody : action.summary.consequence),
           canConfirm && h("p", { className: "personal-review-muted" }, reviewReason(record2.reason, locale)),
           fileAction && h(

@@ -217,6 +217,17 @@ describe("Personal action approval component",()=>{
     expect(diff?.querySelectorAll('pre')).toHaveLength(4);
     expect(diff?.textContent).toContain("First old");expect(diff?.textContent).toContain("Second new");
   });
+  it("accepts a host-bound original request caption and rejects malformed source data",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    const withSource={...snapshot,requests:snapshot.requests.map(record=>({...record,action:{...record.action,summary:{...record.action.summary,source:"Prepare my weekly report"}}}))};
+    await render({list:async()=>withSource,resolve:async()=>ready(),revoke:async()=>ready()});
+    expect(container.querySelector('[data-review-source]')?.textContent).toContain("Prepare my weekly report");
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(false);
+    await React.act(async()=>root?.unmount());root=undefined;container.remove();
+    const malformed={...withSource,requests:withSource.requests.map(record=>({...record,action:{...record.action,summary:{...record.action.summary,source:42}}}))};
+    await render({list:async()=>malformed,resolve:async()=>ready(),revoke:async()=>ready()});
+    expect(container.querySelector('[data-review-choice]')).toBeNull();
+  });
   it("keeps a main-chat action without a time limit confirmable",async()=>{
     const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
     const raw={...snapshot,requests:snapshot.requests.map(record=>({...record,action:{...record.action,expires_at:null}}))};
