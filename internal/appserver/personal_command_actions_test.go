@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -20,9 +21,22 @@ import (
 // A pending/rejected/stale action must not spawn; duplicate approval and retry
 // must return the original receipt instead of repeating the command's effect.
 func TestPersonalCommandApprovalProductionEntry(t *testing.T) {
-	for _, choice := range []string{"approve_once", "reject"} {
+	for _, choice := range []string{"approve_once", "reject", "command-only", "file-only"} {
 		t.Run(choice, func(t *testing.T) {
 			f := newPersonalBoundaryFixture(t, nil)
+			if choice == "command-only" || choice == "file-only" {
+				f.cancelOwner()
+				if err := f.host.Close(); err != nil {
+					t.Fatal(err)
+				}
+				f.openHost(WithAccessPolicy(access.PolicyFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
+					denied := "personal/file.execute"
+					if choice == "file-only" {
+						denied = "personal/command.execute"
+					}
+					return access.Decision{Allow: request.Action != denied, Reason: "fixture operation capability"}, nil
+				})))
+			}
 			before := f.snapshot()
 			settings, _ := json.Marshal(map[string]any{"enabled": false, "expected_revision": before.Settings.Revision})
 			if _, err := f.host.personal.Call(f.owner, "review.settings", settings, ""); err != nil {
@@ -40,7 +54,11 @@ func TestPersonalCommandApprovalProductionEntry(t *testing.T) {
 				t.Fatalf("records %d: %v", len(records), err)
 			}
 			r := records[0]
-			raw, _ := json.Marshal(map[string]any{"space_id": r.Action.Scope.SpaceID, "id": r.Action.ID, "digest": r.Action.Digest, "expected_revision": r.Revision, "choice": choice})
+			decision := choice
+			if choice == "command-only" || choice == "file-only" {
+				decision = "approve_once"
+			}
+			raw, _ := json.Marshal(map[string]any{"space_id": r.Action.Scope.SpaceID, "id": r.Action.ID, "digest": r.Action.Digest, "expected_revision": r.Revision, "choice": decision})
 			if _, err = f.host.personal.Call(f.owner, "review.resolve", raw, ""); err != nil {
 				t.Fatal(err)
 			}
@@ -52,7 +70,7 @@ func TestPersonalCommandApprovalProductionEntry(t *testing.T) {
 			}
 			_, retryErr := f.kit.Execute(f.owner, call)
 			data, readErr := os.ReadFile(filepath.Join(f.rt.RootDir, "marker.txt"))
-			if choice == "approve_once" {
+			if choice == "approve_once" || choice == "command-only" {
 				if retryErr != nil || readErr != nil || string(data) != "once" {
 					t.Fatalf("receipt/effect: %s %v %v", data, retryErr, readErr)
 				}

@@ -99,10 +99,10 @@ func newPersonalBoundaryFixtureWithProvider(t *testing.T, client *fakeClient, pr
 	})
 	return f
 }
-func (f *personalBoundaryFixture) openHost() {
+func (f *personalBoundaryFixture) openHost(options ...ServerOption) {
 	f.t.Helper()
 	var err error
-	f.host, err = NewUserHost(f.rt, personalhost.Options{})
+	f.host, err = NewUserHost(f.rt, personalhost.Options{}, options...)
 	if err != nil {
 		f.t.Fatal(err)
 	}
