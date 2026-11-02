@@ -258,6 +258,63 @@ describe("AppSidebar layout", () => {
     expect(titles()).toEqual(["older"]);
   });
 
+  it.each(["pointer", "keyboard"])("keeps newly visited conversations in Recent across repeated navigation during a %s hold", (interaction) => {
+    const thread = (id: string, day: number): ThreadSummary => ({
+      id, title: id, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle",
+      created_at: "2026-09-01T00:00:00Z", updated_at: `2026-09-${day}T00:00:00Z`,
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    });
+    const older = thread("older", 11);
+    const first = thread("first new conversation", 12);
+    const second = thread("second new conversation", 13);
+    const background = thread("background arrival", 14);
+    const render = (threads: ThreadSummary[], activeThreadID?: string, pendingThreadID?: string) => renderSidebar({
+      activeThreadID, pendingThreadID, expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: { "project-1": threads },
+    });
+    const recent = () => container.querySelector('[data-sidebar-recents]')!;
+    const titles = () => [...recent().querySelectorAll('.thread-row-title')].map(row => row.textContent);
+    render([older], older.id);
+    if (interaction === "pointer") {
+      const enter = new MouseEvent("pointerover", { bubbles: true });
+      Object.defineProperty(enter, "pointerType", { value: "mouse" });
+      act(() => recent().dispatchEvent(enter));
+    } else {
+      const row = recent().querySelector<HTMLButtonElement>(".thread-row-main")!;
+      act(() => { row.focus(); row.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    }
+    render([older, first], first.id);
+    expect(titles()).toEqual([first.title, older.title]);
+    render([older, first, second, background], first.id, second.id);
+    expect(titles()).toEqual([second.title, first.title, older.title]);
+    render([older, first, second, background], second.id);
+    expect(titles()).toEqual([second.title, first.title, older.title]);
+    // Starting another draft or opening a workspace must not hide visited rows.
+    render([older, first, second, background]);
+    expect(titles()).toEqual([second.title, first.title, older.title]);
+    const renamed = { ...first, title: "Renamed conversation", updated_at: "2026-09-20T00:00:00Z" };
+    render([background, second, renamed, older]);
+    // Accessible names update immediately while the visible title animates.
+    expect([...recent().querySelectorAll(".thread-row-main")].map(row => row.getAttribute("aria-label")))
+      .toEqual([second.title, renamed.title, older.title].map(title => expect.stringContaining(title!)));
+    // Deleting an admitted row must win over the retained interaction snapshot.
+    render([older, renamed, background]);
+    expect(recent().textContent).not.toContain(second.title);
+    render([background, renamed, older]);
+    expect(recent().textContent).not.toContain(second.title);
+    // Authoritative removal still wins, including for rows added during the hold.
+    render([older, { ...renamed, archived: true }, { ...second, pinned: true }, background]);
+    expect(titles()).toEqual([older.title]);
+    if (interaction === "pointer") {
+      act(() => recent().dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
+    } else {
+      act(() => (document.activeElement as HTMLElement).blur());
+    }
+    expect(titles()).toEqual([background.title, older.title]);
+    render([background]);
+    expect(titles()).toEqual([background.title]);
+  });
+
   it("selects only the clicked occurrence when a project and Recent show the same conversation", () => {
     const thread = { id: "shared", title: "Shared conversation", cwd: "/repo/wuu", workspace_id: "project-1",
       status: "idle", preview: "", model_provider: "test", model: "test", turn_count: 0, turns: [], created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" } as ThreadSummary;
