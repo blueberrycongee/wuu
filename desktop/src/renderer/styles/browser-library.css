@@ -114,9 +114,15 @@
   border-radius: var(--radius-sm);
 }
 
-.browser-library-results li:hover,
+.browser-library-results li[data-library-entry]:hover,
 .browser-library-sections button:hover {
   background: var(--menu-hover);
+}
+
+.browser-library-date-group {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  color: var(--ink-soft);
+  font-weight: var(--weight-medium);
 }
 
 .browser-library-open {

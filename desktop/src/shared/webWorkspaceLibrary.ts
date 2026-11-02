@@ -1,8 +1,13 @@
+// Frequency decays continuously so old visits gradually lose influence.
+export const HISTORY_FREQUENCY_DECAY_MS = 30 * 24 * 60 * 60 * 1000;
+
 export type WebWorkspaceHistoryEntry = {
   id: string;
   url: string;
   title: string;
   visitedAt: number;
+  /** Decayed visit frequency at visitedAt; absent on older records. */
+  visitScore?: number;
 };
 
 export type WebWorkspaceBookmark = {
