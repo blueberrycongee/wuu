@@ -547,9 +547,9 @@ function appendStreamDelta(
     streamTextStore.append(key, delta);
     return false;
   }
-  // /\S/ short-circuits at the first visible character; trimming the full
-  // accumulated text here made every delta O(message length).
-  const hadVisibleText = /\S/.test(streamTextStore.get(key));
+  // Reading the whole value here defeats chunk buffering and makes V8 flatten
+  // a growing string for every delta, including streams with no subscribers.
+  const hadVisibleText = streamTextStore.hasVisibleText(key);
   streamTextStore.append(key, delta);
   return !hadVisibleText && /\S/.test(delta);
 }
@@ -565,9 +565,9 @@ function replaceStreamText(
     return false;
   }
   const key = streamTextKey(turnID, itemID, field);
-  const wasEmpty = streamTextStore.get(key).trim().length === 0;
+  const wasEmpty = !streamTextStore.hasVisibleText(key);
   streamTextStore.replace(key, text);
-  return field === "text" && wasEmpty && text.trim().length > 0;
+  return field === "text" && wasEmpty && /\S/.test(text);
 }
 
 function syncStreamItem(params: Record<string, unknown> | undefined): void {
