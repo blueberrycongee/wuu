@@ -485,6 +485,9 @@ async function run() {
   const sendAction = 'button[data-genui-node="root/send"]';
   await wait(selector => document.querySelector(selector) && !document.querySelector(selector).matches(':disabled'), sendAction);
   const actionOrigin = rpc.filter(entry => entry.channel === 'wuu:turn-start').at(-1).args[0];
+  const actionTurn = await evaluate(async id => (await window.wuu.resumeThread(id)).thread.turns.at(-1).id, actionOrigin);
+  // Rendered answer text and an enabled artifact can precede turn completion.
+  await wait(id => document.querySelector(`[data-turn-id="${CSS.escape(id)}"]`)?.dataset.turnStatus === 'completed', actionTurn);
   const actionHistory = await evaluate(id => window.wuu.resumeThread(id), actionOrigin);
   const sourceTurn = actionHistory.thread.turns.at(-1);
   const sourceItem = sourceTurn.items.find(item => item.result_detail?.content?.some(part => part.type === 'resource' && part.name === actionSpec.title));
