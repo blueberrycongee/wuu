@@ -102,6 +102,7 @@ import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
 import { pluginToggle } from "./extensionPackageState";
 import { PluginIcon } from "./PublicIcon";
+import { PluginAvatar } from "./PluginAvatar";
 import { SidebarBrand } from "./SidebarBrand";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
@@ -1639,7 +1640,7 @@ export function AppSidebar({
           ...pluginNavigationEntries.map((entry) => ({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
-            icon: <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
+            icon: <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey ? <PluginAvatar avatarKey={entry.avatarKey} /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>,
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
             pluginId: entry.pluginId,
@@ -1728,7 +1729,7 @@ export function AppSidebar({
                   aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
                   onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
                 >
-                  <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
+                  <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey ? <PluginAvatar avatarKey={entry.avatarKey} /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>
                   <span className="sidebar-section-label">{entry.title}</span>
                 </button>
               ))}

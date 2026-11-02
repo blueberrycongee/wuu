@@ -43,6 +43,7 @@ export interface NavigationWorkspaceV1 {
   readonly created_at: string; readonly updated_at: string;
 }
 export interface NavigationPluginDestinationV1 {
+  readonly avatarKey?: string | null;
   readonly id: string; readonly pluginId: string; readonly generation: string; readonly view: string;
   readonly title: string; readonly icon?: NavigationIconV1; readonly instanceId?: string; readonly navigationId?: string;
 }

@@ -16,6 +16,7 @@ export interface RegisteredStatusItemV1 extends StatusItemDefinition, UIContribu
 export interface RegisteredThemeTokensV1 extends ThemeTokens, UIContributionIdentityV1 { readonly id: string; readonly order: number }
 export interface RegisteredViewPlacementV1 extends UIContributionIdentityV1 { readonly id: string; readonly view: string; readonly region: ViewPlacementRegion; readonly order: number }
 export interface RegisteredViewEntryV1 extends UIContributionIdentityV1 {
+  readonly avatarKey?: string | null;
   readonly id: string; readonly view: string; readonly title: string; readonly description?: string; readonly order?: number;
   readonly icon?: import('./ui-catalog.js').CatalogIconDescriptorV1;
 }

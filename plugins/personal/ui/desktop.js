@@ -749,6 +749,7 @@ export async function activate(api) {
     if (!value || (identityAgent && identityAgent.agent_id === value.agent_id && identityAgent.revision > value.revision)) return identityAgent;
     identityAgent = value;
     api.setNavigationTitle?.("personal", Array.from(value.name?.trim() || "twin").slice(0, 64).join(""));
+    api.setNavigationAvatar?.("personal", value.avatar_key);
     identityListeners.forEach(listener => listener(value));
     return value;
   };
@@ -1613,8 +1614,20 @@ export async function activate(api) {
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
           calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || nameOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || nameOpen || Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), avatarOpen && h(AvatarDialog, { agent, locale, onSave: saveAvatar, onClose: closeAvatar }), nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
   }
-  // A cold/offline host keeps the manifest title until the normal view initialization succeeds.
-  call("agents.list").then(result => { if (!api.signal.aborted) publishIdentity(result.agents?.find(value => value.kind === "main")); }).catch(() => {});
+  // Runtime calls require an active generation. Keep prior artwork while its identity loads.
+  api.setNavigationAvatar?.("personal", null);
+  let identityLoading = false;
+  const stopIdentityActivation = api.contributions.subscribe(() => {
+    if (identityLoading || api.signal.aborted || !api.contributions.getGenerationActivation(api.pluginId, api.generation)) return;
+    identityLoading = true;
+    call("agents.list").then(result => {
+      if (api.signal.aborted) return;
+      const agent = result.agents?.find(value => value.kind === "main");
+      if (agent) publishIdentity(agent);
+      else if (!identityAgent) api.setNavigationAvatar?.("personal", undefined);
+    }).catch(() => { if (!api.signal.aborted && !identityAgent) api.setNavigationAvatar?.("personal", undefined); });
+  });
+  api.registerCleanup(stopIdentityActivation);
   api.registerViewType({ id: "personal.home", title: "twin", icon: "mascot", defaultRegion: "primary", persistence: "durable", layout: "user-space", render: props => h(PersonalHome, props) });
   api.registerViewType({ id: "personal.preferences", title: "twin", icon: "settings", defaultRegion: "settings", persistence: "session", render: props => h(PersonalPreferences, props) });
 }

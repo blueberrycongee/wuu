@@ -1672,3 +1672,19 @@ it("keeps an interrupted shared UI preview read-only and ignores late deltas", a
   await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-stop", item_id: "item", delta: "late" });
   expect(captured.metadata.toolInput.argumentsText).toBe("initial");
 });
+
+it("hydrates navigation avatars after activation and retains prior artwork during reload", async () => {
+  let finish!: (value: unknown) => void;
+  let response = Promise.resolve<unknown>({ agents: [{ ...main, avatar_key: "mascot-v1:diamond:leaf:150" }] });
+  const host = new PluginHost({ react: React, invokeRuntime: async () => response });
+  cleanups.push(() => host.unload("personal"));
+  const install = (generation: string) => host.activateGeneration({ pluginId: "personal", generation,
+    contributions: { navigation: [{ id: "personal", view: "personal.home", title: "twin", icon: { name: "mascot" } }] }, register: activate });
+  await install("one");
+  await vi.waitFor(() => expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:diamond:leaf:150"));
+  response = new Promise(resolve => { finish = resolve; });
+  await install("two");
+  expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:diamond:leaf:150");
+  finish({ agents: [{ ...main, revision: 3, avatar_key: "mascot-v1:capsule:beanie:288" }] });
+  await vi.waitFor(() => expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:capsule:beanie:288"));
+});
