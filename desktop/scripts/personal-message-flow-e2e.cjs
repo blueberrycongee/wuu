@@ -8,8 +8,10 @@ const { app, BrowserWindow } = require('electron');
 const output = path.resolve(process.env.WUU_MESSAGE_FLOW_OUTPUT || path.join(__dirname, '../out/personal-message-flow-e2e'));
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', fs.mkdtempSync(path.join(output, 'profile-')));
-const report = { scope: 'Production Electron renderer; synthetic conversation transport, no live model', cases: [] };
+const report = { scope: 'Production Electron renderer with offscreen paint capture; synthetic conversation transport, no live model or physical-display claim', cases: [] };
 let win;
+let recordingActive = false;
+let recordingTask;
 const evaluate = fn => win.webContents.executeJavaScript(`(${fn})()`, true);
 async function until(fn) {
   const deadline = Date.now() + 10000;
@@ -43,7 +45,9 @@ async function send(text) {
   await until(() => !document.querySelector('.mosaic-send-overlay, [data-personal-send-source]'));
 }
 app.whenReady().then(async () => {
-  win = new BrowserWindow({ width: 1128, height: 900, show: true, webPreferences: { contextIsolation: true } });
+  // Parallel hosted acceptance windows can occlude this synthetic renderer.
+  // Offscreen paint keeps screenshots and the animation clock independent of them.
+  win = new BrowserWindow({ width: 1128, height: 900, show: false, webPreferences: { contextIsolation: true, backgroundThrottling: false, offscreen: true } });
   for (const [name, width, theme, font] of [['wide-light',1128,'light','15'],['narrow-dark-large',620,'dark','19']]) {
     win.setSize(width, 900);
     await load({theme,font});
@@ -66,9 +70,9 @@ app.whenReady().then(async () => {
   win.setSize(1128, 900);
   await load({ sendScenario: 'sending' });
   const recording = [];
-  let recordingActive = true;
+  recordingActive = true;
   const recordStarted = Date.now();
-  const record = (async () => {
+  recordingTask = (async () => {
     while(recordingActive) {
       const file = `send-frame-${String(recording.length).padStart(3,'0')}.png`;
       await capture(file.slice(0,-4));
@@ -102,7 +106,7 @@ app.whenReady().then(async () => {
   await evaluate(() => window.__receiptScenario.release());
   await until(() => !document.querySelector('.mosaic-send-overlay, [data-personal-send-source]'));
   await until(() => window.__flowFrames.at(-1)?.time >= 1100);
-  recordingActive = false; await record;
+  recordingActive = false; await recordingTask;
   fs.writeFileSync(path.join(output,'send-recording.json'), JSON.stringify(recording,null,2));
   report.cases.push({name:'send-continuity', frames:await evaluate(() => window.__flowFrames)});
   const flights = report.cases.at(-1).frames.filter(frame => frame.overlay);
@@ -176,7 +180,9 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => !!document.querySelector('.mosaic-send-overlay, [data-personal-send-source]')),false);
   report.cases.push({name:'reduced-motion-reload-tab-return',passed:true});
   report.status = 'passed';
-}).catch(error => { report.status = 'failed'; report.error = error.stack; console.error(error); }).finally(() => {
+}).catch(error => { report.status = 'failed'; report.error = error.stack; console.error(error); }).finally(async () => {
+  recordingActive = false;
+  await recordingTask;
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({status:report.status, cases:report.cases.map(item=>item.name), error:report.error}));
   app.exit(report.status === 'passed' ? 0 : 1);

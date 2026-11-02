@@ -2008,6 +2008,8 @@ jobs:
             desktop/out/personal-desktop-acceptance/settings/*.txt
             desktop/out/personal-desktop-acceptance/approval/*.json
             desktop/out/personal-desktop-acceptance/approval/*.png
+            desktop/out/personal-desktop-acceptance/message-flow/*.json
+            desktop/out/personal-desktop-acceptance/message-flow/*.png
           if-no-files-found: warn
           retention-days: 14
       - name: Upload hosted macOS error feedback evidence
