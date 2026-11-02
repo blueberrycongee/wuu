@@ -16,6 +16,7 @@ import (
 
 func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 	f := newPersonalBoundaryFixtureWithProvider(t, nil, "independent-assistant")
+	f.setReviewMode(false)
 	subject := "plugin:bundled:independent-assistant"
 	facts := personalExecutionFacts{SessionID: f.id, AgentID: "main", MainSessionID: f.id, Active: true}
 	save := func() {
@@ -88,6 +89,7 @@ func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 
 func TestPersonalReplacementReviewExecutes(t *testing.T) {
 	f := newPersonalBoundaryFixtureWithProvider(t, nil, "independent-assistant")
+	f.setReviewMode(false)
 	record := f.pending(f.sourceContext())
 	if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(record), ""); err != nil {
 		t.Fatal(err)
@@ -100,6 +102,7 @@ func TestPersonalReplacementReviewExecutes(t *testing.T) {
 
 func TestPersonalReplacementTaskRevisionInvalidatesApprovedAction(t *testing.T) {
 	f := newPersonalBoundaryFixtureWithProvider(t, nil, "independent-assistant")
+	f.setReviewMode(false)
 	worker := "replacement-worker"
 	_, err := f.rt.Sessions.CreateInitialized(session.Session{ID: worker, ParentID: f.id, AgentID: "main", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:independent-assistant", Visibility: "plugin", CWD: f.rt.RootDir}, nil)
 	if err != nil {

@@ -114,7 +114,7 @@ func newPersonalActionsForState(s *Server, state *runtime.State) (*personalActio
 		operations[name] = personalreview.Operation{Version: "personal-local-file.v1", Effect: personalreview.DataWrite, Describe: p.describe, Execute: p.execute, RuleScope: p.fileRuleScope}
 	}
 	p.registerCommandOperations(operations)
-	p.engine, err = personalreview.New(personalreview.Options{Store: store, Operations: operations, Authenticate: p.authenticate, WithAuthority: p.withAuthority, WithExecutionAuthority: p.withExecutionAuthority, Review: p.review})
+	p.engine, err = personalreview.New(personalreview.Options{Store: store, Operations: operations, ActionExpiry: personalActionExpiry, Authenticate: p.authenticate, WithAuthority: p.withAuthority, WithExecutionAuthority: p.withExecutionAuthority, Review: p.review})
 	if err == nil {
 		err = p.engine.Recover(startup)
 	}
@@ -1020,4 +1020,11 @@ func (p *personalActions) schedulerSelected(state *runtime.State) bool {
 	}
 	id, ok := state.Host.ServiceRegistry().ProviderPluginIDFor(PersonalCoordinationConsumer, PersonalCoordinationService, 1)
 	return ok && id == personalActionsConsumerID
+}
+
+func personalActionExpiry(scope personalreview.Scope, at time.Time) time.Time {
+	if strings.HasPrefix(scope.TaskID, "conversation:") {
+		return time.Time{}
+	}
+	return at.Add(30 * time.Minute)
 }

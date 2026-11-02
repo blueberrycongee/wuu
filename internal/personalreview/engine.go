@@ -15,6 +15,7 @@ type Engine struct {
 	store                  *Store
 	operations             map[string]Operation
 	clock                  func() time.Time
+	actionExpiry           func(Scope, time.Time) time.Time
 	withAuthority          func(context.Context, Scope, func(Authority) error) error
 	withExecutionAuthority func(context.Context, Scope, func(context.Context, Authority) error) error
 	authenticate           func(context.Context) (Identity, error)
@@ -28,6 +29,9 @@ func New(options Options) (*Engine, error) {
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
+	if options.ActionExpiry == nil {
+		options.ActionExpiry = func(_ Scope, at time.Time) time.Time { return at.Add(10 * time.Minute) }
+	}
 	operations := make(map[string]Operation, len(options.Operations))
 	for name, operation := range options.Operations {
 		if strings.TrimSpace(name) == "" || operation.Version == "" || operation.Describe == nil || operation.Execute == nil {
@@ -35,7 +39,7 @@ func New(options Options) (*Engine, error) {
 		}
 		operations[name] = operation
 	}
-	return &Engine{store: options.Store, operations: operations, clock: options.Clock, withAuthority: options.WithAuthority, withExecutionAuthority: options.WithExecutionAuthority, authenticate: options.Authenticate, review: options.Review}, nil
+	return &Engine{store: options.Store, operations: operations, clock: options.Clock, actionExpiry: options.ActionExpiry, withAuthority: options.WithAuthority, withExecutionAuthority: options.WithExecutionAuthority, authenticate: options.Authenticate, review: options.Review}, nil
 }
 
 func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error) {
@@ -59,7 +63,7 @@ func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error)
 	var created Record
 	err = e.withAuthority(ctx, proposal.Scope, func(authority Authority) error {
 		action := Action{Proposal: proposal, OwnerID: authority.OwnerID, PolicyRevision: authority.PolicyRevision, CreatedAt: e.clock().UTC(), Effect: Unknown}
-		action.ExpiresAt = action.CreatedAt.Add(10 * time.Minute)
+		action.ExpiresAt = e.actionExpiry(proposal.Scope, action.CreatedAt)
 		operation, known := e.operations[proposal.Operation]
 		if known {
 			action.HandlerVersion = operation.Version
@@ -536,7 +540,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 		}
 		if r.Status == Executing {
 			r.Status, r.Outcome, r.Reason = Uncertain, "deny", "Host interrupted after dispatch; reconcile without replay"
-		} else if (r.Status == Proposed || r.Status == Ready || r.Status == Approved || r.Status == AwaitingConfirmation || r.Status == Blocked) && !e.clock().Before(r.Action.ExpiresAt) {
+		} else if (r.Status == Proposed || r.Status == Ready || r.Status == Approved || r.Status == AwaitingConfirmation || r.Status == Blocked) && !r.Action.ExpiresAt.IsZero() && !e.clock().Before(r.Action.ExpiresAt) {
 			r.Status, r.Outcome, r.Reason = Expired, "deny", "Action confirmation expired"
 		} else {
 			continue
@@ -586,7 +590,7 @@ func (e *Engine) check(r Record, a Authority) (Status, string) {
 	if a.OwnerID == "" || a.PolicyRevision < 1 || !a.Active || a.Scope != r.Action.Scope || a.OwnerID != r.Action.OwnerID || a.PolicyRevision != r.Action.PolicyRevision {
 		return Stale, "Task, owner, execution or policy changed"
 	}
-	if !e.clock().Before(r.Action.ExpiresAt) {
+	if !r.Action.ExpiresAt.IsZero() && !e.clock().Before(r.Action.ExpiresAt) {
 		return Expired, "Action confirmation expired"
 	}
 	if r.Approval != nil && !validApproval(r) {

@@ -87,8 +87,8 @@ func TestPersonalReviewRetractionAfterModelDecisionPreventsDispatch(t *testing.T
 	retracted := make(chan error, 1)
 	f.client.mu.Lock()
 	f.client.onChat = func(call int, _ providers.ChatRequest) {
-		if call == 2 {
-			// The execution reviewer already sampled the original source. A
+		if call == 1 {
+			// The reviewer already sampled the original source. A
 			// separate writer retracts it before the final guarded dispatch.
 			retracted <- external.RewriteHistoryRecordsForEdit(f.id, nil, f.sourceSeq, page.HeadSeq)
 		}

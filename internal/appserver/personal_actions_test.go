@@ -110,6 +110,7 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 	for _, outcome := range []string{"approve", "reject", "cancel"} {
 		t.Run(outcome, func(t *testing.T) {
 			f := newPersonalBoundaryFixture(t, nil)
+			f.setReviewMode(false)
 			worker := "approval-worker"
 			_, err := f.rt.Sessions.CreateInitialized(session.Session{ID: worker, ParentID: f.id, AgentID: "main", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", CWD: f.rt.RootDir}, nil)
 			if err != nil {

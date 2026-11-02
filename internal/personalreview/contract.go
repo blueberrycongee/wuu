@@ -190,6 +190,9 @@ type Options struct {
 	Store      *Store
 	Operations map[string]Operation
 	Clock      func() time.Time
+	// ActionExpiry returns zero for interactive requests without a deadline.
+	// Scope or authority changes still invalidate them before dispatch.
+	ActionExpiry func(Scope, time.Time) time.Time
 	// WithAuthority reads a consistent selected authority snapshot for proposals,
 	// review and owner decisions. It does not authorize external effects.
 	WithAuthority func(context.Context, Scope, func(Authority) error) error
