@@ -17,7 +17,7 @@ export function useConversationCommands({ commands, value, setValue, disabled, i
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState<string>();
   const [selected, setSelected] = useState(0);
-  const draft = commands && !disabled ? parseComposerSlashDraft(value) : undefined;
+  const draft = commands && !disabled && !value.includes("\n") ? parseComposerSlashDraft(value) : undefined;
   const visible = filterComposerSlashCommands(commands ?? [], draft?.query ?? "");
   const open = focused && !draft?.query.includes("/") && Boolean(draft) && dismissed !== value;
   const selectionKey = JSON.stringify(visible.map(command => [command.id, command.disabledReason]));

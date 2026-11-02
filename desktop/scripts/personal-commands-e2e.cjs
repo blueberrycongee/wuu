@@ -111,7 +111,7 @@ app.whenReady().then(async()=>{
  assert(report.requests.filter(r=>r.method==='agents.send').at(-1).input.relation?.reply_to);
  report.cases.push('Reply composer invokes the skill and preserves its reply relation');
  await evaluate(()=>document.querySelector('[data-action="close-replies"]').click());await until(()=>!document.querySelector('.mosaic-replies'));
- for(const value of ['/not-a-command hello','/tmp/example.txt','//comment','/settings\nordinary multiline']){
+ for(const value of ['/not-a-command hello','/tmp/example.txt','//comment','/settings\nordinary multiline','/handoff\nordinary multiline']){
   await fill(value);await key('Escape');await until(()=>document.querySelector('.mosaic-main .composer-send-button:not(:disabled)'));await evaluate(()=>document.querySelector('.mosaic-main .composer-send-button').click());
   await until(()=>document.querySelector('.mosaic-main textarea').value==='');
   assert.equal(report.requests.filter(r=>r.method==='agents.send').at(-1).input.prompt,value);

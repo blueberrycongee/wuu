@@ -445,7 +445,7 @@ export function PluginConversationComposer({ commands, commandsLoading, commands
   const onCommandAction = (command: ComposerSlashCommand) => {
     const action = commands?.find(item => item.id === command.id);
     if (action?.kind !== "action") return;
-    const draft = parseComposerSlashDraft(prompt);
+    const draft = prompt.includes("\n") ? undefined : parseComposerSlashDraft(prompt);
     void Promise.resolve().then(() => action.onSelect()).then(() => {
       if (draft && currentDraft.current.conversationId === conversationId && currentDraft.current.prompt === prompt) onChangePrompt(draft.args);
     }).catch(showErrorToast);

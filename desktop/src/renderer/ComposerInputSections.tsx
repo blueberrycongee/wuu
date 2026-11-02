@@ -405,7 +405,7 @@ export function SplitPaneComposer({
   function submitDraft(promptOverride?: string): void {
     const visiblePrompt = promptOverride ?? textareaRef.current?.value ?? visiblePromptValue;
     let currentPrompt = promptOverride ?? (hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt);
-    const commandDraft = slashCommands && !hasCollapsedPromptBlocks ? parseComposerSlashDraft(currentPrompt) : undefined;
+    const commandDraft = slashCommands && !hasCollapsedPromptBlocks && !currentPrompt.includes("\n") ? parseComposerSlashDraft(currentPrompt) : undefined;
     const command = commandDraft && slashCommands?.find(item => item.name.toLowerCase() === commandDraft.query);
     if (command?.disabledReason || commandDraft && !commandDraft.query.includes("/") && (commandsLoading || commandsError) && command?.kind !== "action") return;
     if (command?.kind === "action" && !commandDraft?.args) { commandMenu.apply(command); return; }
