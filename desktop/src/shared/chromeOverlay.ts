@@ -40,9 +40,11 @@ export interface ChromeOverlayApi {
   hide(token: string, generation: number): Promise<void>;
   onEvent(listener: (event: ChromeOverlayEvent) => void): () => void;
 }
+export type ChromeOverlayRendererRequest = ChromeOverlayRequest & { phase: "prepare" | "layout" | "presented" };
 export interface ChromeOverlayRendererApi {
-  ready(): Promise<ChromeOverlayRequest | null>;
-  onState(listener: (request: ChromeOverlayRequest | null) => void): () => void;
-  painted(token: string, generation: number): void;
+  ready(): Promise<ChromeOverlayRendererRequest | null>;
+  onState(listener: (request: ChromeOverlayRendererRequest | null) => void): () => void;
+  prepared(token: string, generation: number): void;
+  painted(token: string, generation: number, viewport: { width: number; height: number }): void;
   command(event: ChromeOverlayEvent): void;
 }

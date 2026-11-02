@@ -1,4 +1,4 @@
-import type { ChromeOverlayRequest, ChromeOverlayRendererApi } from "../shared/chromeOverlay";
+import type { ChromeOverlayRendererRequest, ChromeOverlayRendererApi } from "../shared/chromeOverlay";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,17 +66,18 @@ describe("native overlay first-paint geometry", () => {
     const frames = new Map<number, FrameRequestCallback>(); let nextFrame = 0;
     vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.set(++nextFrame, callback); return nextFrame; });
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
-    vi.stubGlobal("innerWidth", 1); vi.stubGlobal("innerHeight", 1);
-    const request: ChromeOverlayRequest = {
+    vi.stubGlobal("innerWidth", 0); vi.stubGlobal("innerHeight", 0);
+    const request: ChromeOverlayRendererRequest = {
+      phase: "prepare",
       version: 1, token: "recovered", generation: 1, focus: true,
       bounds: { x: 0, y: 0, width: 320, height: 91 },
       appearance: { theme: "dark", locale: "en-US", fontFamily: "sans-serif", variables: {} },
       model: { kind: "account", panel: { label: "Account", rows: [{ action: "providers", label: "Settings" }] } },
     };
-    let receive!: (value: ChromeOverlayRequest | null) => void;
+    let receive!: (value: ChromeOverlayRendererRequest | null) => void;
     const api: ChromeOverlayRendererApi = {
       ready: async () => request, onState: listener => { receive = listener; return () => {}; },
-      painted: vi.fn(), command: vi.fn(),
+      prepared: vi.fn(), painted: vi.fn(), command: vi.fn(),
     };
     Object.assign(window, { wuuChromeOverlay: api });
     const element = document.createElement("div"); element.id = "root"; document.body.appendChild(element);
@@ -84,13 +85,20 @@ describe("native overlay first-paint geometry", () => {
     try {
       await act(async () => { await import("./chromeOverlayMain"); });
       await frame();
+      expect(api.prepared).toHaveBeenCalledWith("recovered", 1);
+      expect(api.painted).not.toHaveBeenCalled();
+      expect(element.querySelector(".chrome-overlay-surface")?.getAttribute("inert")).not.toBeNull();
+      await act(async () => receive({ ...request, phase: "layout" }));
+      await frame();
       expect(api.painted).not.toHaveBeenCalled();
       expect(document.activeElement).not.toBe(element.querySelector("button"));
       vi.stubGlobal("innerWidth", 320); vi.stubGlobal("innerHeight", 91);
       await frame();
-      expect(api.painted).toHaveBeenCalledWith("recovered", 1);
+      await frame();
+      expect(api.painted).toHaveBeenCalledWith("recovered", 1, { width: 320, height: 91 });
       expect(document.activeElement).toBe(element.querySelector("button"));
-      vi.stubGlobal("innerWidth", 1);
+      expect(element.querySelector(".chrome-overlay-surface")?.hasAttribute("inert")).toBe(false);
+      vi.stubGlobal("innerWidth", 0);
       await act(async () => receive({ ...request, generation: 2 }));
       await frame();
       await act(async () => receive(null));
@@ -102,4 +110,19 @@ describe("native overlay first-paint geometry", () => {
       delete (window as unknown as { wuuChromeOverlay?: ChromeOverlayRendererApi }).wuuChromeOverlay;
     }
   });
+});
+
+it.each([false, true])("defers a fresh expanded capsule's own focus selection until content is ready (menu=%s)", async menuOpen => {
+  const { ContextChatCapsuleSurface } = await import("./ContextChatCapsuleSurface");
+  const element = document.createElement("div"); document.body.appendChild(element);
+  const root = createRoot(element);
+  const model = { kind: "capsule" as const, draft: "Keep draft", expanded: true, menuOpen, busy: false,
+    sourceTitle: "Page", label: "Ask", placeholder: "Ask", sendLabel: "Send", openLabel: "Open", collapseLabel: "Close" };
+  const render = async (focusReady: boolean) => { await act(async () => root.render(<ContextChatCapsuleSurface model={model} send={() => {}} focusReady={focusReady} />)); };
+  try {
+    await render(false);
+    expect(element.contains(document.activeElement)).toBe(false);
+    await render(true);
+    expect(document.activeElement).toBe(element.querySelector(menuOpen ? '[role="menu"] button' : 'input'));
+  } finally { await act(async () => root.unmount()); element.remove(); }
 });

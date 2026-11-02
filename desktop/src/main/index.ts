@@ -3298,7 +3298,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:chrome-overlay-show", (event, request: ChromeOverlayRequest) => chromeOverlayHost.show(webWorkspaceSender(event), request));
   ipcMain.handle("wuu:chrome-overlay-hide", (event, token: string, generation: number) => chromeOverlayHost.hide(webWorkspaceSender(event), token, generation));
   ipcMain.handle("wuu:chrome-overlay-ready", event => chromeOverlayHost.ready(event));
-  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number) => chromeOverlayHost.painted(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token: string, generation: number) => chromeOverlayHost.prepared(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number, viewport: { width: number; height: number }) => chromeOverlayHost.painted(event, token, generation, viewport));
   ipcMain.on("wuu:chrome-overlay-command", (event, message) => chromeOverlayHost.command(event, message));
   ipcMain.handle("wuu:web-workspace-tabs-initialize", (event, destinations: WebWorkspaceLegacyDestination[]) =>
     webWorkspaceHost.initializeTabs(webWorkspaceSender(event), destinations));

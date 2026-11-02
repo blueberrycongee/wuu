@@ -36,7 +36,7 @@ const report = { status: "running", platform: process.platform, versions: proces
 const save = () => fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
 const trace = value => fs.appendFileSync(path.join(output, "events.jsonl"), JSON.stringify({ at: Date.now(), ...value }) + "\n");
 let win, host, page, dropPaint = false;
-let lastReadyGeometry;
+let lastReadyGeometry, holdLayout = false, heldLayout;
 const failures = [];
 app.on("web-contents-created", (_event, contents) => {
   contents.on("console-message", details => trace({ kind: "console", id: contents.id, message: details.message }));
@@ -157,9 +157,21 @@ async function run() {
       .catch(error => trace({ kind: "ready-geometry-unavailable", id: event.sender.id, error: String(error) }));
     return state;
   });
-  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => {
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token, generation) => {
+    trace({ kind: "prepared", token, generation });
+    // Interrupt only delivery of the layout phase to observe the real native
+    // preparation rectangle while the shipping renderer stays hidden/inert.
+    const send = event.sender.send;
+    if (holdLayout) event.sender.send = function (channel, state, ...rest) {
+      if (channel === "wuu:chrome-overlay-state" && state?.phase === "layout") heldLayout = { sender: event.sender, state };
+      else send.call(this, channel, state, ...rest);
+    };
+    try { host.prepared(event, token, generation); }
+    finally { event.sender.send = send; }
+  });
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation, viewport) => {
     trace({ kind: "painted", token, generation, dropped: dropPaint });
-    if (!dropPaint) host.painted(event, token, generation);
+    if (!dropPaint) host.painted(event, token, generation, viewport);
   });
   ipcMain.on("wuu:chrome-overlay-command", (event, command) => host.command(event, command));
   win = new BrowserWindow({ width: 1180, height: 820, show: true,
@@ -223,6 +235,32 @@ async function run() {
     scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings navigation and exact draft preservation");
     scenario.status = "passed"; save();
   }
+  for (const cancel of ["escape", "outside"]) {
+    holdLayout = true; heldLayout = undefined;
+    await click(win.webContents, ".sidebar-account-trigger");
+    await until(() => heldLayout && menuView()?.getVisible(), "native preparation awaits renderer layout");
+    const preparing = menuView(), pending = heldLayout.state;
+    assert.ok(win.webContents.isFocused() && !preparing.webContents.isFocused(), "Owner retains keyboard focus during native preparation");
+    const hidden = await evaluate(preparing.webContents, () => {
+      const surface = document.querySelector(".chrome-overlay-surface");
+      return { inert: surface?.inert, visibility: surface && getComputedStyle(surface).visibility };
+    });
+    assert.deepEqual(hidden, { inert: true, visibility: "hidden" }, "Prepared content is not shown or interactive before layout");
+    const event = { sender: preparing.webContents, senderFrame: preparing.webContents.mainFrame };
+    host.command(event, { token: pending.token, generation: pending.generation, command: { type: "account-action", action: "providers" } });
+    assert.equal(await evaluate(win.webContents, () => Boolean(document.querySelector(".settings-shell"))), false, "Preparation cannot invoke a menu business action");
+    fs.writeFileSync(path.join(output, `preparing-${cancel}-shell.png`), (await win.webContents.capturePage()).toPNG());
+    if (cancel === "escape") key(win.webContents, "Escape");
+    else await click(win.webContents, "textarea");
+    await closed();
+    host.prepared(event, pending.token, pending.generation);
+    host.painted(event, pending.token, pending.generation, pending.bounds);
+    assert.equal(preparing.getVisible(), false, "Late preparation/paint acknowledgements cannot reopen a cancelled menu");
+    holdLayout = false; heldLayout = undefined;
+    trace({ kind: "preparation-cancel-passed", cancel, hidden });
+  }
+  report.preparation = "Owner focus retained; hidden inert content cannot invoke actions; Escape/outside cancel and fence late acknowledgements";
+  save();
   // Reproduce a loaded renderer that never acknowledges its first presentation.
   // Only transport delivery is interrupted; the shipping UI and host are intact.
   dropPaint = true;
