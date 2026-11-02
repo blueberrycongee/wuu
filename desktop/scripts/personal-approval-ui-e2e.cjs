@@ -82,6 +82,7 @@ async function capture(name) {
     const name=narrow?'identity-scroll-narrow-large':'identity-scroll-wide';
     await open('long',{replies:'1',...(narrow?{font:'20',theme:'dark'}:{})},narrow?{width:430,height:1100}:{width:1100,height:950});
     await wait('[data-review-choice="approve_once"]');
+    await page.locator('.personal-review-parameters').evaluateAll(nodes=>nodes.forEach(node=>node.open=true));
     const viewport=page.locator('.mosaic-main > .plugin-conversation > .plugin-conversation-scroll');
     await page.locator('[data-review-choice="approve_once"]').scrollIntoViewIfNeeded();
     const before=await viewport.evaluate(node=>node.scrollTop);
@@ -120,6 +121,21 @@ async function capture(name) {
   }
   await open();await wait('[data-review-choice="reject"]');await page.locator('[data-review-choice="reject"]').click();await wait('[data-review-state="denied"]');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls[0].input.choice),'reject');report.cases.push('Reject stops the precise action in the displayed synthetic state');
+  await open();await wait('[data-review-choice="remember"]');
+  await page.locator('[data-review-choice="remember"]').click();await wait('[data-review-rule-preview]');
+  assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve'||c.method==='review.rules').length),0);
+  await capture('chat-rule-preview');
+  await page.locator('[data-review-choice="save_rule"]').click();await wait('[data-review-state="approved"]');
+  assert.deepEqual(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.rules'||c.method==='review.resolve').map(c=>c.method)),['review.rules','review.resolve']);
+  await page.locator('[data-review-open-settings]').click();await wait('[data-review-rule]');
+  await capture('settings-saved-rule');
+  await page.locator('[data-review-rule-ask]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules[0].decision==='ask');
+  await page.locator('[data-review-rule-delete]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules.length===0);
+  report.cases.push('Rule preview grants nothing; saving precedes the exact once-only decision; settings can require confirmation or remove a saved rule');
+  await open('rule-save-failed');await wait('[data-review-choice="remember"]');await page.locator('[data-review-choice="remember"]').click();await wait('[data-review-rule-preview]');await page.locator('[data-review-choice="save_rule"]').click();await wait('[data-personal-action-review] [role="alert"]');
+  assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve').length),0);
+  await page.locator('[data-review-refresh]').click();await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-review-state="approved"]');
+  report.cases.push('Failed rule save never grants this action; after refreshing the owner can explicitly allow once');
   await open('lost-ack');await wait('[data-review-choice="approve_once"]');await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-personal-action-review] [role="alert"]');
   assert(await page.locator('[data-review-choice="approve_once"]').isDisabled());await capture('chat-lost-ack');
   await page.locator('[data-review-refresh]').click();await wait('[data-review-state="approved"]');
@@ -127,7 +143,7 @@ async function capture(name) {
   await open('stale-response');await wait('[data-review-choice="approve_once"]');await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-personal-action-review] [role="alert"]');await page.locator('[data-review-refresh]').click();await wait('[data-review-state="stale"]');report.cases.push('Stale decision refreshes to changed task state without resubmission');
   await open();await page.locator('[data-review-open-settings]').click();await wait('[data-review-variant="settings"]');await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();await capture('settings-manual-default');
   const toggle=page.locator('[data-personal-action-review] [role="switch"]');assert.equal(await toggle.getAttribute('aria-checked'),'false');await toggle.click();await page.waitForFunction(()=>document.querySelector('[data-personal-action-review] [role="switch"]')?.getAttribute('aria-checked')==='true');
-  assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.settings').length),1);await capture('settings-opted-in');report.cases.push('AutoReview defaults off; explicit version-bound opt-in saves once without changing Coding');
+  assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.settings').length),1);await capture('settings-opted-in');report.cases.push('Existing explicit manual preference is preserved; version-bound opt-in saves once without changing Coding');
   for (const [name,scenario,extra,viewport] of [
     ['existing-session-review-wide','review',{}, {width:1100,height:950}],
     ['existing-session-review-narrow','review',{theme:'dark',font:'20'}, {width:430,height:1100}],

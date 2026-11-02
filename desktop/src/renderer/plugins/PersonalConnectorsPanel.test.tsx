@@ -12,9 +12,30 @@ async function render(service:ConnectorService,conversation=false){container=doc
 const service=()=>({list:async()=>({connections:[]}),actions:async():Promise<unknown>=>pending(),decide:vi.fn(async()=>({state:'completed',action_id:'a'})),disconnect:vi.fn(async()=>({state:'disconnected'}))});
 const approve=()=>container.querySelector<HTMLButtonElement>('[data-connector-approve]')!;
 describe('Personal connector owner surface',()=>{
+ it('previews an exact connector rule and saves it before dispatching once',async()=>{
+  const calls:string[]=[];const base=service();
+  const s={...base,rulePreview:vi.fn(async()=>({schema:'personal-review-rules.v1',revision:3,rules:[],preview:{description:'Only this exact account, recipient and message',operation:'gmail.send',target:'reader@example.invalid',decision:'allow'}})),ruleSave:vi.fn(async()=>{calls.push('save');return {schema:'personal-review-rules.v1',revision:4,rules:[]}}),decide:vi.fn(async()=>{calls.push('decide');return {state:'completed',action_id:'a'}})};
+  await render(s,true);await React.act(async()=>container.querySelector<HTMLButtonElement>('[data-connector-remember]')!.click());
+  expect(s.ruleSave).not.toHaveBeenCalled();expect(s.decide).not.toHaveBeenCalled();
+  await React.act(async()=>container.querySelector<HTMLButtonElement>('[data-connector-save-rule]')!.click());
+  expect(calls).toEqual(['save','decide']);expect(s.ruleSave).toHaveBeenCalledWith({action_id:'a',digest:'a'.repeat(64),expected_revision:3,decision:'allow'});
+ });
+ it('never dispatches after a rule save fails',async()=>{
+  const base=service();const s={...base,rulePreview:async()=>({schema:'personal-review-rules.v1',revision:3,rules:[],preview:{description:'Exact message',operation:'gmail.send',target:'reader@example.invalid',decision:'allow'}}),ruleSave:async()=>{throw new Error('lost save response')}};
+  await render(s,true);await React.act(async()=>container.querySelector<HTMLButtonElement>('[data-connector-remember]')!.click());
+  await React.act(async()=>container.querySelector<HTMLButtonElement>('[data-connector-save-rule]')!.click());
+  expect(s.decide).not.toHaveBeenCalled();expect(approve().disabled).toBe(true);
+ });
  it('displays exact recipient/body and dispatches one digest-bound decision',async()=>{const s=service();await render(s);expect(container.textContent).toContain('reader@example.invalid');let finish:(x:{state:string;action_id:string})=>void=()=>{};s.decide.mockImplementation(()=>new Promise(resolve=>{finish=resolve}));await React.act(async()=>{approve().click();approve().click()});expect(s.decide).toHaveBeenCalledTimes(1);expect(s.decide).toHaveBeenCalledWith({action_id:'a',digest:'a'.repeat(64),approve:true});await React.act(async()=>finish({state:'completed',action_id:'a'}));});
  it('locks an ambiguous response until read-only refresh without replay',async()=>{const s=service();s.decide.mockRejectedValue(new Error('secret upstream error'));await render(s);await React.act(async()=>approve().click());expect(approve().disabled).toBe(true);expect(container.textContent).not.toContain('secret upstream');expect(container.querySelector('[role="alert"]')).not.toBeNull();expect(s.decide).toHaveBeenCalledTimes(1);});
  it('unknown and incomplete confirmation data cannot authorize',async()=>{const s=service();s.actions=async()=>({actions:[{...pending().actions[0],arguments_json:undefined}]});await render(s);expect(approve()?.disabled??true).toBe(true);});
+ it('ignores a late decision response after the Personal service changes',async()=>{
+  const s=service();let finish:()=>void=()=>{};s.decide.mockImplementation(()=>new Promise(resolve=>{finish=()=>resolve({state:'completed',action_id:'a'})}));
+  container=document.createElement('div');document.body.append(container);root=createRoot(container);const Panel=createConnectorsPanel(React,createPluginUIKit(React));
+  await React.act(async()=>root?.render(<Panel service={s} conversation/>));React.act(()=>approve().click());
+  const next=service();next.actions=async()=>({actions:[]});await React.act(async()=>root?.render(<Panel service={next} conversation/>));
+  await React.act(async()=>finish());expect(container.querySelector('[data-connector-approve]')).toBeNull();
+ });
  it('empty configuration is not presented as connected and empty conversation is quiet',async()=>{const s=service();s.actions=async()=>({actions:[]});await render(s,true);expect(container.textContent).toBe('');});
  it('closing and reopening reloads saved state without auto-confirming',async()=>{const s=service();await render(s,true);await React.act(async()=>root?.unmount());root=undefined;container.remove();await render(s,true);expect(s.decide).not.toHaveBeenCalled();expect(approve().disabled).toBe(false);});
 

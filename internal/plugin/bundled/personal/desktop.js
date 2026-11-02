@@ -274,144 +274,6 @@ var personalDesktop = (() => {
   }
   var connectorOAuthStyles = ".personal-connector-oauth{margin-top:var(--space-3)}.personal-connector-oauth>label{display:flex;flex-direction:column;gap:var(--space-2)}.personal-connector-oauth textarea{font:inherit;width:100%;box-sizing:border-box}.personal-connector-oauth fieldset{border:0;padding:0;margin:var(--space-3) 0;display:flex;gap:var(--space-3);flex-wrap:wrap}.personal-connector-oauth fieldset label{display:flex;align-items:center;gap:var(--space-2)}.personal-connector-oauth button{font:inherit}";
 
-  // plugins/personal/ui/connectors-panel.ts
-  var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["github", "GitHub", "PR\u3001Issue\u3001CI \u4E0E Release"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
-  var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
-  function object(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid connector response");
-    return value;
-  }
-  function connections(raw) {
-    const rows = object(raw).connections;
-    if (!Array.isArray(rows) || rows.length > 100) throw Error("Invalid connector list");
-    return rows.map((row) => {
-      const v = object(row);
-      if (!["connection_id", "provider", "account_id", "domain", "state"].every((key) => typeof v[key] === "string") || !Array.isArray(v.resources) || !v.resources.every((x) => typeof x === "string") || !Array.isArray(v.scopes) || !v.scopes.every((x) => typeof x === "string")) throw Error("Invalid connector identity");
-      return structuredClone(v);
-    });
-  }
-  function actions(raw) {
-    const rows = object(raw).actions;
-    if (!Array.isArray(rows) || rows.length > 1e3) throw Error("Invalid connector actions");
-    return rows.map((row) => {
-      const v = object(row);
-      if (typeof v.state !== "string" || typeof v.action_id !== "string") throw Error("Invalid connector action");
-      for (const key of ["digest", "summary", "connection_id", "operation", "arguments_json", "account_id", "code"]) if (v[key] !== void 0 && typeof v[key] !== "string") throw Error("Invalid connector action");
-      return structuredClone(v);
-    });
-  }
-  function confirmable(a) {
-    if (a.state !== "awaiting_confirmation" || !a.digest || !/^[a-f0-9]{64}$/.test(a.digest) || !a.arguments_json) return false;
-    try {
-      return !!object(JSON.parse(a.arguments_json));
-    } catch {
-      return false;
-    }
-  }
-  function capabilitySummary(c) {
-    const granted = (scope) => c.state === "connected" && c.scopes.includes(scope);
-    const read = { gmail: ["https://www.googleapis.com/auth/gmail.readonly"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events.readonly", "https://www.googleapis.com/auth/calendar.events"], drive: ["https://www.googleapis.com/auth/drive.file"], notion: ["read_content"], github: ["pull_requests:read", "issues:read", "checks:read", "contents:read"], slack: ["channels:history", "groups:history"], feishu: ["im:message:readonly"] };
-    const write = { gmail: ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.compose"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events"], notion: ["insert_content"] };
-    const reads = (read[c.provider] ?? []).filter(granted), writes = (write[c.provider] ?? []).filter(granted);
-    return `\u8BFB\u53D6\uFF1A${reads.length ? "\u5728\u6240\u9009\u8D44\u6E90\u5185\u9010\u64CD\u4F5C\u6821\u9A8C" : "\u7F3A\u5C11\u8BFB\u53D6\u6388\u6743"}\uFF1B\u5199\u5165\uFF1A${writes.length ? "\u5DF2\u6388\u6743\u80FD\u529B\u4ECD\u9700\u7CBE\u786E\u786E\u8BA4" : write[c.provider] ? "\u672A\u83B7\u5199\u5165\u6388\u6743" : "\u672C\u8FDE\u63A5\u5668\u53EA\u8BFB"}`;
-  }
-  function createConnectorsPanel(react, ui) {
-    const h = react.createElement, Button = ui.Button, OAuth = createConnectorOAuth(react);
-    return function Connectors({ service, conversation = false }) {
-      const [rows, setRows] = react.useState([]), [saved, setSaved] = react.useState([]), [error, setError] = react.useState(""), [loading, setLoading] = react.useState(true), [busy, setBusy] = react.useState(false), [uncertain, setUncertain] = react.useState(false), [disconnectID, setDisconnectID] = react.useState("");
-      const gate = react.useRef(false), alive = react.useRef(true), generation = react.useRef(0);
-      const load = async () => {
-        const n = ++generation.current;
-        setLoading(true);
-        try {
-          const [list, history] = await Promise.all([conversation ? Promise.resolve({ connections: [] }) : service.list(), service.actions()]);
-          if (!alive.current || n !== generation.current) return;
-          setRows(connections(list));
-          setSaved(actions(history));
-          setError("");
-          setUncertain(false);
-        } catch {
-          if (alive.current && n === generation.current) setError("\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\u8FDE\u63A5\u6216\u52A8\u4F5C\u72B6\u6001\uFF0C\u8BF7\u5237\u65B0\u3002");
-        } finally {
-          if (alive.current && n === generation.current) setLoading(false);
-        }
-      };
-      react.useEffect(() => {
-        alive.current = true;
-        void load();
-        const timer = conversation ? setInterval(() => {
-          if (!gate.current) void load();
-        }, 5e3) : void 0;
-        return () => {
-          alive.current = false;
-          generation.current++;
-          clearInterval(timer);
-        };
-      }, [service]);
-      const mutate = async (work) => {
-        if (gate.current || uncertain) return;
-        gate.current = true;
-        setBusy(true);
-        setError("");
-        try {
-          await work();
-          if (alive.current) await load();
-        } catch {
-          if (alive.current) {
-            setUncertain(true);
-            setError("\u672A\u6536\u5230\u53EF\u6838\u5B9E\u56DE\u6267\u3002\u8BF7\u5148\u5237\u65B0\u6838\u5BF9\u5DF2\u4FDD\u5B58\u72B6\u6001\uFF0C\u4E0D\u8981\u91CD\u590D\u64CD\u4F5C\u3002");
-          }
-        } finally {
-          gate.current = false;
-          if (alive.current) setBusy(false);
-        }
-      };
-      const visible = conversation ? saved.filter((a) => ["awaiting_confirmation", "uncertain", "executing"].includes(a.state)) : saved;
-      if (conversation && !visible.length) return null;
-      return h(
-        "section",
-        { className: "personal-connectors", "data-personal-connectors": conversation ? "conversation" : "settings" },
-        h("div", { className: "personal-connectors-heading" }, h("h3", null, conversation ? "\u8FDE\u63A5\u5668\u52A8\u4F5C" : "\u8D26\u53F7\u4E0E\u8D44\u6599"), h(Button, { disabled: busy || loading, onClick: () => void load(), "data-connector-refresh": true }, loading ? "\u6B63\u5728\u6838\u5BF9\u2026" : "\u5237\u65B0\u72B6\u6001")),
-        error ? h("p", { role: "alert" }, error) : null,
-        !conversation ? h("p", null, "\u8BFB\u53D6\u4EC5\u9650\u5DF2\u6388\u6743\u8303\u56F4\uFF1B\u5916\u90E8\u5199\u5165\u5148\u6838\u5BF9\u7CBE\u786E\u5185\u5BB9\u3002\u5DE5\u4F5C\u8D44\u6599\u5355\u72EC\u9694\u79BB\uFF0C\u4E0D\u81EA\u52A8\u52A0\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002") : null,
-        !conversation ? h("div", { className: "personal-connectors-list" }, ...providers.map(([provider, title, description]) => {
-          const matching = rows.filter((c) => c.provider === provider || provider === "calendar" && c.provider === "google-calendar" || provider === "drive" && c.provider === "google-drive");
-          return h(
-            "div",
-            { key: provider, className: "personal-connector-provider" },
-            h("div", { className: "personal-connector-title" }, h("h4", null, title), h("span", null, matching.some((c) => c.state === "connected") ? "\u5DF2\u8FDE\u63A5" : "\u672A\u63A5\u901A")),
-            h("p", null, description),
-            matching.length ? matching.map((c) => h(
-              "div",
-              { key: c.connection_id },
-              h("p", null, `${c.account_id} \xB7 ${c.domain === "work" ? "\u5DE5\u4F5C\u9694\u79BB\u57DF" : "\u4E2A\u4EBA\u57DF"} \xB7 ${c.state}`),
-              h("p", null, `\u8303\u56F4\uFF1A${c.resources.join("\u3001") || "\u5C1A\u672A\u9009\u62E9\u8D44\u6E90"}`),
-              h("p", null, capabilitySummary(c)),
-              h("p", null, "\u53D8\u5316\u6BD4\u8F83\uFF1A\u8C03\u7528\u65F6\u6BD4\u8F83\u540C\u4E00\u6267\u884C\u4F1A\u8BDD\u5185\u7684\u6709\u754C\u9875\uFF1B\u65B0\u4EFB\u52A1\u53E6\u5EFA\u57FA\u7EBF\uFF0C\u65E0\u5E38\u9A7B\u63A8\u9001\u6216\u5168\u91CF\u540C\u6B65"),
-              disconnectID === c.connection_id ? h("div", { className: "personal-connectors-controls" }, h("span", null, "\u65AD\u5F00\u540E\u505C\u6B62\u6B64\u8D26\u53F7\u540E\u7EED\u8C03\u7528\u3002"), h(Button, { disabled: busy || uncertain, onClick: () => void mutate(async () => {
-                const value = await service.disconnect({ connection_id: c.connection_id });
-                setDisconnectID("");
-                return value;
-              }) }, "\u786E\u8BA4\u65AD\u5F00"), h(Button, { disabled: busy, onClick: () => setDisconnectID("") }, "\u53D6\u6D88")) : h(Button, { disabled: busy || uncertain, onClick: () => setDisconnectID(c.connection_id) }, "\u65AD\u5F00\u8FDE\u63A5")
-            )) : h("p", { className: "personal-connectors-muted" }, "\u9700\u5148\u5728\u5BBF\u4E3B\u5B89\u5168\u914D\u7F6E\u8D26\u53F7\u548C\u8D44\u6E90\u8303\u56F4\uFF1B\u5C1A\u672A\u8FDB\u884C\u771F\u5B9E\u8D26\u53F7\u9A8C\u6536\u3002"),
-            service.oauth ? h("details", null, h("summary", null, matching.length ? "\u7BA1\u7406\u6388\u6743\u8303\u56F4" : "\u914D\u7F6E\u8D26\u53F7\u6388\u6743"), h(OAuth, { provider: provider === "calendar" ? "google-calendar" : provider, service: service.oauth, onConnected: () => void load(), existing: matching[0] })) : null
-          );
-        })) : null,
-        visible.length ? h("div", { className: "personal-connectors-actions" }, !conversation ? h("h3", null, "\u52A8\u4F5C\u4E0E\u56DE\u6267") : null, ...visible.map((a) => h(
-          "article",
-          { key: a.action_id, "data-connector-state": a.state, className: "personal-connector-action" },
-          h("div", { className: "personal-connector-title" }, h("h4", null, a.summary || a.operation || "\u8FDE\u63A5\u5668\u52A8\u4F5C"), h("span", null, states[a.state] || "\u5F85\u6838\u5B9E\u72B6\u6001")),
-          h("p", null, `${a.account_id || a.connection_id || ""} \xB7 ${a.operation || ""}`),
-          a.arguments_json ? h("details", { open: a.state === "awaiting_confirmation" }, h("summary", null, "\u6838\u5BF9\u5B8C\u6574\u64CD\u4F5C\u5185\u5BB9"), h("pre", null, a.arguments_json)) : null,
-          a.state === "uncertain" ? h("p", null, "\u5916\u90E8\u670D\u52A1\u53EF\u80FD\u5DF2\u63A5\u53D7\u6B64\u64CD\u4F5C\u3002\u6B64\u5904\u4E0D\u4F1A\u91CD\u53D1\uFF1B\u5148\u5230\u6765\u6E90\u6838\u5BF9\u7ED3\u679C\u3002") : null,
-          a.state === "awaiting_confirmation" ? h("div", { className: "personal-connectors-controls" }, h(Button, { "data-connector-approve": true, disabled: busy || uncertain || !confirmable(a), onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: true })) }, "\u4EC5\u6267\u884C\u8FD9\u4E00\u6B21"), h(Button, { "data-connector-reject": true, disabled: busy || uncertain || !a.digest, onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: false })) }, "\u62D2\u7EDD")) : null,
-          a.code ? h("p", null, `\u72B6\u6001\u4EE3\u7801\uFF1A${a.code}`) : null
-        ))) : null
-      );
-    };
-  }
-  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3{color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;margin:0;}.personal-connectors h4{color:var(--ink);font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);margin:0;}.personal-connectors p{margin:var(--space-1,4px) 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px);overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connector-title span{font-size:var(--font-xs,12px);color:var(--ink-tertiary);padding:1px 8px;border-radius:var(--radius-pill,999px);background:var(--surface-2);}.personal-connectors-list{display:flex;flex-direction:column;margin-block:var(--space-3,12px);border-top:1px solid var(--hairline-soft);}.personal-connector-provider{padding-block:var(--settings-row-pad-block,12px);border-bottom:1px solid var(--hairline-soft);min-width:0;}.personal-connector-provider details{margin-top:var(--space-2);font-size:var(--font-sm,14px);color:var(--ink-soft);}.personal-connector-provider summary{cursor:pointer;color:var(--ink-tertiary);font-weight:var(--weight-medium,500);}.personal-connectors-controls{display:flex;gap:var(--space-2,8px);align-items:center;flex-wrap:wrap;margin-top:var(--space-2,8px);}.personal-connectors-muted{color:var(--ink-tertiary);font-size:var(--font-xs,12px)!important;}.personal-connector-action{border-top:1px solid var(--hairline-soft);padding-block:var(--space-3,12px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);border-radius:var(--radius-sm,6px);}.personal-connectors [role=alert]{color:var(--danger);border-left:2px solid var(--danger);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
-
   // plugins/personal/ui/action-review-panel.ts
   var ReviewContractError = class extends Error {
   };
@@ -436,7 +298,7 @@ var personalDesktop = (() => {
   function reviewRecord(value) {
     if (!exactObject(value, ["revision", "status", "outcome", "reason", "action", ...typeof value === "object" && value !== null && Object.hasOwn(value, "receipt_json") ? ["receipt_json"] : []]) || value.receipt_json !== void 0 && !parametersText(value.receipt_json) || !exactRevision(value.revision) || typeof value.status !== "string" || !Object.hasOwn(copy.en.states, value.status) || typeof value.outcome !== "string" || !["allow", "ask", "deny"].includes(value.outcome) || typeof value.reason !== "string") return false;
     const action = value.action;
-    if (!exactObject(action, ["id", "digest", "operation", "scope", "effect", "summary", "arguments_json", "expires_at"]) || !nonempty(action.id) || typeof action.digest !== "string" || !/^[a-f0-9]{64}$/.test(action.digest) || !nonempty(action.operation) || typeof action.effect !== "string" || !Object.hasOwn(copy.en.effects, action.effect) || !parametersText(action.arguments_json) || typeof action.expires_at !== "string" || !Number.isFinite(Date.parse(action.expires_at))) return false;
+    if (!exactObject(action, ["id", "digest", "operation", "scope", "effect", "summary", "arguments_json", "expires_at"]) || !nonempty(action.id) || typeof action.digest !== "string" || !/^[a-f0-9]{64}$/.test(action.digest) || !nonempty(action.operation) || typeof action.effect !== "string" || !Object.hasOwn(copy.en.effects, action.effect) || !parametersText(action.arguments_json) || action.expires_at !== null && (typeof action.expires_at !== "string" || !Number.isFinite(Date.parse(action.expires_at)))) return false;
     const scope = action.scope, summary = action.summary;
     return exactObject(scope, ["space_id", "session_id", "task_id", "requirements_revision", ...typeof scope === "object" && scope !== null && Object.hasOwn(scope, "context_digest") ? ["context_digest"] : []]) && (scope.context_digest === void 0 || typeof scope.context_digest === "string" && /^[a-f0-9]{64}$/.test(scope.context_digest)) && nonempty(scope.space_id) && nonempty(scope.session_id) && nonempty(scope.task_id) && exactRevision(scope.requirements_revision) && exactObject(summary, ["title", "account", "target", "consequence"]) && typeof summary.title === "string" && typeof summary.account === "string" && typeof summary.target === "string" && typeof summary.consequence === "string";
   }
@@ -449,21 +311,59 @@ var personalDesktop = (() => {
     }
     throw new ReviewContractError("Action data could not be verified. Refresh to check the saved state.");
   }
+  function reviewRule(value) {
+    return exactObject(value, ["id", "description", "operation", "target", "decision", "enabled", "created_at", "updated_at"]) && nonempty(value.id) && nonempty(value.description) && nonempty(value.operation) && typeof value.target === "string" && (value.decision === "allow" || value.decision === "ask") && typeof value.enabled === "boolean" && typeof value.created_at === "string" && Number.isFinite(Date.parse(value.created_at)) && typeof value.updated_at === "string" && Number.isFinite(Date.parse(value.updated_at));
+  }
+  function decodeReviewRules(value) {
+    if (!exactObject(value, ["schema", "revision", "rules", ...typeof value === "object" && value !== null && Object.hasOwn(value, "preview") ? ["preview"] : []]) || value.schema !== "personal-review-rules.v1" || !exactRevision(value.revision) || !Array.isArray(value.rules) || !value.rules.every(reviewRule)) throw new ReviewContractError("Saved rules could not be verified. Refresh to check the saved state.");
+    return { schema: value.schema, revision: value.revision, rules: structuredClone(value.rules) };
+  }
+  function decodeRulePreview(value) {
+    const rules = decodeReviewRules(value);
+    if (typeof value !== "object" || value === null || !("preview" in value) || !exactObject(value.preview, ["description", "operation", "target", "decision"])) throw new ReviewContractError("Rule preview could not be verified.");
+    const preview = value.preview;
+    if (!nonempty(preview.description) || !nonempty(preview.operation) || typeof preview.target !== "string" || preview.decision !== "allow") throw new ReviewContractError("Rule preview could not be verified.");
+    return { ...rules, preview: { description: preview.description, operation: preview.operation, target: preview.target, decision: preview.decision } };
+  }
+  function actionBinding(record2) {
+    return { space_id: record2.action.scope.space_id, id: record2.action.id, digest: record2.action.digest, expected_revision: record2.revision };
+  }
+  function actionParameters(record2) {
+    const value = JSON.parse(record2.action.arguments_json);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+    if ("arguments" in value && typeof value.arguments === "object" && value.arguments !== null && !Array.isArray(value.arguments)) return { ...value.arguments, before_content: "before_content" in value ? value.before_content : void 0, exists: "exists" in value ? value.exists : void 0 };
+    return value;
+  }
+  function fileEdits(parameters) {
+    const entries = Array.isArray(parameters.edits) ? parameters.edits : [parameters];
+    const edits = [];
+    for (const entry of entries) {
+      if (typeof entry !== "object" || entry === null || !("old_text" in entry) || typeof entry.old_text !== "string" || !("new_text" in entry) || typeof entry.new_text !== "string") return [];
+      edits.push({ old_text: entry.old_text, new_text: entry.new_text, replace_all: "replace_all" in entry && entry.replace_all === true });
+    }
+    return edits;
+  }
+  function ruleDescription(rule, locale) {
+    if (!locale.startsWith("zh")) return rule.description;
+    if (rule.operation === "write_file" || rule.operation === "edit_file") return `\u4EE5\u540E\u5141\u8BB8\u4FEE\u6539\u201C${rule.target.split(/[\\/]/).pop()}\u201D\u7684\u5185\u5BB9\uFF0C\u4EC5\u9650\u8FD9\u4E2A\u6587\u4EF6\u3002`;
+    if (["bash", "process", "process_start"].includes(rule.operation)) return "\u4EE5\u540E\u5141\u8BB8\u5728\u76F8\u540C\u4F4D\u7F6E\uFF0C\u4F7F\u7528\u76F8\u540C\u6743\u9650\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u3002";
+    return rule.description;
+  }
   var copy = {
     en: {
-      title: "Action approvals",
-      description: "Checks each action against your request before it runs.",
-      mode: "Auto Review",
-      scope: "Only the registered actions listed below are covered, in this Personal space. Coding is unchanged.",
+      title: "Approvals and rules",
+      description: "Choose what Personal can do for you.",
+      mode: "Automatic review",
+      scope: "Applies to this Personal space, including its background tasks.",
       enabled: "On",
       disabled: "Off",
-      enable: "Enable Auto Review",
-      disable: "Disable Auto Review",
-      manual: "Off does not disable protection: consequential actions still ask you first.",
+      enable: "Turn on automatic review",
+      disable: "Turn off automatic review",
+      manual: "Actions without a saved permission ask you first.",
       coverage: "Covered actions",
       fileWrite: "Create or replace a Personal file",
       fileEdit: "Edit a Personal file",
-      excluded: "Email, calendar changes, payments, account security and new permissions are not covered.",
+      excluded: "Account connections and new permissions still need their own confirmation.",
       noCoverage: "No action handlers registered",
       policy: "Policy version",
       receipt: "Execution receipt",
@@ -472,15 +372,15 @@ var personalDesktop = (() => {
       pending: "Waiting for you",
       recent: "Recent activity",
       refresh: "Refresh",
-      approve: "Approve once",
-      reject: "Reject",
+      approve: "Allow once",
+      reject: "Don\u2019t allow",
       revoke: "Withdraw approval",
       withdraw: "Withdraw action",
       account: "Account",
       target: "Destination",
       effect: "Effect",
       task: "Task version",
-      parameters: "Full action parameters",
+      parameters: "Technical details",
       expires: "Expires",
       digest: "Action digest",
       noActions: "No actions to review",
@@ -489,24 +389,55 @@ var personalDesktop = (() => {
       working: "Saving\u2026",
       failed: "Could not save. Refresh to check the current state.",
       invalidData: "Action data could not be verified. Refresh to check the saved state.",
-      single: "Your decision applies only to this action and these parameters. Account connections and lasting permissions require their own confirmation.",
-      states: { proposed: "Awaiting review", ready: "Authorized \xB7 awaiting execution", awaiting_confirmation: "Needs your decision", approved: "Approved once \xB7 awaiting review", blocked: "Review unavailable \xB7 not executed", denied: "Denied \xB7 not executed", revoked: "Withdrawn \xB7 not executed", expired: "Expired \xB7 not executed", stale: "Task changed \xB7 not executed", executing: "Started \xB7 result pending", succeeded: "Completed", uncertain: "Result unknown \xB7 will not retry" },
+      single: "Allow once applies only to the action shown. Saved rules can be changed or removed here.",
+      remember: "Handle this automatically\u2026",
+      ruleTitle: "Remember this permission?",
+      ruleScope: "This exact scope applies to future tasks in this Personal space.",
+      saveRule: "Save and allow once",
+      cancel: "Cancel",
+      ruleSaved: "Rule saved. This action still needs your decision.",
+      ruleSaveFailed: "The rule save could not be confirmed. Refresh to check it; you can then allow just this action.",
+      rules: "Saved rules",
+      noRules: "No saved rules yet.",
+      askRule: "Always ask first",
+      allowRule: "Allow automatically",
+      pauseRule: "Pause",
+      resumeRule: "Enable",
+      deleteRule: "Remove",
+      pausedRule: "Paused",
+      rulesPriority: "\u201CAlways ask first\u201D takes priority over automatic review and other permissions.",
+      changes: "View changes",
+      before: "Before",
+      after: "After",
+      newContent: "Content to save",
+      replaceAll: "Replace every matching occurrence",
+      ruleDetails: "Exact permission scope",
+      originalUnavailable: "The full original content is not included in this request. Replacing the file overwrites its current contents.",
+      writeTitle: "Save this file?",
+      replaceTitle: "Replace this file?",
+      editTitle: "Update this file?",
+      commandTitle: "Run this task step?",
+      commandBody: "Personal wants to run a program. Review its exact command and working folder in the details before allowing it.",
+      reason: "Why confirmation is needed",
+      pendingCount: "waiting for you",
+      noExpiry: "Until this task changes or you cancel",
+      states: { proposed: "Awaiting review", ready: "Authorized \xB7 awaiting execution", awaiting_confirmation: "Needs your decision", approved: "Allowed once \xB7 waiting to start", blocked: "Review unavailable \xB7 not executed", denied: "Denied \xB7 not executed", revoked: "Withdrawn \xB7 not executed", expired: "Expired \xB7 not executed", stale: "Task changed \xB7 not executed", executing: "Started \xB7 result pending", succeeded: "Completed", uncertain: "Result unknown \xB7 will not retry" },
       effects: { internal_bookkeeping: "Internal bookkeeping", read_only: "Read only", data_write: "Changes data", external_write: "Sends outside twin", sensitive_authority: "Account or lasting authority", unknown: "Unknown effect" }
     },
     zh: {
-      title: "\u52A8\u4F5C\u5BA1\u6279",
-      description: "\u6267\u884C\u524D\u68C0\u67E5\u5177\u4F53\u52A8\u4F5C\u662F\u5426\u5728\u4F60\u7684\u6388\u6743\u8303\u56F4\u5185\u3002",
-      mode: "Auto Review",
-      scope: "\u4EC5\u8986\u76D6\u4E0B\u5217\u5DF2\u6CE8\u518C\u52A8\u4F5C\uFF0C\u4F5C\u7528\u4E8E\u5F53\u524D Personal \u7A7A\u95F4\uFF0C\u4E0D\u6539\u53D8 Coding\u3002",
+      title: "\u5BA1\u6279\u4E0E\u89C4\u5219",
+      description: "\u51B3\u5B9A Personal \u53EF\u4EE5\u66FF\u4F60\u505A\u54EA\u4E9B\u4E8B\u3002",
+      mode: "\u81EA\u52A8\u5BA1\u6838",
+      scope: "\u9002\u7528\u4E8E\u5F53\u524D Personal \u7A7A\u95F4\uFF0C\u5305\u62EC\u540E\u53F0\u4EFB\u52A1\u3002",
       enabled: "\u5DF2\u5F00\u542F",
       disabled: "\u672A\u5F00\u542F",
-      enable: "\u5F00\u542F Auto Review",
-      disable: "\u5173\u95ED Auto Review",
-      manual: "\u5173\u95ED\u4E0D\u7B49\u4E8E\u5173\u95ED\u4FDD\u62A4\uFF1A\u6709\u5B9E\u9645\u5F71\u54CD\u7684\u52A8\u4F5C\u4ECD\u9700\u4F60\u786E\u8BA4\u3002",
+      enable: "\u5F00\u542F\u81EA\u52A8\u5BA1\u6838",
+      disable: "\u5173\u95ED\u81EA\u52A8\u5BA1\u6838",
+      manual: "\u6CA1\u6709\u5DF2\u4FDD\u5B58\u8BB8\u53EF\u7684\u64CD\u4F5C\uFF0C\u4F1A\u5148\u8BF7\u4F60\u786E\u8BA4\u3002",
       coverage: "\u8986\u76D6\u52A8\u4F5C",
       fileWrite: "\u521B\u5EFA\u6216\u66FF\u6362 Personal \u6587\u4EF6",
       fileEdit: "\u4FEE\u6539 Personal \u6587\u4EF6",
-      excluded: "\u4E0D\u8986\u76D6\u53D1\u4FE1\u3001\u65E5\u5386\u4FEE\u6539\u3001\u652F\u4ED8\u3001\u8D26\u53F7\u5B89\u5168\u4E0E\u65B0\u589E\u6743\u9650\u3002",
+      excluded: "\u8FDE\u63A5\u8D26\u53F7\u4E0E\u65B0\u589E\u6743\u9650\u4ECD\u9700\u5355\u72EC\u786E\u8BA4\u3002",
       noCoverage: "\u5C1A\u672A\u6CE8\u518C\u52A8\u4F5C\u6267\u884C\u5668",
       policy: "\u7B56\u7565\u7248\u672C",
       receipt: "\u6267\u884C\u56DE\u6267",
@@ -515,15 +446,15 @@ var personalDesktop = (() => {
       pending: "\u7B49\u4F60\u51B3\u5B9A",
       recent: "\u6700\u8FD1\u8BB0\u5F55",
       refresh: "\u5237\u65B0",
-      approve: "\u4EC5\u6279\u51C6\u8FD9\u6B21",
-      reject: "\u62D2\u7EDD",
+      approve: "\u5141\u8BB8\u8FD9\u6B21",
+      reject: "\u4E0D\u5141\u8BB8",
       revoke: "\u64A4\u56DE\u6279\u51C6",
       withdraw: "\u64A4\u56DE\u52A8\u4F5C",
       account: "\u8D26\u53F7",
       target: "\u76EE\u6807",
       effect: "\u5F71\u54CD",
       task: "\u9700\u6C42\u7248\u672C",
-      parameters: "\u5B8C\u6574\u52A8\u4F5C\u53C2\u6570",
+      parameters: "\u6280\u672F\u8BE6\u60C5",
       expires: "\u6709\u6548\u671F\u81F3",
       digest: "\u52A8\u4F5C\u6458\u8981",
       noActions: "\u6CA1\u6709\u5F85\u5BA1\u6279\u52A8\u4F5C",
@@ -532,8 +463,39 @@ var personalDesktop = (() => {
       working: "\u6B63\u5728\u4FDD\u5B58\u2026",
       failed: "\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u6838\u5BF9\u5F53\u524D\u72B6\u6001\u3002",
       invalidData: "\u52A8\u4F5C\u6570\u636E\u683C\u5F0F\u65E0\u6CD5\u9A8C\u8BC1\uFF0C\u8BF7\u5237\u65B0\u6838\u5BF9\u4FDD\u5B58\u72B6\u6001\u3002",
-      single: "\u51B3\u5B9A\u4EC5\u9002\u7528\u4E8E\u6B64\u52A8\u4F5C\u548C\u8FD9\u4E9B\u53C2\u6570\u3002\u8D26\u53F7\u8FDE\u63A5\u4E0E\u957F\u671F\u6743\u9650\u9700\u8981\u5355\u72EC\u786E\u8BA4\u3002",
-      states: { proposed: "\u7B49\u5F85\u5BA1\u6838", ready: "\u6388\u6743\u5339\u914D\uFF0C\u7B49\u5F85\u6267\u884C", awaiting_confirmation: "\u9700\u8981\u4F60\u786E\u8BA4", approved: "\u5DF2\u6279\u51C6\u672C\u6B21\uFF0C\u7B49\u5F85\u590D\u6838", blocked: "\u5BA1\u6838\u4E0D\u53EF\u7528\uFF0C\u672A\u6267\u884C", denied: "\u5DF2\u62D2\u7EDD\uFF0C\u672A\u6267\u884C", revoked: "\u5DF2\u64A4\u56DE\uFF0C\u672A\u6267\u884C", expired: "\u5DF2\u8FC7\u671F\uFF0C\u672A\u6267\u884C", stale: "\u4EFB\u52A1\u5DF2\u53D8\u5316\uFF0C\u672A\u6267\u884C", executing: "\u5DF2\u7ECF\u5F00\u59CB\uFF0C\u7B49\u5F85\u7ED3\u679C", succeeded: "\u5DF2\u5B8C\u6210", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5" },
+      single: "\u201C\u5141\u8BB8\u8FD9\u6B21\u201D\u53EA\u9002\u7528\u4E8E\u773C\u524D\u7684\u64CD\u4F5C\u3002\u4FDD\u5B58\u7684\u89C4\u5219\u53EF\u4EE5\u968F\u65F6\u5728\u8FD9\u91CC\u4FEE\u6539\u6216\u79FB\u9664\u3002",
+      remember: "\u4EE5\u540E\u81EA\u52A8\u5904\u7406\u2026",
+      ruleTitle: "\u8BB0\u4F4F\u8FD9\u9879\u8BB8\u53EF\uFF1F",
+      ruleScope: "\u4EC5\u5BF9\u4E0B\u5217\u8303\u56F4\u751F\u6548\uFF0C\u9002\u7528\u4E8E\u6B64 Personal \u7A7A\u95F4\u4ECA\u540E\u7684\u4EFB\u52A1\u3002",
+      saveRule: "\u4FDD\u5B58\u5E76\u5141\u8BB8\u8FD9\u6B21",
+      cancel: "\u53D6\u6D88",
+      ruleSaved: "\u89C4\u5219\u5DF2\u4FDD\u5B58\uFF1B\u8FD9\u6B21\u64CD\u4F5C\u4ECD\u9700\u8981\u4F60\u7684\u51B3\u5B9A\u3002",
+      ruleSaveFailed: "\u672A\u80FD\u786E\u8BA4\u89C4\u5219\u662F\u5426\u4FDD\u5B58\u3002\u8BF7\u5237\u65B0\u6838\u5BF9\uFF0C\u4E4B\u540E\u4E5F\u53EF\u4EE5\u53EA\u5141\u8BB8\u8FD9\u6B21\u64CD\u4F5C\u3002",
+      rules: "\u5DF2\u4FDD\u5B58\u7684\u89C4\u5219",
+      noRules: "\u8FD8\u6CA1\u6709\u4FDD\u5B58\u89C4\u5219\u3002",
+      askRule: "\u6BCF\u6B21\u5148\u95EE\u6211",
+      allowRule: "\u81EA\u52A8\u5141\u8BB8",
+      pauseRule: "\u6682\u505C",
+      resumeRule: "\u542F\u7528",
+      deleteRule: "\u79FB\u9664",
+      pausedRule: "\u5DF2\u6682\u505C",
+      rulesPriority: "\u201C\u6BCF\u6B21\u5148\u95EE\u6211\u201D\u4F18\u5148\u4E8E\u81EA\u52A8\u5BA1\u6838\u548C\u5176\u4ED6\u8BB8\u53EF\u3002",
+      changes: "\u67E5\u770B\u4FEE\u6539\u5185\u5BB9",
+      before: "\u4FEE\u6539\u524D",
+      after: "\u4FEE\u6539\u540E",
+      newContent: "\u5C06\u4FDD\u5B58\u7684\u5185\u5BB9",
+      replaceAll: "\u66FF\u6362\u6BCF\u4E00\u5904\u5339\u914D\u7684\u5185\u5BB9",
+      ruleDetails: "\u67E5\u770B\u8BB8\u53EF\u8303\u56F4",
+      originalUnavailable: "\u8FD9\u6B21\u8BF7\u6C42\u6CA1\u6709\u5305\u542B\u5B8C\u6574\u539F\u6587\u3002\u66FF\u6362\u6587\u4EF6\u4F1A\u8986\u76D6\u5B83\u73B0\u6709\u7684\u5185\u5BB9\u3002",
+      writeTitle: "\u4FDD\u5B58\u8FD9\u4E2A\u6587\u4EF6\uFF1F",
+      replaceTitle: "\u66FF\u6362\u8FD9\u4E2A\u6587\u4EF6\uFF1F",
+      editTitle: "\u4FEE\u6539\u8FD9\u4E2A\u6587\u4EF6\uFF1F",
+      commandTitle: "\u6267\u884C\u8FD9\u4E00\u6B65\u64CD\u4F5C\uFF1F",
+      commandBody: "\u8FD0\u884C\u4E00\u6BB5\u7A0B\u5E8F\uFF0C\u53EF\u80FD\u5728\u5DF2\u6388\u6743\u8303\u56F4\u5185\u8BFB\u53D6\u6216\u4FEE\u6539\u6587\u4EF6\u3002\u8BF7\u786E\u8BA4\u8FD9\u7B26\u5408\u5F53\u524D\u4EFB\u52A1\u3002",
+      reason: "\u4E3A\u4EC0\u4E48\u9700\u8981\u786E\u8BA4",
+      pendingCount: "\u9879\u7B49\u4F60\u786E\u8BA4",
+      noExpiry: "\u76F4\u5230\u4EFB\u52A1\u53D8\u5316\u6216\u4F60\u53D6\u6D88",
+      states: { proposed: "\u7B49\u5F85\u5BA1\u6838", ready: "\u6388\u6743\u5339\u914D\uFF0C\u7B49\u5F85\u6267\u884C", awaiting_confirmation: "\u9700\u8981\u4F60\u786E\u8BA4", approved: "\u5DF2\u5141\u8BB8\u8FD9\u6B21\uFF0C\u7B49\u5F85\u5F00\u59CB", blocked: "\u5BA1\u6838\u4E0D\u53EF\u7528\uFF0C\u672A\u6267\u884C", denied: "\u5DF2\u62D2\u7EDD\uFF0C\u672A\u6267\u884C", revoked: "\u5DF2\u64A4\u56DE\uFF0C\u672A\u6267\u884C", expired: "\u5DF2\u8FC7\u671F\uFF0C\u672A\u6267\u884C", stale: "\u4EFB\u52A1\u5DF2\u53D8\u5316\uFF0C\u672A\u6267\u884C", executing: "\u5DF2\u7ECF\u5F00\u59CB\uFF0C\u7B49\u5F85\u7ED3\u679C", succeeded: "\u5DF2\u5B8C\u6210", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5" },
       effects: { internal_bookkeeping: "\u5185\u90E8\u8BB0\u8D26", read_only: "\u53EA\u8BFB", data_write: "\u4FEE\u6539\u6570\u636E", external_write: "\u5411\u5916\u53D1\u9001", sensitive_authority: "\u8D26\u53F7\u6216\u957F\u671F\u6743\u9650", unknown: "\u672A\u77E5\u5F71\u54CD" }
     }
   };
@@ -557,12 +519,21 @@ var personalDesktop = (() => {
 .personal-review-parameters pre { white-space:pre-wrap;overflow-wrap:anywhere;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3);background:var(--surface-2);border-radius:var(--radius-sm,6px); }
 .personal-review-actions { display:flex;gap:var(--space-3);flex-wrap:wrap;margin-top:var(--space-4); }
 .personal-review-error { color:var(--danger-text,var(--ink));margin-top:var(--space-3)!important; }
+.personal-review-conversation .personal-review-overview { padding-bottom:0; }
 .personal-review-conversation { margin:var(--space-5) 0; }
 .personal-review-history { margin-top:var(--space-5); }
 .personal-review-history>summary { cursor:pointer;color:var(--ink-muted); }
 .personal-review-coverage { margin:0;padding-inline-start:1.3em;overflow-wrap:anywhere; }
+.personal-review-consequence { margin-top:var(--space-3)!important;overflow-wrap:anywhere; }
+.personal-review-rule-preview { margin-top:var(--space-4);padding:var(--space-4);background:var(--surface-2);border-radius:var(--radius-md,8px); }
+.personal-review-rule-preview h5 { margin:0 0 var(--space-3);font:inherit;font-weight:600; }
+.personal-review-rules { margin:var(--space-5) 0; }
+.personal-review-rules h3 { font:inherit;font-weight:600; }
+.personal-review-rule { padding:var(--space-4) 0;border-bottom:1px solid var(--hairline);overflow-wrap:anywhere; }
+.personal-review-diff { display:grid;gap:var(--space-3); }
+.personal-review-diff pre { margin:0; }
 .personal-review-footnote { margin-top:var(--space-5)!important;color:var(--ink-muted); }
-@media(max-width:480px){.personal-review-fields { grid-template-columns:1fr;gap:var(--space-1); }.personal-review-fields dd { margin-bottom:var(--space-2); }.personal-review-actions>* { flex:1; }}
+@media(max-width:480px){.personal-review-fields { grid-template-columns:1fr;gap:var(--space-1); }.personal-review-fields dd { margin-bottom:var(--space-2); }.personal-review-actions>* { flex:0 1 auto;white-space:nowrap; }}
 `;
   function createPersonalReviewPanel(react, ui) {
     const h = react.createElement;
@@ -587,6 +558,11 @@ var personalDesktop = (() => {
       };
       const [unverified, setUnverified] = react.useState(false);
       const [busy, setBusy] = react.useState();
+      const [savedRules, setSavedRules] = react.useState();
+      const rules = savedRules?.service === service ? savedRules.value : void 0;
+      const [rulePreview, setRulePreview] = react.useState();
+      const preview = rulePreview?.service === service ? rulePreview : void 0;
+      const [notice, setNotice] = react.useState("");
       const [now, setNow] = react.useState(Date.now);
       const active = react.useRef(true), epoch = react.useRef(0), submitting = react.useRef(false), refreshing = react.useRef(false);
       const refresh = async () => {
@@ -595,8 +571,10 @@ var personalDesktop = (() => {
         const generation = ++epoch.current;
         try {
           const next = decodeReviewSnapshot(await service.list());
+          const nextRules = !conversation && service.rules ? decodeReviewRules(await service.rules()) : void 0;
           if (active.current && generation === epoch.current) {
             setSnapshot(next);
+            if (nextRules) setSavedRules({ service, value: nextRules });
             setUnverified(false);
             setError("");
           }
@@ -617,6 +595,9 @@ var personalDesktop = (() => {
         setBusy(void 0);
         setUnverified(false);
         setSnapshot(void 0);
+        setSavedRules(void 0);
+        setRulePreview(void 0);
+        setNotice("");
         void refresh();
         const timer = setInterval(() => setNow(Date.now()), 1e3);
         const poll = setInterval(() => {
@@ -630,12 +611,12 @@ var personalDesktop = (() => {
         };
       }, [service]);
       const decide = async (record2, choice) => {
-        if (submitting.current || unverified || !Number.isFinite(Date.parse(record2.action.expires_at)) || Date.now() >= Date.parse(record2.action.expires_at)) return;
+        if (submitting.current || unverified || record2.action.expires_at !== null && Date.now() >= Date.parse(record2.action.expires_at)) return;
         submitting.current = true;
         setBusy(record2.action.id);
         setError("");
         const generation = ++epoch.current;
-        const command = { space_id: record2.action.scope.space_id, id: record2.action.id, digest: record2.action.digest, expected_revision: record2.revision };
+        const command = actionBinding(record2);
         try {
           const next = decodeReviewSnapshot(choice === "revoke" ? await service.revoke(command) : await service.resolve({ ...command, choice }));
           if (active.current && generation === epoch.current) {
@@ -680,34 +661,134 @@ var personalDesktop = (() => {
           }
         }
       };
+      const remember = async (record2) => {
+        if (!service.previewRule || submitting.current || unverified) return;
+        submitting.current = true;
+        setBusy(record2.action.id);
+        setError("");
+        setNotice("");
+        const generation = ++epoch.current;
+        try {
+          const value = decodeRulePreview(await service.previewRule(actionBinding(record2)));
+          if (active.current && generation === epoch.current) setRulePreview({ service, record: structuredClone(record2), value });
+        } catch (cause) {
+          if (active.current && generation === epoch.current) showFailure(cause);
+        } finally {
+          if (active.current && generation === epoch.current) {
+            submitting.current = false;
+            refreshing.current = false;
+            setBusy(void 0);
+          }
+        }
+      };
+      const saveRule = async () => {
+        if (!preview || !service.rules || submitting.current || unverified) return;
+        const current = snapshot2?.kind === "ready" ? snapshot2.requests.find((item) => item.action.id === preview.record.action.id) : void 0;
+        if (!current || current.revision !== preview.record.revision || current.action.digest !== preview.record.action.digest || current.status !== "awaiting_confirmation" || current.action.expires_at !== null && Date.now() >= Date.parse(current.action.expires_at)) return;
+        submitting.current = true;
+        setBusy(current.action.id);
+        setError("");
+        const generation = ++epoch.current;
+        let saved = false;
+        try {
+          const value = decodeReviewRules(await service.rules({ expected_revision: preview.value.revision, action: "save", source: actionBinding(preview.record), decision: "allow" }));
+          if (!active.current || generation !== epoch.current) return;
+          saved = true;
+          setSavedRules({ service, value });
+          setRulePreview(void 0);
+          setNotice(words.ruleSaved);
+          const next = decodeReviewSnapshot(await service.resolve({ ...actionBinding(preview.record), choice: "approve_once" }));
+          if (active.current && generation === epoch.current) {
+            setSnapshot(next);
+            setUnverified(false);
+            setNotice("");
+          }
+        } catch (cause) {
+          if (active.current && generation === epoch.current) {
+            setUnverified(true);
+            setError(saved ? words.ruleSaved : words.ruleSaveFailed);
+          }
+        } finally {
+          if (active.current && generation === epoch.current) {
+            submitting.current = false;
+            refreshing.current = false;
+            setBusy(void 0);
+          }
+        }
+      };
+      const changeRule = async (command) => {
+        if (!service.rules || submitting.current || unverified) return;
+        submitting.current = true;
+        setBusy("rules");
+        setError("");
+        const generation = ++epoch.current;
+        try {
+          const value = decodeReviewRules(await service.rules(command));
+          if (active.current && generation === epoch.current) setSavedRules({ service, value });
+        } catch (cause) {
+          if (active.current && generation === epoch.current) {
+            setUnverified(true);
+            showFailure(cause);
+          }
+        } finally {
+          if (active.current && generation === epoch.current) {
+            submitting.current = false;
+            refreshing.current = false;
+            setBusy(void 0);
+          }
+        }
+      };
       const renderRecord = (record2) => {
         const action = record2.action;
-        const expiry = Date.parse(action.expires_at), expired = !Number.isFinite(expiry) || now >= expiry;
+        const expiry = action.expires_at === null ? Infinity : Date.parse(action.expires_at), expired = now >= expiry;
         const canConfirm = record2.status === "awaiting_confirmation" && ["data_write", "external_write"].includes(action.effect);
         const canRevoke = record2.status === "approved" || record2.status === "ready" || record2.status === "blocked";
-        const fields = [[words.account, action.summary.account || "\u2014"], [words.target, action.summary.target], [words.effect, words.effects[action.effect]], [words.task, `${action.scope.task_id} \xB7 ${action.scope.requirements_revision}`], [words.expires, Number.isFinite(expiry) ? new Date(expiry).toLocaleString(locale) : "\u2014"]];
+        const fields = [[words.account, action.summary.account || "\u2014"], [words.target, action.summary.target], [words.effect, words.effects[action.effect]], [words.task, `${action.scope.task_id} \xB7 ${action.scope.requirements_revision}`], [words.expires, Number.isFinite(expiry) ? new Date(expiry).toLocaleString(locale) : words.noExpiry]];
+        const parameters = actionParameters(record2);
+        const edits = fileEdits(parameters);
+        const fileAction = action.operation === "write_file" || action.operation === "edit_file";
+        const commandAction = ["bash", "shell", "process", "process_start", "process_write_stdin"].includes(action.operation);
+        const filename = Array.from(action.summary.target.split(/[\\/]/).pop() || "");
+        const fileLabel = filename.length > 40 ? filename.slice(0, 40).join("") + "\u2026" : filename.join("");
+        const title = fileAction ? `${action.operation === "write_file" ? parameters.exists === true ? words.replaceTitle : words.writeTitle : words.editTitle} ${fileLabel}` : commandAction ? words.commandTitle : action.summary.title;
+        const disabled = Boolean(busy) || unverified || expired;
         return h(
           "article",
           { key: action.id, className: "personal-review-item", "data-review-id": action.id, "data-review-state": record2.status },
-          h("h4", null, action.summary.title),
+          h("h4", null, title),
           h("span", { className: "personal-review-status", role: "status" }, words.states[expired && canConfirm ? "expired" : record2.status]),
-          h("dl", { className: "personal-review-fields" }, fields.flatMap(([label, value]) => [h("dt", { key: `${label}-label` }, label), h("dd", { key: label }, value)])),
-          h("p", null, action.summary.consequence),
-          h("p", { className: "personal-review-muted" }, record2.reason),
-          h("details", { className: "personal-review-parameters" }, h("summary", null, words.parameters), h("pre", null, action.arguments_json), h("p", { className: "personal-review-muted", style: { overflowWrap: "anywhere" } }, `${words.digest}: ${action.digest}`)),
+          h("p", { className: "personal-review-consequence" }, commandAction ? words.commandBody : action.summary.consequence),
+          canConfirm && h("p", { className: "personal-review-muted" }, record2.reason),
+          fileAction && h(
+            "details",
+            { className: "personal-review-parameters", "data-review-changes": true },
+            h("summary", null, words.changes),
+            action.operation === "edit_file" && edits.length ? edits.map((edit, index) => h("div", { key: index, className: "personal-review-diff" }, edit.replace_all && h("p", { className: "personal-review-muted" }, words.replaceAll), h("strong", null, words.before), h("pre", null, edit.old_text), h("strong", null, words.after), h("pre", null, edit.new_text))) : typeof parameters.content === "string" ? h("div", { className: "personal-review-diff" }, typeof parameters.before_content === "string" ? h(react.Fragment, null, h("strong", null, words.before), h("pre", null, parameters.before_content)) : parameters.exists !== false && h("p", { className: "personal-review-muted" }, words.originalUnavailable), h("strong", null, words.newContent), h("pre", null, parameters.content)) : h("pre", null, action.arguments_json)
+          ),
+          h("details", { className: "personal-review-parameters" }, h("summary", null, words.parameters), h("dl", { className: "personal-review-fields" }, fields.flatMap(([label, value]) => [h("dt", { key: `${label}-label` }, label), h("dd", { key: label }, value)])), h("pre", null, action.arguments_json), h("p", { className: "personal-review-muted", style: { overflowWrap: "anywhere" } }, `${words.digest}: ${action.digest}`)),
           record2.receipt_json && h("details", { className: "personal-review-parameters", "data-review-receipt": true }, h("summary", null, words.receipt), h("pre", null, record2.receipt_json)),
           (canConfirm || canRevoke) && h(
             "div",
             { className: "personal-review-actions" },
             canConfirm && h(ui.Button, { variant: "primary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "approve_once", onClick: () => void decide(record2, "approve_once") }, busy === action.id ? words.working : words.approve),
+            canConfirm && service.previewRule && service.rules && h(ui.Button, { variant: "secondary", disabled, "data-review-choice": "remember", onClick: () => void remember(record2) }, words.remember),
             canConfirm && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "reject", onClick: () => void decide(record2, "reject") }, words.reject),
             canRevoke && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "revoke", onClick: () => void decide(record2, "revoke") }, record2.status === "blocked" ? words.withdraw : words.revoke)
+          ),
+          preview?.record.action.id === action.id && h(
+            "section",
+            { className: "personal-review-rule-preview", "data-review-rule-preview": true, "aria-label": words.ruleTitle },
+            h("h5", null, words.ruleTitle),
+            h("p", null, ruleDescription(preview.value.preview, locale)),
+            h("p", { className: "personal-review-muted" }, words.ruleScope),
+            h("details", { className: "personal-review-parameters" }, h("summary", null, words.ruleDetails), h("p", null, preview.value.preview.target), h("p", null, preview.value.preview.description), h("pre", null, action.arguments_json)),
+            h("div", { className: "personal-review-actions" }, h(ui.Button, { variant: "primary", disabled: disabled || record2.revision !== preview.record.revision, "data-review-choice": "save_rule", onClick: () => void saveRule() }, words.saveRule), h(ui.Button, { variant: "secondary", disabled: Boolean(busy), onClick: () => setRulePreview(void 0) }, words.cancel))
           )
         );
       };
       const records = snapshot2?.kind === "ready" ? snapshot2.requests.filter((record2) => !conversation || ["data_write", "external_write"].includes(record2.action.effect)) : [];
       const pending = records.filter((record2) => ["awaiting_confirmation", "approved", "ready", "blocked", "executing"].includes(record2.status));
-      const history = records.filter((record2) => !pending.includes(record2)).sort((a, b) => Date.parse(b.action.expires_at) - Date.parse(a.action.expires_at));
+      const history = records.filter((record2) => !pending.includes(record2)).sort((a, b) => (b.action.expires_at === null ? 0 : Date.parse(b.action.expires_at)) - (a.action.expires_at === null ? 0 : Date.parse(a.action.expires_at)));
       const settings = snapshot2?.kind === "ready" ? snapshot2.settings : void 0;
       if (conversation && !records.length && (!error || !hadActions.current)) return null;
       return h(
@@ -716,11 +797,11 @@ var personalDesktop = (() => {
         h("style", null, personalReviewStyles),
         h(
           ui.Section,
-          { title: words.title, description: conversation ? void 0 : words.description },
+          { title: conversation ? void 0 : words.title, description: conversation ? void 0 : words.description },
           h(
             "div",
             { className: "personal-review-overview" },
-            h("div", { className: "personal-review-heading" }, !conversation && h("h3", null, words.mode), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
+            h("div", { className: "personal-review-heading" }, h("h3", null, conversation ? pending.some((record2) => record2.status === "awaiting_confirmation") ? `${pending.filter((record2) => record2.status === "awaiting_confirmation").length} ${words.pendingCount}` : words.recentResults : words.mode), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
             !conversation && h(
               react.Fragment,
               null,
@@ -735,6 +816,22 @@ var personalDesktop = (() => {
               )
             )
           ),
+          notice && h("p", { role: "status" }, notice),
+          !conversation && rules && h(
+            "section",
+            { className: "personal-review-rules", "aria-label": words.rules },
+            h("h3", null, words.rules),
+            h("p", { className: "personal-review-muted" }, words.rulesPriority),
+            !rules.rules.length && h("p", { className: "personal-review-muted" }, words.noRules),
+            rules.rules.map((rule) => h(
+              "div",
+              { key: rule.id, className: "personal-review-rule", "data-review-rule": rule.id },
+              h("p", null, ruleDescription(rule, locale)),
+              h("details", { className: "personal-review-parameters" }, h("summary", null, words.ruleDetails), h("p", null, rule.target), h("p", null, rule.description)),
+              h("p", { className: "personal-review-muted" }, !rule.enabled ? words.pausedRule : rule.decision === "ask" ? words.askRule : words.allowRule),
+              h("div", { className: "personal-review-actions" }, h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified, "data-review-rule-ask": rule.id, onClick: () => void changeRule({ action: "update", expected_revision: rules.revision, id: rule.id, decision: rule.decision === "ask" ? "allow" : "ask", enabled: rule.enabled }) }, rule.decision === "ask" ? words.allowRule : words.askRule), h(ui.Button, { variant: "ghost", disabled: Boolean(busy) || unverified, onClick: () => void changeRule({ action: "update", expected_revision: rules.revision, id: rule.id, decision: rule.decision, enabled: !rule.enabled }) }, rule.enabled ? words.pauseRule : words.resumeRule), h(ui.Button, { variant: "ghost", disabled: Boolean(busy) || unverified, "data-review-rule-delete": rule.id, onClick: () => void changeRule({ action: "delete", expected_revision: rules.revision, id: rule.id }) }, words.deleteRule))
+            ))
+          ),
           error && h("p", { role: "alert", className: "personal-review-error" }, error),
           !snapshot2 && !error && h("p", { role: "status" }, "\u2026"),
           !conversation && snapshot2?.kind === "unavailable" && h(ui.EmptyState, { title: words.unavailable, description: snapshot2.reason }),
@@ -746,6 +843,252 @@ var personalDesktop = (() => {
       );
     };
   }
+
+  // plugins/personal/ui/connectors-panel.ts
+  var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["github", "GitHub", "PR\u3001Issue\u3001CI \u4E0E Release"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
+  var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
+  function object(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid connector response");
+    return value;
+  }
+  function connections(raw) {
+    const rows = object(raw).connections;
+    if (!Array.isArray(rows) || rows.length > 100) throw Error("Invalid connector list");
+    return rows.map((row) => {
+      const v = object(row);
+      if (!["connection_id", "provider", "account_id", "domain", "state"].every((key) => typeof v[key] === "string") || !Array.isArray(v.resources) || !v.resources.every((x) => typeof x === "string") || !Array.isArray(v.scopes) || !v.scopes.every((x) => typeof x === "string")) throw Error("Invalid connector identity");
+      return structuredClone(v);
+    });
+  }
+  function actions(raw) {
+    const rows = object(raw).actions;
+    if (!Array.isArray(rows) || rows.length > 1e3) throw Error("Invalid connector actions");
+    return rows.map((row) => {
+      const v = object(row);
+      if (typeof v.state !== "string" || typeof v.action_id !== "string") throw Error("Invalid connector action");
+      for (const key of ["digest", "summary", "connection_id", "operation", "arguments_json", "account_id", "code", "review_reason"]) if (v[key] !== void 0 && typeof v[key] !== "string") throw Error("Invalid connector action");
+      return structuredClone(v);
+    });
+  }
+  function confirmable(a) {
+    if (a.state !== "awaiting_confirmation" || !a.digest || !/^[a-f0-9]{64}$/.test(a.digest) || !a.arguments_json) return false;
+    try {
+      return !!object(JSON.parse(a.arguments_json));
+    } catch {
+      return false;
+    }
+  }
+  function actionContent(a) {
+    if (!a.arguments_json) return [];
+    let data;
+    try {
+      data = object(JSON.parse(a.arguments_json));
+    } catch {
+      return [];
+    }
+    const fields = [];
+    const add = (label, value) => {
+      if (typeof value === "string") fields.push([label, value]);
+      else if (Array.isArray(value) && value.every((item) => typeof item === "string")) fields.push([label, value.join("\u3001")]);
+    };
+    if (a.operation === "gmail.send" || a.operation === "gmail.draft") {
+      add("\u6536\u4EF6\u4EBA", data.to);
+      add("\u4E3B\u9898", data.subject);
+      add("\u6B63\u6587", data.body);
+    } else if (a.operation?.startsWith("calendar.")) {
+      add("\u65E5\u5386", data.calendar_id);
+      add("\u65E5\u7A0B", data.summary);
+      add("\u5F00\u59CB", data.start);
+      add("\u7ED3\u675F", data.end);
+      add("\u65F6\u533A", data.timezone);
+      add("\u53C2\u4E0E\u8005", data.attendees);
+      if (data.send_updates === "all") add("\u901A\u77E5", "\u901A\u77E5\u6240\u6709\u53C2\u4E0E\u8005");
+      else if (data.send_updates === "externalOnly") add("\u901A\u77E5", "\u53EA\u901A\u77E5\u5916\u90E8\u53C2\u4E0E\u8005");
+      else if (data.send_updates === "none") add("\u901A\u77E5", "\u4E0D\u53D1\u9001\u901A\u77E5");
+    }
+    return fields;
+  }
+  function actionTitle(a) {
+    switch (a.operation) {
+      case "gmail.send":
+        return "\u53D1\u9001\u8FD9\u5C01\u90AE\u4EF6\uFF1F";
+      case "gmail.draft":
+        return "\u4FDD\u5B58\u8FD9\u5C01\u90AE\u4EF6\u8349\u7A3F\uFF1F";
+      case "calendar.create":
+        return "\u521B\u5EFA\u8FD9\u4E2A\u65E5\u7A0B\uFF1F";
+      case "calendar.reschedule":
+        return "\u8C03\u6574\u8FD9\u4E2A\u65E5\u7A0B\uFF1F";
+      case "calendar.cancel":
+        return "\u53D6\u6D88\u8FD9\u4E2A\u65E5\u7A0B\uFF1F";
+      default:
+        return a.summary || "\u786E\u8BA4\u8FD9\u9879\u64CD\u4F5C\uFF1F";
+    }
+  }
+  function capabilitySummary(c) {
+    const granted = (scope) => c.state === "connected" && c.scopes.includes(scope);
+    const read = { gmail: ["https://www.googleapis.com/auth/gmail.readonly"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events.readonly", "https://www.googleapis.com/auth/calendar.events"], drive: ["https://www.googleapis.com/auth/drive.file"], notion: ["read_content"], github: ["pull_requests:read", "issues:read", "checks:read", "contents:read"], slack: ["channels:history", "groups:history"], feishu: ["im:message:readonly"] };
+    const write = { gmail: ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.compose"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events"], notion: ["insert_content"] };
+    const reads = (read[c.provider] ?? []).filter(granted), writes = (write[c.provider] ?? []).filter(granted);
+    return `\u8BFB\u53D6\uFF1A${reads.length ? "\u5728\u6240\u9009\u8D44\u6E90\u5185\u9010\u64CD\u4F5C\u6821\u9A8C" : "\u7F3A\u5C11\u8BFB\u53D6\u6388\u6743"}\uFF1B\u5199\u5165\uFF1A${writes.length ? "\u5DF2\u6388\u6743\u80FD\u529B\u4ECD\u9700\u7CBE\u786E\u786E\u8BA4" : write[c.provider] ? "\u672A\u83B7\u5199\u5165\u6388\u6743" : "\u672C\u8FDE\u63A5\u5668\u53EA\u8BFB"}`;
+  }
+  function createConnectorsPanel(react, ui) {
+    const h = react.createElement, Button = ui.Button, OAuth = createConnectorOAuth(react);
+    return function Connectors({ service, conversation = false }) {
+      const [rows, setRows] = react.useState([]), [saved, setSaved] = react.useState([]), [error, setError] = react.useState(""), [loading, setLoading] = react.useState(true), [busy, setBusy] = react.useState(false), [uncertain, setUncertain] = react.useState(false), [disconnectID, setDisconnectID] = react.useState("");
+      const [rulePreview, setRulePreview] = react.useState();
+      const gate = react.useRef(false), alive = react.useRef(true), generation = react.useRef(0);
+      const load = async () => {
+        const n = ++generation.current;
+        setLoading(true);
+        try {
+          const [list, history] = await Promise.all([conversation ? Promise.resolve({ connections: [] }) : service.list(), service.actions()]);
+          if (!alive.current || n !== generation.current) return;
+          setRows(connections(list));
+          setSaved(actions(history));
+          setError("");
+          setUncertain(false);
+        } catch {
+          if (alive.current && n === generation.current) setError("\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\u8FDE\u63A5\u6216\u52A8\u4F5C\u72B6\u6001\uFF0C\u8BF7\u5237\u65B0\u3002");
+        } finally {
+          if (alive.current && n === generation.current) setLoading(false);
+        }
+      };
+      react.useEffect(() => {
+        alive.current = true;
+        gate.current = false;
+        setBusy(false);
+        setUncertain(false);
+        setRulePreview(void 0);
+        setSaved([]);
+        setError("");
+        void load();
+        const timer = conversation ? setInterval(() => {
+          if (!gate.current) void load();
+        }, 5e3) : void 0;
+        return () => {
+          alive.current = false;
+          generation.current++;
+          clearInterval(timer);
+        };
+      }, [service]);
+      const mutate = async (work) => {
+        if (gate.current || uncertain) return;
+        gate.current = true;
+        setBusy(true);
+        setError("");
+        const n = ++generation.current;
+        try {
+          await work();
+          if (alive.current && n === generation.current) {
+            gate.current = false;
+            setBusy(false);
+            await load();
+          }
+        } catch {
+          if (alive.current && n === generation.current) {
+            setUncertain(true);
+            setError("\u672A\u6536\u5230\u53EF\u6838\u5B9E\u56DE\u6267\u3002\u8BF7\u5148\u5237\u65B0\u6838\u5BF9\u5DF2\u4FDD\u5B58\u72B6\u6001\uFF0C\u4E0D\u8981\u91CD\u590D\u64CD\u4F5C\u3002");
+          }
+        } finally {
+          if (alive.current && n === generation.current) {
+            gate.current = false;
+            setBusy(false);
+          }
+        }
+      };
+      const previewRule = async (action) => {
+        if (gate.current || uncertain || !action.digest || !service.rulePreview) return;
+        gate.current = true;
+        setBusy(true);
+        setError("");
+        const n = ++generation.current;
+        try {
+          const value = decodeRulePreview(await service.rulePreview({ action_id: action.action_id, digest: action.digest }));
+          if (alive.current && n === generation.current) setRulePreview({ action: structuredClone(action), value });
+        } catch {
+          if (alive.current && n === generation.current) setError("\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\u89C4\u5219\u8303\u56F4\uFF0C\u8BF7\u5237\u65B0\u540E\u518D\u8BD5\u3002");
+        } finally {
+          if (alive.current && n === generation.current) {
+            gate.current = false;
+            setBusy(false);
+          }
+        }
+      };
+      const saveRule = async () => {
+        if (gate.current || uncertain || !rulePreview || !service.ruleSave) return;
+        const { action, value } = rulePreview;
+        const current = saved.find((item) => item.action_id === action.action_id);
+        if (!action.digest || !current || current.digest !== action.digest || !confirmable(current)) return;
+        gate.current = true;
+        setBusy(true);
+        setError("");
+        const n = ++generation.current;
+        let ruleSaved = false;
+        try {
+          decodeReviewRules(await service.ruleSave({ action_id: action.action_id, digest: action.digest, expected_revision: value.revision, decision: "allow" }));
+          if (!alive.current || n !== generation.current) return;
+          ruleSaved = true;
+          setRulePreview(void 0);
+          await service.decide({ action_id: action.action_id, digest: action.digest, approve: true });
+          if (alive.current && n === generation.current) await load();
+        } catch {
+          if (alive.current && n === generation.current) {
+            setUncertain(true);
+            setError(ruleSaved ? "\u89C4\u5219\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u8FD9\u6B21\u64CD\u4F5C\u7684\u7ED3\u679C\u5C1A\u672A\u786E\u8BA4\u3002\u8BF7\u5237\u65B0\u6838\u5BF9\uFF0C\u4E0D\u8981\u91CD\u590D\u6267\u884C\u3002" : "\u672A\u80FD\u786E\u8BA4\u89C4\u5219\u662F\u5426\u4FDD\u5B58\u3002\u8BF7\u5237\u65B0\u6838\u5BF9\uFF1B\u8FD9\u6B21\u64CD\u4F5C\u5C1A\u672A\u6279\u51C6\u3002");
+          }
+        } finally {
+          gate.current = false;
+          if (alive.current) setBusy(false);
+        }
+      };
+      const visible = conversation ? saved.filter((a) => ["awaiting_confirmation", "uncertain", "executing"].includes(a.state)) : saved;
+      if (conversation && !visible.length) return null;
+      return h(
+        "section",
+        { className: "personal-connectors", "data-personal-connectors": conversation ? "conversation" : "settings" },
+        h("div", { className: "personal-connectors-heading" }, h("h3", null, conversation ? "\u9700\u8981\u4F60\u786E\u8BA4" : "\u8D26\u53F7\u4E0E\u8D44\u6599"), h(Button, { disabled: busy || loading, onClick: () => void load(), "data-connector-refresh": true }, loading ? "\u6B63\u5728\u6838\u5BF9\u2026" : "\u5237\u65B0\u72B6\u6001")),
+        error ? h("p", { role: "alert" }, error) : null,
+        !conversation ? h("p", null, "\u8BFB\u53D6\u4EC5\u9650\u5DF2\u6388\u6743\u8303\u56F4\uFF1B\u5916\u90E8\u5199\u5165\u5148\u6838\u5BF9\u7CBE\u786E\u5185\u5BB9\u3002\u5DE5\u4F5C\u8D44\u6599\u5355\u72EC\u9694\u79BB\uFF0C\u4E0D\u81EA\u52A8\u52A0\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002") : null,
+        !conversation ? h("div", { className: "personal-connectors-list" }, ...providers.map(([provider, title, description]) => {
+          const matching = rows.filter((c) => c.provider === provider || provider === "calendar" && c.provider === "google-calendar" || provider === "drive" && c.provider === "google-drive");
+          return h(
+            "div",
+            { key: provider, className: "personal-connector-provider" },
+            h("div", { className: "personal-connector-title" }, h("h4", null, title), h("span", null, matching.some((c) => c.state === "connected") ? "\u5DF2\u8FDE\u63A5" : "\u672A\u63A5\u901A")),
+            h("p", null, description),
+            matching.length ? matching.map((c) => h(
+              "div",
+              { key: c.connection_id },
+              h("p", null, `${c.account_id} \xB7 ${c.domain === "work" ? "\u5DE5\u4F5C\u9694\u79BB\u57DF" : "\u4E2A\u4EBA\u57DF"} \xB7 ${c.state}`),
+              h("p", null, `\u8303\u56F4\uFF1A${c.resources.join("\u3001") || "\u5C1A\u672A\u9009\u62E9\u8D44\u6E90"}`),
+              h("p", null, capabilitySummary(c)),
+              h("p", null, "\u53D8\u5316\u6BD4\u8F83\uFF1A\u8C03\u7528\u65F6\u6BD4\u8F83\u540C\u4E00\u6267\u884C\u4F1A\u8BDD\u5185\u7684\u6709\u754C\u9875\uFF1B\u65B0\u4EFB\u52A1\u53E6\u5EFA\u57FA\u7EBF\uFF0C\u65E0\u5E38\u9A7B\u63A8\u9001\u6216\u5168\u91CF\u540C\u6B65"),
+              disconnectID === c.connection_id ? h("div", { className: "personal-connectors-controls" }, h("span", null, "\u65AD\u5F00\u540E\u505C\u6B62\u6B64\u8D26\u53F7\u540E\u7EED\u8C03\u7528\u3002"), h(Button, { disabled: busy || uncertain, onClick: () => void mutate(async () => {
+                const value = await service.disconnect({ connection_id: c.connection_id });
+                setDisconnectID("");
+                return value;
+              }) }, "\u786E\u8BA4\u65AD\u5F00"), h(Button, { disabled: busy, onClick: () => setDisconnectID("") }, "\u53D6\u6D88")) : h(Button, { disabled: busy || uncertain, onClick: () => setDisconnectID(c.connection_id) }, "\u65AD\u5F00\u8FDE\u63A5")
+            )) : h("p", { className: "personal-connectors-muted" }, "\u9700\u5148\u5728\u5BBF\u4E3B\u5B89\u5168\u914D\u7F6E\u8D26\u53F7\u548C\u8D44\u6E90\u8303\u56F4\uFF1B\u5C1A\u672A\u8FDB\u884C\u771F\u5B9E\u8D26\u53F7\u9A8C\u6536\u3002"),
+            service.oauth ? h("details", null, h("summary", null, matching.length ? "\u7BA1\u7406\u6388\u6743\u8303\u56F4" : "\u914D\u7F6E\u8D26\u53F7\u6388\u6743"), h(OAuth, { provider: provider === "calendar" ? "google-calendar" : provider, service: service.oauth, onConnected: () => void load(), existing: matching[0] })) : null
+          );
+        })) : null,
+        visible.length ? h("div", { className: "personal-connectors-actions" }, !conversation ? h("h3", null, "\u52A8\u4F5C\u4E0E\u56DE\u6267") : null, ...visible.map((a) => h(
+          "article",
+          { key: a.action_id, "data-connector-state": a.state, className: "personal-connector-action" },
+          h("div", { className: "personal-connector-title" }, h("h4", null, actionTitle(a)), h("span", null, states[a.state] || "\u5F85\u6838\u5B9E\u72B6\u6001")),
+          a.account_id ? h("p", null, `\u8D26\u53F7\uFF1A${a.account_id}`) : null,
+          actionContent(a).length ? h("dl", { className: "personal-connector-fields" }, actionContent(a).flatMap(([label, value]) => [h("dt", { key: label + "-label" }, label), h("dd", { key: label }, value)])) : null,
+          a.review_reason ? h("p", null, a.review_reason) : null,
+          a.arguments_json ? h("details", null, h("summary", null, "\u6280\u672F\u8BE6\u60C5"), h("p", null, a.operation), h("pre", null, a.arguments_json)) : null,
+          a.state === "uncertain" ? h("p", null, "\u5916\u90E8\u670D\u52A1\u53EF\u80FD\u5DF2\u63A5\u53D7\u6B64\u64CD\u4F5C\u3002\u6B64\u5904\u4E0D\u4F1A\u91CD\u53D1\uFF1B\u5148\u5230\u6765\u6E90\u6838\u5BF9\u7ED3\u679C\u3002") : null,
+          a.state === "awaiting_confirmation" ? h("div", { className: "personal-connectors-controls" }, h(Button, { "data-connector-approve": true, disabled: busy || uncertain || !confirmable(a), onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: true })) }, "\u5141\u8BB8\u8FD9\u6B21"), service.rulePreview && service.ruleSave ? h(Button, { "data-connector-remember": true, disabled: busy || uncertain || !confirmable(a), onClick: () => void previewRule(a) }, "\u4EE5\u540E\u81EA\u52A8\u5904\u7406\u2026") : null, h(Button, { "data-connector-reject": true, disabled: busy || uncertain || !a.digest, onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: false })) }, "\u4E0D\u5141\u8BB8")) : null,
+          rulePreview?.action.action_id === a.action_id && a.state === "awaiting_confirmation" ? h("section", { className: "personal-review-rule-preview", "data-connector-rule-preview": true }, h("h4", null, "\u8BB0\u4F4F\u8FD9\u9879\u8BB8\u53EF\uFF1F"), h("p", null, a.operation === "gmail.send" || a.operation === "gmail.draft" ? "\u4EE5\u540E\u5141\u8BB8\u6B64\u8D26\u53F7\u91CD\u590D\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\uFF0C\u6536\u4EF6\u4EBA\u548C\u5185\u5BB9\u90FD\u5FC5\u987B\u76F8\u540C\u3002" : "\u4EE5\u540E\u5141\u8BB8\u6B64\u8D26\u53F7\u91CD\u590D\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\uFF0C\u76EE\u6807\u548C\u5185\u5BB9\u90FD\u5FC5\u987B\u76F8\u540C\u3002"), h("p", null, "\u53EF\u5728\u201C\u5BA1\u6279\u4E0E\u89C4\u5219\u201D\u4E2D\u4FEE\u6539\u6216\u79FB\u9664\u3002"), h("details", null, h("summary", null, "\u67E5\u770B\u8BB8\u53EF\u8303\u56F4"), h("p", null, rulePreview.value.preview.description), h("pre", null, a.arguments_json)), h("div", { className: "personal-connectors-controls" }, h(Button, { "data-connector-save-rule": true, disabled: busy || uncertain || a.digest !== rulePreview.action.digest, onClick: () => void saveRule() }, "\u4FDD\u5B58\u5E76\u5141\u8BB8\u8FD9\u6B21"), h(Button, { disabled: busy, onClick: () => setRulePreview(void 0) }, "\u53D6\u6D88"))) : null,
+          a.code ? h("details", null, h("summary", null, "\u72B6\u6001\u8BE6\u60C5"), h("p", null, a.code)) : null
+        ))) : null
+      );
+    };
+  }
+  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3{color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;margin:0;}.personal-connectors h4{color:var(--ink);font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);margin:0;}.personal-connectors p{margin:var(--space-1,4px) 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px);overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connector-title span{font-size:var(--font-xs,12px);color:var(--ink-tertiary);padding:1px 8px;border-radius:var(--radius-pill,999px);background:var(--surface-2);}.personal-connectors-list{display:flex;flex-direction:column;margin-block:var(--space-3,12px);border-top:1px solid var(--hairline-soft);}.personal-connector-provider{padding-block:var(--settings-row-pad-block,12px);border-bottom:1px solid var(--hairline-soft);min-width:0;}.personal-connector-provider details{margin-top:var(--space-2);font-size:var(--font-sm,14px);color:var(--ink-soft);}.personal-connector-provider summary{cursor:pointer;color:var(--ink-tertiary);font-weight:var(--weight-medium,500);}.personal-connector-fields{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-2,8px) var(--space-4,16px);margin-block:var(--space-3,12px);}.personal-connector-fields dt{color:var(--ink-muted);}.personal-connector-fields dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;}.personal-connectors-controls{display:flex;gap:var(--space-2,8px);align-items:center;flex-wrap:wrap;margin-top:var(--space-2,8px);}.personal-connectors-muted{color:var(--ink-tertiary);font-size:var(--font-xs,12px)!important;}.personal-connector-action{border-top:1px solid var(--hairline-soft);padding-block:var(--space-3,12px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);border-radius:var(--radius-sm,6px);}.personal-connectors [role=alert]{color:var(--danger);border-left:2px solid var(--danger);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
 
   // plugins/personal-calendar/src/google-calendar.ts
   var CalendarReadError = class extends Error {
@@ -1121,8 +1464,8 @@ var personalDesktop = (() => {
   function createSettingsPanels(react, ui, invoke) {
     const h = react.createElement, ReviewPanel = createPersonalReviewPanel(react, ui), ConnectorsPanel = createConnectorsPanel(react, ui), ShareCapturePanel = createShareCapturePanel(react, ui, invoke);
     const host = async (method, input) => unwrapPersonalHost(await invoke(method, input));
-    const reviewService = { list: () => host("review.list"), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
-    const connectorService = { oauth: { start: (input) => host("connectors.start", input), attempt: (input) => host("connectors.attempt", input), cancel: (input) => host("connectors.cancel", input) }, list: () => host("connectors.list"), actions: () => host("connectors.actions"), decide: (input) => host("connectors.decide", input), disconnect: (input) => host("connectors.disconnect", input) };
+    const reviewService = { list: () => host("review.list"), rules: (input) => host("review.rules", input), previewRule: (input) => host("review.rule.preview", input), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
+    const connectorService = { rulePreview: (input) => host("connectors.rule.preview", input), ruleSave: (input) => host("connectors.rule.save", input), oauth: { start: (input) => host("connectors.start", input), attempt: (input) => host("connectors.attempt", input), cancel: (input) => host("connectors.cancel", input) }, list: () => host("connectors.list"), actions: () => host("connectors.actions"), decide: (input) => host("connectors.decide", input), disconnect: (input) => host("connectors.disconnect", input) };
     function Connections() {
       const root = react.useRef(null);
       react.useEffect(() => {

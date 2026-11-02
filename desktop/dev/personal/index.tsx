@@ -1,5 +1,6 @@
 /** Synthetic runtime fixture around the production Personal contribution. No account, native local file reads or external writes. */
 import * as React from "react";
+import type { ReviewRules } from "../../../plugins/personal/ui/action-review-panel";
 import { createRoot } from "react-dom/client";
 import type { ClientInputReceipt, MessageRelation } from "../../../packages/plugin-sdk/src/index";
 import type { PluginHostOptions } from "../../src/renderer/plugins/PluginHost";
@@ -45,8 +46,9 @@ const reviewSnapshot = {
 };
 // Omit absent optional fields, matching the production JSON transport.
 const reviewValue = () => JSON.parse(JSON.stringify(reviewSnapshot));
+const reviewRules:ReviewRules = {schema:"personal-review-rules.v1",revision:1,rules:[]};
 const reviewCalls: Array<{method:string;input:unknown}> = [];
-Object.assign(window,{__reviewFixture:{snapshot:reviewSnapshot,calls:reviewCalls}});
+Object.assign(window,{__reviewFixture:{snapshot:reviewSnapshot,calls:reviewCalls,rules:reviewRules}});
 if (["blocked","stale","denied","revoked","uncertain","succeeded"].includes(reviewScenario)) {
   reviewSnapshot.requests[0].status=reviewScenario;
   reviewSnapshot.requests[0].reason=reviewScenario === "uncertain" ? "结果未知；先核对，绝不会自动重放。" : "合成的已保存动作状态。";
@@ -340,6 +342,17 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "agents.pause":case "agents.resume":{const agent=agents.find(a=>a.agent_id===data.agent_id)!;agent.status=method.endsWith("pause")?"paused":"active";agent.revision++;return {agent};}
     case "connectors.list":return {ok:true,value:{state:"available",connections:connectorScenario === "empty" ? [] : [{connection_id:"synthetic-gmail",provider:"gmail",account_id:"demo@example.invalid",domain:"personal",state:"connected",revision:"one",scopes:["gmail.readonly","gmail.send"],resources:["me"]}]}};
     case "connectors.actions":return {ok:true,value:{actions:structuredClone(connectorActions)}};
+    case "connectors.rule.preview": {
+      const item=connectorActions.find(value=>value.action_id===data.action_id);
+      if(!item||item.digest!==data.digest)throw new Error("动作已变化。");
+      return {ok:true,value:{...structuredClone(reviewRules),preview:{description:"以后允许用此账号，向同一收件人发送内容完全相同的邮件",operation:"gmail.send",target:"reader@example.invalid",decision:"allow"}}};
+    }
+    case "connectors.rule.save": {
+      if(data.expected_revision!==reviewRules.revision)throw new Error("规则已变化。");
+      connectorCalls.push({method,input:structuredClone(data)});
+      reviewRules.rules.push({id:"synthetic-connector-rule",description:"此账号、收件人和邮件内容完全相同",operation:"gmail.send",target:"reader@example.invalid",decision:data.decision,enabled:true,created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      reviewRules.revision++;return {ok:true,value:structuredClone(reviewRules)};
+    }
     case "connectors.decide": {
       connectorCalls.push({method,input});const action=connectorActions.find(a=>a.action_id===data.action_id);if(!action||action.digest!==data.digest||action.state!=="awaiting_confirmation")throw Error("Stale synthetic decision");
       action.state=data.approve?"completed":"rejected";if(connectorScenario==="lost-ack")throw Error("Synthetic lost response");return {ok:true,value:structuredClone(action)};
@@ -350,6 +363,26 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "connections.agenda": {
       const stale=++calendarReads>1;
       return {state:stale?"error":"ready",freshness:stale?"stale":"fresh",error_code:stale?"provider_unavailable":undefined,source:{...data,provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"fixture-event",status:"confirmed",summary:"合成日程 · 上次读取结果",all_day:true}],cancelled_events:[]};
+    }
+    case "review.rule.preview": {
+      const item=reviewSnapshot.requests.find(value=>value.action.id===data.id);
+      if (!item||item.revision!==data.expected_revision||item.action.digest!==data.digest)throw new Error("动作已变化，请重新查看。");
+      return {ok:true,value:{...structuredClone(reviewRules),preview:{description:`以后允许修改“${item.action.summary.target}”这个文件`,operation:item.action.operation,target:item.action.summary.target,decision:"allow"}}};
+    }
+    case "review.rules": {
+      if (!data.action)return {ok:true,value:structuredClone(reviewRules)};
+      reviewCalls.push({method,input:structuredClone(data)});
+      if(data.expected_revision!==reviewRules.revision)throw new Error("规则已变化，请刷新。");
+      if(reviewScenario==="rule-save-failed")throw new Error("合成规则保存失败");
+      if(data.action==="save"){
+        const item=reviewSnapshot.requests.find(value=>value.action.id===data.source.id);
+        if(!item||item.revision!==data.source.expected_revision||item.action.digest!==data.source.digest)throw new Error("动作已变化。");
+        reviewRules.rules.push({id:"synthetic-rule",description:`以后允许修改“${item.action.summary.target}”这个文件`,operation:item.action.operation,target:item.action.summary.target,decision:data.decision,enabled:true,created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      }else if(data.action==="update"){
+        const rule=reviewRules.rules.find(rule=>rule.id===data.id);if(!rule)throw new Error("规则不存在。");rule.decision=data.decision;rule.enabled=data.enabled;
+      }else if(data.action==="delete")reviewRules.rules=reviewRules.rules.filter(rule=>rule.id!==data.id);
+      else throw new Error("Unsupported rule mutation");
+      reviewRules.revision++;return {ok:true,value:structuredClone(reviewRules)};
     }
     case "review.list":return {ok:true,value:reviewScenario === "unavailable" ? {schema:"personal-review.v1",kind:"unavailable",reason:"尚未配置审核服务，动作审批当前不可用。"} : reviewValue()};
     case "review.settings": {
@@ -444,7 +477,7 @@ document.documentElement.style.setProperty("--conversation-message-font-size",`$
 document.documentElement.dataset.platform="linux";
 if (params.get("font")==="20") { document.documentElement.style.setProperty("--font-ui","20px");document.documentElement.style.fontSize="20px"; }
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label" style={{flexWrap:"wrap"}}><span>{reviewScenario !== "unavailable" ? "动作审批 · 当前实际桌面组件 · 合成数据 · 不执行文件写入或模型调用" : "twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览"}{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div hidden={reviewScenario !== "unavailable"}><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div>{reviewScenario !== "unavailable" && <div><button data-review-open-settings onClick={()=>window.dispatchEvent(new CustomEvent("wuu:open-settings",{detail:{page:"plugin-view:personal:personal-preferences"}}))}>Auto Review 设置</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><select aria-label="合成审批场景" value={reviewScenario} onChange={event=>{const url=new URL(location.href);url.searchParams.set("review",event.target.value);location.href=url.href;}}>{["ready","empty","expired","blocked","stale","denied","revoked","uncertain","succeeded","long","lost-ack","stale-response"].map(value=><option key={value} value={value}>{value}</option>)}</select></div>}</div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationScope application={fixtureApplication} signal={fixtureLifetime.signal}><PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView></PluginConversationScope> : <ApplicationShellOutlet host={host} binding={{pluginId:"wuu.default-shell",generation:"fixture",id:"ui.shell"}} surfaceBindings={surfaceBindings} />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label" style={{flexWrap:"wrap"}}><span>{reviewScenario !== "unavailable" ? "动作审批 · 当前实际桌面组件 · 合成数据 · 不执行文件写入或模型调用" : "twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览"}{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div hidden={reviewScenario !== "unavailable"}><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div>{reviewScenario !== "unavailable" && <div><button data-review-open-settings onClick={()=>window.dispatchEvent(new CustomEvent("wuu:open-settings",{detail:{page:"plugin-view:personal:personal-preferences"}}))}>Auto Review 设置</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><select aria-label="合成审批场景" value={reviewScenario} onChange={event=>{const url=new URL(location.href);url.searchParams.set("review",event.target.value);location.href=url.href;}}>{["ready","empty","expired","blocked","stale","denied","revoked","uncertain","succeeded","long","lost-ack","stale-response","rule-save-failed"].map(value=><option key={value} value={value}>{value}</option>)}</select></div>}</div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationScope application={fixtureApplication} signal={fixtureLifetime.signal}><PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView></PluginConversationScope> : <ApplicationShellOutlet host={host} binding={{pluginId:"wuu.default-shell",generation:"fixture",id:"ui.shell"}} surfaceBindings={surfaceBindings} />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {
