@@ -121,17 +121,20 @@ async function capture(name) {
   }
   await open();await wait('[data-review-choice="reject"]');await page.locator('[data-review-choice="reject"]').click();await wait('[data-review-state="denied"]');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls[0].input.choice),'reject');report.cases.push('Reject stops the precise action in the displayed synthetic state');
-  await open();await wait('[data-review-choice="remember"]');
+  for(const narrow of [false,true]){
+  await open('ready',narrow?{theme:'dark',font:'20'}:{},narrow?{width:430,height:1100}:{width:1100,height:950});await wait('[data-review-choice="remember"]');
   await page.locator('[data-review-choice="remember"]').click();await wait('[data-review-rule-preview]');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve'||c.method==='review.rules').length),0);
-  await capture('chat-rule-preview');
+  await page.locator('[data-review-rule-preview]').scrollIntoViewIfNeeded();await capture(narrow?'chat-rule-preview-narrow-dark':'chat-rule-preview');
   await page.locator('[data-review-choice="save_rule"]').click();await wait('[data-review-state="approved"]');
   assert.deepEqual(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.rules'||c.method==='review.resolve').map(c=>c.method)),['review.rules','review.resolve']);
   await page.locator('[data-review-open-settings]').click();await wait('[data-review-rule]');
-  await capture('settings-saved-rule');
+  if(narrow){await page.locator('[data-wuu-component="sidebar-toggle"]:visible').click();await page.waitForSelector('.settings-embedded.sidebar-collapsed');}
+  await page.locator('[data-review-rule]').scrollIntoViewIfNeeded();await capture(narrow?'settings-saved-rule-narrow-dark':'settings-saved-rule');
   await page.locator('[data-review-rule-ask]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules[0].decision==='ask');
   await page.locator('[data-review-rule-delete]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules.length===0);
-  report.cases.push('Rule preview grants nothing; saving precedes the exact once-only decision; settings can require confirmation or remove a saved rule');
+  report.cases.push(`${narrow?'narrow-dark-large':'wide-light'}: rule preview grants nothing; saving precedes the exact once-only decision; settings can require confirmation or remove a saved rule`);
+  }
   await open('rule-save-failed');await wait('[data-review-choice="remember"]');await page.locator('[data-review-choice="remember"]').click();await wait('[data-review-rule-preview]');await page.locator('[data-review-choice="save_rule"]').click();await wait('[data-personal-action-review] [role="alert"]');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve').length),0);
   await page.locator('[data-review-refresh]').click();await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-review-state="approved"]');

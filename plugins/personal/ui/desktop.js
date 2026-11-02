@@ -726,6 +726,7 @@ export async function activate(api) {
     const save = async () => { if (saving) return; setSaving(true); setError(""); try { const result = await call("settings.update", { expected_revision: preferences.revision, notifications: preferences.notifications, quiet_hours: preferences.quiet_hours, notification_batch_seconds: preferences.notification_batch_seconds ?? 0 }); setPreferences(result.settings); } catch (cause) { setError(String(cause)); } finally { setSaving(false); } };
     return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, h(Stack, { gap: "large" },
       error && h("p", { role: "alert" }, error),
+      h(settingsPanels.Review, { locale }),
       !preferences ? h(LoadingState, { label: "twin" }) : h(Section, { title: locale?.startsWith("zh") ? "通知与免打扰" : "Notifications & Quiet Hours" },
         h(Card, null,
           h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: event => setPreferences({ ...preferences, notifications: event.target.checked }) }),
@@ -737,8 +738,7 @@ export async function activate(api) {
           h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })),
         h(Row, { className: "mosaic-settings-save-row" },
           h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")))),
-      h(settingsPanels.Connections),
-      h(settingsPanels.Review, { locale })));
+      h(settingsPanels.Connections)));
   }
   let identityAgent;
   const identityListeners = new Set();

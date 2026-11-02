@@ -846,7 +846,7 @@ var personalDesktop = (() => {
 
   // plugins/personal/ui/connectors-panel.ts
   var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["github", "GitHub", "PR\u3001Issue\u3001CI \u4E0E Release"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
-  var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
+  var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", denied: "\u5BA1\u6838\u672A\u901A\u8FC7\uFF0C\u672A\u6267\u884C", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
   function object(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid connector response");
     return value;
@@ -2630,6 +2630,7 @@ ${personalReviewStyles}
         Stack,
         { gap: "large" },
         error && h("p", { role: "alert" }, error),
+        h(settingsPanels.Review, { locale }),
         !preferences ? h(LoadingState, { label: "twin" }) : h(
           Section,
           { title: locale?.startsWith("zh") ? "\u901A\u77E5\u4E0E\u514D\u6253\u6270" : "Notifications & Quiet Hours" },
@@ -2653,8 +2654,7 @@ ${personalReviewStyles}
             h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save"))
           )
         ),
-        h(settingsPanels.Connections),
-        h(settingsPanels.Review, { locale })
+        h(settingsPanels.Connections)
       ));
     }
     let identityAgent;
