@@ -1,4 +1,4 @@
-// macOS native ordering diagnostic: baseline and two candidate policies.
+// macOS native ordering diagnostic: baseline and candidate presentation policies.
 // Run: electron scripts/activity-preview-ordering-e2e.cjs
 // This checks native policy behavior, not the production ActivityPiPSurface.
 // No user profile, network, screenshots, or screen-recording permission needed.
@@ -6,7 +6,7 @@
 // reattachment lifts the host; repeated presentation loses native ownership.
 const { app, BrowserWindow } = require('electron');
 const { execFileSync, spawn } = require('node:child_process');
-const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = require('node:fs');
+const { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -25,38 +25,11 @@ app.whenReady().then(async () => {
   if (process.platform !== 'darwin') throw new Error('macOS acceptance probe only');
   const source = join(directory, 'observe.swift');
   const helper = join(directory, 'observe');
-  writeFileSync(source, `import AppKit
-import CoreGraphics
-if CommandLine.arguments[1] == "--cover" {
-  let app = NSApplication.shared
-  app.setActivationPolicy(.regular)
-  let window = NSWindow(contentRect: NSRect(x: 180, y: 300, width: 760, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-  window.title = "Synthetic external app — no user data"
-  window.backgroundColor = NSColor.systemGreen
-  window.makeKeyAndOrderFront(nil)
-  app.activate(ignoringOtherApps: true)
-  app.run()
-  exit(0)
-}
-let pid = Int(CommandLine.arguments[1])!
-let coverPID = Int(CommandLine.arguments[2])!
-let front = NSWorkspace.shared.frontmostApplication
-let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-let own = windows.enumerated().compactMap { index, w -> [String: Any]? in
-  guard (w[kCGWindowOwnerPID as String] as? Int) == pid else { return nil }
-  return ["zIndex": index, "id": w[kCGWindowNumber as String] ?? 0, "layer": w[kCGWindowLayer as String] ?? 0]
-}
-let external = windows.firstIndex { ($0[kCGWindowOwnerPID as String] as? Int) == coverPID && ($0[kCGWindowLayer as String] as? Int) == 0 }
-let result: [String: Any] = ["frontPID": Int(front?.processIdentifier ?? 0), "coverNormalWindowZIndex": external ?? -1, "probeWindows": own]
-print(String(data: try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), encoding: .utf8)!)
-`);
+  writeFileSync(source, readFileSync(join(__dirname, "fixtures/activity-ordering.swift")));
   execFileSync('/usr/bin/xcrun', ['swiftc', source, '-o', helper], { stdio: 'inherit' });
   const main = new BrowserWindow({ width: 700, height: 480, title: 'Synthetic Wuu host', show: false });
-  const panel = new BrowserWindow({ width: 260, height: 170, x: 850, y: 550, frame: false,
-    title: 'Synthetic activity preview', type: 'panel', show: false, acceptFirstMouse: true,
-    resizable: false, minimizable: false, maximizable: false, fullscreenable: false });
+  let panel;
   await main.loadURL('data:text/html,<body style="background:%23dcecff;font:24px sans-serif">Synthetic Wuu host. The synthetic green external-app window should remain over this blue host.</body>');
-  await panel.loadURL('data:text/html,<body style="background:%23fee4b0;font:20px sans-serif">Synthetic live preview</body>');
   const observe = label => {
     const native = JSON.parse(execFileSync(helper, [String(process.pid), String(coverProcess.pid)], { encoding: 'utf8' }));
     const sample = { label, hostID: Number(main.getMediaSourceId().split(":")[1]), panelID: Number(panel.getMediaSourceId().split(":")[1]), nativeParentIsHost: panel.getParentWindow() === main, coverPID: coverProcess?.pid, time: new Date().toISOString(), mainFocused: main.isFocused(), panelFocused: panel.isFocused(), mainVisible: main.isVisible(), panelVisible: panel.isVisible(), ...native };
@@ -75,8 +48,16 @@ print(String(data: try! JSONSerialization.data(withJSONObject: result, options: 
     assert.ok(host, 'Synthetic host must remain present in CGWindowList');
     assert.ok(host.zIndex > sample.coverNormalWindowZIndex, 'Host must remain behind the external test app');
   };
-  for (const mode of ['native-child', 'independent-panel', 'detach-show-reattach']) {
+  for (const mode of ['native-child', 'independent-panel', 'detach-show-reattach', 'detach-show-order-reattach', 'detach-show-level-order-reattach']) {
     const attached = mode !== 'independent-panel';
+    const detached = mode.startsWith('detach-');
+    const candidate = mode === 'detach-show-level-order-reattach';
+    const relative = mode.includes('-order-');
+    panel = new BrowserWindow({ width: 260, height: 170, x: 850, y: 550, frame: false,
+      title: 'Synthetic activity preview', type: 'panel', show: false, acceptFirstMouse: true,
+      resizable: false, minimizable: false, maximizable: false, fullscreenable: false });
+    await panel.loadURL('data:text/html,<body style="background:%23fee4b0;font:20px sans-serif">Synthetic live preview</body>');
+
     panel.hide();
     panel.setParentWindow(attached ? main : null);
     main.show(); main.focus();
@@ -89,13 +70,19 @@ print(String(data: try! JSONSerialization.data(withJSONObject: result, options: 
       await delay(100);
     }
     assertBackground(observe('baseline-' + mode));
-    if (mode === 'detach-show-reattach') panel.setParentWindow(null);
+    if (detached) panel.setParentWindow(null);
     panel.showInactive();
     await delay(1000); observe('after-showInactive-' + mode);
-    if (mode === 'detach-show-reattach') {
-      assertBackground(report.samples.at(-1));
+    if (detached) {
+      if (relative) {
+        if (candidate) panel.setAlwaysOnTop(false);
+        panel.moveAbove(main.getMediaSourceId());
+        await delay(1000); const ordered = observe('after-relative-order-' + mode);
+        if (candidate) assertBackground(ordered);
+      }
       panel.setParentWindow(main);
-      await delay(1000); assertBackground(observe('after-reattach-' + mode));
+      await delay(1000); const reattached = observe('after-reattach-' + mode);
+      if (candidate) assertBackground(reattached);
       assert.equal(panel.getParentWindow(), main, 'Restore native ownership after presentation');
     }
     panel.moveTop();
@@ -106,13 +93,28 @@ print(String(data: try! JSONSerialization.data(withJSONObject: result, options: 
     }
     observe('after-passive-updates-' + mode);
     panel.hide(); await delay(300);
-    if (mode === 'detach-show-reattach') panel.setParentWindow(null);
+    if (detached) panel.setParentWindow(null);
     panel.showInactive();
-    if (mode === 'detach-show-reattach') panel.setParentWindow(main);
+    if (candidate) panel.setAlwaysOnTop(false);
+    if (relative) panel.moveAbove(main.getMediaSourceId());
+    if (detached) panel.setParentWindow(main);
     await delay(1000); observe('after-reshow-' + mode);
-    if (mode === 'detach-show-reattach') {
+    if (candidate) {
       for (const sample of report.samples.filter(sample => sample.label.endsWith(mode))) assertBackground(sample);
       assert.equal(panel.getParentWindow(), main, 'Repeated presentation preserves native ownership');
+      assert.equal(panel.isVisible(), true, 'An unfocused visible host still presents its preview');
+      const final = report.samples.at(-1);
+      assert.equal(final.probeWindows.find(window => window.id === final.panelID).layer, final.probeWindows.find(window => window.id === final.hostID).layer, 'Native child preserves the host window level');
+      main.show(); main.focus();
+      const focusedDeadline = Date.now() + 5000;
+      while (!main.isFocused()) {
+        if (Date.now() >= focusedDeadline) throw new Error('Explicit host focus did not complete');
+        await delay(50);
+      }
+      panel.moveTop();
+      const foreground = observe('explicit-host-focus-' + mode);
+      assert.equal(foreground.frontPID, process.pid, 'Explicit host focus still activates Wuu');
+      assert.equal(panel.isVisible(), true, 'Preview remains visible with the foreground host');
     }
     if (mode === 'native-child') {
       report.baselineReproduced = report.samples.filter(sample => sample.label.endsWith(mode)).some(sample =>
@@ -120,10 +122,11 @@ print(String(data: try! JSONSerialization.data(withJSONObject: result, options: 
         || sample.probeWindows.find(window => window.id === sample.hostID).zIndex < sample.coverNormalWindowZIndex);
       saveReport();
     }
-    await delay(2000);
+    panel.destroy();
+    await delay(500);
   }
   console.log('DONE. Compare frontPID and host normal-layer zIndex before/after each operation. A changed visual z-order can occur without a focus change.');
   report.status = 'passed'; saveReport();
-  panel.destroy(); main.destroy(); app.quit();
+  main.destroy(); app.quit();
 }).catch(error => { console.error(error); report.status = 'failed'; report.error = String(error.stack || error); saveReport(); cleanup(); app.exit(1); });
 app.on('will-quit', cleanup);
