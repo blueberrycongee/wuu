@@ -7,14 +7,16 @@ const fs = require("node:fs");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const outDir = path.join(desktopRoot, "out-e2e");
-const outFile = path.join(outDir, "browser-pip-e2e.main.cjs");
+const orderingOnly = process.env.WUU_BROWSER_PIP_ORDERING_ONLY === "1";
+const entry = orderingOnly ? "browser-pip-ordering-e2e-entry.ts" : "browser-pip-e2e-entry.ts";
+const outFile = path.join(outDir, orderingOnly ? "browser-pip-ordering-e2e.main.cjs" : "browser-pip-e2e.main.cjs");
 
 fs.mkdirSync(outDir, { recursive: true });
 
 const esbuild = require("esbuild");
 async function main() {
   await esbuild.build({
-    entryPoints: [path.join(__dirname, "browser-pip-e2e-entry.ts")],
+    entryPoints: [path.join(__dirname, entry)],
     bundle: true,
     platform: "node",
     format: "cjs",
@@ -44,7 +46,7 @@ async function main() {
     outFile,
   ], {
     stdio: "inherit",
-    env: { ...process.env },
+    env: { ...process.env, WUU_ACTIVITY_ORDERING_HELPER_SOURCE: path.join(__dirname, "fixtures/activity-ordering.swift") },
   });
   process.exit(result.status ?? 1);
 }
