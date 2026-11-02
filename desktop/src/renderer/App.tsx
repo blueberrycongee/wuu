@@ -1618,6 +1618,7 @@ export function App({ application, slots, shellPluginId }: {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
+          data-active-session-tab-id={tabs.activeTabId}
           data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
           data-settings-open={settingsOpen ? "" : undefined}
           data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}

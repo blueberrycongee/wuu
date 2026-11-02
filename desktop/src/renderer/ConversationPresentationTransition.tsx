@@ -412,9 +412,27 @@ export function useConversationPresentationTransition({ scopeRef, pending, enabl
   }, [ready, layoutReady, scopeRef, getRegions]);
   const requestId = pending?.requestId;
   useLayoutEffect(() => {
-    bridge?.update({ owner: owner.current, pending, enabled, ready: ready && layoutReady, pane: scopeRef.current, getRegions });
+    const update = () => bridge?.update({ owner: owner.current, pending, enabled, ready: ready && layoutReady, pane: scopeRef.current, getRegions });
+    update();
     // Content readiness starts restoration, not reveal. Retain message pixels
     // until pending clears, while successor chrome is immediately live.
+    const pane = scopeRef.current;
+    if (!pending?.intentId || !enabled || !pane) return;
+    // A retained composer can bind a taller draft without rerendering this
+    // boundary. Reclip held pixels before they can cover the new live input.
+    const observed = new Set<Element>();
+    const resize = new ResizeObserver(update);
+    const refresh = () => {
+      for (const element of [pane, ...(getRegions?.() ?? []).flatMap(region =>
+        [region.element, ...region.excludeBelow ?? [], ...region.excludeRight ?? []])]) {
+        if (!observed.has(element)) { observed.add(element); resize.observe(element); }
+      }
+      update();
+    };
+    const mutations = new MutationObserver(refresh);
+    mutations.observe(pane, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+    refresh();
+    return () => { resize.disconnect(); mutations.disconnect(); };
   }, [bridge, enabled, ready, layoutReady, requestId, pending?.intentId, scopeRef, getRegions]);
   useLayoutEffect(() => () => bridge?.detach(owner.current), [bridge]);
 }
