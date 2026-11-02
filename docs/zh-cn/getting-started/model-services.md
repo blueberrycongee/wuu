@@ -45,6 +45,12 @@ GPT-6 Sol 和 Luna 支持 `none` 至 `max` 推理档位，默认 `medium`。Fast
 
 Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 `none` 选择映射为 `low`，两者默认档位分别为 `medium` 和 `high`。Wuu 请求可读的思考摘要，并允许 API 丢弃因上下文变更而失效的思考块，同时保留有效的签名块。这两个模型不接受强制工具选择，因此 Wuu 通过指令表达收尾工具调用要求，使用自动工具选择；这不保证模型一定调用工具。详见官方 [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) 和 [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) 迁移指南。
 
+## Gemini 工具兼容性
+
+对于模型 ID 中包含 `gemini` 的模型，Wuu 会将工具定义转换为 Gemini 支持的 schema 子集。例如，交互界面工具的版本字段 `const: 3` 会转换为最小值和最大值均为 3 的数字约束；字符串常量则使用只有一个值的枚举。这样可以避免使用 Google OpenAPI schema 的网关返回 `400 Invalid JSON payload` / `Unknown name "const"`，同时保持工具参数的数字类型。
+
+其他种类的常量保留类型并附带明确的取值提示，工具执行时仍需验证原始约束。参数名称以及默认值、示例中的字面数据会保留。这些转换只作用于发出的请求，不修改已安装的工具定义或其他模型的 schema。
+
 ## Kimi K3.1 Pro
 
 Kimi 按量付费 API 使用 `kimi-k3.1-pro` 或 `kimi-k3.1-pro-highspeed`，地址为 `https://api.moonshot.cn/v1` 或 `https://api.moonshot.ai/v1`。Kimi Code 订阅使用 `k3.1-pro` 或 `k3.1-pro-highspeed`，地址为 `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1`。
