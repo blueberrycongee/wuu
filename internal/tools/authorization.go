@@ -60,8 +60,8 @@ type AtomicAuthorizer interface {
 	SupportsAtomicAuthorization() bool
 	WithAuthorization(context.Context, AuthorizationRequest, func(context.Context) error) error
 }
-type fileAuthorizationContextKey struct{}
-type fileAuthorization struct {
+type effectAuthorizationContextKey struct{}
+type effectAuthorization struct {
 	toolkit *Toolkit
 	request AuthorizationRequest
 }
@@ -69,7 +69,7 @@ type fileAuthorization struct {
 func (t *Toolkit) authorizationRequest(info ToolInfo, call providers.ToolCall) AuthorizationRequest {
 	return AuthorizationRequest{SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir, PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments}
 }
-func (t *Toolkit) hasFileAuthorization(ctx context.Context, info ToolInfo, call providers.ToolCall) bool {
-	proof, ok := ctx.Value(fileAuthorizationContextKey{}).(fileAuthorization)
+func (t *Toolkit) hasEffectAuthorization(ctx context.Context, info ToolInfo, call providers.ToolCall) bool {
+	proof, ok := ctx.Value(effectAuthorizationContextKey{}).(effectAuthorization)
 	return ok && proof.toolkit == t && proof.request == t.authorizationRequest(info, call) && ctx.Err() == nil
 }

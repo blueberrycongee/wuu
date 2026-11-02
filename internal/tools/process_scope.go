@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,6 +32,7 @@ type ProcessScopeConfig struct {
 	BeforePermission              func(context.Context, ToolInfo, providers.ToolCall) error
 	Reviewer                      Reviewer
 	ApproveForMe                  bool
+	ReviewStart                   func(context.Context, string, string) (*proc.Process, *proc.Manager, error)
 	ExecutionRoot                 func(context.Context) (string, error)
 	CommandPrefix                 func() (string, error)
 	Disabled                      bool
@@ -135,6 +135,9 @@ func (s *ProcessScope) Start(ctx context.Context, command, cwd string) (*proc.Pr
 	if err := c.Boundary.Check(info, call); err != nil {
 		return nil, nil, err
 	}
+	if c.ReviewStart != nil {
+		return c.ReviewStart(ctx, command, cwd)
+	}
 	if err := reviewAuthorizedToolCall(ctx, reviewAuthority{SessionID: c.ThreadID, PermissionMode: c.PermissionMode, CWD: location.Root, Enabled: c.ApproveForMe, Reviewer: c.Reviewer}, info, call); err != nil {
 		return nil, nil, err
 	}
@@ -175,7 +178,7 @@ func (s *ProcessScope) startAuthorized(ctx context.Context, command, cwd, operat
 			return nil, nil, err
 		}
 	}
-	env := shellCommandEnv(os.Environ())
+	env := commandEnvironment(ctx)
 	if tempDir != "" {
 		env = replaceCommandEnv(env, "TMPDIR", tempDir)
 	}

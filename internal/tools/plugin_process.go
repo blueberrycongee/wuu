@@ -28,6 +28,9 @@ func (t *Toolkit) PluginProcessScope() (*ProcessScope, error) {
 		}
 	}
 	config := ProcessScopeConfig{Manager: manager, ExecutionEnvironment: t.env.ExecutionEnvironment, GitAttributionEnabled: t.env.gitAttributionEnabled(), RootDir: t.env.RootDir, StateDir: t.env.StateDir, SessionDir: t.env.SessionDir, ThreadID: t.env.SessionID, ActorID: defaultProcessOwnerID(t.env), ActorPath: currentExecutionPath(t.env), PermissionMode: t.env.PermissionMode, Boundary: t.boundary, FileScopeRoots: t.env.FileScopeRoots, ProtectedPaths: t.env.ProtectedPaths, Authorizer: t.authorizer, SandboxProvider: t.env.ProcessSandboxProvider, Reviewer: t.reviewer, ApproveForMe: t.approveForMe, ExecutionRoot: t.env.ExecRootDir, Disabled: t.IsToolDisabled("bash")}
+	if t.commandActionGate != nil {
+		config.ReviewStart = t.reviewedProcessStart
+	}
 	if t.permissionRequestHook != nil {
 		config.BeforePermission = func(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
 			return t.permissionRequestHook(ctx, t, info, call)

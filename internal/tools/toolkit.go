@@ -59,6 +59,7 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // registry lookup.
 type Toolkit struct {
 	fileActionGate          FileActionGate
+	commandActionGate       CommandActionGate
 	permissionHookLocalOnly func() bool
 	fileChangedLocalOnly    func() bool
 	env                     *Env
@@ -135,7 +136,7 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	}
 	// The selected provider makes the policy decision before local enforcement
 	// or contextual review. Neither can turn its denial into an allowed action.
-	if t.authorizer != nil && !t.hasFileAuthorization(ctx, info, call) {
+	if t.authorizer != nil && !t.hasEffectAuthorization(ctx, info, call) {
 		decision, err := t.authorizer.Authorize(ctx, t.authorizationRequest(info, call))
 		if err != nil {
 			return authorizationDenied(info.Name, "authorization provider unavailable")
@@ -179,6 +180,7 @@ func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
 	t.approveForMe = parent.approveForMe
 	t.reviewer = parent.reviewer
 	t.fileActionGate = parent.fileActionGate
+	t.commandActionGate = parent.commandActionGate
 }
 
 func (t *Toolkit) ExecutionEnvironment() executionenv.Executor { return t.env.ExecutionEnvironment }
@@ -340,6 +342,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		replacementBindings:     t.ReplacementBindings(),
 		sessionStore:            t.sessionStore,
 		fileActionGate:          t.fileActionGate,
+		commandActionGate:       t.commandActionGate,
 		permissionHookLocalOnly: t.permissionHookLocalOnly,
 		fileChangedLocalOnly:    t.fileChangedLocalOnly,
 		env:                     &env,
@@ -2075,6 +2078,9 @@ func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.T
 	}
 	if err := t.checkPermission(ctx, buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments), call); err != nil {
 		return toolresult.Result{}, err
+	}
+	if t.commandActionGate != nil && commandMutation(call) {
+		return t.commandActionGate(ctx, t, call)
 	}
 	if t.fileActionGate != nil && fileMutation(call.Name) {
 		return t.fileActionGate(ctx, t, call)

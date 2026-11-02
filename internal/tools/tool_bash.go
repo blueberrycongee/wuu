@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
@@ -197,7 +196,7 @@ func (t *BashTool) startBackground(ctx context.Context, args bashArgs, tty bool,
 	if err != nil {
 		return nil, fmt.Errorf("prepare filesystem process sandbox: %w", err)
 	}
-	commandEnv := shellCommandEnv(os.Environ())
+	commandEnv := commandEnvironment(ctx)
 	if sandboxTempDir != "" {
 		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
 	}
@@ -211,7 +210,7 @@ func (t *BashTool) startBackground(ctx context.Context, args bashArgs, tty bool,
 	return m.Start(startCtx, proc.StartOptions{
 		Command:               args.Command,
 		CommandPrefix:         commandPrefix,
-		CWD:                   args.CWD,
+		CWD:                   commandWorkingDirectory(ctx, args.CWD),
 		WorkspaceRoot:         t.env.RootDir,
 		OwnerKind:             proc.OwnerKind(defaultProcessOwnerKind(t.env, "")),
 		OwnerID:               defaultProcessOwnerID(t.env),

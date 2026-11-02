@@ -119,6 +119,7 @@ func (m *personalEffectMechanisms) Close(context.Context) error {
 func (*personalEffectMechanisms) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*personalEffectMechanisms) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: PersonalEffectService, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
+		{Name: "prepare-command", InputSchema: "host.personal-effects.prepare-command.input.v1", OutputSchema: "host.personal-effects.prepare-command.output.v1"},
 		{Name: "prepare-file", InputSchema: "host.personal-effects.prepare-file.input.v1", OutputSchema: "host.personal-effects.prepare-file.output.v1"},
 		{Name: "execute", InputSchema: "host.personal-effects.reference.v1", OutputSchema: "host.personal-effects.execute.output.v1"},
 		{Name: "release", InputSchema: "host.personal-effects.reference.v1", OutputSchema: "host.personal-effects.release.output.v1", Cleanup: true},
@@ -165,6 +166,8 @@ func (m *personalEffectMechanisms) InvokeService(ctx context.Context, call plugi
 	ctx = runtime.WithExecutionAuthorization(ctx, runtime.CaptureExecutionAuthorization(scope.authority))
 	ctx = runtime.WithInvocationState(ctx, held)
 	switch call.Method {
+	case "prepare-command":
+		return m.prepareCommand(ctx, scope, held, owner, call.Params)
 	case "prepare-file":
 		if scope.kit == nil {
 			return nil, errors.New("file effect requires captured toolkit")
