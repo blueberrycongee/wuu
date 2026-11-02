@@ -407,7 +407,8 @@ app.whenReady().then(async () => {
           && !document.querySelector(".project-thread-list .thread-row.pending-switch"));
         assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-main [aria-current="page"]').length), 1,
           'opening a project session selects only its project occurrence');
-        await evaluate(() => document.querySelector('[data-sidebar-recents] .thread-row-main').click());
+        // An unsent draft can still be retained for its exit animation.
+        await evaluate(() => document.querySelector('[data-sidebar-recents] .thread-row:not([data-draft-id]) .thread-row-main').click());
         await waitFor(() => Boolean(document.querySelector('[data-sidebar-recents] .thread-row.active')));
         assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-main [aria-current="page"]').length), 1,
           'opening Recent clears the project occurrence and project header');

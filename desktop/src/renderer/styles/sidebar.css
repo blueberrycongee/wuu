@@ -2151,6 +2151,12 @@ html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .p
   --reveal-gap: var(--sidebar-functional-row-gap);
 }
 
+.sidebar-draft-reveal[data-state="closing"] {
+  --reveal-duration: var(--motion-fast);
+  opacity: 0;
+  margin-block-end: calc(-1 * var(--reveal-gap));
+}
+
 .sidebar-session-row {
   position: relative;
   height: 30px;
