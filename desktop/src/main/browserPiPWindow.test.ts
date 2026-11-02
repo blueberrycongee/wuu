@@ -65,6 +65,8 @@ class FakePipWindow {
   opacity = 1;
   ignoringMouse = false;
   setAlwaysOnTop(): void {}
+  setParentWindow(): void {}
+  moveAbove(): void {}
   setVisibleOnAllWorkspaces(): void {}
   setOpacity(opacity: number): void {
     this.opacity = opacity;
@@ -290,7 +292,7 @@ function makeSurface(opts?: {
 
 describe("BrowserPiPSurface", () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
-  afterEach(() => { vi.useRealTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 
   it.each(["user", "error"] as const)("keeps the completion deadline through repeated %s snapshots and presentation churn", async (mode) => {
@@ -376,6 +378,7 @@ describe("BrowserPiPSurface", () => {
       isVisible: () => visible,
       isMinimized: () => minimized,
       isFocused: () => focused,
+      getMediaSourceId: () => "window:123:0",
       getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
       webContents: { getZoomFactor: () => 1 },
     });
@@ -428,6 +431,67 @@ describe("BrowserPiPSurface", () => {
     parent.emit("restore");
     expect(win.isVisible()).toBe(true);
 
+    surface.stop();
+    expect(parent.eventNames()).toEqual([]);
+  });
+
+  it.each(["darwin", "linux"] as const)("presents a %s child without changing its host's native ordering", async (platform) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    let visible = true;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false, isVisible: () => visible,
+      isMinimized: () => false, isFocused: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      getMediaSourceId: () => "window:123:0", webContents: { getZoomFactor: () => 1 },
+    });
+    const { surface, win, sink, overlay } = makeSurface({ reducedMotion: true });
+    const calls: string[] = [];
+    Object.assign(win, {
+      setParentWindow: (owner: unknown) => calls.push(owner ? "attach" : "detach"),
+      moveAbove: (id: string) => calls.push(`above:${id}`),
+    });
+    const show = win.showInactive.bind(win);
+    vi.spyOn(win, "showInactive").mockImplementation(() => { calls.push("show"); show(); });
+    surface.start(); surface.setHostParent(parent);
+    calls.length = 0;
+    surface.setVisible(true);
+    await settle(); finishMotion();
+    const presentation = platform === "darwin" ? ["detach", "show", "above:window:123:0", "attach"] : ["show"];
+    expect(calls).toEqual(presentation);
+    expect(win.isVisible()).toBe(true);
+    calls.length = 0;
+    surface.updateActivity({ ...makeActivity(), state: "background_controlled" });
+    win.emit("ready-to-show");
+    expect(calls).toEqual([]);
+    visible = false; parent.emit("hide");
+    expect(win.isVisible()).toBe(false);
+    visible = true; parent.emit("show");
+    await settle(); finishMotion();
+    expect(calls).toEqual(presentation);
+    expect(win.isVisible()).toBe(true);
+    overlay.navigate("wuu-pip://expand");
+    expect(sink.events).toContainEqual({ event: "expand" });
+    if (platform === "darwin") {
+      visible = false; parent.emit("hide");
+      calls.length = 0;
+      Object.assign(win, {
+        moveAbove: () => { calls.push("order-failed"); throw new Error("Target window disappeared"); },
+        setParentWindow: (owner: unknown) => {
+          if (owner) expect(win.isVisible()).toBe(false);
+          calls.push(owner ? "attach" : "detach");
+        },
+      });
+      const shown = sink.events.filter(event => event.event === "shown").length;
+      visible = true;
+      expect(() => parent.emit("show")).not.toThrow();
+      expect(win.isVisible()).toBe(false);
+      expect(calls.length).toBeGreaterThan(0);
+      for (let index = 0; index < calls.length; index += 4) {
+        expect(calls.slice(index, index + 4)).toEqual(["detach", "show", "order-failed", "attach"]);
+      }
+      expect(sink.failures).toContain("Could not present activity preview: Target window disappeared");
+      expect(sink.events.filter(event => event.event === "shown")).toHaveLength(shown);
+    }
     surface.stop();
     expect(parent.eventNames()).toEqual([]);
   });
