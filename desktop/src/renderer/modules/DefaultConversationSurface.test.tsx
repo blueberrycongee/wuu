@@ -77,6 +77,28 @@ it("renders the canonical pending creation turn only for its tab owner", () => {
   expect(container!.querySelector('[data-turn-id="one-turn"]')).not.toBeNull();
 });
 
+it("does not re-enter an already visible independent submission when its draft binds, but animates a later return", () => {
+  const h = fixture(), created = thread("created"), source = "draft-source";
+  const submission = { operationID: "send", ownerTabId: source, messageID: "message", phase: "sending" as const };
+  h.update({ ...h.get(), tabs: { ...h.get().tabs, activeTabId: source },
+    conversationWorkspace: { ...h.get().conversationWorkspace, primaryThreadId: undefined },
+    submission: { ...h.get().submission, operations: [submission], pendingCreations: [{ ownerTabId: source, operationID: "send", startedAtMs: 1, turn: created.turns[0] }] } });
+  expect(container!.textContent).toContain("Question created");
+  h.update({ ...h.get(), tabs: { ...h.get().tabs, activeTabId: "thread:created" },
+    conversationWorkspace: { ...h.get().conversationWorkspace, primaryThreadId: created.id, threads: [...h.get().conversationWorkspace.threads, created] } });
+  const content = container!.querySelector<HTMLElement>(".scroll-region-content")!;
+  expect(content.dataset.conversationEntry).toBe("false");
+  expect(container!.textContent).toContain("Question created");
+  // Thread binding publishes before the submission's own frozen snapshot.
+  h.update({ ...h.get(), submission: { ...h.get().submission, pendingCreations: [], operations: [{ ...submission, threadId: created.id }] } });
+  expect(content.dataset.conversationEntry).toBe("false");
+  h.update({ ...h.get(), submission: { ...h.get().submission, operations: [] } });
+  expect(content.dataset.conversationEntry).toBe("false");
+  h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, primaryThreadId: "one" } });
+  h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, primaryThreadId: created.id } });
+  expect(content.dataset.conversationEntry).toBe("true");
+});
+
 it("uses the selected composer for both split owners and removes it when disabled", async () => {
   const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
   const base = createConversationTestApplication(), one = thread("one"), two = thread("two");

@@ -286,6 +286,28 @@
   visibility: visible;
 }
 
+/* Reveal only ready message content, never retained pixels or live chrome.
+   Selecting the active cached pane also restarts entry on an immediate cache
+   hit, without remounting the history or waiting for animation to finish. */
+.scroll-region-content[data-conversation-entry="true"] .cached-conversation-pane[data-active="true"],
+.scroll-region-content[data-conversation-entry="true"] > .empty-home,
+.scroll-region-content[data-conversation-entry="true"] .conversation-split-body {
+  animation: conversation-content-enter var(--motion-fast) var(--ease-out);
+}
+
+@keyframes conversation-content-enter {
+  from { opacity: 0.72; }
+  to { opacity: 1; }
+}
+
+@container style(--motion-reduced: 1) {
+  .scroll-region-content[data-conversation-entry="true"] .cached-conversation-pane[data-active="true"],
+  .scroll-region-content[data-conversation-entry="true"] > .empty-home,
+  .scroll-region-content[data-conversation-entry="true"] .conversation-split-body {
+    animation: none;
+  }
+}
+
 .window-resizing .conversation-pane {
   transition: none;
 }
