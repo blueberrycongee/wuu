@@ -89,6 +89,8 @@ export interface ModelProviderItemV1 {
 }
 
 export interface ModelToolCallV1 {
+  /** Opaque provider state; preserve verbatim with provider/model provenance. */
+  readonly thought_signature?: string;
  readonly display?: ModelToolCallDisplayV1;
   readonly id?: string;
   readonly name?: string;

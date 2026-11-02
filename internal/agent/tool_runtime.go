@@ -234,6 +234,7 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 		existing.call.ProviderItemID = call.ProviderItemID
 		existing.call.ProviderItemProvider = call.ProviderItemProvider
 		existing.call.ProviderItemModel = call.ProviderItemModel
+		existing.call.ThoughtSignature = call.ThoughtSignature
 		existing.call.Name = call.Name
 		existing.call.Kind = call.Kind
 		existing.concurrencySafe = toolCanRunConcurrently(r.executor, existing.call)
@@ -246,6 +247,7 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 			ProviderItemID:       call.ProviderItemID,
 			ProviderItemProvider: call.ProviderItemProvider,
 			ProviderItemModel:    call.ProviderItemModel,
+			ThoughtSignature:     call.ThoughtSignature,
 			Name:                 call.Name,
 			Kind:                 call.Kind,
 		},
@@ -290,6 +292,7 @@ func (r *TurnToolRuntime) finalizeStreamTool(ctx context.Context, call *provider
 				ProviderItemID:       call.ProviderItemID,
 				ProviderItemProvider: call.ProviderItemProvider,
 				ProviderItemModel:    call.ProviderItemModel,
+				ThoughtSignature:     call.ThoughtSignature,
 			},
 			order: len(r.runs),
 			done:  make(chan struct{}),
@@ -297,7 +300,10 @@ func (r *TurnToolRuntime) finalizeStreamTool(ctx context.Context, call *provider
 		r.runs = append(r.runs, run)
 		r.byID[call.ID] = run
 	}
-	if call.ProviderItemID != "" {
+	if call.ThoughtSignature != "" {
+		run.call.ThoughtSignature = call.ThoughtSignature
+	}
+	if call.ProviderItemID != "" || call.ThoughtSignature != "" {
 		run.call.ProviderItemID = call.ProviderItemID
 		run.call.ProviderItemProvider = call.ProviderItemProvider
 		run.call.ProviderItemModel = call.ProviderItemModel

@@ -149,6 +149,9 @@ func NormalizeFinishReason(stopReason string, truncated bool, hasToolCalls bool)
 
 // ToolCall is a model requested tool execution.
 type ToolCall struct {
+	// ThoughtSignature is opaque provider state, replayed only to its originating
+	// provider/model. It is not tool input and must survive history persistence.
+	ThoughtSignature     string           `json:"thought_signature,omitempty"`
 	ID                   string           `json:"id,omitempty"`
 	ProviderItemID       string           `json:"provider_item_id,omitempty"`
 	ProviderItemProvider string           `json:"provider_item_provider,omitempty"`

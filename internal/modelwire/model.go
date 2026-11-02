@@ -127,6 +127,7 @@ func ProviderItemFromWire(in pluginprotocol.ModelProviderItemV1) (out providers.
 }
 
 func ToolCallToWire(in providers.ToolCall) (out pluginprotocol.ModelToolCallV1) {
+	out.ThoughtSignature = in.ThoughtSignature
 	if in.Display != nil {
 		out.Display = &pluginprotocol.ModelToolCallDisplayV1{Kind: in.Display.Kind, Label: in.Display.Label, Text: in.Display.Text, Capability: in.Display.Capability, LabelTranslations: maps.Clone(in.Display.LabelTranslations)}
 	}
@@ -142,6 +143,7 @@ func ToolCallToWire(in providers.ToolCall) (out pluginprotocol.ModelToolCallV1) 
 }
 
 func ToolCallFromWire(in pluginprotocol.ModelToolCallV1) (out providers.ToolCall) {
+	out.ThoughtSignature = in.ThoughtSignature
 	if in.Display != nil {
 		out.Display = &providers.ToolCallDisplay{Kind: in.Display.Kind, Label: in.Display.Label, Text: in.Display.Text, Capability: in.Display.Capability, LabelTranslations: maps.Clone(in.Display.LabelTranslations)}
 	}

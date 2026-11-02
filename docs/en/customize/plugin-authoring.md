@@ -609,6 +609,14 @@ and their budgeted `model_text`. Local working-copy paths, credentials, host ret
 objects and execution authority are not exported. Preserve unknown provider option
 keys and opaque native item data when copying a snapshot.
 
+Tool calls may include an optional `thought_signature`, scoped by
+`provider_item_provider` and `provider_item_model`. Preserve this opaque value
+verbatim with its call and origin through model, driver, tool-batch, and session
+round trips. Preserve parallel-call order as well. The host omits foreign-origin
+signatures when preparing a request for a different provider or model. This is
+an additive version-1 field; external providers that rebuild tool calls must
+forward it to support signed Gemini continuations.
+
 These are logical snapshots, not guarantees of identical HTTP bytes or a cache
 hit. Plugins must invalidate retained snapshots when their context, route, model,
 adapter, native-state compatibility or media changes. The host remains responsible
