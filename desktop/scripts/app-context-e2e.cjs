@@ -98,8 +98,8 @@ app.whenReady().then(async () => {
   await waitFor(win, () => document.querySelector('.composer textarea').value === 'Keep my existing draft');
   assert.deepEqual(snapshotCalls, [], 'The disabled capture host must not read state or subscribe');
   await evaluate(win, () => document.querySelector('.sidebar-account-trigger').click());
-  await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
-  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-settings-entry="settings"]')));
+  await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
   await evaluate(win, () => [...document.querySelectorAll('.settings-nav-item')].find(button => /^(General|常规)$/.test(button.textContent.trim())).click());
   await waitFor(win, () => document.querySelectorAll('.system-permission-row button:not(:disabled)').length === 2);

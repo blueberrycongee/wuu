@@ -19,6 +19,15 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("opens Settings on General and retains the last selected page", async () => {
+    const controller = new ApplicationController();
+    await controller.invoke("settings.open", {});
+    expect(controller.getSnapshot().settings).toMatchObject({ open: true, activePageId: "general" });
+    await controller.invoke("settings.open", { pageId: "providers" });
+    await controller.invoke("settings.close", {});
+    await controller.invoke("settings.open", {});
+    expect(controller.getSnapshot().settings).toMatchObject({ open: true, activePageId: "providers" });
+  });
   it.each(["conversations", "catalog"] as const)("leaves settings when navigating to %s without changing the draft", async section => {
     const controller = new ApplicationController();
     await controller.invoke("composer.set-draft", { text: "keep this draft" });
