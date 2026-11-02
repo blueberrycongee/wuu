@@ -16,6 +16,7 @@ const viewportSelector = ".conversation-pane > .scroll-region";
 const activeSelector = '.cached-conversation-pane[data-active="true"]';
 const marker = "IMAGE-LAYOUT-READING-MARKER";
 const results = [];
+const containmentResults = [];
 let win;
 let pending = [];
 let requestCount;
@@ -303,12 +304,12 @@ app.whenReady().then(async () => {
             images[width > 500 ? 1 : 2].scrollIntoView({ block: "center" });
           }, activeSelector, width);
           await frames(8);
-          const contained = await evaluate(selector => {
+          const containment = await evaluate(selector => {
             const pane = document.querySelector(selector);
             const bounds = pane.getBoundingClientRect();
-            return [...pane.querySelectorAll("img.rich-image, .turn-artifact-inline-image img")].every(image => {
+            return [...pane.querySelectorAll("img.rich-image, .turn-artifact-inline-image img")].map(image => {
               const rect = image.getBoundingClientRect();
-              const table = image.closest(".rich-table-wrap, .turn-artifact-gallery-items");
+              const table = image.closest(".rich-table-scroll, .turn-artifact-gallery-items");
               if (table) {
                 // Wide tables scroll within the message; both edges of a preview
                 // must remain reachable without overflowing the conversation.
@@ -321,14 +322,20 @@ app.whenReady().then(async () => {
                 table.scrollLeft = initialScroll;
                 // Table previews keep a readable intrinsic width; carousel
                 // thumbnails scale with the available conversation column.
-                const readable = table.classList.contains("rich-table-wrap") ? rect.width >= 100 : rect.width > 0;
-                return readable && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
-                  && left >= tableBounds.left - 1 && right <= tableBounds.right + 1;
+                const readable = table.classList.contains("rich-table-scroll") ? rect.width >= 100 : rect.width > 0;
+                return { image: rect.toJSON(), conversation: bounds.toJSON(), scrollOwner: table.className,
+                  scrollBounds: tableBounds.toJSON(), scrollWidth: table.scrollWidth, clientWidth: table.clientWidth,
+                  leftAtStart: left, rightAtEnd: right,
+                  contained: readable && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
+                    && left >= tableBounds.left - 1 && right <= tableBounds.right + 1 };
               }
-              return rect.width > 0 && rect.height > 0 && rect.left >= bounds.left && rect.right <= bounds.right;
+              return { image: rect.toJSON(), conversation: bounds.toJSON(),
+                contained: rect.width > 0 && rect.height > 0 && rect.left >= bounds.left && rect.right <= bounds.right };
             });
           }, activeSelector);
-          assert.ok(contained, `${kind}-${theme}-${font}-${width}: portrait and panorama previews must fit the conversation`);
+          containmentResults.push({ name: `${kind}-${theme}-${font}-${width}`, images: containment });
+          fs.writeFileSync(path.join(output, "containment.json"), JSON.stringify(containmentResults, null, 2));
+          assert.ok(containment.every(image => image.contained), `${kind}-${theme}-${font}-${width}: portrait and panorama previews must fit the conversation`);
           await capture(`${kind}-${theme}-${font}-${width}`);
           if (kind === "artifact") {
             win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
