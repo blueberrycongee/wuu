@@ -654,6 +654,25 @@ function extensionPackageSecondaryAction(record: ExtensionInventoryRecord): Exte
 
 type PluginAttention = { tone: "warning" | "danger"; label: string };
 
+function pluginActivationNotice(
+  issue: NonNullable<ExtensionInventoryRecord["activation_issues"]>[number],
+  t: ReturnType<typeof useI18n>["t"],
+  pluginName: (id: string) => string,
+): { tone: "error" | "warning"; text: string } {
+  const labels: Record<typeof issue.kind, TranslationKey> = {
+    missing_requirement: "skills.pluginDependencyMissing",
+    version_mismatch: "skills.pluginDependencyVersionMismatch",
+    conflict: "skills.pluginConflictWarning",
+    optional_missing: "skills.pluginOptionalDependencyMissing",
+    optional_version_mismatch: "skills.pluginOptionalDependencyVersionMismatch",
+    optional_cycle: "skills.pluginOptionalDependencyCycle",
+  };
+  return {
+    tone: issue.kind === "missing_requirement" || issue.kind === "version_mismatch" ? "error" : "warning",
+    text: t(labels[issue.kind], { plugin: pluginName(issue.related_plugin_id) }),
+  };
+}
+
 // The one reason a plugin needs a look, most serious first; its page lists
 // every notice with the details.
 function pluginAttention(
@@ -664,9 +683,9 @@ function pluginAttention(
   if (record.runtime_state === "failed") {
     return { tone: "danger", label: t("skills.pluginStatusFailed") };
   }
-  const missing = record.activation_issues?.find((issue) => issue.kind === "missing_requirement");
-  if (missing) {
-    return { tone: "danger", label: t("skills.pluginDependencyMissing", { plugin: pluginName(missing.related_plugin_id) }) };
+  const blocking = record.activation_issues?.find((issue) => issue.kind === "missing_requirement" || issue.kind === "version_mismatch");
+  if (blocking) {
+    return { tone: "danger", label: pluginActivationNotice(blocking, t, pluginName).text };
   }
   if (record.pending_update) {
     return { tone: "warning", label: t("skills.pluginStatusUpdatePending") };
@@ -676,7 +695,7 @@ function pluginAttention(
   if (approval === "pending") return { tone: "warning", label: t("skills.pluginNeedsGrant") };
   const conflict = record.activation_issues?.find((issue) => issue.kind === "conflict");
   if (conflict) {
-    return { tone: "warning", label: t("skills.pluginConflictWarning", { plugin: pluginName(conflict.related_plugin_id) }) };
+    return { tone: "warning", label: pluginActivationNotice(conflict, t, pluginName).text };
   }
   return undefined;
 }
@@ -857,10 +876,7 @@ function PluginDetailPage({
     }] : []),
     ...(record.activation_issues ?? []).map((issue) => ({
       key: `${issue.kind}:${issue.related_plugin_id}`,
-      tone: issue.kind === "missing_requirement" ? "error" as const : "warning" as const,
-      text: issue.kind === "missing_requirement"
-        ? t("skills.pluginDependencyMissing", { plugin: pluginName(issue.related_plugin_id) })
-        : t("skills.pluginConflictWarning", { plugin: pluginName(issue.related_plugin_id) }),
+      ...pluginActivationNotice(issue, t, pluginName),
     })),
   ];
 

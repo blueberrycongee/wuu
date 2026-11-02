@@ -1,3 +1,4 @@
+import { decodePluginRuntimeResponse } from "../../shared/pluginRuntimeIPC";
 import { PluginConversationAttachment, PluginConversationView, PluginConversationComposer, PluginConversationMessage } from "./PluginConversation";
 import { MarkdownContent } from "../RichContent";
 import { PluginAvatar } from "../PluginAvatar";
@@ -66,7 +67,7 @@ export const desktopPluginHost = new PluginHost({
     try {
       const result = await response;
       signal?.throwIfAborted();
-      return result.result;
+      return decodePluginRuntimeResponse(result).result;
     } finally {
       signal?.removeEventListener("abort", cancel);
     }

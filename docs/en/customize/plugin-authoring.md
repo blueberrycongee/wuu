@@ -351,6 +351,12 @@ Use it for activation-owned background work and stop timers in shutdown. Cleanup
 may still use the unscoped lifecycle host to persist state or release resources;
 do not make cleanup depend on an already-aborted signal.
 
+Process shutdown has a bounded acknowledgement window. If it expires, the host
+terminates the process and reports cleanup as unconfirmed, not successful.
+Physical termination does not confirm pending external writes or undo their effects;
+check their state before retrying. A runtime that exits normally without replying
+may still complete shutdown successfully.
+
 ## Tools and capabilities
 
 Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
@@ -827,7 +833,11 @@ belongs to the plugin generation and may outlive the tool callback. Cancelling
 a read or aborting the original call's signal does not stop that accepted process;
 call `stopProcess` for explicit cancellation.
 
-`readProcess` returns merged output, byte cursors, truncation and a process snapshot.
+`readProcess` returns output, byte cursors, truncation and a process snapshot.
+Omitting `stream` preserves merged output. With host.process 1.2, `stream: "stdout"`
+or `stream: "stderr"` selects an independent byte cursor and the result echoes
+`stream`. Old records, PTYs and backends without separate streams fail explicitly;
+the SDK rejects a missing stream acknowledgement. Raw output remains passive.
 Reads accept 4 bytes to 1 MiB (default 64 KiB), and up to 30 seconds of waiting.
 Use `next_offset`, including when UTF-8 framing or log retention changes a read's
 length. `stopProcess` stops the entire process tree. A zero timeout means no deadline;

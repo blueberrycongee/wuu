@@ -174,10 +174,10 @@ func TestServiceRegistryCall(t *testing.T) {
 	if _, err := registry.Call(context.Background(), "stranger", call); err == nil || err.Code != "service_not_authorized" {
 		t.Fatalf("undeclared consumer = %v, want service_not_authorized", err)
 	}
-	// A declared-but-unprovided service resolves to not_found; an undeclared
+	// A declared optional service without a provider is explicitly absent; an undeclared
 	// one stays not_authorized so consumers cannot probe what exists.
-	if _, err := registry.Call(context.Background(), "notes", ServiceCallParams{Service: "memory.index", Method: "query"}); err == nil || err.Code != "service_unavailable" {
-		t.Fatalf("declared unprovided service = %v, want service_unavailable", err)
+	if _, err := registry.Call(context.Background(), "notes", ServiceCallParams{Service: "memory.index", Method: "query"}); err == nil || err.Code != "service_optional_absent" {
+		t.Fatalf("declared unprovided service = %v, want service_optional_absent", err)
 	}
 	if _, err := registry.Call(context.Background(), "notes", ServiceCallParams{Service: "unknown.service", Method: "query"}); err == nil || err.Code != "service_not_authorized" {
 		t.Fatalf("undeclared service = %v, want service_not_authorized", err)
@@ -877,6 +877,77 @@ func TestNativeServiceRegistrationUsesPublicDescriptorValidation(t *testing.T) {
 		}
 		if registry.HasProvider(descriptor.Name, 1) != (publicErr == nil) {
 			t.Fatal("invalid descriptor retained provider authority")
+		}
+	}
+}
+
+func TestSelectedGoalProviderFailureDoesNotMeanMissingProvider(t *testing.T) {
+	provider := &fakeServiceProcess{id: "alternate-goal", state: StateActive, provided: []ServiceDescriptor{{
+		Name: "goal.control", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "request", InputSchema: "goal.control.request.v1", OutputSchema: "goal.control.response.v1"}},
+	}}, invoke: func(context.Context, ServiceInvokeParams) (json.RawMessage, error) {
+		return nil, errors.New("no provider for service goal.control")
+	}}
+	consumer := &fakeServiceProcess{id: "goal-ui", state: StateActive, required: []ServiceRequirement{{Name: "goal.control", MajorVersion: 1, Required: false}}}
+	registry, conflicts := BuildServiceRegistry(provider, consumer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	registry.Activate()
+	_, err := registry.Call(context.Background(), consumer.ID(), ServiceCallParams{Service: "goal.control", Method: "request", Params: json.RawMessage(`{"method":"get_goal","input":{"thread_id":"example"}}`)})
+	if err == nil || err.Message != "service goal.control call failed: no provider for service goal.control" || len(provider.invokeCalls) != 1 {
+		t.Fatalf("selected provider failure path = %v; calls = %d", err, len(provider.invokeCalls))
+	}
+}
+
+func TestOptionalServiceAbsenceIsHostResolutionOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		required bool
+		bindings []composition.Binding
+		versions []string
+		want     string
+	}{
+		{name: "optional absent", want: "service_optional_absent"},
+		{name: "required absent", required: true, want: "service_unavailable"},
+		{name: "explicit missing", bindings: []composition.Binding{{Service: "search.provider", Major: 1, Provider: "missing"}}, want: "service_unavailable"},
+		{name: "scoped missing", bindings: []composition.Binding{{Consumer: "consumer", Service: "search.provider", Major: 1, Provider: "missing"}}, want: "service_unavailable"},
+		{name: "wrong major", versions: []string{"2.0.0"}, want: "service_unavailable"},
+		{name: "ambiguous", versions: []string{"1.0.0", "1.0.0"}, want: "service_unavailable"},
+		{name: "ambiguous other major", versions: []string{"2.0.0", "2.0.0"}, want: "service_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			registry, err := NewServiceRegistryWithBindings(tc.bindings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clients := []Client{&fakeServiceProcess{id: "consumer", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: tc.required}}}}
+			for i, version := range tc.versions {
+				clients = append(clients, &fakeServiceProcess{id: []string{"one", "two"}[i], state: StateActive, provided: []ServiceDescriptor{searchService(version)}})
+			}
+			registry.RegisterClients(clients...)
+			registry.Activate()
+			_, callErr := registry.Call(context.Background(), "consumer", ServiceCallParams{Service: "search.provider", Method: "query"})
+			if callErr == nil || callErr.Code != tc.want {
+				t.Fatalf("got %v; want %s", callErr, tc.want)
+			}
+		})
+	}
+}
+
+func TestProviderCannotReportHostOptionalAbsence(t *testing.T) {
+	for _, failure := range []error{
+		&HostServiceError{Code: "service_optional_absent", Message: "provider nested lookup failed"},
+		&remoteCallError{code: "service_optional_absent", message: "provider nested lookup failed"},
+		&HostServiceError{Code: "WUU_PLUGIN_SCOPE_RETIRED", Message: "provider nested lookup failed"},
+		&remoteCallError{code: "WUU_PLUGIN_SCOPE_RETIRED", message: "provider nested lookup failed"},
+	} {
+		provider := &fakeServiceProcess{id: "selected", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}, invoke: func(context.Context, ServiceInvokeParams) (json.RawMessage, error) { return nil, failure }}
+		consumer := &fakeServiceProcess{id: "consumer", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: false}}}
+		registry, _ := BuildServiceRegistry(provider, consumer)
+		registry.Activate()
+		_, err := registry.Call(context.Background(), "consumer", ServiceCallParams{Service: "search.provider", Method: "query"})
+		if err == nil || err.Code != "service_unavailable" || err.Message != "provider nested lookup failed" {
+			t.Fatalf("provider impersonated absent dependency: %v", err)
 		}
 	}
 }

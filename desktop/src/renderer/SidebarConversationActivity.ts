@@ -17,16 +17,11 @@ import {
 const RECENT_THREAD_ORDER_ID = "__wuu_recent_threads__";
 
 const RECENT_THREAD_LIMIT = 50;
-// Assign priority when a conversation enters this mounted sidebar. Live status
-// changes update its indicators without moving it or its neighboring rows.
+// Seed the initial list by activity. Later arrivals go before existing rows,
+// whose positions stay stable as their execution and unread indicators change.
 const ACTIVITY_RANK = { running: 0, attention: 1, history: 2 } as const;
 
-type RecentActivity = {
-  rank: number;
-  time: number;
-};
-
-/** Seed Recent by priority, then keep existing conversations in a stable order. */
+/** Seed Recent by priority, then prepend new conversations in a stable order. */
 export function useSidebarConversationActivity(
   threads: ThreadSummary[],
   activeThreadID: string | undefined,
@@ -38,37 +33,39 @@ export function useSidebarConversationActivity(
   onReorder: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
 } {
   const [threadOrder, setThreadOrder] = useState(() => storedThreadOrder(RECENT_THREAD_ORDER_ID));
-  const committedActivity = useRef(new Map<string, RecentActivity>());
-  const activity = useMemo(() => {
-    const rows = new Map<string, RecentActivity>();
-    const ordered = threads.map((thread) => {
-      let position = committedActivity.current.get(thread.id);
-      if (!position) {
-        const running = isThreadExecuting(thread);
-        const unread = thread.id !== activeThreadID && thread.id !== pendingThreadID
-          && isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]);
-        const startedAt = running
-          ? thread.turns.findLast((turn) => turn.status === "in_progress")?.started_at
-          : undefined;
-        position = {
-          rank: running ? ACTIVITY_RANK.running
-            : unread ? ACTIVITY_RANK.attention : ACTIVITY_RANK.history,
-          time: (startedAt ? Date.parse(startedAt) : 0) || sidebarThreadSortTime(thread, running),
-        };
-      }
-      rows.set(thread.id, position);
-      return { thread, ...position };
+  const reconciledOrder = useMemo(() => {
+    const seeded = threads.map((thread) => {
+      const running = isThreadExecuting(thread);
+      const unread = thread.id !== activeThreadID && thread.id !== pendingThreadID
+        && isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]);
+      const startedAt = running
+        ? thread.turns.findLast((turn) => turn.status === "in_progress")?.started_at
+        : undefined;
+      return {
+        thread,
+        rank: running ? ACTIVITY_RANK.running
+          : unread ? ACTIVITY_RANK.attention : ACTIVITY_RANK.history,
+        time: (startedAt ? Date.parse(startedAt) : 0) || sidebarThreadSortTime(thread, running),
+      };
     }).sort((left, right) => left.rank - right.rank
       || right.time - left.time
       || left.thread.id.localeCompare(right.thread.id));
-    return { rows, ordered: ordered.slice(0, RECENT_THREAD_LIMIT).map((row) => row.thread) };
-  }, [activeThreadID, lastViewedTurnByThreadID, pendingThreadID, threads]);
-  // An abandoned render must not assign a conversation's initial position.
-  useLayoutEffect(() => { committedActivity.current = activity.rows; }, [activity]);
+    return reconcileThreadOrder(seeded.map((row) => row.thread), threadOrder);
+  }, [activeThreadID, lastViewedTurnByThreadID, pendingThreadID, threadOrder, threads]);
+  // Commit membership as well as positions. A thread can arrive idle before its
+  // first turn starts; freezing its activity rank would bury it below old work.
+  useLayoutEffect(() => {
+    const knownIDs = new Set(threadOrder);
+    const newIDs = reconciledOrder.filter((id) => !knownIDs.has(id));
+    // Keep saved IDs while workspace caches are empty or still loading.
+    // Reconciliation filters absent rows without erasing their saved positions.
+    if (newIDs.length > 0) setThreadOrder([...newIDs, ...threadOrder]);
+  }, [reconciledOrder, threadOrder]);
   const ordered = useMemo(() => {
-    const byID = new Map(activity.ordered.map((thread) => [thread.id, thread]));
-    return reconcileThreadOrder(activity.ordered, threadOrder).map((id) => byID.get(id)!);
-  }, [activity, threadOrder]);
+    const byID = new Map(threads.map((thread) => [thread.id, thread]));
+    // Apply the cap after inserting arrivals so a full list still shows them.
+    return reconciledOrder.slice(0, RECENT_THREAD_LIMIT).map((id) => byID.get(id)!);
+  }, [reconciledOrder, threads]);
   const [heldOrder, setHeldOrder] = useState<ThreadSummary[]>();
   const interaction = useRef({ pointer: false, keyboard: false, dragging: false });
   const listRef = useRef<HTMLDivElement>(null);
@@ -112,8 +109,10 @@ export function useSidebarConversationActivity(
       const current = visibleThreads.map((thread) => thread.id);
       const next = moveThreadInOrder(current, activeThreadID, overThreadID, position);
       if (next === current) return;
-      setThreadOrder(next);
-      persistThreadOrder(RECENT_THREAD_ORDER_ID, next);
+      const visibleIDs = new Set(next);
+      const fullOrder = [...next, ...reconciledOrder.filter((id) => !visibleIDs.has(id))];
+      setThreadOrder(fullOrder);
+      persistThreadOrder(RECENT_THREAD_ORDER_ID, fullOrder);
       // A deliberate drop must take effect even while the pointer holds the list.
       const byID = new Map(visibleThreads.map((thread) => [thread.id, thread]));
       setHeldOrder((held) => held ? next.map((id) => byID.get(id)!) : undefined);

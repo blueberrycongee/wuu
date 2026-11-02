@@ -50,7 +50,7 @@ it("installed additive packages cooperate across the process and renderer bounda
     reportPluginDesktopActivation: (params: unknown) => request("plugin/desktop-activation", params),
     requestPluginRuntime: async (params: { id: string; fingerprint: string; graph_generation: string; request_id: string; method: string }) => {
       if (params.method === "watch") watches.set(params.request_id, params);
-      try { return await request("plugin/client/request", params); }
+      try { return { ok: true, value: await request("plugin/client/request", params) }; }
       finally { watches.delete(params.request_id); }
     },
     cancelPluginRuntime: (params: unknown) => request("plugin/client/cancel", params),

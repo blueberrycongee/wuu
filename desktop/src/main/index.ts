@@ -1,3 +1,4 @@
+import { encodePluginRuntimeResponse } from "./pluginRuntimeIPC";
 import { DictationService } from "./dictation";
 import { spawn as spawnDictationHelper } from "node:child_process";
 import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
@@ -2411,7 +2412,7 @@ app.whenReady().then(async () => {
     }
     return inventory;
   });
-  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
+  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => encodePluginRuntimeResponse(async () => {
     if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
       throw new Error("User host and workspace routes cannot be combined");
     }
@@ -2446,7 +2447,7 @@ app.whenReady().then(async () => {
     return pluginRuntimeRequests.request(owner, request, params, undefined, () => {
       event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
     });
-  });
+  }));
   ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
     pluginRuntimeRequests.cancel(`window:${event.sender.id}`, params));
   ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {

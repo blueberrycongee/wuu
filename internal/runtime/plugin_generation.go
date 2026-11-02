@@ -633,6 +633,7 @@ type PluginCatalogPreparation struct {
 	discovered        []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
 	selectedPluginIDs []string
+	packagePlan       pluginpkg.ActivationPlan
 	required          map[string]bool
 	ownedRoots        []string
 	factories         []NativeProviderFactory
@@ -664,8 +665,9 @@ func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
 	var selectedPluginIDs []string
+	var activationPlan pluginpkg.ActivationPlan
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
+		activationPlan, err = ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
 			return nil, err
 		}
@@ -716,7 +718,7 @@ func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg
 	}
 	ownedRoots = append(ownedRoots, snapshotRoots...)
 	return &PluginCatalogPreparation{
-		storageTransfers: storageTransfers, session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
+		packagePlan: activationPlan, storageTransfers: storageTransfers, session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
 		selectedPluginIDs: selectedPluginIDs, required: required, ownedRoots: ownedRoots, factories: factories, start: start,
 	}, nil
 }
@@ -735,7 +737,7 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		requiredRuntimes[id] = value
 	}
 	selection := productComposition(cfg.Composition, s.DesktopExecutionDefaults, active, factories)
-	host, kernel, err := buildPluginHostForBinding(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, s.UserBinding(), p.storageTransfers, factories...)
+	host, kernel, err := buildPluginHostWithPlan(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, s.UserBinding(), p.storageTransfers, &p.packagePlan, factories...)
 	if err != nil {
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err

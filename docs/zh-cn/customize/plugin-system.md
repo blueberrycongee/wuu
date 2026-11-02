@@ -58,6 +58,8 @@ npm 依赖。内置与第三方插件遵循相同的 JSONL 初始化、服务协
 
 App-server 客户端可以通过 `extension/package/update` 一次提交相关启停选择，例如 `{"updates":[{"id":"plugin:user:provider","action":"disable"},{"id":"plugin:user:consumer","action":"disable"}]}`。宿主校验完整选择，准备一个候选，通过一次 compare-and-exchange 持久化设置，再激活该 generation。每项可提供 `fingerprint`，用于拒绝过期的目录选择。数组不能为空，包 subject ID 不能重复，动作只能是 `enable` 或 `disable`；不能同时提供顶层单包字段，即使字段值为空。信任和待处理包更新仍使用原有单包请求。批量请求不会授予信任或自动选择依赖。对于请求显式启用、已获信任且被选中的包，准备阶段必须满足其必需的包依赖和服务依赖。校验或准备失败，以及已确认的 compare-and-exchange 拒绝，会保留原设置和 generation。写入结果未知时，应重新读取配置再决定下一步，不能假定已经回滚或自动重试。提交后的激活失败按下文约定报告已提交状态。
 
+运行时将已准入的包关系带入同一张服务生命周期依赖图。满足条件的可选包依赖使提供方先于消费方准备和激活，并在消费方清理完成后退出，但不会传播提供方故障。如果服务绑定后某条可选包边形成环，宿主会忽略这条顺序边，而不是拒绝整个 generation。`registry.introspect` 的 `dependencies` 返回实际采用的图，`dependency_issues` 说明未采用的包关系（`optional_missing`、`optional_version_mismatch` 或 `optional_cycle`）。包版本与服务主版本独立；可选包依赖不授予服务调用权限。
+
 ## 运行时 generation
 
 热更新不会自动把进程或模块变量迁移到新实现。需要保留的业务状态应写入宿主存储或会话记录；持久数据格式可能变化时，由插件明确管理版本。会话历史与插件实现的生命周期彼此分离。

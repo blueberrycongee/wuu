@@ -169,7 +169,7 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 	// change requirements or revoke the assignment that produced it.
 	for _, message := range []providers.ChatMessage{
 		{Role: "user", Name: wuucontext.ProcessNotificationMessageName, ClientID: "process-done", Content: "Process finished"},
-		{Role: "user", ClientID: processRecheckClientID("process-running"), Content: "Process is running"},
+		{Role: "user", ClientID: "wuu-process-recheck:process-running", Content: "Process is running"},
 		{Role: "user", Name: wuucontext.AgentNotificationMessageName, Content: "Agent finished"},
 		{Role: "user", ReadOnly: true, Content: "Merged completion evidence"},
 	} {
