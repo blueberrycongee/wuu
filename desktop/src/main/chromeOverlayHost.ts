@@ -137,7 +137,7 @@ export class ChromeOverlayHost {
       || request.bounds.width <= 0 || request.bounds.height <= 0 || request.bounds.width > 640
       || JSON.stringify(request).length > 512 * 1024) throw new Error("Invalid browser chrome surface.");
     if (request.model.kind === "capsule" && (typeof request.model.draft !== "string" || request.model.draft.length > 8000)) throw new Error("Invalid browser capsule draft.");
-    if (request.model.kind === "account" && (!Array.isArray(request.model.panel.rows) || request.model.panel.rows.some(row => !["devices", "usage", "account", "providers", "logout"].includes(row.action)))) throw new Error("Invalid browser account actions.");
+    if (request.model.kind === "account" && (!Array.isArray(request.model.panel.rows) || request.model.panel.rows.some(row => !["devices", "usage", "account", "settings", "providers", "logout"].includes(row.action)))) throw new Error("Invalid browser account actions.");
   }
 
   private create(owner: BrowserWindow, kind: ChromeOverlaySurface): Surface {

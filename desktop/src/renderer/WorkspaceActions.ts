@@ -14,7 +14,6 @@ import {
 import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import type { InstructionFilesEntry } from "./InstructionFilesCard";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
-import type { SettingsPage } from "./SettingsView";
 import { translateCurrent } from "./i18n";
 import { showActionErrorToast } from "./Toast";
 
@@ -38,8 +37,6 @@ export type WorkspaceActionsDeps = {
   >;
   scheduleStreamScroll: () => void;
   closeWorkspaceMenus: () => void;
-  setSettingsInitialPage: (page: SettingsPage) => void;
-  setSettingsOpen: (open: boolean) => void;
 };
 
 export type WorkspaceActions = {
