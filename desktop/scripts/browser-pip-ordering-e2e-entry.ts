@@ -48,11 +48,17 @@ app.whenReady().then(async () => {
   await main.loadURL("data:text/html,<body style='background:%23dcecff'>Synthetic Wuu host</body>");
   const native = (): NativeSnapshot => JSON.parse(execFileSync(helper, [String(process.pid), String(cover?.pid ?? 0)], { encoding: "utf8" }));
   const panels = () => BrowserWindow.getAllWindows().filter(win => win.getTitle() === "Wuu Live Activity");
+  const waitForPresented = (label: string, count: number) => waitFor(label, () => {
+    const current = panels();
+    const snapshot = native();
+    return current.length === count && current.every(win => win.isVisible() && win.getOpacity() === 1
+      && snapshot.probeWindows.some(item => item.id === Number(win.getMediaSourceId().split(":")[1])));
+  });
   const observe = (label: string, background = true) => {
     const snapshot = native();
     const hostID = Number(main.getMediaSourceId().split(":")[1]);
     const sample = { label, ...snapshot, hostID, coverPID: cover?.pid, hostFocused: main.isFocused(), panels: panels().map(win => ({
-      id: Number(win.getMediaSourceId().split(":")[1]), visible: win.isVisible(), focused: win.isFocused(), nativeParentIsHost: win.getParentWindow() === main,
+      id: Number(win.getMediaSourceId().split(":")[1]), visible: win.isVisible(), opacity: win.getOpacity(), focused: win.isFocused(), nativeParentIsHost: win.getParentWindow() === main,
     })) };
     report.samples.push(sample); save(); console.log(JSON.stringify(sample));
     const host = snapshot.probeWindows.find(win => win.id === hostID);
@@ -66,7 +72,9 @@ app.whenReady().then(async () => {
     }
     for (const panel of sample.panels) if (panel.visible) {
       assert.equal(panel.nativeParentIsHost, true, "Presented previews retain native host ownership");
-      assert.ok(snapshot.probeWindows.some(win => win.id === panel.id), "Visible preview must have an observable native window");
+      // Preparation intentionally shows a fully transparent native panel so
+      // Chromium can paint. macOS can omit it from the on-screen window list.
+      if (panel.opacity > 0) assert.ok(snapshot.probeWindows.some(win => win.id === panel.id), "Painted preview must have an observable native window");
     }
   };
   main.show(); main.focus();
@@ -120,7 +128,8 @@ app.whenReady().then(async () => {
   const first = panels()[0];
   const overlay = (first.contentView.children.find(view => view instanceof WebContentsView && !views.includes(view)) as WebContentsView).webContents;
   await waitFor("production overlay ready", () => overlay.executeJavaScript("typeof window.wuuPipInteract === 'function' && document.getElementById('ph').classList.contains('gone')"));
-  await delay(500); observe("first-preview-painted");
+  await waitForPresented("first preview painted in native compositor", 1);
+  observe("first-preview-painted");
   report.scenarios.push("background initial browser tab and preview creation");
 
   for (let frame = 0; frame < 4; frame++) {
@@ -134,12 +143,12 @@ app.whenReady().then(async () => {
   observe("preview-hidden");
   coordinator.setActiveThread(thread);
   await waitFor("preview reshown", () => first.isVisible());
-  await delay(500); observe("preview-reshown");
+  await waitForPresented("reshown preview painted", 1); observe("preview-reshown");
   report.scenarios.push("conversation hide and repeated presentation");
 
   await open("second"); coordinator.update(activity("second"));
   await waitFor("two previews visible", () => panels().length === 2 && panels().every(win => win.isVisible()));
-  await delay(500); observe("second-preview-and-stack");
+  await waitForPresented("two previews painted", 2); observe("second-preview-and-stack");
   coordinator.refreshBrowserPresentation(); observe("restack-two-previews");
   report.scenarios.push("multiple previews and stack ordering");
   await overlay.executeJavaScript("document.getElementById('expand').click()");
@@ -151,14 +160,14 @@ app.whenReady().then(async () => {
   await waitFor("old previews destroyed", () => panels().length === 0);
   await open("reconnected"); coordinator.update(activity("reconnected"));
   await waitFor("reconnected preview visible", () => panels().length === 1 && panels()[0].isVisible());
-  await delay(500); observe("preview-after-reconnect");
+  await waitForPresented("reconnected preview painted", 1); observe("preview-after-reconnect");
   report.scenarios.push("browser host teardown and new preview after reconnect");
 
   // Explicit user foregrounding remains allowed; it is not a passive update.
   main.show(); main.focus();
   await waitFor("explicit host foreground", () => main.isFocused());
   coordinator.refreshBrowserPresentation();
-  await waitFor("foreground preview visible", () => panels().every(win => win.isVisible()));
+  await waitForPresented("foreground preview painted", 1);
   observe("explicit-foreground", false);
   report.scenarios.push("explicit host foreground and live preview remain available");
   const enteredFullscreen = once(main, "enter-full-screen", { signal: AbortSignal.timeout(10_000) });
@@ -167,7 +176,7 @@ app.whenReady().then(async () => {
   await waitFor("fullscreen host on active Space", () => native().probeWindows.some(win => win.id === Number(main.getMediaSourceId().split(":")[1])));
   await waitFor("preview visible in host fullscreen Space", () => {
     const snapshot = native();
-    return panels().length === 1 && panels().every(win => win.isVisible() && snapshot.probeWindows.some(item => item.id === Number(win.getMediaSourceId().split(":")[1])));
+    return panels().length === 1 && panels().every(win => win.isVisible() && win.getOpacity() === 1 && snapshot.probeWindows.some(item => item.id === Number(win.getMediaSourceId().split(":")[1])));
   });
   observe("host-fullscreen-preview", false);
   execFileSync(helper, ["--activate", String(cover!.pid)]);
@@ -184,7 +193,7 @@ app.whenReady().then(async () => {
   await waitFor("return to fullscreen host Space", () => main.isFocused() && native().probeWindows.some(win => win.id === Number(main.getMediaSourceId().split(":")[1])));
   await waitFor("preview returns with fullscreen host", () => {
     const snapshot = native();
-    return panels().length === 1 && panels().every(win => win.isVisible() && snapshot.probeWindows.some(item => item.id === Number(win.getMediaSourceId().split(":")[1])));
+    return panels().length === 1 && panels().every(win => win.isVisible() && win.getOpacity() === 1 && snapshot.probeWindows.some(item => item.id === Number(win.getMediaSourceId().split(":")[1])));
   });
   observe("return-to-fullscreen-host-space", false);
   const leftFullscreen = once(main, "leave-full-screen", { signal: AbortSignal.timeout(10_000) });
