@@ -539,8 +539,10 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
 	var activePlugins []pluginpkg.Plugin
+	var activationPlan pluginpkg.ActivationPlan
 	if !safeMode {
-		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins, factories...)
+		var activationErr error
+		activationPlan, activationErr = ResolvePluginActivationPlan(cfg, discoveredPlugins, factories...)
 		if activationErr != nil {
 			return nil, activationErr
 		}
@@ -572,7 +574,7 @@ func NewSession(opts Options) (*Session, error) {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
 	selection := productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activePlugins, factories)
-	pluginHost, pluginKernel, err := buildPluginHostForBinding(context.Background(), activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), cfg.Composition != nil, opts.DriverProfile, binding, storageTransfers, factories...)
+	pluginHost, pluginKernel, err := buildPluginHostWithPlan(context.Background(), activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(selection, safeMode), cfg.Composition != nil, opts.DriverProfile, binding, storageTransfers, &activationPlan, factories...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
