@@ -89,7 +89,7 @@ func (p *personalActions) commandRuleScope(raw json.RawMessage) (personalreview.
 	if err := json.Unmarshal(a.Arguments, &instruction); err != nil {
 		return personalreview.RuleScope{}, err
 	}
-	description := "Run only this exact command in " + a.CWD + ": " + instruction.Command
+	description := "Run only this exact command in " + a.CWD + ": " + a.ResolvedCommand
 	if a.Operation == "process" {
 		description = "Apply only this exact instruction to process " + instruction.ProcessID + ": " + string(a.Arguments)
 	}

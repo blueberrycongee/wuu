@@ -116,3 +116,40 @@ func TestPersonalCommandActionBindsEnvironmentAndAuthority(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonalCommandApprovalBindsResolvedLocalRunner(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetGitAttributionEnabled(false)
+	kit.SetBoundary(UnconfinedBoundary())
+	kit.SetPermissionMode("unconfined")
+	runner := filepath.Join(kit.RootDir(), "node_modules", ".bin", "vitest")
+	if err = os.MkdirAll(filepath.Dir(runner), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(runner, []byte("#!/bin/sh\nprintf ran > runner-result.txt\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	action, err := kit.PrepareCommandAction(context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"command":"npx vitest run"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.ResolvedCommand != "./node_modules/.bin/vitest run" {
+		t.Fatalf("actual command not presented: %+v", action)
+	}
+	if _, err = kit.ExecuteCommandAction(context.Background(), action); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(kit.RootDir(), "runner-result.txt"))
+	if err != nil || string(data) != "ran" {
+		t.Fatalf("reviewed command did not run: %s %v", data, err)
+	}
+	if err = os.Remove(runner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = kit.ExecuteCommandAction(context.Background(), action); err == nil {
+		t.Fatal("missing reviewed runner allowed fallback")
+	}
+}

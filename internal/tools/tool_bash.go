@@ -258,6 +258,9 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Re
 		command = resolved.Command
 	}
 
+	if frozen, ok := ctx.Value(commandActionContextKey{}).(CommandAction); ok && command != frozen.ResolvedCommand {
+		return toolresult.Result{}, errors.New("reviewed command resolution changed")
+	}
 	timeout := args.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = defaultShellTimeoutSeconds

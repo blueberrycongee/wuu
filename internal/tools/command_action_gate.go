@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/shellpath"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -27,6 +29,7 @@ type CommandAction struct {
 	Operation         string          `json:"operation"`
 	Arguments         json.RawMessage `json:"arguments"`
 	CWD               string          `json:"cwd"`
+	ResolvedCommand   string          `json:"resolved_command,omitempty"`
 	EnvironmentDigest string          `json:"environment_digest"`
 	PermissionMode    string          `json:"permission_mode"`
 	SessionID         string          `json:"session_id"`
@@ -97,6 +100,7 @@ func (t *Toolkit) PrepareCommandAction(ctx context.Context, call providers.ToolC
 	}
 	cwd := t.RootDir()
 	identity := ""
+	resolvedCommand := ""
 	if checked.Name == "bash" {
 		var args bashArgs
 		if err = decodeArgs(call.Arguments, &args); err != nil {
@@ -108,6 +112,14 @@ func (t *Toolkit) PrepareCommandAction(ctx context.Context, call providers.ToolC
 		cwd, err = resolveShellWorkingDir(ctx, t.env, args.CWD)
 		if err != nil {
 			return CommandAction{}, err
+		}
+		resolvedCommand = args.Command
+		if call.Name == "bash" && !args.RunInBackground && bashCommandLooksLikeVerification(args.Command) {
+			resolved, err := resolveRunTestCommand(cwd, args.Command)
+			if err != nil {
+				return CommandAction{}, err
+			}
+			resolvedCommand = resolved.Command
 		}
 		if (args.RunInBackground || call.Name == "process_start") && len(t.env.ProtectedPaths) > 0 {
 			return CommandAction{}, errors.New("protected read/write policy does not support background processes")
@@ -163,16 +175,25 @@ func (t *Toolkit) PrepareCommandAction(ctx context.Context, call providers.ToolC
 			return CommandAction{}, err
 		}
 	}
-	binding, err := json.Marshal(struct {
-		Environment               []string
-		Root, Prefix              string
-		Enforce, AllowMutations   bool
-		FileRoots, ProtectedPaths []string
-	}{env, t.RootDir(), prefix, t.boundary.Enforce, t.boundary.AllowMutations, t.env.FileScopeRoots, t.env.ProtectedPaths})
+	interpreter, err := shellpath.LoginBash()
 	if err != nil {
 		return CommandAction{}, err
 	}
-	return CommandAction{CallID: call.ID, Operation: call.Name, Arguments: json.RawMessage(call.Arguments), CWD: cwd, EnvironmentDigest: sha256Hex(binding), PermissionMode: t.env.PermissionMode, SessionID: t.SessionID(), ActorID: t.env.AgentID, ProcessIdentity: identity}, nil
+	interpreter.Path, err = exec.LookPath(interpreter.Path)
+	if err != nil {
+		return CommandAction{}, err
+	}
+	binding, err := json.Marshal(struct {
+		Environment               []string
+		Interpreter               shellpath.Shell
+		Root, Prefix              string
+		Enforce, AllowMutations   bool
+		FileRoots, ProtectedPaths []string
+	}{env, interpreter, t.RootDir(), prefix, t.boundary.Enforce, t.boundary.AllowMutations, t.env.FileScopeRoots, t.env.ProtectedPaths})
+	if err != nil {
+		return CommandAction{}, err
+	}
+	return CommandAction{CallID: call.ID, Operation: call.Name, Arguments: json.RawMessage(call.Arguments), CWD: cwd, ResolvedCommand: resolvedCommand, EnvironmentDigest: sha256Hex(binding), PermissionMode: t.env.PermissionMode, SessionID: t.SessionID(), ActorID: t.env.AgentID, ProcessIdentity: identity}, nil
 }
 
 func (t *Toolkit) ValidateCommandAction(ctx context.Context, a CommandAction) error {
