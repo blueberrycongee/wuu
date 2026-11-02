@@ -1603,6 +1603,30 @@ describe("AppState stream cache lifecycle", () => {
     streamTextStore.clearItem("turn-bg", "agent-bg");
   });
 
+  it.each(["agentMessage", "reasoning"])("publishes the first visible %s delta again after a whitespace retry", (kind) => {
+    const key = streamTextKey("turn-1", "agent-1", "text");
+    const state = { ...initialState, thread: threadWithUserTexts(["hi"]) };
+    const ingest = (operation: "delta" | "replace", text: string) => handleStreamingNotification({
+      kind: "notification", workdir: "/repo", message: {
+        method: `item/${kind}/${operation}`,
+        params: { thread_id: "thread-1", turn_id: "turn-1", item_id: "agent-1", [operation === "delta" ? "delta" : "text"]: text },
+      },
+    }, state);
+
+    expect(ingest("delta", "\n\u00a0")).toBe("stream");
+    expect(ingest("delta", "first")).toBe("stream-state");
+    expect(ingest("delta", " answer")).toBe("stream");
+    expect(ingest("replace", "")).toBe("stream");
+    expect(streamTextStore.get(key)).toBe("\n\u00a0first answer");
+    expect(ingest("delta", "\t")).toBe("stream");
+    expect(ingest("delta", "second")).toBe("stream-state");
+    expect(streamTextStore.get(key)).toBe("\tsecond");
+    expect(ingest("replace", " ")).toBe("stream");
+    expect(ingest("replace", "third")).toBe("stream-state");
+    expect(ingest("delta", " answer")).toBe("stream");
+    expect(streamTextStore.get(key)).toBe("third answer");
+  });
+
   it("keeps visible text through an empty replace while resetting the next delta base", () => {
     const key = streamTextKey("turn-1", "agent-1", "text");
     const state = {
