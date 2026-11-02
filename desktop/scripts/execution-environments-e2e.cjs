@@ -44,8 +44,8 @@ async function openSettingsPage(win, label, ready) {
 async function openRuntime(win) {
   await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-trigger")));
   await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
-  await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
-  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-settings-entry="settings"]')));
+  await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-execution-environments"]');
 }
