@@ -59,6 +59,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
             </span>
           ))}
           <textarea
+            data-wuu-component="composer-input"
             aria-label={label}
             value={prompt}
             onChange={(event) => {

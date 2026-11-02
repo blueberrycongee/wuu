@@ -148,6 +148,8 @@ type Env struct {
 	// External engines use a direct browser/CUA surface and receive screenshot
 	// pixels without needing access to the workspace's file tools.
 	externalCapabilitiesOnly bool
+	conversationMCPServers   map[string]bool
+	conversationPluginTools  map[string]bool
 
 	// Optional dependencies — nil means the feature is unavailable.
 	// Tools check for nil and return a clear error rather than panic.

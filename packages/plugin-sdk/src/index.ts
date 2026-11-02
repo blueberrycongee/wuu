@@ -3138,6 +3138,7 @@ export * from "./ui-conversation.js";
 export * from "./ui-composer-runtime.js";
 export * from "./ui-environment.js";
 export * from "./ui-submission.js";
+export * from "./ui-plugin-reference.js";
 export * from "./ui-search.js";
 export * from "./ui-terminals.js";
 export * from "./ui-browser.js";

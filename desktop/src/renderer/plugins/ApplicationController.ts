@@ -58,6 +58,7 @@ import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
+import { ApplicationMCPConnectorLogin, type MCPConnectorLoginIntent } from "./ApplicationMCPConnectorLogin";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
 import { ApplicationComposerRuntime, isApplicationComposerRuntimeAction } from "./ApplicationComposerRuntime";
 import { ApplicationConversationDetails, isApplicationConversationDetailsAction } from "./ApplicationConversationDetails";
@@ -271,7 +272,14 @@ export class ApplicationController implements HostApplicationService {
     } });
   }
   private settingsControlsOwner?: ReturnType<typeof createApplicationSettingsControls>;
-  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench }); }
+  private connectorLoginOwner?: ApplicationMCPConnectorLogin;
+  private get connectorLogin() { return this.connectorLoginOwner ??= new ApplicationMCPConnectorLogin({
+    context: () => JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
+    presentation: () => JSON.stringify([this.state.activeSessionTabID, this.settings, this.state.nativeSection ?? "conversations",
+      this.state.catalogSection ?? "plugins", this.state.catalogPluginID ?? ""]),
+    inventory: () => this.state.initialized?.extension_inventory ?? [], workbench: () => this.workbench,
+  }); }
+  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench, connectorLogin: this.connectorLogin }); }
   get contributions(): UIContributionRegistryV1 {
     if (!this.dependencies) throw new Error("Application contribution registry is unavailable");
     return this.dependencies.contributions;
@@ -534,7 +542,8 @@ export class ApplicationController implements HostApplicationService {
       ...thread, turns: thread.turns.map(turn => ({ ...turn, items: [], items_view: "conversation" as const })), child_agents: undefined,
       worktree: thread.worktree && { ...thread.worktree, changed_files: thread.worktree.changed_files && [...thread.worktree.changed_files] },
     }));
-    return { state, sidebarThreads, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent };
+    return { state, sidebarThreads, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent,
+      connectorLoginIntent: this.connectorLoginOwner?.checkpoint() };
   }
   restoreSidebar(checkpoint: { state: AppState; sidebarThreads?: Thread[] }): void {
     // The newly loaded project catalog owns visibility. A removed/replaced
@@ -584,8 +593,10 @@ export class ApplicationController implements HostApplicationService {
     this.publish();
   }
 
-  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"] }): void {
-    this.settings = checkpoint.settings; this.preview = checkpoint.preview; this.publish();
+  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"]; connectorLoginIntent?: MCPConnectorLoginIntent }): void {
+    this.settings = checkpoint.settings; this.preview = checkpoint.preview;
+    if (checkpoint.connectorLoginIntent) this.connectorLogin.restore(checkpoint.connectorLoginIntent);
+    this.publish();
   }
 
   getState = (): AppState => this.state;
@@ -622,6 +633,7 @@ export class ApplicationController implements HostApplicationService {
     }
     for (const id of this.draftRevisions.keys()) if (!next.sessionTabs.some(tab => tab.id === id)) this.draftRevisions.delete(id);
     this.state = next;
+    this.connectorLoginOwner?.reconcile();
     this.projectsOwner?.notifyChanged();
     this.onboardingOwner?.notifyChanged();
     this.environmentOwner?.notifyChanged();
@@ -643,6 +655,7 @@ export class ApplicationController implements HostApplicationService {
         notify, reportError: error => console.error("Application event notification failed", error) });
       this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
+      if (this.dependencies) this.subscriptions.push(this.workbench.subscribe(() => this.connectorLoginOwner?.reconcile()));
       if (this.browser.available) {
         this.subscriptions.push(this.browser.onInvalidate(({ workdir }) => {
           this.activitySessions = clearActivitiesForWorkdir(this.activitySessions, workdir);
@@ -686,6 +699,7 @@ export class ApplicationController implements HostApplicationService {
       this.submissionOwner?.dispose();
       this.submissionOwner = undefined;
       this.lifetime?.abort();
+      this.connectorLoginOwner?.suspend();
       this.clearPreviewVisibility?.();
       this.conversationDetails.stop();
       this.composerRuntimeOwner?.dispose();
@@ -841,6 +855,7 @@ export class ApplicationController implements HostApplicationService {
   setSettings(open: boolean, pageId = this.settings.pageId): void {
     if (open === this.settings.open && pageId === this.settings.pageId) return;
     this.settings = { open, pageId };
+    this.connectorLoginOwner?.reconcile();
     this.publish();
   }
 

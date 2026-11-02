@@ -1522,27 +1522,33 @@ func TestNewSessionWiresPluginHooks(t *testing.T) {
 
 func TestMCPServersFromConfigAndPluginsPrefixesPluginServers(t *testing.T) {
 	disabled := false
+	enabled := true
 	plugins := []pluginpkg.Plugin{{
 		Manifest: pluginpkg.Manifest{
 			ID: "docs",
 			MCPServers: map[string]config.MCPServerConfig{
 				"search": {Command: "plugin-docs", ToolTimeoutMS: 45000},
+				"setup":  {URL: "https://setup.example.test/mcp", Connector: &config.MCPConnectorDescriptor{Title: "Setup", SetupRequired: "Ask the administrator."}},
 			},
 		},
 	}}
 	cfg := config.Config{
 		MCPServers: map[string]config.MCPServerConfig{
-			"search":                  {Command: "user-docs"},
+			"search":                  {Command: "user-docs", Connector: &config.MCPConnectorDescriptor{Title: "Native metadata", SetupRequired: "Informational only"}},
 			"plugin.docs.search":      {Enabled: &disabled, ToolTimeoutMS: 90000},
+			"plugin.docs.setup":       {Enabled: &enabled},
 			"plugin.cua-mac.computer": {},
 		},
 	}
 	servers := mcpServersFromConfigAndPlugins(cfg, plugins)
-	if servers["search"].Command != "user-docs" {
+	if servers["search"].Command != "user-docs" || servers["search"].Enabled != nil {
 		t.Fatalf("user MCP server changed: %+v", servers)
 	}
 	if got := servers["plugin.docs.search"]; got.Command != "plugin-docs" || got.Enabled == nil || *got.Enabled || got.ToolTimeoutMS != 90000 {
 		t.Fatalf("plugin MCP server missing or unprefixed: %+v", servers)
+	}
+	if got := servers["plugin.docs.setup"]; got.Enabled == nil || *got.Enabled || got.Connector == nil {
+		t.Fatalf("setup-required connector enabled by raw override: %+v", got)
 	}
 	if _, ok := servers["plugin.cua-mac.computer"]; ok {
 		t.Fatalf("inactive plugin MCP override must be ignored: %+v", servers)
@@ -3633,5 +3639,28 @@ func TestRuntimeCompositionProfileOverridePreservesExplicitChoices(t *testing.T)
 	reloaded, err := owner.applyRuntimeConfig(config.Config{})
 	if err != nil || reloaded.Composition == nil || reloaded.Composition.Profile != "personal" {
 		t.Fatalf("reload lost process-scoped profile: %+v %v", reloaded.Composition, err)
+	}
+}
+
+func TestMCPIdentityProbeAdmittedOnlyFromActivePackageDefinition(t *testing.T) {
+	disabled := false
+	readonly := true
+	probe := &config.MCPIdentityProbe{Tool: "self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id"}}
+	descriptor := &config.MCPConnectorDescriptor{Title: "Documents", IdentityProbe: probe}
+	declared := config.MCPServerConfig{URL: "https://example.test/mcp", Enabled: &disabled, Connector: descriptor, ToolOverrides: map[string]config.MCPToolOverride{"self": {ReadOnly: &readonly}}}
+	item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "fixture", MCPServers: map[string]config.MCPServerConfig{"docs": declared}}, Source: "user", Root: "/trusted/fixture"}
+	cfg := config.Config{MCPServers: map[string]config.MCPServerConfig{"standalone": declared, "plugin.fixture.docs": {Connector: &config.MCPConnectorDescriptor{Title: "Injected", IdentityProbe: &config.MCPIdentityProbe{Tool: "unsafe"}}}}}
+	manager, err := startMCPManager(cfg, []pluginpkg.Plugin{item}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	standalone, _ := manager.Config("standalone")
+	if standalone.IdentityProbe != nil || standalone.IdentitySource != "" {
+		t.Fatal("standalone metadata admitted an identity probe")
+	}
+	plugin, _ := manager.Config("plugin.fixture.docs")
+	if plugin.IdentityProbe == nil || plugin.IdentityProbe.Tool != "self" || plugin.IdentitySource == "" {
+		t.Fatalf("canonical package probe missing: %+v", plugin)
 	}
 }

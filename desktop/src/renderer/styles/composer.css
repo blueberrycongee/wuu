@@ -688,12 +688,12 @@
 }
 
 /* Draw the draft's keyboard ring inside the editor's clipped edge. */
-html[data-focus-modality="keyboard"] .composer-editor:has(> textarea:focus-visible)::after {
+html[data-focus-modality="keyboard"] .composer-editor:has(> :is(textarea, .composer-rich-input):focus-visible)::after {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
+html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-rich-input):focus-visible {
   outline: none;
 }
 
@@ -1047,7 +1047,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding: 4px 0 8px;
 }
 
-.composer textarea {
+.composer :is(textarea, .composer-rich-input) {
   /* Keep hints at the same quiet level as aggregated tool-call summaries. */
   --placeholder-ink: var(--ink-quiet);
   display: block;
@@ -1074,12 +1074,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 /* The Plus button's hit box and one grid gap already separate it from the
  * draft. Dropping the textarea's leading inset keeps the visible icon-to-text
  * gap at one card inset instead of adding a second inset inside the field. */
-.composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+.composer-editor:has(> .composer-bar-left .composer-plus-button) > :is(textarea, .composer-rich-input) {
   padding-inline-start: 0;
 }
 
 /* Keep an empty editor's hint on one line in narrow panes. */
-.composer textarea::placeholder {
+.composer :is(textarea, .composer-rich-input)::placeholder {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -1117,7 +1117,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   box-shadow: var(--shadow-tray);
 }
 
-.composer textarea:disabled {
+.composer :is(textarea, .composer-rich-input):disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
 }
@@ -2347,13 +2347,13 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .composer-editor > textarea {
+  .composer-editor > :is(textarea, .composer-rich-input) {
     grid-column: 1 / -1;
     grid-row: 1;
   }
 
   /* The draft has the full row to itself once the toolbar wraps below. */
-  .composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+  .composer-editor:has(> .composer-bar-left .composer-plus-button) > :is(textarea, .composer-rich-input) {
     padding-inline-start: var(--space-2);
   }
 

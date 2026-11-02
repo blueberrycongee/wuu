@@ -16,11 +16,10 @@ func (s *Server) handleMCPAuthStart(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
-	if err != nil {
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	result, err := mgr.StartOAuthWithRedirect(ctx, params.Name, params.RedirectURI)
+	result, err := s.rt.StartMCPAuth(ctx, s.sessionOperationCtx, params.Name, params.RedirectURI)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -34,6 +33,9 @@ func (s *Server) handleMCPAuthStart(ctx context.Context, req Request) error {
 func (s *Server) handleMCPAuthStatus(ctx context.Context, req Request) error {
 	params, err := parseMCPServerActionParams(req)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	mgr, err := s.mcpManager()
@@ -52,15 +54,10 @@ func (s *Server) handleMCPAuthFinish(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
-	if err != nil {
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	serverStatus, err := mgr.FinishOAuth(ctx, params.Name, params.State, params.Code)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	authStatus, err := mgr.OAuthStatus(ctx, params.Name)
+	serverStatus, authStatus, err := s.rt.FinishMCPAuth(ctx, params.Name, params.State, params.Code)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -74,8 +71,14 @@ func (s *Server) handleMCPAuthRemove(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	mgr, err := s.mcpManager()
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.rt.CancelPendingMCPAuth(params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := mgr.RemoveOAuth(ctx, params.Name); err != nil {
@@ -95,11 +98,10 @@ func (s *Server) handleMCPAuthCancel(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	mgr, err := s.mcpManager()
-	if err != nil {
+	if err := s.checkMCPConnectorDomain(params.Name); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, map[string]bool{"ok": true}, mgr.CancelOAuth(ctx, params.Name, params.State))
+	return s.writeResponse(req.ID, map[string]bool{"ok": true}, s.rt.CancelMCPAuth(ctx, params.Name, params.State))
 }
 
 func parseMCPAuthFinishParams(req Request) (MCPAuthFinishParams, error) {
@@ -121,6 +123,7 @@ func parseMCPAuthFinishParams(req Request) (MCPAuthFinishParams, error) {
 func mcpAuthStatusResult(status mcp.OAuthStatus) MCPAuthStatusResult {
 	result := MCPAuthStatusResult{
 		Name:          status.ServerID,
+		Identity:      status.Identity,
 		Authenticated: status.Authenticated,
 		Scopes:        append([]string(nil), status.Scopes...),
 	}
@@ -128,4 +131,20 @@ func mcpAuthStatusResult(status mcp.OAuthStatus) MCPAuthStatusResult {
 		result.ExpiresAt = status.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	return result
+}
+
+func (s *Server) handleMCPIdentityRefresh(ctx context.Context, req Request) error {
+	params, err := parseMCPServerActionParams(req)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.admitMCPConnectorAction(ctx, params.Name); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	mgr, err := s.mcpManager()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	status, err := mgr.RefreshIdentity(ctx, params.Name)
+	return s.writeResponse(req.ID, mcpAuthStatusResult(status), err)
 }

@@ -102,3 +102,52 @@
 .mcp-editor {
   width: min(560px, calc(100vw - var(--space-5) * 2));
 }
+
+
+.mcp-connector {
+  align-items: flex-start;
+}
+
+.mcp-connector .mcp-service-copy {
+  flex-basis: 20ch;
+}
+
+.mcp-connector-expanded {
+  flex-basis: 100%;
+  min-width: 0;
+  margin-inline-start: calc(var(--icon-size) + var(--space-3));
+}
+
+.mcp-connector-description {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-secondary);
+  font-size: var(--font-ui);
+}
+
+.mcp-connector-details {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-ui);
+}
+
+.mcp-connector-details dt {
+  color: var(--ink-secondary);
+}
+
+.mcp-connector-details dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .mcp-connector-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mcp-connector-details dd + dt {
+    margin-top: var(--space-2);
+  }
+}
