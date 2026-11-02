@@ -250,8 +250,10 @@ WUU_ERROR_STYLE_FONT=20 npm --prefix desktop run test:e2e:error-message-style
 `WUU_DESKTOP_CORE` 指定已构建的核心。每次使用独立的应用与用户配置和 loopback
 合成模型服务，经过真实 Electron 输入、preload、主进程和 Go。检查浅色/深色、
 1280/640px 窗口、IM/普通气泡、字号与裁切、原生详情开合和键盘焦点、HTTP 401 后
-手动继续，以及 HTTP 503 后自动恢复。详情应保留核心输出的完整诊断；原始模型服务
-错误正文可能在到达渲染器前被归一化。
+手动继续，以及 HTTP 503 后自动恢复。详情应保留核心输出的诊断。对于原生适配器
+收到的结构化模型服务错误，核心提取错误消息、遮蔽凭据格式的片段，并将详情限制为
+200 个 Unicode 字符。其他响应字段和非结构化代理页面不会转发；无法解析的错误
+保留其失败类别。
 
 session CI 使用已有渲染器/核心构建运行两种字号，并上传合成截图、布局测量、日志
 和构建哈希。证据默认位于 `desktop/out/e2e/error-message-style-15/` 或
