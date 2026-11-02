@@ -123,7 +123,7 @@ func documentRows[T any](ctx context.Context, s *Store, namespace, prefix string
 	return rows, err
 }
 func defaultReviewSettings() Settings {
-	return Settings{Revision: 1, PolicyVersion: PersonalFilesPolicyVersion, Scope: []string{"write_file", "edit_file"}}
+	return Settings{AutoReviewEnabled: true, Revision: 1, PolicyVersion: PersonalFilesPolicyVersion, Scope: []string{"write_file", "edit_file"}}
 }
 func validateReviewSettings(settings Settings) error {
 	if settings.PolicyVersion != PersonalFilesPolicyVersion {
@@ -197,7 +197,7 @@ func (s *Store) documentSetSettings(ctx context.Context, spaceID string, enabled
 
 // WithPolicyInspection fences policy writers through an effect on this exact
 // selected binding. Initialize GetSettings for the relevant space beforehand;
-// its conservative first-use default is itself a policy write.
+// its first-use default is itself a policy write.
 func (s *Store) WithPolicyInspection(ctx context.Context, use func() error) error {
 	if s == nil || s.documents == nil {
 		return persistence.ErrInspectionUnsupported

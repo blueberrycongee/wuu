@@ -25,7 +25,7 @@ func TestSettingsAuditIsAttributableAtomicAndDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now().UTC()
-	after, err := store.SetSettings(ctx, "space", true, before.Revision, "stable-owner")
+	after, err := store.SetSettings(ctx, "space", false, before.Revision, "stable-owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,17 +37,17 @@ func TestSettingsAuditIsAttributableAtomicAndDurable(t *testing.T) {
 		t.Fatalf("events=%+v err=%v", events, err)
 	}
 	event := events[0]
-	if event.Actor != "stable-owner" || event.OldEnabled || !event.NewEnabled || event.Revision != after.Revision || event.PolicyVersion != after.PolicyVersion || event.At.Before(started) || event.At.After(time.Now().UTC()) {
+	if event.Actor != "stable-owner" || !event.OldEnabled || event.NewEnabled || event.Revision != after.Revision || event.PolicyVersion != after.PolicyVersion || event.At.Before(started) || event.At.After(time.Now().UTC()) {
 		t.Fatalf("incorrect settings provenance: %+v", event)
 	}
 	if _, err := store.db.Exec(`CREATE TRIGGER synthetic_settings_audit_failure BEFORE INSERT ON personal_review_settings_events BEGIN SELECT RAISE(ABORT,'synthetic persistence fault'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetSettings(ctx, "space", false, after.Revision, "stable-owner"); err == nil {
+	if _, err := store.SetSettings(ctx, "space", true, after.Revision, "stable-owner"); err == nil {
 		t.Fatal("audit failure was ignored")
 	}
 	retained, err := store.GetSettings(ctx, "space")
-	if err != nil || !retained.AutoReviewEnabled || retained.Revision != after.Revision {
+	if err != nil || retained.AutoReviewEnabled || retained.Revision != after.Revision {
 		t.Fatalf("audit failure changed settings: %+v %v", retained, err)
 	}
 	events, err = store.SettingsEvents(ctx, "space")

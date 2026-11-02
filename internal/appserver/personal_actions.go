@@ -111,7 +111,7 @@ func newPersonalActionsForState(s *Server, state *runtime.State) (*personalActio
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	operations := map[string]personalreview.Operation{}
 	for _, name := range []string{"write_file", "edit_file"} {
-		operations[name] = personalreview.Operation{Version: "personal-local-file.v1", Effect: personalreview.DataWrite, Describe: p.describe, Execute: p.execute}
+		operations[name] = personalreview.Operation{Version: "personal-local-file.v1", Effect: personalreview.DataWrite, Describe: p.describe, Execute: p.execute, RuleScope: p.fileRuleScope}
 	}
 	p.engine, err = personalreview.New(personalreview.Options{Store: store, Operations: operations, Authenticate: p.authenticate, WithAuthority: p.withAuthority, WithExecutionAuthority: p.withExecutionAuthority, Review: p.review})
 	if err == nil {
@@ -640,15 +640,25 @@ func (p *personalActions) review(ctx context.Context, input personalreview.Revie
 			_ = p.callEffect(ctx, nil, "release", PersonalEffectReference{EffectID: prepared.EffectID}, nil)
 		}
 	}
+	return p.reviewDecision(ctx, input)
+}
+
+func (p *personalActions) reviewDecision(ctx context.Context, input personalreview.ReviewInput) (approvefor.Decision, error) {
 	if input.Confirmation != nil && input.Confirmation.Choice == personalreview.ApproveOnce && input.Confirmation.Digest == input.Action.Digest && input.Confirmation.OwnerID == input.Action.OwnerID {
-		return approvefor.Decision{Outcome: "allow", Reason: "Authenticated owner confirmed this exact bounded file action"}, nil
+		return approvefor.Decision{Outcome: "allow", Reason: "Authenticated owner confirmed this exact action"}, nil
+	}
+	if input.RuleApproved {
+		return approvefor.Decision{Outcome: "allow", Reason: "Allowed by your saved rule"}, nil
+	}
+	if input.PreviouslyReviewed {
+		return approvefor.Decision{Outcome: "allow", Reason: "Automatic review already approved this exact action"}, nil
 	}
 	settings, err := p.store.GetSettings(ctx, input.Action.Scope.SpaceID)
 	if err != nil {
 		return approvefor.Decision{}, err
 	}
 	if !settings.AutoReviewEnabled {
-		return approvefor.Decision{Outcome: "unsure", Reason: "Review the file target and exact changes before approving once"}, nil
+		return approvefor.Decision{Outcome: "unsure", Reason: "Review what will happen before allowing this action"}, nil
 	}
 	if len(input.UserMessages) == 0 {
 		return approvefor.Decision{Outcome: "unsure", Reason: "Original authenticated user request is unavailable; confirm this exact action manually"}, nil
@@ -703,6 +713,9 @@ func (p *personalActions) Call(ctx context.Context, operation string, raw json.R
 	}
 	if _, err := p.authenticate(ctx); err != nil {
 		return nil, err
+	}
+	if operation == "review.rules" || operation == "review.rule.preview" {
+		return p.callRules(ctx, operation, raw)
 	}
 	switch operation {
 	case "review.list":
