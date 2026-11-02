@@ -282,15 +282,18 @@ export class ApplicationController implements HostApplicationService {
   }
   readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
     getSnapshot: (target: ApplicationConversationTextTargetV1) => {
-      const item = this.knownThread(target.threadId)?.turns.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
+      const thread = this.knownThread(target.threadId);
+      const side = this.snapshot.sideConversation;
+      const sideThreadId = side.entry?.summary?.side_thread_id ?? (side.parentThreadId ? `side:${side.parentThreadId}` : undefined);
+      const turns = thread?.turns ?? (sideThreadId === target.threadId ? side.turns : undefined);
+      const item = turns?.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
       if (!item) return undefined;
       const key = streamTextKey(target.turnId, target.itemId, target.field);
       return streamTextStore.has(key) ? streamTextStore.get(key) : item[target.field];
     },
     subscribe: (target: ApplicationConversationTextTargetV1, listener: () => void) => {
-      if (!this.knownThread(target.threadId)?.turns.some(turn => turn.id === target.turnId && turn.items.some(item => item.id === target.itemId))) {
-        throw new Error("Conversation text source is unavailable");
-      }
+      // A rendered item can precede its first text or canonical snapshot.
+      // Keep observing its address; getSnapshot fences unavailable sources.
       const key = streamTextKey(target.turnId, target.itemId, target.field);
       let previous = this.conversationText.getSnapshot(target);
       let stopped = false;

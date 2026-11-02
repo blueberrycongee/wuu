@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ConversationTurnList } from "./ConversationTurnList";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { sideThreadMessagesToTurns } from "./SideThreadTurns";
 import type { SideThreadEntryState } from "./SideThreadState";
 import { latestAgentMessageItemID, TurnView } from "./TurnView";
@@ -118,25 +119,27 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
           role="log"
           aria-live={active ? "polite" : "off"}
         >
-          <div className="conversation-width session-flow side-thread-panel__conversation">
-            <ConversationTurnList
-              threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
-              turns={turns}
-              renderTurn={(turn) => (
-                <ArtifactPreviewContext.Provider value={undefined}>
-                <TurnView
-                  threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
-                  turn={turn}
-                  cwd={cwd}
-                  onOpenFile={onOpenFile}
-                  latestAgentMessageID={latestMessageID}
-                  onStreamFrame={handleStreamFrame}
-                  isLatestTurn={turn.id === latestTurn?.id}
-                />
-                </ArtifactPreviewContext.Provider>
-              )}
-            />
-          </div>
+          <ConversationRenderActivityProvider active={active}>
+            <div className="conversation-width session-flow side-thread-panel__conversation">
+              <ConversationTurnList
+                threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
+                turns={turns}
+                renderTurn={(turn) => (
+                  <ArtifactPreviewContext.Provider value={undefined}>
+                    <TurnView
+                      threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
+                      turn={turn}
+                      cwd={cwd}
+                      onOpenFile={onOpenFile}
+                      latestAgentMessageID={latestMessageID}
+                      onStreamFrame={handleStreamFrame}
+                      isLatestTurn={turn.id === latestTurn?.id}
+                    />
+                  </ArtifactPreviewContext.Provider>
+                )}
+              />
+            </div>
+          </ConversationRenderActivityProvider>
         </div>
 
         <div ref={footerRef} className="side-thread-panel__footer">
