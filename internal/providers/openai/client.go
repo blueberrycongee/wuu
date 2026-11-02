@@ -18,6 +18,10 @@ import (
 
 const defaultTimeout = 120 * time.Second
 
+// Keep structured error responses parseable before extracting their bounded
+// display message. A short byte prefix can cut off the enclosing JSON object.
+const maxErrorResponseBytes = 16 << 10
+
 const (
 	wireAPIChat      = "chat"
 	wireAPIResponses = "responses"
@@ -289,8 +293,8 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		snippet := string(respBody)
-		if len(snippet) > 400 {
-			snippet = snippet[:400]
+		if len(snippet) > maxErrorResponseBytes {
+			snippet = snippet[:maxErrorResponseBytes]
 		}
 		body := fmt.Sprintf("%s: %s", httpResp.Status, snippet)
 		err := &providers.HTTPError{
@@ -499,7 +503,7 @@ func (c *Client) doSingleChatCompletionsRequest(
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorResponseBytes))
 		_ = resp.Body.Close()
 		body := fmt.Sprintf("%s: %s", resp.Status, string(snippet))
 		err := &providers.HTTPError{

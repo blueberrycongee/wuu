@@ -292,8 +292,11 @@ and user profiles with a loopback synthetic provider, exercising real Electron
 input, preload, main and Go. It checks light/dark themes, 1280/640px windows,
 IM/regular bubbles, readable text, clipping, native disclosure and keyboard
 focus, manual continuation after HTTP 401, and automatic recovery after HTTP 503.
-The details must preserve the core's diagnostic; raw provider error bodies may
-be normalized before reaching the renderer.
+The details must preserve the core's diagnostic. For structured native-provider
+errors, the core extracts the error message, redacts credential-shaped fragments,
+and limits the detail to 200 Unicode characters. Other response fields and
+unstructured proxy pages are not forwarded. Unparseable errors retain their
+failure category.
 
 Session CI runs both font sizes against its existing renderer/core builds and
 uploads synthetic screenshots, geometry, logs and build hashes. Evidence defaults
