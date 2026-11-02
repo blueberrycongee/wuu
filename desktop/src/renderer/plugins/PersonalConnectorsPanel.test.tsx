@@ -28,6 +28,11 @@ describe('Personal connector owner surface',()=>{
  });
  it('displays exact recipient/body and dispatches one digest-bound decision',async()=>{const s=service();await render(s);expect(container.textContent).toContain('reader@example.invalid');let finish:(x:{state:string;action_id:string})=>void=()=>{};s.decide.mockImplementation(()=>new Promise(resolve=>{finish=resolve}));await React.act(async()=>{approve().click();approve().click()});expect(s.decide).toHaveBeenCalledTimes(1);expect(s.decide).toHaveBeenCalledWith({action_id:'a',digest:'a'.repeat(64),approve:true});await React.act(async()=>finish({state:'completed',action_id:'a'}));});
  it('locks an ambiguous response until read-only refresh without replay',async()=>{const s=service();s.decide.mockRejectedValue(new Error('secret upstream error'));await render(s);await React.act(async()=>approve().click());expect(approve().disabled).toBe(true);expect(container.textContent).not.toContain('secret upstream');expect(container.querySelector('[role="alert"]')).not.toBeNull();expect(s.decide).toHaveBeenCalledTimes(1);});
+ it('locks stale cards when the read following a confirmed decision fails',async()=>{
+  const s=service();let reads=0;s.actions=async()=>{if(++reads>1)throw new Error('read unavailable');return pending()};
+  await render(s,true);await React.act(async()=>approve().click());
+  expect(approve().disabled).toBe(true);expect(s.decide).toHaveBeenCalledTimes(1);
+ });
  it('unknown and incomplete confirmation data cannot authorize',async()=>{const s=service();s.actions=async()=>({actions:[{...pending().actions[0],arguments_json:undefined}]});await render(s);expect(approve()?.disabled??true).toBe(true);});
  it('ignores a late decision response after the Personal service changes',async()=>{
   const s=service();let finish:()=>void=()=>{};s.decide.mockImplementation(()=>new Promise(resolve=>{finish=()=>resolve({state:'completed',action_id:'a'})}));
