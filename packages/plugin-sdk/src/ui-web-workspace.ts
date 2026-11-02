@@ -67,6 +67,8 @@ type WebWorkspaceHistoryEntry = {
   url: string;
   title: string;
   visitedAt: number;
+  /** Decayed visit frequency at visitedAt; absent on older records or providers. */
+  visitScore?: number;
 };
 
 type WebWorkspaceBookmark = {
