@@ -1449,10 +1449,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 /* Waiting for a draft: the same disc, muted, with its arrow still legible so
- * it reads as Send not yet available rather than an empty circle. */
+ * it reads as Send not yet available rather than an empty circle. Reset the
+ * global disabled opacity so this disc matches the voice control exactly. */
 .composer-send-button:disabled {
   cursor: default;
-  color: var(--ink-muted);
+  color: var(--ink-faint);
+  opacity: 1;
 }
 
 .composer-stop-button {

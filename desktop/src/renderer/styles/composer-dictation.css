@@ -5,10 +5,10 @@
 }
 .composer-action-button.composer-dictation-button::before,
 .composer-dictation-recording .composer-action-button::before {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 .composer-action-button.composer-dictation-button:hover:not(:disabled)::before,
-.composer-dictation-recording .composer-action-button:hover:not(:disabled)::before { background: var(--surface-3); }
+.composer-dictation-recording .composer-action-button:hover:not(:disabled)::before { background: var(--surface-4); }
 .composer-editor.is-dictating,
 .composer-bar.is-dictating { align-items: center; }
 .composer-editor.is-dictating > :is(textarea, .composer-rich-input),
