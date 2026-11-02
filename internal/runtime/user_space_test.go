@@ -177,6 +177,13 @@ func TestUserHostSkillRefreshCannotReintroduceGlobalSkills(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("---\nname: coding-secret\ndescription: Coding only\n---\nPrivate Coding context"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	local := filepath.Join(root, ".agents", "skills", "personal-note")
+	if err := os.MkdirAll(local, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "SKILL.md"), []byte("---\nname: personal-note\ndescription: Personal only\n---\nScoped instructions"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	kit, err := tools.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +195,7 @@ func TestUserHostSkillRefreshCannotReintroduceGlobalSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(skills) != 0 {
+	if len(skills) != 1 || skills[0].Name != "personal-note" {
 		t.Fatalf("user host discovered Coding/global skills: %v", skills)
 	}
 }

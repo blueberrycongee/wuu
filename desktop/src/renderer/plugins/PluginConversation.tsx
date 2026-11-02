@@ -9,6 +9,8 @@ import { ConversationAttachmentPreviewContext } from "../ConversationAttachmentP
 import * as React from "react";
 import { Component, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PluginUIConversationAttachmentProps, PluginUIConversationComposerProps, PluginUIConversationMessageProps, PluginUIConversationViewProps } from "../../shared/workbench";
+import { buildSkillSlashCommands, parseComposerSlashDraft, type ComposerSlashCommand } from "../ComposerSlashCommands";
+import { showErrorToast } from "../Toast";
 import { SplitPaneComposer } from "../ComposerInputSections";
 import { FileSelectionIsolation } from "../FileSelectionContext";
 import { ArtifactThreadContext } from "../ArtifactPreviewContext";
@@ -434,12 +436,26 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
 }
 
 
-export function PluginConversationComposer({ replyContext, conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
+export function PluginConversationComposer({ commands, commandsLoading, commandsError, onRefreshCommands, replyContext, conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
+  const slashCommands = useMemo(() => commands?.flatMap((command): ComposerSlashCommand[] => command.kind === "skill"
+    ? buildSkillSlashCommands([command.skill]).map(item => ({ ...item, id: command.id }))
+    : [{ id: command.id, name: command.name, title: command.description, description: command.description, tag: "", kind: "action" }]), [commands]);
+  const currentDraft = useRef({ conversationId, prompt });
+  currentDraft.current = { conversationId, prompt };
+  const onCommandAction = (command: ComposerSlashCommand) => {
+    const action = commands?.find(item => item.id === command.id);
+    if (action?.kind !== "action") return;
+    const draft = parseComposerSlashDraft(prompt);
+    void Promise.resolve().then(() => action.onSelect()).then(() => {
+      if (draft && currentDraft.current.conversationId === conversationId && currentDraft.current.prompt === prompt) onChangePrompt(draft.args);
+    }).catch(showErrorToast);
+  };
   const images = attachments.filter(file => ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(file.media_type)).map(file => ({ ...file }));
   const files = attachments.filter(file => !images.some(image => image.id === file.id)).map(file => ({ ...file }));
   return <FileSelectionIsolation>
     {replyContext && <div className="plugin-composer-reply-context" data-reply-context="" role="group" aria-label={replyContext.label}><div><span>{replyContext.label}</span><p>{replyContext.preview}</p></div><button type="button" className="settings-button settings-button-ghost" data-action="cancel-reply" aria-label={replyContext.cancelLabel} onClick={replyContext.onCancel}>{replyContext.cancelLabel}</button></div>}
     <SplitPaneComposer key={conversationId} pluginHost={conversationHost} allowWorkspaceReferences={false} framed
+      slashCommands={slashCommands} commandsLoading={commandsLoading} commandsError={commandsError} onRefreshCommands={onRefreshCommands} onCommandAction={onCommandAction}
       placeholder={placeholder} prompt={prompt} setPrompt={onChangePrompt} images={images} files={files}
       running={running} submitting={submitting} queuedCount={queuedCount} pendingCount={pendingCount} stopState={stopState} readOnly={disabled} sendDisabled={sendDisabled} queryHistorySessionID={`plugin:${conversationId}`}
       onPasteAttachmentFiles={onAddAttachments} onRemoveFile={onRemoveAttachment} onRemoveImage={onRemoveAttachment}

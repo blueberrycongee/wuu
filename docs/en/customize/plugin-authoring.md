@@ -490,6 +490,12 @@ The Peers plugin uses `if_running: "steer"` to deliver terminal replies into act
 
 Subagent and Peers qualify tool-call identities with the host-supplied session, tool, call ID, turn ID and step index when available; transport execution IDs do not define retries. Calls without turn and step metadata retain their legacy mapping. Persisted requests continue recovery using their stored IDs; missing historical turn/step identity is not inferred. Peers' existing content-duplicate and uncertain-send matching remain separate policies.
 
+#### Owned session skills
+
+`host.session.inspect` accepts `include_skills: true` for a session owned by the calling plugin. `skills` lists the current user-invocable catalog, with name, source, path, description and invocation metadata. This option never grants access to another plugin's session or the selected Coding workspace. Omitted or empty `skills` means no available skills. A fresh request refreshes the catalog.
+
+Authenticated `host.session.send` user input can carry the same explicit `/skill` identity as the Coding composer. The host validates and expands it before acceptance, freezes the content for queue/recovery, and retains the original draft as display text. Plugin-origin messages do not invoke slash commands.
+
 #### Live session progress
 
 For a status card or subagent dashboard, declare

@@ -343,25 +343,7 @@ export interface PluginUIConversationAttachmentProps {
   onLoad(): void | Promise<string | void>;
 }
 
-export interface PluginUIConversationComposerProps {
-  replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
-  conversationId: string;
-  prompt: string;
-  placeholder?: string;
-  running: boolean;
-  submitting?: boolean;
-  queuedCount?: number;
-  pendingCount?: number;
-  stopState?: "pending" | "retry";
-  disabled?: boolean;
-  sendDisabled?: boolean;
-  attachments: readonly { id: string; filename: string; media_type: string; data: string }[];
-  onChangePrompt(value: string): void;
-  onAddAttachments(files: File[]): void;
-  onRemoveAttachment(id: string): void;
-  onSend(prompt: string): void;
-  onStop(): void;
-}
+export type PluginUIConversationComposerProps = import("../../../packages/plugin-sdk/src/index").PluginUIConversationComposerProps;
 
 /** Native conversation controls for independent transports, such as personal or support conversations. */
 export interface PluginConversationComponents {

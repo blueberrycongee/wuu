@@ -778,6 +778,7 @@ export const enUS = {
   "plugins.retrySurface": "Try again",
   "plugins.surfaceUnavailable": "A plugin view could not be displayed. Check its details in Settings.",
   "plugins.viewUnavailable": "This plugin view is unavailable.",
+  "composer.retryCommands": "Retry",
   "common.loading": "Loading",
   "common.loadingEllipsis": "Loading…",
   "common.back": "Back",

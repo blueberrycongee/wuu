@@ -481,6 +481,7 @@ type SessionInspectParams struct {
 	// Requires an explicit request ID. Progress is an optional display snapshot,
 	// not a delivery receipt, event stream or durable execution result.
 	IncludeProgress bool `json:"include_progress,omitempty"`
+	IncludeSkills   bool `json:"include_skills,omitempty"`
 }
 
 // SessionControlParams coordinates automatic execution without changing Owner
@@ -506,7 +507,18 @@ type SessionAcceptedInput struct {
 	Attachments []SessionInputAttachment     `json:"attachments,omitempty"`
 }
 
+type SessionSkill struct {
+	Name               string `json:"name"`
+	Source             string `json:"source"`
+	Path               string `json:"path,omitempty"`
+	Description        string `json:"description,omitempty"`
+	ArgumentHint       string `json:"argument_hint,omitempty"`
+	UserInvocable      bool   `json:"user_invocable"`
+	DisableModelInvoke bool   `json:"disable_model_invoke"`
+}
+
 type SessionInspectResult struct {
+	Skills        []SessionSkill        `json:"skills,omitempty"`
 	AcceptedInput *SessionAcceptedInput `json:"accepted_input,omitempty"`
 
 	Receipt       *providers.ClientInputReceipt `json:"receipt,omitempty"`

@@ -41,6 +41,7 @@
     "desktop/scripts/ptc-settings-e2e.cjs": "shell",
     "desktop/scripts/build-personal-fixture.cjs": "shell",
     "desktop/scripts/personal-settings-e2e.cjs": "shell",
+    "desktop/scripts/personal-commands-e2e.cjs": "shell",
     "desktop/scripts/personal-approval-ui-e2e.cjs": "shell",
     "desktop/dev/personal/index.tsx": "shell",
     "desktop/dev/personal/shell.ts": "shell",

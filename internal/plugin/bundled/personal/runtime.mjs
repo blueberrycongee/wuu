@@ -2906,7 +2906,7 @@ var routeActions = ["session/route/send", "session/route/inspect", "session/rout
 var existingTargetSchema = { type: "object", additionalProperties: false, properties: { version: { type: "integer", const: 1 }, execution_host: { type: "string" }, session_id: { type: "string" }, storage_host: { type: "string" }, display_host: { type: "string" } }, required: ["version", "execution_host", "session_id"] };
 var string2 = { type: "string" };
 var integer = { type: "integer", minimum: 0 };
-var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.skills", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 var PersonalPlugin = class {
   concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle", "agent.request.transform"];
   concurrentServices = [service, "automation.trigger", PERSONAL_MEMORY_SERVICE, "agent.prompt", "personal.recovery"];
@@ -4814,6 +4814,12 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
         if (!ownerClient) throw new Error("message receipts require the authenticated client capability");
         const agent = await this.conversation(input, true);
         return this.host.call("host.session.inspect", { session_id: agent.main_session_id });
+      }
+      case "agents.skills": {
+        if (!ownerClient || !clientHost) throw new Error("skill discovery requires the authenticated owner client");
+        const agent = await this.conversation(input, true);
+        const result2 = await clientHost.call("host.session.inspect", { session_id: agent.main_session_id, include_skills: true });
+        return { skills: result2.skills ?? [] };
       }
       case "agents.messages.status":
       case "agents.messages.resume":
