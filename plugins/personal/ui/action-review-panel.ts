@@ -115,6 +115,49 @@ function ruleDescription(rule: Pick<ReviewRule, "operation" | "target" | "descri
   if (["bash", "process", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "在相同位置重复这条完全相同的操作前，每次先问我。" : "以后允许在相同位置，使用相同权限重复这条完全相同的操作。";
   return rule.description;
 }
+const systemReasonsZH: Record<string, string> = {
+  "Review what will happen before allowing this action": "请确认这项操作和你想做的一致。",
+  "Original authenticated user request is unavailable; confirm this exact action manually": "暂时无法核对你最初的要求，请确认这项具体操作。",
+  "Personal state unavailable; manual review required": "暂时无法核对任务状态，需要你确认。",
+  "Personal model unavailable; manual review required": "自动审核暂时不可用，需要你确认。",
+  "AutoReview unavailable; nothing executed. Review this exact action manually": "自动审核暂时不可用，尚未执行。请你确认这项操作。",
+  "Exact owner confirmation is required; automatic intent review is unavailable": "暂时无法自动判断是否符合你的要求，需要你确认。",
+  "Your saved rule requires confirmation for this action": "你设置了“每次先问我”，请确认这次操作。",
+  "The saved permission changed. Confirm this action again": "之前的许可已改变，需要重新确认这次操作。",
+  "Authenticated owner confirmed this exact action": "你已允许这次操作。",
+  "Allowed by your saved rule": "已按你保存的规则允许。",
+  "Automatic review already approved this exact action": "自动审核已通过。",
+  "Awaiting action assessment": "正在检查这项操作。",
+  "Owner rejected this action": "你没有允许这次操作，尚未执行。",
+  "Confirmed once; fresh assessment required before execution": "你已允许这次操作，开始前会核对操作内容是否变化。",
+  "Durable dispatch claim; result not yet known": "操作已开始，正在等待结果。",
+  "Execution returned a receipt": "操作已完成。",
+  "Execution result is unknown; reconcile without replay": "暂时无法确认结果，需要先核对，不会自动重试。",
+  "Host interrupted after dispatch; reconcile without replay": "执行时连接中断，需要先核对结果，不会自动重试。",
+  "Owner revoked the pending action": "你已撤回这项操作，尚未执行。",
+  "Owning execution was cancelled; pending action was not executed": "任务已取消，这项操作没有执行。",
+  "Action confirmation expired": "这次确认已过期，操作没有执行。",
+  "Task, owner, execution or policy changed": "任务或许可已经变化，需要重新检查，尚未执行。",
+  "Operation contract changed": "操作方式已经变化，需要重新检查，尚未执行。",
+  "Bound user authorization was withdrawn, expired or changed": "之前的授权已撤回、过期或改变，这项操作没有执行。",
+  "Reviewer unavailable; action not executed": "自动审核暂时不可用，操作没有执行。",
+  "Reviewer omitted its rationale; action not executed": "没有收到完整审核结果，操作没有执行。",
+  "No valid safety verdict; action not executed": "没有收到有效审核结果，操作没有执行。",
+  "Native file runtime unavailable; action not executed": "文件操作暂时不可用，文件没有修改。",
+  "Host file effect unavailable; action not executed": "文件操作暂时不可用，文件没有修改。",
+  "Command runtime unavailable; nothing executed": "运行程序的服务暂时不可用，尚未执行。",
+  "Host command effect unavailable; nothing executed": "运行程序的服务暂时不可用，尚未执行。",
+  "Frozen file action changed; no effect dispatched": "文件操作的内容已经改变，文件没有修改。",
+  "Frozen command changed; nothing executed": "操作内容已经改变，尚未执行。",
+};
+export function reviewReason(reason: string, locale: string): string {
+  if (!locale.startsWith("zh")) return reason;
+  if (Object.hasOwn(systemReasonsZH, reason)) return systemReasonsZH[reason];
+  if (reason.startsWith("Host boundary denied this action: ")) return "这项操作超出了当前允许的范围，尚未执行。";
+  if (reason.startsWith("Command or execution environment changed; nothing executed: ")) return "操作内容或运行环境已经变化，尚未执行。";
+  if (reason.startsWith("Frozen file action cannot be validated; no effect was dispatched: ")) return "文件或操作内容已经变化，文件没有修改。";
+  return reason;
+}
 type UI = {
   Button: React.ComponentType<React.ButtonHTMLAttributes<HTMLButtonElement> & Pick<PluginUIButtonProps,"variant"> & { "data-review-choice"?: string; "data-review-refresh"?: boolean; "data-review-rule-ask"?: string; "data-review-rule-delete"?: string }>;
   EmptyState: React.ComponentType<{title:React.ReactNode;description?:React.ReactNode}>;
@@ -312,10 +355,10 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
       return h("article", { key:action.id,className:"personal-review-item","data-review-id":action.id,"data-review-state":record.status },
         h("h4",null,title),h("span",{className:"personal-review-status",role:"status"},words.states[expired && canConfirm ? "expired" : record.status]),
         h("p",{className:"personal-review-consequence"},commandAction ? words.commandBody : action.summary.consequence),
-        canConfirm && h("p",{className:"personal-review-muted"},record.reason),
+        canConfirm && h("p",{className:"personal-review-muted"},reviewReason(record.reason,locale)),
         fileAction && h("details",{className:"personal-review-parameters","data-review-changes":true},h("summary",null,words.changes),
           action.operation === "edit_file" && edits.length ? edits.map((edit,index)=>h("div",{key:index,className:"personal-review-diff"},edit.replace_all && h("p",{className:"personal-review-muted"},words.replaceAll),h("strong",null,words.before),h("pre",null,edit.old_text),h("strong",null,words.after),h("pre",null,edit.new_text))) : typeof parameters.content === "string" ? h("div",{className:"personal-review-diff"},typeof parameters.before_content === "string" ? h(react.Fragment,null,h("strong",null,words.before),h("pre",null,parameters.before_content)) : parameters.exists !== false && h("p",{className:"personal-review-muted"},words.originalUnavailable),h("strong",null,words.newContent),h("pre",null,parameters.content)) : h("pre",null,action.arguments_json)),
-        h("details",{className:"personal-review-parameters"},h("summary",null,words.parameters),h("dl",{className:"personal-review-fields"},fields.flatMap(([label,value])=>[h("dt",{key:`${label}-label`},label),h("dd",{key:label},value)])),h("pre",null,action.arguments_json),h("p",{className:"personal-review-muted",style:{overflowWrap:"anywhere"}},`${words.digest}: ${action.digest}`)),
+        h("details",{className:"personal-review-parameters"},h("summary",null,words.parameters),h("p",{className:"personal-review-muted"},record.reason),h("dl",{className:"personal-review-fields"},fields.flatMap(([label,value])=>[h("dt",{key:`${label}-label`},label),h("dd",{key:label},value)])),h("pre",null,action.arguments_json),h("p",{className:"personal-review-muted",style:{overflowWrap:"anywhere"}},`${words.digest}: ${action.digest}`)),
         record.receipt_json && h("details",{className:"personal-review-parameters","data-review-receipt":true},h("summary",null,words.receipt),h("pre",null,record.receipt_json)),
         (canConfirm || canRevoke) && h("div",{className:"personal-review-actions"},
           canConfirm && h(ui.Button,{variant:"primary",disabled:Boolean(busy)||unverified||expired,"data-review-choice":"approve_once",onClick:()=>void decide(record,"approve_once")},busy===action.id?words.working:words.approve),

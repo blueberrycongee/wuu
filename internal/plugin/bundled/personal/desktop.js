@@ -349,6 +349,49 @@ var personalDesktop = (() => {
     if (["bash", "process", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "\u5728\u76F8\u540C\u4F4D\u7F6E\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u524D\uFF0C\u6BCF\u6B21\u5148\u95EE\u6211\u3002" : "\u4EE5\u540E\u5141\u8BB8\u5728\u76F8\u540C\u4F4D\u7F6E\uFF0C\u4F7F\u7528\u76F8\u540C\u6743\u9650\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u3002";
     return rule.description;
   }
+  var systemReasonsZH = {
+    "Review what will happen before allowing this action": "\u8BF7\u786E\u8BA4\u8FD9\u9879\u64CD\u4F5C\u548C\u4F60\u60F3\u505A\u7684\u4E00\u81F4\u3002",
+    "Original authenticated user request is unavailable; confirm this exact action manually": "\u6682\u65F6\u65E0\u6CD5\u6838\u5BF9\u4F60\u6700\u521D\u7684\u8981\u6C42\uFF0C\u8BF7\u786E\u8BA4\u8FD9\u9879\u5177\u4F53\u64CD\u4F5C\u3002",
+    "Personal state unavailable; manual review required": "\u6682\u65F6\u65E0\u6CD5\u6838\u5BF9\u4EFB\u52A1\u72B6\u6001\uFF0C\u9700\u8981\u4F60\u786E\u8BA4\u3002",
+    "Personal model unavailable; manual review required": "\u81EA\u52A8\u5BA1\u6838\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u9700\u8981\u4F60\u786E\u8BA4\u3002",
+    "AutoReview unavailable; nothing executed. Review this exact action manually": "\u81EA\u52A8\u5BA1\u6838\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u5C1A\u672A\u6267\u884C\u3002\u8BF7\u4F60\u786E\u8BA4\u8FD9\u9879\u64CD\u4F5C\u3002",
+    "Exact owner confirmation is required; automatic intent review is unavailable": "\u6682\u65F6\u65E0\u6CD5\u81EA\u52A8\u5224\u65AD\u662F\u5426\u7B26\u5408\u4F60\u7684\u8981\u6C42\uFF0C\u9700\u8981\u4F60\u786E\u8BA4\u3002",
+    "Your saved rule requires confirmation for this action": "\u4F60\u8BBE\u7F6E\u4E86\u201C\u6BCF\u6B21\u5148\u95EE\u6211\u201D\uFF0C\u8BF7\u786E\u8BA4\u8FD9\u6B21\u64CD\u4F5C\u3002",
+    "The saved permission changed. Confirm this action again": "\u4E4B\u524D\u7684\u8BB8\u53EF\u5DF2\u6539\u53D8\uFF0C\u9700\u8981\u91CD\u65B0\u786E\u8BA4\u8FD9\u6B21\u64CD\u4F5C\u3002",
+    "Authenticated owner confirmed this exact action": "\u4F60\u5DF2\u5141\u8BB8\u8FD9\u6B21\u64CD\u4F5C\u3002",
+    "Allowed by your saved rule": "\u5DF2\u6309\u4F60\u4FDD\u5B58\u7684\u89C4\u5219\u5141\u8BB8\u3002",
+    "Automatic review already approved this exact action": "\u81EA\u52A8\u5BA1\u6838\u5DF2\u901A\u8FC7\u3002",
+    "Awaiting action assessment": "\u6B63\u5728\u68C0\u67E5\u8FD9\u9879\u64CD\u4F5C\u3002",
+    "Owner rejected this action": "\u4F60\u6CA1\u6709\u5141\u8BB8\u8FD9\u6B21\u64CD\u4F5C\uFF0C\u5C1A\u672A\u6267\u884C\u3002",
+    "Confirmed once; fresh assessment required before execution": "\u4F60\u5DF2\u5141\u8BB8\u8FD9\u6B21\u64CD\u4F5C\uFF0C\u5F00\u59CB\u524D\u4F1A\u6838\u5BF9\u64CD\u4F5C\u5185\u5BB9\u662F\u5426\u53D8\u5316\u3002",
+    "Durable dispatch claim; result not yet known": "\u64CD\u4F5C\u5DF2\u5F00\u59CB\uFF0C\u6B63\u5728\u7B49\u5F85\u7ED3\u679C\u3002",
+    "Execution returned a receipt": "\u64CD\u4F5C\u5DF2\u5B8C\u6210\u3002",
+    "Execution result is unknown; reconcile without replay": "\u6682\u65F6\u65E0\u6CD5\u786E\u8BA4\u7ED3\u679C\uFF0C\u9700\u8981\u5148\u6838\u5BF9\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002",
+    "Host interrupted after dispatch; reconcile without replay": "\u6267\u884C\u65F6\u8FDE\u63A5\u4E2D\u65AD\uFF0C\u9700\u8981\u5148\u6838\u5BF9\u7ED3\u679C\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002",
+    "Owner revoked the pending action": "\u4F60\u5DF2\u64A4\u56DE\u8FD9\u9879\u64CD\u4F5C\uFF0C\u5C1A\u672A\u6267\u884C\u3002",
+    "Owning execution was cancelled; pending action was not executed": "\u4EFB\u52A1\u5DF2\u53D6\u6D88\uFF0C\u8FD9\u9879\u64CD\u4F5C\u6CA1\u6709\u6267\u884C\u3002",
+    "Action confirmation expired": "\u8FD9\u6B21\u786E\u8BA4\u5DF2\u8FC7\u671F\uFF0C\u64CD\u4F5C\u6CA1\u6709\u6267\u884C\u3002",
+    "Task, owner, execution or policy changed": "\u4EFB\u52A1\u6216\u8BB8\u53EF\u5DF2\u7ECF\u53D8\u5316\uFF0C\u9700\u8981\u91CD\u65B0\u68C0\u67E5\uFF0C\u5C1A\u672A\u6267\u884C\u3002",
+    "Operation contract changed": "\u64CD\u4F5C\u65B9\u5F0F\u5DF2\u7ECF\u53D8\u5316\uFF0C\u9700\u8981\u91CD\u65B0\u68C0\u67E5\uFF0C\u5C1A\u672A\u6267\u884C\u3002",
+    "Bound user authorization was withdrawn, expired or changed": "\u4E4B\u524D\u7684\u6388\u6743\u5DF2\u64A4\u56DE\u3001\u8FC7\u671F\u6216\u6539\u53D8\uFF0C\u8FD9\u9879\u64CD\u4F5C\u6CA1\u6709\u6267\u884C\u3002",
+    "Reviewer unavailable; action not executed": "\u81EA\u52A8\u5BA1\u6838\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u64CD\u4F5C\u6CA1\u6709\u6267\u884C\u3002",
+    "Reviewer omitted its rationale; action not executed": "\u6CA1\u6709\u6536\u5230\u5B8C\u6574\u5BA1\u6838\u7ED3\u679C\uFF0C\u64CD\u4F5C\u6CA1\u6709\u6267\u884C\u3002",
+    "No valid safety verdict; action not executed": "\u6CA1\u6709\u6536\u5230\u6709\u6548\u5BA1\u6838\u7ED3\u679C\uFF0C\u64CD\u4F5C\u6CA1\u6709\u6267\u884C\u3002",
+    "Native file runtime unavailable; action not executed": "\u6587\u4EF6\u64CD\u4F5C\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u6587\u4EF6\u6CA1\u6709\u4FEE\u6539\u3002",
+    "Host file effect unavailable; action not executed": "\u6587\u4EF6\u64CD\u4F5C\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u6587\u4EF6\u6CA1\u6709\u4FEE\u6539\u3002",
+    "Command runtime unavailable; nothing executed": "\u8FD0\u884C\u7A0B\u5E8F\u7684\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u5C1A\u672A\u6267\u884C\u3002",
+    "Host command effect unavailable; nothing executed": "\u8FD0\u884C\u7A0B\u5E8F\u7684\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u5C1A\u672A\u6267\u884C\u3002",
+    "Frozen file action changed; no effect dispatched": "\u6587\u4EF6\u64CD\u4F5C\u7684\u5185\u5BB9\u5DF2\u7ECF\u6539\u53D8\uFF0C\u6587\u4EF6\u6CA1\u6709\u4FEE\u6539\u3002",
+    "Frozen command changed; nothing executed": "\u64CD\u4F5C\u5185\u5BB9\u5DF2\u7ECF\u6539\u53D8\uFF0C\u5C1A\u672A\u6267\u884C\u3002"
+  };
+  function reviewReason(reason, locale) {
+    if (!locale.startsWith("zh")) return reason;
+    if (Object.hasOwn(systemReasonsZH, reason)) return systemReasonsZH[reason];
+    if (reason.startsWith("Host boundary denied this action: ")) return "\u8FD9\u9879\u64CD\u4F5C\u8D85\u51FA\u4E86\u5F53\u524D\u5141\u8BB8\u7684\u8303\u56F4\uFF0C\u5C1A\u672A\u6267\u884C\u3002";
+    if (reason.startsWith("Command or execution environment changed; nothing executed: ")) return "\u64CD\u4F5C\u5185\u5BB9\u6216\u8FD0\u884C\u73AF\u5883\u5DF2\u7ECF\u53D8\u5316\uFF0C\u5C1A\u672A\u6267\u884C\u3002";
+    if (reason.startsWith("Frozen file action cannot be validated; no effect was dispatched: ")) return "\u6587\u4EF6\u6216\u64CD\u4F5C\u5185\u5BB9\u5DF2\u7ECF\u53D8\u5316\uFF0C\u6587\u4EF6\u6CA1\u6709\u4FEE\u6539\u3002";
+    return reason;
+  }
   var copy = {
     en: {
       title: "Approvals and rules",
@@ -758,14 +801,14 @@ var personalDesktop = (() => {
           h("h4", null, title),
           h("span", { className: "personal-review-status", role: "status" }, words.states[expired && canConfirm ? "expired" : record2.status]),
           h("p", { className: "personal-review-consequence" }, commandAction ? words.commandBody : action.summary.consequence),
-          canConfirm && h("p", { className: "personal-review-muted" }, record2.reason),
+          canConfirm && h("p", { className: "personal-review-muted" }, reviewReason(record2.reason, locale)),
           fileAction && h(
             "details",
             { className: "personal-review-parameters", "data-review-changes": true },
             h("summary", null, words.changes),
             action.operation === "edit_file" && edits.length ? edits.map((edit, index) => h("div", { key: index, className: "personal-review-diff" }, edit.replace_all && h("p", { className: "personal-review-muted" }, words.replaceAll), h("strong", null, words.before), h("pre", null, edit.old_text), h("strong", null, words.after), h("pre", null, edit.new_text))) : typeof parameters.content === "string" ? h("div", { className: "personal-review-diff" }, typeof parameters.before_content === "string" ? h(react.Fragment, null, h("strong", null, words.before), h("pre", null, parameters.before_content)) : parameters.exists !== false && h("p", { className: "personal-review-muted" }, words.originalUnavailable), h("strong", null, words.newContent), h("pre", null, parameters.content)) : h("pre", null, action.arguments_json)
           ),
-          h("details", { className: "personal-review-parameters" }, h("summary", null, words.parameters), h("dl", { className: "personal-review-fields" }, fields.flatMap(([label, value]) => [h("dt", { key: `${label}-label` }, label), h("dd", { key: label }, value)])), h("pre", null, action.arguments_json), h("p", { className: "personal-review-muted", style: { overflowWrap: "anywhere" } }, `${words.digest}: ${action.digest}`)),
+          h("details", { className: "personal-review-parameters" }, h("summary", null, words.parameters), h("p", { className: "personal-review-muted" }, record2.reason), h("dl", { className: "personal-review-fields" }, fields.flatMap(([label, value]) => [h("dt", { key: `${label}-label` }, label), h("dd", { key: label }, value)])), h("pre", null, action.arguments_json), h("p", { className: "personal-review-muted", style: { overflowWrap: "anywhere" } }, `${words.digest}: ${action.digest}`)),
           record2.receipt_json && h("details", { className: "personal-review-parameters", "data-review-receipt": true }, h("summary", null, words.receipt), h("pre", null, record2.receipt_json)),
           (canConfirm || canRevoke) && h(
             "div",
@@ -1087,8 +1130,8 @@ var personalDesktop = (() => {
           h("div", { className: "personal-connector-title" }, h("h4", null, actionTitle(a)), h("span", null, states[a.state] || "\u5F85\u6838\u5B9E\u72B6\u6001")),
           a.account_id ? h("p", null, `\u8D26\u53F7\uFF1A${a.account_id}`) : null,
           actionContent(a).length ? h("dl", { className: "personal-connector-fields" }, actionContent(a).flatMap(([label, value]) => [h("dt", { key: label + "-label" }, label), h("dd", { key: label }, value)])) : null,
-          a.review_reason ? h("p", null, a.review_reason) : null,
-          a.arguments_json ? h("details", null, h("summary", null, "\u6280\u672F\u8BE6\u60C5"), h("p", null, a.operation), h("pre", null, a.arguments_json)) : null,
+          a.review_reason ? h("p", null, reviewReason(a.review_reason, "zh")) : null,
+          a.arguments_json ? h("details", null, h("summary", null, "\u6280\u672F\u8BE6\u60C5"), a.review_reason ? h("p", null, a.review_reason) : null, h("p", null, a.operation), h("pre", null, a.arguments_json)) : null,
           a.state === "uncertain" ? h("p", null, "\u5916\u90E8\u670D\u52A1\u53EF\u80FD\u5DF2\u63A5\u53D7\u6B64\u64CD\u4F5C\u3002\u6B64\u5904\u4E0D\u4F1A\u91CD\u53D1\uFF1B\u5148\u5230\u6765\u6E90\u6838\u5BF9\u7ED3\u679C\u3002") : null,
           a.state === "awaiting_confirmation" ? h("div", { className: "personal-connectors-controls" }, h(Button, { "data-connector-approve": true, disabled: busy || loading || uncertain || !confirmable(a), onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: true })) }, "\u5141\u8BB8\u8FD9\u6B21"), service.rulePreview && service.ruleSave ? h(Button, { "data-connector-remember": true, disabled: busy || loading || uncertain || !confirmable(a), onClick: () => void previewRule(a) }, "\u4EE5\u540E\u81EA\u52A8\u5904\u7406\u2026") : null, h(Button, { "data-connector-reject": true, disabled: busy || loading || uncertain || !a.digest, onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: false })) }, "\u4E0D\u5141\u8BB8")) : null,
           rulePreview?.action.action_id === a.action_id && a.state === "awaiting_confirmation" ? h("section", { className: "personal-review-rule-preview", "data-connector-rule-preview": true }, h("h4", null, "\u8BB0\u4F4F\u8FD9\u9879\u8BB8\u53EF\uFF1F"), h("p", null, a.operation === "gmail.send" || a.operation === "gmail.draft" ? "\u4EE5\u540E\u5141\u8BB8\u6B64\u8D26\u53F7\u91CD\u590D\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\uFF0C\u6536\u4EF6\u4EBA\u548C\u5185\u5BB9\u90FD\u5FC5\u987B\u76F8\u540C\u3002" : "\u4EE5\u540E\u5141\u8BB8\u6B64\u8D26\u53F7\u91CD\u590D\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\uFF0C\u76EE\u6807\u548C\u5185\u5BB9\u90FD\u5FC5\u987B\u76F8\u540C\u3002"), h("p", null, "\u53EF\u5728\u201C\u5BA1\u6279\u4E0E\u89C4\u5219\u201D\u4E2D\u4FEE\u6539\u6216\u79FB\u9664\u3002"), h("details", null, h("summary", null, "\u67E5\u770B\u8BB8\u53EF\u8303\u56F4"), h("p", null, rulePreview.value.preview.description), h("pre", null, a.arguments_json)), h("div", { className: "personal-connectors-controls" }, h(Button, { "data-connector-save-rule": true, disabled: busy || loading || uncertain || a.digest !== rulePreview.action.digest, onClick: () => void saveRule() }, "\u4FDD\u5B58\u5E76\u5141\u8BB8\u8FD9\u6B21"), h(Button, { disabled: busy, onClick: () => setRulePreview(void 0) }, "\u53D6\u6D88"))) : null,
