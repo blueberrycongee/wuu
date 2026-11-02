@@ -4,7 +4,7 @@ import { useComposerPluginMenu } from "./ComposerPluginMenu";
 import { pluginReferenceParts } from "./ComposerPluginReferences";
 import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
-import { DictationButton, DictationRecording, useComposerDictation } from "./ComposerDictation";
+import { DictationButton, DictationErrorToast, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import type { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
@@ -471,7 +471,7 @@ export function SplitPaneComposer({
   return (
     <footer className="composer-wrap dock-composer-wrap split-composer" data-pip-obstacle="composer">
       <div className="composer-stack">
-        {dictation.error && <div className="composer-dictation-error" role="alert">{dictation.error}</div>}
+        <DictationErrorToast message={dictation.error} />
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">
             {cameraOpen && !readOnly ? (

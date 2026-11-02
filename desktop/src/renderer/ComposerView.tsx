@@ -1,7 +1,7 @@
 import { ComposerInput, composerInputElement, type ComposerInputHandle } from "./ComposerInput";
 import { useComposerPluginMenu } from "./ComposerPluginMenu";
 import { pluginReferenceParts } from "./ComposerPluginReferences";
-import { DictationButton, DictationRecording, useComposerDictation } from "./ComposerDictation";
+import { DictationButton, DictationErrorToast, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import { showActionErrorToast } from "./Toast";
 import { createPortal } from "react-dom";
 import { useComposerServices } from "./ComposerServicesContext";
@@ -1398,7 +1398,7 @@ export function Composer({
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       {statusAccessory}
-      {dictation.error && <div className="composer-dictation-error" role="alert">{dictation.error}</div>}
+      <DictationErrorToast message={dictation.error} />
       <div className="composer-above-input">
         <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>

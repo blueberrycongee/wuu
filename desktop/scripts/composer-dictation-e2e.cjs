@@ -112,14 +112,16 @@ if (!process.versions.electron) {
       await click('[data-wuu-component="composer-dictation"]');
       await waitFor(`document.querySelector('[data-phase="listening"]')`);
       await evaluate(`window.dictationAcceptance.emit({sessionId:window.dictationAcceptance.active,type:'error',code:'microphone_permission_denied'})`);
-      await waitFor(`document.querySelector('.composer-dictation-error')`);
-      await screenshot('permission-error');
+      await waitFor(`document.querySelector('[data-wuu-layer="notice"][data-wuu-variant="error"]')`);
+      assert.equal(await evaluate(`document.querySelectorAll('.composer-dictation-error').length`), 0);
+      await screenshot('permission-error-toast');
       await click('[data-wuu-component="composer-dictation"]');
       await waitFor(`document.querySelector('[data-phase="listening"]')`);
+      await waitFor(`!document.querySelector('[data-wuu-layer="notice"][data-wuu-variant="error"]')`);
       await evaluate(`window.composerAcceptance.retire()`);
       await waitFor(`document.querySelectorAll('textarea').length===0 && window.dictationAcceptance.active===''`);
       assert.deepEqual(errors, []);
-      fs.writeFileSync(path.join(evidence,'result.json'), JSON.stringify({passed:true, sent, checks:['stop preserves draft and awaits final transcript','direct send awaits final result and sends once','cancel ignores late results','permission denial','owner retirement cancels microphone','action controls share hit-target and concentric visible-disc geometry','light/dark and large/narrow rendering']},null,2));
+      fs.writeFileSync(path.join(evidence,'result.json'), JSON.stringify({passed:true, sent, checks:['stop preserves draft and awaits final transcript','direct send awaits final result and sends once','cancel ignores late results','permission denial uses the error toast and retry clears it','owner retirement cancels microphone','action controls share hit-target and concentric visible-disc geometry','light/dark and large/narrow rendering']},null,2));
       console.log('Dictation composer journeys passed'); app.exit(0);
     } catch(error) { console.error(error,errors); await screenshot('failure');fs.writeFileSync(path.join(evidence,'failure.json'),JSON.stringify({error:String(error),errors}));app.exit(1); }
   });
