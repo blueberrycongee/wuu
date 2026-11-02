@@ -3,6 +3,7 @@ package appserver
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -429,11 +430,20 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 	if err != nil {
 		return toolresult.Result{}, err
 	}
+	invocationID := ""
+	if call.Name != "write_file" && call.Name != "edit_file" {
+		invocationID = call.ID
+		if invocationID == "" {
+			invocationID = rand.Text()
+			call.ID = invocationID
+		}
+	}
 	identity, _ := json.Marshal(struct {
 		Scope     personalreview.Scope
 		Operation string
 		Arguments string
-	}{scope, call.Name, personalreview.ArgumentsDigest(json.RawMessage(call.Arguments))})
+		CallID    string `json:"CallID,omitempty"`
+	}{scope, call.Name, personalreview.ArgumentsDigest(json.RawMessage(call.Arguments)), invocationID})
 	prefix := "file-"
 	if call.Name != "write_file" && call.Name != "edit_file" {
 		prefix = "command-"

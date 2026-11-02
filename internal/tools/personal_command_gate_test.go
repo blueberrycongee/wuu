@@ -31,8 +31,10 @@ func TestPersonalCommandGateCoversNativeAndHostProcessEntries(t *testing.T) {
 	}
 	kit.SetProcessManager(manager)
 	calls := []string{}
+	identities := []string{}
 	kit.SetCommandActionGate(func(_ context.Context, _ *Toolkit, call providers.ToolCall) (toolresult.Result, error) {
 		calls = append(calls, call.Name)
+		identities = append(identities, call.ID)
 		return toolresult.Result{}, errors.New("needs owner")
 	})
 	clone, err := kit.CloneForRoot(kit.RootDir())
@@ -58,7 +60,24 @@ func TestPersonalCommandGateCoversNativeAndHostProcessEntries(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "needs owner") {
 		t.Fatalf("host process bypass: %v", err)
 	}
-	if strings.Join(calls, ",") != "bash,process,bash,process_start" {
+	started, err := clone.StartEnvironmentProcess(context.Background(), "printf denied > marker", "", "worker-operation")
+	if started != nil {
+		defer manager.Stop(started.ID)
+	}
+	if err == nil || !strings.Contains(err.Error(), "needs owner") {
+		t.Fatalf("environment process bypass: %v", err)
+	}
+	scope, err := clone.PluginProcessScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := scope.StartOperation(context.Background(), "printf denied > marker", "", "host-request-key"); err == nil || !strings.Contains(err.Error(), "needs owner") {
+		t.Fatalf("host operation bypass: %v", err)
+	}
+	if identities[3] == "" || identities[4] != "worker-operation" || identities[5] != "host-request-key" {
+		t.Fatalf("host invocation identities lost: %v", identities)
+	}
+	if strings.Join(calls, ",") != "bash,process,bash,process_start,process_start,process_start" {
 		t.Fatalf("gated calls: %v", calls)
 	}
 	if _, err = os.Stat(filepath.Join(kit.RootDir(), "marker")); !os.IsNotExist(err) {

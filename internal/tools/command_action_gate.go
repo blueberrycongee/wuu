@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"os"
@@ -270,12 +271,15 @@ func (t *Toolkit) ExecuteCommandAction(ctx context.Context, a CommandAction) (to
 	return result, err
 }
 
-func (t *Toolkit) reviewedProcessStart(ctx context.Context, command, cwd string) (*proc.Process, *proc.Manager, error) {
+func (t *Toolkit) reviewedProcessStart(ctx context.Context, command, cwd, operationID string) (*proc.Process, *proc.Manager, error) {
 	raw, err := json.Marshal(bashArgs{Command: command, CWD: cwd, RunInBackground: true})
 	if err != nil {
 		return nil, nil, err
 	}
-	result, err := t.commandActionGate(ctx, t, providers.ToolCall{Name: "process_start", Arguments: string(raw)})
+	if operationID == "" {
+		operationID = rand.Text()
+	}
+	result, err := t.commandActionGate(ctx, t, providers.ToolCall{ID: operationID, Name: "process_start", Arguments: string(raw)})
 	if err != nil {
 		return nil, nil, err
 	}

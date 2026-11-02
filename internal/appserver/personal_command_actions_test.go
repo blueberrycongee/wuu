@@ -77,6 +77,35 @@ func TestPersonalCommandApprovalProductionEntry(t *testing.T) {
 				if r = f.current(r.Action.Key()); r.Status != personalreview.Succeeded {
 					t.Fatalf("status %s", r.Status)
 				}
+				if choice == "approve_once" {
+					call.ID = "new-invocation-same-command"
+					if _, err := f.kit.Execute(f.owner, call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
+						t.Fatalf("new invocation returned old receipt: %v", err)
+					}
+					records, err := f.host.actionsForTest(t).engine.Records(context.Background(), f.rt.UserSpaceID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var next personalreview.Record
+					for _, record := range records {
+						if record.Status == personalreview.AwaitingConfirmation {
+							next = record
+						}
+					}
+					if next.Action.ID == "" || next.Action.ID == r.Action.ID {
+						t.Fatal("new invocation reused prior approval")
+					}
+					if _, err := f.host.personal.Call(f.owner, "review.resolve", f.command(next), ""); err != nil {
+						t.Fatal(err)
+					}
+					if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+					data, err := os.ReadFile(filepath.Join(f.rt.RootDir, "marker.txt"))
+					if err != nil || string(data) != "onceonce" {
+						t.Fatalf("distinct invocation not executed: %q %v", data, err)
+					}
+				}
 			} else if retryErr == nil || !os.IsNotExist(readErr) {
 				t.Fatalf("rejected command ran: %s %v %v", data, retryErr, readErr)
 			}

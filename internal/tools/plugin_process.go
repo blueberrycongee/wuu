@@ -79,6 +79,10 @@ func (t *Toolkit) StartEnvironmentProcess(ctx context.Context, command, cwd, ope
 	if err := t.checkPermission(ctx, buildToolInfoForArgs(&BashTool{}, ToolExposureDirect, call.Arguments), call); err != nil {
 		return nil, err
 	}
+	if t.commandActionGate != nil {
+		started, _, err := t.reviewedProcessStart(ctx, command, cwd, operationID)
+		return started, err
+	}
 	started, _, err := scope.startAuthorized(ctx, command, cwd, operationID)
 	return started, err
 }
