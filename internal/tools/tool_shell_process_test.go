@@ -66,6 +66,19 @@ while :; do sleep 1; done
 func TestExecuteShellCommandTimeoutStopsProcessTree(t *testing.T) {
 	t.Setenv("WUU_HOME", t.TempDir())
 	root := t.TempDir()
+	env := newShellTestEnv(root)
+	owner, err := env.ProcessManager()
+	if err != nil {
+		t.Fatalf("process owner: %v", err)
+	}
+	env.ProcessMgr = owner
+	// A reconstructed manager can stop the tree but cannot join the original
+	// output monitor. Drain its owner before TempDir removes the process records.
+	t.Cleanup(func() {
+		if err := owner.CleanupOwned(); err != nil {
+			t.Errorf("cleanup process owner: %v", err)
+		}
+	})
 	readyMarker := root + "/ready"
 	descendantMarker := root + "/descendant"
 	t.Setenv("WUU_TEST_READY_MARKER", readyMarker)
@@ -73,7 +86,7 @@ func TestExecuteShellCommandTimeoutStopsProcessTree(t *testing.T) {
 
 	resultCh := make(chan shellTestResult, 1)
 	go func() {
-		result, err := executeShellCommandInDir(context.Background(), newShellTestEnv(root), `
+		result, err := executeShellCommandInDir(context.Background(), env, `
 trap '' TERM
 (trap '' TERM; while :; do sleep 1; done) &
 printf '%s' "$!" > "$WUU_TEST_DESCENDANT_MARKER"
