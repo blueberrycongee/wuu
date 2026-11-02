@@ -31,34 +31,43 @@ var personalDesktop = (() => {
   var PERSONAL_AVATAR_HUES = [14, 33, 52, 96, 150, 182, 202, 222, 250, 288, 322, 350];
   var DEFAULT_PERSONAL_AVATAR = "mascot-v1:round:headset:222";
 
-  // plugins/personal/ui/avatar-dialog.js
+  // plugins/personal/ui/identity-dialog.js
   var avatarDialogStyles = `
-.mosaic-avatar-dialog { position:relative;box-sizing:border-box;width:min(440px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:var(--space-4);padding:24px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
-.mosaic-avatar-dialog h2 { margin:0;padding-right:32px;font-size:var(--font-ui);font-weight:600; }
-.mosaic-avatar-preview { display:flex;justify-content:center; }
+.mosaic-avatar-dialog { position:relative;box-sizing:border-box;width:min(800px,100%);max-height:100%;overflow:auto;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:32px;padding:32px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
+.mosaic-avatar-controls { display:flex;flex-direction:column;gap:24px;min-width:0; }
+.mosaic-avatar-summary { display:flex;flex-direction:column;gap:24px;min-width:0; }
+.mosaic-name-input { box-sizing:border-box;width:100%;min-width:0;border:1px solid transparent;border-radius:var(--radius-md,12px);background:var(--surface-1);color:var(--ink);padding:12px;font:inherit;font-size:calc(var(--font-ui) * 2); }
+.mosaic-avatar-dialog h2 { grid-column:1/-1;margin:0;padding-right:32px;font-size:var(--font-ui);font-weight:600; }
+.mosaic-avatar-preview { display:flex;align-items:center;justify-content:center;flex:1;min-height:180px; }
 .mosaic-avatar-dialog fieldset { border:0;margin:0;padding:0;min-width:0; }
 .mosaic-avatar-dialog legend { padding:0;margin-bottom:var(--space-2);color:var(--ink-muted); }
 .mosaic-avatar-options { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--space-2); }
-.mosaic-avatar-options button { min-width:0;min-height:48px;display:grid;place-items:center;padding:4px;border:1px solid transparent;border-radius:var(--radius-md,10px);background:transparent;color:var(--ink);cursor:pointer; }
-.mosaic-avatar-options button[aria-pressed="true"] { border-color:var(--accent);background:var(--field-hover-bg); }
+.mosaic-avatar-options button { position:relative;min-width:0;min-height:48px;display:grid;place-items:center;padding:4px;border:0;border-radius:var(--radius-md,10px);background:transparent;color:var(--ink);cursor:pointer; }
+.mosaic-avatar-options button:hover { background:var(--field-hover-bg); }
+.mosaic-avatar-options button[aria-pressed="true"] { background:color-mix(in srgb,var(--avatar-selection) 18%,var(--paper)); }
+.mosaic-avatar-selected { position:absolute;top:3px;right:3px;display:grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--paper);color:var(--ink);font-size:12px;line-height:1; }
 .mosaic-avatar-dialog button:focus-visible,.mosaic-avatar-dialog input:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
 .mosaic-avatar-colors { grid-template-columns:repeat(6,minmax(0,1fr)); }
 .mosaic-avatar-colors button { min-height:36px; }
 .mosaic-avatar-swatch { width:24px;height:24px;border-radius:50%;background:var(--swatch);box-shadow:inset 0 0 0 1px #00000020; }
-.mosaic-avatar-hue { display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-2); }
-.mosaic-avatar-hue input { flex:1;min-width:0;accent-color:var(--accent); }
-.mosaic-avatar-actions { display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--space-2); }
-.mosaic-avatar-actions > :first-child { margin-right:auto; }
+.mosaic-avatar-actions { display:flex;gap:var(--space-2);margin-top:auto; }
+.mosaic-avatar-actions > button { flex:1;border-radius:999px;min-height:42px; }
+.mosaic-avatar-reset { align-self:flex-start; }
+@media(max-width:720px) { .mosaic-avatar-dialog { grid-template-columns:minmax(0,1fr);gap:24px;padding:24px; } .mosaic-avatar-summary { grid-row:2;display:grid;grid-template-columns:minmax(0,1fr) 144px;align-items:center;gap:16px; } .mosaic-avatar-preview { grid-column:2;grid-row:1/3;min-height:144px; } .mosaic-avatar-actions { grid-column:1; } .mosaic-avatar-summary .mosaic-name-error { grid-column:1/-1; } .mosaic-avatar-controls { gap:20px; } }
+@media(max-width:480px) { .mosaic-avatar-summary { display:flex;align-items:stretch; } }
 `;
-  function createAvatarDialog({ react: React, ui: { Avatar, Button } }) {
+  function createIdentityDialog({ react: React, ui: { Avatar, Button } }) {
     const h = React.createElement;
-    return function AvatarDialog({ agent, locale, onSave, onClose }) {
+    return function IdentityDialog({ agent, locale, onSave, onClose }) {
       const zh = locale.startsWith("zh"), label = (en, cn) => zh ? cn : en;
-      const [key, setKey] = React.useState(agent.avatar_key || DEFAULT_PERSONAL_AVATAR);
+      const [draftKey, setKey] = React.useState(null), [draftName, setName] = React.useState(null);
+      const key = draftKey ?? agent.avatar_key ?? DEFAULT_PERSONAL_AVATAR, name = draftName ?? agent.name;
+      const trimmed = name.trim(), valid = trimmed.length > 0 && Array.from(trimmed).length <= 64;
       const [saving, setSaving] = React.useState(false), [error, setError] = React.useState("");
       const dialog = React.useRef(null), pending = React.useRef(false), alive = React.useRef(true);
       const [, shape, accessory, rawHue] = key.split(":"), hue = Number(rawHue);
-      const changed = key !== (agent.avatar_key || DEFAULT_PERSONAL_AVATAR);
+      const nameChanged = trimmed !== agent.name, avatarChanged = key !== (agent.avatar_key || DEFAULT_PERSONAL_AVATAR);
+      const changed = nameChanged || avatarChanged;
       React.useEffect(() => {
         alive.current = true;
         dialog.current?.focus();
@@ -72,20 +81,21 @@ var personalDesktop = (() => {
       };
       const save = async (event) => {
         event.preventDefault();
-        if (pending.current || !changed) return;
+        if (pending.current || !valid || !changed) return;
         pending.current = true;
         setSaving(true);
         setError("");
         dialog.current?.focus();
         try {
-          await onSave(key);
+          await onSave({ ...nameChanged ? { name: trimmed } : {}, ...avatarChanged ? { avatar_key: key } : {} });
         } catch (cause) {
-          if (alive.current) setError(`${label("Could not confirm the saved style. Try again.", "\u672A\u80FD\u786E\u8BA4\u6837\u5F0F\u5DF2\u4FDD\u5B58\uFF0C\u8BF7\u91CD\u8BD5\u3002")} ${cause instanceof Error ? cause.message : String(cause)}`);
+          if (alive.current) setError(`${label("Could not confirm your changes were saved. Try again.", "\u672A\u80FD\u786E\u8BA4\u4FEE\u6539\u5DF2\u4FDD\u5B58\uFF0C\u8BF7\u91CD\u8BD5\u3002")} ${cause instanceof Error ? cause.message : String(cause)}`);
         } finally {
           pending.current = false;
           if (alive.current) setSaving(false);
         }
       };
+      const selectedMark = h("span", { className: "mosaic-avatar-selected", "aria-hidden": true }, "\u2713");
       const shapes = { round: label("Round", "\u5706\u5F62"), "rounded-square": label("Rounded square", "\u5706\u89D2\u65B9\u5F62"), capsule: label("Capsule", "\u80F6\u56CA"), triangle: label("Triangle", "\u4E09\u89D2"), diamond: label("Diamond", "\u83F1\u5F62") };
       const accessories = { none: label("None", "\u65E0\u914D\u9970"), beanie: label("Beanie", "\u6BDB\u7EBF\u5E3D"), "hard-hat": label("Hard hat", "\u5B89\u5168\u5E3D"), headset: label("Headset", "\u8033\u673A"), leaf: label("Leaf", "\u53F6\u5B50") };
       return h(
@@ -95,7 +105,7 @@ var personalDesktop = (() => {
         } },
         h(
           "form",
-          { ref: dialog, className: "mosaic-avatar-dialog", tabIndex: -1, role: "dialog", "aria-modal": true, "aria-label": label("Change style", "\u66F4\u6362\u6837\u5F0F"), "aria-busy": saving, onSubmit: save, onKeyDown: (event) => {
+          { ref: dialog, className: "mosaic-avatar-dialog", style: { "--avatar-selection": `hsl(${hue} 65% 65%)` }, tabIndex: -1, role: "dialog", "aria-modal": true, "aria-label": label("Customize your twin", "\u81EA\u5B9A\u4E49\u4F60\u7684 twin"), "aria-busy": saving, onSubmit: save, onKeyDown: (event) => {
             if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
@@ -115,28 +125,34 @@ var personalDesktop = (() => {
               }
             }
           } },
-          h("h2", null, label("Change style", "\u66F4\u6362\u6837\u5F0F")),
           h("button", { type: "button", className: "mosaic-name-close", disabled: saving, "aria-label": label("Close", "\u5173\u95ED"), onClick: onClose }, "\xD7"),
-          h("div", { className: "mosaic-avatar-preview" }, h(Avatar, { size: 112, avatarKey: key, motion: "ambient" })),
-          h("fieldset", { disabled: saving }, h("legend", null, label("Shape", "\u5F62\u72B6")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_SHAPES.map((value) => h("button", { key: value, type: "button", "data-avatar-shape": value, "aria-label": shapes[value], title: shapes[value], "aria-pressed": shape === value, onClick: () => choose(value, accessory, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${value}:${accessory}:${hue}` }))))),
-          h("fieldset", { disabled: saving }, h("legend", null, label("Accessory", "\u914D\u9970")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_ACCESSORIES.map((value) => h("button", { key: value, type: "button", "data-avatar-accessory": value, "aria-label": accessories[value], title: accessories[value], "aria-pressed": accessory === value, onClick: () => choose(shape, value, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${shape}:${value}:${hue}` }))))),
-          h(
-            "fieldset",
-            { disabled: saving },
-            h("legend", null, label("Color", "\u989C\u8272")),
-            h("div", { className: "mosaic-avatar-options mosaic-avatar-colors" }, PERSONAL_AVATAR_HUES.map((value) => h("button", { key: value, type: "button", "data-avatar-hue": value, "aria-label": `${label("Hue", "\u8272\u76F8")} ${value}\xB0`, "aria-pressed": hue === value, onClick: () => choose(shape, accessory, value) }, h("span", { className: "mosaic-avatar-swatch", style: { "--swatch": `hsl(${value} 65% 65%)` } })))),
-            h("label", { className: "mosaic-avatar-hue" }, label("Hue", "\u8272\u76F8"), h("input", { type: "range", min: 0, max: 359, step: 1, value: hue, onChange: (event) => choose(shape, accessory, Number(event.target.value)) }), h("output", null, `${hue}\xB0`))
-          ),
-          error && h("p", { className: "mosaic-name-error", role: "alert" }, error),
+          h("h2", null, label("Customize your twin", "\u81EA\u5B9A\u4E49\u4F60\u7684 twin")),
           h(
             "div",
-            { className: "mosaic-avatar-actions" },
-            h(Button, { type: "button", variant: "ghost", disabled: saving || key === DEFAULT_PERSONAL_AVATAR, "data-action": "reset-avatar", onClick: () => {
+            { className: "mosaic-avatar-controls" },
+            h("fieldset", { disabled: saving }, h("legend", null, label("Shape", "\u5F62\u72B6")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_SHAPES.map((value) => h("button", { key: value, type: "button", "data-avatar-shape": value, "aria-label": shapes[value], title: shapes[value], "aria-pressed": shape === value, onClick: () => choose(value, accessory, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${value}:${accessory}:${hue}` }), shape === value && selectedMark)))),
+            h("fieldset", { disabled: saving }, h("legend", null, label("Accessory", "\u914D\u9970")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_ACCESSORIES.map((value) => h("button", { key: value, type: "button", "data-avatar-accessory": value, "aria-label": accessories[value], title: accessories[value], "aria-pressed": accessory === value, onClick: () => choose(shape, value, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${shape}:${value}:${hue}` }), accessory === value && selectedMark)))),
+            h("fieldset", { disabled: saving }, h("legend", null, label("Color", "\u989C\u8272")), h("div", { className: "mosaic-avatar-options mosaic-avatar-colors" }, PERSONAL_AVATAR_HUES.map((value) => h("button", { key: value, type: "button", "data-avatar-hue": value, "aria-label": `${label("Hue", "\u8272\u76F8")} ${value}\xB0`, "aria-pressed": hue === value, onClick: () => choose(shape, accessory, value) }, h("span", { className: "mosaic-avatar-swatch", style: { "--swatch": `hsl(${value} 65% 65%)` } }), hue === value && selectedMark)))),
+            h(Button, { type: "button", variant: "ghost", className: "mosaic-avatar-reset", disabled: saving || key === DEFAULT_PERSONAL_AVATAR, "data-action": "reset-avatar", onClick: () => {
               setKey(DEFAULT_PERSONAL_AVATAR);
               setError("");
-            } }, label("Reset", "\u6062\u590D\u9ED8\u8BA4")),
-            h(Button, { type: "button", disabled: saving, "data-action": "cancel-avatar", onClick: onClose }, label("Cancel", "\u53D6\u6D88")),
-            h(Button, { type: "submit", variant: "primary", disabled: saving || !changed, "data-action": "save-avatar" }, saving ? label("Saving\u2026", "\u4FDD\u5B58\u4E2D\u2026") : label("Save", "\u4FDD\u5B58"))
+            } }, label("Reset appearance", "\u6062\u590D\u9ED8\u8BA4\u5916\u89C2"))
+          ),
+          h(
+            "div",
+            { className: "mosaic-avatar-summary" },
+            h("input", { className: "mosaic-name-input", "aria-label": label("Name", "\u540D\u5B57"), value: name, disabled: saving, "aria-invalid": !valid, onChange: (event) => {
+              setName(event.target.value);
+              setError("");
+            } }),
+            !valid && h("p", { className: "mosaic-name-error", role: "status" }, label("Use 1\u201364 characters.", "\u8BF7\u8F93\u5165 1\u201364 \u4E2A\u5B57\u7B26\u3002")),
+            h("div", { className: "mosaic-avatar-preview" }, h(Avatar, { size: 144, avatarKey: key, motion: "ambient" })),
+            error && h("p", { className: "mosaic-name-error", role: "alert" }, error),
+            h(
+              "div",
+              { className: "mosaic-avatar-actions" },
+              h(Button, { type: "submit", variant: "primary", disabled: saving || !valid || !changed, "data-action": "save-avatar" }, saving ? label("Saving\u2026", "\u4FDD\u5B58\u4E2D\u2026") : label("Save", "\u4FDD\u5B58"))
+            )
           )
         )
       );
@@ -1484,7 +1500,7 @@ ${personalReviewStyles}
   async function activate(api) {
     const React = api.react, h = React.createElement;
     const { Page, Section, Card, Stack, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
-    const AvatarDialog = createAvatarDialog(api);
+    const IdentityDialog = createIdentityDialog(api);
     const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
     const call = async (method, input) => {
       if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -1787,12 +1803,7 @@ ${personalReviewStyles}
     .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
     .mosaic-reply-task-context > p { margin:8px 0 0; }
     @media(max-width:720px) { .mosaic-replies { inset-inline:6px;border-radius:24px;max-height:60%; } .mosaic-replies-toolbar { padding-inline:12px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:12px; } }
-    .mosaic-name-dialog { position:relative;width:min(360px,100%);max-height:100%;overflow:auto;min-height:450px;display:flex;flex-direction:column;align-items:center;gap:20px;padding:48px 32px 24px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
-    .mosaic-name-input { width:100%;min-width:0;border:0;border-radius:12px;background:var(--surface-1);color:var(--ink);padding:12px 8px;text-align:center;font-size:32px;font-weight:600; }
-    .mosaic-name-dialog [data-plugin-avatar] { margin:22px 0; }
-    .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
-    .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
     /* Only the identity's halo covers history; its initial clearance scrolls away. */
     .mosaic-main > .plugin-conversation { --conversation-composer-clearance:calc(var(--mosaic-message-tail-space) - var(--conversation-dock-top-space));grid-template-rows:0 minmax(0,1fr); }
@@ -1810,6 +1821,13 @@ ${personalReviewStyles}
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-profile-trigger .mosaic-avatar { width:40px;height:40px; }
     .mosaic-profile-head .mosaic-avatar { width:64px;height:64px; }
+    .mosaic-avatar-editable { position:relative;flex:none;border-radius:50%; }
+    .mosaic-avatar-edit { position:absolute;right:-6px;bottom:-4px;display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);color:var(--ink);box-shadow:0 1px 3px #00000014;cursor:pointer;opacity:0;pointer-events:none; }
+    .mosaic-avatar-editable:hover .mosaic-avatar-edit,.mosaic-avatar-editable:focus-within .mosaic-avatar-edit { opacity:1;pointer-events:auto; }
+    .mosaic-avatar-edit:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
+    .mosaic[data-panel-open="true"] .mosaic-identity .mosaic-avatar-editable { visibility:hidden; }
+    @media(hover:none) { .mosaic-avatar-edit { opacity:1;pointer-events:auto; } }
+
     .mosaic-sidebar .mosaic-task { align-items:center;min-height:28px;padding:4px 8px;margin:0 -8px;width:calc(100% + 16px);gap:8px;border-radius:8px;font-size:calc(var(--font-ui) * .9333); }
     .mosaic-sidebar .mosaic-task-mark { width:20px;height:20px; }
     .mosaic-sidebar .mosaic-nav-icon { width:16px;height:16px; }
@@ -2653,64 +2671,6 @@ ${personalReviewStyles}
         view === "edit" && h("footer", { className: "mosaic-routine-footer", "data-view": view }, h(React.Fragment, null, h(Button, { variant: "ghost", "data-action": "cancel-routine-edit", disabled: busy, onClick: back }, label("Cancel", "\u53D6\u6D88")), h(Button, { variant: "primary", type: "submit", form: "mosaic-routine-editor", "data-action": "save-routine", disabled: busy }, busy ? t("savingName") : t("save"))))
       ));
     }
-    function RenameDialog({ agent, t, onSave, onClose }) {
-      const [name, setName] = React.useState(agent.name || "twin"), [saving, setSaving] = React.useState(false), [error, setError] = React.useState("");
-      const input = React.useRef(null), dialog = React.useRef(null), alive = React.useRef(true);
-      const trimmed = name.trim(), valid = trimmed.length > 0 && Array.from(trimmed).length <= 64, changed = trimmed !== (agent.name || "twin").trim();
-      React.useEffect(() => {
-        alive.current = true;
-        input.current?.focus();
-        input.current?.select();
-        return () => {
-          alive.current = false;
-        };
-      }, []);
-      React.useEffect(() => {
-        (saving ? dialog.current : input.current)?.focus();
-      }, [saving]);
-      const save = async (event) => {
-        event.preventDefault();
-        if (saving || !valid || !changed) return;
-        setSaving(true);
-        setError("");
-        try {
-          await onSave(trimmed);
-        } catch (cause) {
-          if (alive.current) {
-            setSaving(false);
-            setError(`${t("nameSaveFailed")} ${cause instanceof Error ? cause.message : String(cause)}`);
-          }
-        }
-      };
-      return h("div", { className: "mosaic-name-backdrop", onPointerDown: (event) => {
-        if (!saving && event.target === event.currentTarget) onClose();
-      } }, h("form", { ref: dialog, className: "mosaic-name-dialog", tabIndex: -1, role: "dialog", "aria-modal": true, "aria-label": t("rename"), onSubmit: save, onKeyDown: (event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          event.preventDefault();
-          if (!saving) onClose();
-        }
-        if (event.key === "Tab") {
-          const controls = [...dialog.current.querySelectorAll("button:not(:disabled),input:not(:disabled)")];
-          const first = controls[0], last = controls[controls.length - 1];
-          if (!controls.length) {
-            event.preventDefault();
-            dialog.current.focus();
-            return;
-          }
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-          }
-        }
-      } }, h("button", { type: "button", className: "mosaic-name-close", disabled: saving, "aria-label": t("close"), onClick: onClose }, "\xD7"), h("input", { ref: input, className: "mosaic-name-input", value: name, disabled: saving, "aria-label": t("nameLabel"), "aria-invalid": !valid, onChange: (event) => {
-        setName(event.target.value);
-        setError("");
-      } }), h(Avatar, { size: 160, motion: "ambient", avatarKey: agent.avatar_key }), !valid && h("p", { className: "mosaic-name-error", role: "status" }, t("invalidName")), error && h("p", { className: "mosaic-name-error", role: "alert" }, error), h("button", { type: "submit", className: "mosaic-name-save", disabled: saving || !valid || !changed }, saving ? t("savingName") : t("saveName"))));
-    }
     const replySources = /* @__PURE__ */ new Map();
     function useReplySource({ reference, records, sessionID, agentID }) {
       const key = `${agentID}:${reference?.session_id}:${reference?.seq}`;
@@ -2827,7 +2787,6 @@ ${personalReviewStyles}
       };
       const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
       const [avatarOpen, setAvatarOpen] = React.useState(false);
-      const [nameOpen, setNameOpen] = React.useState(false);
       const [replySelection, setReplySelection] = React.useState(null);
       const [replyHistory, setReplyHistory] = React.useState(null);
       const reactionStates = React.useRef(/* @__PURE__ */ new Map()), reactionTargets = React.useRef(/* @__PURE__ */ new Set());
@@ -3575,28 +3534,9 @@ ${personalReviewStyles}
         routineTrigger.current = event.currentTarget;
         setRoutineID(routine.routine_id);
       } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("clock")), h("span", { className: "mosaic-task-copy mosaic-task-title" }, routine.title), h("span", { className: "mosaic-routine-next" }, routine.binding?.next_run_at && routine.status === "active" ? date(routine.binding.next_run_at, true, routine.timezone) : routineStatus(routine.status, locale, t)));
-      const openRename = () => {
+      const openIdentity = () => {
         closePanel(false);
-        setNameOpen(true);
-      };
-      const closeRename = () => {
-        const version = ++focusVersion.current;
-        setNameOpen(false);
-        requestAnimationFrame(() => {
-          if (version === focusVersion.current) profileTrigger.current?.focus({ preventScroll: true });
-        });
-      };
-      const saveName = async (name) => {
-        try {
-          const result2 = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, name });
-          if (!mounted.current) return;
-          publishIdentity(result2.agent);
-          closeRename();
-        } catch (cause) {
-          if (mounted.current) await loadConversation(agent).catch(() => {
-          });
-          throw cause;
-        }
+        setAvatarOpen(true);
       };
       const closeAvatar = () => {
         const version = ++focusVersion.current;
@@ -3605,9 +3545,9 @@ ${personalReviewStyles}
           if (version === focusVersion.current) profileTrigger.current?.focus({ preventScroll: true });
         });
       };
-      const saveAvatar = async (avatar_key) => {
+      const saveIdentity = async (changes) => {
         try {
-          const result2 = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, avatar_key });
+          const result2 = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, ...changes });
           if (!mounted.current) return;
           publishIdentity(result2.agent);
           closeAvatar();
@@ -3615,7 +3555,7 @@ ${personalReviewStyles}
           if (mounted.current) {
             await loadConversation(agent).catch(() => {
             });
-            if (identityAgent?.agent_id === agent.agent_id && identityAgent.avatar_key === avatar_key) {
+            if (identityAgent?.agent_id === agent.agent_id && Object.entries(changes).every(([field, value]) => identityAgent[field] === value)) {
               closeAvatar();
               return;
             }
@@ -3627,6 +3567,7 @@ ${personalReviewStyles}
       const avatarStatus = running ? liveMessages.some((message) => message.streaming && message.content) ? "responding" : "thinking" : queuedCount > 0 ? "queued" : "idle";
       const statusText = running ? t(avatarStatus) : queuedCount > 0 ? `${queuedCount} \xB7 ${t("queued")}` : t("ready");
       const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : 40, avatarKey: agent?.avatar_key, status: avatarStatus, motion: large && panelOpen ? "ambient" : "static" }));
+      const editAvatar = () => h("button", { type: "button", className: "mosaic-avatar-edit", "data-action": "edit-personal", "aria-label": locale.startsWith("zh") ? "\u7F16\u8F91 twin" : "Edit twin", onClick: openIdentity }, h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: "m16 3 5 5M4 20l4-1L21 6a2.1 2.1 0 0 0-3-3L5 16l-1 4Z" })));
       const sidebar = h(
         "aside",
         { ref: panelRef, id: panelID, className: "mosaic-sidebar", "data-personal-panel": true, hidden: !panelPresent, inert: !panelOpen, "aria-hidden": !panelOpen, "data-panel-phase": panelPhase, "data-panel-visible": panelVisible, tabIndex: -1, role: "dialog", "aria-label": t("profile"), onKeyDown: (event) => {
@@ -3684,10 +3625,7 @@ ${personalReviewStyles}
         ) : h(
           React.Fragment,
           null,
-          h("header", { className: "mosaic-profile-head" }, avatar(true), h("div", { className: "mosaic-profile-copy" }, h("button", { type: "button", className: "mosaic-profile-name mosaic-profile-name-button", "data-action": "rename-personal", "aria-label": `${t("rename")} \xB7 ${displayName}`, onClick: openRename }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText), h(Button, { variant: "ghost", "data-action": "change-avatar", onClick: () => {
-            closePanel(false);
-            setAvatarOpen(true);
-          } }, locale.startsWith("zh") ? "\u66F4\u6362\u6837\u5F0F" : "Change style"))),
+          h("header", { className: "mosaic-profile-head" }, h("div", { className: "mosaic-avatar-editable" }, avatar(true), editAvatar()), h("div", { className: "mosaic-profile-copy" }, h("button", { type: "button", className: "mosaic-profile-name mosaic-profile-name-button", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "\u7F16\u8F91 twin" : "Edit twin"} \xB7 ${displayName}`, onClick: openIdentity }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText))),
           h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map((item) => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll((value) => !value) }, t(showAll ? "showLess" : "showMore"))),
           h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.slice(0, showAllOutputs ? void 0 : 3).map((output) => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => {
             detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`;
@@ -3814,7 +3752,7 @@ ${personalReviewStyles}
       ));
       return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h(
         "main",
-        { className: "mosaic-main", inert: avatarOpen || nameOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": avatarOpen || nameOpen || Boolean(replySelection) || Boolean(selectedRoutine) || void 0 },
+        { className: "mosaic-main", inert: avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine) || void 0 },
         !replySelection && sendRefreshNotice,
         !replySelection && agent && draftNotice(conversationID, draft),
         error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => {
@@ -3831,10 +3769,10 @@ ${personalReviewStyles}
             onQuestionReply: replyToQuestion,
             title: "twin",
             loading,
-            actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} \xB7 ${displayName} \xB7 ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => {
+            actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("div", { className: "mosaic-avatar-editable", inert: panelOpen, "aria-hidden": panelOpen }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} \xB7 ${displayName} \xB7 ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => {
               if (panelOpen) closePanel();
               else openPanel();
-            } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} \xB7 ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
+            } }, avatar()), editAvatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "\u7F16\u8F91 twin" : "Edit twin"} \xB7 ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openIdentity }, h("strong", null, displayName))),
             showHistorySearch: false,
             showJumpToLatest: !replySelection,
             searchLabel: t("historySearch"),
@@ -3888,12 +3826,12 @@ ${personalReviewStyles}
             calendarError && h("p", { role: "alert" }, calendarError)
           )
         )
-      ), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || nameOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || nameOpen || Boolean(selectedRoutine) || void 0, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: (item) => {
+      ), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || void 0, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: (item) => {
         setTasks((current) => current.some((value) => value.task_id === item.task_id) ? current : [...current, item]);
         setRoutineID(null);
         detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`;
         setSelection({ taskId: item.task_id, kind: "task" });
-      } }), avatarOpen && h(AvatarDialog, { agent, locale, onSave: saveAvatar, onClose: closeAvatar }), nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
+      } }), avatarOpen && h(IdentityDialog, { agent, locale, onSave: saveIdentity, onClose: closeAvatar })));
     }
     api.setNavigationAvatar?.("personal", null);
     let identityLoading = false;

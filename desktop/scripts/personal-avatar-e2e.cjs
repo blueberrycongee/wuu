@@ -22,7 +22,7 @@ if (!process.versions.electron) {
   console.log(`Personal avatar E2E passed, including full app restart. Evidence: ${output}`);
   process.exit(0);
 }
-const { app, BrowserWindow, nativeTheme } = require('electron');
+const { app, BrowserWindow, nativeTheme, nativeImage } = require('electron');
 const fixture = process.env.WUU_AVATAR_FIXTURE, phase = process.env.WUU_AVATAR_PHASE;
 assert.ok(fixture && phase, 'Use node to run the isolated three-process harness');
 const home = path.join(fixture, 'wuu-home');
@@ -71,9 +71,25 @@ async function capture(name) {
   fs.writeFileSync(path.join(output, `${phase}-${name}.png`), shot.toPNG());
   return shot;
 }
+async function setName(value) {
+  await evaluate(value => { const input = document.querySelector('.mosaic-name-input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+}
 async function openEditor() {
   await click('[data-action="toggle-personal-panel"]');
-  await click('[data-action="change-avatar"]');
+  await until(() => document.querySelector('.mosaic-sidebar')?.dataset.panelPhase === 'open');
+  if (!checks.includes('Avatar edit control appears on hover and keyboard focus')) {
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
+    await until(() => getComputedStyle(document.querySelector('.mosaic-profile-head .mosaic-avatar-edit')).opacity === '0');
+    const rect = await evaluate(() => document.querySelector('.mosaic-profile-head .mosaic-avatar-editable').getBoundingClientRect().toJSON());
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) });
+    await until(() => getComputedStyle(document.querySelector('.mosaic-profile-head .mosaic-avatar-edit')).opacity === '1');
+    await capture('avatar-hover');
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
+    await evaluate(() => document.querySelector('.mosaic-profile-head .mosaic-avatar-edit').focus());
+    await until(() => getComputedStyle(document.querySelector('.mosaic-profile-head .mosaic-avatar-edit')).opacity === '1');
+    checks.push('Avatar edit control appears on hover and keyboard focus');
+  }
+  await click('.mosaic-profile-head [data-action="edit-personal"]');
   await until(() => document.querySelector('.mosaic-avatar-dialog'));
 }
 async function avatar(selector = '.mosaic-profile-trigger') {
@@ -139,25 +155,31 @@ async function run() {
     assert.equal((await avatar('.mosaic-avatar-preview')).hue, '150');
     assert.equal((await avatar('.mosaic-avatar-preview')).accessory, 'leaf');
     assert.notEqual((await avatar('.mosaic-avatar-preview')).body, defaultBody);
+    await setName('Combined identity');
     await capture('preview-light');
     // Repeated submits must not create conflicting writes or close a new dialog.
     await evaluate(() => { const form = document.querySelector('.mosaic-avatar-dialog'); form.requestSubmit(); form.requestSubmit(); });
     await until(() => !document.querySelector('.mosaic-avatar-dialog'));
     await assertAvatar('mascot-v1:diamond:leaf:150');
-    checks.push('Shape/accessory/color preview and duplicate-submit save through real backend');
+    await until(() => document.querySelector('.mosaic-identity-label strong')?.textContent === 'Combined identity');
+    checks.push('Name and appearance save together through real backend; duplicate submit is ignored');
     await click('[data-action="toggle-personal-panel"]');
     assert.deepEqual(await avatar('.mosaic-profile-head'), await avatar());
     await capture('profile-synchronized');
-    await click('[data-action="change-avatar"]');
+    await click('.mosaic-profile-head [data-action="edit-personal"]');
     await click('[data-avatar-shape="triangle"]');
-    await click('[data-action="cancel-avatar"]');
+    await setName('Discard this name');
+    await click('.mosaic-avatar-dialog .mosaic-name-close');
     await assertAvatar('mascot-v1:diamond:leaf:150');
+    await until(() => document.querySelector('.mosaic-identity-label strong')?.textContent === 'Combined identity');
     await openEditor();
+    await setName('Discard on Escape');
     await click('[data-action="reset-avatar"]');
     await key('Escape');
     await until(() => !document.querySelector('.mosaic-avatar-dialog'));
     await assertAvatar('mascot-v1:diamond:leaf:150');
-    checks.push('Cancel and Escape discard shape changes and unsaved reset');
+    await until(() => document.querySelector('.mosaic-identity-label strong')?.textContent === 'Combined identity');
+    checks.push('Close and Escape discard both name and appearance drafts');
     // A second writer changes only the name via the real public IPC service.
     // Submit in the same continuation before any periodic view refresh can hide
     // the stale-revision boundary; the UI must keep the draft and allow retry.
@@ -201,8 +223,7 @@ async function run() {
     // All available shapes/accessories are real rendered options, including none.
     for (const shape of ['round', 'rounded-square', 'capsule', 'triangle', 'diamond']) await click(`[data-avatar-shape="${shape}"]`);
     for (const accessory of ['none', 'beanie', 'hard-hat', 'headset', 'leaf']) await click(`[data-avatar-accessory="${accessory}"]`);
-    await evaluate(() => { const input = document.querySelector('.mosaic-avatar-dialog input[type="range"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '288'); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); });
-    await until(() => document.querySelector('.mosaic-avatar-hue output')?.textContent === '288°');
+    await click('[data-avatar-hue="288"]');
     win.setContentSize(680, 900);
     nativeTheme.themeSource = 'dark';
     await evaluate(async () => { await window.wuu.setThemePreference('dark'); document.documentElement.style.setProperty('--conversation-message-font-size', '20px'); });
@@ -210,23 +231,27 @@ async function run() {
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     assert.equal(await evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches), true);
+    await capture('dark-narrow-layout');
     const eyes = await evaluate(() => [...document.querySelectorAll('.mosaic-avatar-dialog [data-wuu-mascot-provider-hue], button[data-wuu-plugin="plugin:bundled:personal"] [data-wuu-mascot-provider-hue]')].map(svg => ({
       box: svg.getBoundingClientRect().toJSON(),
       eyes: [...svg.querySelectorAll('.mo-eye > path')].map(eye => ({ rect: eye.getBoundingClientRect().toJSON(), fill: getComputedStyle(eye).fill, visibility: getComputedStyle(eye).visibility }))
     })));
     fs.writeFileSync(path.join(output, 'eye-audit.json'), JSON.stringify(eyes, null, 2));
     const shot = await capture('dark-narrow-large-reduced-motion');
-    const pixels = shot.toBitmap({ scaleFactor: 1 }), size = shot.getSize();
+    const nativeShot = nativeImage.createFromBuffer(shot.toPNG());
+    const pixels = nativeShot.toBitmap(), size = nativeShot.getSize();
+    const scale = size.width / await evaluate(() => innerWidth);
     assert.equal(pixels.length, size.width * size.height * 4);
     // SVG geometry alone passed while Chromium failed to paint the updated
-    // eyes. Check the actual screenshot inside each eye, not stylesheet text.
+    // eyes. Sample the native-resolution bitmap so downsampling does not wash
+    // out the narrow eyes before comparing them with their CSS-pixel bounds.
     for (const [index, svg] of eyes.entries()) {
       assert.equal(svg.eyes.length, 2);
       for (const eye of svg.eyes) {
         assert.ok(eye.rect.width > 1 && eye.rect.height > 1);
         let dark = 0, total = 0;
-        for (let y = Math.ceil(eye.rect.y + eye.rect.height * .25); y < eye.rect.y + eye.rect.height * .75; y++) {
-          for (let x = Math.ceil(eye.rect.x + eye.rect.width * .25); x < eye.rect.x + eye.rect.width * .75; x++) {
+        for (let y = Math.ceil(scale * (eye.rect.y + eye.rect.height * .25)); y < scale * (eye.rect.y + eye.rect.height * .75); y++) {
+          for (let x = Math.ceil(scale * (eye.rect.x + eye.rect.width * .25)); x < scale * (eye.rect.x + eye.rect.width * .75); x++) {
             const offset = (y * size.width + x) * 4;
             if (pixels[offset] < 80 && pixels[offset + 1] < 80 && pixels[offset + 2] < 80) dark++;
             total++;
@@ -238,19 +263,23 @@ async function run() {
     checks.push('Actual screenshot pixels retain both eyes after repeated style changes and reduced motion');
     const geometry = await evaluate(() => { const dialog = document.querySelector('.mosaic-avatar-dialog'); const rect = dialog.getBoundingClientRect(); return { width: dialog.clientWidth, scrollWidth: dialog.scrollWidth, left: rect.left, right: rect.right, viewport: innerWidth }; });
     assert.ok(geometry.scrollWidth <= geometry.width + 1 && geometry.left >= 0 && geometry.right <= geometry.viewport);
-    checks.push('Five shapes/five accessory choices, hue slider, keyboard focus containment, dark/narrow/large/reduced motion');
+    checks.push('Five shapes/five accessory choices, color presets, keyboard focus containment, dark/narrow/large/reduced motion');
     await click('[data-action="save-avatar"]');
     await until(() => !document.querySelector('.mosaic-avatar-dialog'));
     await assertAvatar('mascot-v1:diamond:leaf:288');
     await click('.mosaic-identity-label');
     await until(() => document.querySelector('.mosaic-name-input'));
-    assert.deepEqual(await avatar('.mosaic-name-dialog'), await avatar());
+    assert.deepEqual(await avatar('.mosaic-avatar-preview'), await avatar());
+    await setName('   ');
+    assert.equal(await evaluate(() => document.querySelector('[data-action="save-avatar"]').disabled), true);
+    await setName('a'.repeat(65));
+    assert.equal(await evaluate(() => document.querySelector('[data-action="save-avatar"]').disabled), true);
     await evaluate(() => { const input = document.querySelector('.mosaic-name-input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Avatar E2E'); input.dispatchEvent(new Event('input', { bubbles: true })); });
-    await click('.mosaic-name-save');
-    await until(() => !document.querySelector('.mosaic-name-dialog'));
+    await click('[data-action="save-avatar"]');
+    await until(() => !document.querySelector('.mosaic-avatar-dialog'));
     await assertAvatar('mascot-v1:diamond:leaf:288');
     await until(() => document.querySelector('.mosaic-identity-label strong')?.textContent === 'Avatar E2E');
-    checks.push('Rename dialog uses configured avatar; rename preserves appearance');
+    checks.push('Unified editor rejects invalid names; name-only save preserves appearance');
     fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify({ avatar: await avatar(), defaultAvatar }));
     await capture('saved-renamed');
     const saved = await avatar(navigationSelector);
