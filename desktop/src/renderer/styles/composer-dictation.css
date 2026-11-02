@@ -34,7 +34,6 @@
 .composer-dictation-stop svg { width: 14px; height: 14px; fill: currentColor; }
 .composer-dictation-stop svg.is-spinning { fill: none; }
 .composer-dictation-recording[data-phase="finalizing"] .composer-dictation-dot { animation: none; opacity: .4; }
-.composer-dictation-error { margin: var(--space-2) var(--space-3); color: var(--danger, var(--ink)); font-size: var(--font-body); }
 @keyframes dictation-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes dictation-pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .composer-dictation-recording, .composer-dictation-dot { animation: none; } .composer-dictation-wave > span { transition: none; } }
