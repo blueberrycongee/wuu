@@ -55,6 +55,16 @@ describe("Plugin avatar public contract", () => {
     host.unload("avatar-contract");
   });
 
+  it("renders a configured identity without changing unconfigured brand avatars", () => {
+    const rendered = render(<><PluginAvatar avatarKey="mascot-v1:diamond:leaf:150" /><PluginAvatar /></>);
+    const faces = rendered.querySelectorAll("[data-wuu-mascot-accessory]");
+    expect(faces[0].getAttribute("data-wuu-mascot-accessory")).toBe("leaf");
+    expect(faces[0].getAttribute("data-wuu-mascot-provider-hue")).toBe("150");
+    expect(faces[0].querySelector(bodySelector)?.getAttribute("d")).not.toBe(circlePath);
+    expect(faces[1].getAttribute("data-wuu-mascot-accessory")).toBe("headset");
+    expect(faces[1].querySelector(bodySelector)?.getAttribute("d")).toBe(circlePath);
+  });
+
   it("keeps the same sphere and headphones through work, failure and recovery without morph artwork", () => {
     vi.useFakeTimers();
     const rendered = render(<PluginAvatar size={64} motion="ambient" />);

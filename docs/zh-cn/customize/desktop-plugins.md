@@ -215,7 +215,9 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 使用 `api.react` 和 `api.ui`，让控件遵循宿主主题、间距和排版。UI 字号与代码字号应分开。只改外观时优先使用声明式主题 token，公开契约见[界面矩阵](theme-surface-matrix.md)。
 
-桌面上的 `api.ui.Avatar` 和公开图标 `mascot` 共用 Wuu 的圆球耳机形象。Avatar 接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留圆球、面部和耳机，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+桌面上的 `api.ui.Avatar` 默认显示与公开图标 `mascot` 相同的 Wuu 圆球耳机形象。它接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。可选的 `avatarKey` 使用 `mascot-v1:shape:accessory:hue` 格式：形状为 `round`、`rounded-square`、`capsule`、`triangle` 或 `diamond`，配饰为 `none`、`beanie`、`hard-hat`、`headset` 或 `leaf`，色相为 0 到 359 的整数，例如 `mascot-v1:diamond:leaf:150`。省略该字段则保持品牌形象。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留配置的形状和配饰，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标，可能忽略样式字段。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+
+桌面 Personal 的资料面板提供“更换样式”，可预览形状、配饰和颜色。保存会将外观写入现有 Personal 身份；取消或关闭编辑器会丢弃修改。“恢复默认”预览原有圆形、耳机和色相 222 的组合，仍需保存才会生效。顶栏、资料面板和重命名对话框共用保存的外观，重命名会保留外观。已有身份无需迁移。原生 iOS 和 Android 头像尚未适配此设置。
 
 可以使用选区、尺寸观察器等标准浏览器 API。定位时优先选择公开的 `data-wuu-component`、`data-wuu-slot`、`data-wuu-surface` 锚点，不要依赖私有类名或 React 内部对象；这些锚点也不保证周围 DOM 结构稳定。对于不由 React effect 清理的监听器、观察器、定时器和其他资源，应显式注册清理。
 

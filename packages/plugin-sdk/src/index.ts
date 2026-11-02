@@ -376,8 +376,10 @@ export interface PluginUIConversationComposerProps {
   onStop(): void;
 }
 
-/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+/** Decorative host identity. Static is the default; ambient preserves its configured appearance. */
 export interface PluginUIAvatarProps {
+  /** Optional mascot-v1:shape:accessory:hue style. Omit for the host brand identity. */
+  readonly avatarKey?: string;
   readonly size?: number;
   readonly status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
   readonly motion?: "static" | "ambient";
