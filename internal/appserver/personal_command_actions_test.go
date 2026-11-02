@@ -7,9 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/personalreview"
+	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // Real UserHost, selected coordinator/effect providers and native shell. Only
@@ -60,5 +63,100 @@ func TestPersonalCommandApprovalProductionEntry(t *testing.T) {
 				t.Fatalf("rejected command ran: %s %v %v", data, retryErr, readErr)
 			}
 		})
+	}
+}
+
+// This fixture deliberately has no protected-path policy. Production Personal
+// keeps its existing refusal of detached processes with protected paths; this
+// verifies the approval contract in hosts where such processes are supported.
+func TestPersonalProcessInputRequiresIndependentApproval(t *testing.T) {
+	f := newPersonalBoundaryFixture(t, nil)
+	before := f.snapshot()
+	settings, _ := json.Marshal(map[string]any{"enabled": false, "expected_revision": before.Settings.Revision})
+	if _, err := f.host.personal.Call(f.owner, "review.settings", settings, ""); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := proc.NewManager(f.rt.RootDir, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.kit.SetProcessManager(manager)
+	events := make(chan proc.Event, 16)
+	manager.Subscribe(events)
+	defer manager.Unsubscribe(events)
+	decide := func(call providers.ToolCall, choice string) personalreview.Record {
+		t.Helper()
+		if _, err := f.kit.Execute(f.owner, call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
+			t.Fatalf("expected pending %s: %v", call.Name, err)
+		}
+		records, err := f.host.actionsForTest(t).engine.Records(context.Background(), f.rt.UserSpaceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pending personalreview.Record
+		for _, r := range records {
+			if r.Action.Operation == call.Name && r.Status == personalreview.AwaitingConfirmation {
+				pending = r
+			}
+		}
+		if pending.Action.ID == "" {
+			t.Fatalf("no pending %s approval: %+v", call.Name, records)
+		}
+		raw, _ := json.Marshal(map[string]any{"space_id": pending.Action.Scope.SpaceID, "id": pending.Action.ID, "digest": pending.Action.Digest, "expected_revision": pending.Revision, "choice": choice})
+		if _, err := f.host.personal.Call(f.owner, "review.resolve", raw, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return f.current(pending.Action.Key())
+	}
+	start := providers.ToolCall{ID: "start-interactive", Name: "bash", Arguments: `{"command":"printf ready; read value; printf '%s' \"$value\" > stdin.txt","run_in_background":true}`}
+	started := decide(start, "approve_once")
+	if started.Status != personalreview.Succeeded {
+		t.Fatalf("start status: %+v", started)
+	}
+	var receipt struct {
+		ToolResult toolresult.Result `json:"tool_result"`
+	}
+	if err = json.Unmarshal(started.Result, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	var process proc.Process
+	receipt.ToolResult.ModelText = nil
+	if err = json.Unmarshal([]byte(receipt.ToolResult.TextProjection()), &process); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = manager.Stop(process.ID) })
+	input := func(text string) providers.ToolCall {
+		raw, _ := json.Marshal(map[string]any{"action": "write", "process_id": process.ID, "input": text})
+		return providers.ToolCall{ID: "stdin", Name: "process", Arguments: string(raw)}
+	}
+	rejected := decide(input("unapproved\n"), "reject")
+	if rejected.Status != personalreview.Denied {
+		t.Fatalf("input not denied: %+v", rejected)
+	}
+	if _, err = os.Stat(filepath.Join(f.rt.RootDir, "stdin.txt")); !os.IsNotExist(err) {
+		t.Fatal("spawn approval admitted later stdin")
+	}
+	approved := decide(input("approved\n"), "approve_once")
+	if approved.Status != personalreview.Succeeded {
+		t.Fatalf("input not executed: %+v", approved)
+	}
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event.Process.ID == process.ID && event.Type == proc.EventStopped && event.Cause == proc.EventCauseNaturalExit {
+				data, err := os.ReadFile(filepath.Join(f.rt.RootDir, "stdin.txt"))
+				if err != nil || string(data) != "approved" {
+					t.Fatalf("stdin result: %q %v", data, err)
+				}
+				return
+			}
+		case <-timer.C:
+			t.Fatal("approved process input did not finish")
+		}
 	}
 }
