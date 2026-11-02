@@ -55,10 +55,11 @@ export function useSidebarConversationActivity(
   // Commit membership as well as positions. A thread can arrive idle before its
   // first turn starts; freezing its activity rank would bury it below old work.
   useLayoutEffect(() => {
-    if (reconciledOrder.length !== threadOrder.length
-      || reconciledOrder.some((id, index) => id !== threadOrder[index])) {
-      setThreadOrder(reconciledOrder);
-    }
+    const knownIDs = new Set(threadOrder);
+    const newIDs = reconciledOrder.filter((id) => !knownIDs.has(id));
+    // Keep saved IDs while workspace caches are empty or still loading.
+    // Reconciliation filters absent rows without erasing their saved positions.
+    if (newIDs.length > 0) setThreadOrder([...newIDs, ...threadOrder]);
   }, [reconciledOrder, threadOrder]);
   const ordered = useMemo(() => {
     const byID = new Map(threads.map((thread) => [thread.id, thread]));

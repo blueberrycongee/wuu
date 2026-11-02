@@ -82,6 +82,8 @@ app.whenReady().then(async () => {
     const recentTitles = () => evaluate(() => [...document.querySelectorAll(
       '[data-sidebar-recents] .thread-row:not([data-draft-id]) .thread-row-title',
     )].map(node => node.textContent));
+    const initialThreads = await evaluate(async () => (await window.wuu.listThreads()).threads);
+    const initialTitles = new Map(initialThreads.map(thread => [thread.id, thread.title || thread.preview]));
     const template = await evaluate(async () => (await window.wuu.resumeThread("sidebar-fade-0")).thread);
     const olderRunning = { ...template, id: "recent-older-running", title: "Older running conversation",
       status: "in_progress", turns: [{ id: "older-running-turn", status: "in_progress", started_at: now, items: [] }] };
@@ -134,7 +136,7 @@ app.whenReady().then(async () => {
       const beforeDrag = await recentTitles();
       const saved = await evaluate(async () => {
         const rows = document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])');
-        const source = rows[1], target = rows[0], dataTransfer = new DataTransfer();
+        const source = rows[rows.length - 1], target = rows[0], dataTransfer = new DataTransfer();
         source.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer }));
         await new Promise(requestAnimationFrame);
         target.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer,
@@ -143,13 +145,30 @@ app.whenReady().then(async () => {
         await new Promise(requestAnimationFrame);
         return JSON.parse(localStorage.getItem("wuu.desktop.sidebarThreadOrderByWorkspace"))["__wuu_recent_threads__"];
       });
-      assert.deepEqual(await recentTitles(), [beforeDrag[1], beforeDrag[0], ...beforeDrag.slice(2)], "manual reordering still works at the cap");
+      assert.deepEqual(await recentTitles(), [beforeDrag.at(-1), ...beforeDrag.slice(0, -1)], "manual reordering still works at the cap");
       assert.equal(saved.length, theme === "light" ? 51 : 53, "manual order retains hidden conversations");
       results.push({ label: `recent-drag-${theme}`, order: await recentTitles(), saved });
     }
+    const saved = await evaluate(() => JSON.parse(localStorage.getItem("wuu.desktop.sidebarThreadOrderByWorkspace"))["__wuu_recent_threads__"]);
+    const expectedRestored = saved.filter(id => initialTitles.has(id)).map(id => initialTitles.get(id));
+    // Reload starts with an empty cache before the fixture's original sessions
+    // arrive. That loading phase must not erase their saved relative positions.
+    await win.loadFile(path.join(desktop, "out/renderer/index.html"), { query: { emptyRecent: "1" } });
+    await waitFor(() => Boolean(document.querySelector(".project-row")));
+    assert.deepEqual(await recentTitles(), [], "restore starts before sessions have loaded");
+    const firstBatch = initialThreads.slice(0, 24);
+    for (const thread of firstBatch) emit("thread/started", { thread });
+    await waitFor(() => document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])').length === 24);
+    const firstTitles = new Set(firstBatch.map(thread => initialTitles.get(thread.id)));
+    assert.deepEqual(await recentTitles(), expectedRestored.filter(title => firstTitles.has(title)), "partial loading preserves saved positions");
+    for (const thread of initialThreads.slice(24)) emit("thread/started", { thread });
+    await waitFor(() => document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])').length === 48);
+    assert.deepEqual(await recentTitles(), expectedRestored, "saved order survives an initially empty session cache");
+    results.push({ label: "recent-restored", order: await recentTitles() });
+    await capture("recent-restored");
     // The remaining scroll scenarios start with their own default ordering.
     await evaluate(() => localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace"));
-    console.log("PASS: new Recent conversations stay first through admission, completion, focus release, manual reordering, and the 50-row cap.");
+    console.log("PASS: new Recent conversations stay first through admission, completion, focus release, manual reordering, reload, and the 50-row cap.");
   };
   try {
     await win.loadURL("about:blank");
