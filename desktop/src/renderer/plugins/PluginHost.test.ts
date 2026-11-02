@@ -1005,7 +1005,7 @@ it("owns central notices by generation and rejects notices from retired handles"
   try {
     await host.activateGeneration({ pluginId: "notices", generation: "one", register: value => { api = value; } });
     api.showNotice({ message: "Could not refresh. Try again.", tone: "error", key: "refresh" });
-    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: "plugin:notices:one:1:refresh" });
+    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: expect.stringMatching(/^plugin:\d+:notices:one:1:refresh$/) });
     host.unload("notices");
     expect(dismiss).toHaveBeenCalledWith(71);
     expect(() => api.showNotice({ message: "stale" })).toThrow();
@@ -1140,5 +1140,29 @@ it("does not let a retiring owner dismiss a replacement provider's notice", asyn
     await host.unloadAndWait("notice-provider");
     show.mockRestore();
     toast.clearToasts();
+  }
+});
+
+it("keeps notices isolated across concurrent scoped-content hosts", async () => {
+  const toast = await import("../Toast");
+  toast.clearToasts();
+  const show = vi.spyOn(toast, "showToast");
+  const first = new PluginHost({ react: React }), second = new PluginHost({ react: React });
+  let a!: PluginGenerationApi, b!: PluginGenerationApi;
+  try {
+    await first.activateGeneration({ pluginId: "scoped-notice", generation: "same", register(api) { a = api; } });
+    await second.activateGeneration({ pluginId: "scoped-notice", generation: "same", register(api) { b = api; } });
+    a.showNotice({ message: "First scope failed", key: "refresh", tone: "error" });
+    const firstID = show.mock.results.at(-1)?.value;
+    b.showNotice({ message: "Second scope failed", key: "refresh", tone: "error" });
+    const secondID = show.mock.results.at(-1)?.value;
+    expect(secondID).not.toBe(firstID);
+    await first.unloadAndWait("scoped-notice");
+    b.showNotice({ message: "Second scope failed", key: "refresh", tone: "error" });
+    expect(show.mock.results.at(-1)?.value).toBe(secondID);
+  } finally {
+    await first.unloadAndWait("scoped-notice");
+    await second.unloadAndWait("scoped-notice");
+    show.mockRestore(); toast.clearToasts();
   }
 });
