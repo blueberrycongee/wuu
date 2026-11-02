@@ -1,3 +1,4 @@
+import { decodePluginRuntimeResponse } from "../../shared/pluginRuntimeIPC";
 import * as React from "react";
 import type { ExtensionInventoryRecord, PluginScopeInitializeParams, WuuDesktopApi } from "../../shared/protocol";
 import { PluginHost } from "./PluginHost";
@@ -33,7 +34,7 @@ export class ScopedContentRuntime {
         if (signal.aborted) { cancel(); throw new Error("Scoped renderer is no longer active"); }
         const result = await this.bridge.requestPluginRuntime({ ...identity, method, input, user_space_id: source.user_space_id, product_domain: source.product_domain, composition_profile: source.composition_profile });
         if (signal.aborted || this.inventory.get(id) !== plugin || !this.host.isGenerationActive(id, generation)) throw new Error("Scoped renderer is no longer active");
-        return result.result;
+        return decodePluginRuntimeResponse(result).result;
       } finally { signal.removeEventListener("abort", cancel); }
     };
     this.controller = new WorkbenchController(this.host, {

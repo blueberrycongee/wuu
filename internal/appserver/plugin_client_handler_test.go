@@ -22,6 +22,7 @@ type pluginClientRequestTestRuntime struct {
 type desktopServiceTestClient struct {
 	id       string
 	provider bool
+	optional bool
 	call     func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error)
 }
 
@@ -40,7 +41,7 @@ func (c *desktopServiceTestClient) RequiredServices() []pluginhost.ServiceRequir
 	if c.provider {
 		return nil
 	}
-	return []pluginhost.ServiceRequirement{{Name: "example.catalog", MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: "example.catalog", MajorVersion: 1, Required: !c.optional}}
 }
 func (c *desktopServiceTestClient) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	if c.call == nil {
@@ -318,5 +319,42 @@ func TestPluginClientNonOwnerCancelUsesCapturedOperation(t *testing.T) {
 	response := responseByID(t, parseOutput(t, out.String()), "cancel")
 	if response["error"] != nil || !remarshal[PluginClientCancelResult](t, response["result"]).Cancelled {
 		t.Fatalf("captured operation cancel failed: %+v", response)
+	}
+}
+
+func TestDesktopServiceRequestPreservesStructuredFailure(t *testing.T) {
+	srv, item, out := newPluginStateTestServer(t,
+		func(id string) pluginhost.Client { return &desktopServiceTestClient{id: id} },
+		func(string) pluginhost.Client {
+			return &desktopServiceTestClient{id: "external.catalog", provider: true, call: func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+				return nil, &pluginhost.HostServiceError{Code: "catalog_unavailable", Message: "Selected catalog could not load"}
+			}}
+		},
+	)
+	graph, release, err := srv.rt.RetainStateServices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	callPluginPackageRPC(t, srv, "failure", MethodPluginClientRequest, map[string]any{"id": item.SubjectID, "fingerprint": item.Fingerprint, "graph_generation": graph.GenerationID, "service": "example.catalog", "method": "list"})
+	response := responseByID(t, parseOutput(t, out.String()), "failure")
+	failure := remarshal[ResponseError](t, response["error"])
+	if failure.Code != "catalog_unavailable" || failure.Message != "Selected catalog could not load" {
+		t.Fatalf("lost service failure: %+v", response)
+	}
+}
+
+func TestDesktopServiceRequestReportsOptionalAbsence(t *testing.T) {
+	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client { return &desktopServiceTestClient{id: id, optional: true} })
+	graph, release, err := srv.rt.RetainStateServices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	callPluginPackageRPC(t, srv, "absent", MethodPluginClientRequest, map[string]any{"id": item.SubjectID, "fingerprint": item.Fingerprint, "graph_generation": graph.GenerationID, "service": "example.catalog", "method": "list"})
+	response := responseByID(t, parseOutput(t, out.String()), "absent")
+	failure := remarshal[ResponseError](t, response["error"])
+	if failure.Code != "service_optional_absent" {
+		t.Fatalf("missing host absence code: %+v", response)
 	}
 }

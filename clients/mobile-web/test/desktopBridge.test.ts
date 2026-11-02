@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Credentials, RemoteClientOptions } from "@wuu/remote-core";
+import { RPCResponseError, type Credentials, type RemoteClientOptions } from "@wuu/remote-core";
 import type { Thread } from "@wuu/protocol";
 
 const remote = vi.hoisted(() => ({ call: vi.fn(), wake: vi.fn(), suspend: vi.fn(), options: {} as RemoteClientOptions, attached: true }));
@@ -12,7 +12,8 @@ vi.mock('../src/lib/backgroundSync', () => ({
     stop = background.stop;
   },
 }));
-vi.mock("@wuu/remote-core", () => ({
+vi.mock("@wuu/remote-core", async importOriginal => ({
+  ...(await importOriginal<typeof import("@wuu/remote-core")>()),
   RemoteClient: class {
     call = remote.call;
     wake = remote.wake;
@@ -450,7 +451,7 @@ describe("connection recovery", () => {
     remote.call.mockResolvedValueOnce({ id: "selected", fingerprint: "current-source", entry: "wuu-builtin:default-shell", digest: "validated" });
     await expect(bridge.api.loadPluginDesktopModule({ id: "selected", fingerprint: "current-source" })).resolves.toMatchObject({ url: "wuu-builtin:default-shell" });
     expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-module/read", { id: "selected", fingerprint: "current-source" }, expect.any(Number), "/paired/workspace");
-    await expect(bridge.api.requestPluginRuntime({ id: "selected", fingerprint: "current-source", graph_generation: "current-graph", method: "mutate" })).rejects.toThrow(/restoring/);
+    await expect(bridge.api.requestPluginRuntime({ id: "selected", fingerprint: "current-source", graph_generation: "current-graph", method: "mutate" })).resolves.toMatchObject({ ok: false, error: { message: expect.stringMatching(/restoring/) } });
     await expect(bridge.api.listWorkspaceFiles()).rejects.toThrow(/restoring/);
     gate.resolve();
     await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
@@ -902,4 +903,17 @@ it('keeps unmanaged HTTP downloads as explicit anchors without granting provider
     await expect(bridge.api.saveArtifactFile!('secret', 's3://selected-provider/private')).rejects.toThrow(/lease/);
     await expect(bridge.api.saveArtifactFile!('foreign', 'blob:unowned')).rejects.toThrow(/lease/);
   } finally { fetchSpy.mockRestore(); await bridge.disconnect(); vi.unstubAllGlobals(); }
+});
+
+
+describe("plugin runtime transport response", () => {
+  it("retains structured service errors and same-shaped successful plugin data", async () => {
+    const bridge = await connectBridge();
+    const params = { id: "selected", fingerprint: "source", graph_generation: "graph", service: "goal.control", method: "request" };
+    remote.call.mockRejectedValueOnce(new RPCResponseError("service_optional_absent", "No configured provider"));
+    await expect(bridge.api.requestPluginRuntime(params)).resolves.toEqual({ ok: false, error: { code: "service_optional_absent", message: "No configured provider" } });
+    const result = { result: { ok: false, error: { code: "service_optional_absent", message: "ordinary data" } } };
+    remote.call.mockResolvedValueOnce(result);
+    await expect(bridge.api.requestPluginRuntime(params)).resolves.toEqual({ ok: true, value: result });
+  });
 });

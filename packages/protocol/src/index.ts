@@ -909,6 +909,10 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   workspace_root?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
+/** Host transport envelope, outside the plugin result; survives Electron context isolation. */
+export type PluginRuntimeResponse<T = PluginClientRequestResult> =
+  | { ok: true; value: T }
+  | { ok: false; error: { message: string; code?: string }; scopeRetired?: true };
 export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; graph_generation: string; }
 export interface PluginClientCancelResult { cancelled: boolean; }
 
@@ -3381,7 +3385,7 @@ export type WuuDesktopApi = {
   getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
-  requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
+  requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginRuntimeResponse>;
   initializePluginScope?: (params: PluginScopeInitializeParams) => Promise<readonly ExtensionInventoryRecord[]>;
   onPluginScopeInvalidated?: (handler: (event: PluginScopeInvalidation) => void) => () => void;
   cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
