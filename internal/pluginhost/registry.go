@@ -199,6 +199,7 @@ type ServiceRegistry struct {
 	composition          *CompositionSnapshot
 	moduleStatuses       func() []Status
 	dependencies         func() map[string][]Dependency
+	dependencyIssues     func() map[string][]DependencyIssue
 }
 
 func NewServiceRegistry() *ServiceRegistry {
@@ -1106,7 +1107,8 @@ type ServiceRegistrySnapshot struct {
 	// mutable catalog epoch shared by concurrent and retained compositions.
 	GraphGeneration string `json:"graph_generation,omitempty"`
 	// Dependencies retain the lifecycle graph after provider retirement.
-	Dependencies map[string][]Dependency `json:"dependencies"`
+	Dependencies     map[string][]Dependency      `json:"dependencies"`
+	DependencyIssues map[string][]DependencyIssue `json:"dependency_issues"`
 	// Requirements include unresolved optional and required declarations.
 	Requirements map[string][]ServiceRequirement `json:"requirements"`
 	Generation   uint64                          `json:"generation"`
@@ -1169,6 +1171,7 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 	}
 	graphGeneration := r.graphGeneration
 	moduleStatuses := r.moduleStatuses
+	dependencyIssues := r.dependencyIssues
 	dependencies := r.dependencies
 	requirements := make(map[string][]ServiceRequirement, len(r.requirements))
 	for id, declared := range r.requirements {
@@ -1223,7 +1226,11 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 	if dependencies != nil {
 		graph = dependencies()
 	}
-	return ServiceRegistrySnapshot{GraphGeneration: graphGeneration, Generation: generation, Services: entries, Composition: composition, Dependencies: graph, Requirements: requirements}
+	issues := make(map[string][]DependencyIssue)
+	if dependencyIssues != nil {
+		issues = dependencyIssues()
+	}
+	return ServiceRegistrySnapshot{DependencyIssues: issues, GraphGeneration: graphGeneration, Generation: generation, Services: entries, Composition: composition, Dependencies: graph, Requirements: requirements}
 }
 
 // notifyConsumers delivers service.changed to every consumer of (name,

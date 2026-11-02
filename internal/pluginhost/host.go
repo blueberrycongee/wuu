@@ -87,6 +87,7 @@ type Host struct {
 	serviceRegistry     *ServiceRegistry
 	dependencies        map[string][]Dependency
 	dependencyErrors    map[string]error
+	dependencyIssues    map[string][]DependencyIssue
 	executions          *ExecutionTracker
 	background          map[string]*backgroundJob
 	backgroundCompleted []string
@@ -159,6 +160,7 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		registry.scopeTracker = h.executions
 		registry.moduleStatuses = h.Statuses
 		registry.dependencies = h.Dependencies
+		registry.dependencyIssues = h.DependencyIssues
 		registry.mu.Unlock()
 	}
 	for _, conflict := range conflicts {

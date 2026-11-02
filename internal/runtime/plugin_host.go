@@ -68,6 +68,10 @@ func buildPluginHostWithSelection(ctx context.Context, plugins []pluginpkg.Plugi
 }
 
 func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, requireSelectedModules bool, driverProfile string, binding userspace.Binding, transfers []pluginStorageTransfer, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
+	return buildPluginHostWithPlan(ctx, plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, required, start, turnRouter, userQuestions, selection, requireSelectedModules, driverProfile, binding, transfers, nil, factories...)
+}
+
+func buildPluginHostWithPlan(ctx context.Context, plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, requireSelectedModules bool, driverProfile string, binding userspace.Binding, transfers []pluginStorageTransfer, packagePlan *pluginpkg.ActivationPlan, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
 	if err := binding.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -92,11 +96,24 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 	if err != nil {
 		return nil, nil, err
 	}
+	if packagePlan == nil {
+		// Bare host embedders resolve their selected packages here. Session callers
+		// carry the original admission plan through immutable package snapshots.
+		plan, err := pluginpkg.BuildActivationPlan(plugins)
+		if err != nil {
+			return nil, nil, err
+		}
+		packagePlan = &plan
+		plugins, resolved, err = selectCompositionPlugins(selection, plan.Plugins, factoryIDs...)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	registry, err := pluginhost.NewServiceRegistryWithBindings(resolved.Services)
 	if err != nil {
 		return nil, nil, err
 	}
-	host := newPluginHostWithRequirements(plugins)
+	host := pluginhost.New()
 	defer func() {
 		if prepareErr == nil {
 			return
@@ -186,22 +203,32 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 		nativeModules = append(nativeModules, module)
 		required[module.ID()] = true
 	}
-	packageRequirements := make(map[string][]string)
+	packageRequirements := make(map[string][]pluginhost.Dependency)
+	packageIssues := make(map[string][]pluginhost.DependencyIssue)
 	for _, item := range plugins {
-		packageRequirements[item.ID] = item.RequiredPluginIDs()
+		requiredIDs := item.RequiredPluginIDs()
+		packageRequirements[item.ID] = nil
+		for _, provider := range packagePlan.Dependencies[item.ID] {
+			packageRequirements[item.ID] = append(packageRequirements[item.ID], pluginhost.Dependency{Provider: provider, Required: slices.Contains(requiredIDs, provider)})
+		}
+	}
+	for id, issues := range packagePlan.Issues {
+		for _, issue := range issues {
+			packageIssues[id] = append(packageIssues[id], pluginhost.DependencyIssue{Provider: issue.RelatedPluginID, Kind: string(issue.Kind)})
+		}
 	}
 	for _, id := range []string{kernelHostModule, toolExecutionConsumer, modelExecutionConsumer, sessionExecutionConsumer, toolservice.DefaultModule} {
 		if resolved.Includes(id) {
-			packageRequirements[id] = append(packageRequirements[id], sessionStateConsumer)
+			packageRequirements[id] = append(packageRequirements[id], pluginhost.Dependency{Provider: sessionStateConsumer, Required: true})
 			if resolved.Includes(StateServicesConsumer) {
-				packageRequirements[id] = append(packageRequirements[id], StateServicesConsumer)
+				packageRequirements[id] = append(packageRequirements[id], pluginhost.Dependency{Provider: StateServicesConsumer, Required: true})
 			}
 		}
 	}
 	if resolved.Includes(ClientInputReceiptsConsumer) {
 		// Receipt updates share the captured session authority and its atomic
 		// history admission; there is no independent receipt storage route.
-		packageRequirements[ClientInputReceiptsConsumer] = []string{sessionStateConsumer}
+		packageRequirements[ClientInputReceiptsConsumer] = []pluginhost.Dependency{{Provider: sessionStateConsumer, Required: true}}
 	}
 	for _, transfer := range transfers {
 		consumer := newStorageTransferConsumer(host, registry, transfer)
@@ -211,9 +238,9 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 		if requireStorageTransfers {
 			required[consumer.ID()] = true
 		}
-		packageRequirements[transfer.targetID] = append(packageRequirements[transfer.targetID], consumer.ID())
+		packageRequirements[transfer.targetID] = append(packageRequirements[transfer.targetID], pluginhost.Dependency{Provider: consumer.ID(), Required: true})
 	}
-	host.SetPackageRequirements(packageRequirements)
+	host.SetPackageDependencies(packageRequirements, packageIssues)
 	for _, module := range nativeModules {
 		host.Add(module)
 	}
@@ -338,7 +365,7 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 			if services, ok := client.(pluginhost.ServiceClient); ok {
 				for _, requirement := range services.RequiredServices() {
 					if requirement.Name == persistence.ServiceName && requirement.MajorVersion == 1 {
-						packageRequirements[client.ID()] = append(packageRequirements[client.ID()], consumer.ID())
+						packageRequirements[client.ID()] = append(packageRequirements[client.ID()], pluginhost.Dependency{Provider: consumer.ID(), Required: true})
 						break
 					}
 				}
@@ -347,7 +374,7 @@ func buildPluginHostForBinding(ctx context.Context, plugins []pluginpkg.Plugin, 
 		host.Add(consumer)
 		required[consumer.ID()] = true
 		conflicts = append(conflicts, registry.RegisterClients(consumer)...)
-		host.SetPackageRequirements(packageRequirements)
+		host.SetPackageDependencies(packageRequirements, packageIssues)
 		if err := registry.WrapServiceInvoker(persistence.ServiceName, 1, authority.Wrap); err != nil {
 			return nil, nil, errors.Join(err, closeStarted())
 		}

@@ -11,10 +11,14 @@ import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";
 
 // Production components with in-memory data only. Query parameters cover
-// theme, size, long text, and enabled/off/approval/failed/minimal states.
+// theme, size, long text, enabled/off/approval/failed/minimal states, and
+// Host-shaped dependency diagnostics (issue=<kind>). Refresh simulates remediation.
 const params = new URLSearchParams(location.search);
 const scenario = params.get("state") ?? "enabled";
 const long = params.has("long");
+const issueKinds = ["missing_requirement", "version_mismatch", "conflict", "optional_missing", "optional_version_mismatch", "optional_cycle"] as const;
+const issueKind = issueKinds.find(kind => kind === params.get("issue"));
+const blockingDependency = issueKind === "missing_requirement" || issueKind === "version_mismatch";
 const minimal = scenario === "minimal";
 const settings: Record<string, boolean | string | number> = { enabled: true, name: "每周阅读摘要", limit: 10 };
 const plugin: ExtensionInventoryRecord = {
@@ -26,7 +30,8 @@ const plugin: ExtensionInventoryRecord = {
   provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "preview.reading" },
   state: scenario === "approval" ? "pending" : "granted",
   approval_state: scenario === "approval" ? "pending" : "granted",
-  enabled: scenario !== "off", runtime_state: scenario === "failed" ? "failed" : "active",
+  enabled: scenario !== "off", runtime_state: scenario === "failed" ? "failed" : blockingDependency ? "inactive" : "active",
+  activation_issues: issueKind ? [{ kind: issueKind, related_plugin_id: long ? "research-library-provider-with-a-long-package-identifier" : "reading-library" }] : [],
   last_error: scenario === "failed" ? "The reading service could not connect. Check the connection and try again." : undefined,
   requested_permissions: ["files.read", "network.connect"],
   contributions: minimal ? {} : {
@@ -59,7 +64,7 @@ function Fixture(): JSX.Element {
       listSkillsForThread: async ({threadId}) => ({contextKey:snapshot.contextKey, threadId, skills}),
       readSkill: async () => ({content: "# Reading notes\n\nSummarize the material and keep links to its sources."}),
       update: async ({ action }) => setRecord(current => ({ ...current, enabled: action !== "disable", approval_state: "granted", state: "granted" })),
-      refresh: async () => { setRecord(current => ({ ...current, runtime_state: "active", last_error: undefined })); return skills; },
+      refresh: async () => { setRecord(current => ({ ...current, runtime_state: "active", last_error: undefined, activation_issues: [] })); return skills; },
       loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
     };
     return { ...base, catalog, settingsControls: {...base.settingsControls,
