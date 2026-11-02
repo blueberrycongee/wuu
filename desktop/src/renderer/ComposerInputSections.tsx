@@ -471,7 +471,7 @@ export function SplitPaneComposer({
   return (
     <footer className="composer-wrap dock-composer-wrap split-composer" data-pip-obstacle="composer">
       <div className="composer-stack">
-        <DictationErrorToast message={dictation.error} />
+        <DictationErrorToast key={dictation.sessionId} message={dictation.error} />
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">
             {cameraOpen && !readOnly ? (

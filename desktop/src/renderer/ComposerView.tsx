@@ -1398,7 +1398,7 @@ export function Composer({
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       {statusAccessory}
-      <DictationErrorToast message={dictation.error} />
+      <DictationErrorToast key={dictation.sessionId} message={dictation.error} />
       <div className="composer-above-input">
         <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>
