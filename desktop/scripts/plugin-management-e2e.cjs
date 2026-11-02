@@ -56,10 +56,17 @@ const until = (fn, arg, snapshot = false) => win.webContents.executeJavaScript(`
   check();
 })`);
 const capture = async name => {
+  console.log(`Capture: ${name}`);
   await evaluate(async () => {
     await document.fonts.ready;
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    await Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
+    let timer;
+    try {
+      await Promise.race([
+        Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {}))),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Animations did not settle before capture")), 15000); }),
+      ]);
+    } finally { clearTimeout(timer); }
   });
   fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
 };
@@ -104,6 +111,7 @@ async function run() {
   mcpFixture = await require("./fixtures/mcp-management.cjs")({ fixture, output });
   await import(pathToFileURL(path.join(desktop, "out/main/index.js")).href);
   await windowCreated;
+  win.webContents.setBackgroundThrottling(false);
   if (win.webContents.isLoadingMainFrame()) await new Promise(resolve => win.webContents.once("did-finish-load", resolve));
   win.setSize(1280, 900);
   await until(() => document.querySelector('[data-ribbon-id="catalog"]:not(:disabled)'));

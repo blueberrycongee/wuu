@@ -2,6 +2,16 @@
 
 MCP connects the Wuu engine to tools provided by a local process or remote service. After connecting, ask the agent to use the server by name and describe the task. Wuu discovers and calls tools; it does not currently provide a resource or prompt browser, and MCP requests for an additional user-input exchange are unsupported.
 
+## Use plugins in a conversation
+
+Type `@` or open **+** to search the same panel of plugins, skills, and actions. Connected MCP services and active plugins with conversation tools can be selected; themes and service-only packages do not appear as conversation plugins. Unavailable connections offer connection or management controls. The panel retains attachment actions.
+
+Selecting a plugin inserts an inline reference at the cursor. Continue writing, select more plugins, or remove a reference with Backspace/Delete. Drafts, queued messages, and sent messages retain the plugin and connection identities, including the authorization and verified account/workspace when available. Names alone are not identities. Separate MCP definitions can represent different accounts; selecting the same canonical definition in another project still shares its login.
+
+References are supported by Wuu, Codex, and Claude Code. Other engine adapters must explicitly advertise `conversation-plugins`; the composer blocks unsupported selection and submission. A message with references submitted during an active turn is queued for the next turn. Tool permissions still apply. Before execution, Wuu checks that the connection and account still match; a replaced login requires selecting the connection again. An older running connection cannot borrow the replacement login.
+
+Connection management opens the plugin catalog while preserving the draft. Return to the conversation after authorization and select the connected plugin. For unavailable account identity, the panel says so instead of inventing a person or workspace.
+
 ## Connect an account
 
 This plugin connector flow currently supports the **Coding / current-project host only**. User-bound Personal/twin hosts keep shared MCP configuration out of their domain and show setup as unavailable rather than changing shared preferences or credentials. Existing dedicated Personal connectors are unchanged; using this picker there requires domain-scoped connection identity, preferences, and credential storage.

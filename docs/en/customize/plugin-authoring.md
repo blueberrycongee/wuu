@@ -151,6 +151,14 @@ The named tool must be in the connected server's live tool catalog and explicitl
 
 The host runs this probe only after the user's successful Connect or explicit identity refresh, with the existing OAuth grant and selected credential provider. Startup, status, catalog reads, and token refresh do not run it. Probe failure leaves authorization and transport intact and reports identity unavailable. The cached result is bound to the grant, resource and admitted package declaration; token refresh retains that grant identity, while completed new authorization replaces it. Cancelled or replaced operations cannot publish a late result. Legacy credentials are not migrated by reads; explicit verification can attach identity safely. Account/workspace names never select credentials, authorize tools, or prove the OAuth application brand. This contract does not expand access into Personal/twin domains.
 
+#### Conversation references
+
+The default composer discovers MCP connections through `listMCPServers` and runtime tool plugins through catalog `conversation_tools`. A theme or service-only package does not need a second opt-out. Use canonical `provenance.plugin_id`, not the catalog record's subject ID, when constructing a runtime plugin reference.
+
+`plugin_reference` message parts carry readable `text` and a `plugin` object (`ApplicationPluginReferenceV1`). Runtime references use `plugin_id`; MCP references also retain `mcp_server`, `resource_url`, opaque `authorization_id`, and any verified `account_id` / `workspace_id`. Preserve the complete part across draft restoration, queueing, editing, and submission. These identifiers are selections, not credentials or execution grants. The host resolves tool names and revalidates connection identity at admission and turn start. An OAuth refresh retains the authorization ID; a new login replaces it. MCP clients bind to their accepted grant and fail if a replacement login supersedes it.
+
+An engine's `conversation-plugins` capability promises that its turn consumes the host's selected plugin tools and instructions while retaining ordinary permission checks. External engines receive the explicitly selected tools through the existing turn-scoped MCP bridge. Unsupported adapters must omit this capability; the host rejects referenced submissions instead of silently dropping their intent. New references during an active turn are queued, because an existing external bridge cannot acquire a new connection midway through execution.
+
 ### Themes and settings
 
 Themes, shell skins, and settings need no desktop module. For example, merge this fragment into a manifest:

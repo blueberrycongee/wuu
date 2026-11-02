@@ -30,7 +30,7 @@ export class ApplicationCatalog implements ApplicationCatalogV1 {
       requested_permissions:record.requested_permissions, approval_state:record.approval_state,
       runtime_state:record.runtime_state, last_error:record.last_error, activation_issues:record.activation_issues,
       enabled:record.enabled, enabled_override:record.enabled_override, pending_update:record.pending_update,
-      contributions:record.contributions,
+      contributions:record.contributions, conversation_tools:record.conversation_tools,
     }));
     const capabilities = {install:hostSupports("installPluginPackage"),update:hostSupports("updateExtensionPackage"),remove:hostSupports("removePluginPackage")};
     const key = JSON.stringify([source.contextKey, inventory, capabilities]);

@@ -1,6 +1,19 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "composer.plugins": "Plugins",
+  "composer.pluginsSearch": "Search plugins, skills and actions",
+  "composer.pluginsLoading": "Loading plugins…",
+  "composer.pluginsLoadFailed": "Could not load connections. Try again.",
+  "composer.pluginsEmpty": "No matching conversation plugins.",
+  "composer.pluginsConnect": "Connect",
+  "composer.pluginsConnectNamed": "Connect {name}",
+  "composer.pluginsManageNamed": "Manage connections for {name}",
+  "composer.pluginsBrowse": "Browse plugins",
+  "composer.pluginsDisabled": "Plugin disabled. Enable it in the catalog.",
+  "composer.pluginsIdentityUnavailable": "Connected; the service has not provided an account identity",
+  "composer.pluginsEngineUnsupported": "This engine does not support conversation plugins yet. Choose an engine with plugin support before sending.",
+  "composer.pluginsQueue": "Wait for the current reply to finish before sending a new plugin reference.",
   "settings.errorRetry": "Try again",
   "settings.accountsLoadFailed": "Could not load your accounts. Try again.",
   "settings.modelsLoadFailed": "Could not load models. Check the connection and try again.",
@@ -2600,6 +2613,8 @@ export const enUS = {
   "composer.compactFailed": "Failed to compact context",
   "composer.sendFailed": "Failed to send",
   "composer.sendFailedDraftRetained": "Sending failed. Your draft is still here.",
+  "composer.pluginsReferenceUnavailable": "A selected plugin or account has changed or is unavailable. Check the connection and select the plugin again. Your draft is still here.",
+  "composer.pluginsReviewConnections": "Review connections",
   "composer.recoveredInterruptedDraft": "Recovered text from an interrupted send. Check the conversation before sending again; attachments are not restored.",
   "composer.failedDraftSaved": "Send failed. Open the saved draft or discard it.",
   "composer.openFailedDraft": "Open draft",

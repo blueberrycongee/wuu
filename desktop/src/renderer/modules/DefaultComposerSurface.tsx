@@ -2,7 +2,6 @@ import { ApplicationSideThreadComposer } from "../SideThreadComposer";
 import { ArtifactsProvider } from "../ArtifactsContext";
 import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
-import { focusComposerTextarea } from "../ComposerFocus";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import type { UIRegisterFocusTargetV1, ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
@@ -49,13 +48,24 @@ export function DefaultComposerSurface({ application, slots, ...layout }: Defaul
   return <OwnedComposer key={pane} application={application} slots={slots} {...layout} pane={pane} ownerTabId={ownerTabId} />;
 }
 
+async function openComposerPlugins(application: ApplicationServiceV1, pluginId?: string, connectServer?: string): Promise<void> {
+  const record = application.catalog.getSnapshot().inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === pluginId);
+  await application.invoke("catalog.select-section", { section: "plugins" });
+  await application.invoke("catalog.select-plugin", { pluginId: record?.id ?? "" });
+  await application.invoke("navigation.show-section", { section: "catalog" });
+  if (connectServer) await application.settingsControls.requestMCPConnectorLogin?.(connectServer);
+}
+
 function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, variant }: {
   application: ApplicationServiceV1; slots: UICompositionV1; ownerTabId: string; parentThreadId: string; variant?: ComposerVariant;
 }): JSX.Element | null {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
   const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
-  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
+  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
+    conversationPluginsSupported: view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
+    openPlugins: (pluginId?: string, connectServer?: string) => openComposerPlugins(application, pluginId, connectServer),
+  }), [application, slots, ownerTabId, presentation, view.composerRuntime.owners]);
   if (view.sideConversation.parentThreadId !== parentThreadId) return null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
     <ApplicationSideThreadComposer snapshot={view.sideConversation} invoke={application.invoke} variant={variant}
@@ -94,7 +104,10 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const tab = view.tabs.items.find(row => row.id === ownerTabId);
   const textOwner = JSON.stringify([pane, ownerTabId, tab?.workspaceId, tab?.workspaceRoot]);
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
-  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
+  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
+    conversationPluginsSupported: view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
+    openPlugins: (pluginId?: string, connectServer?: string) => openComposerPlugins(application, pluginId, connectServer),
+  }), [application, slots, ownerTabId, presentation, view.composerRuntime.owners]);
   const [, redraw] = useReducer(value => value + 1, 0);
   const attachments = useMemo(() => createApplicationComposerAttachments(application, () => redraw()), [application]);
   useEffect(() => { attachments.resume(); return () => attachments.dispose(); }, [attachments]);
@@ -113,8 +126,8 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   useLayoutEffect(() => registerFocusTarget?.({
     focus: options => {
       const snapshot = application.getSnapshot();
-      const input = contentRef.current?.querySelector("textarea");
-      if (!visible || snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId || !input || input.disabled) return false;
+      const input = contentRef.current?.querySelector<HTMLElement>('[data-wuu-component="composer-input"]');
+      if (!visible || snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId || !input || input.getAttribute("aria-readonly") === "true") return false;
       input.focus(options);
       return true;
     },
@@ -136,7 +149,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
         const current = application.getSnapshot();
         const currentThread = pane === "primary" ? current.conversationWorkspace.primaryThreadId : current.conversationWorkspace.secondaryThreadId;
         if (active && !current.tabs.pending && current.drafts[pane].ownerTabId === ownerTabId && currentThread === threadId) {
-          focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null);
+          contentRef.current?.querySelector<HTMLElement>('[data-wuu-component="composer-input"]')?.focus({ preventScroll: true });
         }
       }).catch(reportPresentedNavigationError);
     };
@@ -261,7 +274,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     onAnswer={answer => application.invoke("question.answer", { requestId: offer.request_id, answer })}
     onCancel={() => application.invoke("question.cancel", { requestId: offer.request_id })}
     onHold={() => application.invoke("question.hold", { requestId: offer.request_id })}
-    onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null); }} /> : undefined;
+    onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else contentRef.current?.querySelector<HTMLElement>('[data-wuu-component="composer-input"]')?.focus({ preventScroll: true }); }} /> : undefined;
   const failedDraftTabID = view.submission.failedDraftTabIds.find(id => view.tabs.items.some(tab => tab.id === id));
   const recoveryNotice = visible && !switching && view.tabs.activePane === pane && failedDraftTabID ?
     <DraftRecoveryNotice interrupted={view.drafts.recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)} onOpen={() => {
@@ -331,14 +344,15 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onQueue={creation || presentation.running ? (text, parts) => submit("queue", text, parts) : undefined} onInterrupt={() => run(controls.stop())}
       queryHistorySessionID={presentation.threadId ?? ownerTabId} skillThreadID={presentation.threadId} threadId={presentation.threadId}
       queryHistory={[...presentation.queryHistory]} requestedHandoffIntent={presentation.requestedHandoffIntent} />
-    <SubmissionFailureNotice ownerTabId={ownerTabId} operationID={failedSend?.operationID} sourceOwnerTabId={failedSend?.ownerTabId}
+    <SubmissionFailureNotice ownerTabId={ownerTabId} operationID={failedSend?.operationID} sourceOwnerTabId={failedSend?.ownerTabId} error={failedSend?.error}
+      onReviewPlugins={() => run(services.openPlugins())}
       visible={visible && !switching && view.tabs.activePane === pane && view.submission.failedDraftTabIds.length === 0}
       onRetry={() => run(submit(failedSend?.mode === "steer" ? "steer" : "queue"))} />
   </div></FileSelectionProvider></ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
-function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, visible, onRetry }: {
-  ownerTabId: string; operationID?: string; sourceOwnerTabId?: string; visible: boolean; onRetry(): void;
+function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, error, visible, onRetry, onReviewPlugins }: {
+  ownerTabId: string; operationID?: string; sourceOwnerTabId?: string; error?: string; visible: boolean; onRetry(): void; onReviewPlugins(): void;
 }): JSX.Element | null {
   const { t } = useI18n();
   const observed = useRef({ ownerTabId, operationID });
@@ -354,8 +368,9 @@ function SubmissionFailureNotice({ ownerTabId, operationID, sourceOwnerTabId, vi
     else if (newFailure) setAnnouncedID(operationID);
   }, [ownerTabId, operationID, sourceOwnerTabId, visible]);
   if (!visible || observed.current.ownerTabId !== ownerTabId || !operationID || announcedID !== operationID) return null;
-  return <ScopedToast message={t("composer.sendFailedDraftRetained")} tone="error" dedupeKey={`submission:${ownerTabId}:${operationID}`}
-    action={{ label: t("appState.retryAction"), onClick: () => { setAnnouncedID(undefined); onRetry(); } }} />;
+  const pluginUnavailable = /plugin connection ".+" (?:changed|is unavailable)|account for ".+" changed|selected plugin ".+" has no available conversation tools|reconnect ".+" to bind this reference/.test(error ?? "");
+  return <ScopedToast message={t(pluginUnavailable ? "composer.pluginsReferenceUnavailable" : "composer.sendFailedDraftRetained")} tone="error" dedupeKey={`submission:${ownerTabId}:${operationID}`}
+    action={{ label: t(pluginUnavailable ? "composer.pluginsReviewConnections" : "appState.retryAction"), onClick: () => { setAnnouncedID(undefined); if (pluginUnavailable) onReviewPlugins(); else onRetry(); } }} />;
 
 }
 

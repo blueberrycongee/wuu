@@ -13,7 +13,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
   let pauseToolList = null;
   const manualRedirect = "https://callback.example.test/mcp";
   const codes = new Map();
-  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, checks: [] };
+  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, conversationCalls: [], offeredTools: [], checks: [] };
   const peer = createServer(async (request, response) => {
     const url = new URL(request.url, endpoint);
     if (url.pathname === "/connector-mcp") evidence.connectorRequests++;
@@ -23,6 +23,29 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
     const json = value => response.end(JSON.stringify(value));
     let body = "";
     for await (const chunk of request) body += chunk;
+    if (url.pathname === "/v1/chat/completions") {
+      const completion = JSON.parse(body);
+      const toolName = JSON.stringify(completion.messages).match(/mcp_plugin_mcp_journey_account_echo_[a-f0-9]+/)?.[0];
+      const selected = completion.tools?.find(tool => tool.function?.name === toolName);
+      const codeMode = completion.tools?.find(tool => tool.function?.name === "run_code");
+      const task = JSON.stringify(completion.messages).includes("CONNECTOR_CONVERSATION_E2E");
+      const done = completion.messages.some(message => message.role === "tool");
+      if (task && completion.tools?.length) {
+        evidence.offeredTools = (completion.tools ?? []).map(tool => tool.function?.name);
+        console.log("Conversation tools:", JSON.stringify(evidence.offeredTools));
+      }
+      const message = task && toolName && (selected || codeMode) && !done
+        ? { role: "assistant", content: null, tool_calls: [{ id: "fixture-call", type: "function", function: selected
+          ? { name: selected.function.name, arguments: "{}" }
+          : { name: "run_code", arguments: JSON.stringify({ input: `text(await tools[${JSON.stringify(toolName)}]({}));` }) } }] }
+        : { role: "assistant", content: task ? "CONNECTOR_CONVERSATION_DONE" : "Fixture conversation" };
+      if (completion.stream) {
+        response.setHeader("Content-Type", "text/event-stream");
+        const delta = { ...message, ...(message.tool_calls ? { tool_calls: message.tool_calls.map((call, index) => ({ ...call, index })) } : {}) };
+        response.end(`data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: {}, finish_reason: message.tool_calls ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`);
+      } else json({ id: "fixture", choices: [{ index: 0, message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }] });
+      return;
+    }
     if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
       json({ resource: `${endpoint}/${url.pathname.includes("connector") ? "connector-mcp" : "mcp"}`, authorization_servers: [endpoint], scopes_supported: ["tools:read"] }); return;
     }
@@ -84,22 +107,30 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
         workspace: { id: "fixture-workspace-42", name: "Fixture research workspace" },
       }) }] });
     }
-    else if (rpc.method === "tools/call") reply({ content: [{ type: "text", text: "fixture-ok" }] });
+    else if (rpc.method === "tools/call") {
+      evidence.conversationCalls.push({ path: url.pathname, tool: rpc.params.name });
+      reply({ content: [{ type: "text", text: "fixture-ok" }] });
+    }
     else if (rpc.id !== undefined) json({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "unsupported" } });
     else response.writeHead(202).end();
   });
   await new Promise(resolve => peer.listen(0, "127.0.0.1", resolve));
   endpoint = `http://127.0.0.1:${peer.address().port}`;
+  const configPath = path.join(fixture, "wuu-home", "config.json");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  config.providers.fixture.base_url = `${endpoint}/v1`;
+  fs.writeFileSync(configPath, JSON.stringify(config));
   const originalOpen = shell.openExternal;
   shell.openExternal = async url => { authorizationURL = url; };
   const pluginDir = path.join(fixture, "mcp-plugin");
   fs.mkdirSync(pluginDir);
   fs.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify({ schema_version: 1, id: "mcp-journey", name: "MCP Journey", mcp_servers: {
     docs: { url: `${endpoint}/mcp` },
-    account: { url: `${endpoint}/connector-mcp`, enabled: false, tool_overrides: { "account-self": { read_only: true } }, connector: {
+    account: { url: `${endpoint}/connector-mcp`, enabled: false, tool_overrides: { "account-self": { read_only: true }, echo: { read_only: true } }, connector: {
       title: "Fixture workspace", description: "A user-installed connector, not a bundled product ID.", documentation_url: "https://example.test/connector",
       identity_probe: { tool: "account-self", arguments: {}, result: "single_text_json", account: { id: "/user/id", label: "/user/name", email: "/user/email", kind: "/user/type" }, workspace: { id: "/workspace/id", label: "/workspace/name" } },
     } },
+    alternate: { url: `${endpoint}/connector-mcp`, enabled: false, tool_overrides: { echo: { read_only: true } }, connector: { title: "Fixture workspace", description: "A separate saved connection with the same display name." } },
     gated: { url: `${endpoint}/setup-required`, enabled: false, connector: { title: "Registration required", setup_required: "Register your client before this service can be connected.", documentation_url: "https://example.test/setup" } },
   } }));
 
@@ -354,6 +385,85 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => window.wuu.setThemePreference("light"));
       win.setSize(1280, 900);
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
+      await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      await fetch(authorizationURL);
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("data-connected") === "true");
+      const retainedIdentity = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
+      assert.equal(retainedIdentity.identity?.account?.id, "fixture-user-42", "Enabling a sibling connection must retain verified identity across runtime snapshots");
+      assert.equal(evidence.identityCalls, 2, "A runtime refresh must not re-probe accounts");
+      const exchangesBeforeReconnect = evidence.exchanges;
+      await clickElement('[data-ribbon-id="conversations"]');
+      await until(() => document.querySelector('[data-main-conversation-composer] [data-wuu-component="composer-input"]'));
+      win.focus(); win.webContents.focus();
+      const editorSelector = '[data-main-conversation-composer] [data-wuu-component="composer-input"]';
+      const key = async (keyCode, modifiers = []) => {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+        await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+      };
+      await evaluate(selector => document.querySelector(selector).focus(), editorSelector);
+      await win.webContents.insertText("CONNECTOR_CONVERSATION_E2E @");
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
+      const mentionChoices = await evaluate(() => [...document.querySelectorAll('.composer-plus-menu [data-plugin-choice]')].map(button => button.textContent));
+      await capture("conversation-at-menu-light");
+      await key("Escape");
+      await clickElement('.composer-plus-button');
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
+      assert.deepEqual(await evaluate(() => [...document.querySelectorAll('.composer-plus-menu [data-plugin-choice]')].map(button => button.textContent)), mentionChoices, "@ and + expose the same plugin choices and states");
+      await capture("conversation-plus-menu-light");
+      await key("Escape");
+      await evaluate(selector => { const input = document.querySelector(selector); input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, editorSelector);
+      await win.webContents.insertText("Fixture");
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
+      await key("Enter");
+      await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      const originalToken = await evaluate(() => document.querySelector('.composer-rich-input .composer-plugin-reference').dataset.pluginToken);
+      await key("z", ["meta"]);
+      await until(() => !document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      await key("z", ["meta", "shift"]);
+      await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      await key("Backspace");
+      await key("Backspace");
+      await until(() => !document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      await key("z", ["meta"]);
+      await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      assert.equal(await evaluate(() => document.querySelector('.composer-rich-input .composer-plugin-reference').dataset.pluginToken), originalToken);
+      await win.webContents.insertText(" 请读取工作区 @Fixture");
+      await clickElement('[data-plugin-key="mcp:plugin.mcp-journey.alternate"]:not(:disabled)');
+      await until(() => document.querySelectorAll('.composer-rich-input .composer-plugin-reference').length === 2);
+      const referenceTokens = await evaluate(() => [...document.querySelectorAll('.composer-rich-input .composer-plugin-reference')].map(element => element.dataset.pluginToken));
+      assert.notEqual(referenceTokens[0], referenceTokens[1], "Same display names must retain distinct connection and authorization identities");
+      await capture("conversation-inline-light");
+      await clickElement('[data-ribbon-id="catalog"]');
+      await until(() => document.querySelector('[data-testid="mcp-services"]'));
+      await clickElement('[data-ribbon-id="conversations"]');
+      await until(() => document.querySelectorAll('.composer-rich-input .composer-plugin-reference').length === 2);
+      assert.equal(await evaluate(() => document.querySelector('.composer-rich-input .composer-plugin-reference').dataset.pluginToken), originalToken, "Draft navigation preserves opaque account and plugin identity");
+      await evaluate(() => window.wuu.setThemePreference("dark"));
+      win.setSize(800, 900);
+      await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
+      await capture("conversation-inline-dark-narrow-large");
+      await clickElement('.composer-plus-button');
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]'));
+      await capture("conversation-menu-dark-narrow-large");
+      await key("Escape");
+      await evaluate(() => window.wuu.setThemePreference("light"));
+      win.setSize(1280, 900);
+      await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
+      await evaluate(selector => document.querySelector(selector).focus(), editorSelector);
+      await key("Enter");
+      await until(() => document.querySelector('.conversation-pane')?.textContent.includes("CONNECTOR_CONVERSATION_DONE"));
+      assert.ok(evidence.conversationCalls.some(call => call.path === "/connector-mcp" && call.tool === "echo"), "The real native loop must invoke the referenced connection's MCP tool");
+      await capture("conversation-sent-and-tool-result");
+      await evaluate(selector => document.querySelector(selector).focus(), editorSelector);
+      await win.webContents.insertText("Keep this draft if the account changes @Fixture");
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
+      await key("Enter");
+      await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      evidence.checks.push("Same @/+ panel, searchable keyboard insertion, atomic deletion and undo/redo, same-name connections with distinct stable inline references, draft navigation, light/wide/default and dark/narrow/large font, sent references and native loop MCP execution with a deterministic model endpoint");
+      await clickElement('[data-ribbon-id="catalog"]');
+      await until(selector => document.querySelector(`${selector} [data-connector-action="reconnect"]`), connectorRow);
       await connectorAction("reconnect");
       await clickElement('[data-confirm-action="confirm"]');
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
@@ -362,7 +472,20 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal(reconnecting.identity, undefined, "Reconnect clears the prior identity, not the accepted credentials");
       await click(['[role="dialog"]', "取消登录"]);
       await until(() => !document.querySelector('[role="dialog"]'));
-      assert.equal(evidence.exchanges, exchangesBeforeIdentity);
+      assert.equal(evidence.exchanges, exchangesBeforeReconnect);
+      const callsBeforeStaleReference = evidence.conversationCalls.length;
+      await clickElement('[data-ribbon-id="conversations"]');
+      await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
+      await evaluate(selector => document.querySelector(selector).focus(), editorSelector);
+      await key("Enter");
+      await until(() => document.querySelector('[role="alert"]')?.textContent.includes("重新选择插件"));
+      assert.equal(evidence.conversationCalls.length, callsBeforeStaleReference);
+      assert.ok(await evaluate(() => document.querySelector('.composer-rich-input')?.textContent.includes("Keep this draft")));
+      assert.ok(await evaluate(() => document.querySelector('.composer-rich-input .composer-plugin-reference')?.dataset.pluginToken.includes("fixture-user-42")), "Rejected delivery must retain the account-bound reference, not only its label");
+      await capture("conversation-stale-account-draft-retained");
+      evidence.checks.push("Changed account identity rejects the old reference before model/tool execution and preserves the draft");
+      await clickElement('[data-ribbon-id="catalog"]');
+      await until(selector => document.querySelector(`${selector} [data-connector-action="disconnect"]`), connectorRow);
       await connectorAction("disconnect");
       await clickElement('[data-confirm-action="confirm"]');
       await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "false" && document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
