@@ -1812,6 +1812,28 @@ function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {
   );
 }
 
+// Titles and organization changes do not advance updated_at. Preserve snapshots
+// changed while a list request was in flight instead of ordering by timestamp.
+export function reconcileSidebarThreadList(
+  requested: Thread[] | undefined,
+  current: Thread[] | undefined,
+  listed: Thread[],
+): Thread[] {
+  const before = new Map((requested ?? []).map((thread) => [thread.id, thread]));
+  const now = new Map((current ?? []).map((thread) => [thread.id, thread]));
+  const result = new Map(listed.map((thread) => [thread.id, thread]));
+  for (const id of before.keys()) {
+    if (!now.has(id)) result.delete(id);
+  }
+  for (const [id, thread] of now) {
+    if (before.get(id) !== thread) {
+      const incoming = result.get(id);
+      result.set(id, incoming ? reconcileThreadTitle(incoming, thread) : thread);
+    }
+  }
+  return sortThreads([...result.values()]);
+}
+
 // A later turn timestamp does not make its captured title newer. Title
 // revisions are committed with the title and survive reconnects and restarts.
 export function reconcileThreadTitle(existing: Thread, incoming: Thread): Thread {

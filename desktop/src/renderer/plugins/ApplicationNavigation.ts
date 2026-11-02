@@ -2,7 +2,7 @@ import type { SetStateAction } from "react";
 import type { ApplicationNavigationActionMapV1 as Actions, ApplicationNavigationViewV1, NavigationReadonly } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { DesktopProject, Thread } from "../../shared/protocol";
 import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
-import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
+import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, reconcileSidebarThreadList, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
 import { createRibbonBrowserState } from "../RibbonBrowserState";
 import { parseSessionOrganization } from "../SessionOrganization";
 import { loadThreadListRefresh, resumeThreadForRefresh } from "../RuntimeLoadState";
@@ -75,7 +75,14 @@ export class ApplicationNavigation {
       const previous = rows.get(thread.id);
       rows.set(thread.id, previous ? mergeSidebarThread(previous, thread) : thread);
     }
-    return [...rows.values()];
+    // Archive and rollback update the catalog before closing the open pane.
+    // The pane's snapshot must not override the catalog's visibility decision.
+    const catalog = new Map(state.threads.map(thread => [thread.id, thread]));
+    return [...rows.values()].map(thread => {
+      const listed = catalog.get(thread.id);
+      return listed && Boolean(listed.archived) !== Boolean(thread.archived)
+        ? { ...thread, archived: listed.archived } : thread;
+    });
   }
   private thread(id: string): ThreadSummary {
     const thread = summarizeThreadsForSidebar(this.threads()).find(row => row.id === id);
@@ -169,6 +176,14 @@ export class ApplicationNavigation {
     };
     off.push(this.host.subscribeState(reconcileForeground));
     reconcileForeground();
+    const refreshThreadList = async (captured: AppState) => {
+      const requested = this.host.sidebarCache.getSnapshot().workspaceThreadsByWorkspaceID;
+      const rows = await loadThreadListRefresh(captured);
+      if (!active || this.host.getState().activeContext !== captured.activeContext) return;
+      this.host.sidebarCache.cacheSidebarThreads(rows, { projects: requested });
+      this.host.updateState(current => (!captured.initialized || current.initialized) && current.activeContext === captured.activeContext
+        ? reconcileListedThreadState(current, reconcileSidebarThreadList(captured.threads, current.threads, rows)) : current);
+    };
     let lastRefreshAt = 0;
     const refreshThreads = async () => {
       const captured = this.host.getState();
@@ -176,11 +191,7 @@ export class ApplicationNavigation {
       if (!captured.initialized || now - lastRefreshAt < 10_000) return;
       lastRefreshAt = now;
       try {
-        const rows = await loadThreadListRefresh(captured);
-        if (!active || this.host.getState().activeContext !== captured.activeContext) return;
-        this.host.sidebarCache.cacheSidebarThreads(rows);
-        this.host.updateState(current => current.initialized && current.activeContext === captured.activeContext
-          ? reconcileListedThreadState(current, rows) : current);
+        await refreshThreadList(captured);
       } catch {
         // Another focus event or heartbeat retries shared-store pickup.
       }
@@ -203,11 +214,7 @@ export class ApplicationNavigation {
       changed();
       const captured = this.host.getState();
       if (this.threads().some(thread => isThreadRunning(thread) && !this.runningThreadIds.has(thread.id))) {
-        void loadThreadListRefresh(captured).then(rows => {
-          if (!active) return;
-          this.host.sidebarCache.cacheSidebarThreads(rows);
-          this.host.updateState(state => state.activeContext === captured.activeContext ? reconcileListedThreadState(state, rows) : state);
-        }).catch(() => {});
+        void refreshThreadList(captured).catch(() => {});
       }
     };
     if (window.wuu.onRunningThreadsChanged) off.push(window.wuu.onRunningThreadsChanged(items => { runningEvent = true; applyRunning(items); }));
