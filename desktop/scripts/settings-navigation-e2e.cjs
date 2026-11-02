@@ -35,9 +35,11 @@ app.whenReady().then(async () => {
     win.setContentSize(1180, 820);
     await until(() => document.querySelector(".sidebar-account-trigger"));
     await evaluate(() => document.querySelector(".sidebar-account-trigger").click());
-    await until(() => document.querySelector('[data-settings-page="providers"]'));
-    await evaluate(() => document.querySelector('[data-settings-page="providers"]').click());
+    await until(() => document.querySelector('[data-settings-entry="settings"]'));
+    await evaluate(() => document.querySelector('[data-settings-entry="settings"]').click());
     await until(() => document.querySelector('.app-shell[data-settings-open]'));
+    await until(() => document.querySelector('.settings-nav [data-wuu-page="providers"]'));
+    await evaluate(() => document.querySelector('.settings-nav [data-wuu-page="providers"]').click());
     const measurements = [];
     await until(() => document.querySelector('[data-testid="settings-connection-add"]'));
     for (const theme of ["light", "dark"]) {

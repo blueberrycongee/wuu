@@ -818,8 +818,8 @@ async function runDomOnly() {
     });
     await check("DOM: Settings remains reachable and uses the same twin identity", async () => {
       document.querySelector('.sidebar-account-trigger').click();
-      await wait(window, () => !!document.querySelector('[data-settings-page="providers"]'), 'account settings action');
-      document.querySelector('[data-settings-page="providers"]').click();
+      await wait(window, () => !!document.querySelector('[data-settings-entry="settings"]'), 'account settings action');
+      document.querySelector('[data-settings-entry="settings"]').click();
       await wait(window, () => !!document.querySelector('[data-wuu-component="plugin-settings-navigation"] [data-plugin-avatar]'), 'twin Settings identity');
       const mark = document.querySelector('[data-wuu-component="plugin-settings-navigation"] [data-agent-avatar-id]');
       assert.equal(mark.dataset.agentAvatarId, 'wuu-mascot');

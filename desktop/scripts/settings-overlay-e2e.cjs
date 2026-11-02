@@ -223,7 +223,7 @@ async function run() {
     await openMenu(); await click(win.webContents, "textarea"); await closed(); await focusedComposer();
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Outside click retains composer focus");
     const settingsMenu = await openMenu();
-    await click(settingsMenu.view.webContents, '[data-settings-page="providers"]'); await closed();
+    await click(settingsMenu.view.webContents, '[data-settings-entry="settings"]'); await closed();
     await until(() => evaluate(win.webContents, () => {
       const e = document.querySelector(".settings-main"), r = e?.getBoundingClientRect();
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
