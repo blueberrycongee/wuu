@@ -2268,7 +2268,7 @@ function formatBuildDate(iso: string): string {
  *  main-process RemoteHostManager, re-pulls on every remote event (pairing
  *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
 function availableSettingsPage(page:SettingsPage|undefined, browserAllowed:boolean, capabilities:import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1):SettingsPage {
- const next=page??"providers";
+ const next=page??"general";
  if(next==="subscriptions"||next==="agents"||next==="remote"&&!capabilities.remote||next==="browser"&&(!browserAllowed||!capabilities.browser))return "providers";
  return next;
 }

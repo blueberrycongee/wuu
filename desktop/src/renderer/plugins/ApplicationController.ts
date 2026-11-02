@@ -333,7 +333,7 @@ export class ApplicationController implements HostApplicationService {
   private readonly applicationPreview: ApplicationPreview;
   private readonly applicationNavigation: ApplicationNavigation;
   private readonly conversationDetails = new ApplicationConversationDetails({ getState: () => this.state, getThread: id => this.knownThread(id), changed: () => this.publish() });
-  private settings = { open: false, pageId: "providers" };
+  private settings = { open: false, pageId: "general" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
   private load?: Promise<LoadedRuntimeState>;

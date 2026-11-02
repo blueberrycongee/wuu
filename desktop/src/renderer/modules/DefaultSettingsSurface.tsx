@@ -54,7 +54,7 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     {settings.open && <div className={layout.embedded ? "settings-workbench-layer" : "settings-standalone-layer"}>
       <SettingsShellRenderer {...layout} application={application} initialized={initialized} running={settings.runtimeSwitchPending}
         runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryError={settings.engineInventoryError}
-        page={(settings.activePageId ?? "providers") as SettingsPage}
+        page={settings.activePageId as SettingsPage | undefined}
         onPageChange={pageId => { void application.invoke("settings.open", { pageId }).catch(showErrorToast); }}
         onBack={() => { void application.invoke("settings.close", {}).catch(showErrorToast); }}
         onSave={(provider, model, effort, connection, variant) => application.invoke("settings.save-provider", { provider, model, effort, connection, variant })}
