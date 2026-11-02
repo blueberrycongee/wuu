@@ -146,6 +146,29 @@ func (h *Host) callConnectors(ctx context.Context, operation string, raw json.Ra
 		if err = decode(raw, &input); err == nil {
 			result, err = broker.Call(ctx, actor, input)
 		}
+	case "connectors.rule.preview", "connectors.rule.save":
+		var input struct {
+			ActionID         string `json:"action_id"`
+			Digest           string `json:"digest"`
+			ExpectedRevision int64  `json:"expected_revision,omitempty"`
+			Decision         string `json:"decision,omitempty"`
+		}
+		if err = decode(raw, &input); err != nil {
+			return nil, err
+		}
+		if h.options.ConnectorRules == nil {
+			return nil, errors.New("connector rules unavailable")
+		}
+		saved, listErr := broker.Actions(ctx, actor)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, action := range saved {
+			if action.ActionID == input.ActionID && action.Digest == input.Digest && action.State == "awaiting_confirmation" {
+				return h.options.ConnectorRules(ctx, operation, action, raw)
+			}
+		}
+		return nil, errors.New("connector action changed; refresh before saving a rule")
 	case "connectors.decide":
 		var input struct {
 			ActionID string `json:"action_id"`

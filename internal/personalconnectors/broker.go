@@ -36,6 +36,20 @@ type Grant struct {
 // A snapshot read followed by use is not an implementation of this contract.
 type AuthorizationBoundary func(context.Context, Actor, string, func(context.Context) error) error
 
+// ReviewDecision binds an automatic verdict to the policy observed by the
+// selected coordinator. A verdict alone cannot dispatch an account effect.
+type ReviewDecision struct {
+	Outcome        string `json:"outcome"`
+	Reason         string `json:"reason"`
+	PolicyRevision int64  `json:"policy_revision"`
+	RulesRevision  int64  `json:"rules_revision"`
+	RuleID         string `json:"rule_id,omitempty"`
+	// Source is opaque coordinator-owned evidence, rechecked at dispatch.
+	Source json.RawMessage `json:"source,omitempty"`
+}
+type Review func(context.Context, Actor, Result) (ReviewDecision, error)
+type ReviewBoundary func(context.Context, Actor, string, Result, ReviewDecision, func(context.Context) error) error
+
 type Options struct {
 	WithAuthorization AuthorizationBoundary
 	StateDir          string
@@ -45,6 +59,8 @@ type Options struct {
 	HTTPClient        *http.Client
 }
 type Broker struct {
+	review            Review
+	withReview        ReviewBoundary
 	stateDir          string
 	httpsCallbacks    HTTPSCallbackTransport
 	mu                sync.Mutex
@@ -96,6 +112,13 @@ func (b *Broker) SetAuthorizationBoundary(boundary AuthorizationBoundary) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.withAuthorization = boundary
+}
+
+// SetReview is host composition. Models cannot submit automatic verdicts.
+func (b *Broker) SetReview(review Review, boundary ReviewBoundary) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.review, b.withReview = review, boundary
 }
 
 // Close fences new OAuth admissions before cancellation, then drains callback
@@ -248,9 +271,47 @@ func check(g Grant, p Plan) error {
 }
 func (b *Broker) Call(ctx context.Context, a Actor, r Request) (Result, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	result, created, err := b.call(ctx, a, r)
+	review := b.review
+	b.mu.Unlock()
+	if err != nil || !created || review == nil {
+		return result, err
+	}
+	decision, reviewErr := review(ctx, a, result)
+	if reviewErr != nil || decision.Reason == "" || (decision.Outcome != "allow" && decision.Outcome != "deny" && decision.Outcome != "ask") {
+		decision.Outcome, decision.Reason = "ask", "自动审核暂时不可用，请确认这项操作。"
+	}
+	reason := []rune(decision.Reason)
+	if len(reason) > 1000 {
+		decision.Reason = string(reason[:1000]) + "…"
+	}
+	b.mu.Lock()
+	err = b.update(ctx, a, func(s *stored) error {
+		current, ok := s.Actions[result.ActionID]
+		if !ok || current.Result.Digest != result.Digest {
+			return fault("action_mismatch")
+		}
+		if current.Result.State == "awaiting_confirmation" {
+			current.Result.ReviewReason = decision.Reason
+			if decision.Outcome == "deny" {
+				current.Result.State = "denied"
+			}
+			s.Actions[result.ActionID] = current
+		}
+		result = current.Result
+		return nil
+	})
+	b.mu.Unlock()
+	if err != nil || decision.Outcome != "allow" {
+		return result, err
+	}
+	return b.decide(ctx, a, result.ActionID, result.Digest, true, &decision)
+}
+
+func (b *Broker) call(ctx context.Context, a Actor, r Request) (Result, bool, error) {
+	created := false
 	if err := b.ensureFresh(ctx, a, r.ConnectionID); err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	var g Grant
 	var result Result
@@ -258,6 +319,7 @@ func (b *Broker) Call(ctx context.Context, a Actor, r Request) (Result, error) {
 	authority := ""
 	e := b.update(ctx, a, func(s *stored) error {
 		result = Result{}
+		created = false
 		var ok bool
 		g, ok = s.Grants[r.ConnectionID]
 		if !ok {
@@ -316,19 +378,20 @@ func (b *Broker) Call(ctx context.Context, a Actor, r Request) (Result, error) {
 		}
 		result = Result{State: "awaiting_confirmation", ActionID: id, Digest: digest, Summary: p.Summary, Arguments: r.Arguments, ArgumentsJSON: string(r.Arguments), AccountID: g.Connection.AccountID, Domain: g.Connection.Domain, Resource: p.Resource, ConnectionID: r.ConnectionID, Operation: r.Operation}
 		s.Actions[id] = action{result, r, g.Connection.Revision, a.SessionID, authority}
+		created = true
 		return nil
 	})
 	if e != nil {
-		return Result{}, e
+		return Result{}, false, e
 	}
 	if p.Write || g.Connection.Domain == "work" && g.Connection.WorkReadPolicy != "selected_resources" {
-		return result, nil
+		return result, created, nil
 	}
 	data, _, e := b.request(ctx, a, g, p)
 	if e != nil {
-		return Result{}, e
+		return Result{}, false, e
 	}
-	return Result{State: "completed", Data: data, ConnectionID: r.ConnectionID, Operation: r.Operation, Domain: g.Connection.Domain}, nil
+	return Result{State: "completed", Data: data, ConnectionID: r.ConnectionID, Operation: r.Operation, Domain: g.Connection.Domain}, false, nil
 }
 func (b *Broker) Actions(ctx context.Context, a Actor) ([]Result, error) {
 	b.mu.Lock()
@@ -354,6 +417,10 @@ func (b *Broker) Actions(ctx context.Context, a Actor) ([]Result, error) {
 
 // Decide requires a separately owner-admitted host caller. The model path must never expose this method.
 func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve bool) (Result, error) {
+	return b.decide(ctx, a, id, digest, approve, nil)
+}
+
+func (b *Broker) decide(ctx context.Context, a Actor, id, digest string, approve bool, decision *ReviewDecision) (Result, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var v action
@@ -430,6 +497,9 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 			// atomically with the durable claim. Later revocation can stop
 			// remaining work but cannot promise rollback of admitted HTTP.
 			v.Result.State = "executing"
+			if decision != nil {
+				v.Result.ReviewReason = decision.Reason
+			}
 			s.Actions[id] = v
 			execute = true
 			return nil
@@ -516,7 +586,16 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 	}
 	var result Result
 	entered := false
-	err := b.withAuthorization(ctx, Actor{a.ProductDomain, a.UserSpaceID, initialAction.Session}, initialAction.Authority, func(guarded context.Context) error {
+	boundary := b.withAuthorization
+	if decision != nil {
+		if b.withReview == nil {
+			return initial, nil
+		}
+		boundary = func(ctx context.Context, actor Actor, authority string, use func(context.Context) error) error {
+			return b.withReview(ctx, actor, authority, initial, *decision, use)
+		}
+	}
+	err := boundary(ctx, Actor{a.ProductDomain, a.UserSpaceID, initialAction.Session}, initialAction.Authority, func(guarded context.Context) error {
 		if entered {
 			return fault("execution_authority_unavailable")
 		}
@@ -527,6 +606,23 @@ func (b *Broker) Decide(ctx context.Context, a Actor, id, digest string, approve
 	})
 	if err == nil && !entered {
 		return Result{}, fault("execution_authority_unavailable")
+	}
+	if err != nil && decision != nil && !entered {
+		// A revoked automatic decision is still eligible for a fresh owner choice.
+		initial.ReviewReason = "自动审核结果已失效，请重新确认这项操作。"
+		saveErr := b.update(ctx, a, func(s *stored) error {
+			current, ok := s.Actions[id]
+			if !ok || current.Result.Digest != digest {
+				return fault("action_mismatch")
+			}
+			if current.Result.State == "awaiting_confirmation" {
+				current.Result.ReviewReason = initial.ReviewReason
+				s.Actions[id] = current
+			}
+			initial = current.Result
+			return nil
+		})
+		return initial, saveErr
 	}
 	return result, err
 }

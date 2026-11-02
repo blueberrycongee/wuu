@@ -32,12 +32,27 @@ import (
 
 type connectorChainModel struct {
 	background bool
+	auto       bool
+	deny       bool
 	done       chan string
 	once       sync.Once
 	faults     chan string
 }
 
 func (c *connectorChainModel) Chat(_ context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	if len(req.Tools) == 0 {
+		for _, message := range req.Messages {
+			if strings.Contains(message.Content, "You review one exact Wuu Personal") {
+				if c.deny {
+					return providersResponse(`{"outcome":"deny","reason":"This effect is outside the original authorized request."}`), nil
+				}
+				if c.auto {
+					return providersResponse(`{"outcome":"allow","reason":"The original owner explicitly requested these exact recipients and message."}`), nil
+				}
+				return providersResponse(`{"outcome":"unsure","reason":"The owner asked to confirm first."}`), nil
+			}
+		}
+	}
 	if c.background {
 		return c.backgroundChat(req)
 	}
@@ -81,7 +96,7 @@ func TestPersonalConnectorRealBundleOwnerReceiptChain(t *testing.T) {
 	if os.Getenv("WUU_CONNECTOR_CHAIN_E2E") != "1" {
 		t.Skip("set WUU_CONNECTOR_CHAIN_E2E=1 for real bundled process integration")
 	}
-	for _, scenario := range []string{"approve", "reject", "cancel", "unknown", "cold_pending", "background"} {
+	for _, scenario := range []string{"approve", "reject", "cancel", "unknown", "cold_pending", "background", "auto", "rule", "auto_deny"} {
 		t.Run(scenario, func(t *testing.T) { connectorChain(t, scenario) })
 	}
 }
@@ -113,7 +128,7 @@ func connectorChain(t *testing.T, scenario string) {
 		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	newRuntime := func() (*runtimepkg.Session, *UserHost, *personalconnectors.Broker, *connectorChainModel) {
-		model := &connectorChainModel{done: make(chan string, 1), faults: make(chan string, 1), background: scenario == "background"}
+		model := &connectorChainModel{done: make(chan string, 1), faults: make(chan string, 1), background: scenario == "background", auto: scenario == "auto", deny: scenario == "auto_deny"}
 		endpoint := newTestOpenAIEndpoint(t, "connector-fake", "connector-fixture-title", model.Chat)
 		provider := cfg.Providers["connector-fake"]
 		provider.BaseURL = endpoint.URL + "/v1"
@@ -234,7 +249,11 @@ func connectorChain(t *testing.T, scenario string) {
 	if e := json.Unmarshal(setup, &main); e != nil || main.Agent.ID == "" {
 		t.Fatalf("main=%s err=%v", setup, e)
 	}
-	must("agents.send", map[string]any{"agent_id": main.Agent.ID, "request_id": "original-owner-turn", "prompt": "Send the exact synthetic test message to synthetic@example.invalid, subject Synthetic chain and body No actual email is sent. Ask for confirmation first."})
+	prompt := "Send the exact synthetic test message to synthetic@example.invalid, subject Synthetic chain and body No actual email is sent."
+	if scenario != "auto" && scenario != "auto_deny" {
+		prompt += " Ask for confirmation first."
+	}
+	must("agents.send", map[string]any{"agent_id": main.Agent.ID, "request_id": "original-owner-turn", "prompt": prompt})
 	var pending personalconnectors.Result
 	deadline := time.Now().Add(35 * time.Second)
 	actor := personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: "local", SessionID: main.Agent.Session}
@@ -246,7 +265,7 @@ func connectorChain(t *testing.T, scenario string) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if len(rows) > 0 {
+		if len(rows) > 0 && ((scenario != "auto" && scenario != "auto_deny") || rows[0].State == "completed" || rows[0].State == "denied") {
 			pending = rows[0]
 			break
 		}
@@ -256,6 +275,32 @@ func connectorChain(t *testing.T, scenario string) {
 		default:
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	if scenario == "auto_deny" {
+		if pending.State != "denied" || effects.Load() != 0 || pending.ReviewReason == "" {
+			t.Fatalf("automatic denial: %+v effects=%d", pending, effects.Load())
+		}
+		select {
+		case receipt := <-model.done:
+			if !strings.Contains(receipt, "denied") {
+				t.Fatal(receipt)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("denied action did not terminate original tool")
+		}
+		t.Log("PASS automatic denial: no HTTP effect, persisted reason and terminal failure returned to original tool")
+		return
+	}
+	if scenario == "auto" {
+		if pending.State != "completed" || effects.Load() != 1 {
+			t.Fatalf("automatic review did not dispatch once: %+v effects=%d", pending, effects.Load())
+		}
+		repeated := must("connectors.decide", map[string]any{"action_id": pending.ActionID, "digest": pending.Digest, "approve": true})
+		if !strings.Contains(string(repeated), "completed") || effects.Load() != 1 {
+			t.Fatal("completed automatic action replayed")
+		}
+		t.Log("PASS auto: real bundle request → separate no-tools reviewer → fenced HTTP effect → durable receipt, repeated owner decision did not replay")
+		return
 	}
 	if pending.State != "awaiting_confirmation" || effects.Load() != 0 {
 		t.Fatalf("before owner: action=%+v effects=%d output=%s", pending, effects.Load(), output.String())
@@ -381,6 +426,21 @@ func connectorChain(t *testing.T, scenario string) {
 		t.Log("PASS cancelled main invalidates exact pending connector authority")
 		return
 	}
+	if scenario == "rule" {
+		preview := must("connectors.rule.preview", map[string]any{"action_id": pending.ActionID, "digest": pending.Digest})
+		var previewResult struct {
+			Value struct {
+				Revision int64 `json:"revision"`
+			} `json:"value"`
+		}
+		if err := json.Unmarshal(preview, &previewResult); err != nil || previewResult.Value.Revision < 1 {
+			t.Fatalf("preview %s %v", preview, err)
+		}
+		must("connectors.rule.save", map[string]any{"action_id": pending.ActionID, "digest": pending.Digest, "expected_revision": previewResult.Value.Revision, "decision": "allow"})
+		if effects.Load() != 0 {
+			t.Fatal("saving rule executed pending action")
+		}
+	}
 	decided := must("connectors.decide", decision)
 	if strings.Contains(string(decided), "synthetic-connector-secret") {
 		t.Fatal("host credential escaped")
@@ -479,6 +539,28 @@ func connectorChain(t *testing.T, scenario string) {
 	}
 	if again.State != pendingState(scenario) || effects.Load() != expectedEffects {
 		t.Fatalf("restart replay=%+v effects=%d", again, effects.Load())
+	}
+	if scenario == "rule" {
+		held, err := rt.RetainState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer held.Close()
+		executionCtx := runtimepkg.WithInvocationState(personalTestOwner(context.Background()), held)
+		original.RequestID = "new-exact-action"
+		next, err := broker.Call(executionCtx, actor, original)
+		if err != nil || next.State != "completed" || effects.Load() != 2 {
+			review, reviewErr := host.server.connectorReview(personalTestOwner(context.Background()), actor, next)
+			t.Fatalf("persistent rule failed after restart: %+v %v effects=%d review=%+v error=%v", next, err, effects.Load(), review, reviewErr)
+		}
+		original.RequestID = "changed-content"
+		original.Arguments = json.RawMessage(`{"to":["different@example.invalid"],"subject":"Synthetic chain","body":"No actual email is sent."}`)
+		changed, err := broker.Call(executionCtx, actor, original)
+		if err != nil || changed.State != "awaiting_confirmation" || effects.Load() != 2 {
+			t.Fatalf("rule authorized changed recipient: %+v %v", changed, err)
+		}
+		t.Log("PASS rule: preview/save did not dispatch; once executed; rule survived host restart; changed recipient required confirmation")
+		return
 	}
 	if scenario == "cold_pending" {
 		t.Logf("PASS cold pending: original awaiting approval survived host replacement, fresh admitted owner approved once, terminal receipt then survived second restart; HTTP effects=%d", effects.Load())

@@ -821,6 +821,7 @@ func (p *personalActions) Call(ctx context.Context, operation string, raw json.R
 	if err != nil {
 		return nil, err
 	}
+	settings.Scope = []string{"write_file", "edit_file", "bash", "process", "process_start", "connectors"}
 	view.Settings = &settings
 	return json.Marshal(view)
 }

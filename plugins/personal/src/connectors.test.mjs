@@ -56,3 +56,18 @@ test('poll binds a read source to the real session and rejects missing source id
  const f=fixture();await executeConnectorTool(f.host,'space',call('personal_connector_poll',{source_id:'selected-pr',connection_id:'github',operation:'github.pr',arguments:{repository:'owner/repo',number:1}}));assert.equal(f.calls[1].input.params.operation,'connectors.poll');assert.equal(f.calls[1].input.params.session_id,'session');assert.equal(f.calls[1].input.params.input.source_id,'selected-pr');
  await assert.rejects(executeConnectorTool(f.host,'space',call('personal_connector_poll',{connection_id:'github',operation:'github.pr',arguments:{}})),/source/);
 });
+
+test('automatic denial is a terminal failed effect both immediately and after waiting',async()=>{
+ for(const pending of [false,true]){
+  const f=fixture();let submissions=0;
+  f.host.call=async(method,input)=>{
+   if(method==='host.session.context')return {product_domain:'personal',user_space_id:'space'};
+   if(input.params.operation==='connectors.call'){submissions++;return {ok:true,value:{state:pending?'awaiting_confirmation':'denied',action_id:'a',digest:'exact',review_reason:'Not authorized'}};}
+   return {ok:true,value:{actions:[{state:'denied',action_id:'a',digest:'exact',review_reason:'Not authorized'}]}};
+  };
+  const result=await executeConnectorTool(f.host,'space',call('personal_connector_call',{connection_id:'connection',operation:'gmail.send',arguments:{},request_id:'same'}));
+  assert.equal(result.result.is_error,true);
+  assert.equal(JSON.parse(result.result.content[0].text).state,'denied');
+  assert.equal(submissions,1);
+ }
+});

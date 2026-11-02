@@ -45,6 +45,7 @@ type Plan struct {
 	Filter         func([]byte) (json.RawMessage, error)
 }
 type Result struct {
+	ReviewReason  string          `json:"review_reason,omitempty"`
 	ArgumentsJSON string          `json:"arguments_json,omitempty"`
 	Verification  string          `json:"verification,omitempty"`
 	State         string          `json:"state"`

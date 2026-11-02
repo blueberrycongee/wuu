@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
@@ -36,6 +37,7 @@ type Options struct {
 	// Authorize is the selected resource policy. Live owner transport admission
 	// and verified session identity are additional proof, never substitutes.
 	Authorize                     func(context.Context, string, string) error
+	ConnectorRules                func(context.Context, string, personalconnectors.Result, json.RawMessage) (json.RawMessage, error)
 	Connectors                    Connectors
 	ConnectorsUnavailableCode     string
 	OpenConnectorAuthorizationURL func(context.Context, string) error

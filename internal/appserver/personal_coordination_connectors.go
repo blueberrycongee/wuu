@@ -11,9 +11,13 @@ import (
 )
 
 type personalConnectorCoordination struct {
-	Actor    personalconnectors.Actor `json:"actor"`
-	Expected string                   `json:"expected,omitempty"`
-	EffectID string                   `json:"effect_id,omitempty"`
+	Actor     personalconnectors.Actor           `json:"actor"`
+	Expected  string                             `json:"expected,omitempty"`
+	EffectID  string                             `json:"effect_id,omitempty"`
+	Action    personalconnectors.Result          `json:"action,omitempty"`
+	Decision  *personalconnectors.ReviewDecision `json:"decision,omitempty"`
+	Operation string                             `json:"operation,omitempty"`
+	RuleInput json.RawMessage                    `json:"rule_input,omitempty"`
 }
 
 type personalConnectorSnapshot struct {
@@ -42,6 +46,12 @@ func (s *Server) connectorSnapshot(ctx context.Context, actor personalconnectors
 // The coordinator receives a single-use effect, not permission to later call a
 // broker outside its inspection. Releasing the token drains any in-flight use.
 func (s *Server) connectorCommit(ctx context.Context, actor personalconnectors.Actor, expected string, use func(context.Context) error) error {
+	return s.connectorCommitReviewed(ctx, actor, expected, personalconnectors.Result{}, nil, use)
+}
+func (s *Server) connectorReviewCommit(ctx context.Context, actor personalconnectors.Actor, expected string, action personalconnectors.Result, decision personalconnectors.ReviewDecision, use func(context.Context) error) error {
+	return s.connectorCommitReviewed(ctx, actor, expected, action, &decision, use)
+}
+func (s *Server) connectorCommitReviewed(ctx context.Context, actor personalconnectors.Actor, expected string, action personalconnectors.Result, decision *personalconnectors.ReviewDecision, use func(context.Context) error) error {
 	if s.personalEffects == nil {
 		return errors.New("Personal effect mechanisms are unavailable")
 	}
@@ -65,11 +75,15 @@ func (s *Server) connectorCommit(ctx context.Context, actor personalconnectors.A
 		return err
 	}
 	defer release()
-	input, err := json.Marshal(personalConnectorCoordination{Actor: actor, Expected: expected, EffectID: id})
+	input, err := json.Marshal(personalConnectorCoordination{Actor: actor, Expected: expected, EffectID: id, Action: action, Decision: decision})
 	if err != nil {
 		return err
 	}
-	_, err = s.invokePersonalCoordination(ctx, "connector-commit", personalCoordinationRequest{Input: input}, nil)
+	method := "connector-commit"
+	if decision != nil {
+		method = "connector-review-commit"
+	}
+	_, err = s.invokePersonalCoordination(ctx, method, personalCoordinationRequest{Input: input}, nil)
 	release()
 	outcomeMu.Lock()
 	defer outcomeMu.Unlock()
@@ -87,6 +101,16 @@ func (p *personalActions) coordinateConnector(ctx context.Context, method string
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return nil, err
 	}
+	if method == "connector-review" {
+		decision, err := p.reviewConnector(ctx, input.Actor, input.Action)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(decision)
+	}
+	if method == "connector-rule" {
+		return p.connectorRule(ctx, input.Operation, input.Action, input.RuleInput)
+	}
 	if method == "connector-snapshot" {
 		authority, err := p.connectorAuthority(ctx, input.Actor)
 		if err != nil {
@@ -98,6 +122,11 @@ func (p *personalActions) coordinateConnector(ctx context.Context, method string
 		return nil, errors.New("connector effect is required")
 	}
 	err := p.withConnectorAuthorization(ctx, input.Actor, input.Expected, func(effectCtx context.Context) error {
+		if method == "connector-review-commit" {
+			if err := p.checkConnectorReview(effectCtx, input.Actor, input.Action, input.Decision); err != nil {
+				return err
+			}
+		}
 		state, err := runtime.RetainProductInvocationState(effectCtx)
 		if err != nil {
 			return err

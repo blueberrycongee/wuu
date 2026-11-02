@@ -18,7 +18,7 @@ func TestConnectorHostAuthorityBoundary(t *testing.T) {
 	fixture := &connectorFixture{}
 	host := New(binding, Options{Authorize: authorizeFixture, Connectors: fixture})
 	defer host.Close()
-	for _, operation := range []string{"connectors.list", "connectors.actions", "connectors.decide", "connectors.disconnect"} {
+	for _, operation := range []string{"connectors.list", "connectors.actions", "connectors.decide", "connectors.disconnect", "connectors.rule.preview", "connectors.rule.save"} {
 		if _, err := host.Call(context.Background(), operation, json.RawMessage(`{}`), "model-session"); err == nil {
 			t.Fatalf("forged owner admitted: %s", operation)
 		}
@@ -70,6 +70,7 @@ func TestUnconfiguredConnectorStatusDoesNotClaimConnected(t *testing.T) {
 type connectorFixture struct {
 	actor     personalconnectors.Actor
 	decisions int
+	actions   []personalconnectors.Result
 }
 
 func (f *connectorFixture) Close() error { return nil }
@@ -79,7 +80,7 @@ func (f *connectorFixture) List(_ context.Context, a personalconnectors.Actor) (
 }
 func (f *connectorFixture) Actions(_ context.Context, a personalconnectors.Actor) ([]personalconnectors.Result, error) {
 	f.actor = a
-	return nil, nil
+	return f.actions, nil
 }
 func (f *connectorFixture) Call(_ context.Context, a personalconnectors.Actor, _ personalconnectors.Request) (personalconnectors.Result, error) {
 	f.actor = a
@@ -135,4 +136,36 @@ func (f *connectorOAuthFixture) Attempt(personalconnectors.Actor, string) (perso
 func (f *connectorOAuthFixture) Cancel(personalconnectors.Actor, string) error {
 	f.cancelled.Add(1)
 	return nil
+}
+
+func TestConnectorRulesUseSavedActionNotClientScope(t *testing.T) {
+	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
+	fixture := &connectorFixture{actions: []personalconnectors.Result{{State: "awaiting_confirmation", ActionID: "a", Digest: "d", AccountID: "verified", ArgumentsJSON: `{"to":["test@example.invalid"]}`}}}
+	calls := 0
+	host := New(binding, Options{Authorize: authorizeFixture, Connectors: fixture, ConnectorRules: func(_ context.Context, operation string, saved personalconnectors.Result, raw json.RawMessage) (json.RawMessage, error) {
+		calls++
+		if saved.AccountID != "verified" || saved.Digest != "d" {
+			t.Fatal("unverified action")
+		}
+		return json.RawMessage(`{"ok":true}`), nil
+	}})
+	defer host.Close()
+	owner, err := clientauthority.AdmitDesktop(context.Background(), binding, strings.NewReader(`{"version":1,"user_space_id":"local","product_domain":"personal"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{`{"action_id":"a","digest":"wrong"}`, `{"action_id":"a","digest":"d","account_id":"forged"}`} {
+		if _, err := host.Call(owner, "connectors.rule.preview", json.RawMessage(raw), ""); err == nil {
+			t.Fatal("forged action admitted")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("invalid preview reached policy")
+	}
+	if _, err := host.Call(owner, "connectors.rule.preview", json.RawMessage(`{"action_id":"a","digest":"d"}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("verified preview missing")
+	}
 }

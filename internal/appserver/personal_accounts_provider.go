@@ -167,7 +167,9 @@ func (p *personalAccountsProvider) InvokeService(ctx context.Context, call plugi
 		if broker, ok := options.Connectors.(*personalconnectors.Broker); ok {
 			broker.SetAuthorization(server.connectorSnapshot)
 			broker.SetAuthorizationBoundary(server.connectorCommit)
+			broker.SetReview(server.connectorReview, server.connectorReviewCommit)
 		}
+		options.ConnectorRules = server.connectorRules
 		p.host = personalhost.New(p.input.UserBinding, options)
 		p.server = server
 	}
