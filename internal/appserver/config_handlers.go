@@ -689,6 +689,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			}
 		}
 		dependencies := snapshot.PluginHost.Dependencies()
+		dependencyIssues := snapshot.PluginHost.DependencyIssues()
 		for index := range records {
 			record := &records[index]
 			if record.Kind != extensions.KindPlugin {
@@ -697,6 +698,13 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			edges, admitted := dependencies[record.Provenance.PluginID]
 			if !admitted {
 				continue
+			}
+			// Catalog resolution cannot describe optional edges omitted by the committed mixed graph.
+			record.ActivationIssues = nil
+			for _, issue := range dependencyIssues[record.Provenance.PluginID] {
+				record.ActivationIssues = append(record.ActivationIssues, ExtensionPluginActivationIssue{
+					Kind: issue.Kind, RelatedPluginID: issue.Provider,
+				})
 			}
 			var resolved, required []string
 			for _, edge := range edges {

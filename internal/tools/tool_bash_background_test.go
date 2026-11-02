@@ -13,7 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestProcessUpdateScheduleLifecycle(t *testing.T) {
+func TestBashCompletionModeLifecycle(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
@@ -26,42 +26,9 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 
 	started := startBackgroundForTest(t, kit, map[string]any{"command": "sleep 60"})
 
-	updateResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"update","process_id":"` + started.ID + `","recheck_minutes":10}`,
-	})
-	if err != nil {
-		t.Fatalf("update background: %v", err)
-	}
-	var updated struct {
-		RecheckMinutes int `json:"recheck_minutes"`
-	}
-	if err := json.Unmarshal([]byte(updateResp), &updated); err != nil {
-		t.Fatalf("parse update response: %v\n%s", err, updateResp)
-	}
-	if updated.RecheckMinutes != 10 {
-		t.Fatalf("recheck_minutes = %d, want 10", updated.RecheckMinutes)
-	}
 	record, err := manager.Get(started.ID)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if record.RecheckMinutes != 10 || record.NextRecheckAt.IsZero() {
-		t.Fatalf("schedule not persisted: %+v", record)
-	}
-	if !record.TTY {
-		t.Fatalf("background commands should default to an interactive PTY: %+v", record)
-	}
-
-	cancelResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"update","process_id":"` + started.ID + `","recheck_minutes":0}`,
-	})
-	if err != nil {
-		t.Fatalf("cancel recheck: %v", err)
-	}
-	if !strings.Contains(cancelResp, `"recheck_minutes":0`) {
-		t.Fatalf("cancellation should report recheck_minutes 0: %s", cancelResp)
 	}
 
 	// A resume-mode process holds the owning turn open; detaching releases it.
@@ -72,7 +39,7 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 		t.Fatalf("background command must retain its owner for automatic wake-up: %+v", record)
 	}
 	if _, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "process",
+		Name:      "bash",
 		Arguments: `{"action":"update","process_id":"` + started.ID + `","completion_mode":"detached"}`,
 	}); err != nil {
 		t.Fatalf("detach process: %v", err)
@@ -81,8 +48,8 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.CompletionMode != proc.CompletionModeDetached || record.RecheckMinutes != 0 {
-		t.Fatalf("completion mode update not persisted or clobbered the schedule: %+v", record)
+	if record.CompletionMode != proc.CompletionModeDetached {
+		t.Fatalf("completion mode update not persisted: %+v", record)
 	}
 }
 
@@ -126,9 +93,6 @@ func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	}
 	if record.Lifecycle != proc.LifecycleManaged || record.RootThreadID != "thread-promoted-background" {
 		t.Fatalf("promoted process must retain its owner for automatic wake-up: %+v", record)
-	}
-	if record.RecheckMinutes != defaultPromotedRecheckMinutes || record.NextRecheckAt.IsZero() {
-		t.Fatalf("promoted process should carry the safety-net recheck: %+v", record)
 	}
 	stopped, err := manager.Stop(result.PromotedProcessID)
 	if err != nil {

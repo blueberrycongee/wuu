@@ -166,7 +166,7 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 				return s.writeResponse(req.ID, nil, err)
 			}
 			if callErr != nil {
-				return s.writeResponse(req.ID, nil, callErr)
+				return s.writeJSON(Response{ID: req.ID, Error: &ResponseError{Code: callErr.Code, Message: callErr.Message}})
 			}
 			return s.writePluginClientResult(req.ID, result)
 		}

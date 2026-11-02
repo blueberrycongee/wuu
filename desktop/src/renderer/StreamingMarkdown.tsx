@@ -87,16 +87,13 @@ export function ApplicationStreamingMarkdown({ threadId, turnId, itemId, ...prop
   const active = useConversationRenderActive();
   const key = JSON.stringify([threadId, turnId, itemId]);
   const target = useMemo(() => threadId ? { threadId, turnId, itemId, field: "text" as const } : undefined, [threadId, turnId, itemId]);
-  // Side conversations publish complete message snapshots; only ordinary loaded
-  // threads have a live-text address in the public application workspace.
-  const addressed = Boolean(target && application.getSnapshot().conversationWorkspace.threads.some(thread => thread.id === threadId && thread.turns.some(turn => turn.id === turnId && turn.items.some(item => item.id === itemId))));
   const held = useRef<{ key: string; value?: string }>({ key });
   if (held.current.key !== key) held.current = { key };
   const read = useCallback(() => {
-    if (active) held.current.value = target && addressed ? application.conversationText.getSnapshot(target) : undefined;
+    if (active) held.current.value = target ? application.conversationText.getSnapshot(target) : undefined;
     return held.current.value;
-  }, [application, active, target, addressed]);
-  const subscribe = useCallback((listener: () => void) => active && target && addressed ? application.conversationText.subscribe(target, listener) : () => {}, [application, active, target, addressed]);
+  }, [application, active, target]);
+  const subscribe = useCallback((listener: () => void) => active && target ? application.conversationText.subscribe(target, listener) : () => {}, [application, active, target]);
   const live = useSyncExternalStore(subscribe, read, read);
   const text = live ?? props.initialText ?? "";
   const previous = useRef({ key, text, version: 0 });

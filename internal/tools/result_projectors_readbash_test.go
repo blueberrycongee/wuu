@@ -262,8 +262,8 @@ func TestRenderProcessModelView(t *testing.T) {
 		},
 		{
 			name: "update",
-			raw:  map[string]any{"action": "update", "process_id": "proc-1", "completion_mode": "detached", "recheck_minutes": 10},
-			want: []string{"proc-1", "10 min"},
+			raw:  map[string]any{"action": "update", "process_id": "proc-1", "completion_mode": "detached"},
+			want: []string{"proc-1", "does not resume"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
