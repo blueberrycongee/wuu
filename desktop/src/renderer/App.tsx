@@ -1734,7 +1734,9 @@ export function App({ application, slots, shellPluginId }: {
                 <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
-            <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            {!showingManagementCatalog || showingPrimaryPluginView ? (
+              <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            ) : null}
           </div>
           <ConversationTitleActions
             thread={activeThread}
