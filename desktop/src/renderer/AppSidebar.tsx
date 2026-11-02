@@ -2,6 +2,7 @@ import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
 import { PluginActionNotStartedError } from "../shared/PluginLifecycle";
 import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
+import { useTabExitRetention } from "./TabMotion";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { SessionOrganizationController } from "./SessionOrganization";
@@ -626,6 +627,8 @@ export function AppSidebar({
   const [collapsedFunctionalGroupIDs, setCollapsedFunctionalGroupIDs] =
     useState<Set<SidebarFunctionalGroupID>>(loadCollapsedSidebarFunctionalGroups);
   const [recentsCollapsed, setRecentsCollapsed] = useState(loadSidebarRecentsCollapsed);
+  const draftEntries = useTabExitRetention(draftConversations, draft => draft.id)
+    .filter(entry => !entry.closing || !entry.tab.pending);
   // Consume entrance eligibility even when the fold is closed. Its children
   // can remount later without a new navigation snapshot.
   const presentedDraftIDs = useRef(new Set<string>());
@@ -2189,7 +2192,7 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
-            {recentConversations.length > 0 || draftConversations.length > 0 ? (
+            {recentConversations.length > 0 || draftEntries.length > 0 ? (
               <div className="sidebar-conversation-activity" {...conversationInteractionProps}>
                 <section
                   className="sidebar-functional-group"
@@ -2247,17 +2250,17 @@ export function AppSidebar({
                     expanded={!recentsCollapsed}
                   >
                     <div className="sidebar-functional-group-body">
-                      {draftConversations.map(draft => (
-                        <div key={draft.id} className="motion-height-reveal sidebar-draft-reveal" data-enter={(draft.entering && !presentedDraftIDs.current.has(draft.id)) || undefined}>
+                      {draftEntries.map(({ tab: draft, closing }) => (
+                        <div key={draft.id} className="motion-height-reveal sidebar-draft-reveal" data-enter={(draft.entering && !presentedDraftIDs.current.has(draft.id)) || undefined} data-state={closing ? "closing" : undefined} aria-hidden={closing || undefined} inert={closing}>
                           <div data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${selectionSection === "recent" && draft.id === activeSessionTabID ? " active" : ""}`}>
                             {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
                             <button
                               className="thread-row-main"
                               type="button"
-                              aria-current={selectionSection === "recent" && draft.id === activeSessionTabID ? "page" : undefined}
+                              aria-current={!closing && selectionSection === "recent" && draft.id === activeSessionTabID ? "page" : undefined}
                               aria-busy={draft.pending || undefined}
                               aria-label={draft.title}
-                              onClick={() => { setSelectionOrigin({ id: draft.id, section: "recent" }); activateNative(() => onSelectPendingConversation?.(draft.id)); }}
+                              onClick={closing ? undefined : () => { setSelectionOrigin({ id: draft.id, section: "recent" }); activateNative(() => onSelectPendingConversation?.(draft.id)); }}
                             >
                               <ThreadRowTitle title={draft.title} />
                             </button>
