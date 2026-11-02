@@ -483,6 +483,52 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.ok(await evaluate(() => document.querySelector('.composer-rich-input')?.textContent.includes("Keep this draft")));
       assert.ok(await evaluate(() => document.querySelector('.composer-rich-input .composer-plugin-reference')?.dataset.pluginToken.includes("fixture-user-42")), "Rejected delivery must retain the account-bound reference, not only its label");
       await capture("conversation-stale-account-draft-retained");
+      // Passive, synthetic-fixture-only diagnostics for a disconnect/navigation
+      // handoff. Read React's attached props; never replace or replay a handler.
+      await evaluate(() => {
+        const records = window.__mcpCatalogNavigation = [];
+        const identities = new WeakMap(); let nextIdentity = 0;
+        const scopes = new Set();
+        const selector = '[data-plugin="mcp-journey"] .catalog-row-open';
+        const sample = phase => {
+          const control = document.querySelector(selector);
+          const fiberKey = control && Object.keys(control).find(key => key.startsWith('__reactFiber$'));
+          for (let fiber = fiberKey && control[fiberKey]; fiber; fiber = fiber.return) {
+            const application = fiber.memoizedProps?.application;
+            if (application) { scopes.add(application); break; }
+          }
+          const applications = [...scopes].map(application => {
+            if (!identities.has(application)) identities.set(application, ++nextIdentity);
+            try {
+              const navigation = application.getSnapshot().navigation;
+              const inventory = application.catalog.getSnapshot().inventory;
+              return { scope: identities.get(application), selectedPluginId: navigation.catalogPluginId,
+                section: navigation.section, catalogSection: navigation.catalogSection,
+                generations: [...new Set(inventory.map(record => record.graph_generation).filter(Boolean))] };
+            } catch (error) { return { scope: identities.get(application), scopeError: String(error).slice(0, 200) }; }
+          });
+          const propsKey = control && Object.keys(control).find(key => key.startsWith('__reactProps$'));
+          const state = { controlPresent: Boolean(control), controlConnected: Boolean(control?.isConnected),
+            inert: Boolean(control?.closest('[inert]')), handlerPresent: Boolean(propsKey && control[propsKey]?.onClick),
+            detailPresent: Boolean(document.querySelector('[data-wuu-component="plugin-detail"]')),
+            docsPresent: Boolean(document.querySelector('[data-mcp="plugin.mcp-journey.docs"]')), applications };
+          const serialized = JSON.stringify(state);
+          if (records.length < 80 && (phase !== 'mutation' || serialized !== records.at(-1)?.state)) records.push({ phase, at: performance.now(), state: serialized });
+        };
+        document.addEventListener('click', event => {
+          if (!event.target.closest?.(selector)) return;
+          sample('click-capture'); queueMicrotask(() => sample('click-microtask'));
+          requestAnimationFrame(() => sample('click-animation-frame'));
+          setTimeout(() => sample('click-after-100ms'), 100);
+          setTimeout(() => sample('click-after-1000ms'), 1000);
+        }, true);
+        document.addEventListener('click', event => { if (event.target.closest?.(selector)) sample('click-bubble'); });
+        window.addEventListener('wuu:mcp-connector-handoff', event => sample('handoff-' + event.detail?.phase));
+        const observer = new MutationObserver(() => sample('mutation'));
+        observer.observe(document, { childList: true, subtree: true, attributes: true });
+        setTimeout(() => observer.disconnect(), 40_000);
+        sample('before-disconnect');
+      });
       evidence.checks.push("Changed account identity rejects the old reference before model/tool execution and preserves the draft");
       await clickElement('[data-ribbon-id="catalog"]');
       await until(selector => document.querySelector(`${selector} [data-connector-action="disconnect"]`), connectorRow);
@@ -525,7 +571,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => {
         for (const button of document.querySelectorAll('[data-connector] .settings-mcp-details-toggle[aria-expanded="false"]')) button.click();
       });
-      return evaluate(() => ({ phases: window.__mcpFixtureHandoff || [], rows: [...document.querySelectorAll('[data-connector]')].slice(0, 10).map(row => ({
+      return evaluate(() => ({ catalogNavigation: window.__mcpCatalogNavigation || [], phases: window.__mcpFixtureHandoff || [], rows: [...document.querySelectorAll('[data-connector]')].slice(0, 10).map(row => ({
         name: row.getAttribute("data-connector"), diagnostic: [...row.querySelectorAll("pre")].map(element => element.textContent.replace(/https?:\/\/\S+/g, "[URL]").slice(0, 512)),
       })) }));
     },
