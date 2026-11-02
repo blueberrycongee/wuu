@@ -366,7 +366,6 @@
   gap: var(--settings-gap);
   margin: 0 auto;
   padding: var(--section-gap) var(--settings-pad) calc(var(--settings-pad) * 2);
-  animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* --- Page title ----------------------------------------------------------

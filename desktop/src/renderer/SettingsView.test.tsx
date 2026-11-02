@@ -1625,6 +1625,37 @@ describe("SettingsView general settings", () => {
 });
 
 describe("SettingsView About section", () => {
+  it("keeps the last permission state while returning to General and refreshes it", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    try {
+      installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01T00:00:00Z" } });
+      let finishRefresh!: (value: { available: boolean; screen: boolean; accessibility: boolean }) => void;
+      const refresh = new Promise<{ available: boolean; screen: boolean; accessibility: boolean }>(resolve => { finishRefresh = resolve; });
+      const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+      const getSystemPermissions = vi.fn().mockResolvedValueOnce({ available: true, screen: true, accessibility: true }).mockReturnValueOnce(refresh);
+      const controls = { ...base, capabilities: { ...base.capabilities, systemPermissions: true }, getSystemPermissions };
+      renderSettings({ initialized: baseInitialized(), controls });
+      await act(async () => { await Promise.resolve(); });
+      expect(container.querySelectorAll('[data-permission][data-granted="true"]')).toHaveLength(2);
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="appearance"]')!.click(); });
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="general"]')!.click(); });
+      expect(getSystemPermissions).toHaveBeenCalledTimes(2);
+      expect(container.querySelectorAll('[data-permission][data-granted="true"]')).toHaveLength(2);
+      await act(async () => { finishRefresh({ available: true, screen: false, accessibility: true }); await refresh; });
+      expect(container.querySelector('[data-permission="screen"]')?.hasAttribute("data-granted")).toBe(false);
+      expect(container.querySelector('[data-permission="accessibility"]')?.hasAttribute("data-granted")).toBe(true);
+      getSystemPermissions.mockRejectedValueOnce(new Error("permission read failed"));
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(container.querySelector('[data-testid="system-permissions"] [role="alert"]')).not.toBeNull();
+      getSystemPermissions.mockReturnValueOnce(new Promise(() => {}));
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="appearance"]')!.click(); });
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="general"]')!.click(); });
+      expect(container.querySelectorAll('[data-permission][data-granted="true"]')).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("includes core version in the copied version info when initialized", async () => {
     installBuildInfoStub({
       core: {
