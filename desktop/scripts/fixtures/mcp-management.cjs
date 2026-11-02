@@ -340,6 +340,12 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("connector-picker-light");
       const connectorAction = async action => {
         const selector = `${connectorRow} [data-connector-action="${action}"]`;
+        // Connected-account actions are inside the management disclosure.
+        await evaluate(selector => {
+          const action = document.querySelector(selector);
+          if (action?.closest('[hidden]')) action.closest('[data-connector]').querySelector('[data-connector-details-toggle]').click();
+        }, selector);
+        await until(selector => { const action = document.querySelector(selector); return action && !action.closest('[hidden]'); }, selector);
         // A graph publication can replace this row between separate IPC calls.
         // Check and dispatch once in the same renderer turn, without a sleep.
         await clickElement(selector);
@@ -404,13 +410,22 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       };
       await evaluate(selector => document.querySelector(selector).focus(), editorSelector);
       await win.webContents.insertText("CONNECTOR_CONVERSATION_E2E @");
-      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-key="mcp:plugin.mcp-journey.account"]:not(:disabled)'));
       const mentionChoices = await evaluate(() => [...document.querySelectorAll('.composer-plus-menu [data-plugin-choice]')].map(button => button.textContent));
+      const mentionKeys = await evaluate(() => [...document.querySelectorAll('.composer-plus-menu [data-plugin-choice]')].map(button => button.dataset.pluginKey));
+      assert.ok(mentionKeys.includes("mcp:plugin.mcp-journey.account") && mentionKeys.includes("mcp:plugin.mcp-journey.alternate"), "Connected accounts must be available in @");
+      for (const name of ["plugin.account-connectors.notion", "plugin.account-connectors.github", "plugin.account-connectors.google-drive", "plugin.mcp-journey.gated"]) {
+        assert.ok(!mentionKeys.includes(`mcp:${name}`), `Unconnected or setup-required connector ${name} must not appear in @`);
+      }
+      assert.equal(await evaluate(() => document.querySelectorAll('.composer-plus-menu [data-plugin-choice]:disabled').length), 0, "Every visible plugin choice must be usable");
+      assert.equal(await evaluate(() => document.querySelector('.composer-plus-menu .composer-plugin-browse')), null, "@ must not include a plugin setup action");
+      assert.ok(await evaluate(() => document.querySelector('[data-plugin-key="mcp:plugin.mcp-journey.alternate"]').textContent.includes("alternate")), "Same-name connections should use the local name for disambiguation");
       await capture("conversation-at-menu-light");
       await key("Escape");
       await clickElement('.composer-plus-button');
-      await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-key="mcp:plugin.mcp-journey.account"]:not(:disabled)'));
       assert.deepEqual(await evaluate(() => [...document.querySelectorAll('.composer-plus-menu [data-plugin-choice]')].map(button => button.textContent)), mentionChoices, "@ and + expose the same plugin choices and states");
+      assert.equal(await evaluate(() => document.querySelector('.composer-plus-menu .composer-plugin-browse')), null, "+ must not include a plugin setup action");
       await capture("conversation-plus-menu-light");
       await key("Escape");
       await evaluate(selector => { const input = document.querySelector(selector); input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, editorSelector);
@@ -434,12 +449,17 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await until(() => document.querySelectorAll('.composer-rich-input .composer-plugin-reference').length === 2);
       const referenceTokens = await evaluate(() => [...document.querySelectorAll('.composer-rich-input .composer-plugin-reference')].map(element => element.dataset.pluginToken));
       assert.notEqual(referenceTokens[0], referenceTokens[1], "Same display names must retain distinct connection and authorization identities");
+      await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+      await key("Enter", ["shift"]);
+      await win.webContents.insertText("换行后的问题");
+      assert.ok(await evaluate(() => document.querySelector('.composer-rich-input').textContent.endsWith("\n换行后的问题")), "Typing after a plugin reference must stay on the new line");
       await capture("conversation-inline-light");
       await clickElement('[data-ribbon-id="catalog"]');
       await until(() => document.querySelector('[data-testid="mcp-services"]'));
       await clickElement('[data-ribbon-id="conversations"]');
       await until(() => document.querySelectorAll('.composer-rich-input .composer-plugin-reference').length === 2);
       assert.equal(await evaluate(() => document.querySelector('.composer-rich-input .composer-plugin-reference').dataset.pluginToken), originalToken, "Draft navigation preserves opaque account and plugin identity");
+      assert.ok(await evaluate(() => document.querySelector('.composer-rich-input').textContent.endsWith("\n换行后的问题")), "Draft navigation must preserve the new line");
       await evaluate(() => window.wuu.setThemePreference("dark"));
       win.setSize(800, 900);
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
@@ -461,7 +481,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await until(() => document.querySelector('.composer-plus-menu [data-plugin-choice]:not(:disabled)'));
       await key("Enter");
       await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
-      evidence.checks.push("Same @/+ panel, searchable keyboard insertion, atomic deletion and undo/redo, same-name connections with distinct stable inline references, draft navigation, light/wide/default and dark/narrow/large font, sent references and native loop MCP execution with a deterministic model endpoint");
+      evidence.checks.push("Same @/+ panel, searchable keyboard insertion, atomic deletion and undo/redo, same-name connections with distinct stable inline references, multiline draft navigation, light/wide/default and dark/narrow/large font, sent references and native loop MCP execution with a deterministic model endpoint");
       await clickElement('[data-ribbon-id="catalog"]');
       await until(selector => document.querySelector(`${selector} [data-connector-action="reconnect"]`), connectorRow);
       await connectorAction("reconnect");
@@ -540,6 +560,14 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.deepEqual(connectorPreference.config, { enabled: false });
       evidence.checks.push("External plugin connector stays lazy, reads only its declared identity tool on Connect or explicit retry, rejects incomplete identity without losing authorization, persists verified account/workspace, performs no probe on status/list, and clears identity on cancelled reconnect while retaining accepted credentials");
       evidence.checks.push("Connector disconnect removes local authorization plus startup preference");
+      await clickElement('[data-ribbon-id="conversations"]');
+      await until(() => document.querySelector('[data-main-conversation-composer] [data-wuu-component="composer-input"]'));
+      await clickElement('.composer-plus-button');
+      await until(() => document.querySelector('.composer-plus-menu [data-plugin-key="mcp:plugin.mcp-journey.alternate"]'));
+      assert.equal(await evaluate(name => document.querySelector(`[data-plugin-key="mcp:${name}"]`) === null, connectorName), true, "A disconnected account must leave the composer list");
+      await clickElement('[data-ribbon-id="catalog"]');
+      await until(() => document.querySelector('[data-testid="mcp-services"]'));
+      evidence.checks.push("Only available plugins appear in @ and +; disconnect removes the choice");
       await clickElement('[data-plugin="mcp-journey"] .catalog-row-open');
       await until(() => document.querySelector('[data-mcp="plugin.mcp-journey.docs"]'));
       await capture("mcp-plugin-owned");

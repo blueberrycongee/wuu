@@ -1,0 +1,4 @@
+Notion, GitHub and Google Drive marks from Simple Icons (CC0 1.0 Universal).
+Sources: https://github.com/simple-icons/simple-icons/tree/develop/icons
+Retrieved 2026-11-02. Fill colors were adapted for light/dark backgrounds and the Google Drive mark was split into colored paths.
+The marks are trademarks of their respective owners. CC0 does not grant trademark rights; these integrations are not endorsed by their owners.

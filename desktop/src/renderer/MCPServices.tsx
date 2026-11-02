@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { MCPServerStatus } from "../shared/protocol";
 import type { ApplicationSettingsControlsV1, MCPDefinitionResult } from "../../../packages/plugin-sdk/src/ui-settings-controls";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
+import { CatalogPluginIcon } from "./CatalogPluginIcon";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { Modal } from "./Modal";
@@ -17,14 +19,14 @@ import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 type MCPAction = "connect" | "disconnect" | "refresh" | "identity" | "login" | "logout" | "edit" | "remove";
 type MCPActionFailure = { action: MCPAction; diagnostic: string };
 
-const MCPContext = createContext<{ servers: MCPServerStatus[]; retainedConnectors: MCPServerStatus[]; error: string; contextGeneration: number; refresh(): Promise<void> } | null>(null);
+const MCPContext = createContext<{ servers: MCPServerStatus[]; retainedConnectors: MCPServerStatus[]; error: string; contextGeneration: number; catalog?: ApplicationCatalogV1; refresh(): Promise<void> } | null>(null);
 export function useMCPServices() {
   const value = useContext(MCPContext);
   if (!value) throw new Error("MCP services require a catalog provider");
   return value;
 }
 
-export function MCPServicesProvider({ children, contextKey }: { children: ReactNode; contextKey?: string }): JSX.Element {
+export function MCPServicesProvider({ children, contextKey, catalog }: { children: ReactNode; contextKey?: string; catalog?: ApplicationCatalogV1 }): JSX.Element {
   const controls = useSettingsControls();
   const [servers, setServers] = useState<MCPServerStatus[]>([]);
   const [contextGeneration, setContextGeneration] = useState(0);
@@ -70,7 +72,7 @@ export function MCPServicesProvider({ children, contextKey }: { children: ReactN
       name: server.name, plugin_id: server.plugin_id, connector: { title: server.connector!.title },
       state: "reconnecting", connected: false, tool_count: 0, plugin_active: false, configurable: false,
     })) : [];
-  return <MCPContext.Provider value={{ servers: fresh ? servers : [], retainedConnectors, error, contextGeneration, refresh }}>{children}</MCPContext.Provider>;
+  return <MCPContext.Provider value={{ servers: fresh ? servers : [], retainedConnectors, error, contextGeneration, catalog, refresh }}>{children}</MCPContext.Provider>;
 }
 
 type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string };
@@ -217,7 +219,7 @@ type ConnectorAuth = { result?: Awaited<ReturnType<ApplicationSettingsControlsV1
 
 function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
-  const { servers, retainedConnectors, refresh } = useMCPServices();
+  const { servers, retainedConnectors, catalog, refresh } = useMCPServices();
   const retained = !servers.length && retainedConnectors.length > 0;
   const { t } = useI18n();
   const scope = useMemo(() => ({}), [controls]);
@@ -416,7 +418,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
         catch { /* An invalid plugin link must not launch an external application. */ }
       }
       return <div className="mcp-service mcp-connector" key={server.name} data-connector={server.name} data-connected={connected} data-authorized={authorized === undefined ? "unknown" : authorized} aria-busy={working}>
-        <Plug className="icon mcp-service-icon" aria-hidden="true" />
+        <span className="mcp-connector-mark" aria-hidden="true"><CatalogPluginIcon catalog={catalog} pluginId={server.plugin_id} icon={connector.icon} /></span>
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{connector.title}</div>
           <div className="mcp-service-status" data-attention={attention ? "error" : undefined} role={failure || working || needsAuth ? "status" : undefined}>
@@ -426,18 +428,15 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
           {diagnostic ? <MCPDiagnostic message={diagnostic} /> : null}
         </div>
         <div className="mcp-service-actions">
-          {available ? <button type="button" className="settings-button" data-connector-action={reconnect ? "reconnect" : "connect"} disabled={!!busy || !!login || !!preparing}
-            onClick={() => void act(server.name, "connect", () => connect(server, !!reconnect))}>{t(reconnect ? "connector.reconnect" : "mcp.connect")}</button> : null}
-          {active && server.configurable && saved ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="disconnect" disabled={!!busy || !!login || !!preparing}
-            onClick={() => void act(server.name, "disconnect", () => disconnect(server))}>{t("mcp.disconnect")}</button> : null}
-          {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={retained || !!busy || !!login || !!preparing}
-            onClick={() => void act(server.name, "edit", () => controls.openExternal(documentationURL!))}>{t("connector.documentation")}</button> : null}
-          <button type="button" className="settings-button settings-button-ghost" disabled={retained} data-connector-details-toggle aria-expanded={detailsOpen} aria-controls={detailsTarget}
+          {available && !reconnect ? <button type="button" className="settings-button" data-connector-action="connect" disabled={!!busy || !!login || !!preparing}
+            onClick={() => void act(server.name, "connect", () => connect(server, false))}>{t("mcp.connect")}</button> : null}
+          <button type="button" className="settings-button settings-button-ghost" disabled={retained} data-connector-details-toggle aria-label={t("connector.detailsNamed", { name: connector.title })} aria-expanded={detailsOpen} aria-controls={detailsTarget}
             onClick={() => setExpanded(previous => ({ ...previous, [server.name]: !detailsOpen }))}>
-            <ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("mcp.connectionDetails")}
+            {t("connector.manage")}<ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />
           </button>
         </div>
-        {detailsOpen ? <div className="mcp-connector-expanded" id={detailsTarget}>
+        <div className="mcp-connector-expanded" id={detailsTarget} hidden={!detailsOpen}>
+          {detailsOpen ? <>
           {connector.description ? <p className="mcp-connector-description">{connector.description}</p> : null}
           {setupRequired ? <p className="mcp-connector-description">{setupRequired}</p> : null}
           {server.configuration_unavailable_reason ? <p className="mcp-connector-description">{server.configuration_unavailable_reason}</p> : null}
@@ -466,7 +465,16 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
               }
             })}>{t(account ? "connector.refreshIdentity" : "connector.verifyIdentity")}</button> : null}
           {authorization?.error ? <MCPDiagnostic message={authorization.error} /> : null}
-        </div> : null}
+          </> : null}
+          <div className="mcp-connector-detail-actions">
+            {available && reconnect ? <button type="button" className="settings-button" data-connector-action="reconnect" disabled={!!busy || !!login || !!preparing}
+              onClick={() => void act(server.name, "connect", () => connect(server, true))}>{t("connector.reconnect")}</button> : null}
+            {active && server.configurable && saved ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="disconnect" disabled={!!busy || !!login || !!preparing}
+              onClick={() => void act(server.name, "disconnect", () => disconnect(server))}>{t("mcp.disconnect")}</button> : null}
+            {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={retained || !!busy || !!login || !!preparing}
+              onClick={() => void act(server.name, "edit", () => controls.openExternal(documentationURL!))}>{t("connector.documentation")}</button> : null}
+          </div>
+        </div>
       </div>;
     })}</SettingsGroup>
     {preparing ? <Modal ariaLabel={t("mcp.loginNamed", { name: visible.find(server => server.name === preparing)?.connector?.title || preparing })}

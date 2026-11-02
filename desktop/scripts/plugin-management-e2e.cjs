@@ -122,6 +122,14 @@ async function run() {
     app.quit();
     return;
   }
+  // Explicit compositions select only named modules. Add the navigation fixture
+  // after the independent MCP journey has finished changing its own selection.
+  const configPath = path.join(home, "config.json");
+  const configuration = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  configuration.composition.patches.push({ modules: { "automation": true, "automation-client": true, "automation-ui": true } });
+  fs.writeFileSync(configPath, JSON.stringify(configuration));
+  await evaluate(() => window.wuu.refreshExtensionCatalog());
+  await until(() => document.querySelector('.plugin-navigation-item[aria-label="Automations"]'));
   await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
   const initialized = await evaluate(() => window.wuu.initialize());
   const modules = initialized.extension_inventory.filter(record => record.desktop?.entry.startsWith("wuu-builtin:"));
@@ -130,12 +138,29 @@ async function run() {
   const automation = initialized.extension_inventory.filter(record => ["automation", "automation-client"].includes(record.provenance.plugin_id));
   assert.equal(automation.length, 2);
   assert.equal(new Set(automation.map(record => record.name)).size, 2, "Automation client and scheduler must be distinguishable");
+  // The MCP journey leaves a rejected account-bound reference in its draft.
+  // Start a separate conversation for the independent draft-preservation check.
+  await evaluate(() => document.querySelector('.primary-nav .nav-item:not(:disabled)').click());
+  const composerSelector = '[data-main-conversation-composer] [data-wuu-component="composer-input"]';
+  const draftText = () => evaluate(selector => {
+    const input = document.querySelector(selector);
+    return input instanceof HTMLTextAreaElement ? input.value : input.textContent;
+  }, composerSelector);
+  await until(selector => document.querySelector('.empty-home') && document.querySelector(selector), composerSelector);
   const draft = "Keep this unsent draft\nwhile browsing plugins and skills.";
-  await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
-  win.focus();
-  await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').focus());
-  await win.webContents.insertText(draft);
-  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft);
+  assert.equal(await draftText(), "");
+  win.focus(); win.webContents.focus();
+  await evaluate(selector => document.querySelector(selector).focus(), composerSelector);
+  await win.webContents.insertText("Keep this unsent draft");
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter", modifiers: ["shift"] });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter", modifiers: ["shift"] });
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "w" });
+  win.webContents.sendInputEvent({ type: "char", keyCode: "w" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "w" });
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  await win.webContents.insertText("hile browsing plugins and skills.");
+  assert.equal(await draftText(), draft);
   await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
   await until(() => document.querySelector(".sidebar-plugin-shortcut"));
   await until(() => document.querySelector('.catalog-refresh:not(:disabled)'));
@@ -166,18 +191,32 @@ async function run() {
   await checkCompactRibbon("dark-narrow-large");
   await openAutomations("skills");
   await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
-  await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
-  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft, "Returning to chat must restore the entire unsent draft");
+  await until(selector => document.querySelector(selector), composerSelector);
+  assert.equal(await draftText(), draft, "Returning to chat must restore the entire unsent draft");
   await capture("chat-draft-restored");
   await openAutomations("chat");
   await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
-  await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
-  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft);
+  await until(selector => document.querySelector(selector), composerSelector);
+  assert.equal(await draftText(), draft);
   await evaluate(async () => {
     await window.wuu.setThemePreference("light");
     document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
   });
   win.setSize(1280, 900);
+  await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
+  await until(() => document.querySelector(".sidebar-plugin-shortcut"));
+  const automationTools = automation.find(record => record.provenance.plugin_id === "automation-client");
+  await selectPlugin(automationTools);
+  await until(() => [...document.querySelectorAll('.plugin-page-actions button')].some(button => button.textContent.trim() === '在对话中使用'));
+  await capture("plugin-detail-conversation-action");
+  await evaluate(() => [...document.querySelectorAll('.plugin-page-actions button')].find(button => button.textContent.trim() === '在对话中使用').click());
+  await until(() => document.querySelector('[data-main-conversation-composer] .composer-plugin-reference'));
+  const selectedPlugin = await evaluate(() => {
+    const token = document.querySelector('[data-main-conversation-composer] .composer-plugin-reference').dataset.pluginToken;
+    return JSON.parse(decodeURIComponent(token.match(/\(wuu-plugin:([^)]*)\)/)[1]));
+  });
+  assert.equal(selectedPlugin.plugin_id, "automation-client", "Starting from a plugin detail must insert its identity in a new conversation");
+  await capture("plugin-detail-in-conversation");
   await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
   await until(() => document.querySelector(".sidebar-plugin-shortcut"));
   const composer = modules.find(record => record.provenance.plugin_id === "wuu.default-composer");
@@ -193,7 +232,7 @@ async function run() {
   await selectPlugin(composer);
   await until(() => document.querySelector(".plugin-page")?.textContent.includes("Visible renderer diagnostic fixture"));
   await capture("renderer-failure-visible");
-  fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, modules: modules.map(({ id, name }) => ({ id, name })), automation: automation.map(({ id, name }) => ({ id, name })), scope: "Plugin list, plugin details and skill management omit the composer; multiline draft survives navigation back to chat; light/wide/default and dark/narrow/large font; real IPC diagnostics, stale identity rejected and renderer failure visible" }, null, 2));
+  fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, modules: modules.map(({ id, name }) => ({ id, name })), automation: automation.map(({ id, name }) => ({ id, name })), scope: "Plugin list, plugin details and skill management omit the composer; multiline draft survives navigation back to chat; plugin details start a conversation with the selected identity; light/wide/default and dark/narrow/large font; real IPC diagnostics, stale identity rejected and renderer failure visible" }, null, 2));
   clearTimeout(timeout);
   mcpFixture.close();
   app.quit();

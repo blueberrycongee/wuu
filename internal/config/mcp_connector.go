@@ -6,11 +6,19 @@ import (
 	"strings"
 )
 
+// MCPConnectorIcon identifies package-relative connector artwork.
+type MCPConnectorIcon struct {
+	Path  string `json:"path,omitempty"`
+	Light string `json:"light,omitempty"`
+	Dark  string `json:"dark,omitempty"`
+}
+
 // MCPConnectorDescriptor describes a server's onboarding without credentials.
 // Onboarding gates apply to plugin-owned servers; standalone metadata is informational.
 // SetupRequired is an explanation of configuration still required from the
 // package or its administrator; it is not a request to start authentication.
 type MCPConnectorDescriptor struct {
+	Icon             *MCPConnectorIcon `json:"icon,omitempty"`
 	Title            string            `json:"title"`
 	Description      string            `json:"description,omitempty"`
 	DocumentationURL string            `json:"documentation_url,omitempty"`
