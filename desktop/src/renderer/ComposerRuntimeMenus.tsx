@@ -1615,7 +1615,7 @@ export function ComposerPlusButton({
             onKeyDown={(event) => handleFloatingMenuKeyDown(event, close, pluginMenu?.fromMention ? pluginMenu.inputElement() : buttonRef.current)}
           >
             {pluginMenu ? <ComposerPluginChoices menu={pluginMenu} /> : null}
-            {mobileAttachments ? (
+            {!pluginMenu?.fromMention && (mobileAttachments ? (
               <ComposerMobileAttachmentChoices
                 onTakePhoto={() => {
                   setOpen(false);
@@ -1643,9 +1643,11 @@ export function ComposerPlusButton({
                 <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
                 <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
-            )}
-            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
-            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            ))}
+            {!pluginMenu?.fromMention ? <>
+              <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+              <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            </> : null}
           </div>
         </FloatingMenuPortal>
       ) : null}

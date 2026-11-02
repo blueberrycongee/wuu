@@ -166,6 +166,16 @@ func (m Manifest) capabilityPathMatches(rel string) bool {
 			return true
 		}
 	}
+	for _, server := range m.MCPServers {
+		if server.Connector != nil && server.Connector.Icon != nil {
+			icon := server.Connector.Icon
+			for _, asset := range (IconSpec{Path: icon.Path, Light: icon.Light, Dark: icon.Dark}).AssetPaths() {
+				if relPathUnder(asset, rel) {
+					return true
+				}
+			}
+		}
+	}
 	if m.Icon != nil {
 		for _, asset := range m.Icon.AssetPaths() {
 			if relPathUnder(asset, rel) {

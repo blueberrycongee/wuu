@@ -14,6 +14,7 @@
       "enabled": false,
       "connector": {
         "title": "Notion",
+        "icon": { "light": "icons/notion-light.svg", "dark": "icons/notion-dark.svg" },
         "description": "Search and work with the Notion workspace you authorize.",
         "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
         "identity_probe": {
@@ -32,6 +33,7 @@
       "enabled": false,
       "connector": {
         "title": "GitHub",
+        "icon": { "light": "icons/github-light.svg", "dark": "icons/github-dark.svg" },
         "description": "Work with repositories through GitHub's official MCP server.",
         "documentation_url": "https://github.com/github/github-mcp-server",
         "setup_required": "Wuu must register and configure its own GitHub App or OAuth client before account connection is available. The server URL alone does not enable OAuth."
@@ -43,6 +45,7 @@
       "enabled": false,
       "connector": {
         "title": "Google Drive",
+        "icon": { "path": "icons/google-drive.svg" },
         "description": "Google Drive's official MCP server is in Developer Preview.",
         "documentation_url": "https://developers.google.com/workspace/guides/configure-mcp-servers",
         "setup_required": "Requires Workspace Developer Preview membership, a Cloud project with the Drive and MCP APIs enabled, and a registered Desktop OAuth client for an AI-powered agent with consent and scopes configured."

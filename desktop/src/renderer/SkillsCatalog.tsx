@@ -22,6 +22,7 @@ import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryRecord,
  CatalogPackageActionV1 as ExtensionPackageAction, CatalogSkillV1 as SkillSummary } from "../../../packages/plugin-sdk/src/ui-catalog";
 import { composerSkillPrompt } from "./ComposerSlashCommands";
+import { pluginReferenceToken } from "./ComposerPluginReferences";
 
 import { CatalogSearchField } from "./CatalogSearchField";
 import { CapabilityMark, skillCapability } from "./CapabilityMark";
@@ -87,7 +88,7 @@ export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
  const catalog = props.application.catalog.getSnapshot();
  const ownerKey = JSON.stringify([catalog.contextKey, catalog.inventory.filter(item => item.kind === "plugin")
    .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
- return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey} catalog={props.application.catalog}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
 }
 type SkillsCatalogProps = {
  application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};
@@ -250,6 +251,20 @@ function SkillsCatalogView({
     try {
       await application.invoke("draft.start-with-content", {
         text: composerSkillPrompt(skill),
+        sourceTabId: activeTabId,
+        navigationRevision,
+      });
+    } catch (error) {
+      showErrorToast(error, translateCurrent("skills.loadFailed"));
+    }
+  }
+
+  async function tryPlugin(record: ExtensionInventoryRecord): Promise<void> {
+    if (!catalog.getSnapshot().contextKey || !record.provenance.plugin_id) return;
+    const { activeTabId, navigationRevision } = application.getSnapshot().tabs;
+    try {
+      await application.invoke("draft.start-with-content", {
+        text: `${pluginReferenceToken(`@${record.name}`, { plugin_id: record.provenance.plugin_id })} `,
         sourceTabId: activeTabId,
         navigationRevision,
       });
@@ -441,6 +456,7 @@ function SkillsCatalogView({
           onPrimaryAction={(action) => void updateExtensionPackage(selectedPlugin, action)}
           onReload={() => void refreshSkills()}
           onPreviewSkill={setPreviewSkill}
+          onTry={() => void tryPlugin(selectedPlugin)}
           onMoreActions={(button) => {
             const bounds = button.getBoundingClientRect();
             setPackageActionMenu({ record: selectedPlugin, x: bounds.right, y: bounds.bottom + 4 });
@@ -493,7 +509,7 @@ function SkillsCatalogView({
         >
           <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
         </button></Tooltip>
-        <button
+        <Tooltip asChild content={t("skills.pluginInstallHint")}><button
           className="settings-button"
           type="button"
           disabled={Boolean(packageMutation) || !capabilities.install}
@@ -506,7 +522,7 @@ function SkillsCatalogView({
               ? t("skills.pluginInstalling")
               : t("skills.pluginInstall")}
           </span>
-        </button>
+        </button></Tooltip>
       </div>
 
       <div className="theme-segmented catalog-tabs" role="tablist" aria-label={t("skills.catalogLabel")}>
@@ -815,6 +831,7 @@ function PluginDetailPage({
   onPrimaryAction,
   onReload,
   onPreviewSkill,
+  onTry,
   onMoreActions,
 }: {
   record: ExtensionInventoryRecord;
@@ -830,6 +847,7 @@ function PluginDetailPage({
   onPrimaryAction: (action: ExtensionPackageAction) => void;
   onReload: () => void;
   onPreviewSkill: (skill: SkillSummary) => void;
+  onTry: () => void;
   onMoreActions: (button: HTMLButtonElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -906,6 +924,8 @@ function PluginDetailPage({
           {mutating ? t("skills.pluginUpdating") : t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}
         </span>
         <div className="plugin-page-actions">
+          {toggle.on && record.runtime_state === "active" && record.conversation_tools?.length && record.provenance.plugin_id ?
+            <button type="button" className="settings-button" onClick={onTry}>{t("skills.pluginTryConversation")}</button> : null}
           {hasMoreActions ? (
             <button
               type="button"

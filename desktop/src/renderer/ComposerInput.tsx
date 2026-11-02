@@ -28,6 +28,7 @@ type Props = Omit<TextareaHTMLAttributes<HTMLElement>, "value" | "onChange" | "d
 };
 
 function nodeValue(node: Node): string {
+  if (node instanceof HTMLElement && node.hasAttribute("data-composer-line-end")) return "";
   if (node instanceof HTMLElement && node.dataset.pluginToken) return node.dataset.pluginToken;
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
   if (node.nodeName === "BR") return "\n";
@@ -88,6 +89,12 @@ function renderValue(root: HTMLElement, value: string): void {
     offset = ref.end;
   }
   nodes.push(document.createTextNode(value.slice(offset)));
+  if (value.endsWith("\n")) {
+    // Chromium needs a trailing break to keep the caret after a final newline.
+    const lineEnd = document.createElement("br");
+    lineEnd.dataset.composerLineEnd = "";
+    nodes.push(lineEnd);
+  }
   root.replaceChildren(...nodes);
 }
 

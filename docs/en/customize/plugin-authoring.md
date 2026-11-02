@@ -113,6 +113,7 @@ A plugin-owned MCP server's optional `connector` metadata presents it as an acco
 | --- | --- |
 | `title` | Required, nonblank display name. |
 | `description` | Optional short explanation of the service. |
+| `icon` | Optional package-relative icon: `{ "path": "icons/service.svg" }` or `{ "light": "icons/light.svg", "dark": "icons/dark.svg" }`. The same image formats and validation as plugin icons apply. |
 | `documentation_url` | Optional absolute HTTPS link to setup or provider documentation, without embedded credentials. |
 | `setup_required` | Optional explanation of missing application setup. A nonblank value makes the card show the requirement and documentation instead of offering connection or authorization. |
 | `identity_probe` | Optional fixed, read-only MCP call and bounded JSON-pointer mapping for provider-reported identity. Admitted only from the active trusted package, not standalone configuration. |

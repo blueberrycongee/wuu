@@ -198,6 +198,12 @@ func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
 		}
 	} else {
 		check(fresh.Icon)
+		for _, server := range fresh.MCPServers {
+			if server.Connector != nil && server.Connector.Icon != nil {
+				icon := server.Connector.Icon
+				check(&pluginpkg.IconSpec{Path: icon.Path, Light: icon.Light, Dark: icon.Dark})
+			}
+		}
 		for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.Navigation, fresh.WorkspaceTools, fresh.SettingsPages} {
 			for _, entry := range entries {
 				check(entry.Icon)

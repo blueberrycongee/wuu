@@ -106,6 +106,7 @@
 | --- | --- |
 | `title` | 必填且非空白的显示名称。 |
 | `description` | 可选的简短服务说明。 |
+| `icon` | 可选的包内相对路径图标：`{ "path": "icons/service.svg" }` 或 `{ "light": "icons/light.svg", "dark": "icons/dark.svg" }`，格式与校验规则和插件图标相同。 |
 | `documentation_url` | 可选的配置或服务商文档链接，必须是绝对 HTTPS 地址，且不内嵌凭据。 |
 | `setup_required` | 可选的应用配置缺失说明。非空白时，卡片只展示要求与文档，不提供连接或授权操作。 |
 | `identity_probe` | 可选的固定只读 MCP 调用及有界 JSON Pointer 映射，用于读取服务商返回的身份；仅接受活动的受信任插件包声明，不接受独立配置注入。 |

@@ -1153,6 +1153,8 @@ export type MCPIdentityStatus = {
 
 /** Non-secret onboarding information; standalone MCP metadata is informational only. */
 export type MCPConnectorDescriptor = {
+  /** Package-relative icon assets, loaded from the declaring plugin generation. */
+  icon?: { path: string; light?: never; dark?: never } | { path?: never; light: string; dark: string };
   title: string;
   description?: string;
   documentation_url?: string;
