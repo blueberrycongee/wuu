@@ -14,12 +14,6 @@ import (
 
 // These cases protect provider protocol and resource boundaries, not UI labels.
 func TestProviderPlansRejectExpansion(t *testing.T) {
-	c := Connection{Provider: "github", Domain: "personal", Resources: []string{"acme/project"}, Scopes: []string{"pull_requests:read"}}
-	for _, raw := range []string{`{"repository":"acme/project","number":1,"url":"https://evil.test"}`, `{"repository":"../project","number":1}`, `{"repository":"acme/project","number":0}`} {
-		if _, err := buildGitHub(c, "github.pr", json.RawMessage(raw)); err == nil {
-			t.Fatalf("accepted invalid input %s", raw)
-		}
-	}
 	if _, err := buildSlack(Connection{Domain: "personal"}, "slack.history", json.RawMessage(`{"channel_id":"C123"}`)); err == nil {
 		t.Fatal("work data admitted to personal domain")
 	}
@@ -31,15 +25,7 @@ func TestProviderPlansRejectExpansion(t *testing.T) {
 	}
 }
 func TestProviderReadProtocolPlans(t *testing.T) {
-	c := Connection{Provider: "github", Domain: "personal", Scopes: []string{"checks:read"}}
-	p, err := buildGitHub(c, "github.checks", json.RawMessage(`{"repository":"acme/project","ref":"feature/topic","page":2}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Write || p.Method != "GET" || !strings.Contains(p.URL, "feature%2Ftopic/check-runs") || p.Resource != "acme/project" {
-		t.Fatalf("bad GitHub plan: %+v", p)
-	}
-	p, err = buildNotion(Connection{}, "notion.query", json.RawMessage(`{"data_source_id":"0123456789abcdef0123456789abcdef","cursor":"opaque"}`))
+	p, err := buildNotion(Connection{}, "notion.query", json.RawMessage(`{"data_source_id":"0123456789abcdef0123456789abcdef","cursor":"opaque"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

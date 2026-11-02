@@ -33,7 +33,7 @@ func (b *Broker) Import(ctx context.Context, a Actor, input io.Reader) (Connecti
 	if g.AccessToken == "" || len(g.AccessToken) > 8192 || strings.ContainsAny(g.AccessToken, "\r\n") || (!g.NonExpiring && !g.ExpiresAt.After(time.Now().Add(time.Minute))) {
 		return Connection{}, fault("invalid_grant")
 	}
-	if g.NonExpiring && !slices.Contains([]string{"notion", "github", "slack"}, g.Connection.Provider) {
+	if g.NonExpiring && !slices.Contains([]string{"notion", "slack"}, g.Connection.Provider) {
 		return Connection{}, fault("invalid_nonexpiring_grant")
 	}
 	if g.Connection.Provider == "notion" {
@@ -67,8 +67,6 @@ func (b *Broker) Import(ctx context.Context, a Actor, input io.Reader) (Connecti
 	switch g.Connection.Provider {
 	case "gmail", "google-calendar", "drive":
 		endpoint = "https://www.googleapis.com/oauth2/v2/userinfo"
-	case "github":
-		endpoint = "https://api.github.com/user"
 	case "notion":
 		endpoint = "https://api.notion.com/v1/users/me"
 	case "slack":
@@ -103,7 +101,6 @@ func (b *Broker) Import(ctx context.Context, a Actor, input io.Reader) (Connecti
 		ID            json.RawMessage `json:"id"`
 		Email         string          `json:"email"`
 		VerifiedEmail bool            `json:"verified_email"`
-		Login         string          `json:"login"`
 		OK            bool            `json:"ok"`
 		TeamID        string          `json:"team_id"`
 		UserID        string          `json:"user_id"`
@@ -119,12 +116,6 @@ func (b *Broker) Import(ctx context.Context, a Actor, input io.Reader) (Connecti
 			return Connection{}, fault("identity_verification_failed")
 		}
 		_ = json.Unmarshal(result.ID, &identity)
-	case "github":
-		var numericID json.Number
-		if json.Unmarshal(result.ID, &numericID) != nil {
-			return Connection{}, fault("identity_verification_failed")
-		}
-		identity = numericID.String()
 	case "notion":
 		if result.Type != "bot" {
 			return Connection{}, fault("bot_identity_required")
