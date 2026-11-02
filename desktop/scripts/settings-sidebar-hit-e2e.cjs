@@ -101,6 +101,7 @@ async function run() {
     button.click();
   });
   await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
+  await showProviders(win);
 
   await evaluate(win, () => {
     const button = document.querySelector(".section-sidebar-toggle");
@@ -191,6 +192,7 @@ async function verifyCompactRibbonSettingsResize(win) {
   await waitFor(win, () => !!document.querySelector('[data-settings-entry="settings"]'), 3000);
   await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => !!document.querySelector(".settings-shell"), 3000);
+  await showProviders(win);
   await settleChrome(win);
 
   const before = await settingsResizeGeometry(win);
@@ -300,6 +302,7 @@ async function verifyNarrowSidebarControls(win) {
     await waitFor(win, () => !!document.querySelector('[data-settings-entry="settings"]'), 3000);
     await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
     await waitFor(win, () => !!document.querySelector(".settings-shell"), 3000);
+    await showProviders(win);
     await settleChrome(win);
     const geometry = await chromeToggleGeometry(win);
     results.push({ scenario: `sidebar-${totalWidth}-20px-0.75-settings`, geometry });
@@ -629,6 +632,7 @@ async function verifyTitlebarContinuity(win) {
           await waitFor(win, () => Boolean(document.querySelector('[data-settings-entry="settings"]')), 3000);
           await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
           await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
+          await showProviders(win);
           await settleChrome(win);
           const settings = await chromeToggleGeometry(win);
           results.push({ scenario, page: "settings", geometry: settings });
@@ -835,6 +839,12 @@ function evaluate(win, fn, argument) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function showProviders(win) {
+  await waitFor(win, () => Boolean(document.querySelector('.settings-nav [data-wuu-page="providers"]')), 3000);
+  await evaluate(win, () => document.querySelector('.settings-nav [data-wuu-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-testid="settings-connection-add"]')), 3000);
 }
 
 function assertTopRow(geometry, context) {
