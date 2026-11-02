@@ -600,7 +600,7 @@ export type ExtensionPendingUpdate = {
 };
 
 export type ExtensionPluginActivationIssue = {
-  kind: "missing_requirement" | "conflict" | "version_mismatch" | "optional_cycle";
+  kind: "missing_requirement" | "conflict" | "version_mismatch" | "optional_cycle" | "optional_missing" | "optional_version_mismatch";
   related_plugin_id: string;
 };
 
