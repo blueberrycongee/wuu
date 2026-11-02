@@ -100,6 +100,10 @@ async function openMenu() {
   return { view, bounds, rows };
 }
 async function capture(name, view) {
+  await evaluate(win.webContents, async () => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
+  });
   fs.writeFileSync(path.join(output, `${name}-shell.png`), (await win.webContents.capturePage()).toPNG());
   if (view) {
     const image = await view.webContents.capturePage();
@@ -239,6 +243,7 @@ async function run() {
       const reopened = await openMenu();
       await click(reopened.view.webContents, '[data-settings-page="providers"]'); await closed();
       await until(() => evaluate(win.webContents, () => document.querySelector('[data-testid="settings-general"]')), `Reopen General after ${page}`);
+      await capture(`${name}-reopened-after-${page}`);
     }
     await click(win.webContents, '[data-ribbon-id="conversations"]');
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");
