@@ -128,6 +128,9 @@ func TestNativePluginProcessUsesHostScope(t *testing.T) {
 	kit.SetPermissionMode("unconfined")
 	kit.SetAuthorizer(auth)
 	kit.SetGitAttributionEnabled(false)
+	events := make(chan proc.Event, 4)
+	manager.Subscribe(events)
+	defer manager.Unsubscribe(events)
 	started, got, err := kit.StartPluginProcess(context.Background(), "printf native-host-process", "")
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +138,21 @@ func TestNativePluginProcessUsesHostScope(t *testing.T) {
 	t.Cleanup(func() { _, _ = manager.Stop(started.ID) })
 	if got != manager || started.RootThreadID != "thread" || started.OwnerID != "actor" || len(auth.requests) != 1 {
 		t.Fatalf("native gateway ownership: %+v auth=%+v", started, auth.requests)
+	}
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event.Process.ID == started.ID && (event.Type == proc.EventStopped || event.Type == proc.EventFailed) {
+				if event.Process.ExitCode != 0 {
+					t.Fatalf("native process failed: %+v", event.Process)
+				}
+				return
+			}
+		case <-timer.C:
+			t.Fatal("native process did not finish before cleanup")
+		}
 	}
 }
 
