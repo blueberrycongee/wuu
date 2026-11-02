@@ -9,8 +9,7 @@ const { setTimeout: delay } = require("node:timers/promises");
 
 const root = resolve(__dirname, "../release");
 const output = resolve(process.env.WUU_LINUX_PACKAGE_OUTPUT || join(root, "linux-package-evidence"));
-const scratch = mkdtempSync(join(tmpdir(), "wuu-linux-package-e2e-"));
-mkdirSync(output, { recursive: true });
+let scratch;
 
 function rendererSandbox(processes) {
   const renderers = processes.filter(process => process.type === "renderer").map(({ id: pid }) => {
@@ -96,15 +95,31 @@ async function launch(name, executable, extraEnv = {}) {
     return { renderer: true, preload: true, core: true, updater: state.updater.kind, build: state.build, sandbox };
   } finally {
     socket?.close();
-    child.kill("SIGTERM");
-    if (child.exitCode === null) await Promise.race([once(child, "exit"), delay(5000).then(() => child.kill("SIGKILL"))]);
+    await stopChild(child);
     writeFileSync(join(output, `${name}.log`), log);
   }
 }
 
-(async () => {
+// Register before signalling: an immediate exit must not be missed. A signalled
+// process has null exitCode, so signalCode is also part of the terminal state.
+async function stopChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, "exit");
+  const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+  try {
+    child.kill("SIGTERM");
+    await exited;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+module.exports = { stopChild };
+if (require.main === module) (async () => {
   assert.equal(process.platform, "linux");
   assert.ok(process.env.DISPLAY, "Run in an X11/XWayland session or xvfb-run; the sandbox remains enabled");
+  scratch = mkdtempSync(join(tmpdir(), "wuu-linux-package-e2e-"));
+  mkdirSync(output, { recursive: true });
   const image = join(root, "wuu-linux-x64.AppImage");
   execFileSync(image, ["--appimage-extract"], { cwd: scratch, stdio: "ignore" });
   const imageRoot = join(scratch, "squashfs-root");
@@ -120,4 +135,4 @@ async function launch(name, executable, extraEnv = {}) {
   writeFileSync(verificationPath, JSON.stringify(verification, null, 2) + "\n");
   console.log("PASS: extracted AppImage and Debian packages render with the packaged preload and Chromium sandbox enabled");
 })().catch(error => { console.error(error); process.exitCode = 1; })
-  .finally(() => rmSync(scratch, { recursive: true, force: true }));
+  .finally(() => { if (scratch) rmSync(scratch, { recursive: true, force: true }); });

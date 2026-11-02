@@ -74,18 +74,46 @@ function gatePasses(job, env) {
   }).status === 0;
 }
 
-test('Desktop gate rejects unsuccessful selected suites and selection', () => {
-  const env = { SELECTION_RESULT: 'success', DESKTOP_REQUIRED: 'true', SUITES_RESULT: 'success' };
-  assert.equal(gatePasses('desktop-check', env), true);
-  for (const result of ['failure', 'cancelled', 'skipped', '']) {
-    assert.equal(gatePasses('desktop-check', { ...env, SUITES_RESULT: result }), false, result);
-    assert.equal(gatePasses('desktop-check', { ...env, SELECTION_RESULT: result }), false, result);
+test('Desktop gate requires both selected partitions and exactly skips unselected groups', () => {
+  for (const suites of [[], ['unit', 'unit-extra'], ['layout'], ['unit', 'unit-extra', 'layout', 'session']]) {
+    const e2e = suites.filter(suite => !suite.startsWith('unit'));
+    const env = {
+      SELECTION_RESULT: 'success', DESKTOP_REQUIRED: String(suites.length > 0),
+      DESKTOP_SUITES: JSON.stringify(suites), E2E_SUITES: JSON.stringify(e2e),
+      UNIT_RESULT: suites.includes('unit') ? 'success' : 'skipped',
+      SUITES_RESULT: e2e.length ? 'success' : 'skipped',
+    };
+    assert.equal(gatePasses('desktop-check', env), true, JSON.stringify(suites));
+    for (const name of ['UNIT_RESULT', 'SUITES_RESULT']) {
+      for (const result of ['failure', 'cancelled', 'skipped', 'success', '']) {
+        assert.equal(gatePasses('desktop-check', { ...env, [name]: result }), result === env[name], `${suites}: ${name}=${result}`);
+      }
+    }
+    for (const result of ['failure', 'cancelled', 'skipped', '']) {
+      assert.equal(gatePasses('desktop-check', { ...env, SELECTION_RESULT: result }), false);
+    }
+    for (const bad of ['', 'garbage', 'TRUE']) {
+      assert.equal(gatePasses('desktop-check', { ...env, DESKTOP_REQUIRED: bad }), false);
+    }
+    assert.equal(gatePasses('desktop-check', { ...env, DESKTOP_SUITES: '' }), false);
+    assert.equal(gatePasses('desktop-check', { ...env, E2E_SUITES: '["unexpected"]' }), false);
   }
-  const unselected = { ...env, DESKTOP_REQUIRED: 'false', SUITES_RESULT: 'skipped' };
-  assert.equal(gatePasses('desktop-check', unselected), true);
-  for (const result of ['failure', 'cancelled', 'success', '']) {
-    assert.equal(gatePasses('desktop-check', { ...unselected, SUITES_RESULT: result }), false, result);
-  }
+  const full = { SELECTION_RESULT: 'success', DESKTOP_REQUIRED: 'true', DESKTOP_SUITES: '["unit","unit-extra","layout","session"]', E2E_SUITES: '["layout"]', UNIT_RESULT: 'success', SUITES_RESULT: 'success' };
+  assert.equal(gatePasses('desktop-check', full), false, 'a successful subset cannot omit a selected E2E suite');
+  assert.equal(gatePasses('desktop-check', { ...full, DESKTOP_SUITES: '["unit"]', E2E_SUITES: '[]', SUITES_RESULT: 'skipped' }), false, 'both unit shards remain required');
+});
+
+test('unit work has no artifact dependency while the stable Desktop gate joins both partitions', () => {
+  const unit = workflow.split('\n  desktop-unit:\n')[1].split('\n  desktop-suite:\n')[0];
+  const e2e = workflow.split('\n  desktop-suite:\n')[1].split('\n  desktop-macos-controls:\n')[0];
+  const gate = workflow.split('\n  desktop-check:\n')[1].split('\n  clients-check:\n')[0];
+  assert.match(unit, /^    needs: changes$/m);
+  assert.match(unit, /contains\(fromJSON\(needs.changes.outputs.desktop_suites\), 'unit'\)/);
+  assert.match(unit, /suite: \[unit, unit-extra\]/);
+  assert.doesNotMatch(unit, /actions\/download-artifact/);
+  assert.match(e2e, /needs: \[changes, repository-check\]/);
+  assert.match(e2e, /fromJSON\(needs.changes.outputs.desktop_e2e_suites\)/);
+  assert.match(gate, /needs: \[changes, desktop-unit, desktop-suite\]/);
 });
 
 test('final CI gate never reports unsuccessful required jobs as passing', () => {

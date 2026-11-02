@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const script = resolve('.github/scripts/select-ci.mjs');
-const suites = ['unit', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
+const suites = ['unit', 'unit-extra', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
 function select(paths, event = 'pull_request', remove = false) {
   const cwd = mkdtempSync(join(tmpdir(), 'wuu-ci-selection-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -121,4 +121,37 @@ test('agent skill instructions are non-runtime documentation, not executable ski
     assert.deepEqual(JSON.parse(select([path]).desktop_suites), suites, path);
   }
   assert.deepEqual(JSON.parse(select([instruction], 'workflow_dispatch').desktop_suites), suites);
+});
+
+
+test('E2E matrix partition preserves every non-unit member of the complete selection', () => {
+  for (const [paths, event] of [
+    [['docs/en/project/development.md'], 'pull_request'],
+    [['desktop/scripts/image-layout-e2e.cjs'], 'pull_request'],
+    [['desktop/src/renderer/App.tsx'], 'pull_request'],
+    [['internal/session/run.go'], 'pull_request'],
+    [['desktop/src/renderer/App.tsx'], 'push'],
+    [['docs/en/project/development.md'], 'workflow_dispatch'],
+  ]) {
+    const result = select(paths, event);
+    const complete = JSON.parse(result.desktop_suites);
+    const e2e = JSON.parse(result.desktop_e2e_suites);
+    assert.deepEqual(e2e, complete.filter(suite => !suite.startsWith('unit')));
+    const units = complete.filter(suite => suite.startsWith('unit'));
+    assert.deepEqual(units, complete.includes('unit') ? ['unit', 'unit-extra'] : []);
+    assert.deepEqual([...units, ...e2e].sort(), [...complete].sort());
+  }
+});
+
+
+test('file-selection shard entry points retain selection-only coverage', () => {
+  for (const path of ['desktop/scripts/file-selection-shards.cjs', 'desktop/scripts/file-selection-shards.test.cjs']) {
+    const result = select([path]);
+    assert.deepEqual(JSON.parse(result.desktop_suites), ['selection'], path);
+    for (const job of ['go', 'architecture', 'clients', 'native']) assert.equal(result[job], 'false', `${path}: ${job}`);
+  }
+});
+
+test('shared file-selection variants retain conservative full Desktop coverage', () => {
+  assert.deepEqual(JSON.parse(select(['desktop/scripts/file-selection-variants.cjs']).desktop_suites), suites);
 });

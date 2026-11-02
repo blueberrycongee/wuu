@@ -1,6 +1,7 @@
 {
   "suites": [
     "unit",
+    "unit-extra",
     "selection",
     "corpus",
     "layout",
@@ -10,6 +11,8 @@
   ],
   "entries": {
     "desktop/scripts/file-selection-e2e.cjs": "selection",
+    "desktop/scripts/file-selection-shards.cjs": "selection",
+    "desktop/scripts/file-selection-shards.test.cjs": "selection",
     "desktop/scripts/response-selection-e2e.cjs": "selection",
     "desktop/scripts/artifact-preview-e2e.cjs": "layout",
     "desktop/scripts/image-layout-e2e.cjs": "layout",
