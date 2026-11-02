@@ -63,6 +63,8 @@ export interface ToolServiceDisplay {
   capability?: string;
 }
 export interface ToolServiceCall {
+  /** Provider state for history replay, not a tool argument. */
+  thought_signature?: string;
   id?: string;
   name: string;
   /** Encoded arguments, or literal input for a freeform tool. */

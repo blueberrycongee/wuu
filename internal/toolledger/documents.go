@@ -87,20 +87,21 @@ func batchInvocations(tx *persistence.Tx, batch toolstate.Batch) ([]toolstate.In
 		}
 		out = append(out, invocation)
 	}
+	// Receipts prepared in the same millisecond still retain call order. Gemini
+	// attaches the group's thought signature to its first parallel call.
+	order := make(map[string]int, len(batch.InvocationIDs))
+	for i, id := range batch.InvocationIDs {
+		order[id] = i
+	}
 	slices.SortFunc(out, func(a, b toolstate.Invocation) int {
-		if a.PreparedAt < b.PreparedAt {
-			return -1
-		}
-		if a.PreparedAt > b.PreparedAt {
-			return 1
-		}
-		return strings.Compare(a.ID, b.ID)
+		return order[a.ID] - order[b.ID]
 	})
 	return out, nil
 }
 
 func publicInvocation(stored toolstate.Invocation) Invocation {
 	out := Invocation{ParentInvocationID: stored.ParentInvocationID, ID: stored.ID, BatchID: stored.BatchID, ProviderCallID: stored.ProviderCallID,
+		ThoughtSignature: stored.ThoughtSignature, ProviderItemProvider: stored.ProviderItemProvider, ProviderItemModel: stored.ProviderItemModel,
 		ToolName: stored.ToolName, ToolKind: stored.ToolKind, Arguments: stored.Arguments, ReplayPolicy: ReplayPolicy(stored.ReplayPolicy),
 		State: InvocationState(stored.State), Projected: stored.ProjectedAt > 0}
 	if stored.Result != nil {
@@ -186,13 +187,15 @@ func (l *Ledger) prepare(ctx context.Context, batchID, parentID string, call pro
 			if existing.ProviderCallID != call.ID {
 				continue
 			}
-			if existing.ToolName != call.Name || existing.ToolKind != call.Kind || existing.Arguments != call.Arguments || existing.ReplayPolicy != string(policy) || existing.ParentInvocationID != parentID {
+			if existing.ToolName != call.Name || existing.ToolKind != call.Kind || existing.Arguments != call.Arguments ||
+				existing.ThoughtSignature != call.ThoughtSignature || existing.ProviderItemProvider != call.ProviderItemProvider || existing.ProviderItemModel != call.ProviderItemModel || existing.ReplayPolicy != string(policy) || existing.ParentInvocationID != parentID {
 				return fmt.Errorf("provider tool call %q metadata changed within batch %q", call.ID, batchID)
 			}
 			out = publicInvocation(existing)
 			return nil
 		}
 		stored := toolstate.Invocation{ID: id, BatchID: batchID, ParentInvocationID: parentID, ProviderCallID: call.ID, ToolName: call.Name,
+			ThoughtSignature: call.ThoughtSignature, ProviderItemProvider: call.ProviderItemProvider, ProviderItemModel: call.ProviderItemModel,
 			ToolKind: call.Kind, Arguments: call.Arguments, ReplayPolicy: string(policy), State: string(InvocationPrepared), PreparedAt: now}
 		if err := tx.Put(toolstate.Invocations, id, stored); err != nil {
 			return err

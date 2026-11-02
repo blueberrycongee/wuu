@@ -95,6 +95,8 @@ type ModelProviderItemV1 struct {
 }
 
 type ModelToolCallV1 struct {
+	// ThoughtSignature must be preserved verbatim with provider/model provenance.
+	ThoughtSignature     string                  `json:"thought_signature,omitempty"`
 	Display              *ModelToolCallDisplayV1 `json:"display,omitempty"`
 	ID                   string                  `json:"id,omitempty"`
 	Name                 string                  `json:"name,omitempty"`

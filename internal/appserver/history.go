@@ -21,6 +21,7 @@ type persistedToolCall struct {
 	ProviderItemID       string                     `json:"provider_item_id,omitempty"`
 	ProviderItemProvider string                     `json:"provider_item_provider,omitempty"`
 	ProviderItemModel    string                     `json:"provider_item_model,omitempty"`
+	ThoughtSignature     string                     `json:"thought_signature,omitempty"`
 	Name                 string                     `json:"name"`
 	Arguments            string                     `json:"arguments"`
 	Kind                 string                     `json:"kind,omitempty"`
@@ -208,6 +209,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				ProviderItemID:       tc.ProviderItemID,
 				ProviderItemProvider: tc.ProviderItemProvider,
 				ProviderItemModel:    tc.ProviderItemModel,
+				ThoughtSignature:     tc.ThoughtSignature,
 				Name:                 tc.Name,
 				Arguments:            tc.Arguments,
 				Kind:                 providers.NormalizeToolCallKind(tc.Kind),
@@ -462,6 +464,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			ProviderItemID:       tc.ProviderItemID,
 			ProviderItemProvider: tc.ProviderItemProvider,
 			ProviderItemModel:    tc.ProviderItemModel,
+			ThoughtSignature:     tc.ThoughtSignature,
 			Name:                 tc.Name,
 			Arguments:            tc.Arguments,
 			Kind:                 string(tc.Kind),

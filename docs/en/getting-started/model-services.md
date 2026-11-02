@@ -53,6 +53,10 @@ For model IDs containing `gemini`, Wuu adapts tool definitions to Gemini's suppo
 
 Other constant kinds retain their type and an explicit value hint; the tool must still validate the original constraint when it executes. Parameter names and literal defaults/examples are preserved. These adaptations apply to outgoing requests, without changing installed tool definitions or other models' schemas.
 
+Gemini's OpenAI-compatible Chat Completions API can return an opaque thought signature on a tool call. Wuu preserves it through streaming, saved history, and interrupted tool-result recovery, then sends it back with the same call and parallel-call order. Services that require this continuation state can reject a later request with HTTP 400 when it is missing, even after earlier requests succeeded. See Google's [thought signature guidance](https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures).
+
+Switching provider or model omits signatures from the previous origin on outgoing requests. Signatures already lost by an older Wuu version cannot be reconstructed; start a new conversation if that history is rejected. A generic `invalid_request` alone does not establish that a missing signature caused it.
+
 ## Kimi K3.1 Pro
 
 Choose `kimi-k3.1-pro` or `kimi-k3.1-pro-highspeed` on Kimi's pay-as-you-go API (`https://api.moonshot.ai/v1` or `https://api.moonshot.cn/v1`). Kimi Code subscriptions use `k3.1-pro` or `k3.1-pro-highspeed` instead, at `https://api.kimi.com/coding/v1` or `https://api.kimi.ai/coding/v1`.

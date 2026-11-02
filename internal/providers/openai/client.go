@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -330,11 +332,17 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 
 	calls := make([]providers.ToolCall, 0, len(message.ToolCalls))
 	for _, call := range message.ToolCalls {
-		calls = append(calls, providers.ToolCall{
-			ID:        call.ID,
-			Name:      call.Function.Name,
-			Arguments: call.Function.Arguments,
-		})
+		mapped := providers.ToolCall{
+			ID:               call.ID,
+			Name:             call.Function.Name,
+			Arguments:        call.Function.Arguments,
+			ThoughtSignature: call.ExtraContent.thoughtSignature(),
+		}
+		if mapped.ThoughtSignature != "" {
+			mapped.ProviderItemProvider = req.Provider
+			mapped.ProviderItemModel = req.Model
+		}
+		calls = append(calls, mapped)
 	}
 
 	resp := providers.ChatResponse{
@@ -447,7 +455,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	ch := make(chan providers.StreamEvent, 64)
 	go func() {
 		defer endReceipt(nil)
-		c.readSSE(ctx, resp, lease, ch)
+		c.readSSE(ctx, req.Provider, req.Model, resp, lease, ch)
 	}()
 	return ch, nil
 }
@@ -529,7 +537,7 @@ func failOpenAIResponseLease(lease *providers.ProviderLease, resp *http.Response
 	lease.FailError(err)
 }
 
-func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *providers.ProviderLease, ch chan<- providers.StreamEvent) {
+func (c *Client) readSSE(ctx context.Context, provider, model string, resp *http.Response, lease *providers.ProviderLease, ch chan<- providers.StreamEvent) {
 	defer close(ch)
 	defer resp.Body.Close()
 	defer lease.Release()
@@ -549,9 +557,10 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 	resetIdle := func() { idleTimer.Reset(idleTimeout) }
 
 	type pendingTool struct {
-		id   string
-		name string
-		args strings.Builder
+		id        string
+		name      string
+		args      strings.Builder
+		signature strings.Builder
 	}
 	pending := make(map[int]*pendingTool)
 	var (
@@ -564,14 +573,23 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 	)
 
 	emitToolEnds := func() bool {
-		for idx, pt := range pending {
+		// Preserve the provider's parallel-call order, including the first call
+		// that carries Gemini's thought signature for the group.
+		for _, idx := range slices.Sorted(maps.Keys(pending)) {
+			pt := pending[idx]
+			call := providers.ToolCall{
+				ID:               pt.id,
+				Name:             pt.name,
+				Arguments:        pt.args.String(),
+				ThoughtSignature: pt.signature.String(),
+			}
+			if call.ThoughtSignature != "" {
+				call.ProviderItemProvider = provider
+				call.ProviderItemModel = model
+			}
 			if !emit.Send(providers.StreamEvent{
-				Type: providers.EventToolUseEnd,
-				ToolCall: &providers.ToolCall{
-					ID:        pt.id,
-					Name:      pt.name,
-					Arguments: pt.args.String(),
-				},
+				Type:     providers.EventToolUseEnd,
+				ToolCall: &call,
 			}) {
 				return false
 			}
@@ -716,6 +734,9 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 					return
 				}
 			}
+			// Signature deltas can arrive after the function arguments, including
+			// on an otherwise empty final chunk. Keep them opaque and in order.
+			pt.signature.WriteString(tc.ExtraContent.thoughtSignature())
 			if tc.Function.Arguments != "" {
 				pt.args.WriteString(tc.Function.Arguments)
 				if !emit.Send(providers.StreamEvent{
@@ -885,14 +906,19 @@ func mapMessage(model string, msg providers.ChatMessage) chatMessage {
 	if len(msg.ToolCalls) > 0 {
 		mapped.ToolCalls = make([]toolCall, 0, len(msg.ToolCalls))
 		for _, call := range msg.ToolCalls {
-			mapped.ToolCalls = append(mapped.ToolCalls, toolCall{
+			mappedCall := toolCall{
 				ID:   call.ID,
 				Type: "function",
 				Function: toolFunctionCall{
 					Name:      call.Name,
 					Arguments: call.Arguments,
 				},
-			})
+			}
+			if call.ThoughtSignature != "" {
+				mappedCall.ExtraContent = &toolCallExtraContent{}
+				mappedCall.ExtraContent.Google.ThoughtSignature = call.ThoughtSignature
+			}
+			mapped.ToolCalls = append(mapped.ToolCalls, mappedCall)
 		}
 	}
 	return mapped
@@ -1251,9 +1277,25 @@ type toolFunctionDefinition struct {
 }
 
 type toolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
-	Function toolFunctionCall `json:"function"`
+	ID           string                `json:"id"`
+	Type         string                `json:"type"`
+	Function     toolFunctionCall      `json:"function"`
+	ExtraContent *toolCallExtraContent `json:"extra_content,omitempty"`
+}
+
+// Gemini's OpenAI-compatible API carries opaque continuation state on the call.
+// See https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures.
+type toolCallExtraContent struct {
+	Google struct {
+		ThoughtSignature string `json:"thought_signature,omitempty"`
+	} `json:"google"`
+}
+
+func (e *toolCallExtraContent) thoughtSignature() string {
+	if e == nil {
+		return ""
+	}
+	return e.Google.ThoughtSignature
 }
 
 type toolFunctionCall struct {
@@ -1332,10 +1374,11 @@ type chatChunkDelta struct {
 }
 
 type toolCallDelta struct {
-	Index    int               `json:"index"`
-	ID       string            `json:"id,omitempty"`
-	Type     string            `json:"type,omitempty"`
-	Function toolFunctionDelta `json:"function,omitempty"`
+	Index        int                   `json:"index"`
+	ID           string                `json:"id,omitempty"`
+	Type         string                `json:"type,omitempty"`
+	Function     toolFunctionDelta     `json:"function,omitempty"`
+	ExtraContent *toolCallExtraContent `json:"extra_content,omitempty"`
 }
 
 type toolFunctionDelta struct {
