@@ -149,12 +149,18 @@ function captureCompositor(scope: HTMLElement, regions: readonly ConversationPre
   } catch { fallback(); }
   return {
     release,
-    full: () => { if (!released) { root.setAttribute("data-wuu-compositor-frame", "full"); root.style.setProperty("--wuu-presentation-clip", "none"); scope.inert = true; } },
+    full: () => {
+      if (released) return;
+      if (root.getAttribute("data-wuu-compositor-frame") !== "full") root.setAttribute("data-wuu-compositor-frame", "full");
+      if (root.style.getPropertyValue("--wuu-presentation-clip") !== "none") root.style.setProperty("--wuu-presentation-clip", "none");
+      if (!scope.inert) scope.inert = true;
+    },
     region: next => {
       if (released) return;
-      root.setAttribute("data-wuu-compositor-frame", "region");
-      root.style.setProperty("--wuu-presentation-clip", regionClip(intersectRegions(bounds, measureRegions(next)), width, height));
-      scope.inert = false;
+      const clip = regionClip(intersectRegions(bounds, measureRegions(next)), width, height);
+      if (root.getAttribute("data-wuu-compositor-frame") !== "region") root.setAttribute("data-wuu-compositor-frame", "region");
+      if (root.style.getPropertyValue("--wuu-presentation-clip") !== clip) root.style.setProperty("--wuu-presentation-clip", clip);
+      if (scope.inert) scope.inert = false;
     },
   };
 }
@@ -203,13 +209,20 @@ function captureRaster(scope: HTMLElement, regions: readonly ConversationPresent
   }).catch(fallback);
   return {
     release,
-    full: () => { if (!released) { overlay.setAttribute("data-wuu-presentation-frame", "full"); overlay.style.clipPath = "none"; scope.inert = true; } },
+    full: () => {
+      if (released) return;
+      if (overlay.getAttribute("data-wuu-presentation-frame") !== "full") overlay.setAttribute("data-wuu-presentation-frame", "full");
+      if (overlay.style.clipPath !== "none") overlay.style.clipPath = "none";
+      if (!scope.inert) scope.inert = true;
+    },
     region: nextRegions => {
       if (released) return;
       // A successor can have a taller input or leave split mode. Never cover
       // its live controls with pixels from the source message rectangle.
-      overlay.setAttribute("data-wuu-presentation-frame", "region");
-      overlay.style.clipPath = regionClip(intersectRegions(bounds, measureRegions(nextRegions)), width, height); scope.inert = false;
+      const clip = regionClip(intersectRegions(bounds, measureRegions(nextRegions)), width, height);
+      if (overlay.getAttribute("data-wuu-presentation-frame") !== "region") overlay.setAttribute("data-wuu-presentation-frame", "region");
+      if (overlay.style.clipPath !== clip) overlay.style.clipPath = clip;
+      if (scope.inert) scope.inert = false;
     },
   };
 }
@@ -422,13 +435,25 @@ export function useConversationPresentationTransition({ scopeRef, pending, enabl
     // boundary. Reclip held pixels before they can cover the new live input.
     const observed = new Set<Element>();
     const resize = new ResizeObserver(update);
-    const refresh = () => {
-      for (const element of [pane, ...(getRegions?.() ?? []).flatMap(region =>
-        [region.element, ...region.excludeBelow ?? [], ...region.excludeRight ?? []])]) {
-        if (!observed.has(element)) { observed.add(element); resize.observe(element); }
+    const refresh = (records: MutationRecord[] = []) => {
+      const regions = getRegions?.() ?? [];
+      const next = new Set<Element>([pane, ...regions.flatMap(region =>
+        [region.element, ...region.excludeBelow ?? [], ...region.excludeRight ?? []])]);
+      let changed = false;
+      for (const element of observed) {
+        if (!next.has(element)) { observed.delete(element); resize.unobserve(element); changed = true; }
       }
-      update();
+      for (const element of next) {
+        if (!observed.has(element)) { observed.add(element); resize.observe(element); changed = true; }
+      }
+      const chromeChanged = records.some(({ target }) => target === pane || regions.some(region =>
+        target === region.element || [...region.excludeBelow ?? [], ...region.excludeRight ?? []]
+          .some(element => element.contains(target) || target.contains(element))));
+      if (changed || chromeChanged) update();
     };
+    // Message virtualization mutates descendants without changing the clipping
+    // regions. Measure chrome mutations immediately, including textarea sizing,
+    // but leave message-only geometry changes to resize delivery before paint.
     const mutations = new MutationObserver(refresh);
     mutations.observe(pane, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
     refresh();
