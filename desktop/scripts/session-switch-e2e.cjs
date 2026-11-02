@@ -302,6 +302,12 @@ if (startupMissingWorkspace) fs.renameSync(projects[selectedIndex].path, `${proj
 startupProbe?.mark('fixture-ready');
 const timings = [];
 const pluginActivations = [];
+// Synthetic presentation acceptance only: preserve report ordering across rapid
+// graph changes without issuing extra RPCs or changing navigation timing.
+const presentationActivationTrace = { reports: [], inventories: [], diagnostics: [] };
+const savePresentationActivationTrace = () => {
+  if (presentationMode) fs.writeFileSync(path.join(output, 'activation-trace.json'), JSON.stringify(presentationActivationTrace, null, 2));
+};
 const originalHandle = ipcMain.handle.bind(ipcMain);
 let archiveGate;
 let archiveBlocked = false;
@@ -314,6 +320,13 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   const start = performance.now();
   // Insert at invocation, not completion, so overlapping RPCs keep attribution.
   const timing = { channel, startedAt: start, ...(startupProbe ? { launchMs: startupProbe.launchMs() } : {}), ms: null };
+  let activationReport;
+  if (presentationMode && channel === 'wuu:plugin-desktop-activation' && presentationActivationTrace.reports.length < 2048) {
+    const { id, fingerprint, graph_generation, activation, phase, status, message } = args[1];
+    activationReport = { id, fingerprint, graph_generation, activation, phase, status, startedAt: start,
+      ...(message ? { message: String(message).slice(0, 2048) } : {}) };
+    presentationActivationTrace.reports.push(activationReport);
+  }
   if (missingWorkspace && channel === 'wuu:project-select') timing.projectId = args[1];
   timings.push(timing);
   const subscriptionRead = channel === 'wuu:engines-list' && args[1]?.include_quota === true;
@@ -322,6 +335,12 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   try {
     const result = await listener(...args);
     timing.outcome = 'ok';
+    if (activationReport) activationReport.outcome = 'ok';
+    if (presentationMode && result?.extension_inventory && presentationActivationTrace.inventories.length < 256) {
+      presentationActivationTrace.inventories.push({ channel, startedAt: start, completedAt: performance.now(),
+        context: result.active_context, plugins: result.extension_inventory.filter(plugin => plugin.desktop).slice(0, 64)
+          .map(({ id, fingerprint, graph_generation }) => ({ id, fingerprint, graph_generation })) });
+    }
     if (missingWorkspace && channel === 'wuu:project-select') timing.runtimeIssue = result?.runtime_issue?.code;
     if (Array.isArray(result?.threads)) timing.resultCount = result.threads.length;
     if (startupProbe && channel === 'wuu:initialize') startupProbe.initialized(result);
@@ -338,9 +357,11 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
     return result;
   } catch (error) {
     timing.outcome = 'error';
+    if (activationReport) { activationReport.outcome = 'error'; activationReport.error = String(error.message || error).slice(0, 2048); }
     throw error;
   } finally {
     timing.ms = +(performance.now() - start).toFixed(1);
+    if (activationReport) activationReport.ms = timing.ms;
   }
 });
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -1015,7 +1036,12 @@ const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.ex
 const launchStart = performance.now();
 startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); return import(pathToFileURL(mainBundle).href); }).then(async () => {
   while (!main) await delay(25);
-  main.webContents.on('console-message', (_e, level, message) => { if (level >= 3) console.error(message); });
+  main.webContents.on('console-message', (_e, level, message) => {
+    if (level >= 3) console.error(message);
+    if (presentationMode && level >= 2 && presentationActivationTrace.diagnostics.length < 128) {
+      presentationActivationTrace.diagnostics.push({ at: performance.now(), level, message: String(message).slice(0, 2048) });
+    }
+  });
   if (startupProbe) {
     await waitFor(main, () => location.protocol === 'file:' && document.readyState !== 'loading');
     await startupProbe.verifyDisplay(main, evaluate);
@@ -1105,7 +1131,9 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
       harnessSha256: hash(__filename), presentationHarnessSha256: hash(path.join(__dirname, 'session-switch-presentation.cjs')),
       fixtureSeed, versions: process.versions,
     }, null, 2));
-    await require('./session-switch-presentation.cjs')({ win: main, evaluate, waitFor, output, getResumeCount: () => timings.filter(timing => timing.channel === 'wuu:thread-resume').length });
+    try {
+      await require('./session-switch-presentation.cjs')({ win: main, evaluate, waitFor, output, getResumeCount: () => timings.filter(timing => timing.channel === 'wuu:thread-resume').length });
+    } finally { savePresentationActivationTrace(); }
     clearTimeout(timeout); app.quit(); return;
   }
   if (traceEnabled) await contentTracing.startRecording({

@@ -51,6 +51,10 @@ Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 
 
 其他种类的常量保留类型并附带明确的取值提示，工具执行时仍需验证原始约束。参数名称以及默认值、示例中的字面数据会保留。这些转换只作用于发出的请求，不修改已安装的工具定义或其他模型的 schema。
 
+Gemini 的 OpenAI 兼容 Chat Completions 接口可能随工具调用返回不透明的思考签名。Wuu 会在流式处理、历史保存和中断后的工具结果恢复中保留签名，并按原来的调用及并行顺序回传。要求此续接状态的服务在签名缺失时可能拒绝后续请求并返回 HTTP 400，即使此前的请求成功。详见 Google 的[思考签名说明（英文）](https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures)。
+
+切换服务或模型后，发出的请求会移除原来源的签名。旧版 Wuu 已经丢失的签名无法重建；如果这段历史被拒绝，请新建会话。仅凭通用的 `invalid_request` 错误无法确认缺失签名就是原因。
+
 ## Kimi K3.1 Pro
 
 Kimi 按量付费 API 使用 `kimi-k3.1-pro` 或 `kimi-k3.1-pro-highspeed`，地址为 `https://api.moonshot.cn/v1` 或 `https://api.moonshot.ai/v1`。Kimi Code 订阅使用 `k3.1-pro` 或 `k3.1-pro-highspeed`，地址为 `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1`。

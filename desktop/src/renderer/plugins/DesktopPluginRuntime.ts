@@ -292,6 +292,7 @@ export class DesktopPluginRuntime {
         if (epoch !== this.syncEpoch) { stage.dispose(); return []; }
         preparedApplication = { id: applicationPlugin.id, stage };
       } catch (error) {
+        if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) return [];
         const effective = this.host.applicationProviders.current;
         if (effective?.graphGeneration && applicationPlugin.graph_generation && effective.graphGeneration !== applicationPlugin.graph_generation) {
           // The Go commit cannot be rolled back by retaining JavaScript objects. In

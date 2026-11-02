@@ -15,7 +15,7 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
 }): JSX.Element | null {
   const settings = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings);
   const archiveSource = useMemo(() => ({
-    list: () => application.invoke("settings.list-archived", {}),
+    list: (signal?: AbortSignal) => application.invoke("settings.list-archived", {}, { signal }),
     remove: (threadId: string) => application.invoke("settings.delete-archived", { threadId }),
   }), [application]);
   const archiveDeletion = useArchiveDeletion(archiveSource);

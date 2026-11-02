@@ -79,6 +79,8 @@ export function isAgentNotificationItem(
 export function isInternalUserNotificationItem(
   item: InternalUserNotificationItem | undefined,
 ): boolean {
+  // Background observations stay in model history without becoming chat input.
+  if ((item?.origin === "host" || item?.origin === "plugin") && item.presentation_kind === "background_event") return true;
   return isProcessNotificationItem(item) || isAgentNotificationItem(item);
 }
 

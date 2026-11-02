@@ -134,6 +134,7 @@ func dropForeignProviderModelState(provider, model string, msgs []ChatMessage) [
 			call := &msgs[i].ToolCalls[j]
 			if foreignMessage || providerStateOriginMismatch(currentProvider, currentModel, call.ProviderItemProvider, call.ProviderItemModel) {
 				call.ProviderItemID = ""
+				call.ThoughtSignature = ""
 			}
 		}
 	}

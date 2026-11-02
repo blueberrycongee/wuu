@@ -67,6 +67,7 @@ import {
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { threadHasConversationMedia } from "./ConversationMediaSettle";
 import { UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ConversationPresentationLoading, type ConversationPresentationRegion, useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
 import { createEnvironmentPanelActions } from "./EnvironmentActions";
@@ -1122,8 +1123,15 @@ export function App({ application, slots, shellPluginId }: {
     // its static chrome without displaying a message overlay on that route.
     enabled: initialized && application.getSnapshot().phase !== "error",
   });
+  const activeThreadHasMedia = useMemo(
+    () => pendingViewSwitch?.kind === "thread" && pendingViewSwitch.targetID === activeThreadID
+      ? threadHasConversationMedia(activeThread)
+      : false,
+    [activeThread, activeThreadID, pendingViewSwitch?.kind, pendingViewSwitch?.targetID],
+  );
   useConversationSwitchReady({
     visible: conversationVisible,
+    mediaExpected: activeThreadHasMedia,
     pendingViewSwitch,
     activeThreadID,
     viewportRef: conversationScrollRef,
@@ -1827,6 +1835,7 @@ export function App({ application, slots, shellPluginId }: {
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
               scopeKey={activeThreadID}
+              suspended={viewSwitchPending}
               onJump={jumpConversationToLatest}
               inline
             />

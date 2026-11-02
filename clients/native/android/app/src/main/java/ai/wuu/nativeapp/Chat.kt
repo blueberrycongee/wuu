@@ -42,6 +42,7 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
     val messages: List<ChatMessage> get() = turns.objects().flatMap { turn ->
         val messages = (turn.optJSONArray("items") ?: JSONArray()).objects().mapNotNull { item ->
             val role = when (item.optString("type")) { "user_message" -> "user"; "agent_message" -> "assistant"; "error" -> "error"; "tool_call" -> "tool"; else -> return@mapNotNull null }
+            if (role == "user" && item.optString("origin") in listOf("host", "plugin") && item.optString("presentation_kind") == "background_event") return@mapNotNull null
             ChatMessage(turn.getString("id") + ":" + item.getString("id"), role, item.optString("text", item.optString("error")), item.optString("remote_content_ref"),
                 ((item.optJSONArray("images") ?: JSONArray()).objects() + (item.optJSONArray("files") ?: JSONArray()).objects() + (item.optJSONArray("markdown_images") ?: JSONArray()).objects() +
                     item.optJSONObject("result_detail")?.optJSONArray("content")?.objects().orEmpty().filter { it.optString("type") == "image" }.map {

@@ -82,17 +82,20 @@ func (e *ReplayBlockedError) ReplayReasonCode() string {
 }
 
 type Invocation struct {
-	ParentInvocationID string
-	ID                 string
-	BatchID            string
-	ProviderCallID     string
-	ToolName           string
-	ToolKind           providers.ToolCallKind
-	Arguments          string
-	ReplayPolicy       ReplayPolicy
-	State              InvocationState
-	Result             toolresult.Result
-	Projected          bool
+	ParentInvocationID   string
+	ID                   string
+	BatchID              string
+	ProviderCallID       string
+	ThoughtSignature     string
+	ProviderItemProvider string
+	ProviderItemModel    string
+	ToolName             string
+	ToolKind             providers.ToolCallKind
+	Arguments            string
+	ReplayPolicy         ReplayPolicy
+	State                InvocationState
+	Result               toolresult.Result
+	Projected            bool
 }
 
 func newID(prefix string) string {
