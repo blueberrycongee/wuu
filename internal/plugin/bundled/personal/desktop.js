@@ -3906,7 +3906,9 @@ ${personalReviewStyles}
         if (agent) publishIdentity(agent);
         else if (!identityAgent) api.setNavigationAvatar?.("personal", void 0);
       }).catch(() => {
-        if (!api.signal.aborted && !identityAgent) api.setNavigationAvatar?.("personal", void 0);
+        if (api.signal.aborted || identityAgent) return;
+        const entry = api.contributions.getNavigationEntries().find((value) => value.pluginId === api.pluginId && value.id === "personal");
+        if (entry?.avatarKey === null) api.setNavigationAvatar?.("personal", void 0);
       });
     });
     api.registerCleanup(stopIdentityActivation);

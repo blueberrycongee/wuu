@@ -1625,7 +1625,12 @@ export async function activate(api) {
       const agent = result.agents?.find(value => value.kind === "main");
       if (agent) publishIdentity(agent);
       else if (!identityAgent) api.setNavigationAvatar?.("personal", undefined);
-    }).catch(() => { if (!api.signal.aborted && !identityAgent) api.setNavigationAvatar?.("personal", undefined); });
+    }).catch(() => {
+      if (api.signal.aborted || identityAgent) return;
+      const entry = api.contributions.getNavigationEntries().find(value => value.pluginId === api.pluginId && value.id === "personal");
+      // A transient read failure must not erase artwork retained from the previous generation.
+      if (entry?.avatarKey === null) api.setNavigationAvatar?.("personal", undefined);
+    });
   });
   api.registerCleanup(stopIdentityActivation);
   api.registerViewType({ id: "personal.home", title: "twin", icon: "mascot", defaultRegion: "primary", persistence: "durable", layout: "user-space", render: props => h(PersonalHome, props) });

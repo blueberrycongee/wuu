@@ -1687,4 +1687,9 @@ it("hydrates navigation avatars after activation and retains prior artwork durin
   expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:diamond:leaf:150");
   finish({ agents: [{ ...main, revision: 3, avatar_key: "mascot-v1:capsule:beanie:288" }] });
   await vi.waitFor(() => expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:capsule:beanie:288"));
+  let fail!: (reason: Error) => void;
+  response = new Promise((_, reject) => { fail = reject; });
+  await install("three");
+  await act(async () => { fail(new Error("temporarily offline")); await response.catch(() => {}); });
+  expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:capsule:beanie:288");
 });
