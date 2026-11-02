@@ -67,6 +67,7 @@ type Summary struct {
 	Account     string `json:"account"`
 	Target      string `json:"target"`
 	Consequence string `json:"consequence"`
+	Source      string `json:"source,omitempty"`
 }
 type Action struct {
 	Proposal

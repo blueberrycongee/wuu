@@ -77,6 +77,14 @@ func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error)
 				return errors.New("operation omitted its reviewable summary")
 			}
 		}
+		action.Summary.Source = ""
+		if len(authority.UserMessages) > 0 {
+			source := []rune(strings.TrimSpace(authority.UserMessages[0].Text))
+			if len(source) > 100 {
+				source = append(source[:99], '…')
+			}
+			action.Summary.Source = string(source)
+		}
 		action.Digest = digest(action)
 		created = Record{Action: action, Status: Proposed, Outcome: "ask", Reason: "Awaiting action assessment"}
 		if status, reason := e.check(created, authority); status != "" {
