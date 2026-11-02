@@ -65,8 +65,18 @@ app.whenReady().then(async () => {
     coverProcess = spawn(helper, ['--cover'], { stdio: 'ignore' });
     console.log(`MODE ${mode}: synthetic green app foreground. Do not interact during the probe.`);
     const deadline = Date.now() + 10000;
-    while (JSON.parse(execFileSync(helper, [String(process.pid), String(coverProcess.pid)], { encoding: 'utf8' })).frontPID !== coverProcess.pid) {
-      if (Date.now() >= deadline) throw new Error('Synthetic external app did not become foreground; result would be invalid');
+    while (true) {
+      if (coverProcess.exitCode !== null || coverProcess.signalCode !== null) throw new Error(`Synthetic cover exited before baseline: ${coverProcess.exitCode ?? coverProcess.signalCode}`);
+      const snapshot = JSON.parse(execFileSync(helper, [String(process.pid), String(coverProcess.pid)], { encoding: 'utf8' }));
+      const host = snapshot.probeWindows.find(window => window.id === Number(main.getMediaSourceId().split(':')[1]));
+      // Activation precedes both AppKit's window ordering and Electron's blur
+      // notification. Wait for the complete baseline, not just the front PID.
+      if (snapshot.frontPID === coverProcess.pid && snapshot.coverNormalWindowZIndex >= 0
+        && host && host.zIndex > snapshot.coverNormalWindowZIndex && !main.isFocused() && !panel.isFocused()) break;
+      if (Date.now() >= deadline) {
+        observe('invalid-baseline-' + mode);
+        throw new Error('Synthetic external app did not establish a visible foreground baseline');
+      }
       await delay(100);
     }
     assertBackground(observe('baseline-' + mode));
