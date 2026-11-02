@@ -1,5 +1,5 @@
 import { Tooltip } from "./Tooltip";
-import { showErrorToast } from "./Toast";
+import { showActionErrorToast } from "./Toast";
 import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
 import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
 import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
@@ -345,7 +345,7 @@ export function TurnFailureNotice({
     try {
       await recover();
     } catch (recoverError) {
-      showErrorToast(recoverError);
+      showActionErrorToast(recoverError);
     } finally {
       setRecoverPending(false);
     }
