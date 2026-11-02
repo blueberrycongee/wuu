@@ -1,3 +1,5 @@
+import { composerInputElement, type ComposerInputHandle } from "./ComposerInput";
+import { draftPluginReferences } from "./ComposerPluginReferences";
 import {
   useCallback,
   useEffect,
@@ -47,7 +49,7 @@ export function useComposerInlineCompletion({
   host, inputRef, value, enabled, kind, contextKey, revisionKey, resetKey, threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive, onInsert,
 }: {
   host: ComposerInlineSource;
-  inputRef: RefObject<HTMLTextAreaElement | null>;
+  inputRef: RefObject<ComposerInputHandle | null>;
   value: string;
   enabled: boolean;
   kind: ComposerInlineCompletionContext["kind"];
@@ -98,7 +100,8 @@ export function useComposerInlineCompletion({
       '[data-floating-menu-owner]:not([data-wuu-layer="tooltip"]), .composer-textarea-context-menu, [aria-modal="true"]',
     ));
     const eligible = enabled && providers.length > 0 && !input.disabled && !input.readOnly
-      && !composing.current && !menuOpen && !input.closest("[hidden], [inert]")
+      && !composing.current && !menuOpen && !composerInputElement(input).closest("[hidden], [inert]")
+      && !draftPluginReferences(input.value).length
       && input.selectionStart === input.value.length && input.selectionEnd === input.value.length
       && !parseComposerSlashDraft(input.value);
     const key = JSON.stringify([composerId, kind, revisionKey, threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, input.value,
@@ -254,14 +257,14 @@ export function useComposerInlineCompletion({
 // selection, and hit targets. Computed styles cover document-grid, hero, large
 // type and mobile layouts without maintaining a second typography policy.
 export function ComposerInlineCompletionOverlay({ inputRef, value, text }: {
-  inputRef: RefObject<HTMLTextAreaElement | null>;
+  inputRef: RefObject<ComposerInputHandle | null>;
   value: string;
   text: string;
 }): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const input = inputRef.current;
+    const input = inputRef.current ? composerInputElement(inputRef.current) : null;
     const viewport = viewportRef.current;
     const mirror = mirrorRef.current;
     if (!input || !viewport || !mirror) return;

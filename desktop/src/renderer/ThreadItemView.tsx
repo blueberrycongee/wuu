@@ -1,3 +1,5 @@
+import { ComposerInput, type ComposerInputHandle } from "./ComposerInput";
+import { pluginReferenceDraft, pluginReferenceParts } from "./ComposerPluginReferences";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import { ConversationTriggers } from "./ConversationTriggers";
@@ -455,7 +457,7 @@ function UserMessageContent({
       part.type === "pasted_text",
   );
   const selectionParts = (contentParts ?? []).filter(part => part.type === "response_selection");
-  const textParts = (contentParts ?? []).filter((part) => part.type === "text");
+  const textParts = (contentParts ?? []).filter((part) => part.type === "text" || part.type === "plugin_reference");
   const fileParts = (contentParts ?? []).filter((part) => part.type === "file_selection");
   const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0 || fileParts.length > 0;
   const hasTextBubble = structured
@@ -509,6 +511,10 @@ function UserMessageContent({
         >
           {collapsed ? (
             <div className="user-message-raw-query">{displayedText}</div>
+          ) : textParts.some(part => part.type === "plugin_reference") ? (
+            <div className="user-message-raw-query">{textParts.map((part, index) => part.type === "plugin_reference"
+              ? <span key={index} className="composer-plugin-reference" title={[part.plugin.plugin_id, part.plugin.mcp_server, part.plugin.account_id, part.plugin.workspace_id].filter(Boolean).join(" · ")}>{part.text}</span>
+              : <span key={index}>{part.text}</span>)}</div>
           ) : structured ? (
             <div className="user-message-content-parts">
               {textParts.map((part, index) =>
@@ -592,17 +598,17 @@ function UserMessageInlineEditor({
 }): JSX.Element {
   const { t } = useI18n();
   const initialContext = composerContextFromMessage(initialText, item.content_parts);
-  const initialAttachedParts = (initialContext.contentParts ?? []).filter((part) => part.type !== "text");
-  const initialTextParts = (initialContext.contentParts ?? []).filter((part) => part.type === "text");
+  const initialAttachedParts = (initialContext.contentParts ?? []).filter((part) => part.type !== "text" && part.type !== "plugin_reference");
+  const initialTextParts = (initialContext.contentParts ?? []).filter((part) => part.type === "text" || part.type === "plugin_reference");
   const [text, setText] = useState(
-    item.content_parts?.length ? initialTextParts.map((part) => part.text).join("") : initialText,
+    pluginReferenceDraft(item.content_parts?.length ? initialTextParts.map((part) => part.text).join("") : initialText, initialTextParts),
   );
   const [attachedParts, setAttachedParts] = useState(initialAttachedParts);
   const [selections, setSelections] = useState(initialContext.selections);
   const [images, setImages] = useState<InputImage[]>(item.images ?? []);
   const [files, setFiles] = useState<InputFile[]>(item.files ?? []);
   const [dragOver, setDragOver] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<ComposerInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasAttachments = images.length > 0 || files.length > 0 || attachedParts.length > 0;
@@ -614,11 +620,11 @@ function UserMessageInlineEditor({
   // cancelling back to message A would show B's draft in A.
   useEffect(() => {
     const nextParts = item.content_parts ?? [];
-    const nextAttachedParts = nextParts.filter((part) => part.type !== "text" && part.type !== "response_selection");
+    const nextAttachedParts = nextParts.filter((part) => part.type !== "text" && part.type !== "response_selection" && part.type !== "plugin_reference");
     const nextTextParts = nextParts.filter(
-      (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
+      (part) => part.type === "text" || part.type === "plugin_reference",
     );
-    setText(nextParts.length ? nextTextParts.map((part) => part.text).join("") : initialText);
+    setText(pluginReferenceDraft(nextParts.length ? nextTextParts.map((part) => part.text).join("") : initialText, nextTextParts));
     setAttachedParts(nextAttachedParts);
     setSelections(composerContextFromMessage(initialText, item.content_parts).selections);
     setImages(item.images ?? []);
@@ -647,10 +653,10 @@ function UserMessageInlineEditor({
     if (!canSubmit || submitting) {
       return;
     }
-    const contentParts: MessageContentPart[] = [
+    const contentParts = pluginReferenceParts(text, [
       ...attachedParts,
       ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
-    ];
+    ]) ?? [];
     const fullText = contentParts.length
       ? contentParts.map((part) => part.text).join("")
       : text;
@@ -701,7 +707,7 @@ function UserMessageInlineEditor({
     }
   }
 
-  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key === "Escape") {
       event.preventDefault();
       onCancel?.();
@@ -716,7 +722,7 @@ function UserMessageInlineEditor({
     }
   }
 
-  function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
+  function handlePaste(event: ReactClipboardEvent<HTMLElement>): void {
     if (submitting) {
       return;
     }
@@ -820,12 +826,12 @@ function UserMessageInlineEditor({
             : candidate))}
       />
       {selections.map(selection => <ResponseSelectionReference key={selection.id} selection={selection} />)}
-      <textarea
+      <ComposerInput
         ref={textareaRef}
         className="user-message-edit-input"
         value={text}
         disabled={submitting}
-        onChange={(event) => setText(event.target.value)}
+        onValueChange={setText}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         rows={Math.max(1, Math.min(8, text.split("\n").length))}

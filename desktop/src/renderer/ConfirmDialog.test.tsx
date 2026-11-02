@@ -100,4 +100,34 @@ describe("confirmAction", () => {
     await answer;
     expect(document.activeElement).toBe(opener);
   });
+
+  it("cancels only the aborted request without disturbing queued confirmations", async () => {
+    mountHost();
+    const owner = new AbortController();
+    let first!: Promise<boolean>;
+    await act(async () => { first = confirmAction(request("Retired context?"), owner.signal); });
+    const { answer: next } = await open("Current context?");
+    await act(async () => owner.abort());
+    await expect(first).resolves.toBe(false);
+    expect(dialog()?.textContent).toContain("Current context?");
+    await act(async () => action("confirm").click());
+    await expect(next).resolves.toBe(true);
+    expect(dialog()).toBeNull();
+  });
+
+  it("removes an aborted queued request and never opens an already-aborted request", async () => {
+    mountHost();
+    const { answer: first } = await open("Visible?");
+    const owner = new AbortController();
+    let queued!: Promise<boolean>;
+    await act(async () => { queued = confirmAction(request("Queued?"), owner.signal); });
+    await act(async () => owner.abort());
+    await expect(queued).resolves.toBe(false);
+    await expect(confirmAction(request("Already retired?"), owner.signal)).resolves.toBe(false);
+    expect(dialog()?.textContent).toContain("Visible?");
+    await act(async () => action("cancel").click());
+    await expect(first).resolves.toBe(false);
+    expect(dialog()).toBeNull();
+  });
+
 });

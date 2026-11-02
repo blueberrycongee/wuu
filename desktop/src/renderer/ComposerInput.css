@@ -1,0 +1,26 @@
+.composer-rich-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  caret-color: var(--ink);
+}
+.composer-rich-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+.composer-plugin-reference {
+  display: inline;
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-3);
+  color: var(--ink);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  font-weight: 500;
+  user-select: all;
+}
+.composer-rich-input[aria-disabled="true"] {
+  color: var(--composer-textarea-disabled);
+  cursor: default;
+}

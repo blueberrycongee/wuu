@@ -616,6 +616,8 @@ export type ExtensionProvenance = {
 };
 
 export type ExtensionInventoryRecord = {
+  /** Active public runtime tools. Themes and service-only plugins have none. */
+  conversation_tools?: string[];
   id: string;
   // What people see: a plugin manifest's interface displayName and
   // shortDescription, then its name and description, then the id.
@@ -1131,7 +1133,35 @@ export type MessageImageReadParams = {
   sha256?: string;
 };
 
+/** Fixed read-only tool probe admitted only from the owning active plugin package. */
+export type MCPIdentityProbe = {
+  tool: string;
+  arguments: Record<string, unknown>;
+  result: "structured_content" | "single_text_json";
+  /** Bounded RFC 6901 JSON pointers; no expressions or executable mappings. */
+  account: { id: string; label?: string; email?: string; kind?: string };
+  workspace?: { id: string; label?: string };
+};
+/** Provider-reported connection identity, not OAuth application branding or permissions. */
+export type MCPIdentityStatus = {
+  state: "verified" | "unavailable";
+  verified_at?: string;
+  account?: { id: string; label?: string; email?: string; kind?: string };
+  workspace?: { id: string; label?: string };
+  error_code?: string;
+};
+
+/** Non-secret onboarding information; standalone MCP metadata is informational only. */
+export type MCPConnectorDescriptor = {
+  title: string;
+  description?: string;
+  documentation_url?: string;
+  /** Package setup required before a plugin-owned connector can be enabled. */
+  setup_required?: string;
+  identity_probe?: MCPIdentityProbe;
+};
 export type MCPServerConfig = {
+  connector?: MCPConnectorDescriptor;
   command?: string;
   args?: string[];
   url?: string;
@@ -1146,9 +1176,22 @@ export type MCPServerConfig = {
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
 export type MCPLoginStartResult = { login_id: string };
-export type MCPLoginPollResult = { status: "pending" | "success" | "error"; error?: string };
+export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
 
 export type MCPServerStatus = {
+  authorization_id?: string;
+  identity?: MCPIdentityStatus;
+  tool_names?: string[];
+  connector?: MCPConnectorDescriptor;
+  /** Effective per-server startup preference, independent of connection state. */
+  configuration_enabled?: boolean;
+  /** Why this host cannot persist a connector startup preference. */
+  configuration_unavailable_reason?: string;
+  /** Only active package-declared connectors accept enabled-only preferences. */
+  configurable?: boolean;
+  /** Resource URL without credentials, query parameters, or fragment. */
+  resource_url?: string;
+  plugin_active?: boolean;
   name: string;
   plugin_id?: string;
   display_name?: string;
@@ -1178,6 +1221,7 @@ export type MCPAuthStartResult = {
 export type MCPAuthStatusResult = {
   name: string;
   authenticated: boolean;
+  identity?: MCPIdentityStatus;
   expires_at?: string;
   scopes?: string[];
 };
@@ -1972,7 +2016,18 @@ export type ResponseSelection = {
   };
 };
 
+/** A reference selects a capability; it never grants permission to execute it. */
+export type PluginReference = {
+  authorization_id?: string;
+  plugin_id?: string;
+  mcp_server?: string;
+  resource_url?: string;
+  account_id?: string;
+  workspace_id?: string;
+};
+
 export type MessageContentPart =
+  | { type: "plugin_reference"; text: string; plugin: PluginReference }
   | { type: "text"; text: string }
   | { type: "pasted_text"; text: string; title?: string; local_path?: string }
   | { type: "response_selection"; text: string; selection: ResponseSelection }
@@ -3399,6 +3454,7 @@ export type WuuDesktopApi = {
   refreshMCPServer: (name: string) => Promise<MCPServerActionResult>;
   startMCPAuth: (name: string) => Promise<MCPAuthStartResult>;
   getMCPAuthStatus: (name: string) => Promise<MCPAuthStatusResult>;
+  refreshMCPIdentity: (name: string) => Promise<MCPAuthStatusResult>;
   finishMCPAuth: (name: string, state: string, code: string) => Promise<MCPAuthFinishResult>;
   removeMCPAuth: (name: string) => Promise<MCPAuthRemoveResult>;
   startChatGPTLogin: (accountId?: string, enablePlanUsage?: boolean) => Promise<AuthChatGPTLoginResult>;

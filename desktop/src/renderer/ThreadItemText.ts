@@ -19,6 +19,6 @@ export function streamFieldValue(
 /** Text shown in the user-message body; structured references render as attachments. */
 export function userMessageBodyText(text: string, contentParts?: MessageContentPart[]): string {
   return contentParts?.length
-    ? contentParts.filter((part) => part.type === "text").map((part) => part.text).join("\n\n")
+    ? contentParts.filter((part) => part.type === "text" || part.type === "plugin_reference").map((part) => part.text).join(contentParts.some(part => part.type === "plugin_reference") ? "" : "\n\n")
     : text;
 }

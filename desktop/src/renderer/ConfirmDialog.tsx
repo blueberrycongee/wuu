@@ -39,9 +39,14 @@ function currentRequest(): PendingConfirm | null {
   return queue[0] ?? null;
 }
 
-export function confirmAction(request: ConfirmRequest): Promise<boolean> {
+export function confirmAction(request: ConfirmRequest, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
   return new Promise((resolve) => {
-    queue = [...queue, { ...request, id: nextID++, resolve }];
+    const id = nextID++;
+    const cancel = () => settle(id, false);
+    const finish = (confirmed: boolean) => { signal?.removeEventListener("abort", cancel); resolve(confirmed); };
+    queue = [...queue, { ...request, id, resolve: finish }];
+    signal?.addEventListener("abort", cancel, { once: true });
     for (const listener of listeners) listener();
   });
 }
