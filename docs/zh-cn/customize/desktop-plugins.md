@@ -31,6 +31,7 @@ Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`、`wuu.default-navigation/sidebar.footer` | 侧栏内容和底部 |
 | `wuu.default-shell/workspace.header`、`wuu.default-shell/conversation.header` | 对应的标题区域 |
+| `wuu.default-conversation/welcome`、`welcome.greeting`、`welcome.mascot`、`welcome.usage` | 空会话欢迎页及其独立部分 |
 | `wuu.default-conversation/conversation.turn.after`、`wuu.default-preview/conversation.turn.after` | 每个已展示回合之后；展示已报告的耗时和用量 |
 | `wuu.default-conversation/conversation.tool-activity.after`、`wuu.default-preview/conversation.tool-activity.after` | 已展开的过程详情中，单项工具活动之后 |
 | `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
@@ -49,6 +50,28 @@ api.registerUIContribution({
 ```
 
 省略 `mode`（或使用 `content`）可提供内容，替换调用方的 fallback。单内容 Slot 在准备阶段拒绝冲突注册，并保留当前 generation。包装按 `order`、插件 ID、贡献 ID 升序组合，后面的包装位于外层。包装渲染失败会报告诊断并保留内层内容。卸载 Slot 所有者会移除该区域；卸载贡献者只移除其贡献。provider 清理会等待已挂载视图释放 effect。由服务图选择的区域继续使用精确的 provider 绑定，并拒绝包装。本地 SDK 预览采用相同的内容／包装顺序与冲突规则；包装渲染失败会记录到浏览器控制台。
+
+### 新对话欢迎页
+
+默认会话 provider 仅在会话为空时渲染 `wuu.default-conversation/welcome`；输入框和消息流位于该 Slot 之外。内容贡献可替换整个欢迎页，也可分别替换 `wuu.default-conversation/welcome.greeting`、`welcome.mascot` 或 `welcome.usage`。返回 `null` 可隐藏某一部分。每个 Slot 只接受一个内容提供方，并遵循上述冲突、包装和卸载规则。
+
+欢迎页的 context 为 `ConversationWelcomeContextV1`：包含 `projectDraft` 和三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。各部分的 context 包含 `projectDraft`；项目草稿或没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
+
+例如，以下布局将用量摘要移到问候上方并隐藏吉祥物：
+
+```js
+export function activatePresentation(api) {
+  const h = api.react.createElement;
+  api.registerUIContribution({
+    id: "welcome-layout",
+    target: "wuu.default-conversation/welcome",
+    render: ({ context }) => h("section", { style: { padding: 32, display: "grid", gap: 24 } },
+      context.usage, context.greeting),
+  });
+}
+```
+
+如只需更改问候，目标改为 `wuu.default-conversation/welcome.greeting`；使用相同所有者前缀的 `welcome.mascot` / `welcome.usage` 可分别替换其余部分。替换布局负责自身的响应式样式和无障碍支持。TypeScript 插件可从 `@wuu/plugin-sdk/ui` 导入 `ConversationWelcomeContextV1` 并将欢迎页 context 转换为该类型。
 
 增加指标、注释或上下文操作时，优先使用 `conversation.turn.after` 和 `conversation.tool-activity.after`，不要为了追加内容而包裹原有界面。两个槽位都支持按顺序组合多个插件，在气泡和 IM 样式下使用同一契约。回合追加内容位于原有回合的测量边界内。完整替换 `conversation.turn` 的实现自行拥有其内容，需要自行渲染所需槽位。新增、移除或渲染失败的追加贡献不会重新挂载原有回合和工具详情，保留展开状态与焦点。替换或包裹内容会改变 React 层级，不提供这种状态保留保证。
 

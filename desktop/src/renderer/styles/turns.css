@@ -4383,6 +4383,12 @@ pre {
   column-gap: min(var(--wuu-grid-gutter), calc(100% / var(--wuu-grid-cols) / 2));
 }
 
+/* Replacement content shares the welcome column without relying on private classes. */
+.empty-home-inner > :where(:not(.empty-home-header)) {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 /* The greeting follows the UI size between the display and hero roles, so
  * at large text it still leads the summary numbers beneath it. */
 .empty-home h2 {
