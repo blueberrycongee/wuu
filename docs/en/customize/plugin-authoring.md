@@ -853,6 +853,14 @@ exit alone never wake a conversation. Plugins own framing, filtering, event poli
 and durable history; handles do not survive a runtime restart. The bundled
 [Monitor plugin](plugins.md#monitor-background-events) demonstrates this surface.
 
+For observation inputs, `presentation.kind: "background_event"` keeps the event
+in model context and durable history while omitting its input bubble from the
+conversation. Assistant output, tool activity and turn failures remain visible.
+This presentation is available to any plugin using `host.session.send` or
+`sendProcessEvent`; it does not change admission, steering or request deduplication.
+Human input retains its ordinary presentation. Older hosts reject the new kind;
+update the host and clients together before using it.
+
 ## Providing a service
 
 Return `provided_services` during initialization and implement `invokeService`. A descriptor contains a dotted lowercase name, strict `MAJOR.MINOR.PATCH` version, and methods with `input_schema` and `output_schema` identifiers. These identifiers name contracts; they are not inline JSON Schema definitions.

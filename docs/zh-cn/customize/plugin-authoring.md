@@ -664,6 +664,12 @@ host.process 1.2 支持 `stream: "stdout"` 或 `stream: "stderr"`，分别使用
 过滤、事件策略和持久历史；运行时重启后句柄失效。内置 [Monitor 插件](plugins.md#监控后台事件)
 演示了这个接口。
 
+观察类输入可以使用 `presentation.kind: "background_event"`：事件仍进入模型上下文和
+持久历史，但不显示输入气泡。助手回答、工具活动和轮次失败仍正常显示。
+任何插件都可通过 `host.session.send` 或 `sendProcessEvent` 使用此展示类型，
+接纳、插入当前轮次和请求去重规则保持一致。真实用户输入仍使用普通展示。
+旧宿主会拒绝这个新类型，使用前应一起更新宿主和客户端。
+
 ## 提供服务
 
 初始化时返回 `provided_services`，并实现 `invokeService`。描述包含小写点分名称、严格的 `MAJOR.MINOR.PATCH` 版本，以及带 `input_schema`、`output_schema` 标识的方法。这些标识命名契约，不是内嵌 JSON Schema 定义。

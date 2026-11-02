@@ -1605,7 +1605,8 @@ export interface HostServiceContracts {
         attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
-      presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
+      /** background_event retains model input and history without a conversation bubble. */
+      presentation?: { kind: "query_bubble" | "session_message" | "background_event"; text: string; name?: string; related_session_id?: string };
       cause?: string;
       if_running?: "queue" | "steer";
       reply_to_turn_id?: string;

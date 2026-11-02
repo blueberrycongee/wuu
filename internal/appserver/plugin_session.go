@@ -1135,8 +1135,8 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	msg.DisplayContent = "插件已唤醒 Agent"
 	if params.Presentation != nil {
 		if kind := strings.TrimSpace(params.Presentation.Kind); kind != "" {
-			if kind != pluginhost.SessionPresentationQueryBubble && kind != pluginhost.SessionPresentationSessionMessage {
-				return pluginhost.SessionSendResult{}, errors.New("presentation.kind must be query_bubble or session_message")
+			if kind != pluginhost.SessionPresentationQueryBubble && kind != pluginhost.SessionPresentationSessionMessage && kind != pluginhost.SessionPresentationBackgroundEvent {
+				return pluginhost.SessionSendResult{}, errors.New("presentation.kind must be query_bubble, session_message, or background_event")
 			}
 			msg.PresentationKind = kind
 		}
