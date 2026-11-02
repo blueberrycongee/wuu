@@ -103,6 +103,14 @@ export function useSidebarConversationActivity(
     })];
   }, [activeThreadID, heldOrder, ordered, pendingThreadID, threads]);
 
+  useLayoutEffect(() => {
+    if (!heldOrder) return;
+    const heldIDs = new Set(heldOrder.map(thread => thread.id));
+    // Once navigation admits a row, keep it reachable for the whole hold.
+    // Otherwise opening the next conversation hides the previously admitted row.
+    if (visibleThreads.some(thread => !heldIDs.has(thread.id))) setHeldOrder(visibleThreads);
+  }, [heldOrder, visibleThreads]);
+
   return {
     threads: visibleThreads,
     onReorder: (activeThreadID, overThreadID, position) => {

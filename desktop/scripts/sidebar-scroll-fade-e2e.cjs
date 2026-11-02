@@ -166,6 +166,41 @@ app.whenReady().then(async () => {
     assert.deepEqual(await recentTitles(), expectedRestored, "saved order survives an initially empty session cache");
     results.push({ label: "recent-restored", order: await recentTitles() });
     await capture("recent-restored");
+    // Keep the real pointer over Recent while composer focus moves by keyboard.
+    // The earlier arrival checks deliberately release this hold between sends.
+    win.focus(); win.webContents.focus();
+    await waitFor(() => document.hasFocus());
+    const heldBefore = await recentTitles();
+    const recentPoint = await evaluate(() => {
+      const heading = document.querySelector('[data-sidebar-recents] .sidebar-recents-heading');
+      heading.scrollIntoView({ block: "center" });
+      const rect = heading.getBoundingClientRect();
+      return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+    });
+    win.webContents.sendInputEvent({ type: "mouseMove", ...recentPoint });
+    await waitFor(() => document.querySelector('[data-sidebar-recents]').matches(':hover'));
+    const admitted = [];
+    for (const title of ["Held Recent first conversation", "Held Recent second conversation"]) {
+      await evaluate(() => document.querySelector('[data-sidebar-recents] .sidebar-recents-new-thread').click());
+      await waitFor(() => Boolean(document.querySelector('[data-sidebar-recents] [data-draft-id] .thread-row-main[aria-current="page"]')));
+      await evaluate(() => document.querySelector('.composer textarea').focus());
+      await win.webContents.insertText(title);
+      await waitFor(title => document.querySelector('.composer textarea')?.value === title, title);
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+      await waitFor(title => document.querySelector('[data-sidebar-recents] .thread-row.active:not([data-draft-id]) .thread-row-title')?.textContent === title, title);
+      admitted.unshift(title);
+      assert.equal(await evaluate(() => document.querySelector('[data-sidebar-recents]').matches(':hover')), true, "pointer hold survives composer submission");
+      assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "creating the next conversation retains the previous arrival during a hold");
+    }
+    await evaluate(() => document.querySelector('[data-sidebar-recents] .sidebar-recents-new-thread').click());
+    await waitFor(() => Boolean(document.querySelector('[data-sidebar-recents] [data-draft-id] .thread-row-main[aria-current="page"]')));
+    assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "returning to a draft retains both created conversations");
+    await capture("recent-held-consecutive-creation");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 600, y: 20 });
+    await waitFor(() => !document.querySelector('[data-sidebar-recents]').matches(':hover'));
+    assert.deepEqual(await recentTitles(), [...admitted, ...heldBefore], "releasing the hold preserves arrival order");
+    results.push({ label: "recent-held-consecutive-creation", before: heldBefore, admitted, after: await recentTitles() });
     // The remaining scroll scenarios start with their own default ordering.
     await evaluate(() => localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace"));
     console.log("PASS: new Recent conversations stay first through admission, completion, focus release, manual reordering, reload, and the 50-row cap.");
