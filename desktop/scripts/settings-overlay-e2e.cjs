@@ -36,6 +36,7 @@ const report = { status: "running", platform: process.platform, versions: proces
 const save = () => fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
 const trace = value => fs.appendFileSync(path.join(output, "events.jsonl"), JSON.stringify({ at: Date.now(), ...value }) + "\n");
 let win, host, page, dropPaint = false;
+let lastReadyGeometry;
 const failures = [];
 app.on("web-contents-created", (_event, contents) => {
   contents.on("console-message", details => trace({ kind: "console", id: contents.id, message: details.message }));
@@ -122,7 +123,12 @@ async function run() {
   await app.whenReady();
   host = new ChromeOverlayHost((owner, event) => {
     trace({ kind: "event", ...event });
-    if (event.command.type === "dismiss" && event.command.reason === "failed") failures.push(event);
+    if (event.command.type === "dismiss" && event.command.reason === "failed") {
+      failures.push(event);
+      const view = menuView();
+      trace({ kind: "failed-native-geometry", bounds: view?.getBounds(), visible: view?.getVisible(),
+        zoom: view?.webContents.getZoomFactor(), lastReadyGeometry });
+    }
     owner.webContents.send("wuu:chrome-overlay-event", event);
   },
     path.join(desktop, "out/renderer"), path.join(desktop, "out/preload/chromeOverlay.cjs"));
@@ -131,7 +137,26 @@ async function run() {
     return host.show(win, request);
   });
   ipcMain.handle("wuu:chrome-overlay-hide", (_event, token, generation) => host.hide(win, token, generation));
-  ipcMain.handle("wuu:chrome-overlay-ready", event => { trace({ kind: "ready", id: event.sender.id }); return host.ready(event); });
+  ipcMain.handle("wuu:chrome-overlay-ready", event => {
+    const state = host.ready(event);
+    trace({ kind: "ready", id: event.sender.id, target: state?.bounds });
+    // Keep first-opening geometry in the evidence even when the host retires a
+    // renderer before failure screenshots can inspect it.
+    void evaluate(event.sender, async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { viewport: { width: innerWidth, height: innerHeight },
+        root: document.documentElement.getBoundingClientRect().toJSON(),
+        surface: document.querySelector(".chrome-overlay-surface")?.getBoundingClientRect().toJSON(),
+        rows: [...document.querySelectorAll('[role="menuitem"]')].map(row => row.getBoundingClientRect().toJSON()),
+        visibility: document.visibilityState, ratio: devicePixelRatio };
+    }).then(geometry => {
+      lastReadyGeometry = { at: Date.now(), id: event.sender.id, geometry };
+      trace({ kind: "ready-geometry", ...lastReadyGeometry,
+        bounds: menuView()?.getBounds(), visible: menuView()?.getVisible(), zoom: event.sender.getZoomFactor() });
+    })
+      .catch(error => trace({ kind: "ready-geometry-unavailable", id: event.sender.id, error: String(error) }));
+    return state;
+  });
   ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => {
     trace({ kind: "painted", token, generation, dropped: dropPaint });
     if (!dropPaint) host.painted(event, token, generation);
