@@ -181,7 +181,7 @@ func addSearchTools(b *surfaceBuilder) {
 func addBashFirstTools(b *surfaceBuilder, p Profile) {
 	if p.Execution.AllowDirectShell {
 		b.addVisible("bash", capability.CapabilityCommandBash)
-		b.addVisible("process", capability.CapabilityCommandBackground)
+		b.addVisibleCapability(capability.CapabilityCommandBackground)
 	}
 }
 

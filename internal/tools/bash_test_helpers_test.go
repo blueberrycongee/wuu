@@ -53,7 +53,7 @@ func waitProcessOutputForTest(t *testing.T, kit *Toolkit, id, want string) strin
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-			Name:      "process",
+			Name:      "bash",
 			Arguments: `{"action":"read","process_id":"` + id + `","offset_bytes":0,"wait_ms":500}`,
 		})
 		if err != nil {

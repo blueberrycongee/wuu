@@ -482,3 +482,32 @@ func TestDesktopInventoryKeepsAdmittedGraphGeneration(t *testing.T) {
 	}
 	t.Fatal("desktop inventory record missing")
 }
+
+func TestPluginInventoryReportsCommittedDependencyIssues(t *testing.T) {
+	srv, consumer, _ := newPluginStateTestServer(t)
+	provider := consumer
+	provider.ID, provider.SubjectID, provider.Version = "provider-addon", extensions.SubjectID("user", "provider-addon"), "1.0.0"
+	consumer.Dependencies = []pluginpkg.Dependency{{ID: provider.ID, Version: "^1.0.0", Optional: true}}
+	snapshot := srv.rt.ExtensionSnapshot()
+	snapshot.Plugins = []pluginpkg.Plugin{consumer, provider}
+	// The committed mixed graph omitted this optional edge to avoid a cycle.
+	// Inventory must expose that decision rather than package declarations alone.
+	snapshot.PluginHost = pluginhost.New()
+	snapshot.PluginHost.SetPackageDependencies(map[string][]pluginhost.Dependency{
+		consumer.ID: nil, provider.ID: {{Provider: consumer.ID, Required: true, Service: "example.service", Major: 1}},
+	}, map[string][]pluginhost.DependencyIssue{
+		consumer.ID: {{Provider: provider.ID, Kind: "optional_cycle"}},
+	})
+	records := srv.extensionInventory(snapshot)
+	record := pluginPackageRecord(t, records, consumer.ID)
+	if len(record.ResolvedDependencies) != 0 {
+		t.Fatalf("inventory reconstructed a rejected optional edge: %+v", record.ResolvedDependencies)
+	}
+	if len(record.ActivationIssues) != 1 || record.ActivationIssues[0].Kind != "optional_cycle" || record.ActivationIssues[0].RelatedPluginID != provider.ID {
+		t.Fatalf("inventory lost the committed graph diagnostic: %+v", record.ActivationIssues)
+	}
+	providerRecord := pluginPackageRecord(t, records, provider.ID)
+	if len(providerRecord.ResolvedRequiredDependencies) != 1 || providerRecord.ResolvedRequiredDependencies[0] != consumer.ID {
+		t.Fatalf("inventory lost the retained required service edge: %+v", providerRecord.ResolvedRequiredDependencies)
+	}
+}

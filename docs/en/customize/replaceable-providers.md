@@ -992,9 +992,13 @@ Remove either UI package without removing the provider's data, tools or ongoing
 work. Replace a UI by installing an independent desktop package declaring the
 same service requirement; it imports neither the old UI nor runtime source.
 Likewise select a compatible runtime provider without copying presentation.
-The UI dependencies are optional so disabled/unavailable providers leave a
-visible service error and disabled mutations, not a crashing application or
-silently substituted scheduler. Successful later reads recover the controls.
+The UI dependencies are optional. `goal-ui` hides its controls only when the host
+reports `service_optional_absent`: no provider or explicit binding exists for an
+optional dependency. Inventory changes trigger another read. An unavailable
+explicit selection, ambiguous providers, a wrong major version, or a provider
+execution failure stays visible; none selects a fallback implementation.
+Other unavailable UI dependencies retain their service error and disabled
+mutations. Successful later reads recover the controls.
 The cron tool requires its scheduler and never schedules work locally.
 
 `GOAL_CONTROL_SERVICE_DESCRIPTOR`, `GoalControlRequestV1`, `GoalControlResultV1`

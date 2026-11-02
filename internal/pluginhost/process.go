@@ -488,11 +488,15 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 	defer cancel()
 	shutdownErr := c.call(shutdownCtx, "shutdown", nil, nil)
 	err := c.stopProcess()
-	// Runtimes may exit without replying. Only a received rejection proves a
-	// shutdown callback failure independently of the process retirement result.
+	// Runtimes may exit normally without replying. A received rejection proves
+	// callback failure; an expired waiter leaves cleanup unconfirmed.
 	var remoteErr *remoteCallError
 	if errors.As(shutdownErr, &remoteErr) {
 		err = errors.Join(shutdownErr, err)
+	} else if errors.Is(shutdownErr, context.DeadlineExceeded) || errors.Is(shutdownErr, context.Canceled) {
+		// Killing the process settles its physical lifetime, not the cleanup
+		// callback or its external effects. Preserve that uncertainty for owners.
+		err = errors.Join(fmt.Errorf("shutdown cleanup was not acknowledged before process retirement: %w", shutdownErr), err)
 	}
 	c.mu.Lock()
 	c.status.State = StateStopped

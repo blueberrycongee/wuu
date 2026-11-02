@@ -2,14 +2,14 @@ import { BrowserWindow, WebContentsView, net, session, type IpcMainEvent, type I
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import type { ChromeOverlayCommand, ChromeOverlayEvent, ChromeOverlayRequest, ChromeOverlaySurface } from "../shared/chromeOverlay";
+import type { ChromeOverlayCommand, ChromeOverlayEvent, ChromeOverlayRequest, ChromeOverlayRendererRequest, ChromeOverlaySurface } from "../shared/chromeOverlay";
 import { CHROME_OVERLAY_VERSION } from "../shared/chromeOverlay";
 
 export const chromeOverlayScheme = { scheme: "wuu-chrome", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } };
 const ORIGIN = "wuu-chrome://ui";
 const PARTITION = "wuu-chrome-overlays";
 const OPENING_TIMEOUT_MS = 10_000;
-type Surface = { owner: BrowserWindow; view: WebContentsView; kind: ChromeOverlaySurface; request?: ChromeOverlayRequest; loaded: boolean; focusPending?: boolean; focusBefore?: WebContents; openingTimeout?: ReturnType<typeof setTimeout> };
+type Surface = { owner: BrowserWindow; view: WebContentsView; kind: ChromeOverlaySurface; phase: ChromeOverlayRendererRequest["phase"]; request?: ChromeOverlayRequest; loaded: boolean; focusPending?: boolean; focusBefore?: WebContents; openingTimeout?: ReturnType<typeof setTimeout> };
 
 /** Bounded, trusted UI views. Transparent pixels still hit-test inside these rectangles. */
 export class ChromeOverlayHost {
@@ -97,25 +97,31 @@ export class ChromeOverlayHost {
     this.observe(owner);
     const kind = request.model.kind;
     let surface = this.surfaces.get(kind);
+    const focusBefore = owner.contentView.children.map(child => (child as WebContentsView).webContents)
+      .find(contents => contents && contents !== surface?.view.webContents && !contents.isDestroyed() && contents.isFocused()) ?? owner.webContents;
     if (!surface) surface = this.create(owner, kind);
     const previous = surface.request;
     if (previous?.token === request.token && previous.generation > request.generation) return;
     if (!previous || previous.token !== request.token) {
-      surface.focusBefore = owner.contentView.children.map(child => (child as WebContentsView).webContents).find(contents => contents && contents !== surface!.view.webContents && !contents.isDestroyed() && contents.isFocused()) ?? owner.webContents;
+      surface.focusBefore = focusBefore;
+      surface.focusPending = false;
+      surface.phase = "prepare";
+      surface.view.setVisible(false);
     }
     if (request.focus && (!previous || previous.token !== request.token || !previous.focus)) surface.focusPending = true;
     surface.request = request;
     if (previous?.token !== request.token) this.cancelOpening(surface);
     // Hidden Chromium renderers suspend rAF. Unthrottle only the finite paint
-    // handshake; once visible (or dismissed), normal visibility throttling resumes.
-    if (!surface.view.getVisible() && !this.fullscreen) {
+    // handshake; once presented (or dismissed), normal visibility throttling resumes.
+    if (surface.phase !== "presented" && !this.fullscreen) {
       surface.view.webContents.setBackgroundThrottling(false);
       // A successful document load does not prove its JS mounted or acknowledged
       // the model. Bound the opening, not every streaming/geometry revision.
       surface.openingTimeout ??= setTimeout(() => this.fail(surface), OPENING_TIMEOUT_MS);
     }
-    this.layout(surface);
-    if (surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", request);
+    if (!this.layout(surface) && surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", this.rendererRequest(surface));
+    this.preserveOpeningFocus(surface);
+    this.raise(owner);
   }
 
   hide(owner: BrowserWindow, token: string, generation: number): void {
@@ -136,7 +142,7 @@ export class ChromeOverlayHost {
 
   private create(owner: BrowserWindow, kind: ChromeOverlaySurface): Surface {
     const view = new WebContentsView({ webPreferences: { partition: PARTITION, preload: this.preload, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, backgroundThrottling: true } });
-    const surface: Surface = { owner, view, kind, loaded: false };
+    const surface: Surface = { owner, view, kind, loaded: false, phase: "prepare" };
     this.surfaces.set(kind, surface);
     view.setVisible(false);
     view.setBackgroundColor("#00000000");
@@ -150,10 +156,11 @@ export class ChromeOverlayHost {
     contents.on("did-fail-load", (_event, _code, _description, _url, mainFrame) => { if (mainFrame) this.fail(surface); });
     // Native-tree mutation in a blur callback can invalidate Chromium's focus
     // traversal. Defer dismissal, and never pull focus away from its new owner.
+    contents.on("focus", () => this.preserveOpeningFocus(surface));
     contents.on("blur", () => queueMicrotask(() => {
       // Hidden views can blur during initialization, before the paint handshake
       // gives them keyboard focus. Only a presented surface can lose that focus.
-      if (!surface.request || !surface.view.getVisible() || contents.isDestroyed() || contents.isFocused()) return;
+      if (!surface.request || surface.phase !== "presented" || !surface.view.getVisible() || contents.isDestroyed() || contents.isFocused()) return;
       if (kind === "account") this.dismiss(surface, "outside");
     }));
     void contents.loadURL(`${ORIGIN}/chrome-overlay.html?surface=${kind}`).catch(() => this.fail(surface));
@@ -167,22 +174,47 @@ export class ChromeOverlayHost {
     return surface;
   }
 
-  ready(event: IpcMainInvokeEvent): ChromeOverlayRequest | null {
+  ready(event: IpcMainInvokeEvent): ChromeOverlayRendererRequest | null {
     const surface = this.trusted(event);
     if (!surface) throw new Error("Untrusted browser chrome sender.");
     surface.loaded = true;
-    return surface.request ?? null;
+    return this.rendererRequest(surface);
   }
 
-  painted(event: IpcMainEvent, token: string, generation: number): void {
+  prepared(event: IpcMainEvent, token: string, generation: number): void {
+    const surface = this.trusted(event);
+    if (!surface || surface.phase !== "prepare" || surface.request?.token !== token
+      || surface.request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
+    // The renderer has committed the current model hidden and inert. Chromium
+    // delivers a viewport only after the native view becomes visible.
+    this.layout(surface);
+    surface.phase = "layout";
+    surface.view.setVisible(true);
+    this.preserveOpeningFocus(surface);
+    surface.view.webContents.send("wuu:chrome-overlay-state", this.rendererRequest(surface));
+  }
+
+  private preserveOpeningFocus(surface: Surface): void {
+    if (!surface.request || surface.phase === "presented" || !surface.owner.isFocused()
+      || !surface.view.webContents.isFocused()) return;
+    const target = surface.focusBefore;
+    if (target && !target.isDestroyed()) target.focus();
+  }
+
+  painted(event: IpcMainEvent, token: string, generation: number, viewport: { width: number; height: number }): void {
     const surface = this.trusted(event);
     if (!surface) return;
     const request = surface.request;
-    if (!request || request.token !== token || request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
+    if (!request || surface.phase === "prepare" || request.token !== token || request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
+    // A native resize/zoom can overtake the renderer's acknowledgement. Publish
+    // the new viewport and keep the existing opening budget until it paints.
+    if (this.layout(surface)) return;
+    const target = this.rendererRequest(surface)!.bounds;
+    if (!viewport || !Number.isFinite(viewport.width) || !Number.isFinite(viewport.height) || viewport.width <= 0 || viewport.height <= 0
+      || Math.abs(viewport.width - target.width) > 1 || Math.abs(viewport.height - target.height) > 1) return;
     this.cancelOpening(surface);
-    this.layout(surface);
-    const opening = !surface.view.getVisible();
-    if (opening) surface.view.setVisible(true);
+    const opening = surface.phase !== "presented";
+    surface.phase = "presented";
     surface.view.webContents.setBackgroundThrottling(true);
     // Model and viewport updates keep the existing native stacking. Newly
     // attached website views already raise chrome through prepare().
@@ -197,7 +229,7 @@ export class ChromeOverlayHost {
     if (!request || !message || request.token !== message.token) return;
     const command = message.command;
     if (!command || typeof command.type !== "string") return;
-    if (!surface.view.getVisible()) return;
+    if (surface.phase !== "presented" || !surface.view.getVisible()) return;
     const lifecycle = command.type === "dismiss";
     if (!Number.isSafeInteger(message.generation) || message.generation < 1
       || (lifecycle ? message.generation > request.generation : message.generation !== request.generation)) return;
@@ -230,6 +262,7 @@ export class ChromeOverlayHost {
     const focused = !surface.view.webContents.isDestroyed() && surface.view.webContents.isFocused();
     if (reason) this.emitCurrent(surface, { type: "dismiss", reason });
     surface.request = undefined;
+    surface.phase = "prepare";
     surface.view.setVisible(false);
     if (!surface.view.webContents.isDestroyed()) {
       surface.view.webContents.setBackgroundThrottling(true);
@@ -252,16 +285,26 @@ export class ChromeOverlayHost {
     for (const contents of [owner.webContents, ...owner.contentView.children.map(child => (child as WebContentsView).webContents)]) {
       if (!contents || contents.isDestroyed() || chrome.includes(contents) || this.focusSources.has(contents)) continue;
       const focus = () => {
+        const account = this.surfaces.get("account");
+        if (account?.request && account.phase !== "presented" && contents !== account.focusBefore) this.dismiss(account, "outside");
         const capsule = this.surfaces.get("capsule");
         if (capsule?.owner === owner) capsule.focusBefore = contents;
       };
-      this.focusSources.set(contents, focus);
+      const pointer = (_event: Electron.Event, mouse: Electron.MouseInputEvent) => {
+        const account = this.surfaces.get("account");
+        if (account?.request && account.phase !== "presented" && (mouse.type === "mouseDown" || mouse.type === "mouseWheel")) this.dismiss(account, "outside");
+      };
+      this.focusSources.set(contents, () => {
+        contents.removeListener("focus", focus);
+        contents.removeListener("before-mouse-event", pointer);
+      });
       contents.on("focus", focus);
+      contents.on("before-mouse-event", pointer);
       contents.once("destroyed", () => this.focusSources.delete(contents));
       if (contents.isFocused()) focus();
     }
     const overlays = (["capsule", "account"] as const).map(kind => this.surfaces.get(kind))
-      .filter((surface): surface is Surface => Boolean(surface?.owner === owner && surface.request && surface.view.getVisible()));
+      .filter((surface): surface is Surface => Boolean(surface?.owner === owner && surface.request && surface.phase === "presented" && surface.view.getVisible()));
     const children = owner.contentView.children;
     if (overlays.every((surface, index) => children[children.length - overlays.length + index] === surface.view)) return;
     // Reattaching a macOS native view can clear its sibling's keyboard focus.
@@ -274,7 +317,7 @@ export class ChromeOverlayHost {
 
   close(owner: BrowserWindow): void {
     for (const surface of this.surfaces.values()) if (surface.owner === owner) {
-      if (surface.kind === "capsule") { this.cancelOpening(surface); surface.view.setVisible(false); }
+      if (surface.kind === "capsule" && surface.phase === "presented") { this.cancelOpening(surface); surface.view.setVisible(false); }
       else this.dismiss(surface, "owner");
     }
   }
@@ -286,27 +329,47 @@ export class ChromeOverlayHost {
 
   private restoreCapsule(owner: BrowserWindow): void {
     const surface = this.surfaces.get("capsule");
-    if (!this.fullscreen && surface?.request && surface.loaded && owner.isVisible() && !owner.isMinimized()) {
+    if (!this.fullscreen && surface?.request && surface.phase === "presented" && surface.loaded && owner.isVisible() && !owner.isMinimized()) {
       this.cancelOpening(surface);
       this.layout(surface); surface.view.setVisible(true); this.raise(owner);
     }
   }
 
-  private layout(surface: Surface): void {
+  private rendererRequest(surface: Surface): ChromeOverlayRendererRequest | null {
+    if (!surface.request) return null;
+    const bounds = surface.view.getBounds(), zoom = surface.view.webContents.getZoomFactor();
+    // The renderer must acknowledge the actual viewport, not the unclipped
+    // requested rectangle (which may extend past a small owner window).
+    return { ...surface.request, phase: surface.phase, bounds: { ...surface.request.bounds, width: bounds.width / zoom, height: bounds.height / zoom } };
+  }
+
+  private layout(surface: Surface): boolean {
     const request = surface.request;
-    if (!request) return;
+    if (!request) return false;
     const zoom = surface.owner.webContents.getZoomFactor(), [width, height] = surface.owner.getContentSize();
     const x = Math.max(0, Math.min(width, Math.round(request.bounds.x * zoom))), y = Math.max(0, Math.min(height, Math.round(request.bounds.y * zoom)));
-    if (surface.view.webContents.getZoomFactor() !== zoom) surface.view.webContents.setZoomFactor(zoom);
+    const zoomChanged = surface.view.webContents.getZoomFactor() !== zoom;
+    if (zoomChanged) surface.view.webContents.setZoomFactor(zoom);
     const bounds = { x, y, width: Math.max(0, Math.min(width - x, Math.ceil(request.bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.ceil(request.bounds.height * zoom))) };
     const previous = surface.view.getBounds();
-    if (Object.keys(bounds).some(key => previous[key as keyof typeof bounds] !== bounds[key as keyof typeof bounds])) surface.view.setBounds(bounds);
+    const boundsChanged = Object.keys(bounds).some(key => previous[key as keyof typeof bounds] !== bounds[key as keyof typeof bounds]);
+    if (boundsChanged) surface.view.setBounds(bounds);
+    // Every native geometry writer refreshes the renderer target, including
+    // persistent-capsule resize/restore paths that do not originate in show().
+    if ((boundsChanged || zoomChanged) && surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", this.rendererRequest(surface));
+    return boundsChanged || zoomChanged;
   }
 
   private observe(owner: BrowserWindow): void {
     if (this.owner === owner) return;
     this.owner = owner;
     const close = () => this.close(owner);
+    owner.webContents.on("before-input-event", (event, input) => {
+      const account = this.surfaces.get("account");
+      if (input.type === "keyDown" && input.key === "Escape" && account?.request && account.phase !== "presented") {
+        event.preventDefault(); this.dismiss(account, "escape", true);
+      }
+    });
     owner.on("blur", close).on("hide", close).on("minimize", close);
     owner.on("resize", () => {
       for (const surface of this.surfaces.values()) if (surface.owner === owner) {
@@ -322,7 +385,7 @@ export class ChromeOverlayHost {
     owner.webContents.on("render-process-gone", () => { close(); for (const value of this.surfaces.values()) if (value.kind === "capsule") this.dismiss(value); });
     owner.once("closed", () => {
       for (const surface of [...this.surfaces.values()]) this.remove(surface);
-      for (const [contents, focus] of this.focusSources) if (!contents.isDestroyed()) contents.removeListener("focus", focus);
+      for (const [contents, cleanup] of this.focusSources) if (!contents.isDestroyed()) cleanup();
       this.focusSources.clear();
       this.owner = undefined;
     });
