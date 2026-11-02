@@ -126,6 +126,7 @@ jobs:
         run: |
           npm ci
           npm ci --prefix ../plugins
+          npm ci --prefix ../packages/plugin-sdk
           npm ci --prefix ../clients/core
           npm ci --prefix ../clients/mobile-web
           node node_modules/electron/install.js
