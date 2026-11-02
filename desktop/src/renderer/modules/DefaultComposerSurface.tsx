@@ -127,7 +127,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     focus: options => {
       const snapshot = application.getSnapshot();
       const input = contentRef.current?.querySelector<HTMLElement>('[data-wuu-component="composer-input"]');
-      if (!visible || snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId || !input || input.getAttribute("aria-readonly") === "true") return false;
+      if (!visible || snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId || !input || input.matches(':disabled, [aria-disabled="true"], [aria-readonly="true"]')) return false;
       input.focus(options);
       return true;
     },
