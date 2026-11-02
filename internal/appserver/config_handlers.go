@@ -374,6 +374,12 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		activePluginSubjects[item.SubjectID] = struct{}{}
 	}
 	runtimeStatuses := make(map[string]pluginhost.Status)
+	conversationTools := make(map[string][]string)
+	for _, definition := range snapshot.PluginHost.ToolDefinitions() {
+		if tool, ok := snapshot.PluginHost.Tool(definition.Name); ok && (s.rt.Toolkit == nil || !s.rt.Toolkit.IsToolDisabled(definition.Name)) {
+			conversationTools[tool.PluginID] = append(conversationTools[tool.PluginID], definition.Name)
+		}
+	}
 	if snapshot.PluginHost != nil {
 		for _, status := range snapshot.PluginHost.Statuses() {
 			runtimeStatuses[status.ID] = status
@@ -520,13 +526,14 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		settingsPages := viewEntries(item.SettingsPages)
 		presentation := pluginPresentation(item.Manifest)
 		packageRecord := ExtensionInventoryRecord{
-			ID:              item.SubjectID,
-			Name:            presentation.DisplayName,
-			Description:     presentation.ShortDescription,
-			LongDescription: presentation.LongDescription,
-			Developer:       presentation.DeveloperName,
-			Icon:            extensionIconDescriptor(item.Icon),
-			Kind:            extensions.KindPlugin,
+			ConversationTools: conversationTools[item.ID],
+			ID:                item.SubjectID,
+			Name:              presentation.DisplayName,
+			Description:       presentation.ShortDescription,
+			LongDescription:   presentation.LongDescription,
+			Developer:         presentation.DeveloperName,
+			Icon:              extensionIconDescriptor(item.Icon),
+			Kind:              extensions.KindPlugin,
 			Provenance: extensions.Provenance{
 				Kind:     extensions.KindPlugin,
 				Source:   pluginSource,

@@ -51,6 +51,7 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
+			"conversation-plugins",
 			"native-session-resume",
 			"default-permission-unconfined",
 			"active-turn-steering",

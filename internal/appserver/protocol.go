@@ -597,6 +597,9 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
+	AuthorizationID                string                         `json:"authorization_id,omitempty"`
+	Identity                       *mcp.IdentityStatus            `json:"identity,omitempty"`
+	ToolNames                      []string                       `json:"tool_names,omitempty"`
 	ConfigurationUnavailableReason string                         `json:"configuration_unavailable_reason,omitempty"`
 	Connector                      *config.MCPConnectorDescriptor `json:"connector,omitempty"`
 	ConfigurationEnabled           *bool                          `json:"configuration_enabled,omitempty"`
@@ -908,8 +911,9 @@ type ExtensionPluginActivationIssue struct {
 }
 
 type ExtensionInventoryRecord struct {
-	GraphGeneration string `json:"graph_generation,omitempty"`
-	ID              string `json:"id"`
+	ConversationTools []string `json:"conversation_tools,omitempty"`
+	GraphGeneration   string   `json:"graph_generation,omitempty"`
+	ID                string   `json:"id"`
 	// Name and Description are what people see: a plugin manifest's
 	// interface displayName and shortDescription, then its name and
 	// description, and the id when it names nothing.

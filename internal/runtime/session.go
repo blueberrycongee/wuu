@@ -2830,7 +2830,9 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 	}
 	// Identity probes are package-owned declarations, never editable server metadata.
 	for _, item := range plugins {
-		source, _ := json.Marshal([]string{item.ID, item.Source, item.Root, item.SubjectID, item.WorkspaceID})
+		// Execution roots are temporary generation snapshots. Bind cached identity
+		// to the stable package identity so unrelated graph refreshes retain it.
+		source, _ := json.Marshal([]string{item.ID, item.Source, item.Fingerprint, item.SubjectID, item.WorkspaceID})
 		for localName, declared := range item.MCPServers {
 			if declared.Connector == nil || declared.Connector.IdentityProbe == nil {
 				continue

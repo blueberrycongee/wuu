@@ -616,6 +616,8 @@ export type ExtensionProvenance = {
 };
 
 export type ExtensionInventoryRecord = {
+  /** Active public runtime tools. Themes and service-only plugins have none. */
+  conversation_tools?: string[];
   id: string;
   // What people see: a plugin manifest's interface displayName and
   // shortDescription, then its name and description, then the id.
@@ -1173,6 +1175,9 @@ export type MCPLoginStartResult = { login_id: string };
 export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
 
 export type MCPServerStatus = {
+  authorization_id?: string;
+  identity?: MCPIdentityStatus;
+  tool_names?: string[];
   connector?: MCPConnectorDescriptor;
   /** Effective per-server startup preference, independent of connection state. */
   configuration_enabled?: boolean;
@@ -2009,7 +2014,18 @@ export type ResponseSelection = {
   };
 };
 
+/** A reference selects a capability; it never grants permission to execute it. */
+export type PluginReference = {
+  authorization_id?: string;
+  plugin_id?: string;
+  mcp_server?: string;
+  resource_url?: string;
+  account_id?: string;
+  workspace_id?: string;
+};
+
 export type MessageContentPart =
+  | { type: "plugin_reference"; text: string; plugin: PluginReference }
   | { type: "text"; text: string }
   | { type: "pasted_text"; text: string; title?: string; local_path?: string }
   | { type: "response_selection"; text: string; selection: ResponseSelection }

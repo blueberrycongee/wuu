@@ -163,10 +163,20 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 			}
 		}
 	}
+	toolNames := map[string][]string{}
+	if mgr, err := s.mcpManager(); err == nil {
+		for _, tool := range mgr.NativeTools() {
+			name := mcp.NewMCPTool(tool.Client, tool.Definition).Name()
+			if s.rt.Toolkit == nil || !s.rt.Toolkit.IsToolDisabled(name) {
+				toolNames[tool.Client.Name()] = append(toolNames[tool.Client.Name()], name)
+			}
+		}
+	}
 	result := MCPListResult{Servers: mcpStatusList(statuses)}
 	for index := range result.Servers {
 		server := &result.Servers[index]
 		server.PluginID, server.DisplayName = owners[server.Name], labels[server.Name]
+		server.ToolNames = toolNames[server.Name]
 		definition, exists := definitions[server.Name]
 		server.Editable = exists && server.PluginID == "" && (definition.Command != "" || definition.URL != "")
 		if definition, exists := effective[server.Name]; exists {
@@ -194,6 +204,10 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 			}
 		}
 		if mgr, err := s.mcpManager(); err == nil {
+			if auth, err := mgr.OAuthStatus(ctx, server.Name); err == nil {
+				server.Identity = auth.Identity
+				server.AuthorizationID = auth.AuthorizationID
+			}
 			if cfg, ok := mgr.Config(server.Name); ok && cfg.OAuth != nil {
 				server.OAuthRedirectURI = cfg.OAuth.RedirectURI
 			}

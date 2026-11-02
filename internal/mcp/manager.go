@@ -229,15 +229,11 @@ func (m *Manager) add(ctx context.Context, cfg ServerConfig, mode connectionMode
 	var tokenProvider TokenProvider
 	if cfg.URL != "" {
 		if oauth != nil && cfg.OAuth != nil {
-			serverName, resourceURL := cfg.Name, cfg.URL
-			tokenProvider = func(tokenCtx context.Context, forceRefresh bool) (string, error) {
-				if forceRefresh {
-					return oauth.RefreshAccessToken(tokenCtx, serverName, resourceURL)
-				}
-				return oauth.AccessToken(tokenCtx, serverName, resourceURL)
-			}
+			tokenProvider, err = oauth.boundTokenProvider(ctx, cfg.Name, cfg.URL)
 		}
-		client, err = connectRemoteWithTokenProvider(ctx, cfg, tokenProvider)
+		if err == nil {
+			client, err = connectRemoteWithTokenProvider(ctx, cfg, tokenProvider)
+		}
 	} else {
 		client, err = ConnectStdio(ctx, cfg)
 	}

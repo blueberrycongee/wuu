@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,6 +297,8 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		AllowMutations:              t.env.AllowMutations,
 		boundaryConfigured:          t.env.boundaryConfigured,
 		externalCapabilitiesOnly:    t.env.externalCapabilitiesOnly,
+		conversationMCPServers:      maps.Clone(t.env.conversationMCPServers),
+		conversationPluginTools:     maps.Clone(t.env.conversationPluginTools),
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,

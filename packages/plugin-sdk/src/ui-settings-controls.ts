@@ -336,6 +336,9 @@ export type MCPLoginStartResult = { login_id: string };
 export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
 
 export type MCPServerStatus = {
+  authorization_id?: string;
+  identity?: MCPIdentityStatus;
+  tool_names?: string[];
   connector?: MCPConnectorDescriptor;
   /** Effective per-server startup preference, independent of connection state. */
   configuration_enabled?: boolean;

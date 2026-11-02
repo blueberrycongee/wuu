@@ -78,11 +78,12 @@ type OAuthFinishOptions struct {
 }
 
 type OAuthStatus struct {
-	Identity      *IdentityStatus `json:"identity,omitempty"`
-	ServerID      string          `json:"server_id"`
-	Authenticated bool            `json:"authenticated"`
-	ExpiresAt     time.Time       `json:"expires_at,omitempty"`
-	Scopes        []string        `json:"scopes,omitempty"`
+	AuthorizationID string          `json:"authorization_id,omitempty"`
+	Identity        *IdentityStatus `json:"identity,omitempty"`
+	ServerID        string          `json:"server_id"`
+	Authenticated   bool            `json:"authenticated"`
+	ExpiresAt       time.Time       `json:"expires_at,omitempty"`
+	Scopes          []string        `json:"scopes,omitempty"`
 }
 
 type protectedResourceMetadata struct {
@@ -390,16 +391,48 @@ func (m *OAuthManager) Cancel(ctx context.Context, serverID, state string) error
 
 // AccessToken returns a credential only for the resource used during login.
 func (m *OAuthManager) AccessToken(ctx context.Context, serverID, resourceURL string) (string, error) {
-	return m.accessToken(ctx, serverID, resourceURL, false)
+	return m.accessToken(ctx, serverID, resourceURL, false, "")
 }
 
 // RefreshAccessToken forces a fresh read and refresh when the server rejected
 // a token that still looked valid locally.
 func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID, resourceURL string) (string, error) {
-	return m.accessToken(ctx, serverID, resourceURL, true)
+	return m.accessToken(ctx, serverID, resourceURL, true, "")
 }
 
-func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL string, forceRefresh bool) (string, error) {
+// A connection may refresh its grant, but cannot borrow a later login's account.
+func (m *OAuthManager) boundTokenProvider(ctx context.Context, serverID, resourceURL string) (TokenProvider, error) {
+	var grant string
+	err := m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+		var token storedOAuthToken
+		if len(data) == 0 {
+			return nil, credentialstore.ErrNotFound
+		}
+		if err := json.Unmarshal(data, &token); err != nil {
+			return nil, err
+		}
+		if !sameOAuthResource(token.ResourceURL, resourceURL) {
+			return nil, ErrOAuthResourceMismatch
+		}
+		if token.GrantID == "" {
+			var err error
+			token.GrantID, err = randomURLToken(32)
+			if err != nil {
+				return nil, err
+			}
+		}
+		grant = token.GrantID
+		return json.Marshal(token)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, forceRefresh bool) (string, error) {
+		return m.accessToken(ctx, serverID, resourceURL, forceRefresh, grant)
+	}, nil
+}
+
+func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL string, forceRefresh bool, grant string) (string, error) {
 	refreshLock, release := m.refreshLock(serverID, resourceURL)
 	defer release()
 	// Compatible retained generations share only this gate, not service clients
@@ -417,6 +450,9 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 	token, err := m.loadResourceToken(ctx, serverID, resourceURL)
 	if err != nil {
 		return "", err
+	}
+	if grant != "" && token.GrantID != grant {
+		return "", ErrOAuthSuperseded
 	}
 	if !forceRefresh && (token.ExpiresAt.IsZero() || time.Now().Before(token.ExpiresAt)) {
 		return token.AccessToken, nil
@@ -446,6 +482,9 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 		}
 		if !sameOAuthResource(latest.ResourceURL, resourceURL) {
 			return nil, ErrOAuthResourceMismatch
+		}
+		if grant != "" && latest.GrantID != grant {
+			return nil, ErrOAuthSuperseded
 		}
 		// Start changes only login ordering. Refresh compares the credential version
 		// and the legacy payload, so it cannot overwrite a same-resource new account.

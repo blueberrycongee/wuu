@@ -131,6 +131,8 @@ export type CatalogExtensionV1 = {
   provenance: CatalogProvenanceV1;
   state: CatalogStateV1;
   executable?: boolean;
+  /** Active runtime tool names offered to conversations; presentation-only packages omit this. */
+  conversation_tools?: string[];
   fingerprint?: string;
   graph_generation?: string;
   package_source?: "bundled" | "user" | "project" | "dev";

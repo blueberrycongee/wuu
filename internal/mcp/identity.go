@@ -300,6 +300,10 @@ func (m *OAuthManager) identityStatus(ctx context.Context, cfg ServerConfig) (OA
 		return OAuthStatus{}, err
 	}
 	status := oauthStatus(cfg.Name, token)
+	if token.GrantID != "" {
+		sum := sha256.Sum256([]byte(token.GrantID))
+		status.AuthorizationID = hex.EncodeToString(sum[:])
+	}
 	descriptor := identityDescriptor(cfg)
 	if cfg.IsEnabled() && token.GrantID != "" && descriptor != "" && token.Identity != nil && token.Identity.GrantID == token.GrantID && token.Identity.Resource == canonicalOAuthResource(cfg.URL) && token.Identity.Descriptor == descriptor {
 		status.Identity = &token.Identity.Status
