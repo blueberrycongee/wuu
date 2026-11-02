@@ -1,7 +1,6 @@
 /* Component color tokens for image-preview.css. Light-theme values; the dark
    theme overrides these in base.css theme blocks. */
 :root {
-  --image-preview-overlay-bg: rgba(8, 10, 12, 0.82);
   --image-preview-toolbar-text: #f3f4f5;
   --image-preview-toolbar-border: rgba(255, 255, 255, 0.12);
   --image-preview-toolbar-actions-bg: rgba(20, 24, 28, 0.4);
@@ -11,19 +10,6 @@
   --image-preview-status-text: rgba(243, 244, 245, 0.78);
   --image-preview-status-error: var(--wuu-color-danger, rgba(255, 188, 188, 0.9));
   --image-preview-outline-focus: var(--focus-ring);
-}
-
-.image-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483000;
-  /* Exclude the underlying titlebar's native drag region from hit testing.
-     A high z-index alone does not restore pointer events in Electron. */
-  -webkit-app-region: no-drag;
-  display: flex;
-  flex-direction: column;
-  background: var(--image-preview-overlay-bg);
-  animation: wuu-fade-in var(--motion-base) var(--ease-out);
 }
 
 .image-preview-toolbar {

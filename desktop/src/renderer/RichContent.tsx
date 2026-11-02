@@ -29,6 +29,7 @@ import {
   type WorkspaceFileLinkTarget,
 } from "./LinkTargets";
 import { MessageCopyButton } from "./MessageActions";
+import { RichTable } from "./RichTable";
 import { copyToClipboard, ThreadContextMenu } from "./ThreadContextMenu";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
@@ -84,6 +85,7 @@ type RichTextRenderOptions = {
   renderText?: RichTextRenderer;
 };
 
+const MarkdownSourceContext = createContext("");
 const MermaidStreamingContext = createContext(false);
 // The code block whose source reaches `end` hosts the streaming cursor. The
 // cursor travels through context so the Markdown components keep a stable
@@ -237,22 +239,24 @@ function MarkdownContentView({
   return (
     <MermaidStreamingContext.Provider value={mermaidStreaming}>
       <CodeCursorContext.Provider value={codeCursorTarget}>
-        <ReactMarkdown
-          components={components}
-          // CommonMark links and GFM autolinks are the only text-to-link rules.
-          // File mentions stay literal; file navigation uses explicit link targets.
-          remarkPlugins={markdownRemarkPlugins}
-          rehypePlugins={[
-            ...(allowRawHtml ? [rehypeRaw] : []),
-            ...(sourceMapping ? [rehypePreserveMathSourcePositions] : []),
-            [rehypeKatex, { trust: false, maxSize: 20, maxExpand: 1000 }],
-            [rehypeHeadingIDs, documentContext?.headingIDs],
-            ...(sourceMapping ? [rehypeFileSelectionMapping] : []),
-          ]}
-          urlTransform={richMarkdownUrlTransform}
-        >
-          {source}
-        </ReactMarkdown>
+        <MarkdownSourceContext.Provider value={source}>
+          <ReactMarkdown
+            components={components}
+            // CommonMark links and GFM autolinks are the only text-to-link rules.
+            // File mentions stay literal; file navigation uses explicit link targets.
+            remarkPlugins={markdownRemarkPlugins}
+            rehypePlugins={[
+              ...(allowRawHtml ? [rehypeRaw] : []),
+              ...(sourceMapping ? [rehypePreserveMathSourcePositions] : []),
+              [rehypeKatex, { trust: false, maxSize: 20, maxExpand: 1000 }],
+              [rehypeHeadingIDs, documentContext?.headingIDs],
+              ...(sourceMapping ? [rehypeFileSelectionMapping] : []),
+            ]}
+            urlTransform={richMarkdownUrlTransform}
+          >
+            {source}
+          </ReactMarkdown>
+        </MarkdownSourceContext.Provider>
       </CodeCursorContext.Provider>
     </MermaidStreamingContext.Provider>
   );
@@ -402,12 +406,9 @@ function markdownComponents(
         </li>
       );
     },
-    table({ children }) {
-      return (
-        <div className="rich-table-wrap">
-          <table>{children}</table>
-        </div>
-      );
+    table({ children, node }) {
+      const source = useContext(MarkdownSourceContext);
+      return <RichTable source={source.slice(node?.position?.start.offset, node?.position?.end.offset)}>{children}</RichTable>;
     },
     th({ children }) {
       return <th>{renderMarkdownText(children, richTextOptions, "th")}</th>;

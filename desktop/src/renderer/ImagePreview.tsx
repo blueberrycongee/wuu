@@ -1,4 +1,5 @@
 import { Tooltip } from "./Tooltip";
+import { ContentPreview } from "./ContentPreview";
 import { useArtifacts } from "./ArtifactsContext";
 import {
   createContext,
@@ -14,7 +15,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, Plus, RotateCw, X } from "./WuuIcons";
+import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, Plus, RotateCw } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { imagePreviewSelection } from "./ImagePreviewGallery";
 
@@ -90,7 +91,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   const generation = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [source, setSource] = useState(item.src);
-  const overlayRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -195,17 +195,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   }, []);
 
   useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    overlayRef.current!.focus();
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
-    };
-  }, []);
-
-  useEffect(() => {
     const stage = stageRef.current!;
     function wheel(event: WheelEvent): void {
       event.preventDefault();
@@ -222,48 +211,33 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
     return () => stage.removeEventListener("wheel", wheel);
   }, [ready, zoomAt, pan]);
 
-  useEffect(() => {
-    function keydown(event: KeyboardEvent): void {
-      // Keep preview shortcuts (especially Escape) away from the conversation.
-      event.stopPropagation();
-      if (event.key === "Tab") {
-        const buttons = Array.from(overlayRef.current!.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
-        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-        const next = event.shiftKey ? (index <= 0 ? buttons.length - 1 : index - 1) : (index + 1) % buttons.length;
-        event.preventDefault();
-        buttons[next]?.focus();
-        return;
-      }
-      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        if (ready) void saveImage();
-        return;
-      }
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (!event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-        event.preventDefault();
-        onNavigate(event.key === "ArrowLeft" ? -1 : 1);
-        return;
-      }
-      if (!ready) return;
-      switch (event.key) {
-        case "+": case "=": zoomAt(1.25); break;
-        case "-": zoomAt(1 / 1.25); break;
-        case "0": setView(fittedView); break;
-        case "1": setView({ scale: 1, x: 0, y: 0 }); break;
-        case "r": case "R": rotate(); break;
-        case "ArrowLeft": pan(60, 0); break;
-        case "ArrowRight": pan(-60, 0); break;
-        case "ArrowUp": pan(0, 60); break;
-        case "ArrowDown": pan(0, -60); break;
-        default: return;
-      }
+  function keydown(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
+      if (ready) void saveImage();
+      return;
     }
-    document.addEventListener("keydown", keydown, true);
-    return () => document.removeEventListener("keydown", keydown, true);
-  }, [onClose, onNavigate, ready, saveImage, zoomAt, pan, rotate]);
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      onNavigate(event.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
+    if (!ready) return;
+    switch (event.key) {
+      case "+": case "=": zoomAt(1.25); break;
+      case "-": zoomAt(1 / 1.25); break;
+      case "0": setView(fittedView); break;
+      case "1": setView({ scale: 1, x: 0, y: 0 }); break;
+      case "r": case "R": rotate(); break;
+      case "ArrowLeft": pan(60, 0); break;
+      case "ArrowRight": pan(-60, 0); break;
+      case "ArrowUp": pan(0, 60); break;
+      case "ArrowDown": pan(0, -60); break;
+      default: return;
+    }
+    event.preventDefault();
+  }
 
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     suppressClick.current = false;
@@ -311,8 +285,8 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   const transform = `translate(${visibleView.x}px, ${visibleView.y}px) scale(${scale}) rotate(${rotation}deg)`;
   const canPan = width * scale > stageSize.width - 32 || height * scale > stageSize.height - 32;
   return (
-    <div ref={overlayRef} className="image-preview-overlay" role="dialog" aria-modal="true"
-      aria-label={t("imagePreview.label")} tabIndex={-1} onClick={backgroundClick}>
+    <ContentPreview className="image-preview-overlay" label={t("imagePreview.label")}
+      closeLabel={t("imagePreview.close")} onClose={onClose} onKeyDown={keydown} onClick={backgroundClick}>
       <div className="image-preview-toolbar">
         {count > 1 && <div className="image-preview-toolbar-actions image-preview-navigation">
           <Tooltip asChild content={t("imagePreview.previous")}><button type="button" className="image-preview-toolbar-button" disabled={index === 0}
@@ -356,10 +330,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
             disabled={!ready} aria-label={t("imagePreview.rotate")}>
             <RotateCw className="icon" aria-hidden="true" />
           </button></Tooltip>
-          <Tooltip asChild content={t("imagePreview.closeShortcut")}><button type="button" className="image-preview-toolbar-button" onClick={onClose}
-            aria-label={t("imagePreview.close")}>
-            <X className="icon" aria-hidden="true" />
-          </button></Tooltip>
         </div>
       </div>
       {saveError && <p className="image-preview-save-error" role="alert">{saveError}</p>}
@@ -388,6 +358,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
             }} onError={() => setLoadStatus("error")} />
         ) : null}
       </div>
-    </div>
+    </ContentPreview>
   );
 }

@@ -90,6 +90,19 @@ applyTheme(theme);
 // `?stream=<name>` replaces the streaming sample to inspect where the cursor
 // sits while a fenced code block is still the last visible block.
 const streamSamples: Record<string, string> = {
+  table: `下面的项目对比用于检查表格的悬停操作、横向滚动和展开阅读。
+
+| 方向 | 代表项目 | 现在主要做什么 |
+| --- | --- | --- |
+${Array.from({ length: 12 }, (_, index) => `| ${["个人助手网关", "通用开发平台", "代码编辑工具"][index % 3]} | [Example ${index + 1}](https://example.com/project-${index + 1}) / \`workspace-agent-${index + 1}\` | ${"通过可组合的工具、跨会话记忆和共享工作区支持长时间运行的任务。".repeat(index % 3 + 1)} |`).join("\n")}
+
+| 图片 | 说明 |
+| --- | --- |
+| ![Preview sample](${new URL(mediaURL, location.href).href}) | 从展开的表格打开图片，再关闭图片返回表格。 |
+
+| 空表格 |  |
+| --- | --- |
+`,
   math: String.raw`行内公式 $E = mc^2$ 与 \(a^2 + b^2 = c^2\) 跟随正文。
 
 $$
