@@ -320,7 +320,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectRuntimeModel={async (provider, model, variant) => (await controls.chooseRuntime({ kind: "provider-model", provider, model, variant })).accepted}
       onSelectRuntimeEffort={async variant => (await controls.chooseRuntime({ kind: "effort", variant })).accepted}
       onSelectPermissionMode={(mode, approveForMe) => { run(controls.choosePermission(mode, approveForMe)); setMenu(null); }}
-      onOpenSettings={() => run(application.invoke("settings.open", { pageId: "providers" }))}
+      onOpenSettings={() => run(application.invoke("settings.open", {}))}
       onOpenSkillsCatalog={() => run(application.invoke("catalog.select-section", { section: "skills" }).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "blank" })); }} onOpenWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "folder" })); }}
