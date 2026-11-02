@@ -32,12 +32,24 @@ function Overlay(): JSX.Element | null {
     for (const [name, value] of Object.entries(request.appearance.variables)) if (/^--[a-zA-Z\d_-]+$/.test(name) && !/url\s*\(/i.test(value)) root.style.setProperty(name, value);
     root.dataset.chromeSurface = request.model.kind;
     const takeFocus = request.focus && (previous.current?.token !== request.token || !previous.current.focus);
-    previous.current = { token: request.token, focus: request.focus };
-    // The capsule chooses between its editor and context-menu item itself.
-    if (takeFocus && request.model.kind !== "capsule") {
-      document.querySelector<HTMLElement>("button:not(:disabled), input, textarea")?.focus();
-    }
-    const frame = requestAnimationFrame(() => api.painted(request.token, request.generation));
+    // Native setBounds and renderer viewport delivery are asynchronous. A fresh
+    // renderer can run rAF at its initial 0/1px size; that is not a usable paint.
+    // The host supplies the clipped CSS viewport, including native zoom rounding.
+    let frame: number;
+    const paint = () => {
+      if (Math.abs(window.innerWidth - request.bounds.width) > 1
+        || Math.abs(window.innerHeight - request.bounds.height) > 1) {
+        frame = requestAnimationFrame(paint);
+        return;
+      }
+      // The capsule chooses between its editor and context-menu item itself.
+      if (takeFocus && request.model.kind !== "capsule") {
+        document.querySelector<HTMLElement>("button:not(:disabled), input, textarea")?.focus({ preventScroll: true });
+      }
+      previous.current = { token: request.token, focus: request.focus };
+      api.painted(request.token, request.generation);
+    };
+    frame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(frame);
   }, [request]);
   if (!request) return null;

@@ -16,7 +16,9 @@ vi.mock("electron", async () => {
     isDestroyed = () => this.destroyed;
     close = vi.fn(() => { this.destroyed = true; this.emit("destroyed"); });
     isFocused = () => this.focused;
-    getZoomFactor = () => 1;
+    zoom = 1;
+    getZoomFactor = () => this.zoom;
+    setZoomFactor = (zoom: number) => { this.zoom = zoom; };
     focus = vi.fn(() => { this.focused = true; this.emit("focus"); });
     loadURL = async (url: string) => { this.mainFrame.url = url; };
   }
@@ -41,7 +43,7 @@ vi.mock("electron", async () => {
 });
 
 type AccountView = {
-  webContents: EventEmitter & { focused: boolean; mainFrame: { url: string }; focus: ReturnType<typeof vi.fn>; isDestroyed(): boolean };
+  webContents: EventEmitter & { focused: boolean; mainFrame: { url: string }; send: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn>; isDestroyed(): boolean };
   getVisible(): boolean;
 };
 
@@ -50,7 +52,7 @@ function accountMenu() {
     isVisible: () => true, isMinimized: () => false, isDestroyed: () => false,
     isFocused: () => true, getContentSize: () => [1280, 850],
     webContents: Object.assign(new EventEmitter(), {
-      isDestroyed: () => false, isFocused: () => false, getZoomFactor: () => 1, focus: vi.fn(),
+      isDestroyed: () => false, isFocused: () => false, getZoomFactor: (): number => 1, focus: vi.fn(),
     }),
     contentView: {
       children: [] as AccountView[],
@@ -191,5 +193,47 @@ describe("native account menu focus lifecycle", () => {
     paint();
     expect(view.getVisible()).toBe(false);
     expect(emit).toHaveBeenCalledWith(owner, { token: request.token, generation: request.generation, command: { type: "dismiss", reason: "owner" } });
+  });
+});
+
+
+describe("native overlay viewport handoff", () => {
+  it("reports the clipped viewport in CSS pixels at native zoom", () => {
+    const { host, owner, window, event, request } = accountMenu();
+    owner.getContentSize = () => [300, 200]; owner.webContents.getZoomFactor = () => 1.5;
+    host.show(window, { ...request, bounds: { x: 10, y: 20, width: 320, height: 91 } });
+    expect(host.ready(event)?.bounds).toEqual({ x: 10, y: 20, width: 190, height: 137 / 1.5 });
+  });
+
+  it("requests a new paint when native zoom changes after ready", () => {
+    const { host, owner, view, event, paint } = accountMenu();
+    host.ready(event);
+    owner.webContents.getZoomFactor = () => 1.5;
+    paint();
+    expect(view.getVisible()).toBe(false);
+    expect(view.webContents.send).toHaveBeenCalledWith("wuu:chrome-overlay-state", expect.objectContaining({ bounds: expect.objectContaining({ width: 260 }) }));
+    paint();
+    expect(view.getVisible()).toBe(true);
+  });
+
+  it("refreshes a capsule viewport after resize during opening and while visible", () => {
+    const { host, owner, window, request } = accountMenu();
+    const capsule: ChromeOverlayRequest = { ...request, token: "capsule", bounds: { x: 10, y: 10, width: 300, height: 80 }, model: {
+      kind: "capsule", draft: "", expanded: false, menuOpen: false, busy: false,
+      sourceTitle: "Page", label: "Ask", placeholder: "Ask", sendLabel: "Send", openLabel: "Open", collapseLabel: "Close",
+    } };
+    host.show(window, capsule);
+    const view = owner.contentView.children[1];
+    const event = { sender: view.webContents, senderFrame: view.webContents.mainFrame } as unknown as IpcMainEvent & IpcMainInvokeEvent;
+    host.ready(event);
+    owner.getContentSize = () => [200, 200]; owner.emit("resize");
+    host.painted(event, capsule.token, 1);
+    expect(view.getVisible()).toBe(false);
+    expect(view.webContents.send).toHaveBeenLastCalledWith("wuu:chrome-overlay-state", expect.objectContaining({ bounds: expect.objectContaining({ width: 190 }) }));
+    host.painted(event, capsule.token, 1);
+    expect(view.getVisible()).toBe(true);
+    owner.getContentSize = () => [180, 200]; owner.emit("resize");
+    expect(view.getVisible()).toBe(true);
+    expect(view.webContents.send).toHaveBeenLastCalledWith("wuu:chrome-overlay-state", expect.objectContaining({ bounds: expect.objectContaining({ width: 170 }) }));
   });
 });

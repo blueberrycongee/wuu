@@ -114,8 +114,7 @@ export class ChromeOverlayHost {
       // the model. Bound the opening, not every streaming/geometry revision.
       surface.openingTimeout ??= setTimeout(() => this.fail(surface), OPENING_TIMEOUT_MS);
     }
-    this.layout(surface);
-    if (surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", request);
+    if (!this.layout(surface) && surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", this.rendererRequest(surface));
   }
 
   hide(owner: BrowserWindow, token: string, generation: number): void {
@@ -171,7 +170,7 @@ export class ChromeOverlayHost {
     const surface = this.trusted(event);
     if (!surface) throw new Error("Untrusted browser chrome sender.");
     surface.loaded = true;
-    return surface.request ?? null;
+    return this.rendererRequest(surface);
   }
 
   painted(event: IpcMainEvent, token: string, generation: number): void {
@@ -179,8 +178,10 @@ export class ChromeOverlayHost {
     if (!surface) return;
     const request = surface.request;
     if (!request || request.token !== token || request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
+    // A native resize/zoom can overtake the renderer's acknowledgement. Publish
+    // the new viewport and keep the existing opening budget until it paints.
+    if (this.layout(surface)) return;
     this.cancelOpening(surface);
-    this.layout(surface);
     const opening = !surface.view.getVisible();
     if (opening) surface.view.setVisible(true);
     surface.view.webContents.setBackgroundThrottling(true);
@@ -292,15 +293,29 @@ export class ChromeOverlayHost {
     }
   }
 
-  private layout(surface: Surface): void {
+  private rendererRequest(surface: Surface): ChromeOverlayRequest | null {
+    if (!surface.request) return null;
+    const bounds = surface.view.getBounds(), zoom = surface.view.webContents.getZoomFactor();
+    // The renderer must acknowledge the actual viewport, not the unclipped
+    // requested rectangle (which may extend past a small owner window).
+    return { ...surface.request, bounds: { ...surface.request.bounds, width: bounds.width / zoom, height: bounds.height / zoom } };
+  }
+
+  private layout(surface: Surface): boolean {
     const request = surface.request;
-    if (!request) return;
+    if (!request) return false;
     const zoom = surface.owner.webContents.getZoomFactor(), [width, height] = surface.owner.getContentSize();
     const x = Math.max(0, Math.min(width, Math.round(request.bounds.x * zoom))), y = Math.max(0, Math.min(height, Math.round(request.bounds.y * zoom)));
-    if (surface.view.webContents.getZoomFactor() !== zoom) surface.view.webContents.setZoomFactor(zoom);
+    const zoomChanged = surface.view.webContents.getZoomFactor() !== zoom;
+    if (zoomChanged) surface.view.webContents.setZoomFactor(zoom);
     const bounds = { x, y, width: Math.max(0, Math.min(width - x, Math.ceil(request.bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.ceil(request.bounds.height * zoom))) };
     const previous = surface.view.getBounds();
-    if (Object.keys(bounds).some(key => previous[key as keyof typeof bounds] !== bounds[key as keyof typeof bounds])) surface.view.setBounds(bounds);
+    const boundsChanged = Object.keys(bounds).some(key => previous[key as keyof typeof bounds] !== bounds[key as keyof typeof bounds]);
+    if (boundsChanged) surface.view.setBounds(bounds);
+    // Every native geometry writer refreshes the renderer target, including
+    // persistent-capsule resize/restore paths that do not originate in show().
+    if ((boundsChanged || zoomChanged) && surface.loaded) surface.view.webContents.send("wuu:chrome-overlay-state", this.rendererRequest(surface));
+    return boundsChanged || zoomChanged;
   }
 
   private observe(owner: BrowserWindow): void {
