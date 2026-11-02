@@ -33,7 +33,6 @@ conversation-shell.css .session-tab.running .session-tab-status border-top-color
 environment.css .conversation-search-error background --env-search-error-bg
 environment.css .environment-dialog-error background --danger-soft
 environment.css .plugin-inspector-section-error background --danger-soft
-image-preview.css .image-preview-overlay background --image-preview-overlay-bg
 image-preview.css .image-preview-status color --image-preview-status-text
 image-preview.css .image-preview-toolbar background --image-preview-toolbar-actions-bg
 image-preview.css .image-preview-toolbar border --image-preview-toolbar-border

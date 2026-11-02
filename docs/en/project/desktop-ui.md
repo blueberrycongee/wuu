@@ -112,6 +112,16 @@ shift the current position. Each image starts fitted and unrotated; Shift with
 the left/right arrow keys pans a zoomed image. Escape closes the preview and
 returns focus to the opener.
 
+## Table previews
+
+Markdown tables reveal copy and expand controls on hover or keyboard focus;
+touch surfaces keep them visible. Copy preserves the table's Markdown source.
+Wide tables scroll horizontally with an edge fade indicating hidden columns.
+Expand opens a larger, independently scrollable table in the same preview shell
+as images, using the selected theme and text size. The upper-right close button,
+Escape, and the backdrop dismiss it and restore focus to the opener. Opening an
+embedded image keeps the table underneath; close the image to return to it.
+
 ## Video previews
 
 Video output cards open a player in the right panel. Workspace video files use
@@ -399,7 +409,7 @@ A controller that manages its own scroll node registers it with `markScrollbarRe
 </div>
 ```
 
-Use `compact` for dense inspection strips, an empty value for navigation lists, and `inline` for a horizontal strip such as the composer attachment tray, which fades its start and end edges instead. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and wide content such as tables and code are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
+Use `compact` for dense inspection strips, an empty value for navigation lists, and `inline` for a horizontal strip such as the composer attachment tray, which fades its start and end edges instead. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and code blocks are not intended targets. Markdown tables use `inline` on their horizontal scroll owner, with copy and expand controls outside the mask. Fixed headers, composers, and menus should remain outside the masked owner.
 
 The utility uses self-scroll timelines and an alpha mask, with no overlay or React scroll updates. An edge fades only when more content lies beyond it; no overflow means no fade. Nested scroll owners remain independent, and each edge is capped at half the viewport. Unsupported engines, reduced motion, forced colors, and print fall back to ordinary clipping. Check for existing `animation` or `mask-image` declarations before opting in, because the utility owns both.
 
