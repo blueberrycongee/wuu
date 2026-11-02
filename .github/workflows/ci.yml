@@ -1952,6 +1952,15 @@ jobs:
             result=$?
             echo "personal-settings: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
             if [ "$result" -ne 0 ]; then status=1; fi
+            (
+              set -e
+              set -o pipefail
+              WUU_MESSAGE_FLOW_OUTPUT=desktop/out/personal-desktop-acceptance/message-flow \
+                desktop/node_modules/.bin/electron desktop/scripts/personal-message-flow-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/message-flow.log
+            )
+            result=$?
+            echo "personal-message-flow: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
+            if [ "$result" -ne 0 ]; then status=1; fi
             exit "$status"
           ) &
           native_pid=$!

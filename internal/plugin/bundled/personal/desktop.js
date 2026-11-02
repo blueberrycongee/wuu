@@ -1224,7 +1224,8 @@ ${personalReviewStyles}
         return;
       }
       const destination = body.getBoundingClientRect(), viewRect = flight.view.getBoundingClientRect();
-      const viewport = flight.view.querySelector(".plugin-conversation-scroll").getBoundingClientRect();
+      const scroll = flight.view.querySelector(".plugin-conversation-scroll");
+      const viewport = scroll.getBoundingClientRect();
       if (!destination.width || !body.animate || destination.bottom <= viewport.top || destination.top >= viewport.bottom) {
         body.removeAttribute("data-personal-send-source");
         flights.current.delete(flight.requestID);
@@ -1296,7 +1297,7 @@ ${personalReviewStyles}
         for (const track of tracks) track.cancel();
         overlay.remove();
         flight.source?.removeAttribute("data-personal-send-source");
-        for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.removeEventListener(event, stop, true);
+        for (const event of ["wheel", "pointerdown", "keydown"]) scroll.removeEventListener(event, stop, true);
         flights.current.delete(flight.requestID);
       };
       flight.stop = stop;
@@ -1305,7 +1306,10 @@ ${personalReviewStyles}
           stop();
           return;
         }
-        reconcile(flight);
+        if (!reconcile(flight)) {
+          stop();
+          return;
+        }
         const delta = place();
         if (delta && Math.hypot(delta.x, delta.y) > 0.5) {
           const current = getComputedStyle(overlay).translate.split(" ").map(parseFloat);
@@ -1318,7 +1322,7 @@ ${personalReviewStyles}
         }
         frame = requestAnimationFrame(follow);
       };
-      for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.addEventListener(event, stop, true);
+      for (const event of ["wheel", "pointerdown", "keydown"]) scroll.addEventListener(event, stop, true);
       travel.addEventListener("finish", stop, { once: true });
       frame = requestAnimationFrame(follow);
     };
@@ -1350,12 +1354,6 @@ ${personalReviewStyles}
         const view = [...rootRef.current?.querySelectorAll(".plugin-conversation") || []].find((node) => node.dataset.conversationId === conversationID);
         const composer = view?.querySelector(".composer-frame");
         if (!composer || view.closest('[hidden],[inert],[aria-hidden="true"]')) return;
-        for (const flight of flights.current.values()) if (flight.view === view) {
-          cancelAnimationFrame(flight.frame);
-          flight.stop?.();
-          flight.source?.removeAttribute("data-personal-send-source");
-          flights.current.delete(flight.requestID);
-        }
         flights.current.set(requestID, { requestID, view, origin: composer.getBoundingClientRect() });
       }
     };
@@ -1617,7 +1615,7 @@ ${personalReviewStyles}
     };
     api.registerStyle({ id: "personal", css: `
     .mosaic { --mosaic-message-accent:#3566f0;--mosaic-message-tail-space:max(var(--conversation-turn-boundary-gap), calc(var(--font-sm) * 1.3 + 4px));position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
-    .mosaic-main { flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
+    .mosaic-main { container:personal-conversation / inline-size;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
     .mosaic-panel-layer { position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden; }
     .mosaic-panel-layer[data-panel-phase="open"] { overflow:visible; }
     .mosaic-sidebar { position:absolute;right:8px;top:60px;width:min(300px, calc(100% - 16px));max-height:calc(100% - 68px);min-height:0;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:16px;background:var(--paper);box-shadow:0 0 0 .5px #00000026,0 3px 7.5px #0000000a,0 0 20px #0000000d;pointer-events:auto;opacity:0;transform:translateX(100%);transition:transform var(--mosaic-profile-motion-duration,300ms) cubic-bezier(.16,1,.3,1),opacity var(--mosaic-profile-motion-duration,300ms) cubic-bezier(.16,1,.3,1); }
@@ -1683,7 +1681,11 @@ ${personalReviewStyles}
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { animation-name:none,scroll-fade-bottom; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
-    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
+    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:640px;--session-outer-width:calc(var(--session-composer-width) + var(--session-outer-padding-inline) * 2); }
+    @container personal-conversation (min-width:1024px) { .mosaic-main > .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:768px; } }
+    .mosaic .plugin-conversation-message[data-bubble] { --bubble-time-gutter:max(73px, calc(var(--conversation-message-font-size) * 4.5625)); }
+    .mosaic .plugin-conversation-message[data-bubble][data-role="user"] { --bubble-time-gutter:max(80px, calc(var(--conversation-message-font-size) * 5)); }
+    .mosaic .plugin-conversation-message[data-bubble] .agent-text, .mosaic .plugin-conversation-message[data-bubble] .user-message { text-wrap:pretty;overflow-wrap:anywhere; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
     .mosaic-profile-trigger[aria-expanded="true"] { visibility:hidden; }
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
