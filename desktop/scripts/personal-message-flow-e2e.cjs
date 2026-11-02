@@ -26,10 +26,11 @@ async function capture(name) {
 }
 async function load(query = {}) {
   await win.loadFile(path.resolve(__dirname, '../out/personal-fixture/index.html'), { query: { sendScenario: 'processing', messageFlow: '1', ...query } });
+  await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
   await until(() => document.querySelector('[data-wuu-plugin="personal"]'));
   await evaluate(() => document.querySelector('[data-wuu-plugin="personal"]').click());
   await until(() => document.querySelector('.mosaic-main textarea'));
-  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
 }
 async function submit(text) {
   await win.webContents.executeJavaScript(`(() => {
@@ -48,6 +49,7 @@ app.whenReady().then(async () => {
   // Parallel hosted acceptance windows can occlude this synthetic renderer.
   // Offscreen paint keeps screenshots and the animation clock independent of them.
   win = new BrowserWindow({ width: 1128, height: 900, show: false, webPreferences: { contextIsolation: true, backgroundThrottling: false, offscreen: true } });
+  win.webContents.debugger.attach('1.3');
   for (const [name, width, theme, font] of [['wide-light',1128,'light','15'],['narrow-dark-large',620,'dark','19']]) {
     win.setSize(width, 900);
     await load({theme,font});
@@ -87,7 +89,13 @@ app.whenReady().then(async () => {
       const overlay = document.querySelector('.mosaic-send-overlay');
       const source = document.querySelector('[data-personal-send-source]');
       const rect = node => node?.getBoundingClientRect().toJSON();
-      window.__flowFrames.push({ time: performance.now() - window.__flowFrameStart, overlay: rect(overlay), source: rect(source), hidden: !!source });
+      window.__flowFrames.push({ time: performance.now() - window.__flowFrameStart, overlay: rect(overlay), source: rect(source), hidden: !!source,
+        documentHidden: document.hidden, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches });
+      if (overlay && window.__flowTypingResult === undefined) {
+        document.querySelector('.mosaic-main textarea').dispatchEvent(new KeyboardEvent('keydown', {key:'a', bubbles:true}));
+        window.__flowTypingResult = overlay.isConnected;
+        window.__receiptScenario.release();
+      }
       if (performance.now() - window.__flowFrameStart < 1100) requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
@@ -96,14 +104,11 @@ app.whenReady().then(async () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await evaluate(() => document.querySelector('.mosaic-main .composer-send-button').click());
-  await until(() => document.querySelector('.mosaic-send-overlay'));
-  const typing = await evaluate(() => {
-    const input = document.querySelector('.mosaic-main textarea');
-    input.dispatchEvent(new KeyboardEvent('keydown', {key:'a', bubbles:true}));
-    return !!document.querySelector('.mosaic-send-overlay');
-  });
+  // Observe and interact in the renderer's frame, not after a host IPC roundtrip
+  // that may outlive the entire send animation on a busy CI machine.
+  await until(() => window.__flowTypingResult !== undefined);
+  const typing = await evaluate(() => window.__flowTypingResult);
   assert(typing, 'Typing the next draft must not cancel a message in flight');
-  await evaluate(() => window.__receiptScenario.release());
   await until(() => !document.querySelector('.mosaic-send-overlay, [data-personal-send-source]'));
   await until(() => window.__flowFrames.at(-1)?.time >= 1100);
   recordingActive = false; await recordingTask;
@@ -115,15 +120,23 @@ app.whenReady().then(async () => {
   assert(Math.abs(landing.overlay.top - landing.source.top) < 4, 'Send must land on its real row');
   await capture('send-landed');
   await load();
-  await submit('First consecutive message');
-  await until(() => document.querySelector('.mosaic-send-overlay'));
   await evaluate(() => {
-    window.__firstFlight = document.querySelector('.mosaic-send-overlay');
-    for (const animation of window.__firstFlight.getAnimations({subtree:true})) animation.pause();
+    window.__pausedFlights = [];
+    const observer = new MutationObserver(() => {
+      for (const flight of document.querySelectorAll('.mosaic-send-overlay')) {
+        if (window.__pausedFlights.includes(flight)) continue;
+        window.__pausedFlights.push(flight);
+        for (const animation of flight.getAnimations({subtree:true})) animation.pause();
+      }
+      if (window.__pausedFlights.length === 2) observer.disconnect();
+    });
+    observer.observe(document.querySelector('.mosaic-main'), {childList:true,subtree:true});
   });
+  await submit('First consecutive message');
+  await until(() => window.__pausedFlights.length === 1);
   await submit('Second consecutive message');
-  await until(() => document.querySelectorAll('.mosaic-send-overlay').length === 2);
-  assert.equal(await evaluate(() => window.__firstFlight.isConnected), true, 'A consecutive send must preserve the first flight');
+  await until(() => window.__pausedFlights.length === 2);
+  assert.equal(await evaluate(() => window.__pausedFlights.every(flight => flight.isConnected)), true, 'A consecutive send must preserve the first flight');
   await evaluate(() => { for(const node of document.querySelectorAll('.mosaic-send-overlay')) for(const animation of node.getAnimations({subtree:true})) animation.play(); });
   await until(() => !document.querySelector('.mosaic-send-overlay, [data-personal-send-source]'));
   report.cases.push({name:'consecutive-sends',passed:true});
@@ -183,6 +196,7 @@ app.whenReady().then(async () => {
 }).catch(error => { report.status = 'failed'; report.error = error.stack; console.error(error); }).finally(async () => {
   recordingActive = false;
   await recordingTask;
+  if (report.status === 'failed' && win && !win.isDestroyed()) report.lastFrames = await evaluate(() => window.__flowFrames);
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({status:report.status, cases:report.cases.map(item=>item.name), error:report.error}));
   app.exit(report.status === 'passed' ? 0 : 1);
