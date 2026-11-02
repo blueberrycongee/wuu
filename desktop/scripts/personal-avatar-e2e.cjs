@@ -1,5 +1,5 @@
 // Production Electron renderer → preload → Go core → Personal runtime → disk.
-// Run after build:core and build. Three independent app processes share only the
+// Run after build:core and build. Two independent app processes share only the
 // disposable fixture profile, proving persistence across a complete restart.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,10 +11,10 @@ const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_AVATAR_OUTPUT || path.join(desktop, '../artifacts/personal-avatar'));
 fs.mkdirSync(output, { recursive: true });
 if (!process.versions.electron) {
-  for (const name of ['edit-error.txt', 'edit-dom.txt', 'edit-failure.png', 'restart-error.txt', 'restart-dom.txt', 'restart-failure.png', 'edit-report.json', 'restart-report.json', 'reset-restart-error.txt', 'reset-restart-dom.txt', 'reset-restart-failure.png', 'reset-restart-report.json']) fs.rmSync(path.join(output, name), { force: true });
+  for (const name of ['edit-error.txt', 'edit-dom.txt', 'edit-failure.png', 'restart-error.txt', 'restart-dom.txt', 'restart-failure.png', 'edit-report.json', 'restart-report.json']) fs.rmSync(path.join(output, name), { force: true });
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-avatar-'));
   const electron = require('electron');
-  for (const phase of ['edit', 'restart', 'reset-restart']) {
+  for (const phase of ['edit', 'restart']) {
     const result = spawnSync(electron, [__filename], { env: { ...process.env, WUU_AVATAR_FIXTURE: fixture, WUU_AVATAR_PHASE: phase }, encoding: 'utf8', timeout: 180000 });
     fs.writeFileSync(path.join(output, `${phase}.log`), `${result.stdout || ''}\n${result.stderr || ''}`);
     if (result.status !== 0) { console.error(result.error || result.stderr, `Evidence: ${output}`); process.exit(1); }
@@ -24,7 +24,7 @@ if (!process.versions.electron) {
 }
 const { app, BrowserWindow, nativeTheme, nativeImage } = require('electron');
 const fixture = process.env.WUU_AVATAR_FIXTURE, phase = process.env.WUU_AVATAR_PHASE;
-assert.ok(fixture && phase, 'Use node to run the isolated three-process harness');
+assert.ok(fixture && phase, 'Use node to run the isolated two-process harness');
 const home = path.join(fixture, 'wuu-home');
 const userHome = path.join(fixture, 'user-home');
 for (const dir of [home, userHome]) fs.mkdirSync(dir, { recursive: true });
@@ -118,13 +118,7 @@ async function run() {
   });
   await click('button[data-wuu-plugin="plugin:bundled:personal"]');
   await until(() => document.querySelector('.mosaic-profile-trigger'));
-  if (phase === 'reset-restart') {
-    const before = JSON.parse(fs.readFileSync(path.join(output, 'identity.json'), 'utf8'));
-    await assertAvatar('mascot-v1:round:headset:222');
-    assert.deepEqual(await avatar(), before.defaultAvatar);
-    checks.push('Saved default survives another full app restart; sidebar and header match the original shape/accessory/color');
-    await capture('persisted');
-  } else if (phase === 'restart') {
+  if (phase === 'restart') {
     const before = JSON.parse(fs.readFileSync(path.join(output, 'identity.json'), 'utf8'));
     await assertSynchronized();
     assert.deepEqual(await avatar(), before.avatar);
@@ -132,16 +126,6 @@ async function run() {
     await until(() => document.querySelector('.mosaic-identity-label strong')?.textContent === 'Avatar E2E');
     checks.push('Appearance and renamed identity survived complete Electron/core/runtime restart');
     await capture('persisted');
-    await openEditor();
-    await click('[data-action="reset-avatar"]');
-    await click('[data-action="save-avatar"]');
-    await until(() => !document.querySelector('.mosaic-avatar-dialog'));
-    await assertAvatar('mascot-v1:round:headset:222');
-    assert.deepEqual(await avatar(), before.defaultAvatar);
-    await click('[data-action="toggle-personal-panel"]');
-    assert.deepEqual(await avatar('.mosaic-profile-head'), before.defaultAvatar);
-    checks.push('Reset requires Save and restores original shape/accessory/color across sidebar, header and profile');
-    await capture('reset');
   } else {
     await assertAvatar('mascot-v1:round:headset:222');
     const defaultAvatar = await avatar();
@@ -174,7 +158,7 @@ async function run() {
     await until(() => document.querySelector('.mosaic-identity-label strong')?.textContent === 'Combined identity');
     await openEditor();
     await setName('Discard on Escape');
-    await click('[data-action="reset-avatar"]');
+    await click('[data-avatar-shape="round"]');
     await key('Escape');
     await until(() => !document.querySelector('.mosaic-avatar-dialog'));
     await assertAvatar('mascot-v1:diamond:leaf:150');
@@ -264,6 +248,14 @@ async function run() {
     const geometry = await evaluate(() => { const dialog = document.querySelector('.mosaic-avatar-dialog'); const rect = dialog.getBoundingClientRect(); return { width: dialog.clientWidth, scrollWidth: dialog.scrollWidth, left: rect.left, right: rect.right, viewport: innerWidth }; });
     assert.ok(geometry.scrollWidth <= geometry.width + 1 && geometry.left >= 0 && geometry.right <= geometry.viewport);
     checks.push('Five shapes/five accessory choices, color presets, keyboard focus containment, dark/narrow/large/reduced motion');
+    win.setMinimumSize(360, 600);
+    win.setContentSize(420, 760);
+    await setName('Long twin name '.repeat(4).trim());
+    await capture('compact-long-name');
+    await evaluate(() => { const dialog = document.querySelector('.mosaic-avatar-dialog'); dialog.scrollTop = dialog.scrollHeight; });
+    await capture('compact-scrolled');
+    await setName('Concurrent rename');
+    win.setContentSize(680, 900);
     await click('[data-action="save-avatar"]');
     await until(() => !document.querySelector('.mosaic-avatar-dialog'));
     await assertAvatar('mascot-v1:diamond:leaf:288');

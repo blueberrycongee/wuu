@@ -33,26 +33,24 @@ var personalDesktop = (() => {
 
   // plugins/personal/ui/identity-dialog.js
   var avatarDialogStyles = `
-.mosaic-avatar-dialog { position:relative;box-sizing:border-box;width:min(800px,100%);max-height:100%;overflow:auto;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:32px;padding:32px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
-.mosaic-avatar-controls { display:flex;flex-direction:column;gap:24px;min-width:0; }
-.mosaic-avatar-summary { display:flex;flex-direction:column;gap:24px;min-width:0; }
-.mosaic-name-input { box-sizing:border-box;width:100%;min-width:0;border:1px solid transparent;border-radius:var(--radius-md,12px);background:var(--surface-1);color:var(--ink);padding:12px;font:inherit;font-size:calc(var(--font-ui) * 2); }
+.mosaic-avatar-dialog { position:relative;box-sizing:border-box;width:min(800px,100%);max-height:100%;overflow:auto;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);column-gap:40px;row-gap:28px;padding:32px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
+.mosaic-avatar-controls { display:flex;flex-direction:column;justify-content:space-between;gap:24px;min-width:0; }
+.mosaic-avatar-summary { display:flex;flex-direction:column;gap:20px;min-width:0; }
+.mosaic-name-input { box-sizing:border-box;width:100%;min-width:0;border:1px solid transparent;border-radius:var(--radius-md,12px);background:var(--surface-1);color:var(--ink);padding:12px;font:inherit;font-size:calc(var(--font-ui) * 2);text-align:center; }
 .mosaic-avatar-dialog h2 { grid-column:1/-1;margin:0;padding-right:32px;font-size:var(--font-ui);font-weight:600; }
-.mosaic-avatar-preview { display:flex;align-items:center;justify-content:center;flex:1;min-height:180px; }
+.mosaic-avatar-preview { display:flex;align-items:center;justify-content:center;flex:1;min-height:144px; }
 .mosaic-avatar-dialog fieldset { border:0;margin:0;padding:0;min-width:0; }
-.mosaic-avatar-dialog legend { padding:0;margin-bottom:var(--space-2);color:var(--ink-muted); }
+.mosaic-avatar-dialog legend { padding:0;margin-bottom:12px;color:var(--ink-muted); }
 .mosaic-avatar-options { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--space-2); }
-.mosaic-avatar-options button { position:relative;min-width:0;min-height:48px;display:grid;place-items:center;padding:4px;border:0;border-radius:var(--radius-md,10px);background:transparent;color:var(--ink);cursor:pointer; }
+.mosaic-avatar-options button { min-width:0;min-height:48px;display:grid;place-items:center;padding:4px;border:0;border-radius:var(--radius-md,10px);background:transparent;color:var(--ink);cursor:pointer; }
 .mosaic-avatar-options button:hover { background:var(--field-hover-bg); }
 .mosaic-avatar-options button[aria-pressed="true"] { background:color-mix(in srgb,var(--avatar-selection) 18%,var(--paper)); }
-.mosaic-avatar-selected { position:absolute;top:3px;right:3px;display:grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--paper);color:var(--ink);font-size:12px;line-height:1; }
 .mosaic-avatar-dialog button:focus-visible,.mosaic-avatar-dialog input:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
 .mosaic-avatar-colors { grid-template-columns:repeat(6,minmax(0,1fr)); }
 .mosaic-avatar-colors button { min-height:36px; }
 .mosaic-avatar-swatch { width:24px;height:24px;border-radius:50%;background:var(--swatch);box-shadow:inset 0 0 0 1px #00000020; }
 .mosaic-avatar-actions { display:flex;gap:var(--space-2);margin-top:auto; }
 .mosaic-avatar-actions > button { flex:1;border-radius:999px;min-height:42px; }
-.mosaic-avatar-reset { align-self:flex-start; }
 @media(max-width:720px) { .mosaic-avatar-dialog { grid-template-columns:minmax(0,1fr);gap:24px;padding:24px; } .mosaic-avatar-summary { grid-row:2;display:grid;grid-template-columns:minmax(0,1fr) 144px;align-items:center;gap:16px; } .mosaic-avatar-preview { grid-column:2;grid-row:1/3;min-height:144px; } .mosaic-avatar-actions { grid-column:1; } .mosaic-avatar-summary .mosaic-name-error { grid-column:1/-1; } .mosaic-avatar-controls { gap:20px; } }
 @media(max-width:480px) { .mosaic-avatar-summary { display:flex;align-items:stretch; } }
 `;
@@ -95,7 +93,6 @@ var personalDesktop = (() => {
           if (alive.current) setSaving(false);
         }
       };
-      const selectedMark = h("span", { className: "mosaic-avatar-selected", "aria-hidden": true }, "\u2713");
       const shapes = { round: label("Round", "\u5706\u5F62"), "rounded-square": label("Rounded square", "\u5706\u89D2\u65B9\u5F62"), capsule: label("Capsule", "\u80F6\u56CA"), triangle: label("Triangle", "\u4E09\u89D2"), diamond: label("Diamond", "\u83F1\u5F62") };
       const accessories = { none: label("None", "\u65E0\u914D\u9970"), beanie: label("Beanie", "\u6BDB\u7EBF\u5E3D"), "hard-hat": label("Hard hat", "\u5B89\u5168\u5E3D"), headset: label("Headset", "\u8033\u673A"), leaf: label("Leaf", "\u53F6\u5B50") };
       return h(
@@ -130,13 +127,9 @@ var personalDesktop = (() => {
           h(
             "div",
             { className: "mosaic-avatar-controls" },
-            h("fieldset", { disabled: saving }, h("legend", null, label("Shape", "\u5F62\u72B6")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_SHAPES.map((value) => h("button", { key: value, type: "button", "data-avatar-shape": value, "aria-label": shapes[value], title: shapes[value], "aria-pressed": shape === value, onClick: () => choose(value, accessory, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${value}:${accessory}:${hue}` }), shape === value && selectedMark)))),
-            h("fieldset", { disabled: saving }, h("legend", null, label("Accessory", "\u914D\u9970")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_ACCESSORIES.map((value) => h("button", { key: value, type: "button", "data-avatar-accessory": value, "aria-label": accessories[value], title: accessories[value], "aria-pressed": accessory === value, onClick: () => choose(shape, value, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${shape}:${value}:${hue}` }), accessory === value && selectedMark)))),
-            h("fieldset", { disabled: saving }, h("legend", null, label("Color", "\u989C\u8272")), h("div", { className: "mosaic-avatar-options mosaic-avatar-colors" }, PERSONAL_AVATAR_HUES.map((value) => h("button", { key: value, type: "button", "data-avatar-hue": value, "aria-label": `${label("Hue", "\u8272\u76F8")} ${value}\xB0`, "aria-pressed": hue === value, onClick: () => choose(shape, accessory, value) }, h("span", { className: "mosaic-avatar-swatch", style: { "--swatch": `hsl(${value} 65% 65%)` } }), hue === value && selectedMark)))),
-            h(Button, { type: "button", variant: "ghost", className: "mosaic-avatar-reset", disabled: saving || key === DEFAULT_PERSONAL_AVATAR, "data-action": "reset-avatar", onClick: () => {
-              setKey(DEFAULT_PERSONAL_AVATAR);
-              setError("");
-            } }, label("Reset appearance", "\u6062\u590D\u9ED8\u8BA4\u5916\u89C2"))
+            h("fieldset", { disabled: saving }, h("legend", null, label("Shape", "\u5F62\u72B6")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_SHAPES.map((value) => h("button", { key: value, type: "button", "data-avatar-shape": value, "aria-label": shapes[value], title: shapes[value], "aria-pressed": shape === value, onClick: () => choose(value, accessory, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${value}:${accessory}:${hue}` }))))),
+            h("fieldset", { disabled: saving }, h("legend", null, label("Accessory", "\u914D\u9970")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_ACCESSORIES.map((value) => h("button", { key: value, type: "button", "data-avatar-accessory": value, "aria-label": accessories[value], title: accessories[value], "aria-pressed": accessory === value, onClick: () => choose(shape, value, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${shape}:${value}:${hue}` }))))),
+            h("fieldset", { disabled: saving }, h("legend", null, label("Color", "\u989C\u8272")), h("div", { className: "mosaic-avatar-options mosaic-avatar-colors" }, PERSONAL_AVATAR_HUES.map((value) => h("button", { key: value, type: "button", "data-avatar-hue": value, "aria-label": `${label("Hue", "\u8272\u76F8")} ${value}\xB0`, "aria-pressed": hue === value, onClick: () => choose(shape, accessory, value) }, h("span", { className: "mosaic-avatar-swatch", style: { "--swatch": `hsl(${value} 65% 65%)` } })))))
           ),
           h(
             "div",
