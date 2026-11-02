@@ -253,10 +253,16 @@ on-demand diagnostic view, without credentials or private payloads. Logging an
 exception alone is not feedback. Do not clear a draft, show success, replace a
 working page, or present an empty result merely because its action failed.
 
+Notice placement and delivery are host-owned UI infrastructure, not a selected
+business-service provider. Built-in and external desktop plugins use this same
+public entry point; replacing a shell does not replace the notice queue.
+
 Use a stable semantic `key` for repeated background failures. Each explicit user
 attempt needs fresh feedback even when the reason is unchanged: use an
 attempt-specific key rather than reusing the background key. The returned
-disposable dismisses the active or queued notice. Dispose obsolete notices after
+disposable dismisses the active or queued notice. Keys are scoped to one activation,
+so a reload (including unchanged code) does not suppress the new activation’s errors
+or let the retiring activation close its notices. Dispose obsolete notices after
 recovery; generation retirement also dismisses its notices and rejects later
 calls. Fence late results when a view changes or unmounts. Only a proven retired
 scope is cancellation; an unrelated transport failure must remain visible.

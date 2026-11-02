@@ -1005,7 +1005,7 @@ it("owns central notices by generation and rejects notices from retired handles"
   try {
     await host.activateGeneration({ pluginId: "notices", generation: "one", register: value => { api = value; } });
     api.showNotice({ message: "Could not refresh. Try again.", tone: "error", key: "refresh" });
-    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: "plugin:notices:refresh" });
+    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: "plugin:notices:one:1:refresh" });
     host.unload("notices");
     expect(dismiss).toHaveBeenCalledWith(71);
     expect(() => api.showNotice({ message: "stale" })).toThrow();
@@ -1071,4 +1071,74 @@ it.each(["resolve", "reject"])("fences a runtime %s after authoritative graph ha
   await expect(api.invokeRuntime("another-read")).rejects.toMatchObject({ code: "WUU_PLUGIN_SCOPE_RETIRED" });
   expect(invoke).toHaveBeenCalledTimes(1);
   host.unload("scope");
+});
+
+it.each(["two", "one"])("does not suppress a new activation's notice after retiring generation %s", async nextGeneration => {
+  const toast = await import("../Toast");
+  toast.clearToasts();
+  const show = vi.spyOn(toast, "showToast");
+  const host = new PluginHost({ react: React });
+  let api!: PluginGenerationApi;
+  const activate = async (generation: string) => host.activateGeneration({
+    pluginId: "notice-owner", generation, register(value) { api = value; },
+  });
+  try {
+    await activate("one");
+    const old = api;
+    old.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    const firstID = show.mock.results.at(-1)?.value;
+    expect(firstID).toBeTypeOf("number");
+    await activate(nextGeneration);
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    const nextID = show.mock.results.at(-1)?.value;
+    expect(nextID).toBeTypeOf("number");
+    expect(nextID).not.toBe(firstID);
+    expect(() => old.showNotice({ message: "Late old failure", key: "refresh" })).toThrow();
+    // Stable keys still deduplicate background failures within this activation.
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    expect(show.mock.results.at(-1)?.value).toBe(nextID);
+    toast.dismissToast(nextID);
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    expect(show.mock.results.at(-1)?.value).toBeUndefined();
+    // Explicit retries use a distinct attempt key and remain observable.
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh:attempt-2" });
+    expect(show.mock.results.at(-1)?.value).toBeTypeOf("number");
+  } finally {
+    await host.unloadAndWait("notice-owner");
+    show.mockRestore();
+    toast.clearToasts();
+  }
+});
+
+it("does not let a retiring owner dismiss a replacement provider's notice", async () => {
+  const toast = await import("../Toast");
+  toast.clearToasts();
+  const show = vi.spyOn(toast, "showToast");
+  const host = new PluginHost({ react: React });
+  let old!: PluginGenerationApi, next!: PluginGenerationApi;
+  try {
+    await host.activateGeneration({ pluginId: "notice-provider", generation: "one", register(api) { old = api; } });
+    old.showNotice({ message: "Old failure", key: "refresh", tone: "error" });
+    const firstID = show.mock.results.at(-1)?.value;
+    await host.selectApplicationBinding({ pluginId: "notice-provider", generation: "two", id: "application" });
+    await host.activateGeneration({ pluginId: "notice-provider", generation: "two", register(api) {
+      next = api;
+      api.registerApplicationProvider({ id: "application", prepare: () => ({
+        activate: () => { api.showNotice({ message: "New failure", key: "refresh", tone: "error" }); },
+        deactivate: () => undefined,
+        createScope: () => { throw new Error("Unused application scope"); },
+        dispose: () => {},
+      }) });
+    } });
+    const nextID = show.mock.results.at(-1)?.value;
+    expect(nextID).toBeTypeOf("number");
+    expect(nextID).not.toBe(firstID);
+    // The old owner's abort ran during commit. A live duplicate still finds the new notice.
+    next.showNotice({ message: "New failure", key: "refresh", tone: "error" });
+    expect(show.mock.results.at(-1)?.value).toBe(nextID);
+  } finally {
+    await host.unloadAndWait("notice-provider");
+    show.mockRestore();
+    toast.clearToasts();
+  }
 });

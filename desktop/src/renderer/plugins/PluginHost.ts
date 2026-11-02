@@ -1295,7 +1295,8 @@ export class PluginHost {
       showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
         this.assertActive(state);
         const id = showToast({ message: input.message, tone: input.tone,
-          dedupeKey: `plugin:${state.pluginId}:${input.key ?? input.message}` });
+          // Code fingerprints can repeat after reload; notice ownership follows the activation.
+          dedupeKey: `plugin:${state.pluginId}:${state.generation}:${state.activation}:${input.key ?? input.message}` });
         const dispose = () => { if (id !== undefined) dismissToast(id); state.lifetime.signal.removeEventListener("abort", dispose); };
         state.lifetime.signal.addEventListener("abort", dispose, { once: true });
         return createDisposable(dispose);
