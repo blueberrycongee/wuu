@@ -35,6 +35,7 @@ import type {
   ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
+  SystemPermissionsState,
 } from "../shared/protocol";
 import {
   type CSSProperties,
@@ -309,6 +310,9 @@ function SettingsViewContent({
     [runningProviderNames],
   );
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
+  // The page subtree remounts on navigation. Keep the last permission read
+  // so returning to General does not blank the rows before the refresh lands.
+  const permissionStateCache = useMemo<RefObject<SystemPermissionsState | undefined>>(() => ({ current: undefined }), [controls]);
   const [localPage, setActivePage] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities),
   );
@@ -899,6 +903,7 @@ function SettingsViewContent({
               ) : activePage === "general" ? (
                 <SettingsGeneralPage
                   desktopBuild={desktopBuild}
+                  permissionStateCache={permissionStateCache}
                   copyState={copyState}
                   onCopyVersion={copyVersionInfo}
                 />
@@ -1289,10 +1294,12 @@ function SettingsRuntimePage({
 
 function SettingsGeneralPage({
   desktopBuild,
+  permissionStateCache,
   copyState,
   onCopyVersion
 }: {
   desktopBuild: DesktopBuildInfo | undefined;
+  permissionStateCache: RefObject<SystemPermissionsState | undefined>;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
 }): JSX.Element {
@@ -1326,7 +1333,7 @@ function SettingsGeneralPage({
       </SettingsSection>
 
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
-      <SystemPermissionsSection />
+      <SystemPermissionsSection stateCache={permissionStateCache} />
     </>
   );
 }

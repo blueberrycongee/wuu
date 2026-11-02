@@ -1,5 +1,5 @@
 import { useSettingsControls } from "./SettingsControlsContext";
-import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type Ref, type RefObject } from "react";
 import type { AppLocale, SystemPermission, SystemPermissionPresentation, SystemPermissionsState } from "../shared/protocol";
 import { AlertCircle, Check, Hand, LoaderCircle, Monitor, RefreshCw } from "./WuuIcons";
 import { SettingsSection } from "./SettingsSection";
@@ -61,13 +61,14 @@ function sourcePresentation(requestId: string, row: HTMLElement): SystemPermissi
 
 type ActiveGuide = { requestId: string; permission: SystemPermission; row: HTMLElement };
 
-export function SystemPermissionsPanel({ preview = false }: { preview?: boolean }): JSX.Element {
+export function SystemPermissionsPanel({ preview = false, stateCache }: { preview?: boolean; stateCache?: RefObject<SystemPermissionsState | undefined> }): JSX.Element {
   const settingsControls = useSettingsControls();
   const { t, locale } = useI18n();
-  const [state, setState] = useState<SystemPermissionsState>();
+  const [state, setState] = useState<SystemPermissionsState | undefined>(() => stateCache?.current);
   const [pending, setPending] = useState<{ requestId: string; permission: SystemPermission }>();
   const [floating, setFloating] = useState<SystemPermission>();
   const [error, setError] = useState<"read" | "request">();
+  useEffect(() => { if (stateCache) stateCache.current = error === "read" ? undefined : state; }, [error, state, stateCache]);
   const [attempt, setAttempt] = useState(0);
   const panel = useRef<HTMLDivElement>(null);
   const rows = useRef<Partial<Record<SystemPermission, HTMLDivElement>>>({});
@@ -201,12 +202,12 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
         {(["screen", "accessibility"] as const).map(permission => <div className="system-permission-slot" key={permission}
           data-floating={floating === permission || undefined} aria-hidden={floating === permission || undefined}>
           <SystemPermissionRow permission={permission} locale={locale} granted={state?.[permission] === true && error !== "read"}
-            pending={pending?.permission === permission} disabled={!state?.available || pending !== undefined || floating !== undefined}
+            pending={(!state && !error) || pending?.permission === permission} disabled={!state?.available || pending !== undefined || floating !== undefined}
             rowRef={element => { if (element) rows.current[permission] = element; else delete rows.current[permission]; }}
             onEnable={() => void request(permission)} />
         </div>)}
       </div>
-      {!state && !error ? <p className="system-permissions-note" role="status">{t("permissions.checking")}</p> : null}
+      {!state && !error ? <p className="sr-only" role="status">{t("permissions.checking")}</p> : null}
       {state && !state.available ? <p className="system-permissions-note" role="status">{t("permissions.unavailable")}</p> : null}
       {error ? <div className="system-permissions-error" role="alert">
         <p className="system-permission-feedback"><AlertCircle className="icon" aria-hidden="true" /><span>{t("permissions.error")}</span></p>
@@ -218,9 +219,9 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
   );
 }
 
-export function SystemPermissionsSection(): JSX.Element | null {
+export function SystemPermissionsSection({ stateCache }: { stateCache?: RefObject<SystemPermissionsState | undefined> }): JSX.Element | null {
   const settingsControls = useSettingsControls();
   const { t } = useI18n();
   if (!settingsControls.capabilities.systemPermissions) return null;
-  return <SettingsSection title={t("settings.appContext.permissions")} testID="settings-system-permissions"><SystemPermissionsPanel /></SettingsSection>;
+  return <SettingsSection title={t("settings.appContext.permissions")} testID="settings-system-permissions"><SystemPermissionsPanel stateCache={stateCache} /></SettingsSection>;
 }
