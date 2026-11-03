@@ -3,7 +3,7 @@
   "id": "automation-client",
   "name": "Automation tools",
   "description": "Cron model tool for the selected scheduling provider.",
-  "icon": "clock",
+  "icon": { "path": "icon.webp" },
   "version": "0.2.0",
   "author": {
     "name": "Wuu"

@@ -137,6 +137,13 @@ var PUBLIC_SYNTAX_TOKEN_NAMES = [
   "--wuu-syntax-meta"
 ];
 var PUBLIC_ICON_NAMES = [
+  "app-application",
+  "app-composer",
+  "app-conversations",
+  "app-layout",
+  "app-navigation",
+  "app-preview",
+  "app-settings",
   "archive",
   "bot",
   "brain",

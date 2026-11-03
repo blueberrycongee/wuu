@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "icons": [
+    "app-application",
+    "app-composer",
+    "app-conversations",
+    "app-layout",
+    "app-navigation",
+    "app-preview",
+    "app-settings",
     "archive",
     "bot",
     "brain",

@@ -3,7 +3,7 @@
   "id": "automation-ui",
   "name": "Automation catalog",
   "description": "Independent presentation for the selected automation.scheduler provider.",
-  "icon": "clock",
+  "icon": { "path": "icon.webp" },
   "version": "0.2.0",
   "author": {
     "name": "Wuu"
@@ -34,7 +34,7 @@
         "id": "automation",
         "title": "Automations",
         "view": "automation.catalog",
-        "icon": "clock",
+        "icon": { "path": "icon.webp" },
         "order": 40
       }
     ]

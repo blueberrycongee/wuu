@@ -3,7 +3,7 @@
   "id": "goal",
   "name": "Goal",
   "description": "Persistent session goals with automatic continuation and usage tracking.",
-  "icon": "check-circle",
+  "icon": { "path": "icon.webp" },
   "version": "0.2.0",
   "author": {
     "name": "Wuu"

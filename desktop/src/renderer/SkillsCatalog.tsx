@@ -27,7 +27,7 @@ import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryReco
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 
 import { CatalogSearchField } from "./CatalogSearchField";
-import { CapabilityMark, skillCapability } from "./CapabilityMark";
+import { DefaultExtensionIcon } from "./DefaultExtensionIcon";
 import { confirmAction } from "./ConfirmDialog";
 import { extensionPackageApproval, pluginToggle } from "./extensionPackageState";
 import { translateCurrent, useI18n } from "./i18n";
@@ -1098,7 +1098,7 @@ function SkillsList({
             label={t("skills.previewSkill", { name: skill.name })}
             artwork={
               <span className="catalog-row-mark" aria-hidden="true">
-                <CapabilityMark motif={skillCapability(skill.name)} />
+                <DefaultExtensionIcon />
               </span>
             }
             title={skill.name}
@@ -1172,7 +1172,7 @@ function SkillPreviewDialog({
     // already showed, so the dialog repeats no description.
     <Modal
       ariaLabel={t("skills.previewLabel", { name: skill.name })}
-      icon={<CapabilityMark motif={skillCapability(skill.name)} className="icon" />}
+      icon={<DefaultExtensionIcon className="icon" />}
       title={skill.name}
       panelClassName="model-dialog skill-preview-dialog"
       onClose={onClose}

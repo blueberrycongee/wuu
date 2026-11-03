@@ -32,11 +32,13 @@ import {
 } from "./WuuIcons";
 import { isPublicIconName, type PublicIconName } from "../shared/themeContract.generated";
 import type { ExtensionIconDescriptor } from "../shared/protocol";
-import { PluginBlocksIcon } from "./PluginBlocksIcon";
+import { DefaultExtensionIcon } from "./DefaultExtensionIcon";
+import { MODULE_IDENTITY_ICONS } from "./ModuleIdentityIcons";
 import { PluginAvatar } from "./PluginAvatar";
 import { useEffect, useState } from "react";
 
 export const PUBLIC_ICON_COMPONENTS = {
+  ...MODULE_IDENTITY_ICONS,
   archive: Archive,
   bot: Bot,
   brain: Brain,
@@ -77,7 +79,7 @@ export function PublicIcon({
   className?: string;
 }): JSX.Element {
   if (!name || !isPublicIconName(name)) {
-    return <PluginBlocksIcon className={className} />;
+    return <DefaultExtensionIcon className={className} />;
   }
   const Icon = PUBLIC_ICON_COMPONENTS[name];
   return <Icon className={className} data-icon={name} />;

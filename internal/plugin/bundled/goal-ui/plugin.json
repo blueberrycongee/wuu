@@ -3,7 +3,7 @@
   "id": "goal-ui",
   "name": "Goal controls",
   "description": "Independent presentation for the selected goal.control provider.",
-  "icon": "check-circle",
+  "icon": { "path": "icon.webp" },
   "version": "0.2.0",
   "author": {
     "name": "Wuu"
