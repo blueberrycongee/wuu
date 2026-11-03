@@ -147,11 +147,14 @@ if (files.capabilities.watch && files.watch) {
 }
 ```
 
-The supplied local desktop provider observes metadata about once per second. It
-reports invalidations for an existing file or changes to a directory's direct
-entries, including deletion and recreation. It does not recursively observe child
-file contents, guarantee delivery of transient changes between polls, or provide
-an ordered change journal. Events retain the requested root and path. A terminal
+The supplied local desktop provider uses native filesystem events, sharing
+underlying directory handles across subscriptions and coalescing bursts over
+40 ms. It asynchronously revalidates paths after events; idle native subscriptions
+do not scan metadata. If native observation is unavailable, shared directory
+timers fall back to metadata checks every two seconds. It reports invalidations
+for an existing file or a directory's direct entries, including deletion and
+recreation. It does not recursively observe child file contents, guarantee every
+transient change, or provide an ordered change journal. Events retain the requested root and path. A terminal
 `error` ends that subscription. Unsubscribe, abort, plugin/provider retirement,
 renderer reload and window closure all release observation. Remote web/mobile
 transports currently advertise no observation capability.
