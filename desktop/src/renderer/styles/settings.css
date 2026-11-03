@@ -379,7 +379,6 @@
   gap: var(--settings-gap);
   margin: 0 auto;
   padding: 8px var(--settings-pad) calc(var(--settings-pad) * 2);
-  animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* --- Page title ----------------------------------------------------------
