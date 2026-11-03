@@ -19,6 +19,11 @@ This plugin connector flow currently supports the **Coding / current-project hos
 Open **Plugins → Account Connectors**. The bundled plugin is enabled by default so its connector cards are discoverable, but every service is initially disabled: no account connection starts until you choose to connect it. Disabling the plugin stops its services and removes its connector behavior.
 
 - **Notion:** choose **Connect** to enable the service and begin browser authorization. Review the workspace and access requested by Notion before approving. The official endpoint is `https://mcp.notion.com/mcp`; it supports public-client dynamic registration and PKCE, so no internal integration token or client secret is needed. See [Notion's MCP client guide](https://developers.notion.com/guides/mcp/build-mcp-client).
+- **Linear:** find, create, and update issues, projects, and comments through `https://mcp.linear.app/mcp`. See [Linear's MCP guide](https://linear.app/docs/mcp).
+- **Atlassian:** work with Jira and Confluence through `https://mcp.atlassian.com/v2/mcp`. Your Atlassian organization must allow MCP access; available tools depend on your product access and administrator policies. See [Atlassian's setup guide](https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/).
+- **Sentry:** investigate errors and performance issues through `https://mcp.sentry.dev/mcp`. See [Sentry's MCP guide](https://mcp.sentry.dev/).
+
+All four use browser authorization with dynamic client registration and PKCE; review the requested access before approving. Linear, Atlassian, and Sentry do not currently declare an account identity probe in Wuu, so a successful connection does not display a verified account or workspace.
 
 The bundled catalog includes only services whose official endpoint accepts dynamic client registration, so connecting needs no developer account or client ID. Services that require Wuu to register its own OAuth application, such as GitHub's and Google Drive's official MCP servers, are not offered; you can still add them as an ordinary [remote service](#remote-oauth) with your own client.
 

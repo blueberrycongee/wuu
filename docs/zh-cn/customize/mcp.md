@@ -19,6 +19,11 @@ Wuu、Codex 和 Claude Code 支持插件引用。其他引擎适配器需要明�
 打开**插件 → Account Connectors**。内置插件默认启用，以便发现连接器卡片，但所有服务初始均为禁用状态，直到你主动选择连接才会开始账号连接。禁用插件会停止其服务，并移除其连接器行为。
 
 - **Notion：**点击**连接**，启用服务并开始浏览器授权。在 Notion 页面确认工作区和申请的权限后再批准。官方端点为 `https://mcp.notion.com/mcp`，支持公共客户端动态注册与 PKCE，不需要内部集成 token 或客户端密钥。详见 [Notion MCP 客户端指南（英文）](https://developers.notion.com/guides/mcp/build-mcp-client)。
+- **Linear：**通过 `https://mcp.linear.app/mcp` 查找、创建和更新问题、项目及评论。详见 [Linear MCP 指南（英文）](https://linear.app/docs/mcp)。
+- **Atlassian：**通过 `https://mcp.atlassian.com/v2/mcp` 使用 Jira 和 Confluence。组织需要允许 MCP 访问；可用工具取决于你的产品访问权限和管理员策略。详见 [Atlassian 接入指南（英文）](https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/)。
+- **Sentry：**通过 `https://mcp.sentry.dev/mcp` 排查错误和性能问题。详见 [Sentry MCP 指南（英文）](https://mcp.sentry.dev/)。
+
+四个服务均使用支持动态客户端注册和 PKCE 的浏览器授权流程，请在批准前确认申请的访问权限。Linear、Atlassian 和 Sentry 目前尚未在 Wuu 中声明账号身份探测，因此连接成功后不会显示已验证的账号或工作区。
 
 内置目录只收录官方端点支持动态客户端注册的服务，连接时不需要开发者账号或客户端 ID。需要 Wuu 注册自有 OAuth 应用的服务（例如 GitHub 与 Google Drive 的官方 MCP 服务）暂不提供；你仍可以使用自己的客户端，把它们添加为普通[远程服务](#远程-oauth)。
 
