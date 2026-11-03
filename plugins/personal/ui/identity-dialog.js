@@ -11,7 +11,7 @@ export const avatarDialogStyles = `
 .mosaic-avatar-options { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--space-2); }
 .mosaic-avatar-options button { min-width:0;min-height:48px;display:grid;place-items:center;padding:4px;border:0;border-radius:var(--radius-md,10px);background:transparent;color:var(--ink);cursor:pointer; }
 .mosaic-avatar-options button:hover { background:var(--field-hover-bg); }
-.mosaic-avatar-options button[aria-pressed="true"] { background:color-mix(in srgb,var(--avatar-selection) 18%,var(--paper)); }
+.mosaic-avatar-options button[aria-pressed="true"] { background:var(--surface-3); }
 .mosaic-avatar-dialog button:focus-visible,.mosaic-avatar-dialog input:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
 .mosaic-avatar-colors { grid-template-columns:repeat(6,minmax(0,1fr)); }
 .mosaic-avatar-colors button { min-height:36px; }
@@ -47,7 +47,7 @@ export function createIdentityDialog({ react: React, ui: { Avatar, Button } }) {
     const shapes = { round: label("Round", "圆形"), "rounded-square": label("Rounded square", "圆角方形"), capsule: label("Capsule", "胶囊"), triangle: label("Triangle", "三角"), diamond: label("Diamond", "菱形") };
     const accessories = { none: label("None", "无配饰"), beanie: label("Beanie", "毛线帽"), "hard-hat": label("Hard hat", "安全帽"), headset: label("Headset", "耳机"), leaf: label("Leaf", "叶子") };
     return h("div", { className: "mosaic-name-backdrop", onPointerDown: event => { if (!pending.current && event.target === event.currentTarget) onClose(); } },
-      h("form", { ref: dialog, className: "mosaic-avatar-dialog", style: { "--avatar-selection": `hsl(${hue} 65% 65%)` }, tabIndex: -1, role: "dialog", "aria-modal": true, "aria-label": label("Customize your twin", "自定义你的 twin"), "aria-busy": saving, onSubmit: save, onKeyDown: event => {
+      h("form", { ref: dialog, className: "mosaic-avatar-dialog", tabIndex: -1, role: "dialog", "aria-modal": true, "aria-label": label("Customize your twin", "自定义你的 twin"), "aria-busy": saving, onSubmit: save, onKeyDown: event => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!pending.current) onClose(); }
         if (event.key === "Tab") {
           const controls = [...dialog.current.querySelectorAll("button:not(:disabled),input:not(:disabled)")], first = controls[0], last = controls.at(-1);
