@@ -243,7 +243,7 @@ export async function activate(api) {
     .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:0;padding-top:4px;width:max-content;max-width:min(240px,100%);z-index:31; }
     .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
     .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 12px;border:1px solid color-mix(in srgb,var(--hairline) 50%,transparent);border-radius:999px;background:var(--paper);box-shadow:0 1px 2px #00000008;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
-    .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-ui);line-height:1.4;font-weight:400; }
+    .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-ui);line-height:1.4;font-weight:600;color:light-dark(#000,#fff); }
     .mosaic-identity-label:hover { background:var(--surface-1); }
     .mosaic-identity-label:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
