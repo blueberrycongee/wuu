@@ -497,7 +497,7 @@ export function activate(api: PluginGenerationApi): void {
         history.commits.map((commit, index) => h("li", {
           className: "git-history-page-item",
           key: commit.hash,
-          style: { gridTemplateColumns: `${graph.width}px minmax(220px, 1fr)` },
+          style: { gridTemplateColumns: `${graph.width}px minmax(0, 1fr)` },
           title: `${commit.hash}\n${commit.author} · ${commit.authored_at}\n\n${commit.subject || translate("gitHistory.noSubject")}`,
         },
         h("svg", {
@@ -570,10 +570,9 @@ export function activate(api: PluginGenerationApi): void {
         display: flex;
         flex-direction: column;
         box-sizing: border-box;
-        height: 100%;
-        min-height: 0;
+        min-width: 0;
+        min-height: 100%;
         padding: 14px 14px 18px;
-        overflow: auto;
         color: var(--wuu-color-text);
         font-family: var(--wuu-font-family-ui, inherit);
         font-size: var(--wuu-font-size-ui, inherit);
