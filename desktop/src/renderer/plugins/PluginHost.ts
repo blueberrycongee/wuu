@@ -1,3 +1,4 @@
+import { parseAgentAvatarConfig, serializeAgentAvatarConfig } from "../AgentAvatarMark";
 import { BrowserControlsProvider } from "../BrowserControlsContext";
 import { PluginViewAttachmentPreviews } from "./PluginViewAttachmentPreviews";
 import { PluginConversationScope } from "./PluginConversationScope";
@@ -70,6 +71,7 @@ export interface PluginViewEntryDeclaration {
 }
 
 export interface RegisteredPluginViewEntry extends PluginViewEntryDeclaration {
+  readonly avatarKey?: string | null;
   readonly pluginId: string;
   readonly generation: string;
 }
@@ -181,6 +183,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerViewType(definition: ViewTypeDefinition): Disposable;
   /** Presentation only: update one declared navigation entry owned by this generation. */
   setNavigationTitle(id: string, title: string): boolean;
+  /** Override an owned navigation icon. null retains prior artwork while loading; undefined restores its manifest icon. */
+  setNavigationAvatar(id: string, avatarKey: string | null | undefined): boolean;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   /** Register a custom content renderer (message, tool result, document, file). */
@@ -506,6 +510,7 @@ interface GenerationState {
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
   readonly navigationTitles: Map<string, string>;
+  readonly navigationAvatars: Map<string, string | null>;
   readonly commands: CommandRecord[];
   readonly conversationCards: ConversationCardRecord[];
   readonly styles: StyleRecord[];
@@ -1622,6 +1627,22 @@ export class PluginHost {
         return disposable;
       },
 
+      setNavigationAvatar: (id: string, avatarKey: string | null | undefined) => {
+        this.assertUsable(state);
+        if (!state.declaredContributions?.navigation?.some(entry => entry.id === id)) return false;
+        if (avatarKey != null) {
+          const config = typeof avatarKey === "string" ? parseAgentAvatarConfig(avatarKey) : null;
+          if (!config || serializeAgentAvatarConfig(config) !== avatarKey) throw new Error("Invalid navigation avatar style");
+        }
+        // A replacement may retain the prior presentation while its owner reloads durable identity.
+        const next = avatarKey === null ? state.navigationAvatars.get(id) ?? this.activeGenerations.get(state.pluginId)?.navigationAvatars.get(id) ?? null : avatarKey;
+        if (state.navigationAvatars.get(id) === next) return true;
+        if (next === undefined) state.navigationAvatars.delete(id);
+        else state.navigationAvatars.set(id, next);
+        if (state.active) this.refreshPublicState();
+        return true;
+      },
+
       setNavigationTitle: (id: string, title: string) => {
         this.assertUsable(state);
         if (!state.declaredContributions?.navigation?.some(entry => entry.id === id)) return false;
@@ -2049,7 +2070,7 @@ export class PluginHost {
         pluginId: state.pluginId,
         generation: state.generation,
       });
-      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title })));
+      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title, ...(state.navigationAvatars.has(entry.id) ? { avatarKey: state.navigationAvatars.get(entry.id) } : {}) })));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
     }
@@ -2079,7 +2100,7 @@ export class PluginHost {
       || compareText(left.pluginId, right.pluginId)
       || compareText(left.id, right.id);
     const nextNavigation = Object.freeze(navigationEntries.sort(compareViewEntry));
-    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation) || this.navigationSnapshot.some((entry, index) => entry.title !== nextNavigation[index]?.title)) {
+    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation) || this.navigationSnapshot.some((entry, index) => entry.title !== nextNavigation[index]?.title || entry.avatarKey !== nextNavigation[index]?.avatarKey)) {
       this.navigationSnapshot = nextNavigation;
       changed = true;
     }
@@ -2313,6 +2334,7 @@ function createGenerationState(
     generation,
     declaredContributions,
     navigationTitles: new Map(),
+    navigationAvatars: new Map(),
     shells: [],
     applicationProviders: [],
     uiSlots: [],

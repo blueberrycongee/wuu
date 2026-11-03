@@ -1,3 +1,4 @@
+import { validatePersonalAvatar } from "./avatar.js";
 import { executionGrants, toolService, type SessionLocatorV1, type SessionRouteRequest, personalMemory, PERSONAL_AUTHORITY_METHODS, type PersonalExecutionFacts } from "@wuu/plugin-sdk";
 import { isDeepStrictEqual } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -70,6 +71,7 @@ interface Versioned { revision: number; created_at: string; updated_at: string }
 export interface NamedAgent extends Versioned {
   agent_id: string; user_space_id: string; name: string; kind: "main" | "specialist";
   responsibility: string; communication: string; main_session_id: string;
+  avatar_key?: string;
   status: "creating" | "active" | "stopping" | "paused" | "archived"; create_request_id: string;
   stop_target?: "paused" | "archived"; stop_request_id?: string; cancellation_pending?: boolean; cancellation_error?: string;
 }
@@ -1920,7 +1922,7 @@ export class PersonalPlugin implements RuntimePlugin {
           const stop = method === "agents.pause" || method === "agents.archive";
           const name = input.name === undefined ? current.name : text(input, "name", true);
           if (input.name !== undefined && Array.from(name).length > 64) throw new Error("name must be 64 characters or fewer");
-          return { ...current, name, responsibility: current.kind === "main" ? "" : input.responsibility === undefined ? current.responsibility : text(input, "responsibility", true), communication: input.communication === undefined ? current.communication : text(input, "communication"), status: stop ? "stopping" : method === "agents.resume" ? "active" : current.status,
+          return { ...current, name, ...(input.avatar_key === undefined ? {} : { avatar_key: validatePersonalAvatar(input.avatar_key) }), responsibility: current.kind === "main" ? "" : input.responsibility === undefined ? current.responsibility : text(input, "responsibility", true), communication: input.communication === undefined ? current.communication : text(input, "communication"), status: stop ? "stopping" : method === "agents.resume" ? "active" : current.status,
             ...(stop ? { stop_target: method === "agents.archive" ? "archived" as const : "paused" as const, stop_request_id: `agent-stop-${id(current.agent_id, String(current.revision + 1))}`, cancellation_pending: true, cancellation_error: undefined } : {}) };
         }, number(input, "expected_revision"));
         return { agent: agent.status === "stopping" ? await this.settleAgent(agent.agent_id) : agent };

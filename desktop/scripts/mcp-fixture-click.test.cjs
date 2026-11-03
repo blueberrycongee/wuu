@@ -34,3 +34,15 @@ test("an uncertain dispatch failure is not retried", () => {
   assert.equal(click(request), true);
   assert.equal(clicks, 1);
 });
+
+test("waits for inert presentation to gain live authority before dispatching once", () => {
+  let inert = true, clicks = 0;
+  const control = { getAttribute: () => null, closest: selector => selector === "[inert]" && inert ? {} : null, click: () => { clicks++; } };
+  const click = renderer(() => [control]), request = { selector: "button" };
+  assert.equal(click(request), false);
+  assert.equal(clicks, 0);
+  inert = false;
+  assert.equal(click(request), true);
+  assert.equal(click(request), true);
+  assert.equal(clicks, 1);
+});

@@ -277,7 +277,9 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 使用 `api.react` 和 `api.ui`，让控件遵循宿主主题、间距和排版。UI 字号与代码字号应分开。只改外观时优先使用声明式主题 token，公开契约见[界面矩阵](theme-surface-matrix.md)。
 
-桌面上的 `api.ui.Avatar` 和公开图标 `mascot` 共用 Wuu 的圆球耳机形象。Avatar 接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留圆球、面部和耳机，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+桌面上的 `api.ui.Avatar` 默认显示与公开图标 `mascot` 相同的 Wuu 圆球耳机形象。它接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。可选的 `avatarKey` 使用 `mascot-v1:shape:accessory:hue` 格式：形状为 `round`、`rounded-square`、`capsule`、`triangle` 或 `diamond`，配饰为 `none`、`beanie`、`hard-hat`、`headset` 或 `leaf`，色相为 0 到 359 的整数，例如 `mascot-v1:diamond:leaf:150`。省略该字段则保持品牌形象。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留配置的形状和配饰，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标，可能忽略样式字段。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+
+桌面 Personal 的资料面板提供“更换样式”，可预览形状、配饰和颜色。保存会将外观写入现有 Personal 身份；取消或关闭编辑器会丢弃修改。“恢复默认”预览原有圆形、耳机和色相 222 的组合，仍需保存才会生效。左侧 Twin 入口、顶栏、资料面板和重命名对话框共用保存的外观，切换页面和重启后仍保持一致。全局品牌与其他插件图标不变，重命名会保留外观。已有身份无需迁移。原生 iOS 和 Android 头像尚未适配此设置。
 
 可以使用选区、尺寸观察器等标准浏览器 API。定位时优先选择公开的 `data-wuu-component`、`data-wuu-slot`、`data-wuu-surface` 锚点，不要依赖私有类名或 React 内部对象；这些锚点也不保证周围 DOM 结构稳定。对于不由 React effect 清理的监听器、观察器、定时器和其他资源，应显式注册清理。
 
@@ -286,6 +288,8 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 ### 运行时导航显示名称
 
 `api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。入口未声明时返回 `false`；无效标题及已卸载代次的调用会报错。这只是显示覆盖，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。
+
+`api.setNavigationAvatar(id, avatarKey)` 使用同一格式的样式键，为自己声明的导航入口设置静态 `Avatar`。个人助手、项目智能体等入口都可使用，不改变全局品牌。加载时传入 `null` 可保留上一代次的头像，冷启动时显示空图标占位；传入 `undefined` 则恢复声明的图标。未声明入口返回 `false`，无效样式和已卸载代次的调用会报错。覆盖仅为当前入口的临时呈现，持久化身份与 revision 顺序仍由插件管理。运行时调用要求代次已激活：订阅贡献变化并通过 `getGenerationActivation` 确认激活后再读取身份，加载或保存后发布。导航提供者可读取入口上的可选 `avatarKey`，其中 `null` 表示加载占位。兼容旧宿主时先检测该方法。
 
 ### 界面焦点与恢复
 
