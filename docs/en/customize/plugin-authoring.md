@@ -114,8 +114,8 @@ A plugin-owned MCP server's optional `connector` metadata presents it as an acco
 | --- | --- |
 | `title` | Required, nonblank display name. |
 | `description` | Optional short explanation of the service. |
-| `documentation_url` | Optional absolute HTTPS link to setup or provider documentation, without embedded credentials. |
-| `setup_required` | Optional explanation of missing application setup. A nonblank value makes the card show the requirement and documentation instead of offering connection or authorization. |
+| `documentation_url` | Optional absolute HTTPS link to provider documentation, without embedded credentials. The default catalog does not display it. |
+| `setup_required` | Optional explanation of missing application setup. A nonblank value leaves the connector out of the default catalog and composer, so it never offers connection or authorization. |
 | `identity_probe` | Optional fixed, read-only MCP call and bounded JSON-pointer mapping for provider-reported identity. Admitted only from the active trusted package, not standalone configuration. |
 | `icon` | Optional brand image: `{ "path": "..." }` or `{ "light": "...", "dark": "..." }`, package-relative SVG, PNG, or WebP under the same limits as the plugin `icon`. Shown in a neutral tile on the card, the sign-in dialog, and the composer plugin menu; served only for the owning plugin generation. Cards without one, and standalone services, use a generic mark. |
 

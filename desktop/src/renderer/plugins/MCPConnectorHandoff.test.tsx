@@ -86,7 +86,7 @@ it.each(["config", "config-cancel", "consumed", "start", "start-cancel", "poll",
     await act(async () => { expect(await runtime.sync(inventory())).toEqual([]); });
     expect(window.wuu.startMCPLogin).not.toHaveBeenCalled();
     if (cancel) await act(async () => {
-      [...element.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === translateCurrent("mcp.cancelLogin"))!.click();
+      [...element.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === translateCurrent("common.cancel"))!.click();
     });
     await act(async () => { release(); });
     await vi.waitFor(() => expect(window.wuu.configureMCPServers).toHaveBeenCalledOnce());
@@ -103,7 +103,7 @@ it.each(["config", "config-cancel", "consumed", "start", "start-cancel", "poll",
       expect(window.wuu.startMCPLogin).toHaveBeenCalledOnce();
       expect(window.wuu.cancelMCPLogin).not.toHaveBeenCalled();
       if (stage === "start-cancel") await act(async () => {
-        [...element.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === translateCurrent("mcp.cancelLogin"))!.click();
+        [...element.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === translateCurrent("common.cancel"))!.click();
       });
       await act(async () => { releaseStart(); releasePoll({ status: stage === "poll-success" ? "success" : "pending" }); });
       if (stage === "start-cancel") {
@@ -114,10 +114,10 @@ it.each(["config", "config-cancel", "consumed", "start", "start-cancel", "poll",
         await vi.waitFor(() => expect(element.querySelector('[role="dialog"]')).toBeNull());
         expect(window.wuu.pollMCPLogin).toHaveBeenCalledOnce();
       } else {
-        await act(async () => { await vi.waitFor(() => expect(element.textContent).toContain(translateCurrent("mcp.browserWaiting"))); });
+        await act(async () => { await vi.waitFor(() => expect(element.textContent).toContain(translateCurrent("connector.browserWaiting"))); });
         if (stage === "poll") expect(window.wuu.pollMCPLogin).toHaveBeenCalledOnce();
         await act(async () => {
-          [...element.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === translateCurrent("mcp.cancelLogin"))!.click();
+          [...element.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === translateCurrent("common.cancel"))!.click();
         });
         await vi.waitFor(() => expect(window.wuu.cancelMCPLogin).toHaveBeenCalledExactlyOnceWith("fixture-login"));
       }

@@ -130,19 +130,6 @@
   flex-basis: 20ch;
 }
 
-/* A live connection reads at a glance; the dot sits on the status line's
- * first text line so wrapped account names stay aligned under it. */
-.mcp-connector[data-connected="true"] .mcp-service-status::before {
-  content: "";
-  flex: none;
-  width: 6px;
-  height: 6px;
-  align-self: flex-start;
-  margin-block-start: calc((1lh - 6px) / 2);
-  border-radius: var(--radius-circle);
-  background: var(--success);
-}
-
 .mcp-connector-dialog {
   --environment-dialog-max-width: 520px;
 }
@@ -159,36 +146,109 @@
   margin: 0;
 }
 
-.mcp-connector-description {
+/* Status tone: a dot marks a live connection; problems use their semantic
+ * color. The dot sits on the first text line so wrapped names align. */
+.mcp-connector .mcp-service-status[data-tone="connected"]::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  align-self: flex-start;
+  margin-block-start: calc((1lh - 6px) / 2);
+  border-radius: var(--radius-circle);
+  background: var(--success);
+}
+
+.mcp-connector .mcp-service-status[data-tone="error"] {
+  color: var(--danger);
+}
+
+.mcp-connector .mcp-service-status[data-tone="warning"] {
+  color: var(--warning);
+}
+
+/* Connector sign-in: Wuu and the service side by side, one line of
+ * guidance, and full-width actions. */
+.connector-handshake-dialog {
+  --environment-dialog-max-width: 400px;
+}
+
+.connector-handshake-dialog > .environment-dialog-header {
+  justify-content: flex-end;
+  margin-bottom: calc(var(--space-3) * -1);
+}
+
+.connector-handshake {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block-end: var(--space-2);
+  text-align: center;
+}
+
+.connector-handshake-marks {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block-end: var(--space-3);
+}
+
+.connector-handshake-marks > .connector-mark {
+  --connector-mark-size: 56px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+
+.connector-handshake-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.connector-handshake-dots > i {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-circle);
+  background: var(--ink-tertiary);
+  animation: connector-handshake-dot 1.2s ease-in-out infinite;
+}
+
+.connector-handshake-dots > i:nth-child(2) { animation-delay: 0.15s; }
+.connector-handshake-dots > i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes connector-handshake-dot {
+  0%, 60%, 100% { opacity: 0.35; }
+  30% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connector-handshake-dots > i { animation: none; }
+}
+
+.connector-handshake > h2 {
   margin: 0;
-  color: var(--ink-secondary);
-  font-size: var(--font-ui);
+  font-size: var(--font-title);
 }
 
-.mcp-connector-details {
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
-  gap: var(--space-1) var(--space-3);
+.connector-handshake > p {
   margin: 0;
-  font-size: var(--font-ui);
+  color: var(--ink-soft);
 }
 
-.mcp-connector-details dt {
-  color: var(--ink-secondary);
+.connector-handshake > p[data-tone="error"] {
+  color: var(--danger);
 }
 
-.mcp-connector-details dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
+.connector-handshake > .mcp-field {
+  width: 100%;
+  text-align: start;
 }
 
-@media (max-width: 600px) {
-  .mcp-connector-details {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.connector-handshake-dialog > .environment-dialog-footer {
+  gap: var(--space-2);
+}
 
-  .mcp-connector-details dd + dt {
-    margin-top: var(--space-2);
-  }
+.connector-handshake-dialog > .environment-dialog-footer > .settings-button {
+  flex: 1;
+  justify-content: center;
 }
