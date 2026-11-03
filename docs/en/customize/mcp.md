@@ -40,7 +40,7 @@ The optional [Notion workspace plugin](notion-workspace.md) is different: it use
 
 ## Add a server
 
-Open **Plugins → MCP services → Add MCP**. Enter a server URL or a local executable with its arguments, or choose **Import JSON** to paste an `mcpServers` or `mcp_servers` object. Advanced options accept headers, environment variables, transport, OAuth registration values, and tool timeouts as JSON.
+Open **Plugins → Add → Add custom MCP server**. Enter a server URL or a local executable with its arguments, or choose **Import JSON** to paste an `mcpServers` or `mcp_servers` object. Advanced options accept headers, environment variables, transport, OAuth registration values, and tool timeouts as JSON.
 
 Saved definitions use the selected configuration provider and apply immediately when Wuu has no running turns or background work. Editing and removal check the configuration revision; reopen the editor if another window has changed it. Imports reject duplicate names and unsupported connection fields. Imported values are literal, including `${VAR}` placeholders.
 
