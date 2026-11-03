@@ -621,8 +621,8 @@ app.whenReady().then(async () => {
     });
     await until(() => Boolean(document.querySelector(".sidebar-account-trigger")));
     await evaluate(() => document.querySelector(".sidebar-account-trigger").click());
-    await until(() => Boolean(document.querySelector('[data-settings-page="providers"]')));
-    await evaluate(() => document.querySelector('[data-settings-page="providers"]').click());
+    await until(() => Boolean(document.querySelector('[data-settings-entry="settings"]')));
+    await evaluate(() => document.querySelector('[data-settings-entry="settings"]').click());
     const settingsButton = () => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message");
     await until(settingsButton); await evaluate(() => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message").click());
     await until(() => document.querySelector(".plugin-ui-input")?.disabled === false);

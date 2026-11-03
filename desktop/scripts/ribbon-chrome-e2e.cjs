@@ -136,7 +136,7 @@ async function run() {
         clickAt(await point('.sidebar-account-trigger'));
         await until(() => !!document.querySelector('.sidebar-account-menu'), 'account menu opens');
       }
-      const target = section === 'conversations' ? '[data-wuu-component="conversations-section"]' : '.sidebar-account-menu [data-settings-page="providers"]';
+      const target = section === 'conversations' ? '[data-wuu-component="conversations-section"]' : '.sidebar-account-menu [data-settings-entry="settings"]';
       clickAt(await point(target));
       await until(section === 'settings' ? () => !!document.querySelector('.settings-embedded') : () => !document.querySelector('.settings-embedded'), 'section navigation');
       await settle();

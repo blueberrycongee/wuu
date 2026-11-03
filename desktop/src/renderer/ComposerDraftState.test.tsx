@@ -209,7 +209,7 @@ describe("useComposerDraftState", () => {
       restorePrimaryComposerDraft: (value) => hook.get().restorePrimaryComposerDraft(value),
       setSplitComposerDrafts: (value) => hook.get().setSplitComposerDrafts(value),
       cancelViewSwitch: vi.fn(), setContextCompositionEntries: vi.fn(), setInstructionFilesEntries: vi.fn(),
-      scheduleStreamScroll: vi.fn(), closeWorkspaceMenus: vi.fn(), setSettingsInitialPage: vi.fn(), setSettingsOpen: vi.fn(),
+      scheduleStreamScroll: vi.fn(), closeWorkspaceMenus: vi.fn(),
     });
     await act(async () => actions.openSkillsTab());
     expect(cloneSessionTabDraft(state.sessionTabs.find(tab => tab.id === "draft")!)).toEqual(draft);

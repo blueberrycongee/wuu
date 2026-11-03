@@ -25,6 +25,8 @@ const desktop: ApplicationDesktopControlsV1 = { hostKind: "desktop", popOut: { k
 beforeEach(() => {
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
+  window.localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
+  window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
   unreadViewOpen = false;
   attentionStickyIDs = new Set();
   container = document.createElement("div");
@@ -33,6 +35,8 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
+  window.localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
+  window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   desktopPluginHost.unload("test:app-sidebar-view");
@@ -256,6 +260,109 @@ describe("AppSidebar layout", () => {
       "project-1": [older], "project-2": [{ ...newer, archived: true }],
     } });
     expect(titles()).toEqual(["older"]);
+  });
+
+  it.each(["reload", "late catalog"])("keeps newly created Recent conversations reachable after %s with more than 50 older rows", (refresh) => {
+    window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
+    const old = Array.from({ length: 60 }, (_, index): ThreadSummary => ({
+      id: `old-${index}`, title: `Older conversation ${index}`, cwd: "/repo/wuu", workspace_id: "project-1",
+      status: "in_progress", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    }));
+    const fresh: ThreadSummary = { ...old[0], id: "new", title: "Newly created conversation", status: "idle",
+      created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" };
+    const render = (threads: ThreadSummary[]) => renderSidebar({ activeThreadID: fresh.id,
+      workspaceThreadsByWorkspaceID: { "project-1": threads } });
+    const visible = () => [...container.querySelectorAll('[data-sidebar-recents] .thread-row-title')].map(row => row.textContent);
+    if (refresh === "reload") render(old);
+    render(refresh === "reload" ? [...old, fresh] : [fresh]);
+    expect(visible()).toContain(fresh.title);
+    if (refresh === "reload") {
+      act(() => root?.unmount()); root = null;
+      render([]);
+    }
+    render([...old, fresh]);
+    expect(visible()).toContain(fresh.title);
+  });
+
+  it("migrates manual Recent order and does not rewrite it for unchanged activity", () => {
+    const rows = ["first", "second"].map((id): ThreadSummary => ({ id, title: id, cwd: "/repo/wuu", workspace_id: "project-1",
+      status: "idle", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0 }));
+    window.localStorage.setItem("wuu.desktop.sidebarThreadOrderByWorkspace", JSON.stringify({ __wuu_recent_threads__: ["second", "first"] }));
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    const render = (threads: ThreadSummary[]) => renderSidebar({ workspaceThreadsByWorkspaceID: { "project-1": threads } });
+    const titles = () => [...container.querySelectorAll('[data-sidebar-recents] .thread-row-title')].map(row => row.textContent);
+    try {
+      render(rows);
+      expect(titles()).toEqual(["second", "first"]);
+      const saved = window.localStorage.getItem("wuu.desktop.recentThreadArrivalOrder.v1");
+      writes.mockClear();
+      render(rows.map(row => ({ ...row, updated_at: "2026-09-01T00:00:00Z" })));
+      expect(writes.mock.calls.filter(([key]) => key === "wuu.desktop.recentThreadArrivalOrder.v1")).toHaveLength(0);
+      act(() => root?.unmount()); root = null;
+      render([]);
+      expect(window.localStorage.getItem("wuu.desktop.recentThreadArrivalOrder.v1")).toBe(saved);
+      render([rows[0], { ...rows[1], archived: true }]);
+      expect(titles()).toEqual(["first"]);
+    } finally { writes.mockRestore(); }
+  });
+
+  it.each(["pointer", "keyboard"])("keeps newly visited conversations in Recent across repeated navigation during a %s hold", (interaction) => {
+    const thread = (id: string, day: number): ThreadSummary => ({
+      id, title: id, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle",
+      created_at: `2026-09-${day}T00:00:00Z`, updated_at: `2026-09-${day}T00:00:00Z`,
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    });
+    const older = thread("older", 11);
+    const first = thread("first new conversation", 12);
+    const second = thread("second new conversation", 13);
+    const background = thread("background arrival", 14);
+    const render = (threads: ThreadSummary[], activeThreadID?: string, pendingThreadID?: string) => renderSidebar({
+      activeThreadID, pendingThreadID, expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: { "project-1": threads },
+    });
+    const recent = () => container.querySelector('[data-sidebar-recents]')!;
+    const titles = () => [...recent().querySelectorAll('.thread-row-title')].map(row => row.textContent);
+    render([older], older.id);
+    if (interaction === "pointer") {
+      const enter = new MouseEvent("pointerover", { bubbles: true });
+      Object.defineProperty(enter, "pointerType", { value: "mouse" });
+      act(() => recent().dispatchEvent(enter));
+    } else {
+      const row = recent().querySelector<HTMLButtonElement>(".thread-row-main")!;
+      act(() => { row.focus(); row.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    }
+    render([older, first], first.id);
+    expect(titles()).toEqual([first.title, older.title]);
+    render([older, first, second, background], first.id, second.id);
+    expect(titles()).toEqual([second.title, first.title, older.title]);
+    render([older, first, second, background], second.id);
+    expect(titles()).toEqual([second.title, first.title, older.title]);
+    // Starting another draft or opening a workspace must not hide visited rows.
+    render([older, first, second, background]);
+    expect(titles()).toEqual([second.title, first.title, older.title]);
+    const renamed = { ...first, title: "Renamed conversation", updated_at: "2026-09-20T00:00:00Z" };
+    render([background, second, renamed, older]);
+    // Accessible names update immediately while the visible title animates.
+    expect([...recent().querySelectorAll(".thread-row-main")].map(row => row.getAttribute("aria-label")))
+      .toEqual([second.title, renamed.title, older.title].map(title => expect.stringContaining(title!)));
+    // Deleting an admitted row must win over the retained interaction snapshot.
+    render([older, renamed, background]);
+    expect(recent().textContent).not.toContain(second.title);
+    render([background, renamed, older]);
+    expect(recent().textContent).not.toContain(second.title);
+    // Authoritative removal still wins, including for rows added during the hold.
+    render([older, { ...renamed, archived: true }, { ...second, pinned: true }, background]);
+    expect(titles()).toEqual([older.title]);
+    if (interaction === "pointer") {
+      act(() => recent().dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
+    } else {
+      act(() => (document.activeElement as HTMLElement).blur());
+    }
+    expect(titles()).toEqual([background.title, older.title]);
+    render([background]);
+    expect(titles()).toEqual([background.title]);
   });
 
   it("selects only the clicked occurrence when a project and Recent show the same conversation", () => {

@@ -123,6 +123,29 @@ it("keeps an inline companion mounted while adding and removing the history jump
   expect(open).toHaveBeenCalledOnce();
 });
 
+it("stays hidden and stops measuring while navigation is suspended", () => {
+  const { node, setScrollTop } = scrollContainer({ scrollHeight: 1500, clientHeight: 500, scrollTop: 1000 });
+  const host = document.createElement("div");
+  document.body.append(host);
+  mountedContainers.push(host);
+  const root = createRoot(host);
+  mountedRoots.push(root);
+  const render = (suspended: boolean): void => {
+    act(() => root.render(createElement(JumpToLatestPill, {
+      containerRef: { current: node }, bottomAnchor: null, inline: true, suspended,
+    })));
+  };
+  render(true);
+  expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
+  act(() => { setScrollTop(100); node.dispatchEvent(new Event("scroll")); });
+  expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
+  act(() => { setScrollTop(1000); });
+  render(false);
+  expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
+  act(() => { setScrollTop(100); node.dispatchEvent(new Event("scroll")); });
+  expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
+});
+
 it("does not displace the browser preview when the jump action appears", () => {
   const { node, setScrollTop } = scrollContainer({ scrollHeight: 1500, clientHeight: 500, scrollTop: 1000 });
   node.setAttribute("data-pip-anchor-host", "conversation");

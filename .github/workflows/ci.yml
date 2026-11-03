@@ -1438,6 +1438,7 @@ jobs:
           WUU_JOURNEY_2_1
             run_journey 'Guard error message appearance and recovery' 7m 'WUU_DESKTOP_CORE=${{ runner.temp }}/wuu-session-switch-core' 'WUU_E2E_SOURCE_COMMIT=${{ github.sha }}' <<'WUU_JOURNEY_1_2'
           set -o pipefail
+          node --test desktop/scripts/error-message-style-provider.test.cjs || exit $?
           failed=0
           for font in 15 20; do
             export WUU_ERROR_STYLE_FONT="$font"
@@ -1828,6 +1829,26 @@ jobs:
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           node desktop/node_modules/electron/install.js
           node -e 'require("./desktop/node_modules/electron")'
+      - name: Verify production browser preview window ordering
+        if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_BROWSER_PIP_E2E_ARTIFACTS: ${{ runner.temp }}/wuu-browser-preview-ordering
+          WUU_BROWSER_PIP_ORDERING_ONLY: '1'
+        run: |
+          mkdir -p "$WUU_BROWSER_PIP_E2E_ARTIFACTS"
+          git rev-parse HEAD > "$WUU_BROWSER_PIP_E2E_ARTIFACTS/source-commit.txt"
+          set -o pipefail
+          node desktop/scripts/browser-pip-e2e.cjs 2>&1 | tee "$WUU_BROWSER_PIP_E2E_ARTIFACTS/run.log"
+      - name: Upload production browser preview ordering evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-preview-ordering-macos-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/wuu-browser-preview-ordering/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build production renderer
         id: build-focused-renderer
         timeout-minutes: 6

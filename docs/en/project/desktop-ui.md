@@ -112,6 +112,16 @@ shift the current position. Each image starts fitted and unrotated; Shift with
 the left/right arrow keys pans a zoomed image. Escape closes the preview and
 returns focus to the opener.
 
+## Table previews
+
+Markdown tables reveal copy and expand controls on hover or keyboard focus;
+touch surfaces keep them visible. Copy preserves the table's Markdown source.
+Wide tables scroll horizontally with an edge fade indicating hidden columns.
+Expand opens a larger, independently scrollable table in the same preview shell
+as images, using the selected theme and text size. The upper-right close button,
+Escape, and the backdrop dismiss it and restore focus to the opener. Opening an
+embedded image keeps the table underneath; close the image to return to it.
+
 ## Video previews
 
 Video output cards open a player in the right panel. Workspace video files use
@@ -371,7 +381,7 @@ Earlier-history paging inserts rows above the viewport. A paused reader's offset
 
 ## Following and rendering long conversations
 
-Session switches reuse the conversation loading animation and keep the outgoing view covered until the target resumes. Restore the target's folds and reading position before revealing it, forcing layout around its landing turns even when the cached scroll offset has not changed. Editing and sending stay disabled until this restoration finishes; a newer selection supersedes an earlier request. Wait for stable painted geometry, with a bounded layout phase so live output or external assets cannot keep the conversation covered indefinitely. Resume failures dismiss loading and show an error.
+Session switches reuse the conversation loading animation and keep the outgoing view covered until the target resumes. Restore the target's folds and reading position before revealing it, forcing layout around its landing turns even when the cached scroll offset has not changed. Editing and sending stay disabled until this restoration finishes; a newer selection supersedes an earlier request. Wait for stable painted geometry, with a bounded layout phase so live output or external assets cannot keep the conversation covered indefinitely. Decode visible message images before releasing the cover, and keep navigation actions such as jump to latest hidden until restoration owns the viewport. Resume failures dismiss loading and show an error.
 
 A conversation follows its latest content until the reader takes over. Wheel, touch, keyboard, scrollbar and selection input pause following before the browser delivers the scroll, so a streamed chunk cannot pull the view back. Moving back down to the latest content resumes following within a small band that absorbs output streamed while that scroll settles; moving up never resumes it. Jump to latest resumes following when clicked rather than when its motion lands, and the glide hands over to ordinary following once it is close to the moving bottom.
 
@@ -399,7 +409,7 @@ A controller that manages its own scroll node registers it with `markScrollbarRe
 </div>
 ```
 
-Use `compact` for dense inspection strips, an empty value for navigation lists, and `inline` for a horizontal strip such as the composer attachment tray, which fades its start and end edges instead. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and wide content such as tables and code are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
+Use `compact` for dense inspection strips, an empty value for navigation lists, and `inline` for a horizontal strip such as the composer attachment tray, which fades its start and end edges instead. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and code blocks are not intended targets. Markdown tables use `inline` on their horizontal scroll owner, with copy and expand controls outside the mask. Fixed headers, composers, and menus should remain outside the masked owner.
 
 The utility uses self-scroll timelines and an alpha mask, with no overlay or React scroll updates. An edge fades only when more content lies beyond it; no overflow means no fade. Nested scroll owners remain independent, and each edge is capped at half the viewport. Unsupported engines, reduced motion, forced colors, and print fall back to ordinary clipping. Check for existing `animation` or `mask-image` declarations before opting in, because the utility owns both.
 

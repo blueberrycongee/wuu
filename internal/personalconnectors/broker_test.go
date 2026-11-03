@@ -194,3 +194,36 @@ func TestDisconnectCancelsInFlightRead(t *testing.T) {
 		t.Fatal("cancelled read delivered")
 	}
 }
+
+func TestRemovedGitHubGrantIsIgnoredAndPreserved(t *testing.T) {
+	ctx := context.Background()
+	s := &memoryStore{values: map[string][]byte{}}
+	a := Actor{"personal", "space", "session"}
+	b := newTestBroker(Options{Store: s})
+	defer b.Close()
+	legacy := Grant{Connection: Connection{ID: "old", Provider: "github", AccountID: "synthetic", Domain: "personal", Resources: []string{"owner/repo"}}, AccessToken: "synthetic-token", NonExpiring: true}
+	if err := b.update(ctx, a, func(state *stored) error { state.Grants["old"] = legacy; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := b.List(ctx, a)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("legacy grant visible: %v %v", rows, err)
+	}
+	if _, err := build(legacy.Connection, "github.pr", json.RawMessage(`{"repository":"owner/repo","number":1}`)); err == nil {
+		t.Fatal("removed provider still has a plan")
+	}
+	if _, err := b.Call(ctx, a, Request{ConnectionID: "old", Operation: "github.pr", Arguments: json.RawMessage(`{"repository":"owner/repo","number":1}`)}); err == nil {
+		t.Fatal("legacy grant still usable")
+	}
+	if err := b.update(ctx, a, func(state *stored) error {
+		if state.Grants["old"].AccessToken != "synthetic-token" {
+			t.Fatal("legacy grant changed")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RegisterVerified(ctx, a, legacy); err == nil {
+		t.Fatal("accepted removed provider")
+	}
+}

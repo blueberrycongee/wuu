@@ -40,8 +40,10 @@ it("requests a thumbnail near the viewport and downloads the original only when 
   try {
     await act(async () => root.render(<AttachmentImage image={{media_type:"image/png",data:"",remote_ref:"thread:ref"}} label="Image" onOpen={open} />));
     expect(preview).not.toHaveBeenCalled();
+    expect(container.querySelector("button")?.hasAttribute("data-conversation-image-pending")).toBe(true);
     await act(async () => intersect([{isIntersecting:true}]));
     expect(container.querySelector("img")?.src).toBe("data:image/jpeg;base64,dGh1bWI=");
+    expect(container.querySelector("button")).toBeNull();
     expect(read).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
     await act(async () => container.querySelector("img")!.click());
     expect(open).toHaveBeenCalledWith("data:image/png;base64,b3JpZ2luYWw=", container.querySelector("img"));
