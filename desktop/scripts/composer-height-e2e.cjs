@@ -54,11 +54,13 @@ async function run() {
       const growing = await geometry(win);
       assert.ok(growing.inputHeight > empty.inputHeight, `${label}: multiline input must grow`);
       near(growing.bottom, empty.bottom, `${label}: send row must not move`);
+      near(growing.dockHeight, empty.dockHeight, `${label}: multiline growth preserves the dock footprint`);
       await setDraft(win, Array(60).fill("长消息继续输入，达到上限后在输入区内滚动。").join("\n"));
       const full = await geometry(win);
       assert.ok(full.scrollHeight > full.inputHeight, `${label}: full input must scroll`);
       assert.ok(full.top >= 0 && full.bottom <= height, `${label}: input must stay in viewport: ${JSON.stringify(full)}`);
       near(full.bottom, empty.bottom, `${label}: capped input keeps bottom anchored`);
+      near(full.dockHeight, empty.dockHeight, `${label}: capped growth preserves the dock footprint`);
       if (variant === "populated") await checkEndClearance(win, `${label}: capped input`);
       await evaluate(win, () => {
         const input = document.querySelector('[data-main-conversation-composer] textarea');
@@ -238,6 +240,7 @@ async function geometry(win) {
       const value = {
         width: innerWidth, inputHeight: input.offsetHeight, scrollHeight: input.scrollHeight,
         top: frame.top, bottom: frame.bottom,
+        dockHeight: input.closest(".composer-wrap").getBoundingClientRect().height,
       };
       const next = JSON.stringify(value);
       stable = next === last ? stable + 1 : 0;

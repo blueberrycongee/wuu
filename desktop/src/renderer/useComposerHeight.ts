@@ -37,6 +37,7 @@ export function useComposerHeight(ref: RefObject<ComposerInputHandle | null>, va
     // capsule without clearing the draft.
     delete stack.dataset.multiline;
     input.style.height = "0px";
+    const collapsedComposerHeight = composer.offsetHeight;
     if (input.scrollHeight > input.offsetHeight + 1) {
       stack.dataset.multiline = "true";
     }
@@ -54,8 +55,9 @@ export function useComposerHeight(ref: RefObject<ComposerInputHandle | null>, va
     input.scrollTop = scrollTop;
 
     // Grow upward without moving the send controls or the conversation's scroll
-    // anchor. Put the offset on the common ancestor of the frame and queue tray.
-    stack.style.setProperty("--composer-input-growth", `${Math.max(0, composer.offsetHeight - baseComposerHeight)}px`);
+    // anchor. Include the toolbar row added by multiline layout in that growth.
+    // Put the offset on the common ancestor of the frame and queue tray.
+    stack.style.setProperty("--composer-input-growth", `${Math.max(0, composer.offsetHeight - collapsedComposerHeight)}px`);
   }, [ref]);
 
   // Run after every local value commit, including history, paste, and send-clear.
