@@ -286,12 +286,18 @@ export class DesktopPluginRuntime {
     });
     const selectedApplication = this.host.getApplicationBinding();
     const applicationPlugin = selectedApplication && desired.get(selectedApplication.pluginId);
-    if (applicationPlugin?.desktop && this.activeGenerations.get(applicationPlugin.id) !== desktopGeneration(applicationPlugin)) {
+    // A superseded handoff can stop the writer before the generation cache advances.
+    const currentApplication = this.host.applicationProviders.current;
+    const applicationIsCurrent = currentApplication && !currentApplication.removed
+      && currentApplication.pluginId === selectedApplication?.pluginId && currentApplication.id === selectedApplication?.id
+      && currentApplication.generation === applicationPlugin?.fingerprint && currentApplication.graphGeneration === applicationPlugin?.graph_generation;
+    if (applicationPlugin?.desktop && (!applicationIsCurrent || this.activeGenerations.get(applicationPlugin.id) !== desktopGeneration(applicationPlugin))) {
       try {
         const stage = await this.host.prepareGeneration(activationOptions(applicationPlugin));
         if (epoch !== this.syncEpoch) { stage.dispose(); return []; }
         preparedApplication = { id: applicationPlugin.id, stage };
       } catch (error) {
+        if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) return [];
         const effective = this.host.applicationProviders.current;
         if (effective?.graphGeneration && applicationPlugin.graph_generation && effective.graphGeneration !== applicationPlugin.graph_generation) {
           // The Go commit cannot be rolled back by retaining JavaScript objects. In
@@ -360,7 +366,7 @@ export class DesktopPluginRuntime {
           }
           if (!plugin.desktop) return true;
           const fingerprint = plugin.fingerprint;
-          if (!fingerprint || this.activeGenerations.get(plugin.id) === desktopGeneration(plugin)) {
+          if (!fingerprint || preparedApplication?.id !== plugin.id && this.activeGenerations.get(plugin.id) === desktopGeneration(plugin)) {
             return true;
           }
           // Staging callbacks can already own provider resources before activation commits.

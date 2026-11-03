@@ -74,6 +74,15 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
   const questions = useMemo(() => structuredClone(view.conversationActions.questions) as UserQuestionRequest[], [view.conversationActions.questions]);
   const pending = view.submission.pendingCreations.find(row => row.ownerTabId === view.tabs.activeTabId
     && !view.submission.operations.some(operation => operation.operationID === row.operationID && operation.draftPending));
+  const contentOwner = primary?.id ?? view.tabs.activeTabId;
+  const entry = useRef({ owner: contentOwner, pendingTurnId: pending?.turn.id, continuedSubmission: false });
+  if (entry.current.owner !== contentOwner) {
+    // Independent sends already display this optimistic turn before binding.
+    // Preserve that entrance across draft -> thread, even when submission and
+    // conversation snapshots publish separately. Returning later is navigation.
+    entry.current = { owner: contentOwner, pendingTurnId: pending?.turn.id,
+      continuedSubmission: Boolean(entry.current.pendingTurnId && primary?.turns.some(turn => turn.id === entry.current.pendingTurnId)) };
+  } else entry.current.pendingTurnId = pending?.turn.id;
   const split = Boolean(primary && secondary);
   const empty = !pending && !primary?.turns.length && !details.some(entry => entry.threadID === primary?.id);
   const switching = Boolean(view.tabs.pending && !view.tabs.pending.contentReady);
@@ -163,7 +172,8 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
       className={`scroll-region${empty ? " empty-scroll-region" : ""}${split ? " split-scroll-region" : ""}`}
       inert={layout.visible === false || switching} style={layout.restoring ? { visibility: "hidden" } : undefined}
       onScroll={event => layout.onScroll?.(event.currentTarget)}>
-      <div ref={layout.contentRef} className="scroll-region-content">
+      <div ref={layout.contentRef} className="scroll-region-content"
+        data-conversation-entry={!view.tabs.pending && !layout.restoring && layout.visible !== false && !entry.current.continuedSubmission}>
         {view.conversation.error ? <div role="alert">{view.conversation.error}</div> : null}
         {split ? <div className="conversation-split" style={{ "--conversation-split-left": `${layout.splitLeftPercent ?? 50}%` } as CSSProperties}>
           {(["primary", "secondary"] as const).map(pane => <SplitConversation key={pane} pane={pane} thread={pane === "primary" ? primary! : secondary!} application={application} onStreamFrame={onStreamFrame}

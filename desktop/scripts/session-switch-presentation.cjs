@@ -210,7 +210,13 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
               transform: getComputedStyle(node).transform, marginBottom: getComputedStyle(node).marginBottom,
             }])),
         };
-        probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, composerGeometry, railControls, loading, animations, rasterChrome,
+        const messages = [...document.querySelectorAll('.cached-conversation-pane[data-active="true"], .empty-home, .conversation-split-body')]
+          .filter(node => node.getBoundingClientRect().height && getComputedStyle(node).visibility === 'visible')
+          .map(node => ({ owner: node.dataset.threadId || node.closest('[data-thread-id]')?.dataset.threadId,
+            opacity: Number(getComputedStyle(node).opacity), transform: getComputedStyle(node).transform,
+            moving: node.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().duration > 0) }));
+        probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, composerGeometry, railControls, loading, animations, rasterChrome, messages,
+          appearanceMotion: document.documentElement.dataset.appearanceMotion,
           frame: native ? document.documentElement.getAttribute('data-wuu-compositor-frame') : image?.getAttribute('data-wuu-presentation-frame'), rootInert: !!document.querySelector('.app-shell')?.closest('[inert]'),
           imageAnimations: image?.getAnimations().length || 0, imageOpacity: imageStyle?.opacity, imageTransform: imageStyle?.transform, imageWidth: imageStyle?.width, imageHeight: imageStyle?.height,
           fullscreenLoading: !!document.querySelector('.view-switch-loading'), recovery: !!document.querySelector('[data-wuu-component="launch-view"]') });
@@ -236,6 +242,10 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     fs.writeFileSync(path.join(output, 'presentation-results.json'), JSON.stringify({ viewport, stablePresentation, nativeFrames, compositorProfile: await evaluate(win, () => window.__presentationCompositorProfile), scope: 'Real selected product shell/preload/core, native input, per-rAF geometry/animation samples and compositor PNG frames. Synthetic local data; not physical-display proof.', results }, null, 2));
     fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     assert(result.frames.length >= 2, `${name}: no frame observations`);
+    if (/^no-preference-session-[01]$/.test(name)) {
+      assert(result.frames.some(frame => frame.messages.some(message => message.moving && message.opacity < 1)),
+        `${name}: ready session content did not ease into view`);
+    }
     assert(result.footer, `${name}: current product footer is missing`);
     assert(result.footer.overflow <= 1, `${name}: footer controls overflow`);
     if (narrow) assert.equal(parseFloat(result.footer.fontSize), 20, `${name}: narrow case must use the saved large text preference`);
@@ -266,6 +276,15 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     }
     const geometry = {};
     for (const frame of result.frames) {
+      if (name.startsWith('app-reduce-')) assert.equal(frame.appearanceMotion, 'reduce', `${name}: application motion preference was not retained`);
+      for (const message of frame.messages) {
+        assert.equal(message.transform, 'none', `${name}: message entry moved its reading position`);
+        assert(message.opacity > 0 && message.opacity <= 1, `${name}: message entry hid ready content`);
+        if (name.startsWith('reduce-') || name.startsWith('app-reduce-')) {
+          assert.equal(message.opacity, 1, `${name}: reduced motion faded messages`);
+          assert.equal(message.moving, false, `${name}: reduced motion animated messages`);
+        }
+      }
       // A full retained frame covers a genuinely inert successor while its
       // selected surfaces finish their first layout. Track chrome only from
       // its first live frame; an unmasked or interactive owner gets no grace.
@@ -311,11 +330,25 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
     console.log('PRESENTATION_PASS', name);
   }
-  for (const motion of ['no-preference', 'reduce']) {
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] });
+  for (const motion of ['no-preference', 'reduce', 'app-reduce']) {
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion === 'app-reduce' ? 'no-preference' : motion }] });
+    await evaluate(win, motion => {
+      // Exercise the saved preference, not a transient root attribute that
+      // appearance synchronization legitimately replaces during navigation.
+      const preferences = JSON.parse(localStorage.getItem('wuu.appearance.v1') || '{}');
+      localStorage.setItem('wuu.appearance.v1', JSON.stringify({ ...preferences, motion: motion === 'app-reduce' ? 'reduce' : 'system' }));
+      window.dispatchEvent(new Event('wuu-appearance-change'));
+    }, motion);
+    await waitFor(win, motion => document.documentElement.dataset.appearanceMotion === (motion === 'app-reduce' ? 'reduce' : 'system'), motion);
     for (const index of [1, 0]) {
       const name = `${motion}-session-${index}`; await begin(name); await thread(index); await end(name);
     }
+    const rapid = `${motion}-rapid-return`; await begin(rapid);
+    for (const index of [1, 0, 1, 0]) await click('.thread-row-main', `Switch session ${index}`);
+    await waitFor(win, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.dataset.threadId === 'switch-thread-0');
+    await end(rapid);
+    assert.equal(await evaluate(win, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.dataset.threadId), 'switch-thread-0', `${rapid}: superseded content returned`);
+    if (motion === 'app-reduce') continue;
     await openRelatedSplit();
     await waitFor(win, () => document.querySelectorAll('.conversation-split-body').length === 2
       && [...document.querySelectorAll('.conversation-split-body')].some(node => node.textContent.includes('Related split answer'))
