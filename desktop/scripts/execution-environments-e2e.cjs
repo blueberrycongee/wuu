@@ -33,12 +33,19 @@ async function openSettingsPage(win, label, ready) {
     if (Date.now() > end) throw new Error(`Timed out opening ${label}`);
     await new Promise(resolve => setTimeout(resolve, 40));
   }
+  await win.webContents.executeJavaScript(`(() => {
+    const section = document.querySelector(${JSON.stringify(ready)});
+    const disclosure = section.closest('details');
+    if (disclosure && !disclosure.open) disclosure.querySelector('summary').click();
+    section.scrollIntoView({ block: 'center' });
+  })()`);
+  await settle(win);
 }
 async function openRuntime(win) {
   await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-trigger")));
   await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
-  await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
-  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-settings-entry="settings"]')));
+  await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-execution-environments"]');
 }
@@ -72,7 +79,7 @@ app.whenReady().then(async () => {
   await evaluate(win,()=>document.querySelector('[aria-label="Name"]').scrollIntoView({block:'center'}));
   await settle(win);
   const geometry=await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-execution-environments"] input, [data-testid="settings-execution-environments"] button')].map(el=>{const r=el.getBoundingClientRect();return {label:el.getAttribute('aria-label')||el.textContent,x:r.x,right:r.right,width:r.width,y:r.y,bottom:r.bottom};}).filter(r=>r.y>=0&&r.bottom<=innerHeight));
-  assert.ok(geometry.every(r=>r.x>=0&&r.right<=width&&r.width>0),JSON.stringify({theme,font,width,geometry}));
+  assert.ok(geometry.length > 0 && geometry.every(r=>r.x>=0&&r.right<=width&&r.width>0),JSON.stringify({theme,font,width,geometry}));
   fs.writeFileSync(path.join(evidence,`${theme}-${font}-${width}.png`),(await win.webContents.capturePage()).toPNG());
   samples.push({theme,font,width,geometry});
  }

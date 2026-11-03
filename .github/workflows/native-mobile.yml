@@ -41,22 +41,37 @@ defaults:
 
 jobs:
   ios:
+    name: iOS / ${{ matrix.suite }}
     runs-on: macos-15
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [core, simulator, device]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
+        if: matrix.suite == 'core'
         with:
           go-version-file: go.mod
       - name: PostgreSQL tools
+        if: matrix.suite == 'core'
         run: |
           brew install postgresql@18
           echo "WUU_TEST_PG_BIN=$(brew --prefix postgresql@18)/bin" >> "$GITHUB_ENV"
-      - name: Core, real-server integration and simulator build
-        run: bash clients/native/verify.sh ios | tee native-ios-core.log
+      - name: Core and real-server integration
+        if: matrix.suite == 'core'
+        run: bash clients/native/verify.sh ios-core | tee native-ios-core.log
+      - name: Unsigned iOS simulator build
+        if: matrix.suite == 'simulator'
+        run: |
+          xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
+            -sdk iphonesimulator -derivedDataPath clients/native/ios/.build-xcode \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee native-ios-simulator.log
       - name: Unsigned iOS device Release build
+        if: matrix.suite == 'device'
         run: |
           xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
@@ -65,7 +80,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-ios-results
+          name: native-ios-${{ matrix.suite }}-results
           retention-days: 7
           include-hidden-files: true
           path: |

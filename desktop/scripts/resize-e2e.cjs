@@ -67,7 +67,7 @@ async function run() {
   );
   await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-menu")), 3000);
   await evaluate(win, () => {
-    const button = document.querySelector('[data-settings-page="providers"]');
+    const button = document.querySelector('[data-settings-entry="settings"]');
     if (!(button instanceof HTMLButtonElement)) throw new Error("Settings menu item not found.");
     button.click();
   });

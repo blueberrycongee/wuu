@@ -253,10 +253,16 @@ on-demand diagnostic view, without credentials or private payloads. Logging an
 exception alone is not feedback. Do not clear a draft, show success, replace a
 working page, or present an empty result merely because its action failed.
 
+Notice placement and delivery are host-owned UI infrastructure, not a selected
+business-service provider. Built-in and external desktop plugins use this same
+public entry point; replacing a shell does not replace the notice queue.
+
 Use a stable semantic `key` for repeated background failures. Each explicit user
 attempt needs fresh feedback even when the reason is unchanged: use an
 attempt-specific key rather than reusing the background key. The returned
-disposable dismisses the active or queued notice. Dispose obsolete notices after
+disposable dismisses the active or queued notice. Keys are scoped to one activation,
+so a reload (including unchanged code) does not suppress the new activation’s errors
+or let the retiring activation close its notices. Dispose obsolete notices after
 recovery; generation retirement also dismisses its notices and rejects later
 calls. Fence late results when a view changes or unmounts. Only a proven retired
 scope is cancellation; an unrelated transport failure must remain visible.
@@ -309,3 +315,14 @@ Standalone component preview has no committed product graph and does not adverti
 the capability; feature-requiring packages reject activation there. Use an
 owner-qualified preview shell to inspect a component in isolation, and the running
 host to verify graph selection. Existing owner-qualified previews are unchanged.
+
+### Optional service absence
+
+`api.invokeService` rejects with a structured `code`. Only
+`service_optional_absent` proves that the declared optional dependency has no
+provider, no explicit selection, no ambiguity and no incompatible major. A UI may
+hide an unused optional feature for that code and retry when inventory changes.
+Do not classify errors by message text. A selected provider failure remains an
+error even if its message or nested error describes a missing service. Successful
+service results are returned unchanged; desktop transport envelopes are not part
+of the plugin API.

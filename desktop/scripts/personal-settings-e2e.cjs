@@ -14,8 +14,8 @@ app.whenReady().then(async()=>{
   await win.loadFile(path.resolve(__dirname,'../out/personal-fixture/index.html'));
   await until(()=>document.querySelector('.sidebar-account-trigger'));
   await evaluate(()=>document.querySelector('.sidebar-account-trigger').click());
-  await until(()=>document.querySelector('[data-settings-page="providers"]'));await capture('account-menu');
-  await evaluate(()=>document.querySelector('[data-settings-page="providers"]').click());
+  await until(()=>document.querySelector('[data-settings-entry="settings"]'));await capture('account-menu');
+  await evaluate(()=>document.querySelector('[data-settings-entry="settings"]').click());
   await until(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]'));
   await evaluate(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]').click());
   await until(()=>document.querySelector('.personal-review')?.textContent.includes('动作审批当前不可用'));
@@ -34,8 +34,8 @@ app.whenReady().then(async()=>{
   await win.loadFile(path.resolve(__dirname,'../out/personal-fixture/index.html'),{query:{calendar:'stale'}});
   await until(()=>document.querySelector('.sidebar-account-trigger'));
   await evaluate(()=>document.querySelector('.sidebar-account-trigger').click());
-  await until(()=>document.querySelector('[data-settings-page="providers"]'));
-  await evaluate(()=>document.querySelector('[data-settings-page="providers"]').click());
+  await until(()=>document.querySelector('[data-settings-entry="settings"]'));
+  await evaluate(()=>document.querySelector('[data-settings-entry="settings"]').click());
   await until(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]'));
   await evaluate(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]').click());
   await until(()=>document.querySelector('form.gcal-agenda-form'));

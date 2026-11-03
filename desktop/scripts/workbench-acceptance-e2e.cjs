@@ -208,7 +208,7 @@ const activePane = '.cached-conversation-pane[data-active="true"]';
 const composer = '.conversation-pane .composer textarea';
 const scroller = '.conversation-pane > .scroll-region';
 const conversations = '[data-wuu-component="conversations-section"]';
-const settings = 'button[role="menuitem"][data-settings-page="providers"]';
+const settings = 'button[role="menuitem"][data-settings-entry="settings"]';
 const plugins = '.sidebar-ribbon button[aria-label="Extensions"]';
 const leftToggle = '.section-sidebar-toggle';
 const rightToggle = '.shell-right-sidebar-toggle';
@@ -506,12 +506,12 @@ async function run() {
     await selectThread('acceptance-reading');
     win.webContents.sendInputEvent({ type: 'mouseMove', x: 800, y: 500 });
     await settle();
-    const conversationsLabel = await evaluate(() => {
-      const label = [...document.querySelectorAll('.project-row-name')].find(node => node.textContent.trim() === 'Conversations');
+    const workspaceLabel = await evaluate(() => {
+      const label = [...document.querySelectorAll('.project-row-name')].find(node => node.textContent.trim() === 'Acceptance project');
       return label && { text: label.textContent, width: label.clientWidth, contentWidth: label.scrollWidth };
     });
-    assert.ok(conversationsLabel && conversationsLabel.width > 0 && conversationsLabel.contentWidth <= conversationsLabel.width + 1,
-      `Built-in Conversations label fits at default size: ${JSON.stringify(conversationsLabel)}`);
+    assert.ok(workspaceLabel && workspaceLabel.width > 0 && workspaceLabel.contentWidth <= workspaceLabel.width + 1,
+      `Workspace label fits at default size: ${JSON.stringify(workspaceLabel)}`);
     const reading = await geometry('conversations');
     await click(plugins, 'plugins');
     await waitFor(() => document.querySelector('.skills-catalog'));

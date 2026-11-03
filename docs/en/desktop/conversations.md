@@ -12,9 +12,15 @@ After the first send, the workspace sidebar immediately shows the pending conver
 
 The normal sidebar includes cross-workspace **Recent**. Opening the window orders running conversations first, then unread conversations, then the remaining conversations by latest update. Reading or switching conversations clears unread indicators without changing their positions, even after the pointer or keyboard focus leaves the list. Live output and title updates also preserve the order.
 
-Starting work or receiving a new result gives that conversation priority while preserving the relative order of other conversations. A conversation that finishes stays just below the remaining running conversations, including when you are already viewing it and its result is marked read immediately. These priorities last until the window is reloaded or reopened. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, activity-driven moves wait until the interaction ends; status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
+New conversations appear at the top of Recent, including while the first message is waiting to start. Existing conversations keep their relative positions when work starts or finishes. You can drag rows to save a preferred order; later arrivals appear above them. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, new entries wait until the interaction ends, except for the conversation you are creating or selecting. Status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
 
-These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
+These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
+
+## Dictate a message
+
+On macOS, click the microphone in any desktop composer, including Coding and Personal agent conversations, to start dictation. Allow microphone and Speech Recognition access on first use. The waveform follows microphone volume. Stop waits for the final transcription and appends it to your existing draft. Clicking Send during recording finishes transcription first, then submits through the conversation's normal send flow.
+
+Cancel or switch conversations to end dictation and keep the original draft. Recognition uses the interface language and requires on-device speech recognition support for that language on your Mac; unavailable recognition is reported in the composer.
 
 ## Continue after an interruption
 

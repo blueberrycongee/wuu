@@ -10,6 +10,7 @@ import { SkillsCatalog as PublicSkillsCatalog } from "./SkillsCatalog";
 import type { ComponentProps } from "react";
 import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import type { ExtensionPackageUpdateParams, PluginPackageInstallResult, PluginPackageRemoveResult, RuntimeContext } from "../shared/protocol";
+import { I18nProvider, translate } from "./i18n";
 import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
 // Existing UI scenarios provide a public application fixture; production accepts
@@ -728,6 +729,55 @@ describe("SkillsCatalog", () => {
       skillButton("broken")?.click();
     });
     expect(document.body.textContent).toContain("Plugin process exited before initialize");
+  });
+
+  // Regression: the Host's dependency diagnostics must not become conflict
+  // warnings or imply a failed runtime for an optional relationship.
+  it.each(["en-US", "zh-CN"] as const)("preserves dependency severity and recovery in %s", async (locale) => {
+    installSkillList([]);
+    Object.assign(window.wuu, { initialLanguagePreference: locale });
+    const update = vi.fn(async () => {});
+    const plugin: ExtensionInventoryRecord = {
+      id: "plugin:user:consumer", name: "Consumer", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "consumer" },
+      state: "active", approval_state: "granted", runtime_state: "active", enabled: true,
+    };
+    const render = async (record: ExtensionInventoryRecord) => {
+      await act(async () => {
+        root ??= createRoot(container);
+        root.render(<I18nProvider><SkillsCatalog extensionInventory={[record]} onUpdateExtensionPackage={update} /></I18nProvider>);
+      });
+    };
+    const messages = new Set<string>();
+    for (const kind of ["optional_missing", "optional_version_mismatch", "optional_cycle", "version_mismatch", "missing_requirement", "conflict"] as const) {
+      const blocking = kind === "version_mismatch" || kind === "missing_requirement";
+      await render({ ...plugin, runtime_state: blocking ? "inactive" : "active", activation_issues: [{ kind, related_plugin_id: "provider" }] });
+      expect(attentionLabels()).toHaveLength(kind.startsWith("optional_") ? 0 : 1);
+      await act(async () => skillButton("Consumer")!.click());
+      const notice = container.querySelector(".plugin-detail-notice")!;
+      expect(notice.getAttribute("role")).toBe(blocking ? "alert" : "status");
+      expect(notice.textContent).toContain("provider");
+      if (kind !== "conflict") {
+        expect(notice.textContent).not.toBe(translate(locale, "skills.pluginConflictWarning", { plugin: "provider" }));
+      }
+      messages.add(notice.textContent!);
+      expect(notice.querySelector("button")).toBeNull();
+      const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(toggle.disabled).toBe(false);
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
+      expect(attentionLabels()).toEqual(kind.startsWith("optional_") ? [] : [notice.textContent]);
+    }
+    expect(messages.size).toBe(6);
+    // Replacing the inventory after remediation removes stale diagnostics,
+    // including when the detail page remains open.
+    await act(async () => skillButton("Consumer")!.click());
+    await render(plugin);
+    expect(container.querySelector(".plugin-detail-notice")).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
+    expect(attentionLabels()).toEqual([]);
+    expect(update).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
   });
 
   it("keeps a failed plugin diagnosable without a global toast and clears its retry state after remediation", async () => {

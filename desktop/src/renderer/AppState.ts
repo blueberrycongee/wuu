@@ -547,9 +547,9 @@ function appendStreamDelta(
     streamTextStore.append(key, delta);
     return false;
   }
-  // /\S/ short-circuits at the first visible character; trimming the full
-  // accumulated text here made every delta O(message length).
-  const hadVisibleText = /\S/.test(streamTextStore.get(key));
+  // Reading the whole value here defeats chunk buffering and makes V8 flatten
+  // a growing string for every delta, including streams with no subscribers.
+  const hadVisibleText = streamTextStore.hasVisibleText(key);
   streamTextStore.append(key, delta);
   return !hadVisibleText && /\S/.test(delta);
 }
@@ -565,9 +565,9 @@ function replaceStreamText(
     return false;
   }
   const key = streamTextKey(turnID, itemID, field);
-  const wasEmpty = streamTextStore.get(key).trim().length === 0;
+  const wasEmpty = !streamTextStore.hasVisibleText(key);
   streamTextStore.replace(key, text);
-  return field === "text" && wasEmpty && text.trim().length > 0;
+  return field === "text" && wasEmpty && /\S/.test(text);
 }
 
 function syncStreamItem(params: Record<string, unknown> | undefined): void {
@@ -1556,7 +1556,7 @@ function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
   // action stays reversible from there. Read-only threads are still real
   // conversations that need to render — they only differ in mutation rights.
   // Filtering archived out of sidebar surfaces is the job of pinnedThreads /
-  // workspaceThreads / scratchThreads, not of this generic upsert.
+  // workspaceThreads, not of this generic upsert.
   const index = validThreads.findIndex((item) => item.id === thread.id);
   if (index < 0) {
     return sortThreads([thread, ...validThreads]);
@@ -1810,6 +1810,28 @@ function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {
       return mergeListedThread(existing, thread);
     }),
   );
+}
+
+// Titles and organization changes do not advance updated_at. Preserve snapshots
+// changed while a list request was in flight instead of ordering by timestamp.
+export function reconcileSidebarThreadList(
+  requested: Thread[] | undefined,
+  current: Thread[] | undefined,
+  listed: Thread[],
+): Thread[] {
+  const before = new Map((requested ?? []).map((thread) => [thread.id, thread]));
+  const now = new Map((current ?? []).map((thread) => [thread.id, thread]));
+  const result = new Map(listed.map((thread) => [thread.id, thread]));
+  for (const id of before.keys()) {
+    if (!now.has(id)) result.delete(id);
+  }
+  for (const [id, thread] of now) {
+    if (before.get(id) !== thread) {
+      const incoming = result.get(id);
+      result.set(id, incoming ? reconcileThreadTitle(incoming, thread) : thread);
+    }
+  }
+  return sortThreads([...result.values()]);
 }
 
 // A later turn timestamp does not make its captured title newer. Title
@@ -2077,13 +2099,6 @@ export function threadBelongsToWorkspace(
   return sameDesktopPath(threadWorkspacePath(thread), project.path);
 }
 
-function threadBelongsToAnyWorkspace(
-  thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
-  projects: Pick<DesktopProject, "id" | "path">[],
-): boolean {
-  return projects.some((project) => threadBelongsToWorkspace(thread, project));
-}
-
 function sameDesktopPath(left: string, right: string): boolean {
   return cleanDesktopPath(left) === cleanDesktopPath(right);
 }
@@ -2094,43 +2109,15 @@ function cleanDesktopPath(path: string): string {
   return withoutTrailingSlash || trimmed;
 }
 
-// SCRATCH_PSEUDO_PROJECT_ID is the synthetic project id used to render the
-// scratch (no-project) conversation group inside the unified sidebar tree.
-// Threads whose cwd does not belong to a registered DesktopProject (i.e.
-// isScratchThread returns true) are bucketed under this id so the sidebar
-// can render them through the same WorkspaceList code path as real projects.
-// The DesktopProject entry carrying this id is built in App.tsx and never
-// sent from the app-server — it lives only on the renderer side.
-export const SCRATCH_PSEUDO_PROJECT_ID = "__wuu_scratch__";
-
-export function isScratchThread(
-  thread: Pick<Thread, "workspace_kind" | "cwd" | "worktree">,
-  projects: DesktopProject[],
-): boolean {
-  if (threadBelongsToAnyWorkspace(thread, projects)) {
-    return false;
-  }
-  if (thread.workspace_kind === "scratch") {
-    return true;
-  }
-  if (thread.workspace_kind === "project") {
-    return false;
-  }
-  const projectPath = threadWorkspacePath(thread);
-  return !projects.some((project) => project.path === projectPath);
-}
-
 /**
- * Resolve the RuntimeContext a thread should open under, independent of
- * whichever sidebar group the user clicked it from. Precedence mirrors
- * isScratchThread:
- * a cwd match against a registered project always wins, even when the
- * thread's own workspace_kind says otherwise (e.g. a thread created before
- * a project was registered at that path). Everything else resolves to a
- * no_project context rooted at the thread's own cwd, which is what makes the
- * workspace panel (file tree /
- * terminal / git) follow the thread instead of staying on the previously
- * active project.
+ * Resolve the RuntimeContext a thread should open under. A cwd match against
+ * a registered project always wins, even when the thread's own
+ * workspace_kind says otherwise (e.g. a thread created before a project was
+ * registered at that path). Everything else resolves to a no_project context
+ * rooted at the thread's own cwd so the workspace panel follows the thread
+ * instead of staying on the previously active project. The desktop no longer
+ * creates no-project conversations; this remains the read path for legacy
+ * and CLI-owned sessions.
  */
 export function resolveThreadRuntimeContext(
   thread: Thread,
@@ -2175,29 +2162,6 @@ export function workspacePanelContext(
     return { kind: "no_project", cwd: thread.cwd };
   }
   return { ...activeContext, cwd: thread.cwd };
-}
-
-export function scratchThreads(
-  threads: Thread[],
-  projects: DesktopProject[],
-): Thread[] {
-  return sortThreads(threads).filter(
-    (thread) =>
-      !thread.pinned &&
-      !thread.archived &&
-      isScratchThread(thread, projects),
-  );
-}
-
-export function scratchThreadSummaries(
-  threads: ThreadSummary[],
-  projects: DesktopProject[],
-): ThreadSummary[] {
-  return sortThreadSummaries(threads).filter(
-    (thread) =>
-      !thread.pinned &&
-      isScratchThread(thread, projects),
-  );
 }
 
 function createDraftSessionTab(
@@ -2617,13 +2581,13 @@ function threadNeedsResumeOnReselect(state: AppState, threadID: string): boolean
 }
 
 // workspaceNameForContext resolves the display name of the workspace a tab is
-// bound to: the registered project's name for a project context, or "对话" for
-// the shared no-project workspace. A project context whose project has been
-// removed/relocated (so it is no longer in state.projects) falls back to the
-// cwd basename so the tab still reads as *something* rather than blank.
+// bound to. A project context whose project has been removed/relocated (so it
+// is no longer in state.projects) falls back to the cwd basename so the tab
+// still reads as *something* rather than blank. No-project tabs only remain
+// from legacy sessions and are labelled as having no workspace.
 export function workspaceNameForContext(context: RuntimeContext, projects: DesktopProject[]): string {
   if (context.kind === "no_project") {
-    return t("sidebar.conversations");
+    return t("appState.noWorkspace");
   }
   if (context.kind === "user") return context.product_domain;
   const project = projects.find(
@@ -2634,10 +2598,10 @@ export function workspaceNameForContext(context: RuntimeContext, projects: Deskt
 
 function sessionTabLabel(tab: SessionTab, state: AppState): string {
   if (tab.kind === "draft") {
-    // A draft (unsent) tab is labelled by its workspace — the project name or
-    // "对话" — not the typed prompt. Each workspace has at most one draft tab,
-    // so the name is unambiguous; once the draft is sent it becomes a thread
-    // tab and switches to the conversation title (below).
+    // A draft (unsent) tab is labelled by its workspace — the project name —
+    // not the typed prompt. Each workspace has at most one draft tab, so the
+    // name is unambiguous; once the draft is sent it becomes a thread tab and
+    // switches to the conversation title (below).
     return workspaceNameForContext(tab.context, state.projects);
   }
   if (tab.kind === "skills") {

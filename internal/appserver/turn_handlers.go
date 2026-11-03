@@ -46,6 +46,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 type queuedTurn struct {
@@ -72,18 +73,10 @@ var errQueuedTurnCancelled = errors.New("queued turn was cancelled before admiss
 
 const maxCancelledPendingSubmissions = 1024
 
-type agentCompletionTurnKind string
-
-const (
-	agentCompletionTurnKindCompletion agentCompletionTurnKind = "completion"
-	agentCompletionTurnKindRecheck    agentCompletionTurnKind = "recheck"
-)
-
 type agentCompletionTurn struct {
 	agentID   string
 	resultID  string
 	processID string
-	kind      agentCompletionTurnKind
 	msg       providers.ChatMessage
 	snapshot  *subagent.SubAgentSnapshot
 }
@@ -879,6 +872,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	var params TurnSteerParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if hasPluginReferences(params.ContentParts) {
+		return s.writeResponse(req.ID, nil, errors.New("queue plugin references for the next turn so its tools and account can be validated before execution"))
 	}
 	params.ThreadID = strings.TrimSpace(params.ThreadID)
 	params.Prompt = strings.TrimSpace(params.Prompt)
@@ -2012,6 +2008,11 @@ func userMessageFromPrompt(prompt string, images []providers.InputImage, files [
 		msg.DisplayContent = display
 	}
 	if len(contentPartSets) > 0 {
+		for _, part := range contentPartSets[0] {
+			if part.Type == "plugin_reference" && (part.Text == "" || part.Plugin == nil || part.Plugin.PluginID == "" && part.Plugin.MCPServer == "") {
+				return providers.ChatMessage{}, errors.New("invalid plugin reference; remove it and select the plugin again")
+			}
+		}
 		parts := normalizeMessageContentParts(contentPartSets[0])
 		var flattened strings.Builder
 		for _, part := range parts {
@@ -2024,6 +2025,8 @@ func userMessageFromPrompt(prompt string, images []providers.InputImage, files [
 		// match exactly.
 		if len(parts) > 0 && strings.TrimSpace(flattened.String()) == prompt {
 			msg.ContentParts = parts
+		} else if hasPluginReferences(contentPartSets[0]) {
+			return providers.ChatMessage{}, errors.New("plugin references do not match the message; restore the draft and select them again")
 		}
 	}
 	return msg, nil
@@ -2041,6 +2044,11 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 		switch part.Type {
 		case "text", "pasted_text":
 			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
+		case "plugin_reference":
+			if part.Plugin == nil || part.Plugin.PluginID == "" && part.Plugin.MCPServer == "" {
+				continue
+			}
+			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
 		case "file_selection":
 			if !validFileSelectionPart(part) {
 				continue
@@ -2049,6 +2057,9 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
 		default:
 			continue
+		}
+		if part.Type != "plugin_reference" {
+			part.Plugin = nil
 		}
 		selection := part.Selection
 		part.Selection = nil
@@ -2865,7 +2876,51 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if instructionsErr == nil && found {
 		sessionInstructions, instructionsErr = ProjectInstructions(s.projectServiceContext(ctx, binding), binding.Host, metadata)
 	}
+	var additionalDirectories []string
+	if turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+		catalog := turnKit.RegisteredWorkspaces()
+		additionalDirectories = workspaces.Roots(catalog)
+		if guidance := workspaces.Instructions(catalog); guidance != "" {
+			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
+		}
+	}
 	capabilityErr := instructionsErr
+	referenceParts := latestPluginReferenceParts(history)
+	if capabilityErr == nil && hasPluginReferences(referenceParts) {
+		servers := pluginReferenceServers(referenceParts)
+		if len(servers) > 0 && (turnKit == nil || turnKit.MCPManager() == nil) {
+			capabilityErr = errors.New("this conversation cannot execute MCP connections; choose an engine with conversation plugin support")
+		} else {
+			if turnKit != nil {
+				var pluginTools []string
+				for _, part := range referenceParts {
+					if part.Type != "plugin_reference" || part.Plugin == nil || part.Plugin.MCPServer != "" {
+						continue
+					}
+					for _, definition := range binding.Host.ToolDefinitions() {
+						if tool, ok := binding.Host.Tool(definition.Name); ok && tool.PluginID == part.Plugin.PluginID {
+							pluginTools = append(pluginTools, definition.Name)
+						}
+					}
+				}
+				turnKit.SetConversationTools(servers, pluginTools)
+				defer turnKit.SetConversationTools(nil, nil)
+			}
+			if len(servers) > 0 {
+				manager := turnKit.MCPManager()
+				generation := manager.Generation()
+				turnKit.FreezeToolSurface()
+				defer turnKit.UnfreezeToolSurface()
+				_, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
+				currentManager, managerErr := s.mcpManager()
+				if managerErr != nil || currentManager != manager || manager.Generation() != generation {
+					capabilityErr = errors.New("plugin connections changed while starting this turn; select the connections again")
+				}
+			} else {
+				_, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
+			}
+		}
+	}
 	// A restricted turn must not initialize an external bridge before its
 	// admitted engine has proved that it can enforce the restriction.
 	if (turnRuntime.DisableTools || turnRuntime.ToolPolicy != nil) && (runner == nil || agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu ||
@@ -2892,6 +2947,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if capabilityErr == nil {
 		engineDescriptor, capabilityErr = s.engineDescriptorForState(ctx, binding, agentengine.NormalizeEngineID(th.EngineID))
 	}
+	if capabilityErr == nil && hasPluginReferences(referenceParts) && !slices.Contains(engineDescriptor.Capabilities, "conversation-plugins") {
+		capabilityErr = errors.New("the selected engine does not support conversation plugins; choose a compatible engine or remove the references")
+	}
 	hostSteering := slices.Contains(engineDescriptor.Capabilities, "host-managed-steering")
 	nativeSteering := !hostSteering && slices.Contains(engineDescriptor.Capabilities, "active-turn-steering")
 	var engine agentengine.Session
@@ -2899,16 +2957,17 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		engine = agentengine.FailedSession(capabilityErr)
 	} else {
 		engine = s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
-			ThreadID:       th.ID,
-			RootDir:        firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
-			Model:          th.Model,
-			Effort:         th.ModelEffort,
-			Speed:          th.Speed,
-			ModelOptions:   th.ModelOptions,
-			PermissionMode: turnRuntime.permissions().Mode,
-			Instructions:   sessionInstructions,
-			MCPServers:     mcpServers,
-			ExternalRef:    th.EngineRef,
+			ThreadID:              th.ID,
+			RootDir:               firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
+			AdditionalDirectories: additionalDirectories,
+			Model:                 th.Model,
+			Effort:                th.ModelEffort,
+			Speed:                 th.Speed,
+			ModelOptions:          th.ModelOptions,
+			PermissionMode:        turnRuntime.permissions().Mode,
+			Instructions:          sessionInstructions,
+			MCPServers:            mcpServers,
+			ExternalRef:           th.EngineRef,
 			PersistRef: func(ref string) error {
 				return s.persistThreadEngineRef(binding, th.ID, ref)
 			},
@@ -5527,7 +5586,7 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 		if resultID := strings.TrimSpace(turn.resultID); resultID != "" {
 			completionResultIDs = append(completionResultIDs, resultID)
 		}
-		if processID := strings.TrimSpace(turn.processID); processID != "" && turn.kind != agentCompletionTurnKindRecheck {
+		if processID := strings.TrimSpace(turn.processID); processID != "" {
 			processCompletionIDs = append(processCompletionIDs, processID)
 		}
 	}
@@ -5551,20 +5610,6 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 				}
 				if admitted.completionDeliveryPaused(completionResultIDs, processCompletionIDs) {
 					return errCompletionDeliveryPaused
-				}
-				// Rechecks belong to live processes, so they must not pass through
-				// the natural-exit completion gate or acquire its delivery marker.
-				for _, entry := range pending {
-					if entry.kind != agentCompletionTurnKindRecheck {
-						continue
-					}
-					p, err := threadRuntime.ProcessManager.Get(entry.processID)
-					if err != nil {
-						return errors.Join(errRetryableTurnAdmission, err)
-					}
-					if p.RecheckMinutes <= 0 || (p.Status != process.StatusStarting && p.Status != process.StatusRunning) {
-						return errAgentCompletionAlreadyDelivered
-					}
 				}
 				*admittedMsg = combineAgentCompletionMessages(pending)
 				if clientID := agentCompletionClientID(pending); clientID != "" {
@@ -5857,7 +5902,6 @@ func cloneAgentCompletionTurns(turns []agentCompletionTurn) []agentCompletionTur
 	out := make([]agentCompletionTurn, 0, len(turns))
 	for i, turn := range turns {
 		out = append(out, agentCompletionTurn{
-			kind:      turn.kind,
 			agentID:   turn.agentID,
 			resultID:  turn.resultID,
 			processID: turn.processID,

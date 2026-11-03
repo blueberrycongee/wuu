@@ -58,6 +58,13 @@ let elementFromPointTarget: Element | null = null;
 const originalInnerWidth = window.innerWidth;
 
 const workspace = "/tmp/wuu-drawer-test";
+const project = {
+  id: "drawer-project",
+  name: "Drawer Project",
+  path: workspace,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
 
 function threadFixture(
   id: string,
@@ -71,7 +78,8 @@ function threadFixture(
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
-    workspace_kind: "scratch",
+    workspace_id: project.id,
+    workspace_kind: "project",
     status: "idle",
     pinned: false,
     archived: false,
@@ -128,12 +136,13 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(threads: Thread[] = []): void {
-  const workspaceState = (): {
-    projects: never[];
-    active_context: { kind: "no_project"; cwd: string };
-  } => ({
-    projects: [],
-    active_context: { kind: "no_project", cwd: workspace },
+  window.localStorage.setItem(
+    "wuu.desktop.expandedSidebarSectionIDs",
+    JSON.stringify([project.id]),
+  );
+  const workspaceState = () => ({
+    projects: [project],
+    active_context: { kind: "project" as const, project_id: project.id, cwd: workspace },
   });
   const api = {
     listProjects: vi

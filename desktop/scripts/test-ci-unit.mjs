@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, relative } from 'node:path';
 import { createVitest } from 'vitest/node';
 import { selectRelatedTests } from './ci-unit-dependencies.mjs';
+import { unitTestPlan } from './ci-unit-plan.mjs';
 
 const desktop = fileURLToPath(new URL('..', import.meta.url));
 const related = JSON.parse(process.env.WUU_CI_RELATED || '[]');
@@ -15,8 +16,14 @@ const run = (command, args) => {
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status || 1);
 };
+const runTests = (files = []) => {
+  for (const { tool, args } of unitTestPlan(files, process.env.WUU_CI_UNIT_SHARD || '')) {
+    if (tool === 'npm') run('npm', args);
+    else run(process.execPath, ['node_modules/vitest/vitest.mjs', ...args]);
+  }
+};
 if (!related.length) {
-  run('npm', ['test']);
+  runTests();
 } else {
   // Ask Vitest for its configured test inventory, without transforming/executing
   // mocked browser modules such as Monaco during dependency discovery.
@@ -41,12 +48,8 @@ if (!related.length) {
   console.log(`Unit dependencies: ${files.length}/${tests.length} files selected, ${selection.uncertain.length} with opaque dependencies retained`);
   if (!selection.affected.length) {
     console.log('No related tests found; running the complete unit gate');
-    run('npm', ['test']);
+    runTests();
   } else {
-    run('npm', ['run', 'test:dev-launcher']);
-    run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...files,
-      '--exclude=src/main/gitService.test.ts', '--exclude=src/main/remoteGit.test.ts']);
-    run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...serialized,
-      '--maxWorkers=1', '--minWorkers=1', '--testTimeout=15000']);
+    runTests(files);
   }
 }

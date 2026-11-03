@@ -181,7 +181,7 @@ func addSearchTools(b *surfaceBuilder) {
 func addBashFirstTools(b *surfaceBuilder, p Profile) {
 	if p.Execution.AllowDirectShell {
 		b.addVisible("bash", capability.CapabilityCommandBash)
-		b.addVisible("process", capability.CapabilityCommandBackground)
+		b.addVisibleCapability(capability.CapabilityCommandBackground)
 	}
 }
 
@@ -205,6 +205,7 @@ func addSessionTools(b *surfaceBuilder) {
 
 func addSessionWorkspaceTool(b *surfaceBuilder) {
 	b.addDeferred("set_session_workspace", capability.CapabilitySessionWorkspace)
+	b.addVisible("list_workspaces", capability.CapabilitySessionWorkspace)
 }
 
 func addContextWindowTools(b *surfaceBuilder) {

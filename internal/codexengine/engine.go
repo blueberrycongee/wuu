@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
+
+var codexRetryFractionPattern = regexp.MustCompile(`\b(\d+)/(\d+)\b`)
 
 // Engine is the codex agent engine: the Codex CLI app-server hosted as an
 // external process. It implements agentengine.Factory and
@@ -47,6 +51,7 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
+			"conversation-plugins",
 			"native-session-resume",
 			"default-permission-unconfined",
 			"active-turn-steering",
@@ -81,36 +86,38 @@ func (e *Engine) Resume(ctx context.Context, req agentengine.ResumeRequest) (age
 // an empty ref means the first turn creates the codex thread lazily.
 func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.ThreadBinding) (agentengine.Session, error) {
 	return e.newSession(ctx, sessionOptions{
-		threadID:       binding.ThreadID,
-		rootDir:        binding.RootDir,
-		model:          binding.Model,
-		effort:         ReasoningEffort(binding.Effort),
-		speed:          binding.Speed,
-		permissionMode: binding.PermissionMode,
-		instructions:   binding.Instructions,
-		mcpServers:     binding.MCPServers,
-		externalRef:    binding.ExternalRef,
-		persistRef:     binding.PersistRef,
-		persistTurnRef: binding.PersistTurnRef,
-		approval:       binding.RequestApproval,
-		userInput:      binding.RequestUserInput,
+		threadID:              binding.ThreadID,
+		rootDir:               binding.RootDir,
+		additionalDirectories: append([]string(nil), binding.AdditionalDirectories...),
+		model:                 binding.Model,
+		effort:                ReasoningEffort(binding.Effort),
+		speed:                 binding.Speed,
+		permissionMode:        binding.PermissionMode,
+		instructions:          binding.Instructions,
+		mcpServers:            binding.MCPServers,
+		externalRef:           binding.ExternalRef,
+		persistRef:            binding.PersistRef,
+		persistTurnRef:        binding.PersistTurnRef,
+		approval:              binding.RequestApproval,
+		userInput:             binding.RequestUserInput,
 	})
 }
 
 type sessionOptions struct {
-	threadID       string
-	rootDir        string
-	model          string
-	effort         ReasoningEffort
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
-	externalRef    string
-	persistRef     func(string) error
-	persistTurnRef func(string, bool) error
-	approval       agentengine.ApprovalHandler
-	userInput      agentengine.UserInputHandler
+	threadID              string
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                ReasoningEffort
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
+	externalRef           string
+	persistRef            func(string) error
+	persistTurnRef        func(string, bool) error
+	approval              agentengine.ApprovalHandler
+	userInput             agentengine.UserInputHandler
 }
 
 func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengine.Session, error) {
@@ -130,22 +137,23 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		userInput = e.RequestUserInput
 	}
 	return &Session{
-		client:         client,
-		release:        release,
-		threadID:       opts.threadID,
-		rootDir:        opts.rootDir,
-		model:          opts.model,
-		effort:         opts.effort,
-		speed:          opts.speed,
-		permissionMode: opts.permissionMode,
-		instructions:   opts.instructions,
-		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
-		ref:            opts.externalRef,
-		persist:        opts.persistRef,
-		persistTurnRef: opts.persistTurnRef,
-		approval:       approval,
-		steerReady:     make(chan struct{}),
-		userInput:      userInput,
+		client:                client,
+		release:               release,
+		threadID:              opts.threadID,
+		rootDir:               opts.rootDir,
+		additionalDirectories: opts.additionalDirectories,
+		model:                 opts.model,
+		effort:                opts.effort,
+		speed:                 opts.speed,
+		permissionMode:        opts.permissionMode,
+		instructions:          opts.instructions,
+		mcpServers:            append([]agentengine.MCPServer(nil), opts.mcpServers...),
+		ref:                   opts.externalRef,
+		persist:               opts.persistRef,
+		persistTurnRef:        opts.persistTurnRef,
+		approval:              approval,
+		steerReady:            make(chan struct{}),
+		userInput:             userInput,
 	}, nil
 }
 
@@ -157,14 +165,15 @@ type Session struct {
 	client  *Client
 	release func()
 
-	threadID       string
-	rootDir        string
-	model          string
-	effort         ReasoningEffort
-	speed          string
-	permissionMode string
-	instructions   string
-	mcpServers     []agentengine.MCPServer
+	threadID              string
+	rootDir               string
+	additionalDirectories []string
+	model                 string
+	effort                ReasoningEffort
+	speed                 string
+	permissionMode        string
+	instructions          string
+	mcpServers            []agentengine.MCPServer
 
 	mu                   sync.Mutex
 	ref                  string
@@ -676,7 +685,7 @@ func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartR
 	var resp TurnStartResponse
 	_, approval, sandboxPolicy := codexPermissionSettings(s.permissionMode)
 	if sandboxPolicy.Type == SandboxPolicyWorkspaceWrite && strings.TrimSpace(s.rootDir) != "" {
-		sandboxPolicy.WritableRoots = []string{s.rootDir}
+		sandboxPolicy.WritableRoots = append([]string{s.rootDir}, s.additionalDirectories...)
 	}
 	// Loaded native threads can ignore resume overrides. Set CWD together
 	// with the sandbox so its implicit writable CWD cannot remain on the old
@@ -1102,11 +1111,14 @@ func (sub *turnSubscription) close() {
 // filtered by turn id.
 func (sub *turnSubscription) run() {
 	var (
-		text         strings.Builder
-		reasoning    strings.Builder
-		usage        providers.TokenUsage
-		usageCursor  int
-		reconnecting bool
+		text            strings.Builder
+		reasoning       strings.Builder
+		usage           providers.TokenUsage
+		usageCursor     int
+		reconnecting    bool
+		retryCount      int
+		maxRetries      int
+		reconnectReason string
 	)
 	for {
 		notification, streamErr := sub.next()
@@ -1122,6 +1134,16 @@ func (sub *turnSubscription) run() {
 			}
 			if content != "" || reasoning.Len() > 0 {
 				result.NewMessages = []providers.ChatMessage{{Role: "assistant", Content: content, ReasoningContent: reasoning.String()}}
+			}
+			if reconnecting {
+				reason := reconnectReason
+				if !errors.Is(streamErr, context.Canceled) && strings.TrimSpace(streamErr.Error()) != "" {
+					reason = streamErr.Error()
+				}
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: providers.StreamPhaseFailed, RetryCount: retryCount, MaxRetries: maxRetries, Reason: reason,
+				}})
+				reconnecting = false
 			}
 			if !errors.Is(streamErr, context.Canceled) {
 				sub.emit(providers.StreamEvent{Type: providers.EventError, Error: streamErr})
@@ -1168,6 +1190,9 @@ func (sub *turnSubscription) run() {
 			case NotifyAgentMessageDelta, NotifyReasoningTextDelta, NotifyReasoningSummaryDelta, NotifyItemStarted, NotifyItemCompleted:
 				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseConnected}})
 				reconnecting = false
+				retryCount = 0
+				maxRetries = 0
+				reconnectReason = ""
 			}
 		}
 		switch notification.method {
@@ -1226,13 +1251,29 @@ func (sub *turnSubscription) run() {
 				// Codex owns recovery and may keep executing this turn. Ending
 				// our subscription here would lose its eventual output.
 				reconnecting = true
+				reconnectReason = lastErr.Error()
+				if match := codexRetryFractionPattern.FindStringSubmatch(reconnectReason); len(match) == 3 {
+					if n, err := strconv.Atoi(match[1]); err == nil && n > 0 {
+						retryCount = n
+					} else {
+						retryCount++
+					}
+					if m, err := strconv.Atoi(match[2]); err == nil && m > 0 {
+						maxRetries = m
+					}
+				} else {
+					retryCount++
+				}
 				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
-					Phase: providers.StreamPhaseReconnecting, Reason: lastErr.Error(),
+					Phase: providers.StreamPhaseReconnecting, RetryCount: retryCount, MaxRetries: maxRetries, Reason: lastErr.Error(),
 				}})
 				continue
 			}
 			if reconnecting {
-				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseFailed, Reason: lastErr.Error()}})
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: providers.StreamPhaseFailed, RetryCount: retryCount, MaxRetries: maxRetries, Reason: lastErr.Error(),
+				}})
+				reconnecting = false
 			}
 			// A non-retryable stream error is not native turn completion. Preserve
 			// partial output and let RunTurn confirm the turn stopped.
@@ -1257,10 +1298,18 @@ func (sub *turnSubscription) run() {
 			}
 			if reconnecting {
 				phase := providers.StreamPhaseConnected
+				reason := ""
 				if finishReason == providers.FinishReasonError {
 					phase = providers.StreamPhaseFailed
+					reason = reconnectReason
+					if turnErr != nil && !errors.Is(turnErr, context.Canceled) {
+						reason = turnErr.Error()
+					}
 				}
-				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: phase}})
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: phase, RetryCount: retryCount, MaxRetries: maxRetries, Reason: reason,
+				}})
+				reconnecting = false
 			}
 			sub.emit(providers.StreamEvent{
 				Type:         providers.EventDone,

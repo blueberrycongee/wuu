@@ -31,6 +31,7 @@ When a primary plugin page is active, its contextual sidebar also renders that p
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`, `wuu.default-navigation/sidebar.footer` | Sidebar content and footer |
 | `wuu.default-shell/workspace.header`, `wuu.default-shell/conversation.header` | Corresponding headers |
+| `wuu.default-conversation/welcome`, `welcome.greeting`, `welcome.mascot`, `welcome.usage` | Empty-conversation welcome and its independent parts |
 | `wuu.default-conversation/conversation.turn.after`, `wuu.default-preview/conversation.turn.after` | After each presented turn; reported timing and usage |
 | `wuu.default-conversation/conversation.tool-activity.after`, `wuu.default-preview/conversation.tool-activity.after` | After an individual tool activity inside its disclosed process details |
 | `wuu.default-conversation/conversation.message.before`, `wuu.default-conversation/conversation.message.after` | Around each message |
@@ -50,6 +51,28 @@ api.registerUIContribution({
 
 Omit `mode` (or use `content`) to supply content instead of the caller’s fallback. Single-content slots reject conflicting registrations during preparation, preserving the active generation. Wrappers surround the composed content in ascending `order`, then plugin ID and contribution ID; later wrappers are outermost. A failed wrapper reports a render diagnostic and preserves its children. Removing the slot owner removes the region; unloading a contribution removes only that contribution. Provider cleanup waits for mounted views to release their effects. Graph-selected service slots retain their exact provider binding and reject wrappers. The local SDK preview uses the same content/wrapper ordering and conflict rules; wrapper failures remain visible in its browser console.
 
+### New conversation welcome
+
+The default conversation provider renders `wuu.default-conversation/welcome` only while its conversation is empty. The composer and message flow remain outside this slot. A content contribution can replace the whole welcome, or replace `wuu.default-conversation/welcome.greeting`, `welcome.mascot`, or `welcome.usage` independently. Return `null` to hide a part. Each slot has one content provider; the normal conflict, wrapper, and unload rules above apply.
+
+The welcome context is `ConversationWelcomeContextV1`: `projectDraft` and the React nodes `greeting`, `mascot`, and `usage`. Each node includes its own slot and default fallback, so a replacement layout can arrange or omit them without importing private components. Render each node at most once. Each part's context contains `projectDraft`; the default usage summary is absent for a project draft or when there is no usage. The default greeting includes the workspace switcher where applicable. Replacing it also replaces that control. The default mascot's idle interaction with the usage card requires both defaults inside the default welcome container.
+
+For example, this layout moves the usage summary above the greeting and hides the mascot:
+
+```js
+export function activatePresentation(api) {
+  const h = api.react.createElement;
+  api.registerUIContribution({
+    id: "welcome-layout",
+    target: "wuu.default-conversation/welcome",
+    render: ({ context }) => h("section", { style: { padding: 32, display: "grid", gap: 24 } },
+      context.usage, context.greeting),
+  });
+}
+```
+
+Use `wuu.default-conversation/welcome.greeting` instead to customize only the greeting, or target `welcome.mascot` / `welcome.usage` with the same owner prefix to replace those parts. A replacement layout owns its responsive styling and accessibility. With a TypeScript plugin, cast the welcome context to `ConversationWelcomeContextV1` from `@wuu/plugin-sdk/ui`.
+
 For additive metrics, annotations, or contextual controls, prefer `conversation.turn.after` and `conversation.tool-activity.after` over wrapping the native content. Both accept multiple contributions in order, in bubble and IM styles. Turn addons stay inside the native turn’s measured bounds. A complete replacement of `conversation.turn` owns its contents and must render any desired slots itself. Adding, removing, or failing an additive contribution leaves the native turn and tool details mounted, preserving their disclosure state and focus. Replacing or wrapping the content changes its React ancestry and does not offer that state-preservation guarantee.
 
 The turn slot receives `ConversationTurnSlotContextV1`: `threadId` (optional), `turnId`, and a frozen `snapshot` with status, reported timestamps, duration, token usage, and usage model. Unknown metrics remain absent; do not treat them as zero. The snapshot is display data, not permission to invoke an action. Tool slots share `ConversationToolActivitySlotContextV1`, including optional `threadId`/`turnId`, `itemId`, and the existing immutable `ToolActivitySnapshot`. A preview turn without a durable thread identity must not borrow the currently selected thread. Tool contributions are visible in disclosed tool details, not the compact process summary; single command/MCP details use the same slots as grouped activities. An owning provider must be enabled and render the slot; contributions do not restore a disabled provider.
@@ -64,7 +87,7 @@ A contribution receives `locale` and `translate(key, values?)` alongside `contex
 
 Slot owners may pass a React component through `<Slot layout={Layout} ... />`. It receives the ordered `items` (`key`, `pluginId`, `id`, `title`, `node`) and `context`; render each selected `node` using its `key`. A contribution's optional `title` defaults to its ID. Layouts can group or filter content without creating another registry. Wrappers surround the result; empty slots use `fallback`. Graph-selected service slots render their selected provider directly and ignore custom layouts.
 
-The default composer uses this layout to place its first two contributions inline and the remainder in a titled overflow menu. Use compact controls inline and allow menu content to wrap. Composer context includes `threadId`, `variant`, `mainConversation`, `running`, `readOnly`, `hasDraft`, and `attachmentCount`. Goal and Monitor now use `registerUIContribution`; remove their old `contributes.slots` entries. `application.composerPresentation.getContributions` and its presentation-adapter types have been removed; custom composers render their declared slots instead.
+The default composer uses this layout to place its first two contributions inline and the remainder in a titled overflow menu. Use compact controls inline and allow menu content to wrap. Composer context includes `threadId`, `variant`, `mainConversation`, `running`, `readOnly`, `hasDraft`, and `attachmentCount`. Goal uses `registerUIContribution`; remove its old `contributes.slots` entry. Monitor runs without desktop UI. `application.composerPresentation.getContributions` and its presentation-adapter types have been removed; custom composers render their declared slots instead.
 
 The `workspace.rail` slot belongs to the default preview provider and appears while the right tool rail is expanded. Contributions share one toolbar control's width and stack vertically. Use compact readouts or controls, and expose their full meaning through accessible labels. A contribution can observe the active tab through `application` and read its thread, turn, and running state through `application.composerPresentation`.
 

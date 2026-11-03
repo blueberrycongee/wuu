@@ -76,7 +76,7 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 			kit.SetCodeModeStateOwner(parentSession[0])
 		}
 		kit.SetAgentIdentity(id, agentthread.RootPath)
-		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
+		configureToolkitWorkspaceScope(kit, s.WuuHome, s.UserBinding())
 		if len(parentSession) > 0 {
 			stateDir, err := s.executionStateDir()
 			if err != nil {

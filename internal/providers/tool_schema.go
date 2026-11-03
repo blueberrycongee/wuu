@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -61,16 +62,35 @@ func sanitizeGeminiToolSchema(value any) any {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, child := range typed {
-			if key == "enum" {
+			switch key {
+			case "enum":
 				out[key] = stringifySchemaEnum(child)
-				continue
+			case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas":
+				// These keys contain names, not schema keywords. A parameter
+				// named "const" must survive normalization of its own schema.
+				out[key] = child
+				if entries, ok := child.(map[string]any); ok {
+					normalized := make(map[string]any, len(entries))
+					for name, schema := range entries {
+						normalized[name] = sanitizeGeminiToolSchema(schema)
+					}
+					out[key] = normalized
+				}
+			case "items", "prefixItems", "additionalItems", "additionalProperties", "contains", "propertyNames",
+				"anyOf", "oneOf", "allOf", "not", "if", "then", "else":
+				out[key] = sanitizeGeminiToolSchema(child)
+			default:
+				// Defaults, examples and constant values are literal data.
+				out[key] = child
 			}
-			out[key] = sanitizeGeminiToolSchema(child)
 		}
 		if _, ok := out["enum"]; ok {
 			if schemaType(out) == "integer" || schemaType(out) == "number" {
 				out["type"] = "string"
 			}
+		}
+		if value, ok := typed["const"]; ok {
+			normalizeGeminiConst(out, value, schemaType(typed))
 		}
 		if schemaType(out) == "object" {
 			filterRequiredToProperties(out)
@@ -96,6 +116,46 @@ func sanitizeGeminiToolSchema(value any) any {
 		return out
 	default:
 		return typed
+	}
+}
+
+// normalizeGeminiConst projects JSON Schema constants onto Gemini's OpenAPI
+// subset. Numeric singletons use bounds so tools still receive numbers, rather
+// than the strings required by Gemini's enum field. Other constant kinds keep
+// their type and an explicit value hint; execution must validate the original
+// tool contract. Remove this projection when the gateway accepts JSON Schema const.
+func normalizeGeminiConst(schema map[string]any, value any, declaredType string) {
+	literal, err := json.Marshal(value)
+	if err != nil {
+		// Leave invalid values in place for request validation to reject.
+		return
+	}
+	delete(schema, "const")
+	delete(schema, "enum")
+	switch literal[0] {
+	case '"':
+		schema["type"] = "string"
+		schema["enum"] = []any{value}
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		if declaredType == "number" || strings.ContainsAny(string(literal), ".eE") {
+			schema["type"] = "number"
+		} else {
+			schema["type"] = "integer"
+		}
+		schema["minimum"], schema["maximum"] = value, value
+	default:
+		switch literal[0] {
+		case 't', 'f':
+			schema["type"] = "boolean"
+		case 'n':
+			schema["type"] = "null"
+		case '[':
+			schema["type"] = "array"
+		case '{':
+			schema["type"] = "object"
+		}
+		description, _ := schema["description"].(string)
+		schema["description"] = strings.TrimSpace(description + "\nMust equal " + string(literal) + ".")
 	}
 }
 

@@ -1,6 +1,7 @@
 {
   "suites": [
     "unit",
+    "unit-extra",
     "selection",
     "corpus",
     "layout",
@@ -10,6 +11,8 @@
   ],
   "entries": {
     "desktop/scripts/file-selection-e2e.cjs": "selection",
+    "desktop/scripts/file-selection-shards.cjs": "selection",
+    "desktop/scripts/file-selection-shards.test.cjs": "selection",
     "desktop/scripts/response-selection-e2e.cjs": "selection",
     "desktop/scripts/artifact-preview-e2e.cjs": "layout",
     "desktop/scripts/image-layout-e2e.cjs": "layout",
@@ -28,6 +31,8 @@
     "desktop/scripts/conversation-addons-e2e.cjs": "shell",
     "desktop/scripts/conversation-addons-e2e-preload.cjs": "shell",
     "desktop/scripts/app-context-e2e.cjs": "shell",
+    "desktop/scripts/browser-pip-e2e.cjs": "shell",
+    "desktop/scripts/browser-pip-ordering-e2e-entry.ts": "shell",
     "desktop/scripts/workspace-new-tab-e2e.cjs": "shell",
     "desktop/scripts/settings-sidebar-hit-e2e.cjs": "shell",
     "desktop/scripts/settings-overlay-e2e.cjs": "shell",
@@ -41,6 +46,8 @@
     "desktop/dev/personal/shell.ts": "shell",
     "desktop/scripts/first-send-continuity-e2e.cjs": "session",
     "desktop/scripts/error-message-style-e2e.cjs": "session",
+    "desktop/scripts/error-message-style-provider.cjs": "session",
+    "desktop/scripts/error-message-style-provider.test.cjs": "session",
     "desktop/scripts/confirmed-archive-e2e.cjs": "session",
     "desktop/scripts/workspace-conversation-close-e2e.cjs": "session",
     "desktop/scripts/composer-footer-e2e.cjs": "session",

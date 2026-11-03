@@ -37,6 +37,10 @@ const appContextBuild = spawnSync(process.execPath, [join(__dirname, "build-app-
   stdio: "inherit",
 });
 if (appContextBuild.status !== 0) process.exit(appContextBuild.status ?? 1);
+const speechBuild = spawnSync(process.execPath, [join(__dirname, "build-speech-mac.cjs")], {
+  cwd: desktopRoot, env: { ...process.env, ...(devSigning ? { WUU_SPEECH_MAC_SIGN_ID: devSigning.identity } : {}) }, stdio: "inherit",
+});
+if (speechBuild.status !== 0) process.exit(speechBuild.status ?? 1);
 const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginRuntimes, ...process.argv.slice(2)], {
   cwd: desktopRoot,
   env: process.env,

@@ -2,7 +2,8 @@ const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
-const runtimeContext = { kind: "no_project", cwd };
+const project = { id: "resize-workspace", name: "Resize workspace", path: cwd, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+const runtimeContext = { kind: "project", project_id: project.id, cwd };
 const liveLayout = process.env.WUU_RESIZE_LIVE_E2E === "1";
 let generalSettings = { git_attribution_enabled: true, ptc: { enabled: true } };
 const now = new Date().toISOString();
@@ -102,7 +103,7 @@ const sideSummary = {
 
 function projectList() {
   return {
-    projects: [],
+    projects: [project],
     active_context: runtimeContext
   };
 }

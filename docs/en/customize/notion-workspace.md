@@ -1,5 +1,7 @@
 # Notion workspace
 
+For browser-based authorization to Notion's official MCP server, use [Account Connectors](mcp.md#connect-an-account). This page describes the separate REST-token plugin; its website login and saved token do not authorize the MCP connector.
+
 The optional **Notion** plugin adds a ribbon entry for the Notion website and document tools that call Notion's official API directly. It is distributed as a separate source package, not bundled with Wuu. From a repository checkout, install it explicitly:
 
 ```sh

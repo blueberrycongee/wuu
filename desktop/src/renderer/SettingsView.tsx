@@ -8,6 +8,7 @@ import {
   BarChart3,
   Bot,
   Check,
+  ChevronRight,
   Copy,
   Folder,
   Gauge,
@@ -1141,7 +1142,7 @@ function SettingsRuntimePage({
 
   return (
     <>
-      <SettingsPageHeader title={t("settings.runtime")} description={t("settings.runtimeDescription")} />
+      <SettingsPageHeader title={t("settings.runtime")} />
       {initialized?.features?.project_agent && (
         <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
           <div className="settings-form"><SettingsGroup>
@@ -1158,10 +1159,11 @@ function SettingsRuntimePage({
           </SettingsGroup></div>
         </SettingsSection>
       )}
-      <SettingsSection title={t("settings.sectionCompaction")} testID="settings-advanced">
+      <SettingsSection testID="settings-advanced">
         <SettingsGroup>
           <SettingsRow
             title={t("settings.autoCompact")}
+            description={t("settings.autoCompactDescription")}
             error={fieldError("autoCompact")}
           >
             <button
@@ -1176,72 +1178,9 @@ function SettingsRuntimePage({
               <span className="sr-only">{autoCompact ? t("settings.disableAutoCompact") : t("settings.enableAutoCompact")}</span>
             </button>
           </SettingsRow>
-          <SettingsRow
-            title={t("settings.compactThreshold")}
-            error={fieldError("compactThreshold")}
-          >
-            {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
-              label: t("settings.compactThreshold"),
-              placeholder: t("settings.automatic"),
-              unit: "%",
-            })}
-          </SettingsRow>
-          <SettingsRow
-            title={t("settings.keepRecentContext")}
-            error={fieldError("compactKeepRecent")}
-          >
-            {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
-              label: t("settings.keepRecentContext"),
-              placeholder: "20,000",
-              unit: t("settings.unitTokens"),
-            })}
-          </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
-      <SettingsSection title={t("settings.sectionContextWindow")}>
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.providerContextLimit")}
-            description={`${providerContextWindowSource}${
-              providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
-            }`}
-            error={fieldError("providerContextWindow")}
-          >
-            {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
-              label: t("settings.providerContextLimit"),
-              placeholder: t("settings.detectAutomatically"),
-              unit: t("settings.unitTokens"),
-            })}
-          </SettingsRow>
-          <SettingsRow
-            title={t("settings.unknownModelLimit")}
-            hideDescriptionWhenNarrow
-            hint={t("settings.unknownModelLimitDescription")}
-            error={fieldError("maxContextTokens")}
-          >
-            {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
-              label: t("settings.unknownModelLimit"),
-              placeholder: t("settings.automatic"),
-              unit: t("settings.unitTokens"),
-            })}
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
-      <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
-      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
-        <SettingsGroup>
-          <SettingsRow title={t("settings.ptcEnabled")} hideDescriptionWhenNarrow description={t("settings.ptcDescription")}>
-            <button className="settings-switch" type="button" role="switch"
-              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
-              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
-              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
-              <span className="settings-switch-thumb" aria-hidden="true" />
-            </button>
-          </SettingsRow>
-          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
-        </SettingsGroup>
-      </SettingsSection>
-      <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
+      <SettingsSection testID="settings-git">
         <SettingsGroup>
           <SettingsRow
             title={t("settings.gitAttribution")}
@@ -1266,6 +1205,83 @@ function SettingsRuntimePage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
+      <details
+        className="settings-advanced-disclosure"
+        data-testid="settings-advanced-disclosure"
+        open={Boolean((error && error.field !== "autoCompact") || ptcError) || undefined}
+      >
+        <summary className="settings-advanced-disclosure-summary">
+          <div className="settings-advanced-disclosure-copy">
+            <span className="settings-advanced-disclosure-title">{t("settings.advancedRuntimeTuning")}</span>
+          </div>
+          <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
+        </summary>
+        <div className="settings-advanced-disclosure-body">
+          <SettingsSection title={t("settings.sectionContextWindow")}>
+            <SettingsGroup>
+              <SettingsRow
+                title={t("settings.compactThreshold")}
+                error={fieldError("compactThreshold")}
+              >
+                {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
+                  label: t("settings.compactThreshold"),
+                  placeholder: t("settings.automatic"),
+                  unit: "%",
+                })}
+              </SettingsRow>
+              <SettingsRow
+                title={t("settings.keepRecentContext")}
+                error={fieldError("compactKeepRecent")}
+              >
+                {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
+                  label: t("settings.keepRecentContext"),
+                  placeholder: "20,000",
+                  unit: t("settings.unitTokens"),
+                })}
+              </SettingsRow>
+              <SettingsRow
+                title={t("settings.providerContextLimit")}
+                description={`${providerContextWindowSource}${
+                  providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
+                }`}
+                error={fieldError("providerContextWindow")}
+              >
+                {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
+                  label: t("settings.providerContextLimit"),
+                  placeholder: t("settings.detectAutomatically"),
+                  unit: t("settings.unitTokens"),
+                })}
+              </SettingsRow>
+              <SettingsRow
+                title={t("settings.unknownModelLimit")}
+                hideDescriptionWhenNarrow
+                hint={t("settings.unknownModelLimitDescription")}
+                error={fieldError("maxContextTokens")}
+              >
+                {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
+                  label: t("settings.unknownModelLimit"),
+                  placeholder: t("settings.automatic"),
+                  unit: t("settings.unitTokens"),
+                })}
+              </SettingsRow>
+            </SettingsGroup>
+          </SettingsSection>
+          <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
+          <SettingsSection testID="settings-ptc">
+            <SettingsGroup>
+              <SettingsRow title={t("settings.ptcEnabled")} hideDescriptionWhenNarrow description={t("settings.ptcDescription")}>
+                <button className="settings-switch" type="button" role="switch"
+                  aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
+                  data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
+                  onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
+                  <span className="settings-switch-thumb" aria-hidden="true" />
+                </button>
+              </SettingsRow>
+              {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
+            </SettingsGroup>
+          </SettingsSection>
+        </div>
+      </details>
     </>
   );
 }
@@ -1289,35 +1305,33 @@ function SettingsGeneralPage({
   return (
     <>
       <SettingsPageHeader title={t("settings.general")} />
-      <SettingsSection title={t("settings.textInterface")} testID="settings-general">
+      <SettingsSection testID="settings-general">
         <SettingsGroup>
           <SettingsRow title={t("settings.language")}>
             <LanguagePreferenceControl />
           </SettingsRow>
+          <div className="settings-inline-row-anchor" data-testid="settings-about">
+            <span className="sr-only">{t("settings.about")}</span>
+            <SettingsRow title={t("settings.version")}>
+              <span className="settings-row-control-value">
+                {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
+              </span>
+              <Tooltip asChild content={copyState === "copied" ? t("settings.copied") : undefined}><button
+                className="settings-button settings-button-ghost settings-icon-button"
+                type="button"
+                aria-label={t("settings.copyVersion")}
+                onClick={() => void onCopyVersion()}
+                disabled={!desktopBuild || copyState === "copying"}
+              >
+                {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
+              </button></Tooltip>
+            </SettingsRow>
+          </div>
         </SettingsGroup>
       </SettingsSection>
 
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection stateCache={permissionStateCache} />
-
-      <SettingsSection title={t("settings.about")} testID="settings-about">
-        <SettingsGroup>
-          <SettingsRow title={t("settings.version")}>
-            <span className="settings-row-control-value">
-              {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
-            </span>
-            <Tooltip asChild content={copyState === "copied" ? t("settings.copied") : undefined}><button
-              className="settings-button settings-button-ghost settings-icon-button"
-              type="button"
-              aria-label={t("settings.copyVersion")}
-              onClick={() => void onCopyVersion()}
-              disabled={!desktopBuild || copyState === "copying"}
-            >
-              {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
-            </button></Tooltip>
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
     </>
   );
 }
@@ -1341,14 +1355,18 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
-        <ThemePreferenceControl />
-        <ContentThemeControl inventory={inventory} />
+        <ThemePreferenceControl inventory={inventory} />
+        {/* Palette and skin groups form one continuous list; section spacing
+            belongs around the list, not between its divided rows. */}
+        <div>
+          <ContentThemeControl inventory={inventory} />
+          {isTouchWebShell() ? null : (
+            <div className="settings-inline-section-anchor" data-testid="settings-background">
+              <ShellSkinSettings />
+            </div>
+          )}
+        </div>
       </SettingsSection>
-      {isTouchWebShell() ? null : (
-        <SettingsSection title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")} testID="settings-background">
-          <ShellSkinSettings />
-        </SettingsSection>
-      )}
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
       {controls.capabilities.pets ? <CodexPetSection {...petProps} /> : null}
@@ -1409,7 +1427,7 @@ function CodexPetSection({
   // The row names what it has found and where to add more; the refresh
   // action rereads that folder.
   return (
-    <SettingsSection title={t("settings.sectionPet")} testID="settings-pet">
+    <SettingsSection testID="settings-pet">
       <SettingsGroup>
         <SettingsRow
           title={t("settings.codexPet")}
@@ -1609,15 +1627,16 @@ function SettingsArchivePage({
                             {formatArchiveTime(thread.updated_at, formatDate)}
                           </time>
                         </div>
-                        <Tooltip asChild content={t("settings.restore")}><button
+                        <button
                           type="button"
-                          className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
+                          className="settings-button settings-button-ghost settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
                           disabled={deletion?.pending}
                           onClick={() => onUnarchiveThread(thread)}
                         >
                           <RotateCcw className="icon" aria-hidden="true" />
-                        </button></Tooltip>
+                          <span>{t("settings.restore")}</span>
+                        </button>
                       </div>
                     );
                   })}
@@ -2258,7 +2277,7 @@ function formatBuildDate(iso: string): string {
  *  main-process RemoteHostManager, re-pulls on every remote event (pairing
  *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
 function availableSettingsPage(page:SettingsPage|undefined, browserAllowed:boolean, capabilities:import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1):SettingsPage {
- const next=page??"providers";
+ const next=page??"general";
  if(next==="subscriptions"||next==="agents"||next==="remote"&&!capabilities.remote||next==="browser"&&(!browserAllowed||!capabilities.browser))return "providers";
  return next;
 }

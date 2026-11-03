@@ -1,8 +1,9 @@
+import { composerInputElement, type ComposerInputHandle } from "./ComposerInput";
 import { useLayoutEffect, useRef, type RefObject, type MouseEvent } from "react";
 
 /** Return from a native picker to its draft, unless navigation or new focus supersedes it. */
 export function useComposerAttachmentFocus(
-  textareaRef: RefObject<HTMLTextAreaElement | null>,
+  textareaRef: RefObject<ComposerInputHandle | null>,
   sessionID: string | undefined,
   interactionOwner: string | undefined,
   disabled: boolean,
@@ -39,8 +40,8 @@ export function useComposerAttachmentFocus(
       frame = window.requestAnimationFrame(() => {
         const active = document.activeElement;
         cancel();
-        if (textareaRef.current !== textarea || !textarea.isConnected || textarea.disabled
-          || textarea.closest("[hidden], [inert]")
+        if (textareaRef.current !== textarea || !composerInputElement(textarea).isConnected || textarea.disabled
+          || composerInputElement(textarea).closest("[hidden], [inert]")
           || (active !== document.body && active !== document.documentElement
             && active !== input && active !== opener)) return;
         textarea.focus({ preventScroll: true });

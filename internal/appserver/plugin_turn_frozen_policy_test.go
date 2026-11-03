@@ -41,7 +41,7 @@ func TestPluginTurnToolPolicyPreservesFrozenWorkerTree(t *testing.T) {
 			th.workerTreeFrozen = true
 			th.mu.Unlock()
 			srv.agentCompletionMu.Lock()
-			srv.pendingAgentCompletionTurns[created.SessionID] = []agentCompletionTurn{{agentID: "unrelated-worker", resultID: "unrelated-result", kind: agentCompletionTurnKindCompletion, msg: providers.ChatMessage{Role: "user", Content: "unrelated result"}}}
+			srv.pendingAgentCompletionTurns[created.SessionID] = []agentCompletionTurn{{agentID: "unrelated-worker", resultID: "unrelated-result", msg: providers.ChatMessage{Role: "user", Content: "unrelated result"}}}
 			srv.agentCompletionMu.Unlock()
 			params := pluginhost.SessionSendParams{SessionID: created.SessionID, RequestID: "next", Input: pluginhost.SessionInput{Prompt: "next"}}
 			if isolated {

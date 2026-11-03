@@ -131,29 +131,32 @@ var personalDesktop = (() => {
         "section",
         { "data-personal-share": true },
         h("h3", null, "\u5206\u4EAB\u4E0E\u6536\u85CF"),
-        h("p", null, "\u53EA\u63A5\u6536\u4F60\u4E3B\u52A8\u5206\u4EAB\u7684\u6587\u5B57\u3001\u94FE\u63A5\u6216\u5F53\u524D\u9875\uFF1B\u4E0D\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\uFF0C\u4E0D\u81EA\u52A8\u6253\u5F00\u94FE\u63A5\u3002"),
-        h("label", null, "\u94FE\u63A5", h("input", { type: "url", value: url, disabled: busy, onChange: (e) => {
-          edit();
-          setURL(e.target.value);
-        }, placeholder: "https://\u2026" })),
-        h("label", null, "\u6587\u5B57", h("textarea", { value: body, disabled: busy, maxLength: 65536, rows: 3, onChange: (e) => {
-          edit();
-          setBody(e.target.value);
-        } })),
-        h("label", null, "\u5BFC\u5165\u6D4F\u89C8\u5668\u5F53\u524D\u9875\u6587\u4EF6", h("input", { type: "file", accept: ".json,application/json", disabled: busy, onChange: load })),
-        h("div", null, h("button", { type: "button", disabled: busy || !url.trim() && !body.trim(), onClick: submit }, busy ? "\u6B63\u5728\u63A5\u6536\u2026" : "\u4FDD\u5B58\u5230\u4E3B\u804A\u5929"), h("button", { type: "button", disabled: busy, onClick: () => {
+        h("p", { className: "personal-share-desc" }, "\u63A5\u6536\u4E3B\u52A8\u5206\u4EAB\u7684\u6587\u5B57\u3001\u94FE\u63A5\u6216\u5F53\u524D\u9875\u3002"),
+        h(
+          "div",
+          { className: "personal-share-fields" },
+          h("label", null, h("span", null, "\u94FE\u63A5"), h("input", { className: "plugin-ui-input", type: "url", value: url, disabled: busy, onChange: (e) => {
+            edit();
+            setURL(e.target.value);
+          }, placeholder: "https://\u2026" })),
+          h("label", null, h("span", null, "\u6587\u5B57"), h("textarea", { className: "plugin-ui-input plugin-ui-textarea", value: body, disabled: busy, maxLength: 65536, rows: 3, onChange: (e) => {
+            edit();
+            setBody(e.target.value);
+          } })),
+          h("label", null, h("span", null, "\u5BFC\u5165\u6D4F\u89C8\u5668\u5F53\u524D\u9875\u6587\u4EF6"), h("input", { className: "plugin-ui-input", type: "file", accept: ".json,application/json", disabled: busy, onChange: load }))
+        ),
+        h("div", { className: "personal-share-actions" }, h("button", { className: "plugin-ui-button plugin-ui-button-secondary", type: "button", disabled: busy, onClick: () => {
           generation.current++;
           setCapture(null);
           setURL("");
           setBody("");
           setMessage("");
-        } }, "\u6E05\u7A7A")),
-        message && h("p", { role: "status" }, message),
-        h("p", null, "\u666E\u901A\u6587\u4EF6\u53EF\u901A\u8FC7\u4E3B\u804A\u5929\u9644\u4EF6\u6309\u94AE\u9009\u62E9\uFF1B\u9644\u4EF6\u4E0D\u4F1A\u4ECE\u7535\u8111\u8DEF\u5F84\u81EA\u52A8\u8BFB\u53D6\u3002")
+        } }, "\u6E05\u7A7A"), h("button", { className: "plugin-ui-button plugin-ui-button-primary", type: "button", disabled: busy || !url.trim() && !body.trim(), onClick: submit }, busy ? "\u6B63\u5728\u63A5\u6536\u2026" : "\u4FDD\u5B58\u5230\u4E3B\u804A\u5929")),
+        message && h("p", { role: "status", className: "personal-share-status" }, message)
       );
     };
   }
-  var shareCaptureStyles = "[data-personal-share]{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline)}[data-personal-share] h3{font:inherit;font-weight:600}[data-personal-share] label{display:flex;flex-direction:column;gap:var(--space-2);margin-block:var(--space-3)}[data-personal-share] input,[data-personal-share] textarea{font:inherit;max-width:100%;box-sizing:border-box}[data-personal-share]>div{display:flex;flex-wrap:wrap;gap:var(--space-3)}";
+  var shareCaptureStyles = "[data-personal-share]{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline-soft)}[data-personal-share] h3{margin:0;color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em}[data-personal-share] .personal-share-desc{margin:4px 0 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px)}[data-personal-share] .personal-share-fields{display:flex;flex-direction:column;margin-top:var(--space-3);border-top:1px solid var(--hairline-soft)}[data-personal-share] label{display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);align-items:center;gap:var(--space-4);padding:var(--settings-row-pad-block,12px) 0;border-bottom:1px solid var(--hairline-soft);margin:0;color:var(--ink);font-size:var(--font-ui,15px)}[data-personal-share] label:has(textarea){align-items:start}[data-personal-share] input,[data-personal-share] textarea{font:inherit;width:100%;max-width:100%;box-sizing:border-box}[data-personal-share] .personal-share-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}[data-personal-share] .personal-share-status{margin:var(--space-2) 0 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px)}";
 
   // plugins/personal/ui/connector-oauth.ts
   var permissions = {
@@ -161,7 +164,6 @@ var personalDesktop = (() => {
     "google-calendar": [["\u8BFB\u53D6\u4E8B\u4EF6", "https://www.googleapis.com/auth/calendar.events.readonly"], ["\u521B\u5EFA\u3001\u6539\u671F\u3001\u53D6\u6D88\u4E8B\u4EF6", "https://www.googleapis.com/auth/calendar.events"]],
     drive: [["\u5DF2\u9009\u62E9\u6587\u4EF6", "https://www.googleapis.com/auth/drive.file"]],
     notion: [["\u8BFB\u53D6\u5185\u5BB9", "read_content"], ["\u8FFD\u52A0\u62A5\u544A", "insert_content"]],
-    github: [["PR", "pull_requests:read"], ["Issue", "issues:read"], ["CI", "checks:read"], ["Release", "contents:read"]],
     slack: [["\u5DF2\u9009\u516C\u5F00\u9891\u9053\u5386\u53F2", "channels:history"], ["\u5DF2\u9009\u79C1\u6709\u9891\u9053\u5386\u53F2", "groups:history"]],
     feishu: [["\u6240\u9009\u4F1A\u8BDD\u6D88\u606F", "im:message:readonly"]]
   };
@@ -261,7 +263,7 @@ var personalDesktop = (() => {
         "div",
         { className: "personal-connector-oauth" },
         h("label", null, "\u4EC5\u6388\u6743\u8FD9\u4E9B\u8D44\u6E90 ID\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF09", h("textarea", { value: resource, disabled: busy, rows: 2, onChange: (e) => setResource(e.target.value) })),
-        h("fieldset", { disabled: busy }, h("legend", null, provider === "notion" ? "\u9700\u6838\u5B9E\u7684\u96C6\u6210\u80FD\u529B\uFF08\u987B\u5728 Notion \u96C6\u6210\u8BBE\u7F6E\u914D\u7F6E\uFF09" : provider === "github" ? "\u9700\u6838\u5B9E\u7684\u4ED3\u5E93\u6743\u9650" : "\u6240\u9700\u6743\u9650"), ...(permissions[provider] ?? []).map(([label, scope]) => h("label", { key: scope }, h("input", { type: "checkbox", checked: selected.includes(scope), onChange: () => setSelected((previous) => previous.includes(scope) ? previous.filter((s) => s !== scope) : [...previous, scope]) }), label))),
+        h("fieldset", { disabled: busy }, h("legend", null, provider === "notion" ? "\u9700\u6838\u5B9E\u7684\u96C6\u6210\u80FD\u529B\uFF08\u987B\u5728 Notion \u96C6\u6210\u8BBE\u7F6E\u914D\u7F6E\uFF09" : "\u6240\u9700\u6743\u9650"), ...(permissions[provider] ?? []).map(([label, scope]) => h("label", { key: scope }, h("input", { type: "checkbox", checked: selected.includes(scope), onChange: () => setSelected((previous) => previous.includes(scope) ? previous.filter((s) => s !== scope) : [...previous, scope]) }), label))),
         ["slack", "feishu"].includes(provider) ? h("label", null, h("input", { type: "checkbox", checked: allowWork, disabled: busy, onChange: () => setAllowWork((v) => !v) }), "\u5141\u8BB8 Personal \u4EFB\u52A1\u8BFB\u53D6\u6240\u9009\u5DE5\u4F5C\u9891\u9053\uFF1B\u4E0D\u81EA\u52A8\u7EB3\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002\u672A\u52FE\u9009\u5219\u9010\u6B21\u786E\u8BA4\u3002") : null,
         h("div", { className: "personal-connectors-controls" }, h("button", { "data-oauth-start": true, disabled: busy, onClick: () => void begin() }, existing ? "\u91CD\u65B0\u6388\u6743" : "\u5F00\u59CB\u6388\u6743"), busy ? h("button", { onClick: () => void cancel() }, "\u53D6\u6D88\u6388\u6743") : null),
         message ? h("p", { role: "status" }, message) : null,
@@ -272,7 +274,7 @@ var personalDesktop = (() => {
   var connectorOAuthStyles = ".personal-connector-oauth{margin-top:var(--space-3)}.personal-connector-oauth>label{display:flex;flex-direction:column;gap:var(--space-2)}.personal-connector-oauth textarea{font:inherit;width:100%;box-sizing:border-box}.personal-connector-oauth fieldset{border:0;padding:0;margin:var(--space-3) 0;display:flex;gap:var(--space-3);flex-wrap:wrap}.personal-connector-oauth fieldset label{display:flex;align-items:center;gap:var(--space-2)}.personal-connector-oauth button{font:inherit}";
 
   // plugins/personal/ui/connectors-panel.ts
-  var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["github", "GitHub", "PR\u3001Issue\u3001CI \u4E0E Release"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
+  var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
   var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
   function object(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid connector response");
@@ -307,7 +309,7 @@ var personalDesktop = (() => {
   }
   function capabilitySummary(c) {
     const granted = (scope) => c.state === "connected" && c.scopes.includes(scope);
-    const read = { gmail: ["https://www.googleapis.com/auth/gmail.readonly"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events.readonly", "https://www.googleapis.com/auth/calendar.events"], drive: ["https://www.googleapis.com/auth/drive.file"], notion: ["read_content"], github: ["pull_requests:read", "issues:read", "checks:read", "contents:read"], slack: ["channels:history", "groups:history"], feishu: ["im:message:readonly"] };
+    const read = { gmail: ["https://www.googleapis.com/auth/gmail.readonly"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events.readonly", "https://www.googleapis.com/auth/calendar.events"], drive: ["https://www.googleapis.com/auth/drive.file"], notion: ["read_content"], slack: ["channels:history", "groups:history"], feishu: ["im:message:readonly"] };
     const write = { gmail: ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.compose"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events"], notion: ["insert_content"] };
     const reads = (read[c.provider] ?? []).filter(granted), writes = (write[c.provider] ?? []).filter(granted);
     return `\u8BFB\u53D6\uFF1A${reads.length ? "\u5728\u6240\u9009\u8D44\u6E90\u5185\u9010\u64CD\u4F5C\u6821\u9A8C" : "\u7F3A\u5C11\u8BFB\u53D6\u6388\u6743"}\uFF1B\u5199\u5165\uFF1A${writes.length ? "\u5DF2\u6388\u6743\u80FD\u529B\u4ECD\u9700\u7CBE\u786E\u786E\u8BA4" : write[c.provider] ? "\u672A\u83B7\u5199\u5165\u6388\u6743" : "\u672C\u8FDE\u63A5\u5668\u53EA\u8BFB"}`;
@@ -407,7 +409,7 @@ var personalDesktop = (() => {
       );
     };
   }
-  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3,.personal-connectors h4{font:inherit;font-weight:600;margin:0;}.personal-connectors p{margin:var(--space-2,8px) 0;overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connectors-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:var(--space-5,20px);margin-block:var(--space-5,20px);}.personal-connector-provider{padding-block:var(--space-3,12px);border-top:1px solid var(--hairline);min-width:0;}.personal-connectors-controls{display:flex;gap:var(--space-3,12px);align-items:center;flex-wrap:wrap;margin-top:var(--space-3,12px);}.personal-connectors-muted{color:var(--ink-muted);}.personal-connector-action{border-top:1px solid var(--hairline);padding-block:var(--space-4,16px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);}.personal-connectors [role=alert]{color:var(--ink);border-left:3px solid var(--ink-muted);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
+  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3{color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;margin:0;}.personal-connectors h4{color:var(--ink);font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);margin:0;}.personal-connectors p{margin:var(--space-1,4px) 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px);overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connector-title span{font-size:var(--font-xs,12px);color:var(--ink-tertiary);padding:1px 8px;border-radius:var(--radius-pill,999px);background:var(--surface-2);}.personal-connectors-list{display:flex;flex-direction:column;margin-block:var(--space-3,12px);border-top:1px solid var(--hairline-soft);}.personal-connector-provider{padding-block:var(--settings-row-pad-block,12px);border-bottom:1px solid var(--hairline-soft);min-width:0;}.personal-connector-provider details{margin-top:var(--space-2);font-size:var(--font-sm,14px);color:var(--ink-soft);}.personal-connector-provider summary{cursor:pointer;color:var(--ink-tertiary);font-weight:var(--weight-medium,500);}.personal-connectors-controls{display:flex;gap:var(--space-2,8px);align-items:center;flex-wrap:wrap;margin-top:var(--space-2,8px);}.personal-connectors-muted{color:var(--ink-tertiary);font-size:var(--font-xs,12px)!important;}.personal-connector-action{border-top:1px solid var(--hairline-soft);padding-block:var(--space-3,12px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);border-radius:var(--radius-sm,6px);}.personal-connectors [role=alert]{color:var(--danger);border-left:2px solid var(--danger);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
 
   // plugins/personal/ui/action-review-panel.ts
   var ReviewContractError = class extends Error {
@@ -1165,7 +1167,26 @@ var personalDesktop = (() => {
 ${connectorsStyles}
 ${connection_view_default}
 ${personalReviewStyles}
-.mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}.mosaic-settings .gcal-view h2{font-size:1em;}` };
+.mosaic-settings .mosaic-quiet-hours-row{display:flex;flex-wrap:nowrap;justify-content:flex-end;align-items:center;gap:var(--space-3);padding:var(--settings-row-pad-block,12px) 0;border-bottom:1px solid var(--hairline-soft);}
+.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field{display:inline-flex;align-items:center;gap:var(--space-2);padding:0;border:0;width:auto;}
+.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field:first-child{flex:1;min-width:0;justify-content:space-between;}
+.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-input{width:128px;}
+@container settings-page (max-width:32em){.mosaic-settings .mosaic-quiet-hours-row{flex-direction:column;align-items:stretch;}.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field{width:100%;justify-content:space-between;}.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-field:first-child{flex:none;}.mosaic-settings .mosaic-quiet-hours-row .plugin-ui-input{flex:0 0 128px;max-width:100%;}}
+.mosaic-settings .mosaic-settings-save-row{justify-content:flex-end;}
+.mosaic-settings [data-personal-connections]{display:flex;flex-direction:column;gap:var(--space-4);}
+.mosaic-settings [data-personal-connections]>h2{font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;color:var(--ink);margin:0;}
+.mosaic-settings .gcal-view{margin:0;max-width:none;}
+.mosaic-settings .gcal-heading{margin-bottom:var(--space-2);gap:var(--space-3);}
+.mosaic-settings .gcal-icon{width:34px;height:34px;border-radius:var(--radius-sm);font-size:var(--font-sm);}
+.mosaic-settings .gcal-view h2{font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);}
+.mosaic-settings .gcal-muted{font-size:var(--font-sm,14px);color:var(--ink-tertiary);}
+.mosaic-settings .gcal-connection{padding:var(--settings-row-pad-block,12px) 0;border-top:1px solid var(--hairline-soft);border-bottom:1px solid var(--hairline-soft);}
+.mosaic-settings .gcal-button{min-height:var(--control-field-height,32px);padding:0 var(--control-padding-inline,12px);border-radius:var(--radius-sm,6px);font-size:var(--font-sm,14px);font-weight:var(--weight-medium,500);}
+.mosaic-settings .gcal-view fieldset{padding:var(--space-3) 0;}
+.mosaic-settings .gcal-view legend{padding:var(--space-2) 0 0;font-size:var(--font-sm,14px);color:var(--ink-soft);}
+.mosaic-settings .gcal-agenda-form{padding:var(--space-3) 0;border-top:1px solid var(--hairline-soft);}
+.mosaic-settings .gcal-view input:not([type=checkbox]){min-height:var(--control-field-height,32px);padding:0 var(--control-padding-inline,12px);border:1px solid var(--field-border);border-radius:var(--radius-sm,6px);font-size:var(--font-sm,14px);}
+.mosaic-settings .gcal-disconnect{padding:var(--space-3) 0;border-top:1px solid var(--hairline-soft);margin-top:var(--space-2);}` };
   }
 
   // plugins/personal/ui/send-motion.js
@@ -1343,7 +1364,7 @@ ${personalReviewStyles}
   // plugins/personal/ui/desktop.js
   async function activate(api) {
     const React = api.react, h = React.createElement;
-    const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+    const { Page, Section, Card, Stack, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
     const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
     const call = async (method, input) => {
       if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -1653,14 +1674,14 @@ ${personalReviewStyles}
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
     /* Only the identity's halo covers history; its initial clearance scrolls away. */
-    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    .mosaic-main > .plugin-conversation { --conversation-composer-clearance:calc(var(--mosaic-message-tail-space) - var(--conversation-dock-top-space));grid-template-rows:0 minmax(0,1fr); }
     .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;justify-self:center;max-width:100%;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
     .mosaic .mosaic-main > .plugin-conversation > .plugin-conversation-scroll > .plugin-conversation-flow { padding-top:calc(var(--mosaic-identity-height,0px) + var(--conversation-flow-top-gap)); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
     .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none;-webkit-app-region:no-drag; }
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
-    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { mask-image:none; }
+    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { animation-name:none,scroll-fade-bottom; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
     .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
@@ -1741,7 +1762,7 @@ ${personalReviewStyles}
     .mosaic-routine-link { display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);width:100%;margin-top:var(--space-3);font:inherit;color:var(--ink);cursor:pointer;text-align:left; }
     .mosaic-routine-link { padding-block:var(--space-3); }
     .mosaic-routine-link:hover { background:var(--field-hover-bg); }
-    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:var(--mosaic-message-tail-space); }
+    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:max(var(--mosaic-message-tail-space),var(--conversation-flow-bottom-space)); }
     .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
     .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
     .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
@@ -2255,17 +2276,36 @@ ${personalReviewStyles}
           setSaving(false);
         }
       };
-      return h("section", { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(
-        React.Fragment,
-        null,
-        h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: (event) => setPreferences({ ...preferences, notifications: event.target.checked }) }),
-        h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: (event) => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
-        h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-        h("div", { className: "mosaic-actions" }, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
-        h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) }),
-        h(Button, { "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")),
-        h("p", null, t("memoryHint"))
-      ), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
+      return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, h(
+        Stack,
+        { gap: "large" },
+        error && h("p", { role: "alert" }, error),
+        !preferences ? h(LoadingState, { label: "twin" }) : h(
+          Section,
+          { title: locale?.startsWith("zh") ? "\u901A\u77E5\u4E0E\u514D\u6253\u6270" : "Notifications & Quiet Hours" },
+          h(
+            Card,
+            null,
+            h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: (event) => setPreferences({ ...preferences, notifications: event.target.checked }) }),
+            h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: (event) => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
+            h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
+            h(
+              "div",
+              { className: "mosaic-actions mosaic-quiet-hours-row" },
+              h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }),
+              h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })
+            ),
+            h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })
+          ),
+          h(
+            Row,
+            { className: "mosaic-settings-save-row" },
+            h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save"))
+          )
+        ),
+        h(settingsPanels.Connections),
+        h(settingsPanels.Review, { locale })
+      ));
     }
     let identityAgent;
     const identityListeners = /* @__PURE__ */ new Set();

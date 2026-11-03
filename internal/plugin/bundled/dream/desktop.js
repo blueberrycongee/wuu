@@ -27,17 +27,14 @@ export async function activate(api) {
     "dream.status.failed": "运行失败", "dream.status.skipped": "已跳过"
   }});
   api.registerStyle({ id: "dream-settings", css: `
-    /* One settings group: the label on the left, a compact control pinned
-     * right, soft separators, the settings row height. */
     .plugin-dream { min-width:0; }
-    .plugin-dream-rows, .plugin-dream-stats { display:flex; flex-direction:column; border:1px solid var(--hairline); border-radius:var(--radius-sm); padding:0 var(--card-padding); }
-    .plugin-dream-row, .plugin-dream-stat, .plugin-dream-rows > .plugin-ui-checkbox { min-height:calc(var(--control-field-height) + var(--space-3) * 2); padding:var(--space-3) 0; border-bottom:1px solid var(--hairline-soft); }
-    .plugin-dream-row:last-child, .plugin-dream-stat:last-child { border-bottom:0; }
-    .plugin-dream-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-6); }
+    .plugin-dream-rows, .plugin-dream-stats { display:flex; flex-direction:column; border-top:1px solid var(--hairline-soft); }
+    .plugin-dream-row, .plugin-dream-stat, .plugin-dream-rows > .plugin-ui-checkbox { min-height:calc(var(--control-field-height) + var(--settings-row-pad-block, 12px) * 2); padding:var(--settings-row-pad-block, 12px) 0; border-bottom:1px solid var(--hairline-soft); }
+    .plugin-dream-row, .plugin-dream-rows > .plugin-ui-checkbox { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-6); }
     .plugin-dream-rows .plugin-ui-field-label, .plugin-dream-row-title { color:var(--ink); font-size:var(--font-ui); font-weight:var(--weight-regular); line-height:1.4; }
-    .plugin-dream-num { max-width:100%; width:6.5em; text-align:right; font-variant-numeric:tabular-nums; }
-    .plugin-dream-model { width:12em; max-width:100%; }
-    .plugin-dream-actions { justify-content:flex-start; align-items:center; gap:var(--space-2); }
+    .plugin-dream-num { max-width:100%; width:var(--settings-number-control-width, 112px); text-align:right; font-variant-numeric:tabular-nums; }
+    .plugin-dream-model { width:var(--settings-control-width, 200px); max-width:100%; }
+    .plugin-dream-actions { justify-content:flex-end; align-items:center; gap:var(--space-2); }
     .plugin-dream-saved { color:var(--ink-tertiary); font-size:var(--font-sm); }
     .plugin-dream-stat { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-6); }
     .plugin-dream-stat-label { color:var(--ink); font-size:var(--font-ui); }
@@ -46,7 +43,7 @@ export async function activate(api) {
     .plugin-dream-status-dot[data-tone="ok"] { background:var(--success); }
     .plugin-dream-status-dot[data-tone="bad"] { background:var(--danger); }
     .plugin-dream-status-dot[data-tone="busy"] { background:var(--warning); }
-    .plugin-dream-error { color:var(--danger); font-size:var(--font-ui); }
+    .plugin-dream-error { color:var(--danger); font-size:var(--font-sm); }
     .plugin-dream-loading { color:var(--ink-tertiary); font-size:var(--font-ui); }
     @container settings-page (max-width:480px) {
       .plugin-dream-row { grid-template-columns:minmax(0,1fr); gap:var(--space-2); }

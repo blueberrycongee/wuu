@@ -39,7 +39,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -58,6 +58,7 @@ import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
+import { ApplicationMCPConnectorLogin, type MCPConnectorLoginIntent } from "./ApplicationMCPConnectorLogin";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
 import { ApplicationComposerRuntime, isApplicationComposerRuntimeAction } from "./ApplicationComposerRuntime";
 import { ApplicationConversationDetails, isApplicationConversationDetailsAction } from "./ApplicationConversationDetails";
@@ -271,7 +272,14 @@ export class ApplicationController implements HostApplicationService {
     } });
   }
   private settingsControlsOwner?: ReturnType<typeof createApplicationSettingsControls>;
-  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench }); }
+  private connectorLoginOwner?: ApplicationMCPConnectorLogin;
+  private get connectorLogin() { return this.connectorLoginOwner ??= new ApplicationMCPConnectorLogin({
+    context: () => JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
+    presentation: () => JSON.stringify([this.state.activeSessionTabID, this.settings, this.state.nativeSection ?? "conversations",
+      this.state.catalogSection ?? "plugins", this.state.catalogPluginID ?? ""]),
+    inventory: () => this.state.initialized?.extension_inventory ?? [], workbench: () => this.workbench,
+  }); }
+  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench, connectorLogin: this.connectorLogin }); }
   get contributions(): UIContributionRegistryV1 {
     if (!this.dependencies) throw new Error("Application contribution registry is unavailable");
     return this.dependencies.contributions;
@@ -282,15 +290,18 @@ export class ApplicationController implements HostApplicationService {
   }
   readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
     getSnapshot: (target: ApplicationConversationTextTargetV1) => {
-      const item = this.knownThread(target.threadId)?.turns.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
+      const thread = this.knownThread(target.threadId);
+      const side = this.snapshot.sideConversation;
+      const sideThreadId = side.entry?.summary?.side_thread_id ?? (side.parentThreadId ? `side:${side.parentThreadId}` : undefined);
+      const turns = thread?.turns ?? (sideThreadId === target.threadId ? side.turns : undefined);
+      const item = turns?.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
       if (!item) return undefined;
       const key = streamTextKey(target.turnId, target.itemId, target.field);
       return streamTextStore.has(key) ? streamTextStore.get(key) : item[target.field];
     },
     subscribe: (target: ApplicationConversationTextTargetV1, listener: () => void) => {
-      if (!this.knownThread(target.threadId)?.turns.some(turn => turn.id === target.turnId && turn.items.some(item => item.id === target.itemId))) {
-        throw new Error("Conversation text source is unavailable");
-      }
+      // A rendered item can precede its first text or canonical snapshot.
+      // Keep observing its address; getSnapshot fences unavailable sources.
       const key = streamTextKey(target.turnId, target.itemId, target.field);
       let previous = this.conversationText.getSnapshot(target);
       let stopped = false;
@@ -333,7 +344,7 @@ export class ApplicationController implements HostApplicationService {
   private readonly applicationPreview: ApplicationPreview;
   private readonly applicationNavigation: ApplicationNavigation;
   private readonly conversationDetails = new ApplicationConversationDetails({ getState: () => this.state, getThread: id => this.knownThread(id), changed: () => this.publish() });
-  private settings = { open: false, pageId: "providers" };
+  private settings = { open: false, pageId: "general" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
   private load?: Promise<LoadedRuntimeState>;
@@ -526,8 +537,28 @@ export class ApplicationController implements HostApplicationService {
     // Refresh only its captured source, never whichever tab became active later.
     const presentationIntent = intent && carry ? { ...intent, draftCarry: source
       ? { ...carry, draft: cloneSessionTabDraft(source) } : undefined } : intent;
-    return { state, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent };
+    // Carry navigation metadata, not conversation histories, across writer replacement.
+    const sidebarThreads: Thread[] = this.applicationNavigation.getSnapshot().threads.map(thread => ({
+      ...thread, turns: thread.turns.map(turn => ({ ...turn, items: [], items_view: "conversation" as const })), child_agents: undefined,
+      worktree: thread.worktree && { ...thread.worktree, changed_files: thread.worktree.changed_files && [...thread.worktree.changed_files] },
+    }));
+    return { state, sidebarThreads, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent,
+      connectorLoginIntent: this.connectorLoginOwner?.checkpoint() };
   }
+  restoreSidebar(checkpoint: { state: AppState; sidebarThreads?: Thread[] }): void {
+    // The newly loaded project catalog owns visibility. A removed/replaced
+    // workspace must not be reintroduced by a previous writer's checkpoint.
+    const projects = this.state.projects.filter(project => checkpoint.state.projects.some(previous =>
+      previous.id === project.id && previous.path === project.path));
+    const listedIDs = this.loaded?.threads && new Set(this.loaded.threads.map(thread => thread.id));
+    this.sidebarCache.cacheSidebarThreads((checkpoint.sidebarThreads ?? []).filter(thread =>
+      projects.some(project => threadBelongsToWorkspace(thread, project))
+      // Omission is deletion only within the catalog actually loaded by this
+      // writer. Other workspaces have not been read yet and retain summaries.
+      && (!listedIDs || !sameRuntimeContext(resolveThreadRuntimeContext(thread, this.state.projects), this.state.activeContext)
+        || listedIDs.has(thread.id))));
+  }
+
   /** Fulfill only a read-only destination on the new writer; never replay submissions. */
   async restoreNavigationIntent(intent: NonNullable<ReturnType<ApplicationController["exportCheckpoint"]>["navigationIntent"]>, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
@@ -562,8 +593,10 @@ export class ApplicationController implements HostApplicationService {
     this.publish();
   }
 
-  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"] }): void {
-    this.settings = checkpoint.settings; this.preview = checkpoint.preview; this.publish();
+  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"]; connectorLoginIntent?: MCPConnectorLoginIntent }): void {
+    this.settings = checkpoint.settings; this.preview = checkpoint.preview;
+    if (checkpoint.connectorLoginIntent) this.connectorLogin.restore(checkpoint.connectorLoginIntent);
+    this.publish();
   }
 
   getState = (): AppState => this.state;
@@ -600,6 +633,7 @@ export class ApplicationController implements HostApplicationService {
     }
     for (const id of this.draftRevisions.keys()) if (!next.sessionTabs.some(tab => tab.id === id)) this.draftRevisions.delete(id);
     this.state = next;
+    this.connectorLoginOwner?.reconcile();
     this.projectsOwner?.notifyChanged();
     this.onboardingOwner?.notifyChanged();
     this.environmentOwner?.notifyChanged();
@@ -621,6 +655,7 @@ export class ApplicationController implements HostApplicationService {
         notify, reportError: error => console.error("Application event notification failed", error) });
       this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
+      if (this.dependencies) this.subscriptions.push(this.workbench.subscribe(() => this.connectorLoginOwner?.reconcile()));
       if (this.browser.available) {
         this.subscriptions.push(this.browser.onInvalidate(({ workdir }) => {
           this.activitySessions = clearActivitiesForWorkdir(this.activitySessions, workdir);
@@ -664,6 +699,7 @@ export class ApplicationController implements HostApplicationService {
       this.submissionOwner?.dispose();
       this.submissionOwner = undefined;
       this.lifetime?.abort();
+      this.connectorLoginOwner?.suspend();
       this.clearPreviewVisibility?.();
       this.conversationDetails.stop();
       this.composerRuntimeOwner?.dispose();
@@ -819,6 +855,7 @@ export class ApplicationController implements HostApplicationService {
   setSettings(open: boolean, pageId = this.settings.pageId): void {
     if (open === this.settings.open && pageId === this.settings.pageId) return;
     this.settings = { open, pageId };
+    this.connectorLoginOwner?.reconcile();
     this.publish();
   }
 
@@ -992,7 +1029,7 @@ export class ApplicationController implements HostApplicationService {
         return false;
       } } : {}),
       getActiveThreadID: () => activeThreadIDForState(this.state),
-      getSidebarThreads: () => [...this.state.threads, ...this.sidebarCache.getSnapshot().cachedScratchThreads],
+      getSidebarThreads: () => this.state.threads,
       getSidebarWorkspaceThreadsByWorkspaceID: () => this.sidebarCache.getSnapshot().workspaceThreadsByWorkspaceID,
       getRunningThreadIDs: () => new Set(this.state.threads.filter(isThreadRunning).map(thread => thread.id)),
       isCurrentViewSwitchRequest: isCurrent,
@@ -1032,7 +1069,7 @@ export class ApplicationController implements HostApplicationService {
 
   private knownThread(id: string): Thread | undefined {
     const cache = this.sidebarCache.getSnapshot();
-    return threadForTab(this.state, id) ?? cache.cachedScratchThreads.find(thread => thread.id === id)
+    return threadForTab(this.state, id)
       ?? Object.values(cache.workspaceThreadsByWorkspaceID).flat().find(thread => thread.id === id);
   }
 
@@ -1317,14 +1354,13 @@ export class ApplicationController implements HostApplicationService {
       case "workspace.retarget-draft": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.retarget-draft"]["input"];
         const { workspaces } = this.navigationActions(signal, true);
-        if (workspaceId) await workspaces.selectWorkspaceForNewThread(workspaceId);
-        else await workspaces.useNoProject(false);
+        await workspaces.selectWorkspaceForNewThread(workspaceId);
         return;
       }
       case "workspace.start-draft": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.start-draft"]["input"];
         const { workspaces } = this.navigationActions(signal);
-        const activated = await (workspaceId ? workspaces.startNewThreadInWorkspace(workspaceId) : workspaces.useNoProject(true));
+        const activated = await workspaces.startNewThreadInWorkspace(workspaceId);
         return { activated, tabId: activated ? this.state.activeSessionTabID : undefined };
       }
       case "workspace.create": {

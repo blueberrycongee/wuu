@@ -347,7 +347,7 @@ func TestStopStopsProcessGroup(t *testing.T) {
 }
 
 func TestStopKillsDescendantsAfterLeaderExit(t *testing.T) {
-	for _, mode := range []string{"pipe", "tty", "adopted", "adopted-exited", "adopted-exited-identity-mismatch", "adopted-exited-group-mismatch"} {
+	for _, mode := range []string{"pipe", "pipe-exited", "pipe-exited-identity-mismatch", "pipe-exited-group-mismatch", "tty", "adopted", "adopted-exited", "adopted-exited-identity-mismatch", "adopted-exited-group-mismatch"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			m, err := NewManager(root, filepath.Join(root, "runtime"))
@@ -414,9 +414,9 @@ wait
 				t.Fatalf("child process group = %d, want %d: %v", pgid, p.PGID, err)
 			}
 
-			if strings.HasPrefix(mode, "adopted-exited") {
+			if strings.Contains(mode, "exited") {
 				// Exit only the leader before Stop; its child keeps the
-				// adopted stdout copy alive and ignores the later SIGTERM.
+				// stdout copy alive and ignores the later SIGTERM.
 				leader, err := os.FindProcess(p.PID)
 				if err != nil {
 					t.Fatal(err)
@@ -435,7 +435,7 @@ wait
 			mismatch := strings.HasSuffix(mode, "mismatch")
 			if mismatch {
 				changed := *p
-				if mode == "adopted-exited-identity-mismatch" {
+				if strings.HasSuffix(mode, "identity-mismatch") {
 					changed.ProcessStartTime = "different-launch"
 				} else {
 					changed.PGID++

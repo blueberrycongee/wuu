@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,7 +49,7 @@ type pendingUpdateMetadata struct {
 
 var pendingUpdatesMu sync.Mutex
 
-// StagePackageUpdate validates and copies a directory or zip into the pending
+// StagePackageUpdate validates and copies a directory, zip, or .ts file into the pending
 // update store. The package must update an installed user plugin with the same
 // id and different content. Staging never publishes or executes the package.
 func StagePackageUpdate(wuuHome, source string) (PendingUpdate, error) {
@@ -56,7 +57,7 @@ func StagePackageUpdate(wuuHome, source string) (PendingUpdate, error) {
 	if err != nil {
 		return PendingUpdate{}, err
 	}
-	return StagePackageUpdateFromSource(wuuHome, identity, identity)
+	return StagePackageUpdateFromSource(wuuHome, source, identity)
 }
 
 // StagePackageUpdateFromSource stages resolved bytes while retaining the
@@ -101,6 +102,16 @@ func StagePackageUpdateFromSource(wuuHome, source, identity string) (PendingUpda
 		kind = PackageSourceDirectory
 		if err := copyPackageTree(absSource, packageRoot); err != nil {
 			return PendingUpdate{}, fmt.Errorf("stage plugin update directory: %w", err)
+		}
+	} else if strings.EqualFold(filepath.Ext(absSource), ".ts") {
+		kind = PackageSourceFile
+		prepRoot, cleanup, prepErr := PrepareSingleFile(context.Background(), absSource)
+		if prepErr != nil {
+			return PendingUpdate{}, fmt.Errorf("stage TypeScript plugin update: %w", prepErr)
+		}
+		defer cleanup()
+		if err := copyPackageTree(prepRoot, packageRoot); err != nil {
+			return PendingUpdate{}, fmt.Errorf("stage TypeScript plugin update: %w", err)
 		}
 	} else {
 		kind = PackageSourceZip

@@ -51,7 +51,7 @@ func (b *Broker) Poll(ctx context.Context, a Actor, q PollRequest) (PollResult, 
 	if q.SourceID == "" || len(q.SourceID) > 128 || strings.ContainsAny(q.SourceID, "\x00\r\n") {
 		return PollResult{}, fault("invalid_source_id")
 	}
-	allowed := []string{"gmail.search", "gmail.thread", "notion.search", "notion.page", "notion.blocks", "notion.database", "notion.query", "drive.search", "drive.file", "drive.export", "github.pr", "github.issue", "github.checks", "github.releases", "calendar.agenda", "slack.history", "slack.search", "slack.mentions", "feishu.history", "feishu.search", "feishu.mentions"}
+	allowed := []string{"gmail.search", "gmail.thread", "notion.search", "notion.page", "notion.blocks", "notion.database", "notion.query", "drive.search", "drive.file", "drive.export", "calendar.agenda", "slack.history", "slack.search", "slack.mentions", "feishu.history", "feishu.search", "feishu.mentions"}
 	if !slices.Contains(allowed, q.Operation) {
 		return PollResult{}, fault("poll_operation_not_supported")
 	}

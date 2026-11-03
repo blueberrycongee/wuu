@@ -23,6 +23,8 @@ async function run() {
     if (message.includes("ResizeObserver loop")) errors.push(`${phase}: ${message}`);
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
+  await waitFor(win, () => !!document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main"));
+  await evaluate(win, () => document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main").click());
   await waitFor(win, () => !!document.querySelector(".turn"));
   await evaluate(win, () => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();
@@ -135,8 +137,8 @@ async function run() {
   await setDraft(win, retainedDraft);
   await geometry(win);
   await evaluate(win, () => document.querySelector('.sidebar-account-trigger').click());
-  await waitFor(win, () => !!document.querySelector('.sidebar-account-menu [data-settings-page="providers"]'));
-  await evaluate(win, () => document.querySelector('.sidebar-account-menu [data-settings-page="providers"]').click());
+  await waitFor(win, () => !!document.querySelector('.sidebar-account-menu [data-settings-entry="settings"]'));
+  await evaluate(win, () => document.querySelector('.sidebar-account-menu [data-settings-entry="settings"]').click());
   await waitFor(win, () => !!document.querySelector(".settings-embedded"));
   win.setContentSize(600, 820);
   await evaluate(win, () => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));

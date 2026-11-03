@@ -105,7 +105,7 @@ export type CatalogPendingUpdateV1 = {
 };
 
 export type CatalogPluginActivationIssueV1 = {
-  kind: "missing_requirement" | "conflict" | "version_mismatch" | "optional_cycle";
+  kind: "missing_requirement" | "conflict" | "version_mismatch" | "optional_cycle" | "optional_missing" | "optional_version_mismatch";
   related_plugin_id: string;
 };
 
@@ -131,6 +131,8 @@ export type CatalogExtensionV1 = {
   provenance: CatalogProvenanceV1;
   state: CatalogStateV1;
   executable?: boolean;
+  /** Active runtime tool names offered to conversations; presentation-only packages omit this. */
+  conversation_tools?: string[];
   fingerprint?: string;
   graph_generation?: string;
   package_source?: "bundled" | "user" | "project" | "dev";

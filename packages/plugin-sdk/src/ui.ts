@@ -152,8 +152,8 @@ export interface ApplicationAppearanceV1 {
 export interface ApplicationActionMapV1 extends ApplicationSideConversationActionMapV1, ApplicationSearchActionMapV1, ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   /** Open an existing worktree in a draft, importing its workspace when needed. */
   "workspace.open-worktree": { input: { readonly path: string }; result: void };
-  "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
-  "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
+  "workspace.retarget-draft": { input: { readonly workspaceId: string }; result: void };
+  "workspace.start-draft": { input: { readonly workspaceId: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };
   /** Remove a workspace after the caller has confirmed the user's intent. */
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };
@@ -285,6 +285,14 @@ export interface UISlotProps {
 export interface UICompositionV1 {
   /** Nested contributions use the same component; recursive slot cycles fail visibly. */
   readonly Slot: ComponentType<UISlotProps>;
+}
+/** Context for the default conversation's welcome slot. Render each part at most once.
+ * Each node includes its own independently replaceable slot and native fallback. */
+export interface ConversationWelcomeContextV1 extends Readonly<Record<string, unknown>> {
+  readonly projectDraft: boolean;
+  readonly greeting: ReactNode;
+  readonly mascot: ReactNode;
+  readonly usage: ReactNode;
 }
 export interface UISlotRenderProps {
   readonly locale: string;
@@ -477,8 +485,17 @@ export function scopeApplicationSettingsControls(source: () => ApplicationSettin
     getPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["getPluginSetting"]>) => invoke(() => source().getPluginSetting(...args)),
     setPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["setPluginSetting"]>) => invoke(() => source().setPluginSetting(...args)),
     getPluginDiagnostics: (...args: Parameters<ApplicationSettingsControlsV1["getPluginDiagnostics"]>) => invoke(() => source().getPluginDiagnostics(...args)),
+    getMCPAuthStatus: (...args: Parameters<ApplicationSettingsControlsV1["getMCPAuthStatus"]>) => invoke(() => source().getMCPAuthStatus(...args)),
+    refreshMCPIdentity: (...args: Parameters<ApplicationSettingsControlsV1["refreshMCPIdentity"]>) => invoke(() => source().refreshMCPIdentity(...args)),
     readMCPDefinition: (...args: Parameters<ApplicationSettingsControlsV1["readMCPDefinition"]>) => invoke(() => source().readMCPDefinition(...args)),
     configureMCPServers: (...args: Parameters<ApplicationSettingsControlsV1["configureMCPServers"]>) => invoke(() => source().configureMCPServers(...args)),
+    get requestMCPConnectorLogin() { return read(() => source().requestMCPConnectorLogin) ? (name: string) => invoke(() => source().requestMCPConnectorLogin!(name)) : undefined; },
+    get getPendingMCPConnectorLogin() { return read(() => source().getPendingMCPConnectorLogin) ? () => read(() => source().getPendingMCPConnectorLogin!()) : undefined; },
+    get takeMCPConnectorLogin() { return read(() => source().takeMCPConnectorLogin) ? () => invoke(() => source().takeMCPConnectorLogin!()) : undefined; },
+    get cancelMCPConnectorLogin() { return read(() => source().cancelMCPConnectorLogin) ? () => read(() => source().cancelMCPConnectorLogin!()) : undefined; },
+    get startMCPConnectorLogin() { return read(() => source().startMCPConnectorLogin) ? () => invoke(() => source().startMCPConnectorLogin!()) : undefined; },
+    get pollMCPConnectorLogin() { return read(() => source().pollMCPConnectorLogin) ? () => invoke(() => source().pollMCPConnectorLogin!()) : undefined; },
+    get retryMCPConnectorLogin() { return read(() => source().retryMCPConnectorLogin) ? () => invoke(() => source().retryMCPConnectorLogin!()) : undefined; },
     startMCPLogin: (...args: Parameters<ApplicationSettingsControlsV1["startMCPLogin"]>) => invoke(() => source().startMCPLogin(...args)),
     pollMCPLogin: (...args: Parameters<ApplicationSettingsControlsV1["pollMCPLogin"]>) => invoke(() => source().pollMCPLogin(...args)),
     cancelMCPLogin: (...args: Parameters<ApplicationSettingsControlsV1["cancelMCPLogin"]>) => invoke(() => source().cancelMCPLogin(...args)),

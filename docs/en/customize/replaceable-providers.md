@@ -893,6 +893,21 @@ requests and durable native references; `run_loop` delegates to the selected
 complete loop driver rather than a built-in algorithm. Capabilities, not names,
 select host-managed continuation, canonical history and steering behavior.
 
+The optional `EngineBinding.additional_directories` lists available registered
+project roots for the captured runtime. It does not change `root_dir`, the native
+resume reference, or the permission mode. The default tool provider exposes
+`list_workspaces` to the Wuu loop and the external-engine MCP bridge; external
+engines also receive project names and paths in session instructions. Agents
+choose a matching project from the user's request, read its instructions, and
+use explicit working directories and absolute file paths. A conversation can
+therefore work across projects without moving its history or sidebar selection.
+The Codex adapter includes these roots in `workspaceWrite` turns; the Claude
+adapter passes `--add-dir`. Read-only modes remain read-only. Other engine
+providers must honor their native access rules and report unsupported access.
+User-space hosts and isolated execution environments do not inherit the local
+project catalog. Missing directories are omitted; registration changes are
+picked up when the runtime scope is prepared again.
+
 Closing a bound session cancels and drains its active run before releasing its
 provider generation. A caller's canceled close context stops waiting, not cleanup;
 a subsequent close observes the same terminal cleanup. Native warm scopes retain
@@ -977,9 +992,13 @@ Remove either UI package without removing the provider's data, tools or ongoing
 work. Replace a UI by installing an independent desktop package declaring the
 same service requirement; it imports neither the old UI nor runtime source.
 Likewise select a compatible runtime provider without copying presentation.
-The UI dependencies are optional so disabled/unavailable providers leave a
-visible service error and disabled mutations, not a crashing application or
-silently substituted scheduler. Successful later reads recover the controls.
+The UI dependencies are optional. `goal-ui` hides its controls only when the host
+reports `service_optional_absent`: no provider or explicit binding exists for an
+optional dependency. Inventory changes trigger another read. An unavailable
+explicit selection, ambiguous providers, a wrong major version, or a provider
+execution failure stays visible; none selects a fallback implementation.
+Other unavailable UI dependencies retain their service error and disabled
+mutations. Successful later reads recover the controls.
 The cron tool requires its scheduler and never schedules work locally.
 
 `GOAL_CONTROL_SERVICE_DESCRIPTOR`, `GoalControlRequestV1`, `GoalControlResultV1`

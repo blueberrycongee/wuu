@@ -37,10 +37,20 @@ async function openSettingsPage(win, label, ready) {
 async function openRuntime(win) {
   await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-trigger")));
   await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
-  await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
-  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-settings-entry="settings"]')));
+  await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc-enabled"]');
+  await revealRuntimeControls(win);
+}
+async function revealRuntimeControls(win) {
+  await evaluate(win, () => {
+    const disclosure = document.querySelector('[data-testid="settings-advanced-disclosure"]');
+    if (!disclosure.open) disclosure.querySelector('summary').click();
+    document.querySelector('[data-testid="settings-ptc"]').scrollIntoView({ block: "center" });
+  });
+  await settle(win);
+  await waitFor(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').checkVisibility());
 }
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1180, height: 860, show: false, webPreferences: {
@@ -48,10 +58,21 @@ app.whenReady().then(async () => {
     preload: path.join(__dirname, "resize-e2e-preload.cjs"),
   }});
   await win.loadFile(path.join(desktopRoot, "out", "renderer", "index.html"));
+  win.setContentSize(1180, 860);
+  await waitFor(win, () => innerWidth === 1180 && innerHeight === 860);
   await openRuntime(win);
   assert.equal(await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked")), "true");
   let settings;
-  await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').click());
+  const toggle = await evaluate(win, () => {
+    const button = document.querySelector('[data-testid="settings-ptc-enabled"]');
+    const box = button.getBoundingClientRect();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, owned: hit === button || button.contains(hit) };
+  });
+  assert.ok(toggle.owned, `The expanded PTC switch must own its pointer target: ${JSON.stringify(toggle)}`);
+  win.webContents.sendInputEvent({ type: "mouseDown", x: Math.round(toggle.x), y: Math.round(toggle.y), button: "left", clickCount: 1 });
+  win.webContents.sendInputEvent({ type: "mouseUp", x: Math.round(toggle.x), y: Math.round(toggle.y), button: "left", clickCount: 1 });
   await waitFor(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked") === "false");
   settings = await evaluate(win, async () => (await window.wuu.initialize()).general_settings.ptc);
   assert.deepEqual(settings, { enabled: false });
@@ -79,6 +100,7 @@ app.whenReady().then(async () => {
   await evaluate(win, () => [...document.querySelectorAll('[data-testid="settings-general"] button')].find(button => button.textContent.trim() === "English").click());
   await waitFor(win, () => document.documentElement.lang === "en-US");
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc"]');
+  await revealRuntimeControls(win);
   for (const font of [15, 20]) {
     await win.webContents.executeJavaScript(`document.documentElement.style.setProperty('--font-ui', '${font}px')`);
     await evaluate(win, () => document.querySelector('[data-testid="settings-ptc"]').scrollIntoView({block:"center"}));

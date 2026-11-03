@@ -688,12 +688,12 @@
 }
 
 /* Draw the draft's keyboard ring inside the editor's clipped edge. */
-html[data-focus-modality="keyboard"] .composer-editor:has(> textarea:focus-visible)::after {
+html[data-focus-modality="keyboard"] .composer-editor:has(> :is(textarea, .composer-rich-input):focus-visible)::after {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
+html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-rich-input):focus-visible {
   outline: none;
 }
 
@@ -1047,7 +1047,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding: 4px 0 8px;
 }
 
-.composer textarea {
+.composer :is(textarea, .composer-rich-input) {
   /* Keep hints at the same quiet level as aggregated tool-call summaries. */
   --placeholder-ink: var(--ink-quiet);
   display: block;
@@ -1074,12 +1074,32 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 /* The Plus button's hit box and one grid gap already separate it from the
  * draft. Dropping the textarea's leading inset keeps the visible icon-to-text
  * gap at one card inset instead of adding a second inset inside the field. */
-.composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+.composer-editor:has(> .composer-bar-left .composer-plus-button) > :is(textarea, .composer-rich-input) {
   padding-inline-start: 0;
 }
 
+/* Long drafts own the full row so their scrollbar follows the editor edge,
+ * rather than the inner edge of the send and dictation controls. */
+.composer-stack[data-multiline] .composer-editor:not(.is-dictating) > :is(textarea, .composer-rich-input) {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  padding-inline-start: var(--space-2);
+}
+
+.composer-stack[data-multiline] .composer-editor:not(.is-dictating) > .composer-bar-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.composer-stack[data-multiline] .composer-editor:not(.is-dictating) > .composer-input-actions {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  justify-self: end;
+  justify-content: flex-end;
+}
+
 /* Keep an empty editor's hint on one line in narrow panes. */
-.composer textarea::placeholder {
+.composer :is(textarea, .composer-rich-input)::placeholder {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -1117,7 +1137,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   box-shadow: var(--shadow-tray);
 }
 
-.composer textarea:disabled {
+.composer :is(textarea, .composer-rich-input):disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
 }
@@ -1177,6 +1197,11 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   justify-content: center;
   gap: 0;
   padding: 0;
+}
+
+.workspace-composer-controls .codex-runtime-trigger.is-compact::before,
+.composer-footer-runtime .codex-runtime-trigger.is-compact::before {
+  inset: 0;
 }
 
 .workspace-composer-controls .codex-runtime-trigger .engine-icon,
@@ -1398,17 +1423,34 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 /* Send and stop share the utility-button footprint so the primary action
  * stays clear without overpowering the composer or shifting between states. */
 .composer-action-button {
+  position: relative;
+  isolation: isolate;
   display: grid;
   width: var(--composer-control-size);
   height: var(--composer-control-size);
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-pill);
+  /* Native button chrome is platform-dependent; state rules paint the disc. */
+  background: transparent;
   transition:
     background-color var(--motion-base) var(--ease-out),
     color var(--motion-base) var(--ease-out),
     opacity var(--motion-base) var(--ease-out),
     box-shadow var(--motion-base) var(--ease-out);
+}
+
+/* Every action keeps the same concentric 24px disc inside its 32px hit
+ * target; state rules only change the disc color. */
+.composer-action-button::before {
+  position: absolute;
+  z-index: -1;
+  inset: 4px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  content: "";
+  pointer-events: none;
+  transition: background-color var(--motion-base) var(--ease-out);
 }
 
 .composer-send-button {
@@ -1427,10 +1469,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 /* Waiting for a draft: the same disc, muted, with its arrow still legible so
- * it reads as Send not yet available rather than an empty circle. */
+ * it reads as Send not yet available rather than an empty circle. Reset the
+ * global disabled opacity so this disc matches the voice control exactly. */
 .composer-send-button:disabled {
   cursor: default;
-  color: var(--ink-muted);
+  color: var(--ink-faint);
+  opacity: 1;
 }
 
 .composer-stop-button {
@@ -1552,7 +1596,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-plus-button::before,
 .composer-send-button::before,
 .composer-stop-button::before {
-  /* Match the compact discs while preserving the full hit targets. */
+  /* Keep utility chrome compact inside the full hit targets. */
   inset: 4px;
   border-radius: var(--radius-pill);
 }
@@ -2325,13 +2369,13 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .composer-editor > textarea {
+  .composer-editor > :is(textarea, .composer-rich-input) {
     grid-column: 1 / -1;
     grid-row: 1;
   }
 
   /* The draft has the full row to itself once the toolbar wraps below. */
-  .composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+  .composer-editor:has(> .composer-bar-left .composer-plus-button) > :is(textarea, .composer-rich-input) {
     padding-inline-start: var(--space-2);
   }
 
@@ -2402,7 +2446,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .composer-project-menu button[aria-checked="true"] {
-  background: var(--menu-hover);
   opacity: 1;
 }
 

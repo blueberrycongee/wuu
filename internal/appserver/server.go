@@ -360,6 +360,7 @@ type Server struct {
 	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configNonCatalogFingerprint  string
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
@@ -847,6 +848,9 @@ func (s *Server) Close() {
 		s.closeChatGPTLogins()
 		if s.sessionOperationCancel != nil {
 			s.sessionOperationCancel()
+		}
+		if s.rt != nil {
+			s.rt.DrainCanceledMCPAuth()
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
@@ -1631,6 +1635,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleMCPRefresh(ctx, req)
 	case MethodMCPAuthStart:
 		return s.handleMCPAuthStart(ctx, req)
+	case MethodMCPIdentityRefresh:
+		return s.handleMCPIdentityRefresh(ctx, req)
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:
@@ -1699,6 +1705,10 @@ func sanitizeStreamEvent(ev providers.StreamEvent) StreamEventPayload {
 	}
 	if ev.Message != nil && !ev.Message.Hidden {
 		out.Message = ev.Message
+	}
+	if ev.Notice != nil {
+		notice := *ev.Notice
+		out.Notice = &notice
 	}
 	if ev.ToolCall != nil {
 		out.ToolCall = ev.ToolCall

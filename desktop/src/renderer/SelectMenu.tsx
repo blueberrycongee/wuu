@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -23,6 +24,8 @@ import { useI18n } from "./i18n";
 export type SelectMenuOption = {
   value: string;
   label: string;
+  // Decorative preview shared by the selected value and its menu option.
+  preview?: ReactNode;
   // Optional dimmed secondary line (e.g. the provider a model belongs to).
   hint?: string;
   // Additional terms used only for filtering a searchable menu.
@@ -323,6 +326,7 @@ export function SelectMenu({
         }}
         onKeyDown={handleTriggerKeyDown}
       >
+        {selected?.preview}
         <span className="select-menu-value">{triggerLabel}</span>
         <ChevronDown className="select-menu-chevron icon" aria-hidden="true" />
       </button>
@@ -398,6 +402,7 @@ export function SelectMenu({
                           }
                         }}
                       >
+                        {option.preview}
                         <span className="select-menu-item-text">
                           <span className="select-menu-item-label">{option.label}</span>
                           {option.hint ? (

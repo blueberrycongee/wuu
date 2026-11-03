@@ -353,3 +353,84 @@ func TestBuildTurnError_AnthropicRequestTooLarge(t *testing.T) {
 		t.Errorf("expected category=provider, got %q", out.Category)
 	}
 }
+
+func TestBuildTurnError_ExternalCLIEngineFailures(t *testing.T) {
+	tests := []struct {
+		name         string
+		message      string
+		provider     string
+		wantCategory string
+	}{
+		{
+			name:         "acp in-stream API EOF failure",
+			message:      `request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": EOF`,
+			provider:     "agy",
+			wantCategory: "network",
+		},
+		{
+			name:         "cli exit with auth error is not hijacked by local exit status",
+			message:      "Antigravity exited: exit status 1: Error: 401 Unauthorized",
+			provider:     "agy",
+			wantCategory: "auth",
+		},
+		{
+			name:         "claude login prompt is auth",
+			message:      "Not logged in · Please run /login",
+			provider:     "claude",
+			wantCategory: "auth",
+		},
+		{
+			name:         "claude billing error is provider",
+			message:      "Credit balance is too low",
+			provider:     "claude",
+			wantCategory: "provider",
+		},
+		{
+			name:         "cli exit with rate limit is provider",
+			message:      "OpenCode server exited: exit status 1: rate limit exceeded",
+			provider:     "opencode",
+			wantCategory: "provider",
+		},
+		{
+			name:         "cli exit with connection refused is network",
+			message:      "codex app-server closed: codex app-server exited: exit status 1: dial tcp: connection refused",
+			provider:     "codex",
+			wantCategory: "network",
+		},
+		{
+			name:         "acp agent execution terminated is provider",
+			message:      "agent execution terminated due to error",
+			provider:     "agy",
+			wantCategory: "provider",
+		},
+		{
+			name:         "acp engine stopped max_tokens is provider",
+			message:      "engine stopped: max_tokens",
+			provider:     "agy",
+			wantCategory: "provider",
+		},
+		{
+			name:         "claude turn failed error_max_turns is provider",
+			message:      "engine turn failed: error_max_turns",
+			provider:     "claude",
+			wantCategory: "provider",
+		},
+		{
+			name:         "unclassified external cli exit is provider not internal",
+			message:      "claude exited: exit status 1: unknown flag --foo",
+			provider:     "claude",
+			wantCategory: "provider",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := BuildTurnError(errors.New(tt.message), tt.provider)
+			if out.Category != tt.wantCategory {
+				t.Fatalf("BuildTurnError(%q, %q).Category = %q, want %q", tt.message, tt.provider, out.Category, tt.wantCategory)
+			}
+			if out.Message != tt.message {
+				t.Fatalf("BuildTurnError lost raw diagnostic message: got %q, want %q", out.Message, tt.message)
+			}
+		})
+	}
+}

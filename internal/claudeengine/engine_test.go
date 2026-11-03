@@ -73,10 +73,12 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 		}
 	})
 
+	additional := t.TempDir()
 	persisted := ""
 	sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
-		ThreadID: "wuu-thread-1",
-		Model:    "opus", Effort: "high", Speed: "fast",
+		ThreadID:              "wuu-thread-1",
+		AdditionalDirectories: []string{additional},
+		Model:                 "opus", Effort: "high", Speed: "fast",
 		RootDir: t.TempDir(),
 		PersistRef: func(ref string) error {
 			persisted = ref
@@ -167,6 +169,9 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 		flags := map[string]string{}
 		for index := 0; index+1 < len(args); index++ {
 			flags[args[index]] = args[index+1]
+		}
+		if i == 0 && flags["--add-dir"] != additional {
+			t.Fatalf("additional directory missing: %v", args)
 		}
 		if i == 2 {
 			if !strings.Contains(line, "--no-session-persistence") {

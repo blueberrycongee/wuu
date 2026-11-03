@@ -173,13 +173,25 @@ function extractSpecificDisplay(
       if (hasContextOverflowPhrasing(lower)) {
         return { title: t("error.contextExceeded") };
       }
-      if (lower.includes("too many tokens")) return { title: t("error.tokenLimitExceeded") };
+      if (
+        lower.includes("too many tokens") ||
+        lower.includes("max_output_tokens") ||
+        lower.includes("engine stopped: max_tokens")
+      ) {
+        return { title: t("error.tokenLimitExceeded") };
+      }
       // A status code embedded in the message ("HTTP 429: …") is the one
       // fact that survives a history rebuild, so it outranks keyword
       // guesses — resume-safe identity beats phrasing.
       const code = extractHttpCode(message);
       if (code) return { title: httpTitle(code) };
-      if (lower.includes("content policy") || lower.includes("content_policy")) return { title: t("error.contentPolicy") };
+      if (
+        lower.includes("content policy") ||
+        lower.includes("content_policy") ||
+        lower.includes("engine stopped: refusal")
+      ) {
+        return { title: t("error.contentPolicy") };
+      }
       if (lower.includes("rate_limit") || lower.includes("rate limit")) return { title: t("error.rateLimited") };
       if (lower.includes("model_not_found")) return { title: t("error.modelNotFound") };
       if (lower.includes("empty response") || lower.includes("empty answer")) return { title: t("error.modelEmpty") };
@@ -187,6 +199,7 @@ function extractSpecificDisplay(
       if (lower.includes("response failed") || lower.includes("response error")) return { title: t("error.responseFailed") };
       if (lower.includes("invalid_request_error")) return { title: t("error.invalidRequest") };
       if (lower.includes("did not respond to the prompt")) return { title: t("error.engineUnresponsive") };
+      if (isExternalEngineError(lower)) return { title: t("error.responseFailed") };
       return {};
     }
     case "invalid_request": {
@@ -434,6 +447,9 @@ export function classifyUserFacingError(message: string, context: UserFacingErro
   if (isNetworkOrUpstreamError(normalized)) {
     return "network";
   }
+  if (isExternalEngineError(normalized)) {
+    return "provider";
+  }
   return context === "tool" ? "tool" : "internal";
 }
 
@@ -460,6 +476,7 @@ function isAuthOrPermissionError(message: string): boolean {
     /\b(401|403)\b/.test(message) ||
     message.includes("unauthorized") ||
     message.includes("unauthenticated") ||
+    message.includes("authentication_failed") ||
     message.includes("forbidden") ||
     message.includes("permission denied") ||
     message.includes("api key") ||
@@ -467,6 +484,8 @@ function isAuthOrPermissionError(message: string): boolean {
     message.includes("invalid token") ||
     message.includes("oauth") ||
     message.includes("login required") ||
+    message.includes("not logged in") ||
+    message.includes("/login") ||
     message.includes("log in")
   );
 }
@@ -500,6 +519,7 @@ function isProviderBusinessError(message: string): boolean {
     // are provider-side, never network faults.
     /\b(413|429|529)\b/.test(message) ||
     message.includes("too many tokens") ||
+    message.includes("max_output_tokens") ||
     message.includes("empty response") ||
     message.includes("empty answer") ||
     message.includes("model returned") ||
@@ -508,8 +528,43 @@ function isProviderBusinessError(message: string): boolean {
     message.includes("response error") ||
     message.includes("previous_response_not_found") ||
     message.includes("content policy") ||
+    message.includes("content_policy") ||
     message.includes("rate_limit") ||
-    message.includes("did not respond to the prompt")
+    message.includes("rate limit") ||
+    message.includes("too many requests") ||
+    message.includes("throttling") ||
+    message.includes("insufficient_quota") ||
+    message.includes("quota exceeded") ||
+    message.includes("usage_limit") ||
+    message.includes("credit balance is too low") ||
+    message.includes("billing_error") ||
+    message.includes("resource_exhausted") ||
+    message.includes("resource has been exhausted") ||
+    message.includes("did not respond to the prompt") ||
+    message.includes("agent execution terminated") ||
+    message.includes("engine stopped:") ||
+    message.includes("engine turn failed") ||
+    message.includes("claude turn failed") ||
+    message.includes("codex turn failed") ||
+    message.includes("error_max_turns") ||
+    message.includes("error_max_budget_usd")
+  );
+}
+
+function isExternalEngineError(message: string): boolean {
+  return (
+    message.includes("claude exited") ||
+    message.includes("claude app-server") ||
+    message.includes("claude turn failed") ||
+    message.includes("codex app-server") ||
+    message.includes("codex turn failed") ||
+    message.includes("opencode server") ||
+    message.includes(" exited: ") ||
+    message.includes(" exited during ") ||
+    message.includes(" closed stdout during ") ||
+    message.includes("agent execution terminated") ||
+    message.includes("engine stopped:") ||
+    message.includes("engine turn failed")
   );
 }
 
@@ -529,6 +584,9 @@ function isResponseCompletedMissingMessage(message: string): boolean {
 }
 
 function isLocalOperationError(message: string): boolean {
+  if (isExternalEngineError(message)) {
+    return false;
+  }
   const hasLocalPermission =
     (message.includes("permission denied") || message.includes("operation not permitted")) &&
     (message.includes("file") ||

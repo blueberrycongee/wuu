@@ -70,8 +70,6 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 	switch name {
 	case "bash":
 		return skillSurfaceHasCapability(surface, capability.CapabilityCommandBash)
-	case "process":
-		return skillSurfaceHasCapability(surface, capability.CapabilityCommandBackground)
 	case "git":
 		return false
 	default:

@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/insight"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -126,6 +127,7 @@ const (
 	MethodMCPRefresh                      = "mcp/refresh"
 	MethodMCPAuthStart                    = "mcp/auth/start"
 	MethodMCPAuthStatus                   = "mcp/auth/status"
+	MethodMCPIdentityRefresh              = "mcp/identity/refresh"
 	MethodMCPAuthFinish                   = "mcp/auth/finish"
 	MethodMCPAuthRemove                   = "mcp/auth/remove"
 	MethodActivityList                    = "activity/list"
@@ -595,16 +597,25 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
-	PluginID         string `json:"plugin_id,omitempty"`
-	DisplayName      string `json:"display_name,omitempty"`
-	Editable         bool   `json:"editable,omitempty"`
-	OAuthRedirectURI string `json:"oauth_redirect_uri,omitempty"`
-	Name             string `json:"name"`
-	State            string `json:"state"`
-	AuthStatus       string `json:"auth_status,omitempty"`
-	Connected        bool   `json:"connected"`
-	ToolCount        int    `json:"tool_count"`
-	Error            string `json:"error,omitempty"`
+	AuthorizationID                string                         `json:"authorization_id,omitempty"`
+	Identity                       *mcp.IdentityStatus            `json:"identity,omitempty"`
+	ToolNames                      []string                       `json:"tool_names,omitempty"`
+	ConfigurationUnavailableReason string                         `json:"configuration_unavailable_reason,omitempty"`
+	Connector                      *config.MCPConnectorDescriptor `json:"connector,omitempty"`
+	ConfigurationEnabled           *bool                          `json:"configuration_enabled,omitempty"`
+	Configurable                   bool                           `json:"configurable,omitempty"`
+	ResourceURL                    string                         `json:"resource_url,omitempty"`
+	PluginActive                   *bool                          `json:"plugin_active,omitempty"`
+	PluginID                       string                         `json:"plugin_id,omitempty"`
+	DisplayName                    string                         `json:"display_name,omitempty"`
+	Editable                       bool                           `json:"editable,omitempty"`
+	OAuthRedirectURI               string                         `json:"oauth_redirect_uri,omitempty"`
+	Name                           string                         `json:"name"`
+	State                          string                         `json:"state"`
+	AuthStatus                     string                         `json:"auth_status,omitempty"`
+	Connected                      bool                           `json:"connected"`
+	ToolCount                      int                            `json:"tool_count"`
+	Error                          string                         `json:"error,omitempty"`
 }
 
 type MCPListResult struct {
@@ -646,10 +657,11 @@ type MCPAuthStartResult struct {
 }
 
 type MCPAuthStatusResult struct {
-	Name          string   `json:"name"`
-	Authenticated bool     `json:"authenticated"`
-	ExpiresAt     string   `json:"expires_at,omitempty"`
-	Scopes        []string `json:"scopes,omitempty"`
+	Identity      *mcp.IdentityStatus `json:"identity,omitempty"`
+	Name          string              `json:"name"`
+	Authenticated bool                `json:"authenticated"`
+	ExpiresAt     string              `json:"expires_at,omitempty"`
+	Scopes        []string            `json:"scopes,omitempty"`
 }
 
 type MCPAuthFinishParams struct {
@@ -899,8 +911,9 @@ type ExtensionPluginActivationIssue struct {
 }
 
 type ExtensionInventoryRecord struct {
-	GraphGeneration string `json:"graph_generation,omitempty"`
-	ID              string `json:"id"`
+	ConversationTools []string `json:"conversation_tools,omitempty"`
+	GraphGeneration   string   `json:"graph_generation,omitempty"`
+	ID                string   `json:"id"`
 	// Name and Description are what people see: a plugin manifest's
 	// interface displayName and shortDescription, then its name and
 	// description, and the id when it names nothing.
@@ -979,6 +992,7 @@ type PluginPackageSourceKind string
 const (
 	PluginPackageSourceDirectory PluginPackageSourceKind = "directory"
 	PluginPackageSourceZip       PluginPackageSourceKind = "zip"
+	PluginPackageSourceFile      PluginPackageSourceKind = "file"
 )
 
 type PluginPackageMetadata struct {
@@ -1400,10 +1414,8 @@ type SkillListResult struct {
 
 // ProcessTrigger describes the host-owned wakeups associated with a process.
 type ProcessTrigger struct {
-	Status         string     `json:"status"`
-	OnExit         bool       `json:"on_exit"`
-	RecheckMinutes int        `json:"recheck_minutes,omitempty"`
-	NextRecheckAt  *time.Time `json:"next_recheck_at,omitempty"`
+	Status string `json:"status"`
+	OnExit bool   `json:"on_exit"`
 }
 
 type ManagedProcessSummary struct {
@@ -2822,6 +2834,7 @@ type StreamEventPayload struct {
 	Type             providers.StreamEventType        `json:"type"`
 	Content          string                           `json:"content,omitempty"`
 	Message          *providers.ChatMessage           `json:"message,omitempty"`
+	Notice           *providers.StreamNotice          `json:"notice,omitempty"`
 	ToolCall         *providers.ToolCall              `json:"tool_call,omitempty"`
 	ToolResult       string                           `json:"tool_result,omitempty"`
 	ToolResultDetail *toolresult.Result               `json:"tool_result_detail,omitempty"`

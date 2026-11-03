@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
@@ -17,10 +18,18 @@ import type {
 } from "../../src/shared/protocol";
 import { SettingsView, type ArchivedSessionView, type SettingsPage } from "../../src/renderer/SettingsView";
 import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
+import { PluginHost, type PluginGenerationApi } from "../../src/renderer/plugins/PluginHost";
+import { WorkbenchController } from "../../src/renderer/plugins/Workbench";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
+import { applyThemePreference } from "../../src/renderer/Theme";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
+import memorySource from "../../../internal/plugin/bundled/memory/desktop.js?raw";
+import nextMessageSource from "../../../internal/plugin/bundled/next-message/desktop.js?raw";
+import dreamSource from "../../../internal/plugin/bundled/dream/desktop.js?raw";
+import subagentSource from "../../../internal/plugin/bundled/subagent/desktop.js?raw";
+import personalSource from "../../../internal/plugin/bundled/personal/desktop.js?raw";
 import "../../src/renderer/styles.css";
 
 // Isolated visual fixture: synthetic providers, agents, MCP servers, usage and
@@ -255,6 +264,10 @@ const initialized: InitializeResult = {
   core: { version: "2026.9.25" },
   provider: providers[0]?.name ?? "", model: providers[0]?.model ?? "",
   providers,
+  model_aliases: {
+    research: { provider: "openai-codex", model: "gpt-6-astra", effort: "high" },
+    fast: { provider: "deepseek", model: "deepseek-v4-flash" },
+  },
   advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false, context_window_tokens: 200_000, context_window_source: "provider_model_limit" },
   extension_inventory: empty ? [] : [settingsPlugin],
   general_settings: {
@@ -271,6 +284,7 @@ const initialized: InitializeResult = {
 };
 
 window.wuu = {
+  platform: "darwin",
   initialLanguagePreference: params.get("lang") === "en" ? "en-US" : "zh-CN",
   initialThemePreference: params.get("theme") === "dark" ? "dark" : "light",
   getThemePreference: async () => (params.get("theme") === "dark" ? "dark" : "light"),
@@ -279,6 +293,80 @@ window.wuu = {
   getMessageFlowFontSize: async () => Number(params.get("size")) || 14.5,
   setMessageFlowFontSize: async () => undefined,
   getBuildInfo: async () => ({ core: initialized.core, desktop: { version: "2026.9.25", date: "2026-09-25T08:00:00Z" } }),
+  getSystemPermissions: async () => ({ available: true, screen: false, accessibility: false }),
+  onSystemPermissionGuideChanged: () => () => undefined,
+  getAppContextState: async () => ({
+    supported: true,
+    enabled: true,
+    shortcut: "CommandOrControl+Shift+Space",
+    accessibility_trusted: true,
+    busy: false,
+  }),
+  onAppContextChanged: () => () => undefined,
+  setAppContextEnabled: async () => ({
+    supported: true,
+    enabled: true,
+    shortcut: "CommandOrControl+Shift+Space",
+    accessibility_trusted: true,
+    busy: false,
+  }),
+  setAppContextShortcut: async () => ({
+    supported: true,
+    enabled: true,
+    shortcut: "CommandOrControl+Shift+Space",
+    accessibility_trusted: true,
+    busy: false,
+  }),
+  listCodexPets: async () => pets,
+  listBrowserProfiles: async () => [
+    { profilePath: "/Users/preview/Library/Application Support/Google/Chrome/Default", appName: "Google Chrome", profileName: "Default", hasCookies: true },
+    { profilePath: "/Users/preview/Library/Application Support/Arc/User Data/Default", appName: "Arc", profileName: "Default", hasCookies: true },
+  ],
+  importBrowserCookies: async () => ({ imported: 42, discovered: 42, skippedExpired: 0, skippedInvalid: 0, failed: 0 }),
+  listBrowserExtensions: async () => [
+    {
+      id: "ext-react-devtools",
+      name: "React Developer Tools",
+      version: "5.3.1",
+      enabled: true,
+      loaded: true,
+      hasOptions: true,
+      path: "/Users/preview/Extensions/react-devtools",
+      manifest: {
+        description: "React debugging tools for the browser.",
+        manifestVersion: 3,
+        permissions: ["storage", "tabs"],
+        sites: ["<all_urls>"],
+        optionalPermissions: [],
+        optionalSites: [],
+        unsupportedPermissions: [],
+        compatibility: [],
+      },
+    },
+    {
+      id: "ext-ublock",
+      name: "uBlock Origin Lite",
+      version: "2026.9.1",
+      enabled: false,
+      loaded: false,
+      hasOptions: false,
+      path: "/Users/preview/Extensions/ublock-lite",
+      manifest: {
+        description: "Declarative content blocker.",
+        manifestVersion: 3,
+        permissions: ["declarativeNetRequest"],
+        sites: ["*://*/*"],
+        optionalPermissions: [],
+        optionalSites: [],
+        unsupportedPermissions: [],
+        compatibility: [],
+      },
+    },
+  ],
+  addBrowserExtension: async () => [],
+  setBrowserExtensionEnabled: async () => [],
+  removeBrowserExtension: async () => [],
+  reloadBrowserExtension: async () => [],
   listMCPServers: async () => ({ servers: structuredClone(mcpServers) }),
   connectMCPServer: async (name: string) => ({ status: { ...mcpServers.find((server) => server.name === name)!, state: "connected", connected: true } }),
   disconnectMCPServer: async (name: string) => ({ status: { ...mcpServers.find((server) => server.name === name)!, state: "configured", connected: false } }),
@@ -355,8 +443,158 @@ window.wuu = {
 
 startFocusModality();
 
+const loadActivate = (source: string) =>
+  Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
+
+const previewHost = new PluginHost({
+  react: React,
+  listWorkspaces: async () => ({
+    activeWorkspaceId: "preview-workspace",
+    activeRoot: "/preview",
+    workspaces: [{ id: "preview-workspace", name: "wuu", root: "/preview", available: true }],
+  }),
+  invokeRuntime: async ({ method, input }) => {
+    switch (method) {
+      case "memory.overview.start":
+        return { id: "overview-1" };
+      case "memory.job.get":
+        return {
+          state: "completed",
+          output: "## 架构与边界\n- 保持 Go 核心与插件公共契约解耦，所有内置扩展均通过公开接口装配\n- 设置页采用统一 Linear 分割线与 15px 基准排版\n\n## 协作与验证偏好\n- 提交前优先执行聚焦验证与高分屏视觉巡检\n- 保留现有未暂存变更，避免冗余包装容器",
+        };
+      case "memory.read":
+        return {
+          index_raw: "- [Architecture](architecture.md)\n- [Workflow](workflow.md)",
+          files: [
+            { name: "architecture.md", type: "project", description: "核心与插件边界约束", content: "---\ntype: project\n---\n保持 Go 核心与插件公共契约解耦。" },
+            { name: "workflow.md", type: "feedback", description: "验证与视觉巡检习惯", content: "---\ntype: feedback\n---\n提交前优先运行聚焦测试与渲染检查。" },
+          ],
+        };
+      case "next-message.get":
+        return { settings: { provider: "openai-codex", model: "gpt-6-astra", variant: "low" } };
+      case "next-message.update":
+        return { settings: input };
+      case "dream.get":
+      case "dream.update":
+        return {
+          settings: (input && typeof input === "object" && "enabled" in input)
+            ? input
+            : { enabled: true, interval_days: 7, min_sessions: 5, model_alias: "research" },
+          candidates: { s1: true, s2: true },
+          last_status: "completed",
+        };
+      case "dream.run":
+        return {
+          settings: { enabled: true, interval_days: 7, min_sessions: 5, model_alias: "research" },
+          candidates: {},
+          last_status: "completed",
+        };
+      case "settings.get":
+        return {
+          settings: {
+            revision: 1,
+            notifications: true,
+            notification_batch_seconds: 60,
+            quiet_hours: { enabled: true, start: "22:00", end: "08:00", timezone: "Asia/Shanghai" },
+          },
+        };
+      case "settings.update":
+        return { settings: { revision: 2, ...(input as object) } };
+      case "connections.status":
+        return {
+          ok: true,
+          value: {
+            product_domain: "personal",
+            provider: "google-calendar",
+            user_space_id: "local",
+            account_id: "me@example.com",
+            connection_id: "conn-1",
+            selection_revision: "1",
+            state: "connected",
+            selected_calendars: ["primary"],
+          },
+        };
+      case "connections.calendars":
+        return { ok: true, value: [{ id: "primary", summary: "工作与日程", timeZone: "Asia/Shanghai", primary: true }] };
+      case "connectors.list":
+        return {
+          ok: true,
+          value: {
+            connections: [
+              {
+                connection_id: "c-gh",
+                provider: "github",
+                account_id: "blueberrycongee",
+                domain: "work",
+                state: "connected",
+                scopes: ["pull_requests:read", "issues:read"],
+                resources: ["blueberrycongee/wuu"],
+              },
+            ],
+          },
+        };
+      case "connectors.actions":
+        return { ok: true, value: { actions: [] } };
+      case "review.list":
+        return {
+          ok: true,
+          value: {
+            schema: "personal-review.v1",
+            kind: "ready",
+            requests: [],
+            settings: { auto_review_enabled: true, revision: 1, policy_version: "personal.v1", scope: ["write_file", "edit_file"] },
+          },
+        };
+      default:
+        return {};
+    }
+  },
+});
+
+if (!empty) {
+  await Promise.all([
+    previewHost.activateGeneration({
+      pluginId: "memory",
+      generation: "preview",
+      graphGeneration: "preview",
+      contributions: { settings_pages: [{ id: "memory.settings", title: "记忆", view: "memory.settings", order: 30, icon: { name: "brain" } }] },
+      register: loadActivate(memorySource),
+    }),
+    previewHost.activateGeneration({
+      pluginId: "next-message",
+      generation: "preview",
+      graphGeneration: "preview",
+      contributions: { settings_pages: [{ id: "next-message.settings", title: "Next message", view: "next-message.settings", order: 40, icon: { name: "message-square" } }] },
+      register: loadActivate(nextMessageSource),
+    }),
+    previewHost.activateGeneration({
+      pluginId: "dream",
+      generation: "preview",
+      graphGeneration: "preview",
+      contributions: { settings_pages: [{ id: "dream.settings", title: "Dream", view: "dream.settings", order: 50, icon: { name: "moon" } }] },
+      register: loadActivate(dreamSource),
+    }),
+    previewHost.activateGeneration({
+      pluginId: "subagent",
+      generation: "preview",
+      graphGeneration: "preview",
+      contributions: { settings_pages: [{ id: "subagent.settings", title: "Subagent", view: "subagent.settings", order: 60, icon: { name: "bot" } }] },
+      register: loadActivate(subagentSource),
+    }),
+    previewHost.activateGeneration({
+      pluginId: "personal",
+      generation: "preview",
+      graphGeneration: "preview",
+      contributions: { settings_pages: [{ id: "personal.preferences", title: "twin", view: "personal.preferences", order: 20, icon: { name: "settings" } }] },
+      register: loadActivate(personalSource),
+    }),
+  ]);
+}
+
+const previewController = new WorkbenchController(previewHost, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+
 function Fixture(): JSX.Element {
-  const [application] = useState(() => ({ settingsControls: createApplicationSettingsControls() }));
+  const [application] = useState(() => ({ settingsControls: createApplicationSettingsControls({ host: previewHost, controller: previewController }) }));
   const shellRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState(initialized);
   const [engineInventory, setEngineInventory] = useState(engines);
@@ -382,7 +620,7 @@ function Fixture(): JSX.Element {
   };
   const [collapsed, setCollapsed] = useState(params.has("collapsed"));
   useLayoutEffect(() => {
-    document.documentElement.dataset.theme = params.get("theme") || "light";
+    applyThemePreference(params.get("theme") === "dark" ? "dark" : "light");
     document.documentElement.dataset.platform = "darwin";
     applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
     const detail = params.get("detail");
@@ -433,7 +671,7 @@ function Fixture(): JSX.Element {
     });
   };
   return (
-    <div style={{ height: "100vh" }}>
+    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
       <SettingsView
         application={application}
         initialized={state}

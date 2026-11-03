@@ -22,7 +22,8 @@ import { initialState, reduceServerEvent, type AppState } from "./AppState";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
 import { COMPOSER_COMMAND_MENU_WIDTH } from "./ComposerTypes";
-import { translateCurrent } from "./i18n";
+import { I18nProvider, translateCurrent } from "./i18n";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
 import { ComposerTokenGauge } from "./ComposerTokenGauge";
 import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./ComposerMessages";
@@ -124,6 +125,7 @@ function handoffInitialized(): InitializeResult {
 }
 
 function renderComposer(props: {
+  wrap?: (children: React.ReactNode) => React.ReactNode;
   queryHistorySessionID?: string;
   accessMenuOpen?: boolean;
   activeEngine?: string;
@@ -184,7 +186,10 @@ function renderComposer(props: {
     models: [],
   };
   const onSelectPermissionMode = props.onSelectPermissionMode ?? vi.fn();
-  const withServices = (children: React.ReactNode) => props.services ? <ComposerServicesProvider value={props.services}>{children}</ComposerServicesProvider> : children;
+  const withServices = (children: React.ReactNode) => {
+    const content = props.services ? <ComposerServicesProvider value={props.services}>{children}</ComposerServicesProvider> : children;
+    return props.wrap ? props.wrap(content) : content;
+  };
   act(() => {
     root ??= createRoot(container);
     root.render(withServices(
@@ -244,7 +249,6 @@ function renderComposer(props: {
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
           onSelectWorkspace={() => {}}
-          onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
           onCreateWorkspace={() => {}}
           onOpenWorkspace={() => {}}
@@ -536,6 +540,7 @@ function installSkillList(skills: SkillSummary[]): void {
 }
 
 function renderSplitPaneComposer(props: {
+  wrap?: (children: React.ReactNode) => React.ReactNode;
   connectionAvailable?: boolean;
   selections?: import("../shared/protocol").ResponseSelection[];
   prompt?: string;
@@ -544,9 +549,10 @@ function renderSplitPaneComposer(props: {
   onSend?: () => void;
   onInterrupt?: () => void;
 }): void {
+  const wrap = props.wrap ?? ((children: React.ReactNode) => children);
   act(() => {
     root = createRoot(container);
-    root.render(
+    root.render(wrap(
       <ImagePreviewProvider>
         <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
         <SplitPaneComposer
@@ -566,7 +572,7 @@ function renderSplitPaneComposer(props: {
         />
         </WorkbenchConnectionContext.Provider>
       </ImagePreviewProvider>,
-    );
+    ));
   });
 }
 
@@ -725,7 +731,6 @@ function renderStatefulComposer(props: {
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
           onSelectWorkspace={() => {}}
-          onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
           onCreateWorkspace={() => {}}
           onOpenWorkspace={() => {}}
@@ -2326,7 +2331,7 @@ describe("Composer send control", () => {
     expect(await hoverTooltipText(selector)).toBe("/repo/wuu");
   });
 
-  it("labels the hero pill 对话 for the no-project workspace", () => {
+  it("labels the hero pill 无工作区 for a legacy no-project context", () => {
     renderComposer({
       variant: "hero",
       activeContext: { kind: "no_project", cwd: "/scratch/default" },
@@ -2334,8 +2339,7 @@ describe("Composer send control", () => {
 
     const selector = container.querySelector<HTMLButtonElement>(".hero-project-pill");
     expect(selector).not.toBeNull();
-    // Matches the sidebar group and the session tab, which both read "对话".
-    expect(selector?.textContent).toContain("对话");
+    expect(selector?.textContent).toContain("无工作区");
   });
 
   it("keeps attachment and send actions in the editor with runtime controls below", () => {
@@ -2350,7 +2354,7 @@ describe("Composer send control", () => {
 
     expect(leftGroup).not.toBeNull();
     expect(rightGroup).not.toBeNull();
-    // A sent project/对话 conversation (dock variant) locks its cwd, so no
+    // A sent project conversation (dock variant) locks its cwd, so no
     // project/cwd control renders in the leading slot anymore.
     expect(leftGroup?.querySelector(".composer-project-control")).toBeNull();
     expect(leftGroup?.querySelector(".composer-plus-button")).not.toBeNull();
@@ -3588,7 +3592,6 @@ describe("Composer menu keyboard", () => {
             onOpenSettings={() => {}}
             onOpenSkillsCatalog={() => {}}
             onSelectWorkspace={() => {}}
-            onSelectNoProject={() => {}}
             onSelectGitBranch={() => {}}
             onCreateWorkspace={() => {}}
             onOpenWorkspace={() => {}}
@@ -4172,4 +4175,25 @@ it.each([false, true])("keeps command failure feedback scoped to its authority w
   } finally {
     act(() => host.unload("composer-owner"));
   }
+});
+
+
+it.each(["main", "split"] as const)("reannounces a synchronous dictation failure on retry in the %s composer", async surface => {
+  vi.useFakeTimers();
+  const start = vi.fn(() => { throw new Error("Dictation bridge unavailable"); });
+  window.wuu = { ...window.wuu, dictation: { start, stop: async () => {}, cancel: async () => {}, onEvent: () => () => {} } };
+  const wrap = (children: React.ReactNode) => <I18nProvider><WuuUIRoot>{children}{surface === "split" && <ToastViewport />}</WuuUIRoot></I18nProvider>;
+  try {
+    (surface === "main" ? renderComposer : renderSplitPaneComposer)({ prompt: "Keep this draft", wrap });
+    const retry = () => act(() => { container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-dictation"]')!.click(); });
+    retry();
+    expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+    act(() => { document.body.querySelector<HTMLButtonElement>(".archive-tip-dismiss")!.click(); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    retry();
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep this draft");
+  } finally { vi.useRealTimers(); }
 });

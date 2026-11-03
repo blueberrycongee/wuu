@@ -163,6 +163,16 @@ const api: WuuDesktopApi = {
     ipcRenderer.on("wuu:desktop-update-changed", listener);
     return () => ipcRenderer.removeListener("wuu:desktop-update-changed", listener);
   },
+  ...(process.platform === "darwin" ? { dictation: {
+    start: (id: string, locale: string) => ipcRenderer.invoke("wuu:dictation-start", id, locale),
+    stop: (id: string) => ipcRenderer.invoke("wuu:dictation-stop", id),
+    cancel: (id: string) => ipcRenderer.invoke("wuu:dictation-cancel", id),
+    onEvent: (listener: (event: import("../shared/protocol").DictationEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: import("../shared/protocol").DictationEvent) => listener(event);
+      ipcRenderer.on("wuu:dictation-event", handler);
+      return () => { ipcRenderer.removeListener("wuu:dictation-event", handler); };
+    },
+  } } : {}),
   getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
   requestSystemPermission: (permission, presentation) => ipcRenderer.invoke("wuu:system-permission-request", permission, presentation),
   updateSystemPermissionGuide: presentation => ipcRenderer.send("wuu:system-permission-guide-update", presentation),
@@ -362,6 +372,7 @@ const api: WuuDesktopApi = {
   refreshMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-refresh", name),
   startMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-start", name),
   getMCPAuthStatus: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-status", name),
+  refreshMCPIdentity: (name: string) => ipcRenderer.invoke("wuu:mcp-identity-refresh", name),
   finishMCPAuth: (name: string, state: string, code: string) =>
     ipcRenderer.invoke("wuu:mcp-auth-finish", name, state, code),
   removeMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-remove", name),

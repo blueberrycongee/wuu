@@ -338,8 +338,8 @@ export function useAppLayoutState({
   resetSplitPercent: () => void;
 } {
   const [sidebarPreferredWidth, setSidebarPreferredWidth] = useState(initialSidebarWidth);
-  const [observedWindowWidth, setWindowWidth] = useState(() => window.innerWidth);
-  const windowWidth = viewportWidth ?? observedWindowWidth;
+  const [, invalidateWindowLayout] = useState(0);
+  const windowWidth = viewportWidth ?? window.innerWidth;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(initialSidebarCollapsed);
   const [resizingSidebar, setResizingSidebar] = useState(false);
   const [sidebarAnimating, setSidebarAnimating] = useState(false);
@@ -457,11 +457,11 @@ export function useAppLayoutState({
       const clampedWidth = clampWorkspaceRightPanelWidth(
         nextWidth,
         effectiveSidebarWidth + additionalNavigationWidth,
-        windowWidth,
+        viewportWidth ?? window.innerWidth,
       );
       root.style.setProperty("--workspace-right-panel-width", `${clampedWidth}px`);
     },
-    [additionalNavigationWidth, effectiveSidebarWidth, layoutRootRef, windowWidth]
+    [additionalNavigationWidth, effectiveSidebarWidth, layoutRootRef, viewportWidth]
   );
 
   const writeLiveSplitPercent = useCallback(
@@ -512,9 +512,9 @@ export function useAppLayoutState({
 
   const applyWorkspaceRightPanelWidth = useCallback(
     (nextWidth: number): void => {
-      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth + additionalNavigationWidth, windowWidth));
+      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth + additionalNavigationWidth, viewportWidth ?? window.innerWidth));
     },
-    [additionalNavigationWidth, effectiveSidebarWidth, windowWidth]
+    [additionalNavigationWidth, effectiveSidebarWidth, viewportWidth]
   );
 
   const applySplitPercent = useCallback((nextPercent: number): void => {
@@ -720,14 +720,32 @@ export function useAppLayoutState({
   useEffect(() => {
     function handleResize(): void {
       if (viewportWidth !== undefined) return;
-      setWindowWidth(window.innerWidth);
-      // The right panel keeps its remembered width; render clamps it to the
-      // available window space without replacing the saved preference.
+      const nextWidth = window.innerWidth;
+      const nextAutoGlobalized = workspacePanelNeedsFocus(
+        nextWidth, collapsedSidebarWidth + additionalNavigationWidth,
+      );
+      const nextPanelWidth = clampWorkspaceRightPanelWidth(
+        workspaceRightPanelWidth, effectiveSidebarWidth + additionalNavigationWidth, nextWidth,
+      );
+      // Most resize steps change neither layout decision. Avoid re-rendering
+      // the entire shell and its conversation tree for those pixels.
+      if (nextAutoGlobalized !== workspaceRightPanelAutoGlobalized ||
+        nextPanelWidth !== clampedWorkspaceRightPanelWidth) {
+        invalidateWindowLayout((version) => version + 1);
+      }
     }
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [viewportWidth]);
+  }, [
+    additionalNavigationWidth,
+    clampedWorkspaceRightPanelWidth,
+    collapsedSidebarWidth,
+    effectiveSidebarWidth,
+    viewportWidth,
+    workspaceRightPanelAutoGlobalized,
+    workspaceRightPanelWidth,
+  ]);
 
   // Sidebar / right-panel drags resize the conversation viewport every frame.
   // Reuse the window-resize deferred-scroll path so ResizeObserver consumers

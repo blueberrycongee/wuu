@@ -1,0 +1,22 @@
+.composer-plugin-choices { min-width: 0; }
+.composer-plugin-search {
+  width: 100%;
+  margin-bottom: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+.composer-plugin-search:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.composer-plugin-row { display: flex; align-items: center; gap: var(--space-2); }
+.composer-plugin-row > button:first-child { flex: 1; min-width: 0; }
+.composer-context-menu button .composer-plugin-row-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: start; white-space: normal; }
+.composer-context-menu .composer-plugin-row-copy > span { flex: none; white-space: normal; overflow: visible; text-overflow: clip; }
+.composer-context-menu.composer-plus-menu .composer-plugin-row > button:first-child { align-items: start; font-weight: var(--weight-regular); }
+.composer-plugin-row > button:first-child > svg { margin-top: 0.2em; }
+.composer-plugin-detail { color: var(--ink-muted); font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
+.composer-plugin-row > .composer-plugin-manage { width: auto; flex: none; }
+.composer-plugin-notice { margin: var(--space-2); color: var(--ink-muted); white-space: normal; }
+.composer-plus-menu .composer-plugin-row button:disabled { opacity: 1; color: var(--ink-muted); }

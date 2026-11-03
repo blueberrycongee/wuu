@@ -87,8 +87,8 @@ async function input() { return evaluate(() => document.querySelector("[data-mai
 async function stored(target = win) { return evaluate(key => JSON.parse(sessionStorage.getItem(key) || "null"), key, target); }
 async function inspectSettings() {
   await click(".sidebar-account-trigger");
-  await until(() => Boolean(document.querySelector('[data-settings-page="providers"]')));
-  await click('[data-settings-page="providers"]');
+  await until(() => Boolean(document.querySelector('[data-settings-entry="settings"]')));
+  await click('[data-settings-entry="settings"]');
   await until(() => Boolean(document.querySelector(".settings-nav-item")));
   await evaluate(() => [...document.querySelectorAll(".settings-nav-item")].find(node => /^(General|常规)$/.test(node.textContent.trim())).click());
   if (!report.screenshots.length) {

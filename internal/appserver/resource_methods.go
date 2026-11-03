@@ -48,6 +48,7 @@ var resourceMethods = map[string]string{
 	"mcp/auth/start":                     "global",
 	"mcp/auth/status":                    "global",
 	"mcp/configure":                      "global",
+	"mcp/identity/refresh":               "global",
 	"mcp/connect":                        "global",
 	"mcp/definition/read":                "global",
 	"mcp/disconnect":                     "global",

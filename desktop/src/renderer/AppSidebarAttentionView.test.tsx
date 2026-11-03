@@ -88,7 +88,8 @@ function runningThread(
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
-    workspace_kind: "scratch",
+    workspace_id: "attention-project",
+    workspace_kind: "project",
     status: "in_progress",
     pinned: false,
     archived: false,
@@ -142,13 +143,23 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(threads: Thread[]): void {
+  const project = {
+    id: "attention-project",
+    name: "Attention Project",
+    path: workspace,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  window.localStorage.setItem(
+    "wuu.desktop.expandedSidebarSectionIDs",
+    JSON.stringify([project.id]),
+  );
   const workspaceState = () => ({
-    projects: [],
-    active_context: { kind: "no_project" as const, cwd: workspace },
+    projects: [project],
+    active_context: { kind: "project" as const, project_id: project.id, cwd: workspace },
   });
   const api = {
     listProjects: vi.fn().mockImplementation(() => Promise.resolve(workspaceState())),
-    selectNoProject: vi.fn().mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
@@ -229,7 +240,7 @@ describe("sidebar attention view", () => {
     expect(accountTrigger?.disabled).toBe(false);
     act(() => accountTrigger!.click());
     const settingsItem = document.querySelector<HTMLButtonElement>(
-      '[role="menuitem"][data-settings-page="providers"]',
+      '[role="menuitem"][data-settings-entry="settings"]',
     );
     expect(settingsItem).not.toBeNull();
     // The settings page is a lazy import behind Suspense, so let it resolve.

@@ -248,12 +248,12 @@ describe("primary plugin view covers the conversation", () => {
 
   it("carries exact user input provenance from the production Personal composer to the main bridge", async () => {
     const main = { agent_id: "main", user_space_id: "local", name: "twin", kind: "main", main_session_id: "personal-main", status: "active", revision: 1 };
-    const request = vi.fn(async (params) => ({ result: params.method === "agents.ensure_default" ? { agent: main }
+    const request = vi.fn(async (params) => ({ ok: true, value: { result: params.method === "agents.ensure_default" ? { agent: main }
       : params.method === "agents.list" ? { agents: [main], default_agent_id: "main" }
       : params.method === "agents.open" ? { agent: main, session: { state: "completed" } }
       : params.method === "agents.history" ? { records: [] }
       : params.method === "tasks.list" ? { tasks: [] }
-      : params.method === "agents.proposals" ? { proposals: [] } : { state: "accepted" } }));
+      : params.method === "agents.proposals" ? { proposals: [] } : { state: "accepted" } } }));
     Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
     const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
     const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
@@ -292,11 +292,11 @@ describe("primary plugin view covers the conversation", () => {
     const oldRead = new Promise(resolve => { resolveOld = resolve; });
     let reads = 0;
     let content = "Saved twin conversation";
-    const request = vi.fn(async (params) => ({ result: params.method === "agents.ensure_default" ? { agent: main }
+    const request = vi.fn(async (params) => ({ ok: true, value: { result: params.method === "agents.ensure_default" ? { agent: main }
       : params.method === "agents.open" ? { agent: main, session: { state: "completed" } }
       : params.method === "agents.history" ? ++reads === 1 ? await oldRead : { records: [{ seq: 2, role: "assistant", content }], first_seq: 1, has_earlier: false }
       : params.method === "tasks.list" ? { tasks: [] }
-      : params.method === "routines.list" ? { routines: [] } : {} }));
+      : params.method === "routines.list" ? { routines: [] } : {} } }));
     Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
     const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
     const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;

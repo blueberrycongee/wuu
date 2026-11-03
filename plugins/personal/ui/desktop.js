@@ -2,7 +2,7 @@ import { createSettingsPanels } from "./settings-panels.js";
 import { sendMotionStyles, useSendMotion } from "./send-motion.js";
 export async function activate(api) {
   const React = api.react, h = React.createElement;
-  const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+  const { Page, Section, Card, Stack, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
   const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
   const call = async (method, input) => {
     if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -280,14 +280,14 @@ export async function activate(api) {
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
     /* Only the identity's halo covers history; its initial clearance scrolls away. */
-    .mosaic-main > .plugin-conversation { grid-template-rows:0 minmax(0,1fr); }
+    .mosaic-main > .plugin-conversation { --conversation-composer-clearance:calc(var(--mosaic-message-tail-space) - var(--conversation-dock-top-space));grid-template-rows:0 minmax(0,1fr); }
     .mosaic[data-wuu-personal] .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar { grid-template-columns:minmax(0,1fr);align-self:start;justify-self:center;max-width:100%;min-height:0;height:auto;padding:var(--space-2) var(--space-3); }
     .mosaic .mosaic-main > .plugin-conversation > .plugin-conversation-scroll > .plugin-conversation-flow { padding-top:calc(var(--mosaic-identity-height,0px) + var(--conversation-flow-top-gap)); }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-block { display:none; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-titlebar > .title-actions { width:100%;justify-content:center; }
     .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;border:0;background:transparent;backdrop-filter:none;box-shadow:none;pointer-events:none;-webkit-app-region:no-drag; }
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
-    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { mask-image:none; }
+    .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { animation-name:none,scroll-fade-bottom; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
     .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
@@ -368,7 +368,7 @@ export async function activate(api) {
     .mosaic-routine-link { display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);width:100%;margin-top:var(--space-3);font:inherit;color:var(--ink);cursor:pointer;text-align:left; }
     .mosaic-routine-link { padding-block:var(--space-3); }
     .mosaic-routine-link:hover { background:var(--field-hover-bg); }
-    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:var(--mosaic-message-tail-space); }
+    .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:max(var(--mosaic-message-tail-space),var(--conversation-flow-bottom-space)); }
     .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
     .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
     .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
@@ -724,13 +724,21 @@ export async function activate(api) {
     const [preferences, setPreferences] = React.useState(null), [error, setError] = React.useState(""), [saving, setSaving] = React.useState(false);
     React.useEffect(() => { let active = true; call("settings.get").then(result => { if (active) setPreferences(result.settings); }).catch(cause => { if (active) setError(String(cause)); }); return () => { active = false; }; }, []);
     const save = async () => { if (saving) return; setSaving(true); setError(""); try { const result = await call("settings.update", { expected_revision: preferences.revision, notifications: preferences.notifications, quiet_hours: preferences.quiet_hours, notification_batch_seconds: preferences.notification_batch_seconds ?? 0 }); setPreferences(result.settings); } catch (cause) { setError(String(cause)); } finally { setSaving(false); } };
-    return h("section", { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(React.Fragment, null,
-      h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: event => setPreferences({ ...preferences, notifications: event.target.checked }) }),
-      h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: event => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
-      h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-      h("div", { className: "mosaic-actions" }, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
-      h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) }),
-      h(Button, { "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")), h("p", null, t("memoryHint"))), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
+    return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, h(Stack, { gap: "large" },
+      error && h("p", { role: "alert" }, error),
+      !preferences ? h(LoadingState, { label: "twin" }) : h(Section, { title: locale?.startsWith("zh") ? "通知与免打扰" : "Notifications & Quiet Hours" },
+        h(Card, null,
+          h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: event => setPreferences({ ...preferences, notifications: event.target.checked }) }),
+          h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: event => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
+          h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
+          h("div", { className: "mosaic-actions mosaic-quiet-hours-row" },
+            h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }),
+            h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
+          h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })),
+        h(Row, { className: "mosaic-settings-save-row" },
+          h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")))),
+      h(settingsPanels.Connections),
+      h(settingsPanels.Review, { locale })));
   }
   let identityAgent;
   const identityListeners = new Set();

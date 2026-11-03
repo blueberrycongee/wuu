@@ -549,6 +549,7 @@ const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({}
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
 
 const ACTIVATION_TIMEOUT_MS = 30_000;
+let nextNoticeHostID = 1;
 
 export class PluginGenerationSupersededError extends Error {
   constructor(pluginId: string, generation: string) {
@@ -562,6 +563,7 @@ export class PluginGenerationSupersededError extends Error {
  * This lifecycle boundary provides cleanup and startup recovery, not strong isolation.
  */
 export class PluginHost {
+  private readonly noticeHostID = nextNoticeHostID++;
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
   readonly applicationProviders = new ApplicationProviders();
@@ -1218,6 +1220,13 @@ export class PluginHost {
         throw new Error("Plugin runtime requests are unavailable");
       }
       this.assertActive(state);
+      const graphGeneration = state.graphGeneration;
+      // Committed inventory precedes asynchronous renderer replacement. A live
+      // React contribution can therefore still belong to an obsolete Go graph.
+      const graphRetired = () => state.graphGeneration !== graphGeneration
+        || (this.inventoryGraphs !== undefined
+          && (!this.inventoryGraphs.has(state.pluginId) || this.inventoryGraphs.get(state.pluginId) !== graphGeneration));
+      if (graphRetired()) throw new PluginLifecycleCancellationError();
       options?.signal?.throwIfAborted();
       const controller = new AbortController();
       const abort = () => controller.abort(options?.signal?.reason);
@@ -1227,7 +1236,7 @@ export class PluginHost {
         const result = await this.runtimeInvoker({
           pluginId: state.pluginId,
           generation: state.generation,
-          graphGeneration: state.graphGeneration,
+          graphGeneration,
           ...(service !== undefined ? { service } : {}),
           method: requireNonEmpty(method, "plugin runtime method"),
           input,
@@ -1240,12 +1249,13 @@ export class PluginHost {
           ...(options?.userInput ? { userInput: options.userInput } : {}),
         });
         this.assertActive(state);
+        if (graphRetired()) throw new PluginLifecycleCancellationError();
         controller.signal.throwIfAborted();
         return result;
       } catch (error) {
         // A retired invocation is not a failure in its successor's workspace.
         // Fence rejected results too: transport can reject before cleanup callbacks run.
-        if (state.disposed || state.lifetime.signal.aborted) throw new PluginLifecycleCancellationError(error);
+        if (state.disposed || state.lifetime.signal.aborted || graphRetired()) throw new PluginLifecycleCancellationError(error);
         if (controller.signal.aborted) throw controller.signal.reason;
         const operation = `${service ?? "runtime"}/${method}`.replace(/[^a-zA-Z0-9_.:/-]/g, "_").slice(0, 160);
         this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "runtime",
@@ -1287,7 +1297,8 @@ export class PluginHost {
       showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
         this.assertActive(state);
         const id = showToast({ message: input.message, tone: input.tone,
-          dedupeKey: `plugin:${state.pluginId}:${input.key ?? input.message}` });
+          // Code fingerprints can repeat after reload; notice ownership follows the activation.
+          dedupeKey: `plugin:${this.noticeHostID}:${state.pluginId}:${state.generation}:${state.activation}:${input.key ?? input.message}` });
         const dispose = () => { if (id !== undefined) dismissToast(id); state.lifetime.signal.removeEventListener("abort", dispose); };
         state.lifetime.signal.addEventListener("abort", dispose, { once: true });
         return createDisposable(dispose);

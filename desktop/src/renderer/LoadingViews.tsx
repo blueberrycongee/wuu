@@ -81,10 +81,16 @@ export function ViewSwitchLoading({
   return placement === "window" ? createPortal(indicator, document.body) : indicator;
 }
 
+export function EmptyHomeMascot({ activity }: { activity: WuuMascotActivity }): JSX.Element {
+  return <WuuMascot className="empty-home-mascot" activity={activity} ambient followPointer animate="hover" aria-hidden="true" />;
+}
+
 export function EmptyConversationHome({
   title,
   belowTitle,
   activity = "idle",
+  mascot,
+  heading,
   children
 }: {
   title: ReactNode;
@@ -92,21 +98,16 @@ export function EmptyConversationHome({
   // beside the greeting instead of one row-gap below it with the children.
   belowTitle?: JSX.Element;
   activity?: WuuMascotActivity;
-  children?: JSX.Element | null;
+  mascot?: ReactNode;
+  heading?: ReactNode;
+  children?: ReactNode;
 }): JSX.Element {
   return (
     <section className="empty-home" data-wuu-component="empty-session">
       <div className="empty-home-inner session-flow">
         <div className="empty-home-header">
-          <WuuMascot
-            className="empty-home-mascot"
-            activity={activity}
-            ambient
-            followPointer
-            animate="hover"
-            aria-hidden="true"
-          />
-          <h2>{title}</h2>
+          {mascot === undefined ? <EmptyHomeMascot activity={activity} /> : mascot}
+          {heading === undefined ? <h2>{title}</h2> : heading}
           {belowTitle ?? null}
         </div>
         {children}

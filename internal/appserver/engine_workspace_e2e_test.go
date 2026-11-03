@@ -15,6 +15,77 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
+func testCodexRegisteredProjects(t *testing.T, binary string) {
+	scratch, project, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(scratch, "README.md"), []byte("conversation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WUU_TEST_CODEX_WORKSPACE_STATE", filepath.Join(t.TempDir(), "native-state.json"))
+	requests := filepath.Join(t.TempDir(), "requests.jsonl")
+	t.Setenv("WUU_TEST_CODEX_REQUESTS", requests)
+	rt := newEngineAdminRuntimeAt(t, scratch, config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}})
+	catalog, _ := json.Marshal(map[string]any{"projects": []map[string]string{
+		{"id": "target", "name": "Target project", "path": project},
+		{"id": "missing", "name": "Unavailable", "path": filepath.Join(project, "missing")},
+	}})
+	if err := os.WriteFile(filepath.Join(rt.WuuHome, "projects.json"), catalog, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.handleLine(ctx, []byte(`{"id":"start","method":"thread/start","params":{"engine":"codex","permission_mode":"standard"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	started := responseByID(t, parseOutput(t, out.String()), "start")
+	if started["error"] != nil {
+		t.Fatalf("thread/start: %v", started)
+	}
+	id := remarshal[ThreadStartResult](t, started["result"]).Thread.ID
+	for i, mode := range []string{config.PermissionModeStandard, config.PermissionModeStandard, config.PermissionModeReadOnly} {
+		out.Reset()
+		if mode == config.PermissionModeReadOnly {
+			rt.PermissionModeExplicit = true
+			rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}
+		}
+		target, denied := filepath.Join(project, fmt.Sprintf("write-%d", i)), filepath.Join(outside, fmt.Sprintf("write-%d", i))
+		prompt, _ := json.Marshal(map[string]any{"paths": []string{target, denied}})
+		request, _ := json.Marshal(map[string]any{"id": "turn", "method": "turn/start", "params": TurnStartParams{ThreadID: id, Prompt: string(prompt)}})
+		if err := srv.handleLine(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+		if response := responseByID(t, parseOutput(t, out.String()), "turn"); response["error"] != nil {
+			t.Fatalf("turn/start: %v", response)
+		}
+		messages := waitForTurnCompletedForThread(t, out, id)
+		completed := remarshal[TurnCompletedNotification](t, notificationByMethod(t, messages, NotificationTurnCompleted)["params"])
+		if completed.Turn.Status != TurnStatusCompleted {
+			t.Fatalf("turn failed: %+v", completed)
+		}
+		_, err := os.Stat(target)
+		if (err == nil) != (mode == config.PermissionModeStandard) {
+			t.Fatalf("target write in %s: %v", mode, err)
+		}
+		if _, err := os.Stat(denied); !os.IsNotExist(err) {
+			t.Fatalf("outside write: %v", err)
+		}
+		stored, found, err := rt.Sessions.Find(id)
+		if err != nil || !found || stored.CWD != scratch || stored.WorkspaceID != "" || stored.EngineRef != "workspace-native" {
+			t.Fatalf("conversation moved: %+v %v", stored, err)
+		}
+		t.Logf("turn=%d session=%s cwd=%s target=%s permission=%s native=%s", i+1, id, stored.CWD, project, mode, stored.EngineRef)
+	}
+	data, err := os.ReadFile(requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Target project") || strings.Contains(string(data), "Unavailable") {
+		t.Fatalf("engine did not receive available project discovery: %s", data)
+	}
+}
+
 func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 	repo := initSessionWorkspaceRepo(t)
 	linked := filepath.Join(t.TempDir(), "linked worktree")
