@@ -1828,8 +1828,6 @@ ${personalReviewStyles}
     .mosaic-sidebar .mosaic-detail .mosaic-task-meta,.mosaic-sidebar .mosaic-routines .mosaic-task-meta { display:block; }
     .mosaic-sidebar .mosaic-task-state { font-size:12px; }
     .mosaic-sidebar .mosaic-task-state[data-state="running"],.mosaic-sidebar .mosaic-task-state[data-state="queued"] { color:var(--accent); }
-    .mosaic-sidebar .mosaic-detail { min-height:320px; }
-    .mosaic-sidebar .mosaic-detail-content { overflow:auto; }
     .mosaic-section { margin-bottom:var(--space-6); }
     .mosaic-section h2,.mosaic-section h3 { display:flex;align-items:center;gap:var(--space-3);font:inherit;color:var(--ink-muted);margin:0 0 var(--space-3); }
     .mosaic-count { padding:0 var(--space-1);border-radius:var(--radius-xs);background:var(--surface-1);font-size:var(--font-ui-small); }
@@ -1852,11 +1850,11 @@ ${personalReviewStyles}
     .mosaic-empty { display:grid;place-items:center;min-height:240px;padding:var(--space-6); }
     .mosaic-empty .plugin-ui-empty-state { max-width:440px; }
     .mosaic-eyebrow { color:var(--ink-muted);margin:0 0 var(--space-3); }
-    .mosaic-panel-scroll:has(> .mosaic-detail) { overflow:hidden; }
-    .mosaic-detail { display:flex;flex-direction:column;height:100%;min-height:0; }
+    .mosaic-panel-scroll:has(> .mosaic-detail) { display:flex;flex-direction:column;overflow:hidden; }
+    .mosaic-detail { display:flex;flex-direction:column;flex:1;min-height:0; }
     .mosaic-detail-head { display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-5);flex:none; }
     .mosaic-detail-title { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit; }
-    .mosaic-detail-content { flex:1;min-height:0;overflow:auto;overflow-wrap:anywhere; }
+    .mosaic-detail-content { flex:1;min-height:0;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain; }
     .mosaic-detail-content > p { overflow-wrap:anywhere; }
     .mosaic-detail-actions { flex:none;display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;padding-top:var(--space-4); }
     .mosaic-detail-content .mosaic-section { margin-top:var(--space-5); }
@@ -3559,14 +3557,14 @@ ${personalReviewStyles}
           "div",
           { className: "mosaic-detail", "data-artifact-detail": selectedArtifact.attachment.sha256 },
           h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: selectedArtifact.attachment.name }, selectedArtifact.attachment.name)),
-          h("div", { className: "mosaic-detail-content" }, h(Attachment, { key: `${selectedArtifact.seq}:${selectedArtifact.attachment.sha256}`, agentId: agent.agent_id, seq: selectedArtifact.seq, attachment: selectedArtifact.attachment, t }))
+          h("div", { className: "mosaic-detail-content", tabIndex: 0 }, h(Attachment, { key: `${selectedArtifact.seq}:${selectedArtifact.attachment.sha256}`, agentId: agent.agent_id, seq: selectedArtifact.seq, attachment: selectedArtifact.attachment, t }))
         ) : selection && task ? h(
           "div",
           { className: "mosaic-detail", "data-task-detail": task.task_id, "data-task-state": task.state },
           h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: task.title }, task.title)),
           h(
             "div",
-            { className: "mosaic-detail-content" },
+            { className: "mosaic-detail-content", tabIndex: 0 },
             task.existing_session && h("p", { className: "mosaic-task-meta" }, `${t("existingSession")}: ${task.existing_session.session_id} \xB7 ${task.existing_session.execution_host}`),
             task.worker_result && h("p", { className: "mosaic-task-meta", "data-worker-result": true }, t("workerResult")),
             task.goal && h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:goal`, role: "user", content: task.goal, linkPolicy: "external-only", messageActions: "none" }),
