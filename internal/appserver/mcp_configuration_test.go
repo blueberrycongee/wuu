@@ -405,6 +405,13 @@ func TestMCPConnectorExplicitEnableActivatesCanonicalPackageDefinition(t *testin
 	if responseByID(t, parseOutput(t, out.String()), "direct-disabled")["error"] == nil || requests.Load() != 0 {
 		t.Fatal("direct connect bypassed startup preference")
 	}
+	// Users connect accounts while a conversation runs. A connector preference
+	// is admitted like a plugin enable; standalone edits stay exclusive.
+	srv.threads = map[string]*threadState{"busy": {ID: "busy", running: true}}
+	callPluginPackageRPC(t, srv, "standalone-busy", MethodMCPConfigure, map[string]any{"servers": map[string]any{"local": map[string]any{"url": endpoint.URL}}})
+	if rejected := responseByID(t, parseOutput(t, out.String()), "standalone-busy"); !strings.Contains(fmt.Sprint(rejected["error"]), "turn is running") {
+		t.Fatalf("standalone MCP edit admitted during a running turn: %+v", rejected)
+	}
 	callPluginPackageRPC(t, srv, "enable", MethodMCPConfigure, map[string]any{"servers": map[string]any{name: map[string]any{"enabled": true}}, "revision": definition.Revision})
 	response := responseByID(t, parseOutput(t, out.String()), "enable")
 	if response["error"] != nil {
