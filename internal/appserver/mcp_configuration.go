@@ -301,7 +301,16 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	releaseMutation, err := s.beginPluginGenerationMutation("configure MCP services in", pluginGenerationMutationExclusive)
+	// A connector preference only switches a package-declared server, the same
+	// change as enabling or disabling its plugin: running turns keep their pinned
+	// generation. Editing standalone definitions still needs exclusive ownership.
+	mutation := pluginGenerationMutationLive
+	for name := range params.Servers {
+		if !runtime.IsPluginMCPServerName(name) {
+			mutation = pluginGenerationMutationExclusive
+		}
+	}
+	releaseMutation, err := s.beginPluginGenerationMutation("configure MCP services in", mutation)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

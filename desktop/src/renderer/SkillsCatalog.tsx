@@ -37,7 +37,8 @@ import { MCPServices, MCPServicesProvider, useMCPServices } from "./MCPServices"
 import { RichContent } from "./RichContent";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
-import { showErrorToast, showToast, toastErrorMessage } from "./Toast";
+import { showErrorToast } from "./Toast";
+import { showExtensionMutationError } from "./extensionMutationError";
 
 type LoadState = {
   loading: boolean;
@@ -57,23 +58,6 @@ const initialLoadState: LoadState = {
   skills: [],
 };
 
-function showExtensionMutationError(error: unknown, fallback: string): void {
-  // These admission errors currently cross IPC as text, without a typed code.
-  // Keep their translation here, shared by refresh and package actions.
-  const message = toastErrorMessage(error);
-  const busyExecution = /^cannot .+ plugin packages while (?:a turn is running or background work remains on thread .+|another app-server is running a turn or background work)$/.test(message);
-  const busyMutation = /^cannot .+ plugin packages while (?:another plugin change is running|another app-server is changing the plugin catalog)$/.test(message);
-  if (busyExecution || busyMutation) {
-    showToast({
-      message: translateCurrent(busyExecution ? "skills.executionBusy" : "skills.changeBusy"),
-      tone: "info",
-      dedupeKey: busyExecution ? "extensions-execution-busy" : "extensions-change-busy",
-    });
-    return;
-  }
-  showErrorToast(error, fallback);
-}
-
 export type SkillsCatalogSection = "plugins" | "skills";
 
 const CatalogContext = createContext<ApplicationCatalogV1 | null>(null);
@@ -87,7 +71,7 @@ export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
  const catalog = props.application.catalog.getSnapshot();
  const ownerKey = JSON.stringify([catalog.contextKey, catalog.inventory.filter(item => item.kind === "plugin")
    .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
- return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey} catalog={props.application.catalog}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
 }
 type SkillsCatalogProps = {
  application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};

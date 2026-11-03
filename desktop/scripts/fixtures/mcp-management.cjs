@@ -143,9 +143,9 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
         });
       });
       const clickElement = selector => until(clickReady, { selector });
-      const click = async ([selector, label], keyboard = false) => {
-        const menuAction = selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label);
-        if (menuAction) {
+      // Row menus are native in the packaged shell; pick the item from the menu
+      // Electron is about to show instead of driving the OS menu.
+      const menuSelect = async (selector, label, keyboard = false) => {
           await until(selector => {
             const button = document.querySelector(`${selector} [aria-haspopup="menu"]`);
             return button && !button.disabled;
@@ -168,10 +168,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
               await clickElement(`${selector} [aria-haspopup="menu"]`);
             }
             await selected;
-            await until(() => !document.querySelector('[data-mcp] [aria-expanded="true"]'));
+            await until(selector => !document.querySelector(`${selector} [aria-expanded="true"]`), selector);
           } finally { Menu.prototype.popup = originalPopup; }
-          return;
-        }
+      };
+      const click = async ([selector, label], keyboard = false) => {
+        if (selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label)) return menuSelect(selector, label, keyboard);
         console.log(`MCP journey: ${label}`);
         await until(clickReady, { selector: `${selector} button`, label });
       };
@@ -347,28 +348,27 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       const registrationsBefore = evidence.registration;
       authorizationURL = undefined;
       await connectorAction("connect");
-      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      await capture("connector-sign-in");
       assert.ok(authorizationURL);
       assert.equal(evidence.registration, registrationsBefore + 1);
       const cancelledConnectorURL = authorizationURL;
-      await click(['[role="dialog"]', "取消登录"]);
+      await click(['[role="dialog"]', "取消"]);
       await until(() => !document.querySelector('[role="dialog"]'));
       await assert.rejects(fetch(cancelledConnectorURL));
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);
       await connectorAction("connect");
-      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
       await fetch(authorizationURL);
       await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
       assert.equal(evidence.identityCalls, 1, "Only user Connect runs the admitted account probe");
       await capture("connector-connected-compact-light");
-      await clickElement(`${connectorRow} [data-connector-details-toggle]`);
-      await until(selector => document.querySelector(`${selector} [data-connector-detail="scopes"]`)?.textContent.includes("tools:read"), connectorRow);
-      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-detail="account"]`)?.getAttribute("data-verified"), connectorRow), "false", "An incomplete provider result must not fabricate identity");
+      assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-connector-identity]`) === null, connectorRow), true, "An incomplete provider result must not fabricate identity");
       await capture("connector-identity-unavailable");
       const exchangesBeforeIdentity = evidence.exchanges;
-      await connectorAction("identity");
-      await until(selector => document.querySelector(`${selector} [data-connector-detail="account"]`)?.getAttribute("data-verified") === "true", connectorRow);
+      await menuSelect(connectorRow, "验证身份");
+      await until(selector => document.querySelector(`${selector} [data-connector-identity]`)?.textContent.includes("Fixture researcher"), connectorRow);
       assert.equal(evidence.identityCalls, 2);
       assert.equal(evidence.exchanges, exchangesBeforeIdentity, "Identity retry must reuse the grant, not sign in again");
       const verified = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
@@ -386,7 +386,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       win.setSize(1280, 900);
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
       await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
-      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
       await fetch(authorizationURL);
       await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("data-connected") === "true");
       const retainedIdentity = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
@@ -463,14 +463,13 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await until(() => document.querySelector('.composer-rich-input .composer-plugin-reference'));
       evidence.checks.push("Same @/+ panel, searchable keyboard insertion, atomic deletion and undo/redo, same-name connections with distinct stable inline references, draft navigation, light/wide/default and dark/narrow/large font, sent references and native loop MCP execution with a deterministic model endpoint");
       await clickElement('[data-ribbon-id="catalog"]');
-      await until(selector => document.querySelector(`${selector} [data-connector-action="reconnect"]`), connectorRow);
-      await connectorAction("reconnect");
-      await clickElement('[data-confirm-action="confirm"]');
-      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
+      await until(selector => document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
+      await menuSelect(connectorRow, "重新连接");
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
       const reconnecting = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
       assert.equal(reconnecting.authenticated, true, "Reconnect keeps the accepted grant until replacement succeeds");
       assert.equal(reconnecting.identity, undefined, "Reconnect clears the prior identity, not the accepted credentials");
-      await click(['[role="dialog"]', "取消登录"]);
+      await click(['[role="dialog"]', "取消"]);
       await until(() => !document.querySelector('[role="dialog"]'));
       assert.equal(evidence.exchanges, exchangesBeforeReconnect);
       const callsBeforeStaleReference = evidence.conversationCalls.length;
@@ -531,8 +530,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       });
       evidence.checks.push("Changed account identity rejects the old reference before model/tool execution and preserves the draft");
       await clickElement('[data-ribbon-id="catalog"]');
-      await until(selector => document.querySelector(`${selector} [data-connector-action="disconnect"]`), connectorRow);
-      await connectorAction("disconnect");
+      await menuSelect(connectorRow, "断开");
       await clickElement('[data-confirm-action="confirm"]');
       await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "false" && document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);

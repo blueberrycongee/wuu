@@ -13,7 +13,7 @@ export interface ComposerServices {
   catalog: ApplicationCatalogV1;
   settingsControls: ApplicationSettingsControlsV1;
   conversationPluginsSupported?: boolean;
-  openPlugins?: (pluginId?: string, connectServer?: string) => Promise<void>;
+  openPlugins?: (pluginId?: string) => Promise<void>;
 }
 const Context = createContext<ComposerServices | undefined>(undefined);
 export function ComposerServicesProvider({ value, children }: { value: ComposerServices; children: ReactNode }): JSX.Element {
