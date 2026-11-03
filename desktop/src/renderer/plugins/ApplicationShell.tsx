@@ -133,8 +133,23 @@ const SelectedShell = React.memo(function SelectedShell({ host, shell }: { host:
   React.useEffect(() => host.retainGeneration(shell.pluginId, shell.generation), [host, shell]);
   React.useSyncExternalStore(host.applicationProviders.subscribe, host.applicationProviders.getPresentationRevision);
   const application = host.getPresentationApplication(shell.pluginId, shell.generation, shell.application);
+  // The retained facade still paints during a writer gap, but its actions no
+  // longer have authority. Pin the gate to this facade, not whichever provider
+  // happens to be current during a later parent render.
+  const lifetime = React.useMemo(() => host.applicationProviders.current?.lifetime?.signal, [host, application]);
+  const boundary = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const element = boundary.current!;
+    const retire = () => element.setAttribute("inert", "");
+    if (lifetime?.aborted) retire();
+    else element.removeAttribute("inert");
+    lifetime?.addEventListener("abort", retire, { once: true });
+    // Do not reopen the old DOM during cleanup. Only a committed successor
+    // facade may release this gate; provider publication precedes that commit.
+    return () => lifetime?.removeEventListener("abort", retire);
+  }, [lifetime]);
   const View = shell.render;
-  return <View application={application} slots={slots} />;
+  return <div ref={boundary} style={{ display: "contents" }}><View application={application} slots={slots} /></div>;
 });
 
 /** The selected graph binding is authoritative; absence never chooses a local default. */
