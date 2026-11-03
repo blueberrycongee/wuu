@@ -10,6 +10,7 @@
     "shell"
   ],
   "entries": {
+    "desktop/scripts/settings-general-e2e.cjs": "session",
     "desktop/scripts/file-selection-e2e.cjs": "selection",
     "desktop/scripts/file-selection-shards.cjs": "selection",
     "desktop/scripts/file-selection-shards.test.cjs": "selection",
@@ -38,7 +39,6 @@
     "desktop/scripts/settings-overlay-e2e.cjs": "shell",
     "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
     "desktop/scripts/subscription-quota-e2e.cjs": "shell",
-    "desktop/scripts/ptc-settings-e2e.cjs": "shell",
     "desktop/scripts/build-personal-fixture.cjs": "shell",
     "desktop/scripts/personal-settings-e2e.cjs": "shell",
     "desktop/scripts/personal-approval-ui-e2e.cjs": "shell",

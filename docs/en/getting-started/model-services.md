@@ -283,10 +283,10 @@ image for the model. External agent engines use their own file and image tools.
 The built-in engine enables programmatic tool calling (PTC) by default.
 Basic file and command tools also accept direct calls; `run_code` combines
 tools or processes their results.
-**Settings → Built-in agent → Programmatic tool calling** provides one switch
-for all models. Explicit saved choices are preserved; configurations
-that omit the switch use the default. Changes require idle turns and apply on
-the next turn. External engines keep their own tools.
+Set `ptc.enabled` in [user configuration](../reference/configuration.md#built-in-agent-settings)
+to enable or disable PTC for all models. Explicit saved choices are preserved;
+omitting the field uses the default. Finish active work, then fully quit and
+restart Wuu after editing. External engines keep their own tools.
 
 Interaction, explicit artifact delivery, context replacement, workspace changes,
 and agent/session lifecycle controls remain separate direct tools. Extensions
