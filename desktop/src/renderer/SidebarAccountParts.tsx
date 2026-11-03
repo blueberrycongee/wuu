@@ -16,7 +16,7 @@ export function SidebarAccountTrigger({ model, anchorRef, controls, onOpen }: {
   </button>;
 }
 
-const accountIcons = { devices: UserRound, usage: BarChart3, account: Smartphone, providers: Settings, logout: LogOut };
+const accountIcons = { devices: UserRound, usage: BarChart3, account: Smartphone, settings: Settings, providers: Settings, logout: LogOut };
 export function SidebarAccountPanel({ model, panelRef, id, onAction, onClose, trigger, onBlur }: {
   model: ChromeAccountPanel; panelRef?: Ref<HTMLDivElement>; id?: string; onAction: (action: ChromeAccountAction) => void;
   onClose: () => void; trigger?: HTMLElement | null; onBlur?: React.FocusEventHandler<HTMLDivElement>;
@@ -29,7 +29,8 @@ export function SidebarAccountPanel({ model, panelRef, id, onAction, onClose, tr
     </> : null}
     {model.rows.map(row => {
       const Icon = accountIcons[row.action];
-      return <button key={row.action} role="menuitem" className="select-menu-item" data-settings-page={row.action === "providers" ? "providers" : undefined}
+      return <button key={row.action} role="menuitem" className="select-menu-item" data-settings-entry={row.action === "settings" ? "settings" : undefined}
+        data-settings-page={row.action === "providers" ? "providers" : undefined}
         disabled={row.disabled} onClick={() => onAction(row.action)}><Icon size={18} aria-hidden="true" /><span>{row.label}</span></button>;
     })}
     {model.error && <p className="sidebar-account-message settings-error" role="alert">{model.error}</p>}

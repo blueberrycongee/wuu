@@ -1351,12 +1351,16 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
       <SettingsPageHeader title={t("settings.appearance")} />
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl inventory={inventory} />
-        <ContentThemeControl inventory={inventory} />
-        {isTouchWebShell() ? null : (
-          <div className="settings-inline-section-anchor" data-testid="settings-background">
-            <ShellSkinSettings />
-          </div>
-        )}
+        {/* Palette and skin groups form one continuous list; section spacing
+            belongs around the list, not between its divided rows. */}
+        <div>
+          <ContentThemeControl inventory={inventory} />
+          {isTouchWebShell() ? null : (
+            <div className="settings-inline-section-anchor" data-testid="settings-background">
+              <ShellSkinSettings />
+            </div>
+          )}
+        </div>
       </SettingsSection>
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />

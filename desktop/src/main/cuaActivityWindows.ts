@@ -93,6 +93,7 @@ export interface BrowserPiPHostWindow {
   isVisible(): boolean;
   isMinimized(): boolean;
   getContentBounds(): Rectangle;
+  getMediaSourceId(): string;
   readonly webContents: { getZoomFactor(): number };
   on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore" | "focus", listener: () => void): void;
   removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore" | "focus", listener: () => void): void;

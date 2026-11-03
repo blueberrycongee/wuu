@@ -19,10 +19,14 @@ export type ConfirmRequest = {
   confirmLabel: string;
   /** Danger marks actions that destroy data; the default is a plain primary. */
   tone?: "danger";
+  /** Open immediately but gate confirmation on fresh data. Null dismisses; errors reject the action. */
+  prepare?: () => Promise<Omit<ConfirmRequest, "prepare"> | null>;
 };
 
 type PendingConfirm = ConfirmRequest & {
   id: number;
+  preparing: boolean;
+  reject: (error: unknown) => void;
   resolve: (confirmed: boolean) => void;
 };
 
@@ -41,22 +45,32 @@ function currentRequest(): PendingConfirm | null {
 
 export function confirmAction(request: ConfirmRequest, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return Promise.resolve(false);
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const id = nextID++;
     const cancel = () => settle(id, false);
     const finish = (confirmed: boolean) => { signal?.removeEventListener("abort", cancel); resolve(confirmed); };
-    queue = [...queue, { ...request, id, resolve: finish }];
+    queue = [...queue, { ...request, id, preparing: !!request.prepare, resolve: finish,
+      reject: error => { signal?.removeEventListener("abort", cancel); reject(error); } }];
     signal?.addEventListener("abort", cancel, { once: true });
     for (const listener of listeners) listener();
+    if (request.prepare) {
+      void Promise.resolve().then(request.prepare).then(prepared => {
+        if (!queue.some(entry => entry.id === id)) return;
+        if (!prepared) { settle(id, false); return; }
+        queue = queue.map(entry => entry.id === id ? { ...entry, ...prepared, preparing: false } : entry);
+        for (const listener of listeners) listener();
+      }, error => settle(id, false, { error }));
+    }
   });
 }
 
-function settle(id: number, confirmed: boolean): void {
+function settle(id: number, confirmed: boolean, failure?: { error: unknown }): void {
   const entry = queue.find((candidate) => candidate.id === id);
-  if (!entry) return;
+  if (!entry || (confirmed && entry.preparing)) return;
   queue = queue.filter((candidate) => candidate.id !== id);
   for (const listener of listeners) listener();
-  entry.resolve(confirmed);
+  if (failure) entry.reject(failure.error);
+  else entry.resolve(confirmed);
 }
 
 export function ConfirmDialogHost(): JSX.Element | null {
@@ -79,6 +93,7 @@ export function ConfirmDialogHost(): JSX.Element | null {
             type="button"
             className="settings-button settings-button-ghost"
             data-confirm-action="cancel"
+            autoFocus={request.preparing}
             onClick={cancel}
           >
             {t("common.cancel")}
@@ -87,9 +102,10 @@ export function ConfirmDialogHost(): JSX.Element | null {
             type="button"
             className={`settings-button ${request.tone === "danger" ? "settings-button-danger" : "settings-button-primary"}`}
             data-confirm-action="confirm"
-            // Enter answers the question the user just asked for; Escape,
-            // the backdrop, and Cancel decline it.
-            autoFocus
+            // Ordinary prompts focus Confirm. Preparation starts on Cancel
+            // and does not move focus when the authoritative data arrives.
+            autoFocus={!request.preparing}
+            disabled={request.preparing}
             onClick={() => settle(request.id, true)}
           >
             {request.confirmLabel}
@@ -97,7 +113,7 @@ export function ConfirmDialogHost(): JSX.Element | null {
         </>
       )}
     >
-      <p className="confirm-dialog-message">{request.message}</p>
+      <p className="confirm-dialog-message" aria-busy={request.preparing || undefined}>{request.message}</p>
     </Modal>
   );
 }

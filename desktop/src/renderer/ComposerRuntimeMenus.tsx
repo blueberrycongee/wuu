@@ -345,27 +345,29 @@ function RuntimePanelSummary({
           ) : null}
         </div>
       ) : null}
-      <div className="runtime-panel-selection">
-        <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-          <TruncatedText className="runtime-panel-model-name" text={model} />
-          <ChevronRight aria-hidden="true" />
-        </button>
+      <div className="runtime-panel-model-group">
+        <div className="runtime-panel-selection">
+          <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
+            <TruncatedText className="runtime-panel-model-name" text={model} />
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {effortOptions.length > 1 ? (
+            <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
+          ) : null}
+        </div>
         {effortOptions.length > 1 ? (
-          <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
+          <div className="runtime-panel-effort">
+            <EffortSelector
+              options={effortOptions}
+              selectedVariant={selectedEffort}
+              disabled={effortDisabled}
+              busy={effortSaving}
+              onPreviewEffort={setPreviewEffort}
+              onSelectEffort={onSelectEffort}
+            />
+          </div>
         ) : null}
       </div>
-      {effortOptions.length > 1 ? (
-        <div className="runtime-panel-effort">
-          <EffortSelector
-            options={effortOptions}
-            selectedVariant={selectedEffort}
-            disabled={effortDisabled}
-            busy={effortSaving}
-            onPreviewEffort={setPreviewEffort}
-            onSelectEffort={onSelectEffort}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -315,6 +315,7 @@ describe("browser observation surface", () => {
       isMinimized: () => false,
       isFocused: () => true,
       getContentBounds: () => content,
+      getMediaSourceId: () => "window:123:0",
       webContents: { getZoomFactor: () => 1 },
     });
     const client = { host: { x: 200, y: 40, width: 800, height: 700 }, obstacles: [] };

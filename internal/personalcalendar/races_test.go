@@ -208,7 +208,7 @@ func TestCancelledCommitCleanupPreservesNewerGeneration(t *testing.T) {
 }
 
 func TestCancelledCommitCleanupFailureIsExplicit(t *testing.T) {
-	for _, operation := range []string{"cancel", "close"} {
+	for _, operation := range []string{"cancel", "close", "expired"} {
 		t.Run(operation, func(t *testing.T) {
 			b, s := fixture(t)
 			s.failDelete = true
@@ -228,18 +228,31 @@ func TestCancelledCommitCleanupFailureIsExplicit(t *testing.T) {
 				b.callback(a.ID, httptest.NewRecorder(), httptest.NewRequest("GET", u.Query().Get("redirect_uri")+"?state="+u.Query().Get("state")+"&code=fixture", nil))
 			}()
 			<-started
+			b.mu.Lock()
+			attempt := b.attempts[a.ID]
+			b.mu.Unlock()
+			cancel := attempt.cancel
+			contextCancelled := make(chan struct{})
+			var cancelledOnce sync.Once
+			attempt.cancel = func() {
+				cancel()
+				cancelledOnce.Do(func() { close(contextCancelled) })
+				// Complete failed credential cleanup before stop publishes its state.
+				// Both Cancel and the expiry watcher must retain that failure.
+				<-done
+			}
 			cancelled := make(chan error, 1)
 			go func() {
 				if operation == "cancel" {
 					cancelled <- b.Cancel(actor, a.ID)
-				} else {
+				} else if operation == "close" {
 					cancelled <- b.Close()
+				} else {
+					attempt.stop("expired", "authorization_expired")
+					cancelled <- attempt.drain()
 				}
 			}()
-			b.mu.Lock()
-			attempt := b.attempts[a.ID]
-			b.mu.Unlock()
-			<-attempt.ctx.Done()
+			<-contextCancelled
 			close(release)
 			if e := <-cancelled; e == nil || !strings.Contains(e.Error(), "credential_cleanup_failed") {
 				t.Fatal("cleanup failure hidden", e)

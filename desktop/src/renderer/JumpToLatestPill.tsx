@@ -68,11 +68,18 @@ type JumpToLatestPillProps = {
   /** Remains available at the bottom; shares one centered group with the jump action. */
   companion?: ReactNode;
   /**
-   * Identifies the conversation shown in a reused container. A conversation
-   * reopens where it was left, so its last visibility applies before the first
-   * scroll event instead of the outgoing conversation's pill for a frame.
+   * Identifies the conversation shown in a reused container. Changing scopes
+   * clears the previous visibility before the first measurement; a restored
+   * conversation must not inherit the outgoing conversation's pill.
    */
   scopeKey?: string;
+  /**
+   * Hides the action and stops measuring while navigation owns the viewport.
+   * Session restoration moves content and scroll position in several steps;
+   * measuring those intermediate layouts makes the pill flash even though the
+   * incoming conversation is parked at the latest content.
+   */
+  suspended?: boolean;
 };
 
 const DEFAULT_THRESHOLD_PX = 80;
@@ -101,33 +108,38 @@ export function JumpToLatestPill({
   inline = false,
   companion,
   scopeKey,
+  suspended = false,
 }: JumpToLatestPillProps): React.ReactElement | null {
   const { t } = useI18n();
   const accessibleLabel = label ?? t("conversation.jumpToLatest");
-  const scrolledAwayByScopeRef = useRef(new Map<string, boolean>());
   const [scrolledAway, setScrolledAway] = useState(false);
   const [renderedScopeKey, setRenderedScopeKey] = useState(scopeKey);
+  const [renderedSuspended, setRenderedSuspended] = useState(suspended);
   const [position, setPosition] = useState<PillPosition | null>(null);
   if (renderedScopeKey !== scopeKey) {
     // Adjust during render: the commit that swaps conversations must already
-    // carry the incoming visibility, before scroll restoration measures it.
+    // clear the outgoing conversation's action, before restoration measures
+    // the incoming container. The first settled measurement decides whether
+    // the incoming reader is at the latest content.
     setRenderedScopeKey(scopeKey);
-    setScrolledAway(scopeKey !== undefined && scrolledAwayByScopeRef.current.get(scopeKey) === true);
+    setScrolledAway(false);
   }
+  if (renderedSuspended !== suspended) {
+    setRenderedSuspended(suspended);
+    if (suspended) setScrolledAway(false);
+  }
+  const showPill = scrolledAway && !suspended;
+
+  // Mirror the visible boolean to the parent whenever it flips. The parent
+  // uses this to swap a sibling progress pill out of the same composer-adjacent
+  // slot — see App.tsx. Effect-based so we only fire on real transitions, not
+  // on every scroll/resize tick.
+  useEffect(() => {
+    onScrolledAwayChange?.(showPill);
+  }, [showPill, onScrolledAwayChange]);
 
   useEffect(() => {
-    if (scopeKey !== undefined) scrolledAwayByScopeRef.current.set(scopeKey, scrolledAway);
-  }, [scopeKey, scrolledAway]);
-
-  // Mirror the scrolled-away boolean to the parent whenever it flips. The
-  // parent uses this to swap a sibling progress pill out of the same
-  // composer-adjacent slot — see App.tsx. Effect-based so we only fire on
-  // real transitions, not on every scroll/resize tick.
-  useEffect(() => {
-    onScrolledAwayChange?.(scrolledAway);
-  }, [scrolledAway, onScrolledAwayChange]);
-
-  useEffect(() => {
+    if (suspended) return undefined;
     const node = containerRef.current;
     if (!node) {
       return undefined;
@@ -188,7 +200,7 @@ export function JumpToLatestPill({
       childObserver?.disconnect();
       resizeObserver?.disconnect();
     };
-  }, [containerRef, threshold]);
+  }, [containerRef, scopeKey, suspended, threshold]);
 
   const recomputePosition = useCallback((): void => {
     const container = containerRef.current;
@@ -231,7 +243,7 @@ export function JumpToLatestPill({
   // composer, moving its top edge). The composer frame is observed separately
   // because expanded mode moves it upward without growing the outer anchor.
   useEffect(() => {
-    if (inline || !scrolledAway || !bottomAnchor) {
+    if (inline || !showPill || !bottomAnchor) {
       return undefined;
     }
     const resizeSettleRecompute =
@@ -312,13 +324,13 @@ export function JumpToLatestPill({
   }, [
     bottomAnchor,
     inline,
-    scrolledAway,
+    showPill,
     recomputeHorizontalPosition,
     recomputePosition,
     containerRef,
   ]);
 
-  if (!scrolledAway && !companion) {
+  if (!showPill && !companion) {
     return null;
   }
 
@@ -343,12 +355,12 @@ export function JumpToLatestPill({
 
   if (inline) {
     return <div className="jump-to-latest-cluster jump-to-latest-cluster-inline">
-      {scrolledAway ? <button type="button" className="jump-to-latest-pill" aria-label={accessibleLabel} onClick={scrollToBottom}>{pillBody}</button> : null}
+      {showPill ? <button type="button" className="jump-to-latest-pill" aria-label={accessibleLabel} onClick={scrollToBottom}>{pillBody}</button> : null}
       {companion}
     </div>;
   }
 
-  if (!bottomAnchor || !position) {
+  if (!showPill || !bottomAnchor || !position) {
     return null;
   }
   return (

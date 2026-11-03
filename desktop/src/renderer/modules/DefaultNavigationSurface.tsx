@@ -235,7 +235,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onCreateProject={view.projectAgentEnabled ? workspaceId => run(focusAfterNavigation(() => createProject(workspaceId))) : undefined}
     onAdoptIntoProject={view.projectAgentEnabled ? (projectId, threadId) => run(invoke("navigation.adopt-thread", { projectId, threadId })) : undefined}
     onReorderSections={next => { setOrder(next); localStorage.setItem("wuu.desktop.sidebarSectionOrder", JSON.stringify(next)); }}
-    onOpenSettings={pageId => run(application.invoke("settings.open", { pageId }))}
+    onOpenSettings={pageId => run(application.invoke("settings.open", pageId ? { pageId } : {}))}
     onOpenAccount={() => run(invoke("navigation.show-account", { open: true }))}
     onMarkThreadsViewed={threads => run(invoke("navigation.mark-viewed", { threadIds: threads.map(row => row.id) }))}
     unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(value => !value)} attentionStickyIDs={attentionStickyIDs} onAttentionStickyIDsChange={setAttentionStickyIDs}

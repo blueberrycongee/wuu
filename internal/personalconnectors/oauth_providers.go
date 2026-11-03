@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -15,8 +14,6 @@ func otherOAuthProvider(provider string) (oauthDefinition, error) {
 	switch provider {
 	case "notion":
 		return oauthDefinition{AuthorizationURL: "https://api.notion.com/v1/oauth/authorize", TokenURL: "https://api.notion.com/v1/oauth/token", AuthParams: map[string]string{"owner": "user"}}, nil
-	case "github":
-		return oauthDefinition{AuthorizationURL: "https://github.com/login/oauth/authorize", TokenURL: "https://github.com/login/oauth/access_token", PKCE: true, AuthParams: map[string]string{"allow_signup": "false"}}, nil
 	case "slack":
 		return oauthDefinition{AuthorizationURL: "https://slack.com/oauth/v2/authorize", TokenURL: "https://slack.com/api/oauth.v2.access"}, nil
 	case "feishu":
@@ -105,10 +102,6 @@ func decodeOtherOAuthToken(provider string, body []byte) (OAuthToken, error) {
 		}
 		token.AccountID = raw.BotID
 		token.WorkspaceID = raw.WorkspaceID
-	case "github":
-		if raw.TokenType != "" && !strings.EqualFold(raw.TokenType, "bearer") {
-			return OAuthToken{}, fault("oauth_token_type")
-		}
 	case "slack":
 		if raw.OK == nil || !*raw.OK {
 			return OAuthToken{}, fault("oauth_exchange_failed")
@@ -150,9 +143,6 @@ func (b *Broker) verifyOtherOAuthIdentity(ctx context.Context, provider string, 
 	case "notion":
 		p.URL = "https://api.notion.com/v1/users/me"
 		p.Headers = map[string]string{"Notion-Version": notionVersion}
-	case "github":
-		p.URL = "https://api.github.com/user"
-		p.Headers = map[string]string{"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
 	case "slack":
 		p.URL = "https://slack.com/api/auth.test"
 	case "feishu":
@@ -177,14 +167,6 @@ func (b *Broker) verifyOtherOAuthIdentity(ctx context.Context, provider string, 
 		}
 		account = v.ID
 		workspace = token.WorkspaceID
-	case "github":
-		var v struct {
-			ID int64 `json:"id"`
-		}
-		if json.Unmarshal(raw, &v) != nil || v.ID < 1 {
-			return OAuthToken{}, fault("oauth_identity_unverified")
-		}
-		account = strconv.FormatInt(v.ID, 10)
 	case "slack":
 		var v struct {
 			OK     bool   `json:"ok"`

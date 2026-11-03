@@ -137,8 +137,8 @@ async function run() {
   await setDraft(win, retainedDraft);
   await geometry(win);
   await evaluate(win, () => document.querySelector('.sidebar-account-trigger').click());
-  await waitFor(win, () => !!document.querySelector('.sidebar-account-menu [data-settings-page="providers"]'));
-  await evaluate(win, () => document.querySelector('.sidebar-account-menu [data-settings-page="providers"]').click());
+  await waitFor(win, () => !!document.querySelector('.sidebar-account-menu [data-settings-entry="settings"]'));
+  await evaluate(win, () => document.querySelector('.sidebar-account-menu [data-settings-entry="settings"]').click());
   await waitFor(win, () => !!document.querySelector(".settings-embedded"));
   win.setContentSize(600, 820);
   await evaluate(win, () => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));

@@ -9,7 +9,8 @@ import { readFocusModality } from "./FocusModality";
 import {
   moveThreadInOrder,
   persistThreadOrder,
-  reconcileThreadOrder,
+  reconcileThreadArrivalOrder,
+  type ThreadArrivalOrder,
   storedThreadOrder,
   type ThreadDropPosition,
 } from "./SidebarThreadOrder";
@@ -17,11 +18,26 @@ import {
 const RECENT_THREAD_ORDER_ID = "__wuu_recent_threads__";
 
 const RECENT_THREAD_LIMIT = 50;
-// Seed the initial list by activity. Later arrivals go before existing rows,
-// whose positions stay stable as their execution and unread indicators change.
+const RECENT_ARRIVAL_ORDER_KEY = "wuu.desktop.recentThreadArrivalOrder.v1";
+
+function readRecentOrder(): ThreadArrivalOrder {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(RECENT_ARRIVAL_ORDER_KEY) || "null") as ThreadArrivalOrder | null;
+    if (stored && Array.isArray(stored.ids) && stored.ids.every(id => typeof id === "string")
+      && Number.isFinite(stored.newestCreatedAt)) return stored;
+  } catch { /* Preserve legacy manual ordering when the saved snapshot is unavailable. */ }
+  return { ids: storedThreadOrder(RECENT_THREAD_ORDER_ID), newestCreatedAt: 0 };
+}
+
+function persistRecentOrder(order: ThreadArrivalOrder): void {
+  try { window.localStorage.setItem(RECENT_ARRIVAL_ORDER_KEY, JSON.stringify(order)); }
+  catch { /* Blocked storage must not prevent in-memory navigation. */ }
+}
+// Seed the initial list by activity. Newly created sessions precede known rows;
+// late historical pages follow them without changing their existing positions.
 const ACTIVITY_RANK = { running: 0, attention: 1, history: 2 } as const;
 
-/** Seed Recent by priority, then prepend new conversations in a stable order. */
+/** Preserve Recent order across activity updates, delayed catalogs, and reloads. */
 export function useSidebarConversationActivity(
   threads: ThreadSummary[],
   activeThreadID: string | undefined,
@@ -32,8 +48,8 @@ export function useSidebarConversationActivity(
   interactionProps: ComponentPropsWithRef<"div">;
   onReorder: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
 } {
-  const [threadOrder, setThreadOrder] = useState(() => storedThreadOrder(RECENT_THREAD_ORDER_ID));
-  const reconciledOrder = useMemo(() => {
+  const [arrivalOrder, setArrivalOrder] = useState(readRecentOrder);
+  const reconciledArrivalOrder = useMemo(() => {
     const seeded = threads.map((thread) => {
       const running = isThreadExecuting(thread);
       const unread = thread.id !== activeThreadID && thread.id !== pendingThreadID
@@ -50,17 +66,19 @@ export function useSidebarConversationActivity(
     }).sort((left, right) => left.rank - right.rank
       || right.time - left.time
       || left.thread.id.localeCompare(right.thread.id));
-    return reconcileThreadOrder(seeded.map((row) => row.thread), threadOrder);
-  }, [activeThreadID, lastViewedTurnByThreadID, pendingThreadID, threadOrder, threads]);
-  // Commit membership as well as positions. A thread can arrive idle before its
-  // first turn starts; freezing its activity rank would bury it below old work.
+    return reconcileThreadArrivalOrder(seeded.map((row) => row.thread), arrivalOrder);
+  }, [activeThreadID, arrivalOrder, lastViewedTurnByThreadID, pendingThreadID, threads]);
+  const reconciledOrder = useMemo(() => {
+    const visibleIDs = new Set(threads.map(thread => thread.id));
+    return reconciledArrivalOrder.ids.filter(id => visibleIDs.has(id));
+  }, [reconciledArrivalOrder, threads]);
+  // Preserve automatic arrivals across reloads, not just manual drag order.
+  // Absent IDs remain remembered while catalogs load; visibility uses live rows.
   useLayoutEffect(() => {
-    const knownIDs = new Set(threadOrder);
-    const newIDs = reconciledOrder.filter((id) => !knownIDs.has(id));
-    // Keep saved IDs while workspace caches are empty or still loading.
-    // Reconciliation filters absent rows without erasing their saved positions.
-    if (newIDs.length > 0) setThreadOrder([...newIDs, ...threadOrder]);
-  }, [reconciledOrder, threadOrder]);
+    if (reconciledArrivalOrder === arrivalOrder) return;
+    setArrivalOrder(reconciledArrivalOrder);
+    persistRecentOrder(reconciledArrivalOrder);
+  }, [arrivalOrder, reconciledArrivalOrder]);
   const ordered = useMemo(() => {
     const byID = new Map(threads.map((thread) => [thread.id, thread]));
     // Apply the cap after inserting arrivals so a full list still shows them.
@@ -103,6 +121,14 @@ export function useSidebarConversationActivity(
     })];
   }, [activeThreadID, heldOrder, ordered, pendingThreadID, threads]);
 
+  useLayoutEffect(() => {
+    if (!heldOrder) return;
+    const heldIDs = new Set(heldOrder.map(thread => thread.id));
+    // Once navigation admits a row, keep it reachable for the whole hold.
+    // Otherwise opening the next conversation hides the previously admitted row.
+    if (visibleThreads.some(thread => !heldIDs.has(thread.id))) setHeldOrder(visibleThreads);
+  }, [heldOrder, visibleThreads]);
+
   return {
     threads: visibleThreads,
     onReorder: (activeThreadID, overThreadID, position) => {
@@ -110,8 +136,10 @@ export function useSidebarConversationActivity(
       const next = moveThreadInOrder(current, activeThreadID, overThreadID, position);
       if (next === current) return;
       const visibleIDs = new Set(next);
-      const fullOrder = [...next, ...reconciledOrder.filter((id) => !visibleIDs.has(id))];
-      setThreadOrder(fullOrder);
+      const fullOrder = [...next, ...reconciledArrivalOrder.ids.filter((id) => !visibleIDs.has(id))];
+      const manualOrder = { ...reconciledArrivalOrder, ids: fullOrder };
+      setArrivalOrder(manualOrder);
+      persistRecentOrder(manualOrder);
       persistThreadOrder(RECENT_THREAD_ORDER_ID, fullOrder);
       // A deliberate drop must take effect even while the pointer holds the list.
       const byID = new Map(visibleThreads.map((thread) => [thread.id, thread]));

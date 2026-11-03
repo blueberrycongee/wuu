@@ -277,8 +277,10 @@ async function run() {
   assert.equal(requests.length, 0, 'Ordinary navigation must not request quotas.');
   await waitFor(main, () => document.querySelector('.sidebar-account-trigger'));
   await click(main, '.sidebar-account-trigger');
-  await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
-  await click(main, '[data-settings-page="providers"]');
+  await waitFor(main, () => document.querySelector('[data-settings-entry="settings"]'));
+  await click(main, '[data-settings-entry="settings"]');
+  await waitFor(main, () => document.querySelector('.settings-nav [data-wuu-page="providers"]'));
+  await click(main, '.settings-nav [data-wuu-page="providers"]');
   await waitFor(main, () => document.querySelector('[data-provider="personal"] .connection-usage-summary meter'));
   assert.deepEqual(await evaluate(main, () => [...document.querySelectorAll('[data-provider="personal"] meter')].map(meter => meter.value)), [63, 0], 'Overview meters show remaining allowance.');
   assert.equal(await evaluate(main, () => document.querySelector('[data-provider="team"] meter') === null), true, 'Unknown usage must not become an empty or full meter.');

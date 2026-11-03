@@ -68,7 +68,8 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setBackgroundColor?(color: string): void;
   setIgnoreMouseEvents?(ignore: boolean): void;
   moveTop?(): void;
-  setParentWindow?(parent: unknown): void;
+  setParentWindow(parent: unknown): void;
+  moveAbove(mediaSourceId: string): void;
   on(
     event: "close" | "closed" | "moved" | "resize" | "ready-to-show",
     listener: (...args: unknown[]) => void,
@@ -782,9 +783,45 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.preparing = true;
     win.setOpacity?.(0);
     win.setIgnoreMouseEvents?.(true);
-    win.showInactive();
+    if (!this.showInactive(win)) return;
     // Showing orders the window in front; the stack restores its own order.
     this.deps.sink.onEvent({ event: "shown" });
+  }
+
+  private showInactive(win: BrowserPiPWindowHandle): boolean {
+    const parent = this.hostParent;
+    if (process.platform !== "darwin" || !parent) {
+      win.showInactive();
+      return true;
+    }
+    if (parent.isDestroyed()) return false;
+    try {
+      const source = parent.getMediaSourceId();
+      // AppKit orders native children and their parent as a group, even for
+      // showInactive(). Present independently, then put the panel immediately
+      // above its host before reattaching so Wuu keeps its existing z-order.
+      // Final native ownership preserves Space, fullscreen and sibling behavior.
+      win.setParentWindow(null);
+      try {
+        win.showInactive();
+        win.moveAbove(source);
+      } catch (error) {
+        if (!win.isDestroyed()) win.hide();
+        throw error;
+      } finally {
+        if (!win.isDestroyed()) {
+          if (!parent.isDestroyed()) win.setParentWindow(parent);
+          else win.hide();
+        }
+      }
+      return !win.isDestroyed() && !parent.isDestroyed();
+    } catch (error) {
+      if (!win.isDestroyed()) win.hide();
+      this.endPreparing();
+      this.settleTransition();
+      this.deps.sink.onFailure(`Could not present activity preview: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
 
   private endPreparing(): void {
@@ -810,7 +847,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     });
     this.applyTransitionFrame(transition);
     if (!win.isVisible()) {
-      win.showInactive();
+      if (!this.showInactive(win)) return;
       this.deps.sink.onEvent({ event: "shown" });
     }
     if (leaving || reduced) this.runTransition(transition);

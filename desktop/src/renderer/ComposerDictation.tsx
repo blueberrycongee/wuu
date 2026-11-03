@@ -3,6 +3,7 @@ import type { DesktopDictationAPI, DictationEvent } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { Mic, Square, X, LoaderCircle } from "./WuuIcons";
 import { Tooltip } from "./Tooltip";
+import { ScopedToast } from "./Toast";
 import "./styles/composer-dictation.css";
 
 type Phase = "idle" | "starting" | "listening" | "finalizing";
@@ -89,6 +90,10 @@ export function useComposerDictation({ owner, disabled, prompt, locale, onText }
     if (session && api) void api.cancel(session.id).catch(() => {});
   }
   return { api, phase, sessionId, error, active: phase !== "idle", start, stop, cancel };
+}
+
+export function DictationErrorToast({ message }: { message: string }): JSX.Element | null {
+  return message ? <ScopedToast message={message} tone="error" dedupeKey="composer-dictation" /> : null;
 }
 
 export function DictationButton({ disabled, start }: { disabled: boolean; start(): Promise<void> }): JSX.Element {
