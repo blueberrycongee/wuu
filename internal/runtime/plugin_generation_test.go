@@ -1530,3 +1530,38 @@ func TestExplicitPluginMutationPreservesRequiredConsumerClosure(t *testing.T) {
 		}
 	}
 }
+
+func TestRemovedMCPRetiresPinnedGenerationsWithoutRevokingUnrelatedServers(t *testing.T) {
+	old := testPluginGeneration("peer", &generationClient{id: "peer"})
+	old.mcp = mcp.NewManager()
+	old.settings.MCPServers = map[string]config.MCPServerConfig{"removed": {URL: "https://example.test/mcp"}, "kept": {URL: "https://example.test/other"}}
+	disabled := false
+	for _, name := range []string{"removed", "kept"} {
+		if err := old.mcp.Add(context.Background(), mcp.ServerConfig{Name: name, Enabled: &disabled}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := testGenerationSession(t, old)
+	pinned := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(pinned)
+	candidate := testPluginGeneration("peer", &generationClient{id: "peer"})
+	candidate.settings.MCPServers = map[string]config.MCPServerConfig{"kept": {URL: "https://example.test/mcp"}}
+	failed := testPluginGeneration("peer", &generationClient{id: "peer"})
+	failed.settings = candidate.settings
+	if err := session.ActivatePluginGeneration(failed, func() error { return errors.New("storage unavailable") }); err == nil {
+		t.Fatal("failed commit accepted")
+	}
+	if err := old.mcp.Add(context.Background(), mcp.ServerConfig{Name: "removed", Enabled: &disabled}); err != nil {
+		t.Fatalf("failed commit revoked connection: %v", err)
+	}
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer session.releasePluginGeneration(candidate)
+	if err := old.mcp.Add(context.Background(), mcp.ServerConfig{Name: "removed", Enabled: &disabled}); !errors.Is(err, mcp.ErrServerRevoked) {
+		t.Fatalf("removed server can reconnect: %v", err)
+	}
+	if err := old.mcp.Add(context.Background(), mcp.ServerConfig{Name: "kept", Enabled: &disabled}); err != nil {
+		t.Fatalf("unrelated server revoked: %v", err)
+	}
+}

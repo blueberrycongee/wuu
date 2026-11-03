@@ -187,12 +187,12 @@ function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView 
         <ConnectorMark server={server} />
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{name}</div>
+          <div className="mcp-service-status" data-mcp-source>{t(server.plugin_id ? "mcp.pluginConnection" : server.editable ? "mcp.manualConnection" : "mcp.projectManaged")}</div>
           <div className="mcp-service-status" data-attention={attention} role={attention || working ? "status" : undefined}>
             {attention === "auth" ? <AlertTriangle className="icon-sm" aria-hidden="true" /> : attention ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}
             <span>{status}</span>
           </div>
           {diagnostic ? <MCPDiagnostic key={diagnostic} message={diagnostic} /> : null}
-          {!pluginID && !server.editable ? <p className="mcp-service-status">{t("mcp.projectManaged")}</p> : null}
         </div>
         <div className="mcp-service-actions">
           {enabled && server.state !== "disabled" && !(catalogView && server.connected) ? <>
@@ -433,7 +433,8 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
         <ConnectorMark server={server} catalog={catalog} />
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{view.connector.title}</div>
-          {view.secondary ? <div className="mcp-service-status" data-connector-identity={view.account && view.secondary !== view.connector.description ? "" : undefined}
+          <div className="mcp-service-status" data-mcp-source>{t("mcp.pluginConnection")} · {t(view.working ? "mcp.working" : view.connected ? "mcp.connected" : "mcp.notConnected")}</div>
+          {view.secondary && !view.working ? <div className="mcp-service-status" data-connector-identity={view.account && view.secondary !== view.connector.description ? "" : undefined}
             role={view.working ? "status" : undefined}>{view.secondary}</div> : null}
         </div>
         <div className="mcp-service-actions">
