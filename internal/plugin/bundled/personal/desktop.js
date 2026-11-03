@@ -1578,7 +1578,6 @@ ${personalReviewStyles}
         "recent": "Recent results",
         "requirements": "Request version",
         "outcome": "Result",
-        "stopTask": "Stop this task",
         "existingSession": "Existing session",
         "workerResult": "Worker response \xB7 not independently verified",
         "awaiting_review": "Awaiting controller review",
@@ -1588,11 +1587,8 @@ ${personalReviewStyles}
         "replies": "Replies",
         "replyUnavailable": "Original message unavailable",
         "replyLoading": "Loading original message\u2026",
-        "replyTaskContext": "Task context",
         "replyMessage": "Reply",
-        "replyTask": "Reply to this task",
         "replyingMessage": "Replying to message",
-        "replyingTask": "Replying to task",
         "cancelReply": "Cancel reply",
         "close": "Close",
         "back": "Back",
@@ -1697,7 +1693,6 @@ ${personalReviewStyles}
         "recent": "\u6700\u8FD1\u5B8C\u6210",
         "requirements": "\u8981\u6C42\u7248\u672C",
         "outcome": "\u7ED3\u679C",
-        "stopTask": "\u505C\u6B62\u8FD9\u4EF6\u4E8B",
         "existingSession": "\u5DF2\u6709\u4F1A\u8BDD",
         "workerResult": "\u5DE5\u4F5C\u4F1A\u8BDD\u56DE\u590D \xB7 \u672A\u72EC\u7ACB\u6838\u9A8C",
         "awaiting_review": "\u7B49\u5F85\u4E3B\u52A9\u624B\u590D\u6838",
@@ -1707,11 +1702,8 @@ ${personalReviewStyles}
         "replies": "\u56DE\u590D",
         "replyUnavailable": "\u539F\u6D88\u606F\u4E0D\u53EF\u7528",
         "replyLoading": "\u6B63\u5728\u52A0\u8F7D\u539F\u6D88\u606F\u2026",
-        "replyTaskContext": "\u4E8B\u9879\u4E0A\u4E0B\u6587",
         "replyMessage": "\u5F15\u7528",
-        "replyTask": "\u56DE\u590D\u8FD9\u4EF6\u4E8B",
         "replyingMessage": "\u5F15\u7528\u6D88\u606F",
-        "replyingTask": "\u56DE\u590D\u4E8B\u9879",
         "cancelReply": "\u53D6\u6D88\u5F15\u7528",
         "close": "\u5173\u95ED",
         "back": "\u8FD4\u56DE",
@@ -1792,9 +1784,6 @@ ${personalReviewStyles}
     .mosaic .mosaic-draft-notice > p { display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:0; }
     .mosaic .mosaic-draft-notice > p > span { flex:1 1 240px;min-width:0;overflow-wrap:anywhere; }
     .mosaic .mosaic-replies .mosaic-draft-notice { padding:0;margin:0 0 12px; }
-    .mosaic-reply-task-context { margin:0;overflow-wrap:anywhere; }
-    .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
-    .mosaic-reply-task-context > p { margin:8px 0 0; }
     @media(max-width:720px) { .mosaic-replies { inset-inline:6px;border-radius:24px;max-height:60%; } .mosaic-replies-toolbar { padding-inline:12px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:12px; } }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
@@ -1959,7 +1948,6 @@ ${personalReviewStyles}
   ` });
     const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
     const icon = (key) => h("svg", { className: "mosaic-nav-icon", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: icons[key] }));
-    const aliveTask = (task) => !["completed", "cancelled", "stopped", "failed", "archived"].includes(task.state);
     const fileLimit = 20 * 1024 * 1024, fileCountLimit = 16;
     const safeFilename = (name) => typeof name === "string" && name.length > 0 && name.length <= 255 && !/[\\/\x00-\x1f\x7f]/.test(name) && ![".", ".."].includes(name);
     const safeMime = (mime) => typeof mime === "string" && /^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(mime);
@@ -2708,10 +2696,6 @@ ${personalReviewStyles}
         else retry?.();
       } }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M4 5v5a3 3 0 0 0 3 3h13m-5-5 5 5-5 5" })), h("span", null, excerpt, !record2 && !loading && retry ? ` \xB7 ${t("retry")}` : ""));
     }
-    function ReplyOriginal({ reference, records, sessionID, agentID, t, renderMessage }) {
-      const { record: record2, loading, retry } = useReplySource({ reference, records, sessionID, agentID });
-      return record2 ? renderMessage(record2, true) : h("p", { className: "mosaic-reply-status", role: "status" }, t(loading ? "replyLoading" : "replyUnavailable"), !loading && retry && h(Button, { onClick: retry }, t("retry")));
-    }
     const receiptDisplayDuration = 5e3;
     function MessageReceipt({ receipt, state, busy, onRetry, locale }) {
       const failed = ["unknown", "rejected", "held"].includes(state);
@@ -2781,7 +2765,7 @@ ${personalReviewStyles}
         const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
         return h(MessageReceipt, { receipt: r, state, busy: entry?.busy, onRetry: () => retryReceipt(entry || { receipt: r }), locale });
       };
-      const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
+      const [readingFiles, setReadingFiles] = React.useState(false);
       const [avatarOpen, setAvatarOpen] = React.useState(false);
       const [replySelection, setReplySelection] = React.useState(null);
       const [replyHistory, setReplyHistory] = React.useState(null);
@@ -2797,7 +2781,7 @@ ${personalReviewStyles}
       const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
       const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
       const [, setDraftVersion] = React.useState(0);
-      const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+      const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
       const sendMotion = useSendMotion(React, rootRef);
       const [identityNode, setIdentityNode] = React.useState(null);
       React.useLayoutEffect(() => {
@@ -3154,20 +3138,6 @@ ${personalReviewStyles}
           subscription.dispose();
         };
       }, []);
-      const mutate = async (action) => {
-        if (controlRef.current) return;
-        controlRef.current = true;
-        setBusy(true);
-        setError("");
-        try {
-          await action();
-        } catch (cause) {
-          report(cause);
-        } finally {
-          controlRef.current = false;
-          if (mounted.current) setBusy(false);
-        }
-      };
       React.useLayoutEffect(() => {
         if (!agent || loading || replySelection || !historyInfo?.has_earlier) return;
         const viewport = rootRef.current?.querySelector(".mosaic-main > .plugin-conversation .plugin-conversation-scroll");
@@ -3213,14 +3183,14 @@ ${personalReviewStyles}
           if (mounted.current) setReadingFiles(false);
         }
       };
-      const setReply = async (target, source, taskContext) => {
+      const setReply = async (target, source) => {
         const version = ++replyLoadVersion.current;
         replyTrigger.current = document.activeElement;
         const reference = target.relation.reply_to;
         try {
-          const history = taskContext ? null : await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
+          const history = await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
           if (!mounted.current || version !== replyLoadVersion.current) return;
-          const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
+          const key = `${conversationID}:reply:${history.reply_root_seq}`;
           if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
           for (const record2 of history?.records || []) if (record2.receipt) acceptReceipt(record2.receipt, { prompt: record2.display_content || record2.content, relation: record2.relation, inHistory: true });
           setReplyHistory(history);
@@ -3230,7 +3200,7 @@ ${personalReviewStyles}
             replyMotion.current.onfinish = null;
             replyMotion.current.reverse();
           }
-          setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
+          setReplySelection({ key, source, rootSeq: history.reply_root_seq });
         } catch (cause) {
           if (version === replyLoadVersion.current) report(cause);
         }
@@ -3280,7 +3250,7 @@ ${personalReviewStyles}
         setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map((item) => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {} } }, message);
       };
       const loadReplyHistory = async (earlier = false) => {
-        if (!replySelection || replySelection.taskContext || replyPaging.current || earlier && !replyHistory?.has_earlier) return;
+        if (!replySelection || replyPaging.current || earlier && !replyHistory?.has_earlier) return;
         const version = replyLoadVersion.current;
         replyPaging.current = true;
         try {
@@ -3298,7 +3268,7 @@ ${personalReviewStyles}
         void loadReplyHistory();
       }, [records.at(-1)?.seq, running]);
       React.useEffect(() => {
-        if (!replyHistory?.has_earlier || !replySelection || replySelection.taskContext) return;
+        if (!replyHistory?.has_earlier || !replySelection) return;
         const viewport = replyPanelRef.current?.querySelector(".plugin-conversation-scroll");
         if (!viewport) return;
         const load = () => {
@@ -3608,11 +3578,6 @@ ${personalReviewStyles}
           h(
             "div",
             { className: "mosaic-detail-actions" },
-            aliveTask(task) && h(Button, { disabled: busy || task.state === "stopping", "data-action": "stop-task", onClick: () => mutate(async () => {
-              await call("tasks.stop", { task_id: task.task_id, expected_revision: task.revision });
-              await loadTasks();
-            }) }, t("stopTask")),
-            h(Button, { "data-action": "reply-task", onClick: () => setReply({ label: t("replyingTask"), preview: task.title, relation: { metadata: { task_links: [{ task_id: task.task_id, requirements_revision: task.question?.requirements_revision ?? task.requirements_revision, ...task.execution?.session_id ? { execution_session_id: task.execution.session_id } : {}, ...task.question?.request_id ? { question_request_id: task.question.request_id } : {} }] } } }, void 0, task) }, t("replyTask")),
             h(Button, { "data-action": "open-main-chat", variant: "ghost", onClick: () => {
               closePanel(false);
               rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true });
@@ -3681,7 +3646,7 @@ ${personalReviewStyles}
       const renderReplyMessage = (record2) => h(ConversationMessage, { className: sendMotion.className(record2.receipt?.request_id), interactive: interactiveFor(record2), resources: resourcesFor(record2), footer: receiptFooter(record2.receipt), reaction: reactionFor(record2), key: `reply:${record2.seq ?? record2.id}`, id: `reply:${conversationID}:${record2.seq ?? record2.id}`, streaming: record2.streaming, role: record2.role, content: record2.ui_parts?.length || record2.ui_resources?.length ? record2.ui_text || "" : record2.display_content || record2.content || "", timestamp: record2.at, linkPolicy: "external-only", attachments: record2.attachments?.length ? h(React.Fragment, null, record2.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record2.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record2.seq, attachment, t, autoLoad: true }))) : void 0 });
       const replyDraft = replySelection ? draftFor(replySelection.key) : void 0;
       const rootSeq = replySelection?.rootSeq;
-      const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
+      const replyPersisted = replyHistory?.records || [];
       const replyMessages = [...replyPersisted, ...liveMessages.filter((message) => !replyPersisted.some((record2) => record2.seq === message.seq || message.source_id && record2.provider_item_id === message.source_id)).map((message) => ({ ...message, role: "assistant" }))];
       const relatedSeqs = new Set(rootSeq ? [rootSeq, ...replyPersisted.map((record2) => record2.seq)] : []);
       for (let changed = true; changed; ) {
@@ -3691,17 +3656,11 @@ ${personalReviewStyles}
           changed = true;
         }
       }
-      const taskSource = replySelection?.taskContext?.source;
-      const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : void 0;
-      const replyRecords = replySelection ? replyMessages.filter((record2) => ["user", "assistant"].includes(record2.role) && (replySelection.taskContext ? record2.seq !== taskSourceRef?.seq && record2.relation?.metadata?.task_links?.some((link) => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record2.seq) || record2.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record2.relation.reply_to.seq))) : [];
+      const replyRecords = replySelection ? replyMessages.filter((record2) => ["user", "assistant"].includes(record2.role) && (relatedSeqs.has(record2.seq) || record2.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record2.relation.reply_to.seq))) : [];
       const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some((record2) => record2.receipt?.receipt_id && record2.receipt.receipt_id === entry.receipt?.receipt_id));
       const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : void 0, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
       const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
         if (entry.draftID === replySelection.key) return true;
-        if (replySelection.taskContext) {
-          const expected = replyDraft.replyTarget?.relation?.metadata?.task_links || [];
-          return entry.relation?.metadata?.task_links?.some((link) => expected.some((target) => ["task_id", "requirements_revision", "execution_session_id", "question_request_id"].every((key) => link[key] === target[key])));
-        }
         return entry.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(entry.relation.reply_to.seq);
       }) : [];
       const sendRefreshNotice = sendRefreshError && h("div", { className: "mosaic-error", role: "alert", "data-send-refresh-error": true }, h("span", null, t("sendRefreshFailed"), " ", sendRefreshError), h(Button, { onClick: refreshAcceptedSend }, t("refreshHistory")));
@@ -3741,8 +3700,6 @@ ${personalReviewStyles}
           composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text2) => send(text2, replySelection.key), onStop: stopReply }))
         },
         replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
-        replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : null,
-        taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
         replyRecords.map((record2) => renderReplyMessage(record2)),
         replyPending.map((entry) => renderPendingReceipt(entry, replySelection.key))
       ));

@@ -89,11 +89,10 @@ export async function activate(api) {
       "recent": "Recent results",
       "requirements": "Request version",
       "outcome": "Result",
-      "stopTask": "Stop this task",
       "existingSession": "Existing session", "workerResult": "Worker response · not independently verified", "awaiting_review": "Awaiting controller review", "controllerDecision": "Controller review", "remoteTrace": "Detailed history remains in the original session.",
       "openMainChat": "Open chat",
-      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…", "replyTaskContext": "Task context",
-      "replyMessage": "Reply", "replyTask": "Reply to this task", "replyingMessage": "Replying to message", "replyingTask": "Replying to task", "cancelReply": "Cancel reply",
+      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…",
+      "replyMessage": "Reply", "replyingMessage": "Replying to message", "cancelReply": "Cancel reply",
       "close": "Close",
       "back": "Back",
       "save": "Save changes",
@@ -191,11 +190,10 @@ export async function activate(api) {
       "recent": "最近完成",
       "requirements": "要求版本",
       "outcome": "结果",
-      "stopTask": "停止这件事",
       "existingSession": "已有会话", "workerResult": "工作会话回复 · 未独立核验", "awaiting_review": "等待主助手复核", "controllerDecision": "主助手复核决定", "remoteTrace": "详细记录保留在原会话中。",
       "openMainChat": "打开聊天",
-      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…", "replyTaskContext": "事项上下文",
-      "replyMessage": "引用", "replyTask": "回复这件事", "replyingMessage": "引用消息", "replyingTask": "回复事项", "cancelReply": "取消引用",
+      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…",
+      "replyMessage": "引用", "replyingMessage": "引用消息", "cancelReply": "取消引用",
       "close": "关闭",
       "back": "返回",
       "save": "保存修改",
@@ -275,9 +273,6 @@ export async function activate(api) {
     .mosaic .mosaic-draft-notice > p { display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:0; }
     .mosaic .mosaic-draft-notice > p > span { flex:1 1 240px;min-width:0;overflow-wrap:anywhere; }
     .mosaic .mosaic-replies .mosaic-draft-notice { padding:0;margin:0 0 12px; }
-    .mosaic-reply-task-context { margin:0;overflow-wrap:anywhere; }
-    .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
-    .mosaic-reply-task-context > p { margin:8px 0 0; }
     @media(max-width:720px) { .mosaic-replies { inset-inline:6px;border-radius:24px;max-height:60%; } .mosaic-replies-toolbar { padding-inline:12px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:12px; } }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
@@ -442,7 +437,6 @@ export async function activate(api) {
   ` });
   const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
   const icon = key => h("svg", { className: "mosaic-nav-icon", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: icons[key] }));
-  const aliveTask = task => !["completed", "cancelled", "stopped", "failed", "archived"].includes(task.state);
 
   const fileLimit = 20 * 1024 * 1024, fileCountLimit = 16;
   const safeFilename = name => typeof name === "string" && name.length > 0 && name.length <= 255 && !/[\\/\x00-\x1f\x7f]/.test(name) && ![".", ".."].includes(name);
@@ -872,10 +866,6 @@ export async function activate(api) {
     const excerpt = record ? record.display_content || record.content || record.attachments?.map(item => item.name).join(", ") || t("message") : t(loading ? "replyLoading" : "replyUnavailable");
     return h("button", { type: "button", className: "plugin-reply-reference", "data-reply-reference": true, "data-unavailable": !record && !loading, disabled: loading || (!record && !retry), title: record ? t("viewOriginal") : retry && !loading ? t("retry") : excerpt, onClick: event => { event.currentTarget.focus({ preventScroll: true }); if (record) onOpen(record); else retry?.(); } }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M4 5v5a3 3 0 0 0 3 3h13m-5-5 5 5-5 5" })), h("span", null, excerpt, !record && !loading && retry ? ` · ${t("retry")}` : ""));
   }
-  function ReplyOriginal({ reference, records, sessionID, agentID, t, renderMessage }) {
-    const { record, loading, retry } = useReplySource({ reference, records, sessionID, agentID });
-    return record ? renderMessage(record, true) : h("p", { className: "mosaic-reply-status", role: "status" }, t(loading ? "replyLoading" : "replyUnavailable"), !loading && retry && h(Button, { onClick: retry }, t("retry")));
-  }
   const receiptDisplayDuration = 5000;
   function MessageReceipt({ receipt, state, busy, onRetry, locale }) {
     // Execution outcomes do not change whether the message was delivered/read.
@@ -942,7 +932,7 @@ export async function activate(api) {
       const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
       return h(MessageReceipt, { receipt: r, state, busy: entry?.busy, onRetry: () => retryReceipt(entry || { receipt: r }), locale });
     };
-    const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
+    const [readingFiles, setReadingFiles] = React.useState(false);
     const [avatarOpen, setAvatarOpen] = React.useState(false);
     const [replySelection, setReplySelection] = React.useState(null);
     const [replyHistory, setReplyHistory] = React.useState(null);
@@ -958,7 +948,7 @@ export async function activate(api) {
     const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
     const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
-    const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+    const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
     const sendMotion = useSendMotion(React, rootRef);
     const [identityNode, setIdentityNode] = React.useState(null);
     React.useLayoutEffect(() => {
@@ -1210,7 +1200,6 @@ export async function activate(api) {
       });
       return () => { clearInterval(timer); stopWorkbench(); subscription.dispose(); };
     }, []);
-    const mutate = async action => { if (controlRef.current) return; controlRef.current = true; setBusy(true); setError(""); try { await action(); } catch (cause) { report(cause); } finally { controlRef.current = false; if (mounted.current) setBusy(false); } };
     React.useLayoutEffect(() => {
       if (!agent || loading || replySelection || !historyInfo?.has_earlier) return;
       const viewport = rootRef.current?.querySelector(".mosaic-main > .plugin-conversation .plugin-conversation-scroll");
@@ -1244,20 +1233,20 @@ export async function activate(api) {
       } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); }
       finally { readingRef.current = false; if (mounted.current) setReadingFiles(false); }
     };
-    const setReply = async (target, source, taskContext) => {
+    const setReply = async (target, source) => {
       const version = ++replyLoadVersion.current;
       replyTrigger.current = document.activeElement;
       const reference = target.relation.reply_to;
       try {
-        const history = taskContext ? null : await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
+        const history = await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
         if (!mounted.current || version !== replyLoadVersion.current) return;
-        const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
+        const key = `${conversationID}:reply:${history.reply_root_seq}`;
         if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
         for (const record of history?.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         setReplyHistory(history);
         closePanel(false);
         if (replyClosing.current && replyMotion.current) { replyClosing.current = false; replyMotion.current.onfinish = null; replyMotion.current.reverse(); }
-        setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
+        setReplySelection({ key, source, rootSeq: history.reply_root_seq });
       } catch (cause) { if (version === replyLoadVersion.current) report(cause); }
     };
     React.useLayoutEffect(() => {
@@ -1295,7 +1284,7 @@ export async function activate(api) {
       setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
     };
     const loadReplyHistory = async (earlier = false) => {
-      if (!replySelection || replySelection.taskContext || replyPaging.current || (earlier && !replyHistory?.has_earlier)) return;
+      if (!replySelection || replyPaging.current || (earlier && !replyHistory?.has_earlier)) return;
       const version = replyLoadVersion.current;
       replyPaging.current = true;
       try {
@@ -1308,7 +1297,7 @@ export async function activate(api) {
     };
     React.useEffect(() => { void loadReplyHistory(); }, [records.at(-1)?.seq, running]);
     React.useEffect(() => {
-      if (!replyHistory?.has_earlier || !replySelection || replySelection.taskContext) return;
+      if (!replyHistory?.has_earlier || !replySelection) return;
       const viewport = replyPanelRef.current?.querySelector('.plugin-conversation-scroll');
       if (!viewport) return;
       const load = () => { if (viewport.clientHeight > 0 && (viewport.scrollTop < 80 || viewport.scrollHeight <= viewport.clientHeight + 1)) void loadReplyHistory(true); };
@@ -1506,8 +1495,6 @@ export async function activate(api) {
           task.error && h("p", { role: "alert" }, task.error),
           task.reconciliation_required && h("p", { role: "status" }, t("reconciliation"))),
         h("div", { className: "mosaic-detail-actions" },
-          aliveTask(task) && h(Button, { disabled: busy || task.state === "stopping", "data-action": "stop-task", onClick: () => mutate(async () => { await call("tasks.stop", { task_id: task.task_id, expected_revision: task.revision }); await loadTasks(); }) }, t("stopTask")),
-          h(Button, { "data-action": "reply-task", onClick: () => setReply({ label: t("replyingTask"), preview: task.title, relation: { metadata: { task_links: [{ task_id: task.task_id, requirements_revision: task.question?.requirements_revision ?? task.requirements_revision, ...(task.execution?.session_id ? { execution_session_id: task.execution.session_id } : {}), ...(task.question?.request_id ? { question_request_id: task.question.request_id } : {}) }] } } }, undefined, task) }, t("replyTask")),
           h(Button, { "data-action": "open-main-chat", variant: "ghost", onClick: () => { closePanel(false); rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true }); } }, t("openMainChat"))))  : h(React.Fragment, null,
         h("header", { className: "mosaic-profile-head" }, h("div", { className: "mosaic-avatar-editable" }, avatar(true), editAvatar()), h("div", { className: "mosaic-profile-copy" }, h("button", { type: "button", className: "mosaic-profile-name mosaic-profile-name-button", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "编辑 twin" : "Edit twin"} · ${displayName}`, onClick: openIdentity }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText))),
         h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map(item => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
@@ -1550,21 +1537,15 @@ export async function activate(api) {
     const renderReplyMessage = record => h(ConversationMessage, { className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), resources: resourcesFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: (record.ui_parts?.length || record.ui_resources?.length) ? record.ui_text || "" : record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
     const rootSeq = replySelection?.rootSeq;
-    const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
+    const replyPersisted = replyHistory?.records || [];
     const replyMessages = [...replyPersisted, ...liveMessages.filter(message => !replyPersisted.some(record => record.seq === message.seq || (message.source_id && record.provider_item_id === message.source_id))).map(message => ({ ...message, role: "assistant" }))];
     const relatedSeqs = new Set(rootSeq ? [rootSeq, ...replyPersisted.map(record => record.seq)] : []);
     for (let changed = true; changed;) { changed = false; for (const record of replyMessages) if (Number.isSafeInteger(record.seq) && !relatedSeqs.has(record.seq) && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq)) { relatedSeqs.add(record.seq); changed = true; } }
-    const taskSource = replySelection?.taskContext?.source;
-    const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : undefined;
-    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
+    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
     const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some(record => record.receipt?.receipt_id && record.receipt.receipt_id === entry.receipt?.receipt_id));
     const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : undefined, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
     const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
       if (entry.draftID === replySelection.key) return true;
-      if (replySelection.taskContext) {
-        const expected = replyDraft.replyTarget?.relation?.metadata?.task_links || [];
-        return entry.relation?.metadata?.task_links?.some(link => expected.some(target => ["task_id", "requirements_revision", "execution_session_id", "question_request_id"].every(key => link[key] === target[key])));
-      }
       return entry.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(entry.relation.reply_to.seq);
     }) : [];
     const sendRefreshNotice = sendRefreshError && h("div", { className: "mosaic-error", role: "alert", "data-send-refresh-error": true }, h("span", null, t("sendRefreshFailed"), " ", sendRefreshError), h(Button, { onClick: refreshAcceptedSend }, t("refreshHistory")));
@@ -1578,8 +1559,6 @@ export async function activate(api) {
     } }, h("div", { className: "mosaic-replies-toolbar" }, h("button", { type: "button", className: "icon-button mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" })))), sendRefreshNotice, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
       composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply })) },
       replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
-      replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : null,
-      taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
       replyRecords.map(record => renderReplyMessage(record)), replyPending.map(entry => renderPendingReceipt(entry, replySelection.key))));
     return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine) || undefined },
       !replySelection && sendRefreshNotice,
