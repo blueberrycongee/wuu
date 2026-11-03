@@ -303,10 +303,11 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 	}
 	// A connector preference only switches a package-declared server, the same
 	// change as enabling or disabling its plugin: running turns keep their pinned
-	// generation. Editing standalone definitions still needs exclusive ownership.
+	// generation. Removal also fences old connections without stopping turns.
+	// Adding or editing standalone definitions still needs exclusive ownership.
 	mutation := pluginGenerationMutationLive
-	for name := range params.Servers {
-		if !runtime.IsPluginMCPServerName(name) {
+	for name, definition := range params.Servers {
+		if !runtime.IsPluginMCPServerName(name) && definition != nil {
 			mutation = pluginGenerationMutationExclusive
 		}
 	}
@@ -416,6 +417,7 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 	}
 	// The provider resolves project overlays after committing. Build from that
 	// authoritative result, so removing an override can reveal a project server.
+	s.rt.RetireRemovedMCPServers(committed.Config)
 	activationErr := configActivationError(committed)
 	if activationErr == nil {
 		candidate, prepareErr := s.rt.PreflightExtensionPolicy(committed.Config)

@@ -968,3 +968,30 @@ it.each(["stale", "revoked"])("revalidates an owned login instead of trusting an
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   }
 });
+
+it("distinguishes manual and plugin connections with the same name and removes only the selected definition", async () => {
+  let servers: MCPServerStatus[] = [connector, { ...connected, display_name: connector.connector!.title, editable: true }];
+  const source = connectorControls({
+    listMCPServers: vi.fn(async () => ({ servers })),
+    readMCPDefinition: vi.fn().mockResolvedValue({ name: "docs", revision: "revision", config: { url: connector.resource_url } }),
+    configureMCPServers: vi.fn(async () => { servers = [connector]; return { servers }; }),
+  });
+  await render(source);
+  expect(row().textContent).toContain(translateCurrent("mcp.manualConnection"));
+  expect(connectorRow().textContent).toContain(translateCurrent("mcp.pluginConnection"));
+  expect(connectorRow().textContent).toContain(translateCurrent("mcp.notConnected"));
+  await click(row().querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!);
+  await click(button(document, "common.remove"));
+  await click(button(document.querySelector('[role="dialog"]')!, "common.remove"));
+  expect(source.configureMCPServers).toHaveBeenCalledWith({ servers: { docs: null }, revision: "revision" });
+  expect(container.querySelector('[data-mcp="docs"]')).toBeNull();
+  expect(connectorRow()).not.toBeNull();
+  expect(source.removeMCPAuth).not.toHaveBeenCalled();
+});
+
+it("keeps an unconnected catalog card concise when there is no competing manual connection", async () => {
+  await render(connectorControls());
+  expect(connectorRow().querySelector("[data-mcp-source]")).toBeNull();
+  expect(connectorRow().textContent).toContain(connector.connector!.description);
+  expect(button(connectorRow(), "mcp.connect").disabled).toBe(false);
+});

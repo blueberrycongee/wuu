@@ -649,3 +649,50 @@ func TestLazyConnectorSurvivesCatalogAndConfigReload(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPRemovalWhileUnrelatedTurnRuns(t *testing.T) {
+	prior := newTestRuntime(t, &fakeClient{})
+	preparePluginRuntimePathsForTest(t, prior)
+	cfg, _, err := config.LoadPath(prior.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	cfg.MCPServers = map[string]config.MCPServerConfig{"removed": {URL: "https://example.test/mcp", Enabled: &disabled}, "kept": {URL: "https://example.test/other", Enabled: &disabled}}
+	raw, _ := json.Marshal(cfg)
+	if err := os.WriteFile(prior.ConfigPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt := newConfigRefreshRuntime(t, prior)
+	out := &lockedBuffer{}
+	srv := newOwnerHandlerFixture(rt, out)
+	srv.threads = map[string]*threadState{"unrelated": {ID: "unrelated", running: true}}
+	callPluginPackageRPC(t, srv, "read", MethodMCPDefinitionRead, map[string]any{"name": "removed"})
+	definition := remarshal[MCPDefinitionResult](t, responseByID(t, parseOutput(t, out.String()), "read")["result"])
+	for _, revision := range []string{"stale", definition.Revision} {
+		callPluginPackageRPC(t, srv, revision, MethodMCPConfigure, map[string]any{"servers": map[string]any{"removed": nil}, "revision": revision})
+		response := responseByID(t, parseOutput(t, out.String()), revision)
+		if revision == "stale" {
+			if response["error"] == nil {
+				t.Fatal("stale removal accepted")
+			}
+			continue
+		}
+		if response["error"] != nil {
+			t.Fatalf("unrelated turn blocked removal: %+v", response)
+		}
+	}
+	saved, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := saved.MCPServers["removed"]; exists {
+		t.Fatal("removed definition survived")
+	}
+	if _, exists := saved.MCPServers["kept"]; !exists {
+		t.Fatal("unrelated definition removed")
+	}
+	if !srv.threads["unrelated"].running {
+		t.Fatal("unrelated turn was stopped")
+	}
+}
