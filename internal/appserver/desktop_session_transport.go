@@ -151,8 +151,8 @@ func (p *desktopSessionTransport) InvokeService(ctx context.Context, call plugin
 		if err := route.Validate(); err != nil {
 			return nil, err
 		}
-		if route.Locator.ExecutionHost == "local" || (route.Operation != "send" && route.Operation != "inspect" && route.Operation != "cancel") {
-			return nil, errors.New("desktop transport requires an exact registered existing-session operation")
+		if route.Locator.ExecutionHost == "local" || (route.Operation != "create" && route.Operation != "send" && route.Operation != "inspect" && route.Operation != "cancel") {
+			return nil, errors.New("desktop transport requires an exact registered session operation")
 		}
 		method = desktopSessionDispatch
 	} else if call.Method != "list-targets" {
@@ -190,9 +190,9 @@ func (p *desktopSessionTransport) InvokeService(ctx context.Context, call plugin
 	}
 	if err == nil && call.Method == "dispatch" {
 		var receipt pluginhost.SessionRouteResult
-		if json.Unmarshal(result, &receipt) != nil || receipt.Version != 1 || receipt.OperationID != route.OperationID || receipt.Locator.Version != 1 || receipt.Locator.ExecutionHost != route.Locator.ExecutionHost || receipt.Locator.SessionID != route.Locator.SessionID || (receipt.Status != "completed" && receipt.Status != "pending" && receipt.Status != "unknown") {
+		if json.Unmarshal(result, &receipt) != nil || !receipt.Matches(route) {
 			err = errors.New("invalid registered session receipt")
-		} else if registeredSessionTerminal(route, receipt) {
+		} else if route.Operation == "create" && receipt.Status == "completed" || registeredSessionTerminal(route, receipt) {
 			p.releaseGroup(ctx, string(group))
 		}
 	}
@@ -391,7 +391,7 @@ func (s *Server) authorizeDesktopSessionDelivery(ctx context.Context, request Re
 }
 
 func registeredSessionTerminal(route pluginhost.SessionRouteRequest, receipt pluginhost.SessionRouteResult) bool {
-	if route.Operation != "inspect" || receipt.Status != "completed" || receipt.Error != nil || receipt.Version != 1 || receipt.OperationID != route.OperationID || receipt.Locator.Version != 1 || receipt.Locator.ExecutionHost != route.Locator.ExecutionHost || receipt.Locator.SessionID != route.Locator.SessionID {
+	if route.Operation != "inspect" || receipt.Status != "completed" || receipt.Error != nil || !receipt.Matches(route) {
 		return false
 	}
 	var params pluginhost.SessionInspectParams

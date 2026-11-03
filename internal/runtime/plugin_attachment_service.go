@@ -17,14 +17,15 @@ import (
 )
 
 type historyAttachment struct {
-	metadata pluginhost.SessionHistoryAttachment
-	data     string
-	uri      string
+	metadata  pluginhost.SessionHistoryAttachment
+	data      string
+	uri       string
+	localPath string
 }
 
 func recordAttachments(record session.HistoryRecord) []historyAttachment {
 	var result []historyAttachment
-	add := func(kind string, index int, name, media, data string) {
+	add := func(kind string, index int, name, media, data, localPath string) {
 		if len(data) > base64.StdEncoding.EncodedLen(MaxClientInputAttachmentBytes) {
 			return
 		}
@@ -33,18 +34,18 @@ func recordAttachments(record session.HistoryRecord) []historyAttachment {
 			return
 		}
 		sum := sha256.Sum256(decoded)
-		result = append(result, historyAttachment{metadata: pluginhost.SessionHistoryAttachment{Kind: kind, Index: index, Name: name, MIMEType: media, Size: int64(len(decoded)), SHA256: hex.EncodeToString(sum[:])}, data: data})
+		result = append(result, historyAttachment{metadata: pluginhost.SessionHistoryAttachment{Kind: kind, Index: index, Name: name, MIMEType: media, Size: int64(len(decoded)), SHA256: hex.EncodeToString(sum[:])}, data: data, localPath: localPath})
 	}
 	var images []providers.InputImage
 	if json.Unmarshal(record.Images, &images) == nil {
 		for i, image := range images {
-			add("image", i, fmt.Sprintf("image-%d", i+1), image.MediaType, image.Data)
+			add("image", i, fmt.Sprintf("image-%d", i+1), image.MediaType, image.Data, image.LocalPath)
 		}
 	}
 	var files []providers.InputFile
 	if json.Unmarshal(record.Files, &files) == nil {
 		for i, file := range files {
-			add("file", i, file.Filename, file.MediaType, file.Data)
+			add("file", i, file.Filename, file.MediaType, file.Data, file.LocalPath)
 		}
 	}
 	var output toolresult.Result
@@ -53,7 +54,7 @@ func recordAttachments(record session.HistoryRecord) []historyAttachment {
 			if part.Artifact != nil && part.Artifact.SHA256 != "" && part.Artifact.SizeBytes != nil && part.URI != "" {
 				result = append(result, historyAttachment{metadata: pluginhost.SessionHistoryAttachment{Kind: "artifact", Index: i, Name: part.Name, MIMEType: part.MIMEType, Size: *part.Artifact.SizeBytes, SHA256: part.Artifact.SHA256}, uri: part.URI})
 			} else if part.Data != "" {
-				add("artifact", i, part.Name, part.MIMEType, part.Data)
+				add("artifact", i, part.Name, part.MIMEType, part.Data, "")
 			}
 		}
 	}
@@ -62,9 +63,18 @@ func recordAttachments(record session.HistoryRecord) []historyAttachment {
 
 // HistoryAttachmentMetadata returns the same visible attachment references exposed by session history.
 func HistoryAttachmentMetadata(record session.HistoryRecord) []pluginhost.SessionHistoryAttachment {
+	return historyAttachmentMetadata(record, false)
+}
+
+func historyAttachmentMetadata(record session.HistoryRecord, includeLocations bool) []pluginhost.SessionHistoryAttachment {
 	var result []pluginhost.SessionHistoryAttachment
 	for _, attachment := range recordAttachments(record) {
-		result = append(result, attachment.metadata)
+		metadata := attachment.metadata
+		if includeLocations {
+			metadata.LocalPath = attachment.localPath
+			metadata.URI = attachment.uri
+		}
+		result = append(result, metadata)
 	}
 	return result
 }

@@ -76,6 +76,7 @@ export interface ExecutionAuthorizationRevocation { readonly revoked: boolean; }
 export interface ExecutionAuthorizationPolicy {
   /** Added by the host grant gateway, not provider authorization. Missing means
    * unsupported; session-route.v1 enables exact existing-session routing;
+   * session-route-create.v1 enables exact workspace creation intents;
    * session-turn-tool-policy.v1 enables isolated per-turn tool attenuation. */
   readonly host_features?: readonly string[];
   readonly default_lifetime_seconds: number;
@@ -263,10 +264,12 @@ export interface ExecutionLineageRequest {
  * before attesting lineage; providers cannot claim those host-owned facts. */
 export interface ExecutionSessionRouteBinding {
   readonly locator: SessionLocatorV1;
-  readonly operations: readonly ('send' | 'inspect' | 'cancel')[];
+  readonly operations: readonly ('create' | 'send' | 'inspect' | 'cancel')[];
+  /** Create-only workspace binding, with no locator.session_id. */
+  readonly creation?: Omit<HostServiceContracts['host.session.create']['params'], 'execution_authorization'>;
 }
 export interface ExecutionLineageObservation {
-  /** Exact existing target; the host binds it to the grant and resource policy.
+  /** Exact session target or creation intent; bound to the grant and resource policy.
    * session_id remains the caller-owned controller, not the target session. */
   readonly route?: ExecutionSessionRouteBinding;
   readonly creation?: Omit<HostServiceContracts['host.session.create']['params'], 'execution_authorization'>;

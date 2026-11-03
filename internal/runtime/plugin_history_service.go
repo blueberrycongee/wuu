@@ -58,7 +58,7 @@ func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginI
 		if r, found := receipts[record.ClientID]; found && r.MessageSeq == record.Seq {
 			receipt = &r
 		}
-		attachments := HistoryAttachmentMetadata(record)
+		attachments := historyAttachmentMetadata(record, params.IncludeAttachmentLocations)
 		content := record.Content
 		if record.Origin == "user" && len(attachments) > 0 {
 			content = record.DisplayContent

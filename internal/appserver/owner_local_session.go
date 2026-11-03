@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/access"
@@ -67,7 +68,7 @@ func (s *Server) handleOwnerLocalSession(ctx context.Context, source principal.V
 		return s.writeResponse(req.ID, nil, err)
 	}
 	resource := access.Resource{Kind: "session", ID: input.Request.Locator.SessionID}
-	if input.Request.Operation == "list" {
+	if input.Request.Operation == "list" || input.Request.Operation == "create" {
 		resource = access.Resource{Kind: "workspace", ID: s.rt.RootDir}
 	}
 	if err = s.RegisterAuthorizedResponse(authorized, req, ownerLocalSessionMethod+"."+input.Request.Operation, false, resource); err != nil {
@@ -104,7 +105,7 @@ func (s *Server) dispatchOwnerLocalSession(ctx context.Context, source principal
 	}
 	actor := "desktop-controller-" + federationDigest(actorKey)
 	resource := access.Resource{Kind: "session", ID: request.Locator.SessionID}
-	if request.Operation == "list" {
+	if request.Operation == "list" || request.Operation == "create" {
 		resource = access.Resource{Kind: "workspace", ID: s.rt.RootDir}
 	}
 	recheck := func() error { return s.AuthorizeResource(ctx, ownerLocalSessionMethod+"."+request.Operation, resource) }
@@ -119,6 +120,18 @@ func (s *Server) dispatchOwnerLocalSession(ctx context.Context, source principal
 	ctx = runtime.WithInvocationState(ctx, state)
 	var execute func() (any, error)
 	switch request.Operation {
+	case "create":
+		var p pluginhost.SessionCreateParams
+		if err = decodeParams(request.Params, &p); err != nil {
+			return empty, err
+		}
+		// The receiver owns model, permission and workspace selection. A controller
+		// can name a fresh visible session, but cannot import source-host authority.
+		allowed := pluginhost.SessionCreateParams{RequestID: request.OperationID, Name: p.Name, Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh}
+		if p.RequestID != input.Controller.RunID || !reflect.DeepEqual(p, allowed) {
+			return empty, errors.New("owner-local creation requires an exact fresh visible session with receiver defaults")
+		}
+		execute = func() (any, error) { return s.createPluginSession(ctx, actor, p) }
 	case "send":
 		var p pluginhost.SessionSendParams
 		if err = decodeParams(request.Params, &p); err != nil {
@@ -176,7 +189,7 @@ func (s *Server) dispatchOwnerLocalSession(ctx context.Context, source principal
 			return list, nil
 		}
 	default:
-		return empty, errors.New("owner-local control supports only existing-session send, inspect, cancel and discovery")
+		return empty, errors.New("owner-local control supports create, send, inspect, cancel and discovery")
 	}
 	if strings.TrimSpace(request.OperationID) == "" {
 		return empty, errors.New("stable operation identity required")

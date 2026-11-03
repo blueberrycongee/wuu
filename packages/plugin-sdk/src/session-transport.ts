@@ -97,11 +97,12 @@ function unknownReceipt(request: SessionRouteRequest, code: string): SessionRout
     error: { code, message: "Delivery may have been accepted. Reconcile or retry the same operation ID; do not recreate the operation." } };
 }
 
-function validReceipt(value: unknown, request: SessionRouteRequest): value is SessionRouteResult {
+/** Match a receipt to its original operation, including a newly created session. */
+export function isSessionRouteResult(value: unknown, request: Pick<SessionRouteRequest, "operation" | "operation_id" | "locator">): value is SessionRouteResult {
   if (!record(value) || value.version !== 1 || value.operation_id !== request.operation_id
     || !["completed", "pending", "unknown"].includes(String(value.status)) || !record(value.locator)
     || value.locator.version !== 1 || value.locator.execution_host !== request.locator.execution_host) return false;
-  if (request.locator.session_id !== undefined && value.locator.session_id !== request.locator.session_id) return false;
+  if (request.operation !== "create" && value.locator.session_id !== request.locator.session_id) return false;
   if (request.operation === "create" && value.status === "completed" && value.error === undefined && !token(value.locator.session_id)) return false;
   return value.error === undefined || (record(value.error) && typeof value.error.code === "string" && typeof value.error.message === "string");
 }
@@ -130,7 +131,7 @@ export function remoteSessionTransport(
           if (signal?.aborted) onAbort();
         });
         const value = await (signal ? Promise.race([response, aborted]) : response);
-        return validReceipt(value, request) ? value : unknownReceipt(request, "session_invalid_receipt");
+        return isSessionRouteResult(value, request) ? value : unknownReceipt(request, "session_invalid_receipt");
       } catch {
         return unknownReceipt(request, "session_delivery_unknown");
       } finally {
@@ -146,9 +147,12 @@ export interface RegisteredSessionTargetsV1 {
   targets: {
     locator: SessionLocatorV1;
     title?: string;
+    workspace_root?: string;
     /** Descriptive admission path. Omission means legacy federation. The
      * registered host identity selects the path, never a caller's mode claim. */
     route_kind?: "owner-local" | "federation";
   }[];
+  /** Registered workspaces that support creating visible sessions with receiver defaults. */
+  workspaces?: { locator: SessionLocatorV1; title?: string; workspace_root?: string; route_kind: "owner-local" }[];
   unavailable: { execution_host?: string; reason: string }[];
 }
