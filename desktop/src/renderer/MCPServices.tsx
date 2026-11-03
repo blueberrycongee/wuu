@@ -86,6 +86,15 @@ export function MCPServices(props: MCPServicesProps): JSX.Element {
   </>;
 }
 
+// Display hints distinguish sources, never merge credentials or action targets.
+function hasOtherConnectionSource(server: MCPServerStatus, servers: MCPServerStatus[]): boolean {
+  const title = (server.connector?.title || server.display_name || server.name).trim().toLocaleLowerCase();
+  return servers.some(other => other.name !== server.name
+    && (server.plugin_id ? !other.plugin_id : !!other.plugin_id && !!other.connector)
+    && ((other.connector?.title || other.display_name || other.name).trim().toLocaleLowerCase() === title
+      || !!server.resource_url && server.resource_url === other.resource_url));
+}
+
 function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView = false }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
   const { servers, error: loadError, refresh } = useMCPServices();
@@ -187,7 +196,7 @@ function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView 
         <ConnectorMark server={server} />
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{name}</div>
-          <div className="mcp-service-status" data-mcp-source>{t(server.plugin_id ? "mcp.pluginConnection" : server.editable ? "mcp.manualConnection" : "mcp.projectManaged")}</div>
+          {hasOtherConnectionSource(server, servers) || !pluginID && !server.editable ? <div className="mcp-service-status" data-mcp-source>{t(server.plugin_id ? "mcp.pluginConnection" : server.editable ? "mcp.manualConnection" : "mcp.projectManaged")}</div> : null}
           <div className="mcp-service-status" data-attention={attention} role={attention || working ? "status" : undefined}>
             {attention === "auth" ? <AlertTriangle className="icon-sm" aria-hidden="true" /> : attention ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}
             <span>{status}</span>
@@ -433,8 +442,8 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
         <ConnectorMark server={server} catalog={catalog} />
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{view.connector.title}</div>
-          <div className="mcp-service-status" data-mcp-source>{t("mcp.pluginConnection")} · {t(view.working ? "mcp.working" : view.connected ? "mcp.connected" : "mcp.notConnected")}</div>
-          {view.secondary && !view.working ? <div className="mcp-service-status" data-connector-identity={view.account && view.secondary !== view.connector.description ? "" : undefined}
+          {hasOtherConnectionSource(server, servers) ? <div className="mcp-service-status" data-mcp-source>{t("mcp.pluginConnection")} · {t(view.connected ? "mcp.connected" : "mcp.notConnected")}</div> : null}
+          {view.secondary ? <div className="mcp-service-status" data-connector-identity={view.account && view.secondary !== view.connector.description ? "" : undefined}
             role={view.working ? "status" : undefined}>{view.secondary}</div> : null}
         </div>
         <div className="mcp-service-actions">

@@ -180,7 +180,8 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
           } finally { Menu.prototype.popup = originalPopup; }
       };
       const click = async ([selector, label], keyboard = false) => {
-        if (selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label)) return menuSelect(selector, label, keyboard);
+        if (selector.startsWith('[data-mcp=') && ["刷新", "断开", "移除 OAuth 登录", "编辑", "移除"].includes(label)) return menuSelect(selector, label, keyboard);
+        if (selector.startsWith('[data-mcp=') && label === "连接") return clickElement(`${selector} button[aria-label="连接"]`);
         console.log(`MCP journey: ${label}`);
         await until(clickReady, { selector: `${selector} button`, label });
       };
@@ -190,7 +191,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
         Object.getOwnPropertyDescriptor(prototype, "value").set.call(element, value);
         element.dispatchEvent(new Event("input", { bubbles: true }));
       }, [selector, value]);
-      const row = '[data-mcp="journey-docs"]';
+      const row = '[data-mcp="notion"]';
       await clickElement('[data-ribbon-id="catalog"]');
       await clickElement('[data-tab="plugins"]');
       await until(() => document.querySelector('[data-connector="plugin.account-connectors.notion"] [data-connector-action="connect"]'));
@@ -198,12 +199,12 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("mcp-empty-light");
       await menuSelect(".catalog-add", "添加自定义 MCP 服务器");
       await until(() => document.querySelector(".mcp-editor"));
-      await input('.mcp-editor input:not([type])', "journey-docs");
+      await input('.mcp-editor input:not([type])', "notion");
       await input('.mcp-editor input[type="url"]', `${endpoint}/mcp`);
       await capture("mcp-add-url");
       await click([".mcp-editor", "保存"]);
       const authRow = await snapshot(() => {
-        const row = document.querySelector('[data-mcp="journey-docs"]');
+        const row = document.querySelector('[data-mcp="notion"]');
         return !document.querySelector(".mcp-editor") && row?.textContent.includes("需要认证") ? { text: row.textContent } : false;
       });
       assert.equal(authRow.text.includes("HTTP 401"), false, "Authentication diagnostics stay out of the collapsed service row");
@@ -218,49 +219,48 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal((await fetch(callback)).status, 400);
       assert.equal(evidence.exchanges, 0);
       await fetch(authorizationURL);
-      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("1 个工具"));
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-mcp="notion"]')?.textContent.includes("1 个工具"));
       assert.equal(evidence.exchanges, 1);
       assert.ok(evidence.authenticatedLists > 0);
+      assert.equal(await evaluate(() => document.querySelector('[data-connector="plugin.account-connectors.notion"] [data-mcp-source]')?.textContent), "插件连接 · 未连接");
       await capture("mcp-connected-light");
       win.focus();
       win.webContents.focus();
-      await evaluate(selector => document.querySelector(`${selector} .mcp-service-actions > button:not([aria-haspopup])`).focus(), row);
-      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
-      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+      await evaluate(selector => document.querySelector(`${selector} [aria-haspopup="menu"]`).focus(), row);
       await until(() => document.activeElement?.getAttribute("aria-haspopup") === "menu");
       await capture("mcp-keyboard-focus");
       let releaseToolList;
       pauseToolList = new Promise(resolve => { releaseToolList = resolve; });
       const listsBeforeRefresh = evidence.authenticatedLists;
       await click([row, "刷新"], true);
-      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.getAttribute("aria-busy") === "true");
+      await until(() => document.querySelector('[data-mcp="notion"]')?.getAttribute("aria-busy") === "true");
       assert.equal(await evaluate(selector => [...document.querySelectorAll(`${selector} .mcp-service-actions button`)].every(button => button.disabled), row), true);
       await capture("mcp-refresh-busy");
       releaseToolList();
       pauseToolList = null;
-      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.getAttribute("aria-busy") === "false");
+      await until(() => document.querySelector('[data-mcp="notion"]')?.getAttribute("aria-busy") === "false");
       assert.ok(evidence.authenticatedLists > listsBeforeRefresh, "Refresh must rediscover synthetic tools");
       await click([row, "断开"]);
-      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("已断开"));
+      await until(() => document.querySelector('[data-mcp="notion"]')?.textContent.includes("已断开"));
       await capture("mcp-disconnected");
       failedInitializations = 1;
       await click([row, "连接"]);
-      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("连接失败"));
+      await until(() => document.querySelector('[data-mcp="notion"]')?.textContent.includes("连接失败"));
       await capture("mcp-connection-error");
       await click([row, "连接"]);
-      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("1 个工具"));
+      await until(() => document.querySelector('[data-mcp="notion"]')?.textContent.includes("1 个工具"));
       evidence.checks.push("Keyboard opens management menu; refresh busy state, disconnect, failed connection and retry use the synthetic service");
       evidence.checks.push("DCR, PKCE, wrong-state rejection, callback exchange and automatic tool discovery");
 
       await click([row, "移除 OAuth 登录"]);
-      await until(() => document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("OAuth 登录"));
+      await until(() => document.querySelector('[data-mcp="notion"]')?.textContent.includes("OAuth 登录"));
       await click([row, "OAuth 登录"]);
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("请在浏览器"));
       const cancelledURL = authorizationURL;
       await click(['[role="dialog"]', "取消登录"]);
       await until(() => !document.querySelector('[role="dialog"]'));
       await assert.rejects(fetch(cancelledURL));
-      assert.equal((await evaluate(() => window.wuu.getMCPAuthStatus("journey-docs"))).authenticated, false);
+      assert.equal((await evaluate(() => window.wuu.getMCPAuthStatus("notion"))).authenticated, false);
       evidence.checks.push("Cancellation closes the listener and leaves credentials unauthenticated");
 
       await click([row, "编辑"]);
@@ -269,14 +269,14 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await input('.mcp-editor textarea', JSON.stringify({ headers: { "X-Fixture": "preserved" }, oauth: { scopes: ["tools"], redirect_uri: manualRedirect }, transport: "http", tool_timeout_ms: 45000 }));
       await click([".mcp-editor", "保存"]);
       await until(() => !document.querySelector(".mcp-editor"));
-      const definition = await evaluate(() => window.wuu.readMCPDefinition("journey-docs"));
+      const definition = await evaluate(() => window.wuu.readMCPDefinition("notion"));
       assert.equal(definition.config.headers["X-Fixture"], "preserved");
       assert.deepEqual(definition.config.oauth.scopes, ["tools"]);
-      await evaluate(def => window.wuu.configureMCPServers({ servers: { "journey-docs": def.config }, revision: def.revision }), definition);
+      await evaluate(def => window.wuu.configureMCPServers({ servers: { "notion": def.config }, revision: def.revision }), definition);
       // Use a genuinely stale revision from before a content change.
-      const stale = await evaluate(() => window.wuu.readMCPDefinition("journey-docs"));
-      await evaluate(def => window.wuu.configureMCPServers({ servers: { "journey-docs": { ...def.config, tool_timeout_ms: 46000 } }, revision: def.revision }), stale);
-      assert.equal(await evaluate(async def => { try { await window.wuu.configureMCPServers({ servers: { "journey-docs": null }, revision: def.revision }); return false; } catch { return true; } }, stale), true);
+      const stale = await evaluate(() => window.wuu.readMCPDefinition("notion"));
+      await evaluate(def => window.wuu.configureMCPServers({ servers: { "notion": { ...def.config, tool_timeout_ms: 46000 } }, revision: def.revision }), stale);
+      assert.equal(await evaluate(async def => { try { await window.wuu.configureMCPServers({ servers: { "notion": null }, revision: def.revision }); return false; } catch { return true; } }, stale), true);
       evidence.checks.push("Advanced settings persist and stale edits cannot remove a changed definition");
 
       await click([row, "OAuth 登录"]);
@@ -291,10 +291,10 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal(await evaluate(() => document.querySelector('[role="dialog"] [role="alert"]')?.textContent.includes("HTTP 503")), false, "Login recovery presents a concise failure instead of raw transport text");
       await clickElement('[role="dialog"] button[aria-expanded="false"]');
       assert.equal(await evaluate(() => document.querySelector('[role="dialog"] pre')?.textContent.includes("503")), true, "The original connection failure remains available on request");
-      assert.equal(await evaluate(() => document.querySelector('[data-mcp="journey-docs"] pre') === null), true, "The active login dialog owns the diagnostic without a duplicate in its service row");
+      assert.equal(await evaluate(() => document.querySelector('[data-mcp="notion"] pre') === null), true, "The active login dialog owns the diagnostic without a duplicate in its service row");
       await capture("mcp-manual-reconnect");
       await click(['[role="dialog"]', "连接"]);
-      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-mcp="journey-docs"]')?.textContent.includes("1 个工具"));
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-mcp="notion"]')?.textContent.includes("1 个工具"));
       assert.equal(evidence.exchanges, 2, "Retrying connection must not exchange a consumed authorization code");
       await click([row, "移除 OAuth 登录"]);
       evidence.checks.push("Configured external callbacks use manual authorization; connection retries retain the completed login");
@@ -315,6 +315,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => window.wuu.setThemePreference("dark"));
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
       win.setSize(800, 900);
+      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: "center" }), row);
       await capture("mcp-dark-narrow-large");
       await click([row, "编辑"]);
       await until(() => document.querySelector(".mcp-editor"));
@@ -560,7 +561,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("mcp-plugin-disabled");
       evidence.checks.push("Plugin MCP definitions appear on their owner page and disable with the parent");
       await clickElement('[data-testid="plugin-page-back"]');
-      await until(() => document.querySelector('[data-mcp="journey-docs"]'));
+      await until(() => document.querySelector('[data-mcp="notion"]'));
       assert.equal(await evaluate(selector => document.querySelector(`${selector} [data-mcp-source]`)?.textContent, row), "手动配置");
       const busyThread = await evaluate(async () => {
         const { thread } = await window.wuu.startThread();
@@ -570,14 +571,16 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await Promise.race([busyStarted, new Promise((_, reject) => setTimeout(() => reject(new Error("Unrelated turn never started")), 15000))]);
       await capture("mcp-remove-while-unrelated-turn-runs");
       await click([row, "移除"]);
-      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("移除“journey-docs”"));
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("移除“notion”"));
       await click(['[role="dialog"]', "移除"]);
-      await until(() => !document.querySelector('[data-mcp="journey-docs"]') && !document.querySelector('[role="dialog"]'));
+      await until(() => !document.querySelector('[data-mcp="notion"]') && !document.querySelector('[role="dialog"]'));
       const remaining = await evaluate(() => window.wuu.listMCPServers());
       assert.ok(remaining.servers.some(server => server.name === "journey-local"));
-      releaseBusy();
       const stillRunning = await evaluate(id => window.wuu.resumeThread(id), busyThread);
       assert.equal(stillRunning.thread.id, busyThread);
+      assert.equal(stillRunning.thread.status, "in_progress", "Removal must not interrupt unrelated work");
+      assert.ok(remaining.servers.some(server => server.name === "plugin.account-connectors.notion"), "Removing manual Notion preserves the plugin connection");
+      releaseBusy();
       await capture("mcp-removed-unrelated-service-preserved");
       evidence.checks.push("Deleting a definition during an unrelated running turn preserves other MCP services and the conversation");
       const handoff = await evaluate(() => window.__mcpFixtureHandoff || []);

@@ -988,3 +988,10 @@ it("distinguishes manual and plugin connections with the same name and removes o
   expect(connectorRow()).not.toBeNull();
   expect(source.removeMCPAuth).not.toHaveBeenCalled();
 });
+
+it("keeps an unconnected catalog card concise when there is no competing manual connection", async () => {
+  await render(connectorControls());
+  expect(connectorRow().querySelector("[data-mcp-source]")).toBeNull();
+  expect(connectorRow().textContent).toContain(connector.connector!.description);
+  expect(button(connectorRow(), "mcp.connect").disabled).toBe(false);
+});
