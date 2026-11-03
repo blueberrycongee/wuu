@@ -1,11 +1,10 @@
 import { DEFAULT_PERSONAL_AVATAR, PERSONAL_AVATAR_SHAPES, PERSONAL_AVATAR_ACCESSORIES, PERSONAL_AVATAR_HUES } from "../src/avatar.js";
 
 export const avatarDialogStyles = `
-.mosaic-avatar-dialog { position:relative;box-sizing:border-box;width:min(800px,100%);max-height:100%;overflow:auto;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);column-gap:40px;row-gap:28px;padding:32px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
+.mosaic-avatar-dialog { position:relative;box-sizing:border-box;width:min(800px,100%);max-height:100%;overflow:auto;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);column-gap:40px;padding:48px 32px 32px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
 .mosaic-avatar-controls { display:flex;flex-direction:column;justify-content:space-between;gap:24px;min-width:0; }
 .mosaic-avatar-summary { display:flex;flex-direction:column;gap:20px;min-width:0; }
 .mosaic-name-input { box-sizing:border-box;width:100%;min-width:0;border:1px solid transparent;border-radius:var(--radius-md,12px);background:var(--surface-1);color:var(--ink);padding:12px;font:inherit;font-size:calc(var(--font-ui) * 2);text-align:center; }
-.mosaic-avatar-dialog h2 { grid-column:1/-1;margin:0;padding-right:32px;font-size:var(--font-ui);font-weight:600; }
 .mosaic-avatar-preview { display:flex;align-items:center;justify-content:center;flex:1;min-height:144px; }
 .mosaic-avatar-dialog fieldset { border:0;margin:0;padding:0;min-width:0; }
 .mosaic-avatar-dialog legend { padding:0;margin-bottom:12px;color:var(--ink-muted); }
@@ -19,7 +18,7 @@ export const avatarDialogStyles = `
 .mosaic-avatar-swatch { width:24px;height:24px;border-radius:50%;background:var(--swatch);box-shadow:inset 0 0 0 1px #00000020; }
 .mosaic-avatar-actions { display:flex;gap:var(--space-2);margin-top:auto; }
 .mosaic-avatar-actions > button { flex:1;border-radius:999px;min-height:42px; }
-@media(max-width:720px) { .mosaic-avatar-dialog { grid-template-columns:minmax(0,1fr);gap:24px;padding:24px; } .mosaic-avatar-summary { grid-row:2;display:grid;grid-template-columns:minmax(0,1fr) 144px;align-items:center;gap:16px; } .mosaic-avatar-preview { grid-column:2;grid-row:1/3;min-height:144px; } .mosaic-avatar-actions { grid-column:1; } .mosaic-avatar-summary .mosaic-name-error { grid-column:1/-1; } .mosaic-avatar-controls { gap:20px; } }
+@media(max-width:720px) { .mosaic-avatar-dialog { grid-template-columns:minmax(0,1fr);gap:24px;padding:48px 24px 24px; } .mosaic-avatar-summary { grid-row:2;display:grid;grid-template-columns:minmax(0,1fr) 144px;align-items:center;gap:16px; } .mosaic-avatar-preview { grid-column:2;grid-row:1/3;min-height:144px; } .mosaic-avatar-actions { grid-column:1; } .mosaic-avatar-summary .mosaic-name-error { grid-column:1/-1; } .mosaic-avatar-controls { gap:20px; } }
 @media(max-width:480px) { .mosaic-avatar-summary { display:flex;align-items:stretch; } }
 `;
 
@@ -58,7 +57,6 @@ export function createIdentityDialog({ react: React, ui: { Avatar, Button } }) {
         }
       } },
       h("button", { type: "button", className: "mosaic-name-close", disabled: saving, "aria-label": label("Close", "关闭"), onClick: onClose }, "×"),
-      h("h2", null, label("Customize your twin", "自定义你的 twin")),
       h("div", { className: "mosaic-avatar-controls" },
       h("fieldset", { disabled: saving }, h("legend", null, label("Shape", "形状")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_SHAPES.map(value => h("button", { key: value, type: "button", "data-avatar-shape": value, "aria-label": shapes[value], title: shapes[value], "aria-pressed": shape === value, onClick: () => choose(value, accessory, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${value}:${accessory}:${hue}` }))))),
       h("fieldset", { disabled: saving }, h("legend", null, label("Accessory", "配饰")), h("div", { className: "mosaic-avatar-options" }, PERSONAL_AVATAR_ACCESSORIES.map(value => h("button", { key: value, type: "button", "data-avatar-accessory": value, "aria-label": accessories[value], title: accessories[value], "aria-pressed": accessory === value, onClick: () => choose(shape, value, hue) }, h(Avatar, { size: 40, avatarKey: `mascot-v1:${shape}:${value}:${hue}` }))))),
