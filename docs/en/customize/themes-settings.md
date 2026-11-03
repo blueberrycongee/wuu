@@ -32,7 +32,7 @@ On macOS, **Font smoothing** defaults to the system rendering for fuller regular
 
 ## Control commit attribution
 
-In **Settings → Runtime → Git**, **Agent commit attribution** controls whether Wuu adds `wuu-agent[bot]` as a co-author to commits it creates. Existing authors and other co-authors are preserved. You can save this setting while a conversation is running; that conversation keeps its current setting until its turn and background work finish, then adopts the new setting when it next runs.
+In **Settings → General → Git**, **Agent commit attribution** controls whether Wuu adds `wuu-agent[bot]` as a co-author to commits it creates. Existing authors and other co-authors are preserved. You can save this setting while a conversation is running; that conversation keeps its current setting until its turn and background work finish, then adopts the new setting when it next runs.
 
 ## Change a plugin setting
 
