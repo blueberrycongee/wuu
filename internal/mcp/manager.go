@@ -42,12 +42,13 @@ type connectionAttempt struct {
 
 // Manager holds all active MCP client connections and exposes their tools.
 type Manager struct {
-	mu         sync.RWMutex
-	configs    map[string]ServerConfig
-	clients    map[string]*Client
-	statuses   map[string]ServerStatus
-	servers    map[string]*serverLifecycle
-	generation uint64
+	mu              sync.RWMutex
+	configs         map[string]ServerConfig
+	clients         map[string]*Client
+	drainingClients []*Client
+	statuses        map[string]ServerStatus
+	servers         map[string]*serverLifecycle
+	generation      uint64
 	// connectionRetired releases host resources owned by a disconnected provider.
 	connectionRetired func(string, string)
 	oauth             *OAuthManager
@@ -674,6 +675,16 @@ func (m *Manager) Refresh(ctx context.Context, name string) error {
 // connections are canceled and cannot publish a client or overwrite its disabled
 // status. A replacement generation must use a new manager to admit the name.
 func (m *Manager) Revoke(name string) error {
+	return m.revoke(name, false)
+}
+
+// Retire removes admission immediately while accepted tool calls drain. The
+// manager retains ownership so application shutdown can still cancel them.
+func (m *Manager) Retire(name string) error {
+	return m.revoke(name, true)
+}
+
+func (m *Manager) revoke(name string, drain bool) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("mcp server name is required")
@@ -710,6 +721,9 @@ func (m *Manager) Revoke(name string) error {
 		authStatus = MCPAuthStatusOAuth
 	}
 	client := m.clients[name]
+	if drain && client != nil {
+		m.drainingClients = append(m.drainingClients, client)
+	}
 	delete(m.clients, name)
 	m.statuses[name] = ServerStatus{Name: name, State: MCPServerStateDisabled, AuthStatus: authStatus}
 	m.generation++
@@ -727,6 +741,9 @@ func (m *Manager) Revoke(name string) error {
 	m.notifyConnectionRetired(client)
 	if client != nil {
 		defer m.operations.Done()
+		if drain {
+			return client.retire()
+		}
 		return client.Close()
 	}
 	return nil
@@ -927,7 +944,8 @@ func (m *Manager) Close() error {
 	}
 	m.closed = true
 	cancel := m.cancel
-	clients := make([]*Client, 0, len(m.clients))
+	clients := append([]*Client(nil), m.drainingClients...)
+	m.drainingClients = nil
 	for _, c := range m.clients {
 		clients = append(clients, c)
 	}

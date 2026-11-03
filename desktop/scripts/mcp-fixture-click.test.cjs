@@ -12,7 +12,10 @@ test("waits for a replacement control and dispatches once in the same renderer t
   assert.equal(click(request), false);
   controls = [{ textContent: "Login", disabled: true, getAttribute: () => null, closest: () => null, click: () => { clicks++; } }];
   assert.equal(click(request), false);
-  controls = [{ ...controls[0], disabled: false }];
+  controls = [{ ...controls[0], disabled: false, closest: () => ({ inert: true }) }];
+  assert.equal(click(request), false);
+  assert.equal(clicks, 0);
+  controls = [{ ...controls[0], closest: () => null }];
   assert.equal(click(request), true);
   assert.equal(clicks, 1);
 });

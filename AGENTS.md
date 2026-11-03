@@ -131,6 +131,13 @@ machine-specific setup in user-level configuration.
 - Include only text that helps users understand, decide, or act. Avoid repeating a
   label in a subtitle or hint. Retain explanations for non-obvious consequences
   and restrictions. Remove redundant copy, wrappers, and decoration before handoff.
+- Default to the shared toast system for user-action failures; preserve the current
+  view and user input. Plugins use public `api.showNotice` rather than custom
+  error notifications or private renderer imports. Keep field validation next to
+  the field, page-load failures in place with a retry control, and conversation
+  or task failures in their history with appropriate recovery actions. A temporary
+  toast does not replace a persistent failure state. Avoid duplicate notifications
+  for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
 - Motion explains changes and provides feedback. Keep frequent actions responsive,
   avoid layout jumps and moving click targets, and respect reduced-motion settings.
 - Inspect actual rendering after UI changes. Cover affected themes, default and

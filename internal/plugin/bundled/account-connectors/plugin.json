@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "account-connectors",
   "name": "Account Connectors",
-  "description": "Connect accounts through official MCP services, with explicit authorization and setup requirements.",
+  "description": "Connect your accounts through official MCP services that need no extra setup.",
   "icon": "plug",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "defaultEnabled": true,
   "author": { "name": "Wuu" },
   "mcp_servers": {
@@ -14,8 +14,9 @@
       "enabled": false,
       "connector": {
         "title": "Notion",
-        "description": "Search and work with the Notion workspace you authorize.",
+        "description": "Search and edit pages in your Notion workspace.",
         "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
+        "icon": { "path": "assets/notion.svg" },
         "identity_probe": {
           "tool": "notion-get-self",
           "arguments": {},
@@ -26,32 +27,43 @@
       },
       "tool_overrides": { "notion-get-self": { "read_only": true } }
     },
-    "github": {
-      "url": "https://api.githubcopilot.com/mcp/",
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
       "transport": "http",
       "enabled": false,
       "connector": {
-        "title": "GitHub",
-        "description": "Work with repositories through GitHub's official MCP server.",
-        "documentation_url": "https://github.com/github/github-mcp-server",
-        "setup_required": "Wuu must register and configure its own GitHub App or OAuth client before account connection is available. The server URL alone does not enable OAuth."
+        "title": "Linear",
+        "description": "Find and update issues, projects, and comments in Linear.",
+        "documentation_url": "https://linear.app/docs/mcp",
+        "icon": { "light": "assets/linear-light.svg", "dark": "assets/linear-dark.svg" }
       }
     },
-    "google-drive": {
-      "url": "https://drivemcp.googleapis.com/mcp/v1",
+    "atlassian": {
+      "url": "https://mcp.atlassian.com/v2/mcp",
       "transport": "http",
       "enabled": false,
       "connector": {
-        "title": "Google Drive",
-        "description": "Google Drive's official MCP server is in Developer Preview.",
-        "documentation_url": "https://developers.google.com/workspace/guides/configure-mcp-servers",
-        "setup_required": "Requires Workspace Developer Preview membership, a Cloud project with the Drive and MCP APIs enabled, and a registered Desktop OAuth client for an AI-powered agent with consent and scopes configured."
+        "title": "Atlassian",
+        "description": "Search and update Jira issues and Confluence pages.",
+        "documentation_url": "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/",
+        "icon": { "light": "assets/atlassian-light.svg", "dark": "assets/atlassian-dark.svg" }
+      }
+    },
+    "sentry": {
+      "url": "https://mcp.sentry.dev/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Sentry",
+        "description": "Investigate errors and performance issues in Sentry.",
+        "documentation_url": "https://mcp.sentry.dev/",
+        "icon": { "light": "assets/sentry-light.svg", "dark": "assets/sentry-dark.svg" }
       }
     }
   },
   "interface": {
     "displayName": "Account Connectors",
-    "shortDescription": "Connect accounts only when you choose to authorize them.",
+    "shortDescription": "Connect your accounts with one click.",
     "developerName": "Wuu",
     "category": "Productivity"
   }

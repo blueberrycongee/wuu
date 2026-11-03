@@ -32,6 +32,7 @@ Normal startup removes these fields from every project layer, including `setting
 | `instructions`, legacy `memory` | Control instruction discovery, including user paths |
 | `agent.model_roles`, `agent.model_aliases`, `agent.project_models` | Route model work |
 | `agent.permission_mode` | Set local execution authority |
+| `ptc`, `execution_environments` | Select the user-owned tool runtime and execution adapters |
 
 Case changes in JSON keys do not bypass the restriction. Other allowed project fields can still affect prompts, tools, hooks, and services, so this filtering does not make an unfamiliar repository safe to execute.
 
@@ -57,6 +58,32 @@ A provider entry names a model connection. For example, this user-configuration 
 Replace the endpoint and model with values your service supports, and supply the named environment variable to the process running Wuu. For subscription login, provider types, and desktop setup, see [model services](../getting-started/model-services.md).
 
 [External engines](../getting-started/external-engines.md) are separate programs, not provider types. Their machine-local `engines` configuration controls detection, executable selection, and the default engine. In the desktop, changing a conversation's model does not necessarily change the workspace default; use settings when you intend to change future sessions.
+
+## Built-in agent settings
+
+The desktop has no separate Built-in agent settings tab. Context management,
+programmatic tool calling and execution environments remain configurable in the
+user file. Existing values are preserved. These settings do not control external
+engines. Git commit attribution remains in **Settings → General → Git**.
+
+| Field | Meaning |
+| --- | --- |
+| `agent.disable_auto_compact` | `true` disables automatic compaction; omitted or `false` enables it. |
+| `agent.compact_threshold_pct` | Compaction trigger as a fraction, for example `0.5` for 50%; `0` or omitted means automatic. Custom values must be greater than `0` and less than `1`. |
+| `agent.compact_keep_recent_tokens` | Recent raw-history token budget retained after compaction; `0` or omitted uses 20,000. |
+| `providers.<name>.context_window` | Context-window override for the named connection; `0` or omitted uses detected model metadata. |
+| `agent.max_context_tokens` | Fallback context limit when the model's limit is unknown; `0` or omitted uses automatic resolution. |
+| `ptc.enabled` | Programmatic tool calling for the built-in engine; defaults to `true`. |
+| `execution_environments.default`, `execution_environments.profiles` | Default environment for new conversations and named profiles; see [execution environments](../desktop/execution-environments.md). |
+
+Edit only the relevant fields in the existing user file; do not replace its other
+settings. Finish active work, fully quit Wuu, and restart it to apply all these
+changes. Valid model changes can refresh automatically, but saving the file does
+not guarantee every runtime setting is updated immediately. Project layers can
+override allowed agent fields; provider connections, PTC, execution environments
+and Project Agent model defaults must be set in user configuration, not project
+settings. A custom configuration provider may use a different authoritative
+source instead of this file.
 
 ## Tool loading
 
@@ -88,8 +115,8 @@ protocol; accepting unknown fields is not sufficient.
 ## Project Agent model choices
 
 In builds with Project Agent enabled, the coordinator uses the conversation model. Set
-technical lead and persistent executor defaults independently in Settings → Runtime, or in the user
-configuration:
+technical lead and persistent executor defaults independently in the user
+configuration, then fully quit and restart Wuu:
 
 ```json
 { "agent": { "project_models": {

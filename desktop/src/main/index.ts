@@ -241,6 +241,7 @@ import {
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
+import { registerWorkspaceFileWatches } from "./workspaceFileWatches";
 import { WorkspaceDirectoryReader } from "./workspaceDirectoryReader";
 import createWorkspaceDirectoryWorker from "./workspaceDirectoryWorker?nodeWorker";
 import {
@@ -1898,6 +1899,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:git-create-pr", (event, params: GitPullRequestParams, root?: string) =>
     gitServiceForEvent(event).createPullRequest(params ?? {}, root),
   );
+  registerWorkspaceFileWatches(workspaceFilesForEvent);
   ipcMain.handle("wuu:file-tree-list", (event, root?: string) =>
     workspaceFilesForEvent(event).fileTreeList(root),
   );

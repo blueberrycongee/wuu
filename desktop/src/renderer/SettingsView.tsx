@@ -8,10 +8,8 @@ import {
   BarChart3,
   Bot,
   Check,
-  ChevronRight,
   Copy,
   Folder,
-  Gauge,
   Globe,
   KeyRound,
   LayoutDashboard,
@@ -32,9 +30,9 @@ import type {
   EngineListResult,
   ExtensionInventoryRecord,
   EngineUpdateParams,
-  ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
+  SystemPermissionsState,
 } from "../shared/protocol";
 import {
   type CSSProperties,
@@ -53,7 +51,7 @@ import { isConfigurablePlugin } from "./SettingsPageAvailability";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState, type SidebarDrawerPhase } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
-import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import { SelectMenu } from "./SelectMenu";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -77,8 +75,7 @@ export type ArchivedSessionView = {
 };
 import { AppearanceTypography } from "./AppearanceTypography";
 import { ShellSkinSettings } from "./background/ShellSkinSettings";
-import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
-import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
+import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
@@ -90,7 +87,7 @@ import { ModelServicesPage } from "./ModelServicesPage";
 import { SettingsRemotePageContainer } from "./SettingsRemotePageContainer";
 import { ContentThemeControl, ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
-import { formatCurrentNumber, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import {
@@ -109,7 +106,6 @@ type NativeSettingsPage =
   | "providers"
   | "agents"
   | "subscriptions"
-  | "advanced"
   | "general"
   | "appearance"
   | "browser"
@@ -120,16 +116,17 @@ type NativeSettingsPage =
 
 export type SettingsPage =
   | NativeSettingsPage
+  // Legacy links resolve to General after the built-in agent page was removed.
+  | "advanced"
   | `plugin-settings:${string}`
   | `plugin-view:${string}:${string}`;
 
 // Page ids are part of the plugin settings snapshot, so they stay stable when
-// labels or grouping change ("advanced" is the runtime page).
+// labels or grouping change.
 const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
   providers: KeyRound,
   agents: Bot,
   subscriptions: LayoutDashboard,
-  advanced: Gauge,
   general: Settings,
   appearance: Monitor,
   browser: Globe,
@@ -140,13 +137,12 @@ const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
 };
 
 // Page-level discovery for the rail search. The terms cover the setting names
-// inside each page, not only the page title, so "font" or "context" still
+// inside each page, not only the page title, so "font" or "Git" still
 // finds the right page.
 const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0]> = {
   providers: "settings.searchKeywords.providers",
   agents: "settings.searchKeywords.agents",
   subscriptions: "settings.searchKeywords.subscriptions",
-  advanced: "settings.searchKeywords.advanced",
   general: "settings.searchKeywords.general",
   appearance: "settings.searchKeywords.appearance",
   browser: "settings.searchKeywords.browser",
@@ -157,8 +153,7 @@ const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0
 };
 
 // App-level preferences stay at the top of the rail; less frequent setup follows
-// under labeled groups. Page IDs stay flat for plugin snapshots and deep links
-// ("advanced" is still the built-in agent page).
+// under labeled groups. Page IDs stay flat for plugin snapshots and deep links.
 type NativeSettingsGroup = {
   id: string;
   labelKey?: Parameters<Translate>[0];
@@ -181,7 +176,6 @@ function nativeSettingsGroups(browserSettingsAllowed: boolean, capabilities: imp
       labelKey: "settings.navModelsAgentsTools",
       pages: [
         "providers",
-        "advanced",
       ],
     },
     {
@@ -309,6 +303,9 @@ function SettingsViewContent({
     [runningProviderNames],
   );
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
+  // The page subtree remounts on navigation. Keep the last permission read
+  // so returning to General does not blank the rows before the refresh lands.
+  const permissionStateCache = useMemo<RefObject<SystemPermissionsState | undefined>>(() => ({ current: undefined }), [controls]);
   const [localPage, setActivePage] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities),
   );
@@ -356,37 +353,9 @@ function SettingsViewContent({
     });
   }, [initialized?.model_aliases, initialized?.providers, onAdvancedSave]);
   const [mcpStatus, setMCPStatus] = useState({ busy: false, hasError: false });
-  const [autoCompactDraft, setAutoCompactDraft] = useState(true);
-  const [compactThresholdDraft, setCompactThresholdDraft] = useState("");
-  const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
-  const [providerContextWindowDraft, setProviderContextWindowDraft] = useState("");
-  const [maxContextTokensDraft, setMaxContextTokensDraft] = useState("");
-  // Runtime errors stay beside the field that failed to validate or save.
-  const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   const [titlebarSlot, setTitlebarSlot] = useState<HTMLDivElement | null>(null);
-  // Last persisted draft of each numeric advanced field, recorded when
-  // initialized state syncs in and after every successful commit. Blurring
-  // an untouched field is a no-op instead of a redundant IPC round-trip.
-  const advancedCommittedRef = useRef<Record<string, string>>({});
-  const advancedDraftEditsRef = useRef(new Map<AdvancedField, string>());
-  useLayoutEffect(() => {
-    advancedDraftEditsRef.current.clear();
-  }, [initialized?.provider, initialized?.model]);
-
-  // Drafts survive navigation, but pending feedback belongs to the page and
-  // controls that initiated the save. Each field's latest request owns its result.
-  const advancedOwner = useMemo(() => ({
-    active: true,
-    requests: new Map<AdvancedField, { draft: string }>(),
-  }), [controls, activePage, initialized?.provider, initialized?.model]);
-  useLayoutEffect(() => {
-    advancedOwner.active = true;
-    setAdvancedError(null);
-    return () => { advancedOwner.active = false; };
-  }, [advancedOwner]);
-
   useEffect(() => {
     setActivePage(availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities));
   }, [initialPage, browserSettingsAllowed]);
@@ -428,36 +397,6 @@ function SettingsViewContent({
   }, [controls]);
 
   const core = initialized?.core;
-  useEffect(() => {
-    const advanced = initialized?.advanced_settings;
-    const synced = {
-      compactThreshold: formatPercentDraft(advanced?.compact_threshold_pct),
-      compactKeepRecent: formatOptionalNumberDraft(advanced?.compact_keep_recent_tokens),
-      providerContextWindow: formatOptionalNumberDraft(advanced?.provider_context_window),
-      maxContextTokens: formatOptionalNumberDraft(advanced?.max_context_tokens),
-    };
-    // A save refreshes the whole settings snapshot, not just its own field.
-    // Keep newer local edits until that snapshot acknowledges their value.
-    const reconcileDraft = (field: AdvancedField, persisted: string): string => {
-      const edited = advancedDraftEditsRef.current.get(field);
-      const acknowledged = field === "autoCompact"
-        ? edited === persisted
-        : field === "compactThreshold"
-          ? Number(edited) / 100 === (advanced?.compact_threshold_pct ?? 0)
-          : Number(edited) === Number(persisted);
-      if (edited !== undefined && !acknowledged) return edited;
-      advancedDraftEditsRef.current.delete(field);
-      return persisted;
-    };
-    setAutoCompactDraft(reconcileDraft("autoCompact", String(!(advanced?.disable_auto_compact ?? false))) === "true");
-    setCompactThresholdDraft(reconcileDraft("compactThreshold", synced.compactThreshold));
-    setCompactKeepRecentDraft(reconcileDraft("compactKeepRecent", synced.compactKeepRecent));
-    setProviderContextWindowDraft(reconcileDraft("providerContextWindow", synced.providerContextWindow));
-    setMaxContextTokensDraft(reconcileDraft("maxContextTokens", synced.maxContextTokens));
-    advancedCommittedRef.current = synced;
-    setAdvancedError(null);
-  }, [initialized?.advanced_settings, initialized?.provider, initialized?.model]);
-
   async function copyVersionInfo(): Promise<void> {
     if (!desktopBuild || copyState === "copying") {
       return;
@@ -489,96 +428,6 @@ function SettingsViewContent({
       window.setTimeout(() => setCopyState("idle"), COPY_RESET_MS);
     } catch {
       setCopyState("idle");
-    }
-  }
-
-  // Instant-apply: the switch persists immediately (rolling back on
-  // failure); numeric drafts persist on blur/Enter after per-field
-  // validation. No Save button, no "saved" confirmation — the control
-  // staying put is the confirmation, consistent with the MCP toggles.
-  function toggleAutoCompact(): void {
-    if (!advancedOwner.active) return;
-    const next = !autoCompactDraft;
-    const request = { draft: String(next) };
-    advancedOwner.requests.set("autoCompact", request);
-    advancedDraftEditsRef.current.set("autoCompact", String(next));
-    setAutoCompactDraft(next);
-    setAdvancedError(null);
-    const ownsResult = () => advancedOwner.active && advancedOwner.requests.get("autoCompact") === request;
-    void onAdvancedSave({ disable_auto_compact: !next }).catch((saveError: unknown) => {
-      if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
-        advancedDraftEditsRef.current.set("autoCompact", String(!next));
-        setAutoCompactDraft(!next);
-        setAdvancedError({ field: "autoCompact", message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
-      }
-    }).finally(() => {
-      if (ownsResult()) advancedOwner.requests.delete("autoCompact");
-    });
-  }
-
-  async function commitAdvancedField(field: AdvancedNumericField): Promise<void> {
-    const drafts: Record<AdvancedNumericField, string> = {
-      compactThreshold: compactThresholdDraft,
-      compactKeepRecent: compactKeepRecentDraft,
-      providerContextWindow: providerContextWindowDraft,
-      maxContextTokens: maxContextTokensDraft,
-    };
-    const draft = drafts[field];
-    const pending = advancedOwner.requests.get(field);
-    if (!advancedOwner.active || pending?.draft === draft
-      || (!pending && advancedCommittedRef.current[field] === draft)) {
-      return;
-    }
-    let update: RuntimeAdvancedSettingsUpdate | undefined;
-    let validationError = "";
-    switch (field) {
-      case "compactThreshold": {
-        const parsed = parseOptionalNumber(draft, t("settings.compactThreshold"), t);
-        if (parsed.error) {
-          validationError = parsed.error;
-        } else if (parsed.value >= 100) {
-          validationError = t("validation.compactThreshold");
-        } else {
-          update = { compact_threshold_pct: parsed.value > 0 ? parsed.value / 100 : 0 };
-        }
-        break;
-      }
-      case "compactKeepRecent": {
-        const parsed = parseOptionalInteger(draft, t("settings.keepRecentContext"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { compact_keep_recent_tokens: parsed.value };
-        break;
-      }
-      case "providerContextWindow": {
-        const parsed = parseOptionalInteger(draft, t("settings.providerContextLimit"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { provider_context_window: parsed.value };
-        break;
-      }
-      case "maxContextTokens": {
-        const parsed = parseOptionalInteger(draft, t("settings.unknownModelLimit"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { max_context_tokens: parsed.value };
-        break;
-      }
-    }
-    if (validationError || !update) {
-      setAdvancedError(validationError ? { field, message: validationError } : null);
-      return;
-    }
-    setAdvancedError(null);
-    const request = { draft };
-    advancedOwner.requests.set(field, request);
-    const ownsResult = () => advancedOwner.active && advancedOwner.requests.get(field) === request;
-    try {
-      await onAdvancedSave(update);
-      if (ownsResult()) advancedCommittedRef.current[field] = draft;
-    } catch (saveError) {
-      if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
-        setAdvancedError({ field, message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
-      }
-    } finally {
-      if (ownsResult()) advancedOwner.requests.delete(field);
     }
   }
 
@@ -870,35 +719,12 @@ function SettingsViewContent({
                   onProvidersChanged={onProvidersChanged}
                   onProviderModelsChanged={onProviderModelsChanged}
                 />
-              ) : activePage === "advanced" ? (
-                <SettingsRuntimePage
-                  initialized={initialized}
-                  running={running}
-                  autoCompact={autoCompactDraft}
-                  compactThreshold={compactThresholdDraft}
-                  compactKeepRecent={compactKeepRecentDraft}
-                  providerContextWindow={providerContextWindowDraft}
-                  providerContextWindowCurrent={formatOptionalTokenCount(
-                    initialized?.advanced_settings?.context_window_tokens,
-                  )}
-                  providerContextWindowSource={advancedContextSourceLabel(
-                    initialized?.advanced_settings?.context_window_source,
-                    t,
-                  )}
-                  maxContextTokens={maxContextTokensDraft}
-                  error={advancedError}
-                  onAutoCompactToggle={toggleAutoCompact}
-                  onCompactThresholdChange={(value) => { advancedDraftEditsRef.current.set("compactThreshold", value); setCompactThresholdDraft(value); }}
-                  onCompactKeepRecentChange={(value) => { advancedDraftEditsRef.current.set("compactKeepRecent", value); setCompactKeepRecentDraft(value); }}
-                  onProviderContextWindowChange={(value) => { advancedDraftEditsRef.current.set("providerContextWindow", value); setProviderContextWindowDraft(value); }}
-                  onMaxContextTokensChange={(value) => { advancedDraftEditsRef.current.set("maxContextTokens", value); setMaxContextTokensDraft(value); }}
-                  onCommitField={commitAdvancedField}
-                  onGeneralSave={onGeneralSave}
-                  onAdvancedSave={onAdvancedSave}
-                />
               ) : activePage === "general" ? (
                 <SettingsGeneralPage
+                  initialized={initialized}
+                  onGeneralSave={onGeneralSave}
                   desktopBuild={desktopBuild}
+                  permissionStateCache={permissionStateCache}
                   copyState={copyState}
                   onCopyVersion={copyVersionInfo}
                 />
@@ -948,7 +774,7 @@ function SettingsViewContent({
   );
   return <>{controls.renderPresentation({initialized,activePageId:activePage,availablePages,runningProviderNames,
     busy:running || usageLoading || codexPetsLoading || (activePage === "mcp" && mcpStatus.busy),
-    hasError:Boolean(advancedError || usageError || (activePage === "mcp" && mcpStatus.hasError) || codexPetsError),fallback:nativeSettings,
+    hasError:Boolean(usageError || (activePage === "mcp" && mcpStatus.hasError) || codexPetsError),fallback:nativeSettings,
     onOpenPage:pageId=>selectPage(pageId as SettingsPage),onAdvancedSave,onGeneralSave,onRefresh:onRefreshModelCatalog})}</>;
 }
 
@@ -986,105 +812,28 @@ function SettingsNavItem({
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Runtime page ("advanced" page id)                                          */
+/*  General page                                                               */
 /* -------------------------------------------------------------------------- */
 
-type AdvancedNumericField =
-  | "compactThreshold"
-  | "compactKeepRecent"
-  | "providerContextWindow"
-  | "maxContextTokens";
-
-type AdvancedField = AdvancedNumericField | "autoCompact";
-
-function SettingsRuntimePage({
+function SettingsGeneralPage({
   initialized,
-  running,
-  autoCompact,
-  compactThreshold,
-  compactKeepRecent,
-  providerContextWindow,
-  providerContextWindowCurrent,
-  providerContextWindowSource,
-  maxContextTokens,
-  error,
-  onAutoCompactToggle,
-  onCompactThresholdChange,
-  onCompactKeepRecentChange,
-  onProviderContextWindowChange,
-  onMaxContextTokensChange,
-  onCommitField,
   onGeneralSave,
-  onAdvancedSave
+  permissionStateCache,
+  desktopBuild,
+  copyState,
+  onCopyVersion
 }: {
   initialized: InitializeResult | undefined;
-  running: boolean;
-  autoCompact: boolean;
-  compactThreshold: string;
-  compactKeepRecent: string;
-  providerContextWindow: string;
-  providerContextWindowCurrent: string;
-  providerContextWindowSource: string;
-  maxContextTokens: string;
-  error: { field: AdvancedField; message: string } | null;
-  onAutoCompactToggle: () => void;
-  onCompactThresholdChange: (value: string) => void;
-  onCompactKeepRecentChange: (value: string) => void;
-  onProviderContextWindowChange: (value: string) => void;
-  onMaxContextTokensChange: (value: string) => void;
-  onCommitField: (field: AdvancedNumericField) => void;
+  permissionStateCache: RefObject<SystemPermissionsState | undefined>;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
-  onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
+  desktopBuild: DesktopBuildInfo | undefined;
+  copyState: CopyState;
+  onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const ptc = initialized?.general_settings?.ptc ?? { enabled: true };
-  const [ptcBusy, setPTCBusy] = useState(false);
-  const [ptcError, setPTCError] = useState("");
-  const [projectModelsBusy, setProjectModelsBusy] = useState(false);
-  const [projectModelsError, setProjectModelsError] = useState<{ role: "technical_lead" | "executor"; message: string }>();
-  const projectModels = initialized?.project_models ?? {};
-  const projectModelOptions: SelectMenuOption[] = [{ value: "", label: t("settings.projectModelInherit") }];
-  for (const provider of initialized?.providers ?? []) {
-    const models = provider.models ?? [];
-    for (const id of new Set([provider.model, ...models.map((model) => model.id)].filter(Boolean))) {
-      const model = models.find((model) => model.id === id);
-      projectModelOptions.push({
-        value: JSON.stringify([provider.name, id]),
-        label: `${provider.name} / ${model?.display_name || id}`,
-        hint: model?.display_name && model.display_name !== id ? id : undefined,
-      });
-    }
-  }
-  for (const selection of [projectModels.technical_lead, projectModels.executor]) {
-    if (!selection?.provider || !selection.model) continue;
-    const value = JSON.stringify([selection.provider, selection.model]);
-    if (!projectModelOptions.some((option) => option.value === value)) {
-      projectModelOptions.push({ value, label: `${selection.provider} / ${selection.model}` });
-    }
-  }
-  async function saveProjectModel(role: "technical_lead" | "executor", value: string): Promise<void> {
-    const [provider, model] = value ? JSON.parse(value) as [string, string] : ["", ""];
-    const current = projectModels[role];
-    if ((current?.provider ?? "") === provider && (current?.model ?? "") === model) return;
-    const next: ProjectModelsConfig = { ...projectModels, [role]: value ? { provider, model } : {} };
-    setProjectModelsBusy(true);
-    setProjectModelsError(undefined);
-    try { await onAdvancedSave({ project_models: next }); }
-    catch (error) { setProjectModelsError({ role, message: error instanceof Error ? error.message : t("settings.saveFailed") }); }
-    finally { setProjectModelsBusy(false); }
-  }
-  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
-    setPTCBusy(true);
-    setPTCError("");
-    try { await onGeneralSave({ ptc: next }); }
-    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
-    finally { setPTCBusy(false); }
-  }
   const [gitAttributionBusy, setGitAttributionBusy] = useState(false);
   const [gitAttributionError, setGitAttributionError] = useState("");
   const gitAttributionEnabled = initialized?.general_settings?.git_attribution_enabled ?? true;
-  const fieldsDisabled = running || !initialized;
-  const fieldError = (field: AdvancedField): string | undefined => (error?.field === field ? error.message : undefined);
 
   async function toggleGitAttribution(): Promise<void> {
     if (!initialized || gitAttributionBusy) {
@@ -1105,198 +854,6 @@ function SettingsRuntimePage({
     }
   }
 
-  // Enter and blur both commit through onCommitField; the ref-guard inside
-  // makes the blur that follows Enter a no-op, so there is one effective
-  // commit per edit. A unit inside the field replaces a description line
-  // that only named it.
-  const numericInput = (
-    field: AdvancedNumericField,
-    value: string,
-    onChange: (value: string) => void,
-    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal"; unit?: string },
-  ): JSX.Element => {
-    const input = (
-      <input
-        className="settings-input settings-input-num"
-        aria-label={options.label}
-        value={value}
-        aria-invalid={error?.field === field || undefined}
-        inputMode={options.inputMode ?? "numeric"}
-        placeholder={options.placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={() => onCommitField(field)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            onCommitField(field);
-            event.currentTarget.blur();
-          }
-        }}
-        disabled={fieldsDisabled}
-      />
-    );
-    return options.unit ? <SettingsInputUnit unit={options.unit} placeholder={options.placeholder}>{input}</SettingsInputUnit> : input;
-  };
-
-  return (
-    <>
-      <SettingsPageHeader title={t("settings.runtime")} />
-      {initialized?.features?.project_agent && (
-        <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
-          <div className="settings-form"><SettingsGroup>
-            {(["technical_lead", "executor"] as const).map((role) => {
-              const selection = projectModels[role];
-              const value = selection?.provider && selection.model ? JSON.stringify([selection.provider, selection.model]) : "";
-              const label = t(role === "technical_lead" ? "settings.projectTechnicalLeadModel" : "settings.projectExecutorModel");
-              return <SettingsRow key={role} title={label} error={projectModelsError?.role === role ? projectModelsError.message : undefined}>
-                <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label} dataTestid={`project-${role}-model`}
-                  value={value} options={projectModelOptions} searchable flip disabled={running || projectModelsBusy}
-                  onChange={(next) => void saveProjectModel(role, next)} />
-              </SettingsRow>;
-            })}
-          </SettingsGroup></div>
-        </SettingsSection>
-      )}
-      <SettingsSection testID="settings-advanced">
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.autoCompact")}
-            description={t("settings.autoCompactDescription")}
-            error={fieldError("autoCompact")}
-          >
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={autoCompact}
-              disabled={fieldsDisabled}
-              onClick={onAutoCompactToggle}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">{autoCompact ? t("settings.disableAutoCompact") : t("settings.enableAutoCompact")}</span>
-            </button>
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
-      <SettingsSection testID="settings-git">
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.gitAttribution")}
-            hideDescriptionWhenNarrow
-            hint={t("settings.gitAttributionDescription")}
-            error={gitAttributionError}
-          >
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={gitAttributionEnabled}
-              data-testid="settings-git-attribution"
-              disabled={!initialized || gitAttributionBusy}
-              onClick={() => void toggleGitAttribution()}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">
-                {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
-              </span>
-            </button>
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
-      <details
-        className="settings-advanced-disclosure"
-        data-testid="settings-advanced-disclosure"
-        open={Boolean((error && error.field !== "autoCompact") || ptcError) || undefined}
-      >
-        <summary className="settings-advanced-disclosure-summary">
-          <div className="settings-advanced-disclosure-copy">
-            <span className="settings-advanced-disclosure-title">{t("settings.advancedRuntimeTuning")}</span>
-          </div>
-          <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
-        </summary>
-        <div className="settings-advanced-disclosure-body">
-          <SettingsSection title={t("settings.sectionContextWindow")}>
-            <SettingsGroup>
-              <SettingsRow
-                title={t("settings.compactThreshold")}
-                error={fieldError("compactThreshold")}
-              >
-                {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
-                  label: t("settings.compactThreshold"),
-                  placeholder: t("settings.automatic"),
-                  unit: "%",
-                })}
-              </SettingsRow>
-              <SettingsRow
-                title={t("settings.keepRecentContext")}
-                error={fieldError("compactKeepRecent")}
-              >
-                {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
-                  label: t("settings.keepRecentContext"),
-                  placeholder: "20,000",
-                  unit: t("settings.unitTokens"),
-                })}
-              </SettingsRow>
-              <SettingsRow
-                title={t("settings.providerContextLimit")}
-                description={`${providerContextWindowSource}${
-                  providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
-                }`}
-                error={fieldError("providerContextWindow")}
-              >
-                {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
-                  label: t("settings.providerContextLimit"),
-                  placeholder: t("settings.detectAutomatically"),
-                  unit: t("settings.unitTokens"),
-                })}
-              </SettingsRow>
-              <SettingsRow
-                title={t("settings.unknownModelLimit")}
-                hideDescriptionWhenNarrow
-                hint={t("settings.unknownModelLimitDescription")}
-                error={fieldError("maxContextTokens")}
-              >
-                {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
-                  label: t("settings.unknownModelLimit"),
-                  placeholder: t("settings.automatic"),
-                  unit: t("settings.unitTokens"),
-                })}
-              </SettingsRow>
-            </SettingsGroup>
-          </SettingsSection>
-          <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
-          <SettingsSection testID="settings-ptc">
-            <SettingsGroup>
-              <SettingsRow title={t("settings.ptcEnabled")} hideDescriptionWhenNarrow description={t("settings.ptcDescription")}>
-                <button className="settings-switch" type="button" role="switch"
-                  aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
-                  data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
-                  onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
-                  <span className="settings-switch-thumb" aria-hidden="true" />
-                </button>
-              </SettingsRow>
-              {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
-            </SettingsGroup>
-          </SettingsSection>
-        </div>
-      </details>
-    </>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  General page                                                               */
-/* -------------------------------------------------------------------------- */
-
-function SettingsGeneralPage({
-  desktopBuild,
-  copyState,
-  onCopyVersion
-}: {
-  desktopBuild: DesktopBuildInfo | undefined;
-  copyState: CopyState;
-  onCopyVersion: () => Promise<void>;
-}): JSX.Element {
-  const { t } = useI18n();
   return (
     <>
       <SettingsPageHeader title={t("settings.general")} />
@@ -1326,7 +883,33 @@ function SettingsGeneralPage({
       </SettingsSection>
 
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
-      <SystemPermissionsSection />
+      <SystemPermissionsSection stateCache={permissionStateCache} />
+
+      <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.gitAttribution")}
+            hideDescriptionWhenNarrow
+            hint={t("settings.gitAttributionDescription")}
+            error={gitAttributionError}
+          >
+            <button
+              className="settings-switch"
+              type="button"
+              role="switch"
+              aria-checked={gitAttributionEnabled}
+              data-testid="settings-git-attribution"
+              disabled={!initialized || gitAttributionBusy}
+              onClick={() => void toggleGitAttribution()}
+            >
+              <span className="settings-switch-thumb" aria-hidden="true" />
+              <span className="sr-only">
+                {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
+              </span>
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
     </>
   );
 }
@@ -2079,8 +1662,6 @@ function settingsPageTitle(page: NativeSettingsPage, t: Translate): string {
       return t("settings.agents");
     case "subscriptions":
       return t("settings.subscriptions");
-    case "advanced":
-      return t("settings.runtime");
     case "general":
       return t("settings.general");
     case "appearance":
@@ -2107,73 +1688,6 @@ function pluginViewSettingsPageId(
   entryId: string,
 ): `plugin-view:${string}:${string}` {
   return `plugin-view:${pluginId}:${entryId}`;
-}
-
-function parseOptionalInteger(raw: string, label: string, t: Translate): { value: number; error?: string } {
-  const parsed = parseOptionalNumber(raw, label, t);
-  if (parsed.error) {
-    return parsed;
-  }
-  if (!Number.isInteger(parsed.value)) {
-    return { value: 0, error: t("validation.integer", { field: label }) };
-  }
-  return parsed;
-}
-
-function parseOptionalNumber(raw: string, label: string, t: Translate): { value: number; error?: string } {
-  const value = raw.trim();
-  if (value === "") {
-    return { value: 0 };
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return { value: 0, error: t("validation.nonNegative", { field: label }) };
-  }
-  return { value: parsed };
-}
-
-function formatPercentDraft(value: number | undefined): string {
-  if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return String(Math.round(value * 100));
-}
-
-function formatOptionalNumberDraft(value: number | undefined): string {
-  if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return String(value);
-}
-
-function advancedContextSourceLabel(source: string | undefined, t: Translate): string {
-  switch (source) {
-    case "provider_context_window":
-      return t("advanced.sourceProviderOverride");
-    case "provider_model_limit":
-      return t("advanced.sourceModelConfig");
-    case "provider_input_limit":
-      return t("advanced.sourceInputLimit");
-    case "agent_max_context_tokens":
-      return t("advanced.sourceManualLimit");
-    case "unknown":
-    case "":
-    case undefined:
-      return t("advanced.sourceUnknown");
-    default:
-      return source;
-  }
-}
-
-function formatTokenCount(value: number): string {
-  return formatCurrentNumber(Math.max(0, value));
-}
-
-function formatOptionalTokenCount(value: number | undefined): string {
-  if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return formatTokenCount(value);
 }
 
 function formatPercent(value: number | undefined): string {
@@ -2264,17 +1778,18 @@ function formatBuildDate(iso: string): string {
   return parsed.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
 }
 
-/* -------------------------------------------------------------------------- */
-/*  远程控制                                                                    */
-/* -------------------------------------------------------------------------- */
-
-/** Data wiring for the remote-control page: pulls the snapshot from the
- *  main-process RemoteHostManager, re-pulls on every remote event (pairing
- *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
-function availableSettingsPage(page:SettingsPage|undefined, browserAllowed:boolean, capabilities:import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1):SettingsPage {
- const next=page??"general";
- if(next==="subscriptions"||next==="agents"||next==="remote"&&!capabilities.remote||next==="browser"&&(!browserAllowed||!capabilities.browser))return "providers";
- return next;
+// Resolve legacy links before rendering or publishing the selected page.
+function availableSettingsPage(
+  page: SettingsPage | undefined,
+  browserAllowed: boolean,
+  capabilities: import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1,
+): SettingsPage {
+  const next = page ?? "general";
+  if (next === "advanced") return "general";
+  if (next === "subscriptions" || next === "agents"
+    || (next === "remote" && !capabilities.remote)
+    || (next === "browser" && (!browserAllowed || !capabilities.browser))) return "providers";
+  return next;
 }
 
 export function SettingsView({application,...props}:Parameters<typeof SettingsViewContent>[0] & {application:{readonly settingsControls:import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1}}):JSX.Element {

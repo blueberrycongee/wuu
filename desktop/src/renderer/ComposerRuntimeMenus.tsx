@@ -1643,7 +1643,6 @@ export function ComposerPlusButton({
               >
                 <Paperclip className="icon-lg" />
                 <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
-                <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
             )}
             <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />

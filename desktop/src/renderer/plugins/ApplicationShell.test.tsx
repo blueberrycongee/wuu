@@ -251,6 +251,49 @@ describe("application shell assembly", () => {
     }
   });
 
+  // A retained shell must fence input synchronously before its writer retires,
+  // keep local draft DOM, and restore controls only with the successor scope.
+  it("makes retained controls inert through writer replacement without remounting drafts", async () => {
+    const { service } = fixture();
+    const host = new PluginHost({ react: React });
+    const calls: string[] = [];
+    const provider = (generation: string) => host.applicationProviders.register({ pluginId: "writer", generation, id: "app" }, {
+      id: "app", prepare: () => ({ activate() {}, deactivate() { return undefined; }, dispose() {},
+        createScope: () => Object.assign(Object.create(service), { invoke: async () => { calls.push(generation); } }) as ApplicationServiceV1 }),
+    });
+    const first = provider("first"), next = provider("next");
+    await host.applicationProviders.select(first);
+    await host.activateGeneration({ pluginId: "shell", generation: "same", register: api => host.registerPresentation(api, presentation => {
+      presentation.registerApplicationShell({ id: "shell", render: ({ application }) => <main>
+        <input defaultValue="Keep this draft" /><button onClick={() => void application.invoke("catalog.select-plugin", { pluginId: "example" })}>Open</button>
+      </main> });
+    }) });
+    const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+    let finish = () => {};
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same", id: "shell" }} />));
+      const draft = container.querySelector('input')!, button = container.querySelector('button')!;
+      await act(async () => button.click()); expect(calls).toEqual(["first"]);
+      act(() => {
+        finish = host.applicationProviders.beginRetirement(new AbortController().signal);
+        // Inspect inside the notification turn, before React can commit a render.
+        expect(button.closest('[inert]')).not.toBeNull();
+      });
+      await act(async () => host.applicationProviders.select(undefined));
+      expect(container.querySelector('input')).toBe(draft);
+      expect(draft.value).toBe("Keep this draft");
+      expect(button.closest('[inert]')).not.toBeNull();
+      await act(async () => { await host.applicationProviders.select(next); finish(); });
+      expect(container.querySelector('input')).toBe(draft);
+      expect(button.closest('[inert]')).toBeNull();
+      await act(async () => button.click()); expect(calls).toEqual(["first", "next"]);
+      // Cancelling a prepared retirement also restores the still-current writer.
+      act(() => { finish = host.applicationProviders.beginRetirement(new AbortController().signal); });
+      expect(button.closest('[inert]')).not.toBeNull();
+      act(() => finish()); expect(button.closest('[inert]')).toBeNull();
+    } finally { act(() => root.unmount()); container.remove(); host.unload("shell"); await host.applicationProviders.select(undefined); }
+  });
+
   it("keeps explicit recovery usable while a successor shell registers late", async () => {
     const { host } = fixture();
     const container = document.createElement("div"), root = createRoot(container), retry = vi.fn();

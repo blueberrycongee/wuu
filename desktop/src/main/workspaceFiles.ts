@@ -18,6 +18,7 @@ import type {
   WorkspaceFileReadResult,
   WorkspaceFileSaveParams,
   WorkspaceFileSaveResult,
+  WorkspaceFileChange,
 } from "../shared/protocol";
 import {
   isRenderableImageFile,
@@ -26,6 +27,7 @@ import {
   renderableFileURL,
 } from "./renderableFileURLs";
 import { writeTextFileAtomicSync } from "./atomicFile";
+import { observeWorkspaceFile } from "./workspaceFileObserver";
 
 const FILE_TREE_MAX_PATHS = 4000;
 const FILE_PREVIEW_MAX_BYTES = 512 * 1024;
@@ -77,6 +79,10 @@ export class WorkspaceFileService {
     root?: string,
   ): WorkspaceFileSaveResult {
     return writeWorkspaceFileResult(this.resolveContext(root), params);
+  }
+
+  watch(path: string, root: string, listener: (change: WorkspaceFileChange) => void): Promise<() => void> {
+    return observeWorkspaceFile(this.resolveContext(root).cwd, normalizeWorkspaceDirectoryPath(path), listener);
   }
 
   resolveFileReference(

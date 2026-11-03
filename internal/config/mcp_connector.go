@@ -16,6 +16,27 @@ type MCPConnectorDescriptor struct {
 	DocumentationURL string            `json:"documentation_url,omitempty"`
 	SetupRequired    string            `json:"setup_required,omitempty"`
 	IdentityProbe    *MCPIdentityProbe `json:"identity_probe,omitempty"`
+	// Icon is a package-relative brand image. Plugin manifests validate and
+	// serve it; standalone configuration has no package and never renders it.
+	Icon *MCPConnectorIcon `json:"icon,omitempty"`
+}
+
+// MCPConnectorIcon declares one image or a light/dark pair.
+type MCPConnectorIcon struct {
+	Path  string `json:"path,omitempty"`
+	Light string `json:"light,omitempty"`
+	Dark  string `json:"dark,omitempty"`
+}
+
+// AssetPaths returns the declared package-relative image paths.
+func (i *MCPConnectorIcon) AssetPaths() []string {
+	if i == nil {
+		return nil
+	}
+	if i.Path != "" {
+		return []string{i.Path}
+	}
+	return []string{i.Light, i.Dark}
 }
 
 // Validate applies the same metadata contract to configuration and packages.
