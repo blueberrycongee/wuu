@@ -2401,9 +2401,9 @@ describe("Composer send control", () => {
     });
     expect(plusButton?.getAttribute("aria-expanded")).toBe("true");
 
-    // A compact card on the input's leading edge, not a band as wide as the input.
+    // The menu follows the input's width and leading edge.
     const menu = document.body.querySelector<HTMLElement>('[data-floating-menu-owner="composer-plus"]');
-    expect(menu?.style.width).toBe("");
+    expect(menu?.style.width).toBe(`${frame!.getBoundingClientRect().width}px`);
     expect(menu?.querySelector<HTMLElement>(".composer-plus-menu")?.style.getPropertyValue("--composer-menu-width"))
       .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(menu?.style.left).toBe("80px");
