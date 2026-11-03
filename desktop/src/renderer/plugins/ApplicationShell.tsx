@@ -137,6 +137,22 @@ const SelectedShell = React.memo(function SelectedShell({ host, shell }: { host:
   return <View application={application} slots={slots} />;
 });
 
+/** Retained pixels and drafts outlive the writer, but their controls must not. */
+function ShellInteractionBoundary({ host, shell, children }: { host: PluginHost; shell: RegisteredApplicationShell; children: React.ReactNode }): React.ReactNode {
+  const root = React.useRef<HTMLDivElement>(null);
+  const blocked = () => host.canRebindPresentation(shell.pluginId, shell.generation)
+    && (!host.applicationProviders.current || Boolean(host.applicationProviders.getRetirement()));
+  const subscribe = React.useCallback((listener: () => void) => host.applicationProviders.subscribe(() => {
+    // Fence native input in the retirement notification itself, before React's
+    // next commit. Re-enable only after children have received the new scope.
+    if (blocked()) root.current?.setAttribute("inert", "");
+    listener();
+  }), [host, shell]);
+  const revision = React.useSyncExternalStore(subscribe, host.applicationProviders.getRevision);
+  React.useLayoutEffect(() => { root.current?.toggleAttribute("inert", blocked()); }, [host, shell, revision]);
+  return <div ref={root} style={{ display: "contents" }} inert={blocked()}>{children}</div>;
+}
+
 /** The selected graph binding is authoritative; absence never chooses a local default. */
 export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false, pendingFallback }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean; pendingFallback?: React.ReactNode }): React.ReactNode {
   const { t } = useI18n();
@@ -152,7 +168,7 @@ export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pe
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary fullShell key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
     <UICompositionPendingContext.Provider value={pending}>
-      <SurfaceBindings.Provider value={stableBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
+      <SurfaceBindings.Provider value={stableBindings}><ShellInteractionBoundary host={host} shell={selected}><SelectedShell host={host} shell={selected} /></ShellInteractionBoundary></SurfaceBindings.Provider>
     </UICompositionPendingContext.Provider>
   </ShellBoundary>;
 }
