@@ -172,7 +172,8 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
           } finally { Menu.prototype.popup = originalPopup; }
       };
       const click = async ([selector, label], keyboard = false) => {
-        if (selector.startsWith('[data-mcp=') && ["刷新", "移除 OAuth 登录", "编辑", "移除"].includes(label)) return menuSelect(selector, label, keyboard);
+        if (selector.startsWith('[data-mcp=') && ["刷新", "断开", "移除 OAuth 登录", "编辑", "移除"].includes(label)) return menuSelect(selector, label, keyboard);
+        if (selector.startsWith('[data-mcp=') && label === "连接") return clickElement(`${selector} button[aria-label="连接"]`);
         console.log(`MCP journey: ${label}`);
         await until(clickReady, { selector: `${selector} button`, label });
       };
@@ -185,11 +186,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       const row = '[data-mcp="journey-docs"]';
       await clickElement('[data-ribbon-id="catalog"]');
       await clickElement('[data-tab="plugins"]');
-      await until(() => document.querySelector('[data-testid="mcp-services"]'));
+      await until(() => document.querySelector('.plugin-catalog-grid'));
       await until(() => document.querySelector('[data-connector="plugin.account-connectors.notion"] [data-connector-action="connect"]'));
       assert.equal((await evaluate(() => window.wuu.getMCPAuthStatus("plugin.account-connectors.notion"))).authenticated, false, "The explicitly selected bundled connector stays lazy and locally unauthenticated");
       await capture("mcp-empty-light");
-      await click(['[data-testid="mcp-services"]', "添加 MCP"]);
+      await menuSelect('.catalog-toolbar', "添加自定义 MCP 服务器");
       await until(() => document.querySelector(".mcp-editor"));
       await input('.mcp-editor input:not([type])', "journey-docs");
       await input('.mcp-editor input[type="url"]', `${endpoint}/mcp`);
@@ -217,10 +218,13 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("mcp-connected-light");
       win.focus();
       win.webContents.focus();
-      await evaluate(selector => document.querySelector(`${selector} .mcp-service-actions > button:not([aria-haspopup])`).focus(), row);
+      await evaluate(selector => document.querySelector(`${selector} .mcp-service-actions > button[aria-haspopup="menu"]`).focus(), row);
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["shift"] });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab", modifiers: ["shift"] });
+      await until(selector => !document.activeElement?.closest(selector), row);
       win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
       win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
-      await until(() => document.activeElement?.getAttribute("aria-haspopup") === "menu");
+      await until(selector => document.activeElement === document.querySelector(`${selector} [aria-haspopup="menu"]`), row);
       await capture("mcp-keyboard-focus");
       let releaseToolList;
       pauseToolList = new Promise(resolve => { releaseToolList = resolve; });
@@ -292,7 +296,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await click([row, "移除 OAuth 登录"]);
       evidence.checks.push("Configured external callbacks use manual authorization; connection retries retain the completed login");
 
-      await click(['[data-testid="mcp-services"]', "添加 MCP"]);
+      await menuSelect('.catalog-toolbar', "添加自定义 MCP 服务器");
       await until(() => document.querySelector(".mcp-editor"));
       await clickElement('.mcp-editor [aria-label="连接方式"]');
       await until(clickReady, { selector: '[role="menuitemradio"]', label: "导入 JSON", contains: true });
