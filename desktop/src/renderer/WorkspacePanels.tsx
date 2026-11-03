@@ -1056,15 +1056,15 @@ function WorkspacePanelContent({
                     </button>
                   </Tooltip>
                 ) : null}
-                <WorkspaceFileTree
-                  activeContext={workspaceContext}
-                  open={
-                    open &&
-                    fileTreeShown &&
-                    (activeTab?.kind === "files" || activeTab?.kind === "file")
-                  }
-                  selectedFilePath={selectedFilePath}
-                  onOpenFile={onOpenFile}
+                <slots.Slot name="wuu.default-preview/workspace.file-tree"
+                  context={{ root: workspaceContext?.cwd, selectedFilePath,
+                    visible: open && fileTreeShown && (activeTab?.kind === "files" || activeTab?.kind === "file") }}
+                  fallback={<WorkspaceFileTree
+                    activeContext={workspaceContext}
+                    open={open && fileTreeShown && (activeTab?.kind === "files" || activeTab?.kind === "file")}
+                    selectedFilePath={selectedFilePath}
+                    onOpenFile={onOpenFile}
+                  />}
                 />
               </section>
               {activeTab?.kind === "file" && !fileTreeDocked ? (

@@ -7,6 +7,7 @@ import {
   statSync,
   type Dirent,
 } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -18,6 +19,7 @@ import type {
   WorkspaceFileReadResult,
   WorkspaceFileSaveParams,
   WorkspaceFileSaveResult,
+  WorkspaceFileChange,
 } from "../shared/protocol";
 import {
   isRenderableImageFile,
@@ -28,6 +30,7 @@ import {
 import { writeTextFileAtomicSync } from "./atomicFile";
 
 const FILE_TREE_MAX_PATHS = 4000;
+const FILE_WATCH_INTERVAL_MS = 1000;
 const FILE_PREVIEW_MAX_BYTES = 512 * 1024;
 const FILE_REFERENCE_SEARCH_MAX_VISITS = 8000;
 const FILE_TREE_IGNORED_DIRS = new Set([
@@ -77,6 +80,43 @@ export class WorkspaceFileService {
     root?: string,
   ): WorkspaceFileSaveResult {
     return writeWorkspaceFileResult(this.resolveContext(root), params);
+  }
+
+  watch(path: string, root: string, listener: (change: WorkspaceFileChange) => void): () => void {
+    const context = this.resolveContext(root);
+    const relativePath = normalizeWorkspaceDirectoryPath(path);
+    const absolutePath = resolveWorkspaceDirectoryPath(context.cwd, relativePath);
+    const initial = statSync(absolutePath);
+    if (!initial.isFile() && !initial.isDirectory()) throw new Error("selected path is not a file or directory");
+    let previous: typeof initial | undefined = initial;
+    let stopped = false;
+    const stop = () => { stopped = true; clearTimeout(timer); };
+    const poll = async () => {
+      try {
+        const current = await stat(absolutePath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined;
+          throw error;
+        });
+        if (stopped) return;
+        // Revalidate recreated targets and changed symlinks before reporting them.
+        if (current) resolveWorkspaceDirectoryPath(context.cwd, relativePath);
+        if (current?.mtimeMs !== previous?.mtimeMs || current?.ctimeMs !== previous?.ctimeMs
+          || current?.size !== previous?.size || current?.ino !== previous?.ino || current?.nlink !== previous?.nlink) {
+          previous = current;
+          listener({ type: "changed" });
+        }
+      } catch (error) {
+        if (stopped) return;
+        stop();
+        listener({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      } finally {
+        if (!stopped) timer = setTimeout(poll, FILE_WATCH_INTERVAL_MS).unref();
+      }
+    };
+    // Metadata polling follows atomic replacement and deletion/recreation. Capture
+    // the baseline before acknowledging readiness so the first change is not lost.
+    let timer = setTimeout(poll, FILE_WATCH_INTERVAL_MS).unref();
+    return stop;
   }
 
   resolveFileReference(

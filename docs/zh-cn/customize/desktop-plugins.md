@@ -95,6 +95,66 @@ Slot 所有者可通过 `<Slot layout={Layout} ... />` 传入 React 组件，接
 
 在包含此 Slot 的仓库版本中运行 `wuu plugin install ./examples/plugins/token-speed` 安装示例，或运行 `wuu plugin dev ./examples/plugins/token-speed` 启用热更新。禁用插件会移除读数。
 
+## 文件浏览器和编辑器
+
+插件可以用 `registerUIContribution` 指向
+`wuu.default-preview/workspace.file-tree`，单独替换文件树，无需选择新的
+`ui.preview` provider。该插槽接受一个内容贡献，支持包装以及常规的冲突和卸载规则。
+默认预览继续管理标签页、文件阅读器、停靠和尺寸调整；禁用贡献后恢复默认文件树。
+
+`WorkspaceFileTreeContextV1` 从 `@wuu/plugin-sdk` 导出，包含 `root`、
+`selectedFilePath` 和 `visible`。没有 root 表示没有工作目录；区域隐藏时
+`visible` 为 false。隐藏或卸载时应释放视图订阅。每次操作都捕获 root，异步操作完成时
+不要替换为当前选中的工作目录。点击文件可调用
+`application.previewContent.openFile({ root, path })`。
+
+`application.previewContent` 提供目录枚举、有大小限制的文件读取，以及可选的保存和
+变更订阅。调用前同时检查 capability 和方法：旧版或其他 V1 application provider
+可能不提供它们。
+
+```ts
+const files = application.previewContent;
+const target = { root, path: "notes.md" };
+const original = await files.readFile(target);
+if (files.capabilities.saveFile && files.saveFile && !original.binary && !original.truncated) {
+  const result = await files.saveFile({
+    ...target, text: editedText,
+    base_mtime_ms: original.mtime_ms, base_sha256: original.sha256,
+  });
+  // A conflict leaves the file untouched and returns its current contents.
+  // Keep the user's draft and offer an explicit reload or merge.
+  if (result.status === "conflict") showConflict(result.file);
+}
+```
+
+保存复用宿主的路径规则和原子文本文件替换，只更新已有的完整文本文件，不负责新建、
+重命名或删除。版本检查能发现写入前已经观察到的修改，但不是针对任意外部写入者的
+文件系统事务。操作被接纳后，即使取消或传输失败，写入也可能已经完成；重试前应重新读取。
+
+```ts
+const controller = new AbortController();
+if (files.capabilities.watch && files.watch) {
+  const stop = await files.watch(target, change => {
+    if (change.type === "error") showError(change.message);
+    else scheduleReload(target); // Coalesce reads and retain unsaved editor text.
+  }, { signal: controller.signal });
+  await loadInitialState(target); // Subscribe first, then read.
+  // On unmount: stop(), or controller.abort().
+}
+```
+
+默认本地桌面 provider 约每秒观察一次元数据，报告已有文件或目录直接条目的变化，
+包括删除和重建。它不递归观察子文件内容，不保证捕获两次轮询之间的短暂变化，也不是
+有序的变更日志。事件保留请求时的 root 和 path；终止性 `error` 会结束订阅。
+退订、取消、插件或 provider 退役、渲染器重新加载及窗口关闭都会释放观察资源。
+远程 Web 和移动端传输目前不提供变更订阅能力。
+
+知识库插件可以在自己的运行时服务中维护编辑器、链接关系、递归索引、文件操作和持久化，
+由桌面模块通过 `invokeService` 或 `invokeRuntime` 调用，见[可替换服务提供者](replaceable-providers.md)。
+受信任的运行时插件可以使用其执行环境的文件系统 API，但它不自动等同于远程会话的
+文件系统；插件需要定义工作目录路由和访问策略。宿主无需为每个领域新增注册系统，
+插件也可以声明自己的版本化服务和子 UI 插槽，供其他插件继续扩展。
+
 ## Presenter 和动作
 
 Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot`、当前边界的 `host`，以及三种组合方式：

@@ -17,7 +17,7 @@ import type { ApplicationConversationActionMapV1, ApplicationConversationActions
 import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 } from "./ui-submission.js";
 import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
 import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogThreadSkillsInputV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
-import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
+import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1, PreviewFileSaveV1, PreviewFileChangeV1 } from "./ui-preview-content.js";
 import type { ApplicationConversationThreadItemV1, ApplicationConversationDetailsActionMapV1, ApplicationConversationDetailV1, ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
 import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
@@ -555,6 +555,40 @@ export function scopeApplicationPreviewContent(source: () => ApplicationPreviewC
     openFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().openFile(target, { signal }), options),
     listDirectory: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().listDirectory(target, { signal }), options),
     readFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().readFile(target, { signal }), options),
+    saveFile: (input: PreviewFileSaveV1, options?: PreviewContentOptionsV1) => invoke(signal => {
+      const provider = source();
+      if (!provider.capabilities.saveFile || !provider.saveFile) throw new Error("File saving unavailable");
+      return provider.saveFile(input, { signal });
+    }, options),
+    watch: async (target: PreviewFileTargetV1, listener: (change: PreviewFileChangeV1) => void,
+      options?: PreviewContentOptionsV1): Promise<() => void> => {
+      assertActive(); signal.throwIfAborted(); options?.signal?.throwIfAborted();
+      const provider = source();
+      if (!provider.capabilities.watch || !provider.watch) throw new Error("File observation unavailable");
+      const lifetime = new AbortController();
+      let release: (() => void) | undefined;
+      const stop = () => {
+        if (lifetime.signal.aborted) return;
+        lifetime.abort();
+        signal.removeEventListener("abort", stop);
+        options?.signal?.removeEventListener("abort", stop);
+        release?.();
+      };
+      signal.addEventListener("abort", stop, { once: true });
+      options?.signal?.addEventListener("abort", stop, { once: true });
+      try {
+        release = await provider.watch(Object.freeze({ ...target }), change => {
+          if (lifetime.signal.aborted) return;
+          if (change.type === "error") stop();
+          listener(change);
+        }, { signal: lifetime.signal });
+        if (lifetime.signal.aborted) {
+          release();
+          lifetime.signal.throwIfAborted();
+        }
+        return stop;
+      } catch (error) { stop(); throw error; }
+    },
     revealItem: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().revealItem(target, { signal }), options),
     showItemMenu: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().showItemMenu(target, { signal }), options),
     exportFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().exportFile(target, { signal }), options),

@@ -28,6 +28,7 @@ import {
   type UsageOverviewParams,
   type WindowResizeState,
   type WuuDesktopApi,
+  type WorkspaceFileChange,
 } from "../shared/protocol";
 
 import type { ChromeOverlayApi, ChromeOverlayEvent } from "../shared/chromeOverlay";
@@ -235,6 +236,25 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-read", path, root),
   writeWorkspaceFile: (params, root?: string) =>
     ipcRenderer.invoke("wuu:file-write", params, root),
+  watchWorkspaceFile: async (path, root, listener) => {
+    const id = crypto.randomUUID();
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      ipcRenderer.removeListener("wuu:file-watch-change", receive);
+      void ipcRenderer.invoke("wuu:file-watch-stop", id).catch(error => console.error("File watch cleanup failed", error));
+    };
+    const receive = (_event: Electron.IpcRendererEvent, watchId: string, change: WorkspaceFileChange) => {
+      if (stopped || watchId !== id) return;
+      if (change.type === "error") stop();
+      listener(change);
+    };
+    ipcRenderer.on("wuu:file-watch-change", receive);
+    try { await ipcRenderer.invoke("wuu:file-watch-start", id, path, root); }
+    catch (error) { stop(); throw error; }
+    return stop;
+  },
   resolveWorkspaceFileReference: (reference: string, root?: string) =>
     ipcRenderer.invoke("wuu:file-reference-resolve", reference, root),
   startTerminalSession: (params) =>
