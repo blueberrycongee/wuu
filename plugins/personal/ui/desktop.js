@@ -238,7 +238,7 @@ export async function activate(api) {
     .mosaic-profile-name { font-size:calc(var(--font-ui) * 1.2);font-weight:600;line-height:1.45; }
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
     .mosaic-profile-trigger { position:relative;width:40px;height:40px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
-    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);width:max-content;max-width:100%;z-index:31; }
+    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:4px;width:max-content;max-width:100%;z-index:31; }
     .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
     .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:min(240px,100%);box-sizing:border-box;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
     .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:20px;font-weight:400; }
@@ -294,7 +294,10 @@ export async function activate(api) {
     .mosaic-profile-trigger .mosaic-avatar { width:40px;height:40px; }
     .mosaic-profile-head .mosaic-avatar { width:64px;height:64px; }
     .mosaic-avatar-editable { position:relative;flex:none;border-radius:50%; }
-    .mosaic-avatar-edit { position:absolute;right:-6px;bottom:-4px;display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);color:var(--ink);box-shadow:0 1px 3px #00000014;cursor:pointer;opacity:0;pointer-events:none; }
+    .mosaic-avatar-edit { position:absolute;right:-12px;top:-10px;display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ink-muted);cursor:pointer;opacity:0;pointer-events:none; }
+    .mosaic-avatar-edit::before { content:"";position:absolute;inset:4px;border:1px solid var(--hairline);border-radius:50%;background:var(--paper); }
+    .mosaic-avatar-edit svg { position:relative;width:14px;height:14px; }
+    .mosaic-avatar-edit:hover,.mosaic-avatar-edit:focus-visible { color:var(--ink); }
     .mosaic-avatar-editable:hover .mosaic-avatar-edit,.mosaic-avatar-editable:focus-within .mosaic-avatar-edit { opacity:1;pointer-events:auto; }
     .mosaic-avatar-edit:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic[data-panel-open="true"] .mosaic-identity .mosaic-avatar-editable { visibility:hidden; }
