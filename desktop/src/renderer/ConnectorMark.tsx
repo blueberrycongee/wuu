@@ -17,11 +17,11 @@ export function ConnectorMark({ server, catalog, className = "" }: {
   className?: string;
 }): JSX.Element {
   const loadIcon = useMemo(() => catalog && ((id: string, fingerprint: string, path: string) => catalog.loadIcon(id, fingerprint, path)), [catalog]);
-  const icon = server.connector?.icon;
-  const owner = icon && server.plugin_id
+  const owner = server.plugin_id
     ? catalog?.getSnapshot().inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id && item.fingerprint)
     : undefined;
-  return <span className={`connector-mark ${className}`} data-branded={owner ? "" : undefined} aria-hidden="true">
+  const icon = server.connector?.icon ?? owner?.icon;
+  return <span className={`connector-mark ${className}`} data-branded={owner && icon ? "" : undefined} aria-hidden="true">
     {owner && icon && loadIcon
       ? <PluginIcon icon={icon} pluginId={owner.id} fingerprint={owner.fingerprint!} loadIcon={loadIcon} />
       : <Plug className="icon" />}

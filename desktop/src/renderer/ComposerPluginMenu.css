@@ -1,4 +1,9 @@
-.composer-plugin-choices { min-width: 0; }
+.composer-plugin-choices {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+.composer-context-menu .composer-plugin-row { width: 100%; }
 .composer-plugin-notice { margin: var(--space-2); color: var(--ink-muted); white-space: normal; }
 
 /* One line per choice in the menu's own type and icon column: the mark, the
@@ -7,23 +12,23 @@
   flex: 0 1 auto;
   min-width: 0;
 }
-/* Descriptions share the composer placeholder's quiet ink. */
+/* Keep secondary copy readable without competing with the name. */
 .composer-context-menu .composer-plugin-row > .composer-plugin-detail {
   flex: 1 1 0;
   min-width: 0;
-  color: var(--ink-quiet);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 .composer-plus-menu button.composer-plugin-row:disabled { opacity: 1; color: var(--ink-muted); }
 
 /* Brand marks sit bare, at the size of the menu's other icons. */
 .composer-context-menu .composer-plugin-row > .composer-plugin-mark {
-  --connector-mark-size: var(--icon-size-sm);
+  display: grid;
+  place-items: center;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   flex: none;
   align-self: center;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
   overflow: visible;
 }
 .composer-context-menu .composer-plugin-row > .composer-plugin-mark > :is(.plugin-icon-asset, .plugin-icon-themed) { width: 100%; height: 100%; }

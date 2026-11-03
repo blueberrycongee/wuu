@@ -5,7 +5,7 @@ import { draftPluginReferences, pluginReferenceToken } from "./ComposerPluginRef
 import { useComposerServices } from "./ComposerServicesContext";
 import { useI18n } from "./i18n";
 import { Puzzle } from "./WuuIcons";
-import { ConnectorMark } from "./ConnectorMark";
+import { ComposerPluginIcon } from "./ComposerPluginIcon";
 import { showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
@@ -109,7 +109,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     }),
     ...inventory.filter(item => item.kind === "plugin" && item.conversation_tools?.length && item.enabled !== false && item.runtime_state === "active").map(item => ({
       key: `plugin:${item.id}`, name: item.name, description: item.description, detail: "",
-      plugin: { plugin_id: item.provenance.plugin_id }, server: undefined as MCPServerStatus | undefined,
+      plugin: { plugin_id: item.provenance.plugin_id }, server: undefined,
     })),
   ].filter(item => matches([item.name, item.description, item.detail].filter(Boolean).join(" ")));
   function openPlugins(): void {
@@ -117,7 +117,6 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     void services!.openPlugins?.().catch(showActionErrorToast);
   }
   return <div className="composer-plugin-choices">
-    <div className="composer-plus-menu-section">{t("composer.plugins")}</div>
     {!supported ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsEngineUnsupported")}</p> : null}
     {loading ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsLoading")}</p> : null}
     {error ? <div className="composer-plugin-notice" role="alert">{t("composer.pluginsLoadFailed")} <button type="button" onClick={() => setRevision(value => value + 1)}>{t("settings.errorRetry")}</button></div> : null}
@@ -126,7 +125,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
       const secondary = entry.detail || entry.description;
       return <button type="button" role="menuitem" className="composer-plugin-row" key={entry.key} data-plugin-choice data-plugin-key={entry.key}
         disabled={!supported} title={secondary} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
-        {entry.server ? <ConnectorMark server={entry.server} catalog={services.catalog} className="composer-plugin-mark" /> : <Puzzle aria-hidden="true" />}
+        <ComposerPluginIcon plugin={entry.plugin} server={entry.server} className="composer-plugin-mark" />
         <span className="composer-plugin-name">{entry.name}</span>
         {secondary ? <span className="composer-plugin-detail">{secondary}</span> : null}
       </button>;

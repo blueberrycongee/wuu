@@ -76,7 +76,7 @@ export function MCPServicesProvider({ children, contextKey, catalog }: { childre
   return <MCPContext.Provider value={{ servers: fresh ? servers : [], retainedConnectors, error, contextGeneration, catalog, refresh }}>{children}</MCPContext.Provider>;
 }
 
-type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string };
+type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string; catalogView?: boolean };
 
 export function MCPServices(props: MCPServicesProps): JSX.Element {
   const { contextGeneration } = useMCPServices();
@@ -86,7 +86,7 @@ export function MCPServices(props: MCPServicesProps): JSX.Element {
   </>;
 }
 
-function MCPServerServices({ pluginID, enabled = true, filter = "" }: MCPServicesProps): JSX.Element | null {
+function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView = false }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
   const { servers, error: loadError, refresh } = useMCPServices();
   const { t } = useI18n();
@@ -147,8 +147,8 @@ function MCPServerServices({ pluginID, enabled = true, filter = "" }: MCPService
     await controls.configureMCPServers({ servers: { [server.name]: null }, revision: definition.revision });
   }
 
-  if ((pluginID || filter.trim()) && visible.length === 0 && !loadError) return null;
-  return <SettingsSection testID="mcp-services" title={pluginID ? "MCP" : t("mcp.services")} actions={!pluginID ? <button type="button" className="settings-button" onClick={() => setEditor({ name: "" })}>{t("mcp.add")}</button> : undefined}>
+  if ((catalogView || pluginID || filter.trim()) && visible.length === 0 && !loadError && !editor) return null;
+  return <SettingsSection testID="mcp-services" title={catalogView ? undefined : pluginID ? "MCP" : t("mcp.services")} actions={!catalogView && !pluginID ? <button type="button" className="settings-button" onClick={() => setEditor({ name: "" })}>{t("mcp.add")}</button> : undefined}>
     {loadError ? <div className="mcp-load-failure">
       <MCPFailure message={t("mcp.listFailed")} diagnostic={loadError} />
       <button type="button" className="settings-button settings-button-ghost" data-testid="mcp-list-retry" onClick={() => void refresh()}>{t("mcp.refresh")}</button>
@@ -175,6 +175,7 @@ function MCPServerServices({ pluginID, enabled = true, filter = "" }: MCPService
       const attention = working ? undefined : needsAuth ? "auth" : failure || server.error || ["error", "failed"].includes(server.state) ? "error" : undefined;
       const actions: ThreadContextMenuItem[] = [];
       if (enabled && server.state !== "disabled") {
+        if (catalogView && server.connected) actions.push({ label: t("mcp.disconnect"), onSelect: () => act(server.name, "disconnect", () => controls.disconnectMCPServer(server.name)) });
         if (server.connected) actions.push({ label: t("mcp.refresh"), onSelect: () => act(server.name, "refresh", () => controls.refreshMCPServer(server.name)) });
         if (server.auth_status === "oauth") actions.push({ label: t("mcp.removeLogin"), onSelect: () => act(server.name, "logout", () => controls.removeMCPAuth(server.name)) });
       }
@@ -194,8 +195,8 @@ function MCPServerServices({ pluginID, enabled = true, filter = "" }: MCPService
           {!pluginID && !server.editable ? <p className="mcp-service-status">{t("mcp.projectManaged")}</p> : null}
         </div>
         <div className="mcp-service-actions">
-          {enabled && server.state !== "disabled" ? <>
-            {needsAuth ? <button type="button" className="settings-button" disabled={!!busy} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
+          {enabled && server.state !== "disabled" && !(catalogView && server.connected) ? <>
+            {catalogView && !needsAuth ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("mcp.connect")} title={t("mcp.connect")} disabled={!!busy} onClick={() => void act(server.name, "connect", () => controls.connectMCPServer(server.name))}><Plus className="icon" aria-hidden="true" /></button> : needsAuth ? <button type="button" className="settings-button" disabled={!!busy} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
               : <button type="button" className="settings-button" disabled={!!busy} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
           </> : null}
           {actions.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={!!busy}
@@ -218,7 +219,7 @@ function MCPServerServices({ pluginID, enabled = true, filter = "" }: MCPService
 
 type ConnectorAuth = { result?: Awaited<ReturnType<ApplicationSettingsControlsV1["getMCPAuthStatus"]>>; error?: string };
 
-function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesProps): JSX.Element | null {
+function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = false }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
   const { servers, retainedConnectors, catalog, refresh } = useMCPServices();
   const retained = !servers.length && retainedConnectors.length > 0;
@@ -417,7 +418,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     });
   }
   const detailServer = details ? visible.find(server => server.name === details) : undefined;
-  return <SettingsSection testID="mcp-connectors" title={t("connector.title")}>
+  return <SettingsSection testID="mcp-connectors" title={catalogView ? undefined : t("connector.title")}>
     <SettingsGroup>{visible.map(server => {
       const view = describe(server);
       const items: ThreadContextMenuItem[] = [];
