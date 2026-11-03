@@ -10,10 +10,32 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
-.mcp-service-icon {
+/* A service's brand mark sits in a neutral tile sized to the two-line copy,
+ * so a branded connector and a generic server share one column. */
+.connector-mark {
+  --connector-mark-size: calc(var(--icon-size-lg) * 2);
+  display: grid;
+  flex: none;
+  width: var(--connector-mark-size);
+  height: var(--connector-mark-size);
+  place-items: center;
+  border: 1px solid var(--hairline-soft);
   align-self: flex-start;
-  margin-top: 0.2em;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
   color: var(--ink-secondary);
+}
+
+.connector-mark > :is(.plugin-icon-asset, .plugin-icon-themed) {
+  width: 62%;
+  height: 62%;
+  object-fit: contain;
+}
+
+.environment-dialog-icon:has(> .connector-mark) {
+  width: auto;
+  height: auto;
+  background: transparent;
 }
 
 .mcp-service-copy {
@@ -31,7 +53,7 @@
   align-items: baseline;
   gap: var(--space-1);
   margin-top: var(--space-1);
-  color: var(--ink-secondary);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
 }
 
@@ -104,22 +126,41 @@
 }
 
 
-.mcp-connector {
-  align-items: flex-start;
-}
-
 .mcp-connector .mcp-service-copy {
   flex-basis: 20ch;
 }
 
-.mcp-connector-expanded {
-  flex-basis: 100%;
+/* A live connection reads at a glance; the dot sits on the status line's
+ * first text line so wrapped account names stay aligned under it. */
+.mcp-connector[data-connected="true"] .mcp-service-status::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  align-self: flex-start;
+  margin-block-start: calc((1lh - 6px) / 2);
+  border-radius: var(--radius-circle);
+  background: var(--success);
+}
+
+.mcp-connector-dialog {
+  --environment-dialog-max-width: 520px;
+}
+
+/* Dialog content aligns with the title; the dialog panel owns the inset. */
+.mcp-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
   min-width: 0;
-  margin-inline-start: calc(var(--icon-size) + var(--space-3));
+}
+
+.mcp-dialog-body > p {
+  margin: 0;
 }
 
 .mcp-connector-description {
-  margin: var(--space-1) 0 0;
+  margin: 0;
   color: var(--ink-secondary);
   font-size: var(--font-ui);
 }
@@ -128,7 +169,7 @@
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   gap: var(--space-1) var(--space-3);
-  margin: var(--space-3) 0 0;
+  margin: 0;
   font-size: var(--font-ui);
 }
 

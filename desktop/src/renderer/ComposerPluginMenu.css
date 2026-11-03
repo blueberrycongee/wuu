@@ -20,3 +20,6 @@
 .composer-plugin-row > .composer-plugin-manage { width: auto; flex: none; }
 .composer-plugin-notice { margin: var(--space-2); color: var(--ink-muted); white-space: normal; }
 .composer-plus-menu .composer-plugin-row button:disabled { opacity: 1; color: var(--ink-muted); }
+/* Menu buttons stretch their text spans; the brand tile keeps its own footprint. */
+.composer-context-menu .composer-plugin-row > button:first-child > .composer-plugin-mark { --connector-mark-size: calc(var(--icon-size-lg) * 1.5); flex: none; overflow: visible; border-radius: var(--radius-xs); }
+.composer-context-menu .composer-plugin-mark span { flex: none; }

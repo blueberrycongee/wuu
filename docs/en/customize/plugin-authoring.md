@@ -100,7 +100,8 @@ A plugin-owned MCP server's optional `connector` metadata presents it as an acco
       "connector": {
         "title": "Notion",
         "description": "Work with the workspace you authorize.",
-        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client"
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
+        "icon": { "path": "assets/notion.svg" }
       }
     }
   }
@@ -116,6 +117,7 @@ A plugin-owned MCP server's optional `connector` metadata presents it as an acco
 | `documentation_url` | Optional absolute HTTPS link to setup or provider documentation, without embedded credentials. |
 | `setup_required` | Optional explanation of missing application setup. A nonblank value makes the card show the requirement and documentation instead of offering connection or authorization. |
 | `identity_probe` | Optional fixed, read-only MCP call and bounded JSON-pointer mapping for provider-reported identity. Admitted only from the active trusted package, not standalone configuration. |
+| `icon` | Optional brand image: `{ "path": "..." }` or `{ "light": "...", "dark": "..." }`, package-relative SVG, PNG, or WebP under the same limits as the plugin `icon`. Shown in a neutral tile on the card, the sign-in dialog, and the composer plugin menu; served only for the owning plugin generation. Cards without one, and standalone services, use a generic mark. |
 
 Declare `enabled: false` explicitly for lazy account onboarding: a new installation must not initiate account connection. The example's canonical server name is `plugin.workspace-connector.notion`; user preferences and OAuth credentials use that same identity. Connect checks the selected configuration provider's revision before saving the enabled preference, then uses the ordinary MCP connection and OAuth flow. Connector Disconnect removes local OAuth credentials and persists `enabled: false`, without claiming provider-side revocation. Disabling the plugin stops its owned servers; no fallback connector is substituted.
 

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { MCPServerStatus } from "../shared/protocol";
 import type { ApplicationSettingsControlsV1, MCPDefinitionResult } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { useSettingsControls } from "./SettingsControlsContext";
@@ -9,7 +9,9 @@ import { MCPDiagnostic, MCPFailure } from "./MCPDiagnostic";
 import { confirmAction } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
-import { AlertCircle, AlertTriangle, ChevronRight, MoreHorizontal, Plug } from "./WuuIcons";
+import { showExtensionMutationError } from "./extensionMutationError";
+import { AlertCircle, AlertTriangle, MoreHorizontal } from "./WuuIcons";
+import { ConnectorMark, type ConnectorIconCatalog } from "./ConnectorMark";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 import { usesAutomaticMCPLogin } from "./MCPLoginTransport";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
@@ -17,14 +19,14 @@ import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 type MCPAction = "connect" | "disconnect" | "refresh" | "identity" | "login" | "logout" | "edit" | "remove";
 type MCPActionFailure = { action: MCPAction; diagnostic: string };
 
-const MCPContext = createContext<{ servers: MCPServerStatus[]; retainedConnectors: MCPServerStatus[]; error: string; contextGeneration: number; refresh(): Promise<void> } | null>(null);
+const MCPContext = createContext<{ servers: MCPServerStatus[]; retainedConnectors: MCPServerStatus[]; error: string; contextGeneration: number; catalog?: ConnectorIconCatalog; refresh(): Promise<void> } | null>(null);
 export function useMCPServices() {
   const value = useContext(MCPContext);
   if (!value) throw new Error("MCP services require a catalog provider");
   return value;
 }
 
-export function MCPServicesProvider({ children, contextKey }: { children: ReactNode; contextKey?: string }): JSX.Element {
+export function MCPServicesProvider({ children, contextKey, catalog }: { children: ReactNode; contextKey?: string; catalog?: ConnectorIconCatalog }): JSX.Element {
   const controls = useSettingsControls();
   const [servers, setServers] = useState<MCPServerStatus[]>([]);
   const [contextGeneration, setContextGeneration] = useState(0);
@@ -67,10 +69,10 @@ export function MCPServicesProvider({ children, contextKey }: { children: ReactN
   // authority, credentials, identity, or generic MCP editor state.
   const retainedConnectors = !fresh && contextKey && snapshot.current?.contextKey === contextKey
     ? snapshot.current.servers.filter(server => server.plugin_id && server.connector).map(server => ({
-      name: server.name, plugin_id: server.plugin_id, connector: { title: server.connector!.title },
+      name: server.name, plugin_id: server.plugin_id, connector: { title: server.connector!.title, icon: server.connector!.icon },
       state: "reconnecting", connected: false, tool_count: 0, plugin_active: false, configurable: false,
     })) : [];
-  return <MCPContext.Provider value={{ servers: fresh ? servers : [], retainedConnectors, error, contextGeneration, refresh }}>{children}</MCPContext.Provider>;
+  return <MCPContext.Provider value={{ servers: fresh ? servers : [], retainedConnectors, error, contextGeneration, catalog, refresh }}>{children}</MCPContext.Provider>;
 }
 
 type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string };
@@ -180,7 +182,7 @@ function MCPServerServices({ pluginID, enabled = true, filter = "" }: MCPService
         actions.push({ label: t("common.remove"), danger: true, onSelect: () => act(server.name, "remove", () => remove(server)) });
       }
       return <div className="mcp-service" key={server.name} data-mcp={server.name} aria-busy={busy === server.name}>
-        <Plug className="icon mcp-service-icon" aria-hidden="true" />
+        <ConnectorMark server={server} />
         <div className="mcp-service-copy">
           <div className="mcp-service-name">{name}</div>
           <div className="mcp-service-status" data-attention={attention} role={attention || working ? "status" : undefined}>
@@ -217,17 +219,16 @@ type ConnectorAuth = { result?: Awaited<ReturnType<ApplicationSettingsControlsV1
 
 function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
-  const { servers, retainedConnectors, refresh } = useMCPServices();
+  const { servers, retainedConnectors, catalog, refresh } = useMCPServices();
   const retained = !servers.length && retainedConnectors.length > 0;
   const { t } = useI18n();
   const scope = useMemo(() => ({}), [controls]);
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const confirmation = useRef<AbortController | null>(null);
-  const detailsID = useId();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [menu, setMenu] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [details, setDetails] = useState<string>();
   const [auth, setAuth] = useState<Record<string, ConnectorAuth>>({});
-  const [errors, setErrors] = useState<Record<string, MCPActionFailure>>({});
   const [busy, setBusy] = useState("");
   const [login, setLogin] = useState<{ server: MCPServerStatus; controls: ApplicationSettingsControlsV1; managed: boolean } | null>(null);
   const [preparing, setPreparing] = useState<string>();
@@ -242,7 +243,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
-    setErrors({}); setAuth({}); setExpanded({}); setBusy(""); setLogin(null); setPreparing(undefined); inFlight.current = false;
+    setAuth({}); setMenu(null); setDetails(undefined); setBusy(""); setLogin(null); setPreparing(undefined); inFlight.current = false;
     return () => { confirmation.current?.abort(); };
   }, [controls]);
   useEffect(() => {
@@ -262,7 +263,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     }).catch(failure => {
       if (!current() || revision !== loginIntentRevision.current || isPluginLifecycleCancellation(failure)) return;
       setPreparing(undefined);
-      setErrors(previous => ({ ...previous, [name]: { action: "login", diagnostic: toastErrorMessage(failure) } }));
+      showExtensionMutationError(failure, t("connector.connectFailed"));
     });
     // Server refreshes must not retire an already claimed receipt. The current
     // scope and explicit-cancel revision fence its eventual result instead.
@@ -297,9 +298,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     void Promise.resolve().then(() => controls.takeMCPConnectorLogin!()).then(server => {
       if (!cancelled && current() && !server) setLogin(previous => previous === login ? null : previous);
     }).catch(failure => {
-      if (!cancelled && current() && !isPluginLifecycleCancellation(failure)) {
-        setErrors(previous => ({ ...previous, [login.server.name]: { action: "login", diagnostic: toastErrorMessage(failure) } }));
-      }
+      if (!cancelled && current()) showExtensionMutationError(failure, t("connector.connectFailed"));
     });
     return () => { cancelled = true; };
   }, [login, loginAvailable, listedLoginAvailable, controls, retained, servers]);
@@ -317,16 +316,17 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     try { return await confirmAction(request, owner.signal); }
     finally { if (confirmation.current === owner) confirmation.current = null; }
   }
-  function clearError(name: string): void {
-    setErrors(previous => { const next = { ...previous }; delete next[name]; return next; });
-  }
-  async function act(name: string, action: MCPAction, operation: () => Promise<void>): Promise<void> {
+  // Connector failures are reported once as toasts; the card keeps showing
+  // the backend's state, and the raw diagnostic stays in connection details.
+  const failureMessages = {
+    connect: "connector.connectFailed", disconnect: "connector.disconnectIncomplete", identity: "connector.identityRetryFailed", edit: "connector.openFailed",
+  } as const;
+  async function act(name: string, action: keyof typeof failureMessages, operation: () => Promise<void>): Promise<void> {
     if (inFlight.current || login || preparing) return;
     inFlight.current = true;
     setBusy(name);
-    clearError(name);
     try { await operation(); }
-    catch (failure) { if (current() && !isPluginLifecycleCancellation(failure)) setErrors(previous => ({ ...previous, [name]: { action, diagnostic: toastErrorMessage(failure) } })); }
+    catch (failure) { if (current()) showExtensionMutationError(failure, t(failureMessages[action])); }
     finally {
       if (current()) {
         try { await refresh(); }
@@ -334,9 +334,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
       }
     }
   }
-  async function connect(server: MCPServerStatus, reconnect: boolean): Promise<void> {
-    if (reconnect && !await confirm({ title: t("connector.reconnectTitle", { name: server.connector!.title }), message: t("connector.reconnectHint"), confirmLabel: t("connector.reconnect") })) return;
-    if (!current()) return;
+  async function connect(server: MCPServerStatus): Promise<void> {
     if (controls.requestMCPConnectorLogin && controls.takeMCPConnectorLogin && controls.getPendingMCPConnectorLogin && controls.cancelMCPConnectorLogin) {
       setPreparing(server.name);
       const revision = loginIntentRevision.current;
@@ -357,7 +355,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
     if (current()) attachLogin(server, false);
   }
   async function disconnect(server: MCPServerStatus): Promise<void> {
-    if (!await confirm({ title: t("connector.disconnectTitle", { name: server.connector!.title }), message: t("connector.disconnectHint"), confirmLabel: t("mcp.disconnect"), tone: "danger" })) return;
+    if (!await confirm({ title: t("connector.disconnectTitle", { name: server.connector!.title }), message: t("connector.disconnectHint", { name: server.connector!.title }), confirmLabel: t("mcp.disconnect"), tone: "danger" })) return;
     if (!current()) return;
     // Cleanup is best-effort: a failed runtime stop must not prevent removing
     // local credentials or recording the user's disabled preference.
@@ -374,79 +372,106 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
       try { await operation(); }
       catch (failure) { failures.push(toastErrorMessage(failure)); }
     }
-    if (failures.length) throw new Error(failures.join("\n"));
+    if (failures.length) {
+      console.warn("Connector disconnect was incomplete:", failures.join("\n"));
+      throw new Error(t("connector.disconnectIncomplete"));
+    }
   }
 
   if (!visible.length && !loginAvailable && !preparing) return null;
+  const locked = retained || !!busy || !!login || !!preparing;
+  function describe(server: MCPServerStatus) {
+    const connector = server.connector!;
+    const setupRequired = connector.setup_required?.trim();
+    const authorization = retained ? undefined : auth[server.name];
+    const authorized = authorization?.result?.authenticated;
+    const identity = authorized ? authorization.result?.identity : undefined;
+    const account = identity?.state === "verified" ? identity.account : undefined;
+    const workspace = account ? identity?.workspace : undefined;
+    const accountLabel = account ? `${account.label || account.email || account.id}${account.kind === "bot" ? ` (${t("connector.bot")})` : ""}` : "";
+    const active = !retained && enabled && server.plugin_active !== false;
+    const available = active && server.configurable && !setupRequired;
+    const connected = server.connected && ["ready", "connected"].includes(server.state) && !server.error;
+    const working = retained || busy === server.name || preparing === server.name || login?.server.name === server.name;
+    const needsAuth = ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state);
+    const failed = !needsAuth && (!!server.error || ["failed", "error"].includes(server.state));
+    const attention = !working && failed;
+    const saved = server.configuration_enabled || server.connected || authorized || server.auth_status === "oauth";
+    const reconnect = connected || authorized || server.auth_status === "oauth";
+    const status = working ? t("mcp.working") : setupRequired ? t("connector.setupRequired")
+      : !active ? t("connector.inactive")
+      : !server.configurable ? t("connector.unavailable")
+      : needsAuth ? t("connector.needsSignIn")
+      : failed ? t("connector.connectionFailed")
+      : connected ? [t("mcp.connected"), accountLabel, workspace ? workspace.label || workspace.id : ""].filter(Boolean).join(" · ")
+      : ["starting", "connecting", "reconnecting"].includes(server.state) ? t("mcp.connecting")
+      : saved ? t("mcp.disconnected")
+      : connector.description || t("mcp.disconnected");
+    let documentationURL: string | undefined;
+    if (connector.documentation_url) {
+      try { if (new URL(connector.documentation_url).protocol === "https:") documentationURL = connector.documentation_url; }
+      catch { /* An invalid plugin link must not launch an external application. */ }
+    }
+    return { connector, setupRequired, authorization, authorized, identity, account, workspace, accountLabel, active, available, connected, working, needsAuth, attention, saved, reconnect, status, documentationURL };
+  }
+  function verifyIdentity(server: MCPServerStatus): Promise<void> {
+    return act(server.name, "identity", async () => {
+      const result = await controls.refreshMCPIdentity(server.name);
+      if (current()) {
+        setAuth(previous => ({ ...previous, [server.name]: { result } }));
+        // A credential-store failure cannot persist its own diagnostic.
+        if (result.identity?.error_code === "identity_credentials_unavailable") throw new Error(t("connector.identityRetryFailed"));
+      }
+    });
+  }
+  const detailServer = details ? visible.find(server => server.name === details) : undefined;
   return <SettingsSection testID="mcp-connectors" title={t("connector.title")}>
     <SettingsGroup>{visible.map(server => {
-      const connector = server.connector!;
-      const setupRequired = connector.setup_required?.trim();
-      const detailsOpen = !!expanded[server.name];
-      const detailsTarget = `${detailsID}-${server.name}`;
-      const authorization = retained ? undefined : auth[server.name];
-      const authorized = authorization?.result?.authenticated;
-      const identity = authorized ? authorization.result?.identity : undefined;
-      const account = identity?.state === "verified" ? identity.account : undefined;
-      const workspace = account ? identity?.workspace : undefined;
-      const accountLabel = account ? `${account.label || account.email || account.id}${account.kind === "bot" ? ` (${t("connector.bot")})` : ""}` : "";
-      const active = !retained && enabled && server.plugin_active !== false;
-      const available = active && server.configurable && !setupRequired;
-      const connected = server.connected && ["ready", "connected"].includes(server.state) && !server.error;
-      const failure = errors[server.name];
-      const working = retained || busy === server.name || preparing === server.name || login?.server.name === server.name;
-      const needsAuth = ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state);
-      const attention = !working && (failure || !needsAuth && server.error);
-      const saved = server.configuration_enabled || server.connected || authorized || server.auth_status === "oauth" || failure?.action === "disconnect";
-      const reconnect = connected || authorized || server.auth_status === "oauth";
-      const diagnostic = working || login?.server.name === server.name ? "" : failure?.diagnostic || server.error;
-      const status = working ? t("mcp.working") : setupRequired ? t("connector.setupRequired")
-        : !active ? t("connector.inactive")
-        : !server.configurable ? t("connector.unavailable")
-        : failure?.action === "disconnect" ? t("connector.disconnectIncomplete")
-        : (!failure || failure.action === "identity") && needsAuth ? t("mcp.needsAuth")
-        : (failure && failure.action !== "identity") || server.error || ["failed", "error"].includes(server.state) ? t("mcp.connectionFailed")
-        : connected ? `${t("mcp.connected")} · ${t("mcp.toolCount", { count: server.tool_count })}`
-        : ["starting", "connecting", "reconnecting"].includes(server.state) ? t("mcp.connecting")
-        : ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state) ? t("mcp.needsAuth")
-        : t("mcp.disconnected");
-      let documentationURL: string | undefined;
-      if (connector.documentation_url) {
-        try { if (new URL(connector.documentation_url).protocol === "https:") documentationURL = connector.documentation_url; }
-        catch { /* An invalid plugin link must not launch an external application. */ }
-      }
-      return <div className="mcp-service mcp-connector" key={server.name} data-connector={server.name} data-connected={connected} data-authorized={authorized === undefined ? "unknown" : authorized} aria-busy={working}>
-        <Plug className="icon mcp-service-icon" aria-hidden="true" />
+      const view = describe(server);
+      const items: ThreadContextMenuItem[] = [];
+      if (view.available && view.connected) items.push({ label: t("connector.reconnect"), onSelect: () => act(server.name, "connect", () => connect(server)) });
+      if (view.available && view.connected && view.authorized && view.connector.identity_probe && !view.account) items.push({ label: t("connector.verifyIdentity"), onSelect: () => verifyIdentity(server) });
+      // A connector that was never connected offers just Connect; details and
+      // links matter once there is a connection or a reason it cannot connect.
+      const explains = !retained && (view.saved || !!view.setupRequired || !view.active || !server.configurable);
+      if (explains) items.push({ label: t("mcp.connectionDetails"), onSelect: () => setDetails(server.name) });
+      if (explains && view.documentationURL) items.push({ label: t("connector.documentation"), onSelect: () => act(server.name, "edit", () => controls.openExternal(view.documentationURL!)) });
+      if (view.active && server.configurable && view.saved) items.push({ separator: true }, { label: t("mcp.disconnect"), danger: true, onSelect: () => act(server.name, "disconnect", () => disconnect(server)) });
+      return <div className="mcp-service mcp-connector" key={server.name} data-connector={server.name} data-connected={view.connected} data-authorized={view.authorized === undefined ? "unknown" : view.authorized} aria-busy={view.working}>
+        <ConnectorMark server={server} catalog={catalog} />
         <div className="mcp-service-copy">
-          <div className="mcp-service-name">{connector.title}</div>
-          <div className="mcp-service-status" data-attention={attention ? "error" : undefined} role={failure || working || needsAuth ? "status" : undefined}>
-            {attention ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}<span>{status}</span>
+          <div className="mcp-service-name">{view.connector.title}</div>
+          <div className="mcp-service-status" data-attention={view.attention ? "error" : undefined} data-connector-identity={view.account ? "" : undefined}
+            role={view.attention || view.working || view.needsAuth ? "status" : undefined}>
+            {view.attention ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}<span>{view.status}</span>
           </div>
-          {account ? <div className="mcp-service-status" data-connector-identity>{accountLabel}{workspace ? ` · ${workspace.label || workspace.id}` : ""}</div> : null}
-          {diagnostic ? <MCPDiagnostic message={diagnostic} /> : null}
         </div>
         <div className="mcp-service-actions">
-          {available ? <button type="button" className="settings-button" data-connector-action={reconnect ? "reconnect" : "connect"} disabled={!!busy || !!login || !!preparing}
-            onClick={() => void act(server.name, "connect", () => connect(server, !!reconnect))}>{t(reconnect ? "connector.reconnect" : "mcp.connect")}</button> : null}
-          {active && server.configurable && saved ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="disconnect" disabled={!!busy || !!login || !!preparing}
-            onClick={() => void act(server.name, "disconnect", () => disconnect(server))}>{t("mcp.disconnect")}</button> : null}
-          {documentationURL ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="documentation" disabled={retained || !!busy || !!login || !!preparing}
-            onClick={() => void act(server.name, "edit", () => controls.openExternal(documentationURL!))}>{t("connector.documentation")}</button> : null}
-          <button type="button" className="settings-button settings-button-ghost" disabled={retained} data-connector-details-toggle aria-expanded={detailsOpen} aria-controls={detailsTarget}
-            onClick={() => setExpanded(previous => ({ ...previous, [server.name]: !detailsOpen }))}>
-            <ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("mcp.connectionDetails")}
-          </button>
+          {view.available && !view.connected ? <button type="button" className="settings-button" data-connector-action={view.reconnect ? "reconnect" : "connect"} disabled={locked}
+            onClick={() => void act(server.name, "connect", () => connect(server))}>{t(view.reconnect ? "connector.reconnect" : "mcp.connect")}</button> : null}
+          {items.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-menu disabled={locked}
+            aria-label={t("provider.moreActions", { name: view.connector.title })} aria-haspopup="menu" aria-expanded={menu?.name === server.name}
+            onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ name: server.name, x: bounds.right, y: bounds.bottom }); }}>
+            <MoreHorizontal className="icon" aria-hidden="true" />
+          </button> : null}
+          {menu?.name === server.name ? <ThreadContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} /> : null}
         </div>
-        {detailsOpen ? <div className="mcp-connector-expanded" id={detailsTarget}>
-          {connector.description ? <p className="mcp-connector-description">{connector.description}</p> : null}
-          {setupRequired ? <p className="mcp-connector-description">{setupRequired}</p> : null}
-          {server.configuration_unavailable_reason ? <p className="mcp-connector-description">{server.configuration_unavailable_reason}</p> : null}
-          <p className="mcp-connector-description">{t("connector.accountScope")}</p>
-          {connector.identity_probe ? <p className="mcp-connector-description">{t("connector.identityHint")}</p> : null}
+      </div>;
+    })}</SettingsGroup>
+    {detailServer ? (() => {
+      const view = describe(detailServer);
+      const { account, workspace, identity, authorization, authorized } = view;
+      return <Modal ariaLabel={view.connector.title} icon={<ConnectorMark server={detailServer} catalog={catalog} />} title={view.connector.title} subtitle={view.status}
+        panelClassName="mcp-connector-dialog" onClose={() => setDetails(undefined)}
+        footer={view.available && view.connected && authorized && view.connector.identity_probe ? <button type="button" className="settings-button" data-connector-action="identity" disabled={locked}
+          onClick={() => void verifyIdentity(detailServer)}>{t(account ? "connector.refreshIdentity" : "connector.verifyIdentity")}</button> : undefined}>
+        <div className="mcp-dialog-body" data-connector-details={detailServer.name}>
+          {view.setupRequired ? <p className="mcp-connector-description">{view.setupRequired}</p> : null}
+          {detailServer.configuration_unavailable_reason ? <p className="mcp-connector-description">{detailServer.configuration_unavailable_reason}</p> : null}
           <dl className="mcp-connector-details">
-            {server.resource_url ? <><dt>{t("connector.endpoint")}</dt><dd data-connector-detail="endpoint">{server.resource_url}</dd></> : null}
-            <dt>{t("connector.authorization")}</dt><dd>{!active || server.configuration_unavailable_reason ? t("connector.unavailable") : authorization?.error ? t("connector.authUnavailable") : authorized === undefined ? t("connector.authLoading") : t(authorized ? "connector.authorized" : "connector.notAuthorized")}</dd>
-            {authorized ? <><dt>{t("connector.account")}</dt><dd data-connector-detail="account" data-verified={!!account}>{account ? accountLabel : t(identity?.state === "unavailable" ? "connector.identityUnavailable" : "connector.accountUnknown")}</dd></> : null}
+            {detailServer.resource_url ? <><dt>{t("connector.endpoint")}</dt><dd data-connector-detail="endpoint">{detailServer.resource_url}</dd></> : null}
+            <dt>{t("connector.authorization")}</dt><dd>{!view.active || detailServer.configuration_unavailable_reason ? t("connector.unavailable") : authorization?.error ? t("connector.authUnavailable") : authorized === undefined ? t("connector.authLoading") : t(authorized ? "connector.authorized" : "connector.notAuthorized")}</dd>
+            {authorized ? <><dt>{t("connector.account")}</dt><dd data-connector-detail="account" data-verified={!!account}>{account ? view.accountLabel : t(identity?.state === "unavailable" ? "connector.identityUnavailable" : "connector.accountUnknown")}</dd></> : null}
             {account ? <>
               <dt>{t("connector.accountID")}</dt><dd data-connector-detail="account-id">{account.id}</dd>
               {account.email ? <><dt>{t("connector.email")}</dt><dd data-connector-detail="email">{account.email}</dd></> : null}
@@ -456,33 +481,28 @@ function MCPConnectors({ pluginID, enabled = true, filter = "" }: MCPServicesPro
             </> : null}
             {authorization?.result ? <><dt>{t("connector.scopes")}</dt><dd data-connector-detail="scopes">{authorization.result.scopes?.length ? authorization.result.scopes.join(", ") : t("connector.noScopes")}</dd></> : null}
           </dl>
-          {available && connected && authorized && connector.identity_probe ? <button type="button" className="settings-button settings-button-ghost" data-connector-action="identity" disabled={!!busy || !!login}
-            onClick={() => void act(server.name, "identity", async () => {
-              const result = await controls.refreshMCPIdentity(server.name);
-              if (current()) {
-                setAuth(previous => ({ ...previous, [server.name]: { result } }));
-                // A credential-store failure cannot persist its own diagnostic.
-                if (result.identity?.error_code === "identity_credentials_unavailable") throw new Error(t("connector.identityRetryFailed"));
-              }
-            })}>{t(account ? "connector.refreshIdentity" : "connector.verifyIdentity")}</button> : null}
-          {authorization?.error ? <MCPDiagnostic message={authorization.error} /> : null}
-        </div> : null}
-      </div>;
-    })}</SettingsGroup>
+          <p className="mcp-connector-description">{t("connector.accountScope")}</p>
+          {[detailServer.error, authorization?.error].filter(Boolean).map(message => <MCPDiagnostic key={message} message={message!} />)}
+        </div>
+      </Modal>;
+    })() : null}
     {preparing ? <Modal ariaLabel={t("mcp.loginNamed", { name: visible.find(server => server.name === preparing)?.connector?.title || preparing })}
-      title={t("mcp.working")} onClose={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}
-      footer={<button type="button" className="settings-button" onClick={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}>{t("mcp.cancelLogin")}</button>} /> : null}
-    {loginAvailable ? <MCPLogin server={login.server} managed={login.managed} onClose={failure => {
+      title={t("mcp.loginNamed", { name: visible.find(server => server.name === preparing)?.connector?.title || preparing })}
+      onClose={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}
+      footer={<button type="button" className="settings-button" onClick={() => { loginIntentRevision.current++; controls.cancelMCPConnectorLogin?.(); setPreparing(undefined); }}>{t("mcp.cancelLogin")}</button>}>
+      <div className="mcp-dialog-body"><p role="status">{t("mcp.loginStarting")}</p></div>
+    </Modal> : null}
+    {loginAvailable ? <MCPLogin server={login.server} managed={login.managed} icon={<ConnectorMark server={login.server} catalog={catalog} />} onClose={() => {
+      // The sign-in dialog already showed any failure; dismissing it acknowledges it.
       if (!current()) return;
-      if (failure) setErrors(previous => ({ ...previous, [login.server.name]: failure }));
       controls.cancelMCPConnectorLogin?.();
       setLogin(null);
       void refresh();
-    }} onConnected={() => { if (current()) { controls.cancelMCPConnectorLogin?.(); clearError(login.server.name); setLogin(null); void refresh(); } }} /> : null}
+    }} onConnected={() => { if (current()) { controls.cancelMCPConnectorLogin?.(); setLogin(null); void refresh(); } }} /> : null}
   </SettingsSection>;
 }
 
-function MCPLogin({ server, managed = false, onClose, onConnected }: { server: MCPServerStatus; managed?: boolean; onClose(failure?: MCPActionFailure): void; onConnected(): void }): JSX.Element {
+function MCPLogin({ server, managed = false, icon, onClose, onConnected }: { server: MCPServerStatus; managed?: boolean; icon?: ReactNode; onClose(failure?: MCPActionFailure): void; onConnected(): void }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
   const [error, setError] = useState("");
@@ -568,7 +588,7 @@ function MCPLogin({ server, managed = false, onClose, onConnected }: { server: M
 
   const title = t("mcp.loginNamed", { name: server.connector?.title || server.display_name || server.name });
   const dismiss = () => onClose(error ? { action: authorized ? "connect" : "login", diagnostic: error } : undefined);
-  return <Modal ariaLabel={title} title={title} onClose={dismiss} asForm onSubmit={() => void finish()} footer={<>
+  return <Modal ariaLabel={title} icon={icon} title={title} onClose={dismiss} asForm onSubmit={() => void finish()} footer={<>
     <button type="button" className="settings-button" onClick={dismiss}>{t("mcp.cancelLogin")}</button>
     {error && !manual ? <button type="button" className="settings-button settings-button-primary" data-testid="mcp-login-retry" onClick={() => {
       if (managed) void controls.retryMCPConnectorLogin!().then(() => setRetry(value => value + 1)).catch(failure => {
@@ -578,9 +598,8 @@ function MCPLogin({ server, managed = false, onClose, onConnected }: { server: M
     }}>{t("mcp.retry")}</button> : null}
     {manual ? <button type="submit" className="settings-button settings-button-primary" disabled={(!authorized && !code.trim()) || finishing}>{t(authorized ? "mcp.connect" : "mcp.finishLogin")}</button> : null}
   </>}>
-    <div className="mcp-form">
+    <div className="mcp-dialog-body">
       {error ? <MCPFailure message={t(authorized ? "mcp.connectionFailed" : "mcp.loginFailed")} diagnostic={error} /> : <p role="status">{t(ready ? manual ? "mcp.manualHint" : "mcp.browserWaiting" : "mcp.loginStarting")}</p>}
-      {server.connector?.identity_probe ? <p>{t("connector.identityHint")}</p> : null}
       {manual && !authorized ? <label className="mcp-field">{t("mcp.callbackCode")}<input className="settings-input" value={code} onChange={event => setCode(event.target.value)} autoComplete="off" /></label> : null}
     </div>
   </Modal>;

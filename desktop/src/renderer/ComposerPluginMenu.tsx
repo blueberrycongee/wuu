@@ -5,6 +5,7 @@ import { draftPluginReferences, pluginReferenceToken } from "./ComposerPluginRef
 import { useComposerServices } from "./ComposerServicesContext";
 import { useI18n } from "./i18n";
 import { Puzzle, Settings } from "./WuuIcons";
+import { ConnectorMark } from "./ConnectorMark";
 import { showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
@@ -125,7 +126,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     {entries.map(entry => <div className="composer-plugin-row" key={entry.key}>
       <button type="button" role="menuitem" data-plugin-choice data-plugin-key={entry.key} disabled={!supported || !entry.ready}
         title={entry.description} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
-        <Puzzle className="icon-lg" aria-hidden="true" />
+        {entry.server ? <ConnectorMark server={entry.server} catalog={services.catalog} className="composer-plugin-mark" /> : <Puzzle className="icon-lg" aria-hidden="true" />}
         <span className="composer-plugin-row-copy"><span>{entry.name}</span>
           {entry.description ? <span className="composer-plugin-detail">{entry.description}</span> : null}
           {entry.detail ? <span className="composer-plugin-detail">{entry.detail}</span> : null}

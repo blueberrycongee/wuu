@@ -10,6 +10,7 @@ import { I18nProvider, translateCurrent } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { ConfirmDialogHost } from "./ConfirmDialog";
 import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+import { clearToasts, ToastViewport } from "./Toast";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -28,6 +29,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  act(() => clearToasts());
 });
 
 function controls(overrides: Partial<Controls> = {}): Controls {
@@ -49,7 +51,7 @@ function controls(overrides: Partial<Controls> = {}): Controls {
 async function render(source: Controls, props: { pluginID?: string; enabled?: boolean; filter?: string; contextKey?: string } = {}): Promise<void> {
   await act(async () => root.render(
     <I18nProvider preferenceStore={{ get: () => "en-US", set: async () => undefined, subscribe: () => () => {} }}>
-      <WuuUIRoot><SettingsControlsProvider controls={source}><MCPServicesProvider contextKey={props.contextKey}><MCPServices {...props} /></MCPServicesProvider></SettingsControlsProvider><ConfirmDialogHost /></WuuUIRoot>
+      <WuuUIRoot><SettingsControlsProvider controls={source}><MCPServicesProvider contextKey={props.contextKey}><MCPServices {...props} /></MCPServicesProvider></SettingsControlsProvider><ConfirmDialogHost /><ToastViewport /></WuuUIRoot>
     </I18nProvider>,
   ));
 }
@@ -409,8 +411,31 @@ const connector: MCPServerStatus = {
   resource_url: "https://library.example.test/mcp",
 };
 
+function toastText(): string {
+  return document.querySelector('[data-wuu-component="notice"]')?.textContent ?? "";
+}
+
 function connectorRow(): HTMLElement {
   const value = container.querySelector<HTMLElement>('[data-connector="library-service"]');
+  expect(value).not.toBeNull();
+  return value!;
+}
+
+async function connectorMenu(key: Parameters<typeof translateCurrent>[0]): Promise<void> {
+  await click(connectorRow().querySelector<HTMLButtonElement>("[data-connector-menu]")!);
+  await click(button(document.querySelector('[role="menu"]')!, key));
+}
+
+function menuLabels(): string[] {
+  return [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map(item => item.textContent?.trim() ?? "");
+}
+
+function detail(name: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-connector-detail="${name}"]`);
+}
+
+function detailsDialog(): HTMLElement {
+  const value = document.querySelector<HTMLElement>("[data-connector-details]");
   expect(value).not.toBeNull();
   return value!;
 }
@@ -438,8 +463,9 @@ function connectorControls(overrides: Partial<Controls> = {}): Controls {
 
 it("presents an OAuth-required connector as authorization needed, not a failed connection", async () => {
   await render(connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, state: "auth_required", error: authFailure }] }) }));
-  expect(connectorRow().textContent).toContain(translateCurrent("mcp.needsAuth"));
-  expect(connectorRow().textContent).not.toContain(translateCurrent("mcp.connectionFailed"));
+  expect(connectorRow().textContent).toContain(translateCurrent("connector.needsSignIn"));
+  expect(connectorRow().textContent).not.toContain(translateCurrent("connector.connectionFailed"));
+  expect(connectorRow().textContent).not.toContain(authFailure);
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
 });
 
@@ -517,12 +543,12 @@ it("keeps setup-required connectors informational and opens their documentation 
   const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [setup] }) });
   await render(source);
   expect(connectorRow().textContent).not.toContain(setup.connector.setup_required);
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  expect(connectorRow().textContent).toContain(setup.connector.setup_required);
   expect(connectorRow().querySelector('[data-connector-action="connect"]')).toBeNull();
   expect(connectorRow().querySelector('[data-connector-action="reconnect"]')).toBeNull();
-  await click(button(connectorRow(), "connector.documentation"));
+  await connectorMenu("connector.documentation");
   expect(source.openExternal).toHaveBeenCalledWith(setup.connector.documentation_url);
+  await connectorMenu("mcp.connectionDetails");
+  expect(detailsDialog().textContent).toContain(setup.connector.setup_required);
   expect(source.configureMCPServers).not.toHaveBeenCalled();
   expect(source.startMCPLogin).not.toHaveBeenCalled();
 });
@@ -602,7 +628,18 @@ it.each(["configuration changed", "cannot activate while a turn is running", "ca
   expect(source.startMCPLogin).not.toHaveBeenCalled();
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
   expect(button(connectorRow(), "mcp.connect").disabled).toBe(false);
-  expect((await revealDiagnostic(connectorRow())).textContent).toContain(diagnostic);
+  expect(toastText()).toContain(diagnostic);
+  expect(connectorRow().textContent).not.toContain(diagnostic);
+});
+
+it("explains a connect blocked by running work instead of showing the backend admission error", async () => {
+  const blocked = 'cannot configure MCP services in plugin packages while a turn is running or background work remains on thread "thread-1"';
+  const source = connectorControls({ configureMCPServers: vi.fn().mockRejectedValue(new Error(blocked)) });
+  await render(source);
+  await click(button(connectorRow(), "mcp.connect"));
+  expect(toastText()).toContain(translateCurrent("skills.executionBusy"));
+  expect(document.body.textContent).not.toContain("thread-1");
+  expect(source.startMCPLogin).not.toHaveBeenCalled();
 });
 
 it("cancels a late browser login start after dismissal without showing a connected state", async () => {
@@ -675,12 +712,12 @@ it("shows the resource and saved scopes without presenting the authorized servic
   });
   await render(source);
   expect(source.getMCPAuthStatus).toHaveBeenCalledWith(connector.name);
-  expect(connectorRow().querySelector('[data-connector-detail="endpoint"]')).toBeNull();
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  expect(connectorRow().querySelector('[data-connector-detail="endpoint"]')?.textContent).toBe(connector.resource_url);
-  expect(connectorRow().querySelector('[data-connector-detail="scopes"]')?.textContent).toContain("documents:read");
-  expect(connectorRow().querySelector('[data-connector-detail="scopes"]')?.textContent).toContain("comments:write");
-  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.getAttribute("data-verified")).toBe("false");
+  expect(detail("endpoint")).toBeNull();
+  await connectorMenu("mcp.connectionDetails");
+  expect(detail("endpoint")?.textContent).toBe(connector.resource_url);
+  expect(detail("scopes")?.textContent).toContain("documents:read");
+  expect(detail("scopes")?.textContent).toContain("comments:write");
+  expect(detail("account")?.getAttribute("data-verified")).toBe("false");
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
   expect(connectorRow().getAttribute("data-authorized")).toBe("true");
 });
@@ -710,12 +747,12 @@ it("shows only provider-verified account and workspace data, as text, without re
   expect(connectorRow().textContent).toContain(verifiedIdentity.workspace.label);
   expect(connectorRow().querySelector("script")).toBeNull();
   expect(source.refreshMCPIdentity).not.toHaveBeenCalled();
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.getAttribute("data-verified")).toBe("true");
-  expect(connectorRow().querySelector('[data-connector-detail="account-id"]')?.textContent).toBe("person-123");
-  expect(connectorRow().querySelector('[data-connector-detail="workspace-id"]')?.textContent).toBe("workspace-123");
-  expect(connectorRow().querySelector('[data-connector-detail="email"]')?.textContent).toBe("ada@example.test");
-  expect(connectorRow().querySelector('[data-connector-detail="verified-at"]')).not.toBeNull();
+  await connectorMenu("mcp.connectionDetails");
+  expect(detail("account")?.getAttribute("data-verified")).toBe("true");
+  expect(detail("account-id")?.textContent).toBe("person-123");
+  expect(detail("workspace-id")?.textContent).toBe("workspace-123");
+  expect(detail("email")?.textContent).toBe("ada@example.test");
+  expect(detail("verified-at")).not.toBeNull();
   expect(source.startMCPLogin).not.toHaveBeenCalled();
 });
 
@@ -727,8 +764,8 @@ it("retries identity without replacing OAuth and keeps a failed identity separat
     refreshMCPIdentity: vi.fn(() => retry.promise),
   });
   await render(source);
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  const button = connectorRow().querySelector<HTMLButtonElement>('[data-connector-action="identity"]')!;
+  await connectorMenu("mcp.connectionDetails");
+  const button = document.querySelector<HTMLButtonElement>('[data-connector-action="identity"]')!;
   expect(button).not.toBeNull();
   await act(async () => { button.click(); button.click(); });
   expect(source.refreshMCPIdentity).toHaveBeenCalledExactlyOnceWith(connector.name);
@@ -736,9 +773,9 @@ it("retries identity without replacing OAuth and keeps a failed identity separat
   vi.mocked(source.getMCPAuthStatus).mockResolvedValue({ name: connector.name, authenticated: true });
   await act(async () => retry.resolve({ name: connector.name, authenticated: true, identity: { state: "unavailable", error_code: "identity_credentials_unavailable" } }));
   expect(connectorRow().getAttribute("data-connected")).toBe("true");
-  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.getAttribute("data-verified")).toBe("false");
-  expect(connectorRow().querySelector(".settings-mcp-diagnostic")).not.toBeNull();
-  expect(connectorRow().textContent).not.toContain(translateCurrent("mcp.connectionFailed"));
+  expect(detail("account")?.getAttribute("data-verified")).toBe("false");
+  expect(toastText()).toContain(translateCurrent("connector.identityRetryFailed"));
+  expect(connectorRow().textContent).not.toContain(translateCurrent("connector.connectionFailed"));
   expect(source.startMCPLogin).not.toHaveBeenCalled();
   expect(source.configureMCPServers).not.toHaveBeenCalled();
   expect(source.removeMCPAuth).not.toHaveBeenCalled();
@@ -752,8 +789,8 @@ it("discards a late identity result after the connection context changes", async
     refreshMCPIdentity: vi.fn(() => retry.promise),
   });
   await render(previous);
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  await click(connectorRow().querySelector('[data-connector-action="identity"]')!);
+  await connectorMenu("mcp.connectionDetails");
+  await click(document.querySelector<HTMLButtonElement>('[data-connector-action="identity"]')!);
   const next = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }) });
   await render(next);
   await act(async () => retry.resolve({ name: connector.name, authenticated: true, identity: verifiedIdentity }));
@@ -767,26 +804,26 @@ it("does not present a bot as the authorizing person or stale identity as authen
     getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true, identity: { ...verifiedIdentity, account: { id: "bot-1", kind: "bot" } } }),
   });
   await render(source);
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  expect(connectorRow().querySelector('[data-connector-detail="account"]')?.textContent).toContain("bot");
-  expect(connectorRow().querySelector('[data-connector-detail="email"]')).toBeNull();
+  await connectorMenu("mcp.connectionDetails");
+  expect(detail("account")?.textContent).toContain("bot");
+  expect(detail("email")).toBeNull();
   await render(connectorControls({
     listMCPServers: vi.fn().mockResolvedValue({ servers: [identifiedConnector] }),
     getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: false, identity: verifiedIdentity }),
   }));
   expect(connectorRow().textContent).not.toContain(verifiedIdentity.account.label);
-  expect(connectorRow().querySelector('[data-connector-action="identity"]')).toBeNull();
+  expect(document.querySelector('[data-connector-action="identity"]')).toBeNull();
 });
 
 it("confirms connector disconnect, then stops runtime, removes local credentials and saves disabled", async () => {
   const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, ...connected, name: connector.name, configuration_enabled: true }] }) });
   await render(source);
-  await click(button(connectorRow(), "mcp.disconnect"));
+  await connectorMenu("mcp.disconnect");
   expect(source.disconnectMCPServer).not.toHaveBeenCalled();
   await click(document.querySelector('[data-confirm-action="cancel"]')!);
   expect(source.removeMCPAuth).not.toHaveBeenCalled();
   expect(source.configureMCPServers).not.toHaveBeenCalled();
-  await click(button(connectorRow(), "mcp.disconnect"));
+  await connectorMenu("mcp.disconnect");
   await click(document.querySelector('[data-confirm-action="confirm"]')!);
   expect(source.disconnectMCPServer).toHaveBeenCalledWith(connector.name);
   expect(source.removeMCPAuth).toHaveBeenCalledWith(connector.name);
@@ -799,19 +836,19 @@ it("reports a partial disconnect failure and still attempts credential cleanup a
     disconnectMCPServer: vi.fn().mockRejectedValue(new Error("runtime stop failed")),
   });
   await render(source);
-  await click(button(connectorRow(), "mcp.disconnect"));
+  await connectorMenu("mcp.disconnect");
   await click(document.querySelector('[data-confirm-action="confirm"]')!);
   expect(source.removeMCPAuth).toHaveBeenCalledWith(connector.name);
   expect(source.configureMCPServers).toHaveBeenCalledWith({ servers: { [connector.name]: { enabled: false } }, revision: "connector-revision" });
-  expect((await revealDiagnostic(connectorRow())).textContent).toContain("runtime stop failed");
+  expect(toastText()).toContain(translateCurrent("connector.disconnectIncomplete"));
+  expect(connectorRow().textContent).not.toContain("runtime stop failed");
 });
 
-it("confirms reconnect without removing the existing authorization before replacement succeeds", async () => {
+it("reconnects without removing the existing authorization before replacement succeeds", async () => {
   const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true, auth_status: "oauth" }] }) });
   await render(source);
   await click(button(connectorRow(), "connector.reconnect"));
-  expect(source.startMCPLogin).not.toHaveBeenCalled();
-  await click(document.querySelector('[data-confirm-action="confirm"]')!);
+  expect(document.querySelector('[data-confirm-action="confirm"]')).toBeNull();
   expect(source.startMCPLogin).toHaveBeenCalledWith(connector.name);
   expect(source.removeMCPAuth).not.toHaveBeenCalled();
 });
@@ -830,7 +867,7 @@ it("dismisses an owned confirmation on controls replacement without mutating eit
   const previous = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true }] }) });
   const next = connectorControls();
   await render(previous);
-  await click(button(connectorRow(), "mcp.disconnect"));
+  await connectorMenu("mcp.disconnect");
   expect(document.querySelector('[data-confirm-action="confirm"]')).not.toBeNull();
   await render(next);
   expect(document.querySelector('[data-confirm-action="confirm"]')).toBeNull();
@@ -858,15 +895,16 @@ it("does not treat unreadable credentials or runtime startup as verified authori
   await render(source);
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
   expect(connectorRow().getAttribute("data-authorized")).toBe("unknown");
-  expect(connectorRow().querySelector('[data-connector-detail="scopes"]')).toBeNull();
-  await click(connectorRow().querySelector("[data-connector-details-toggle]")!);
-  expect((await revealDiagnostic(connectorRow())).textContent).toContain("credential store unavailable");
+  expect(detail("scopes")).toBeNull();
+  await connectorMenu("mcp.connectionDetails");
+  expect((await revealDiagnostic(detailsDialog())).textContent).toContain("credential store unavailable");
 });
 
 it.each(["javascript:alert(1)", "file:///private/setup", "http://docs.example.test/setup"])("does not launch unsafe connector documentation URL: %s", async url => {
   const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, connector: { ...connector.connector!, documentation_url: url, setup_required: "Registration unavailable" } }] }) });
   await render(source);
-  expect(connectorRow().querySelector('[data-connector-action="documentation"]')).toBeNull();
+  await click(connectorRow().querySelector<HTMLButtonElement>("[data-connector-menu]")!);
+  expect(menuLabels()).not.toContain(translateCurrent("connector.documentation"));
   expect(source.openExternal).not.toHaveBeenCalled();
 });
 
@@ -876,12 +914,12 @@ it("preserves a failed disabled-preference save as an incomplete disconnect afte
     configureMCPServers: vi.fn().mockRejectedValue(new Error("configuration changed during disconnect")),
   });
   await render(source);
-  await click(button(connectorRow(), "mcp.disconnect"));
+  await connectorMenu("mcp.disconnect");
   await click(document.querySelector('[data-confirm-action="confirm"]')!);
   expect(source.disconnectMCPServer).toHaveBeenCalledWith(connector.name);
   expect(source.removeMCPAuth).toHaveBeenCalledWith(connector.name);
-  expect((await revealDiagnostic(connectorRow())).textContent).toContain("configuration changed during disconnect");
-  expect(button(connectorRow(), "mcp.disconnect").disabled).toBe(false);
+  expect(toastText()).toContain(translateCurrent("connector.disconnectIncomplete"));
+  expect(connectorRow().querySelector<HTMLButtonElement>("[data-connector-menu]")!.disabled).toBe(false);
 });
 
 
@@ -927,8 +965,8 @@ it("explains a context-unavailable connector in details without offering activat
   expect(connectorRow().querySelector('[data-connector-action="connect"]')).toBeNull();
   expect(source.getMCPAuthStatus).not.toHaveBeenCalled();
   expect(connectorRow().textContent).not.toContain(reason);
-  await click(connectorRow().querySelector('[data-connector-details-toggle]')!);
-  expect(connectorRow().textContent).toContain(reason);
+  await connectorMenu("mcp.connectionDetails");
+  expect(detailsDialog().textContent).toContain(reason);
 });
 
 it("does not read credentials for a connector excluded from the active plugin composition", async () => {
@@ -936,7 +974,7 @@ it("does not read credentials for a connector excluded from the active plugin co
   await render(source);
   expect(connectorRow().querySelector('[data-connector-action="connect"]')).toBeNull();
   expect(source.getMCPAuthStatus).not.toHaveBeenCalled();
-  await click(connectorRow().querySelector('[data-connector-details-toggle]')!);
+  await connectorMenu("mcp.connectionDetails");
   expect(connectorRow().getAttribute("data-authorized")).toBe("unknown");
 });
 

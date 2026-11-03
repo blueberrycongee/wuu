@@ -597,6 +597,14 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		if err := server.Connector.Validate(); err != nil {
 			return Manifest{}, fmt.Errorf("mcp_servers.%s.connector: %w", name, err)
 		}
+		if server.Connector != nil && server.Connector.Icon != nil {
+			raw := server.Connector.Icon
+			icon, err := normalizeIconValue(root, "mcp_servers."+name+".connector.icon", &IconSpec{Path: raw.Path, Light: raw.Light, Dark: raw.Dark})
+			if err != nil {
+				return Manifest{}, err
+			}
+			server.Connector.Icon = &config.MCPConnectorIcon{Path: icon.Path, Light: icon.Light, Dark: icon.Dark}
+		}
 	}
 	commands, commandPaths, err := normalizeCommands(root, id, raw.Contributes.Commands)
 	if err != nil {

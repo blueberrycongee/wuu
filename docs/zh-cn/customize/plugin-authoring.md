@@ -93,7 +93,8 @@
       "connector": {
         "title": "Notion",
         "description": "Work with the workspace you authorize.",
-        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client"
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
+        "icon": { "path": "assets/notion.svg" }
       }
     }
   }
@@ -109,6 +110,7 @@
 | `documentation_url` | 可选的配置或服务商文档链接，必须是绝对 HTTPS 地址，且不内嵌凭据。 |
 | `setup_required` | 可选的应用配置缺失说明。非空白时，卡片只展示要求与文档，不提供连接或授权操作。 |
 | `identity_probe` | 可选的固定只读 MCP 调用及有界 JSON Pointer 映射，用于读取服务商返回的身份；仅接受活动的受信任插件包声明，不接受独立配置注入。 |
+| `icon` | 可选的品牌图片：`{ "path": "..." }` 或 `{ "light": "...", "dark": "..." }`，使用包内相对路径的 SVG、PNG 或 WebP，限制与插件 `icon` 相同。显示在连接器卡片、登录对话框和输入框插件菜单的中性底板中，只为所属插件版本提供。未声明图标的卡片和独立服务显示通用图标。 |
 
 按需连接账号时，必须显式声明 `enabled: false`，避免首次安装就开始账号连接。示例的规范服务名是 `plugin.workspace-connector.notion`，用户偏好和 OAuth 凭据使用同一身份。连接操作先检查当前配置提供方的版本并保存启用偏好，再使用普通 MCP 连接与 OAuth 流程。连接器的断开操作会删除本机 OAuth 凭据，并持久化 `enabled: false`，不表示已撤销服务商侧的授权。禁用插件会停止所属服务，不会替换为其他连接器。
 
