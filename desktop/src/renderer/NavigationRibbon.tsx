@@ -173,19 +173,15 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   return <>
     <HoverRevealScopeContext.Provider value={{ disabled: dragging || resizing || collapsed, retain: () => () => {} }}>
     <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" hidden={collapsed} data-expanded={width > RIBBON_COMPACT_WIDTH || undefined} aria-label={t("sidebar.mainNavigation")}>
-      <HoverRevealScopeContext.Provider value={null}>
-        <Tooltip content={t("ribbon.github")} side="bottom" native={Boolean(activeWebsiteId)} disabled={collapsed}>
-          <a className="sidebar-ribbon-brand"
-            href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"
-            aria-label={t("ribbon.github")}
-            onClick={event => {
-              event.preventDefault();
-              void (onOpenExternal ?? window.wuu.openExternal)(event.currentTarget.href).catch(error => showActionErrorToast(error));
-            }}>
-            <img src={mascotIcon} alt="" draggable={false} />
-          </a>
-        </Tooltip>
-      </HoverRevealScopeContext.Provider>
+      <a className="sidebar-ribbon-brand"
+        href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"
+        aria-label={t("ribbon.github")}
+        onClick={event => {
+          event.preventDefault();
+          void (onOpenExternal ?? window.wuu.openExternal)(event.currentTarget.href).catch(error => showActionErrorToast(error));
+        }}>
+        <img src={mascotIcon} alt="" draggable={false} />
+      </a>
       <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
         accessibility={{ screenReaderInstructions: { draggable: t("ribbon.reorderHint") } }}
         onDragStart={() => setDragging(true)}
