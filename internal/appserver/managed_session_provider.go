@@ -247,12 +247,14 @@ func managedSessionError(err error) error {
 	if errors.As(err, &serviceErr) {
 		return serviceErr
 	}
-	code := "managed_session_request_failed"
+	// host.managed-session@1 exposed these codes before Project Agent retired;
+	// keep their wire spelling so existing coordinators can classify failures.
+	code := "project_request_failed"
 	switch {
 	case errors.Is(err, session.ErrControlChanged):
-		code = "control_changed"
+		code = "project_control_changed"
 	case errors.Is(err, session.ErrSessionNotFound):
-		code = "session_not_found"
+		code = "project_session_missing"
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		code = "request_cancelled"
 	}
