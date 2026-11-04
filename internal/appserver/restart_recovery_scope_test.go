@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,11 +143,16 @@ type blockedRecoveryDocuments struct {
 	persistence.Documents
 	entered, release chan struct{}
 	once             sync.Once
+	namespace        string
+	enabled          atomic.Bool
 }
 
 func (d *blockedRecoveryDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
-	if q.Namespace == restartRecoveryNamespace && len(q.Keys) == 0 {
-		d.once.Do(func() { close(d.entered) })
+	blocked := false
+	if d.enabled.Load() && q.Namespace == d.namespace && len(q.Keys) == 0 {
+		d.once.Do(func() { blocked = true; close(d.entered) })
+	}
+	if blocked {
 		select {
 		case <-d.release:
 		case <-ctx.Done():
@@ -158,7 +164,7 @@ func (d *blockedRecoveryDocuments) Read(ctx context.Context, q persistence.Query
 
 func TestRestartRecoveryDoesNotBlockSkillList(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	docs := &blockedRecoveryDocuments{Documents: rt.Documents, entered: make(chan struct{}), release: make(chan struct{})}
+	docs := &blockedRecoveryDocuments{Documents: rt.Documents, entered: make(chan struct{}), release: make(chan struct{}), namespace: restartRecoveryNamespace}
 	rt.Documents = docs
 	rt.Sessions = session.NewStore(context.Background(), docs)
 	out := &lockedBuffer{}
@@ -168,6 +174,7 @@ func TestRestartRecoveryDoesNotBlockSkillList(t *testing.T) {
 	if srv.startupErr != nil {
 		t.Fatal(srv.startupErr)
 	}
+	docs.enabled.Store(true)
 	reader, writer := io.Pipe()
 	t.Cleanup(func() { _ = writer.Close(); _ = reader.Close() })
 	scannerDone := make(chan error, 1)
@@ -200,5 +207,68 @@ func TestRestartRecoveryDoesNotBlockSkillList(t *testing.T) {
 	_ = writer.Close()
 	if err := <-scannerDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRestartRecoverySkipsConversationChangedDuringScan(t *testing.T) {
+	for _, change := range []string{"delete", "archive"} {
+		t.Run(change, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			const threadID = "deleted-during-recovery"
+			if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := appendChatMessage(rt.Sessions, threadID, providers.ChatMessage{Role: "user", Content: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			if err := persistence.Update(context.Background(), rt.Documents, func(tx *persistence.Tx) error {
+				if err := tx.Put(restartRecoveryBootNamespace, "boot", now.Add(-2*time.Hour)); err != nil {
+					return err
+				}
+				return tx.Put(restartRecoveryNamespace, threadID, restartRecoveryRecord{
+					ThreadID: threadID, TurnID: threadID + "-turn-0001", State: "running", AllowedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+				})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			docs := &blockedRecoveryDocuments{Documents: rt.Documents, entered: make(chan struct{}), release: make(chan struct{}), namespace: "wuu.session_messages.v1"}
+			rt.Documents = docs
+			rt.Sessions = session.NewStore(context.Background(), docs)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			var release sync.Once
+			t.Cleanup(func() { release.Do(func() { close(docs.release) }); srv.Close() })
+			docs.enabled.Store(true)
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"recovery","method":"thread/recovery/list"}`)); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-docs.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("recovery did not reach the history barrier")
+			}
+			if change == "delete" {
+				if _, err := rt.Sessions.Delete(threadID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			release.Do(func() { close(docs.release) })
+			response := waitForResponseByID(t, out, "recovery")
+			if response["error"] != nil {
+				t.Fatalf("changing a candidate failed the recovery list: %+v", response)
+			}
+			result := remarshal[struct {
+				Items []RestartRecoveryItem `json:"items"`
+			}](t, response["result"])
+			if len(result.Items) != 0 {
+				t.Fatalf("changed conversation was offered for recovery: %+v", result.Items)
+			}
+
+		})
 	}
 }

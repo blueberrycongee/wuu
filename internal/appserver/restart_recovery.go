@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -163,11 +164,14 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if !found || meta.ArchivedAt != nil || meta.Visibility == pluginhost.SessionVisibilityPlugin || meta.ParentID != "" || projectExecutionDisabled(meta.Source) {
+		if !found || !restartRecoverySessionEligible(meta) {
 			continue
 		}
 		history, err := loadPersistedMessages(binding.Sessions.WithContext(ctx), rec.ThreadID, true)
 		if err != nil {
+			if errors.Is(err, session.ErrSessionNotFound) {
+				continue
+			}
 			return s.writeResponse(req.ID, nil, err)
 		}
 		turns := turnsFromPersistedHistory(rec.ThreadID, history, time.Now().UTC(), s.participantResolver(binding))
@@ -203,7 +207,8 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 		if err := json.Unmarshal(view.Documents[0].Value, &current); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if current.Dismissed || current.State != rec.State || current.TurnID != rec.TurnID || !current.AllowedAt.Equal(rec.AllowedAt) || current.UnexpectedExit != rec.UnexpectedExit {
+		if current.Dismissed || current.State != rec.State || current.TurnID != rec.TurnID || current.Reason != rec.Reason ||
+			!current.AllowedAt.Equal(rec.AllowedAt) || !current.UpdatedAt.Equal(rec.UpdatedAt) || current.UnexpectedExit != rec.UnexpectedExit {
 			continue
 		}
 		active, err = session.ThreadExecutionActive(s.rt.SessionDir, rec.ThreadID)
@@ -211,6 +216,13 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 			return s.writeResponse(req.ID, nil, err)
 		}
 		if active {
+			continue
+		}
+		meta, found, err = binding.Sessions.Find(rec.ThreadID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if !found || !restartRecoverySessionEligible(meta) {
 			continue
 		}
 		last.Status = TurnStatusInterrupted
@@ -222,6 +234,10 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 	return s.writeResponse(req.ID, struct {
 		Items []RestartRecoveryItem `json:"items"`
 	}{items}, nil)
+}
+
+func restartRecoverySessionEligible(meta session.Session) bool {
+	return meta.ArchivedAt == nil && meta.Visibility != pluginhost.SessionVisibilityPlugin && meta.ParentID == "" && !projectExecutionDisabled(meta.Source)
 }
 
 func (s *Server) handleRestartRecoveryDismiss(req Request) error {
