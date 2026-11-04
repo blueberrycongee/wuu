@@ -48,7 +48,26 @@ func writeCachedCheckpoint(dir string, cached cachedCheckpoint) error {
 	if err != nil {
 		return err
 	}
-	return securefs.WriteFileAtomic(filepath.Join(dir, cached.Generation, "checkpoint.json"), raw)
+	// The backend has already made the transaction durable. This derived cache
+	// needs atomic visibility, not a second durability barrier on every commit.
+	// Missing, incomplete or stale cache files are rebuilt from that backend.
+	cacheDir := filepath.Join(dir, cached.Generation)
+	if err := securefs.Mkdir(cacheDir); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(cacheDir, ".checkpoint-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(cacheDir, "checkpoint.json"))
 }
 
 type backendCheckpointReader struct {
