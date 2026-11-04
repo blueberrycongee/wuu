@@ -66,7 +66,7 @@ an older executable can safely write newer data.
 
 ## Build and verification
 
-The macOS job checks Go modules, formatting, vet, cross-builds, and uncached Go tests. It installs locked desktop and shared Web dependencies, explicitly installs and verifies the Electron binary, and runs desktop and release-signing tests. Build scripts consume the committed module manifests rather than repairing them during release.
+The macOS job installs the checksum-pinned bundled ripgrep on `PATH` before checking Go modules, formatting, vet, cross-builds, and uncached Go tests. It installs locked desktop and shared Web dependencies, explicitly installs and verifies the Electron binary, and runs desktop and release-signing tests. Build scripts consume the committed module manifests rather than repairing them during release.
 
 Both `make release-check` and the release workflow run the macOS native Computer Use helper tests. The release command builds and packages `wuu-cua-mac` and `wuu-cua-mac-pip`; the packaged app enables Computer Use from these bundled executables. Release verification requires both helpers, their matching architectures, signatures, hardened runtime, and secure timestamps. Screen Recording and Accessibility authorization remain macOS permission checks on the installed app.
 
