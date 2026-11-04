@@ -584,15 +584,12 @@ terminal:
 	}
 	recovery := remarshal[struct {
 		Items []RestartRecoveryItem `json:"items"`
-	}](t, responseByID(t, parseOutput(t, out.String()), "recovery")["result"])
-	if len(recovery.Items) != 1 || recovery.Items[0].Thread.ID != threadID || recovery.Items[0].Reason != "background_result" {
-		t.Fatalf("recovery candidates = %+v", recovery.Items)
-	}
-	if err := server.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"defer","method":"thread/recovery/dismiss","params":{"thread_ids":[%q]}}`, threadID))); err != nil {
-		t.Fatal(err)
+	}](t, waitForResponseByID(t, out, "recovery")["result"])
+	if len(recovery.Items) != 0 {
+		t.Fatalf("an old background result was offered as an interrupted turn: %+v", recovery.Items)
 	}
 	if !server.completionDeliveryPaused(server.thread(threadID), nil, []string{started.ID}) {
-		t.Fatal("dismissing recovery released automatic delivery")
+		t.Fatal("opening history released automatic delivery")
 	}
 	mainClient.mu.Lock()
 	callsBeforeChoice := len(mainClient.requests)
@@ -600,7 +597,11 @@ terminal:
 	if callsBeforeChoice != 0 {
 		t.Fatalf("history resume silently called the model %d times", callsBeforeChoice)
 	}
-	if err := server.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"continue","method":"turn/start","params":{"thread_id":%q,"resume_after_turn_id":%q}}`, threadID, recovery.Items[0].TurnID))); err != nil {
+	resumed := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, out.String()), "resume")["result"])
+	if len(resumed.Thread.Turns) != 1 {
+		t.Fatalf("expected one persisted turn, got %+v", resumed.Thread.Turns)
+	}
+	if err := server.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"continue","method":"turn/start","params":{"thread_id":%q,"resume_after_turn_id":%q}}`, threadID, resumed.Thread.Turns[0].ID))); err != nil {
 		t.Fatal(err)
 	}
 	waitForTurnCompletedForThread(t, out, threadID)

@@ -34,7 +34,7 @@ async function capture(name) {
   fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   report.screenshots.push(`${name}.png`);
   const geometry = await evaluate(() => {
-    const panel = document.querySelector('.restart-recovery-dialog');
+    const panel = document.querySelector('.restart-recovery-notice');
     const r = panel.getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height, viewport: [innerWidth, innerHeight], overflow: panel.scrollWidth > panel.clientWidth };
   });
@@ -60,10 +60,15 @@ async function run() {
   win.webContents.session.webRequest.onBeforeRequest(({ url }, done) => done({ cancel: /^https?:/.test(url) }));
   win.webContents.on('console-message', event => { if (event.level === 'error') report.errors.push(event.message); });
   await win.loadFile(path.join(desktop, 'out/renderer/index.html'));
-  await until(() => evaluate(() => document.querySelector('.restart-recovery-dialog .confirm-dialog-message')?.textContent.includes('3')), 'recovery count');
+  await until(() => evaluate(() => document.querySelector('.restart-recovery-notice .archive-tip-message')?.textContent.includes('3')), 'recovery count');
   assert.equal(report.starts.length, 0);
-  assert.equal(await evaluate(() => document.querySelectorAll('.restart-recovery-dialog input').length), 0);
-  assert.equal(await evaluate(() => document.querySelectorAll('.restart-recovery-dialog button').length), 2);
+  assert.equal(await evaluate(() => document.querySelectorAll('.restart-recovery-notice input').length), 0);
+  assert.equal(await evaluate(() => document.querySelectorAll('.restart-recovery-notice button').length), 2);
+  assert.equal(await evaluate(() => Boolean(document.querySelector('[role=dialog][aria-modal=true]'))), false);
+  await click('[data-ribbon-id="catalog"]');
+  await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-component="skills-catalog"]'))), 'catalog remains usable');
+  assert.equal(await evaluate(() => Boolean(document.querySelector('.restart-recovery-notice'))), true);
+  report.checks.push('Catalog stays usable while the recovery notice is visible');
   await capture('light-default');
   await evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await capture('dark-default');
@@ -72,8 +77,8 @@ async function run() {
   await capture('narrow-large');
   win.setContentSize(1200, 850);
   await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.removeProperty('--font-ui'); document.documentElement.style.removeProperty('font-size'); });
-  await click('.restart-recovery-dialog .settings-button-primary');
-  await until(() => evaluate(() => !document.querySelector('.restart-recovery-dialog')), 'all conversations accepted');
+  await click('.restart-recovery-notice .archive-tip-action');
+  await until(() => evaluate(() => !document.querySelector('.restart-recovery-notice')), 'all conversations accepted');
   assert.deepEqual(report.starts.map(args => args[0]), ['recovery-0', 'recovery-1', 'recovery-2']);
   for (const args of report.starts) {
     assert.equal(args[1], ''); assert.equal(args[9], `${args[0]}-turn-0001`);
@@ -83,30 +88,23 @@ async function run() {
   report.checks.push('No silent sends; one click continues all conversations in their original workspaces');
   win.webContents.send('test:recovery-refresh');
   await pause(100);
-  assert.equal(await evaluate(() => Boolean(document.querySelector('.restart-recovery-dialog'))), false);
+  assert.equal(await evaluate(() => Boolean(document.querySelector('.restart-recovery-notice'))), false);
   pending = [0, 1, 2]; win.webContents.send('test:recovery-refresh');
-  await until(() => evaluate(() => document.querySelector('.restart-recovery-dialog .confirm-dialog-message')?.textContent.includes('3')), 'second recovery batch');
-  await click('.restart-recovery-dialog .settings-button-ghost');
-  await until(() => evaluate(() => !document.querySelector('.restart-recovery-dialog')), 'cancel');
+  await until(() => evaluate(() => document.querySelector('.restart-recovery-notice .archive-tip-message')?.textContent.includes('3')), 'second recovery batch');
+  await click('.restart-recovery-notice .archive-tip-dismiss');
+  await until(() => evaluate(() => !document.querySelector('.restart-recovery-notice')), 'cancel');
   assert.equal(report.starts.length, 3); assert.deepEqual(pending, []);
   report.checks.push('Not now leaves all work paused; refresh does not reopen dismissed work');
   pending = [0, 1, 2]; failStart = 'recovery-1'; win.webContents.send('test:recovery-refresh');
-  await until(() => evaluate(() => Boolean(document.querySelector('.restart-recovery-dialog'))), 'failed task batch');
-  await click('.restart-recovery-dialog .settings-button-primary');
-  await until(() => evaluate(() => document.querySelector('.restart-recovery-dialog .confirm-dialog-message')?.textContent.includes('1') && !document.querySelector('.restart-recovery-dialog .settings-button-primary').disabled), 'remaining recovery count');
+  await until(() => evaluate(() => Boolean(document.querySelector('.restart-recovery-notice'))), 'failed task batch');
+  await click('.restart-recovery-notice .archive-tip-action');
+  await until(() => evaluate(() => document.querySelector('.restart-recovery-notice .archive-tip-message')?.textContent.includes('1') && !document.querySelector('.restart-recovery-notice .archive-tip-action').disabled), 'remaining recovery count');
   assert.deepEqual(report.starts.slice(3).map(args => args[0]), ['recovery-0', 'recovery-1', 'recovery-2']);
   assert.deepEqual(pending, [1]);
-  failStart = null; await click('.restart-recovery-dialog .settings-button-primary');
-  await until(() => evaluate(() => !document.querySelector('.restart-recovery-dialog')), 'retry');
+  failStart = null; await click('.restart-recovery-notice .archive-tip-action');
+  await until(() => evaluate(() => !document.querySelector('.restart-recovery-notice')), 'retry');
   assert.equal(report.starts.length, 7); assert.equal(report.starts.at(-1)[0], 'recovery-1');
   report.checks.push('One failure does not block other conversations; retry resumes only the remaining conversation');
-  pending = [0]; win.webContents.send('test:recovery-refresh');
-  await until(() => evaluate(() => Boolean(document.querySelector('.restart-recovery-dialog'))), 'Escape batch');
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
-  await until(() => evaluate(() => !document.querySelector('.restart-recovery-dialog')), 'Escape defers recovery');
-  assert.equal(report.starts.length, 7); assert.deepEqual(pending, []);
-  report.checks.push('Escape defers all remaining conversations');
   report.status = 'passed';
 }
 run().catch(error => { report.status = 'failed'; report.failure = error.stack; process.exitCode = 1; }).finally(() => {

@@ -1,8 +1,7 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
-  "restartRecovery.title": "Resume unfinished tasks",
-  "restartRecovery.description": "Unfinished conversations: {count}. Continue from saved progress?",
+  "restartRecovery.description": "Conversations interrupted by an unexpected exit: {count}.",
   "restartRecovery.defer": "Not now",
   "restartRecovery.continue": "Continue all",
   "restartRecovery.applying": "Applying…",

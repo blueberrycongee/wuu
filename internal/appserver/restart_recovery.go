@@ -3,19 +3,15 @@ package appserver
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
+	"errors"
 	"sort"
+	"strings"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agentcontrol"
-	"github.com/blueberrycongee/wuu/internal/agentthread"
-	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 const restartRecoveryNamespace = "wuu.restart_recovery.v1"
@@ -24,13 +20,14 @@ const restartRecoveryBootNamespace = "wuu.restart_recovery_boot.v1"
 // The boot boundary is shared by workspace app-servers. Opening another
 // workspace or replacing a renderer must not revoke this boot's user choices.
 type restartRecoveryRecord struct {
-	ThreadID  string    `json:"thread_id"`
-	TurnID    string    `json:"turn_id"`
-	State     string    `json:"state"`
-	Reason    string    `json:"reason,omitempty"`
-	Dismissed bool      `json:"dismissed,omitempty"`
-	AllowedAt time.Time `json:"allowed_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ThreadID       string    `json:"thread_id"`
+	TurnID         string    `json:"turn_id"`
+	State          string    `json:"state"`
+	Reason         string    `json:"reason,omitempty"`
+	Dismissed      bool      `json:"dismissed,omitempty"`
+	UnexpectedExit bool      `json:"unexpected_exit,omitempty"`
+	AllowedAt      time.Time `json:"allowed_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type RestartRecoveryItem struct {
@@ -46,10 +43,15 @@ func (s *Server) initializeRestartRecovery(binding *runtime.State, first bool) e
 			return err
 		}
 		if first || !found {
+			s.previousRecoveryBootAt = s.recoveryBootAt
+			if err := tx.Put(restartRecoveryBootNamespace, "previous", s.previousRecoveryBootAt); err != nil {
+				return err
+			}
 			s.recoveryBootAt = time.Now().UTC()
 			return tx.Put(restartRecoveryBootNamespace, "boot", s.recoveryBootAt)
 		}
-		return nil
+		_, err = tx.Get(restartRecoveryBootNamespace, "previous", &s.previousRecoveryBootAt)
+		return err
 	})
 }
 
@@ -70,25 +72,24 @@ func (s *Server) recordRecoveryTurn(th *threadState, turnID, state string) error
 		rec.UpdatedAt = time.Now().UTC()
 		if state == "running" {
 			rec.Reason, rec.Dismissed = "", false
+			rec.UnexpectedExit = false
 			rec.AllowedAt = rec.UpdatedAt
 		} else if state == "pending" {
 			rec.Reason = "interrupted"
+			rec.UnexpectedExit = true
+		} else {
+			rec.UnexpectedExit = false
 		}
 		return tx.Put(restartRecoveryNamespace, th.ID, rec)
 	})
 }
 
-// Completion receipts stay unconsumed while paused. Admitting new work (including
-// explicit Continue) releases the gate; reading history and dismissing do not.
+// Keep historical completions paused until the user starts new work, without
+// presenting those old results as interrupted conversations.
 func (s *Server) pauseCompletionAfterRestart(th *threadState) (bool, error) {
-	return s.holdRestartRecovery(th, "background_result")
-}
-
-func (s *Server) holdRestartRecovery(th *threadState, reason string) (bool, error) {
 	if !th.PersistHistory || th.Visibility == pluginhost.SessionVisibilityPlugin || th.ParentID != "" {
 		return false, nil
 	}
-	// A conversation created during this boot has no pre-restart work.
 	meta, found, err := th.state.Sessions.Find(th.ID)
 	if err != nil {
 		return true, err
@@ -96,209 +97,147 @@ func (s *Server) holdRestartRecovery(th *threadState, reason string) (bool, erro
 	if found && !meta.CreatedAt.Before(s.recoveryBootAt) {
 		return false, nil
 	}
-	paused, changed := false, false
-	err = persistence.Update(context.Background(), th.state.Documents, func(tx *persistence.Tx) error {
-		var rec restartRecoveryRecord
-		_, err := tx.Get(restartRecoveryNamespace, th.ID, &rec)
-		if err != nil {
-			return err
-		}
-		if !rec.AllowedAt.Before(s.recoveryBootAt) {
-			return nil
-		}
-		paused = true
-		if rec.State == "pending" {
-			return nil
-		}
-		rec.ThreadID, rec.State, rec.Reason = th.ID, "pending", reason
-		rec.UpdatedAt = time.Now().UTC()
-		changed = true
-		return tx.Put(restartRecoveryNamespace, th.ID, rec)
-	})
-	if changed && err == nil {
-		_ = s.writeNotification("thread/recoveryChanged", struct{}{})
+	view, err := th.state.Documents.Read(context.Background(), persistence.Query{Namespace: restartRecoveryNamespace, Keys: []string{th.ID}})
+	if err != nil {
+		return true, err
 	}
-	return paused || err != nil, err
+	if len(view.Documents) == 0 {
+		return true, nil
+	}
+	var rec restartRecoveryRecord
+	if err := json.Unmarshal(view.Documents[0].Value, &rec); err != nil {
+		return true, err
+	}
+	return rec.AllowedAt.Before(s.recoveryBootAt), nil
 }
 
-func (s *Server) handleRestartRecoveryList(req Request) error {
+func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) error {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.sessionOperationCtx, cancel)
+	defer func() { stop(); cancel() }()
 	binding, err := s.rt.RetainState()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer binding.Close()
-	// Process completion obligations survive independently of loaded threads.
-	// Discover them before the user opens any of those conversations.
-	if s.rt.ProcessManager != nil {
-		pending, err := s.rt.ProcessManager.PendingCompletions()
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		for _, p := range pending {
-			if p.OwnerKind != process.OwnerMainAgent || !p.StartedAt.Before(s.recoveryBootAt) {
-				continue
-			}
-			meta, found, err := binding.Sessions.Find(p.OwnerID)
-			if !found && err == nil {
-				continue
-			}
+	var candidates []restartRecoveryRecord
+	err = persistence.Update(ctx, binding.Documents, func(tx *persistence.Tx) error {
+		candidates = nil
+		query := persistence.Query{Namespace: restartRecoveryNamespace, Limit: 256}
+		for {
+			page, err := tx.ReadView(query)
 			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
+				return err
 			}
-			if meta.ArchivedAt != nil || meta.Visibility == pluginhost.SessionVisibilityPlugin || meta.ParentID != "" {
-				continue
+			for _, doc := range page.Documents {
+				var rec restartRecoveryRecord
+				if err := json.Unmarshal(doc.Value, &rec); err != nil {
+					return err
+				}
+				if rec.Dismissed || s.previousRecoveryBootAt.IsZero() || rec.AllowedAt.Before(s.previousRecoveryBootAt) || !rec.AllowedAt.Before(s.recoveryBootAt) ||
+					(rec.State != "running" && !(rec.State == "pending" && rec.UnexpectedExit && rec.Reason == "interrupted")) {
+					continue
+				}
+				candidates = append(candidates, rec)
 			}
-			// An answer may be committed before its delivery receipt. Do not
-			// offer a completed obligation as unfinished work.
-			loaded, err := s.loadPersistedThreadSnapshot(binding, p.OwnerID)
-			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
+			if page.NextCursor == "" {
+				return nil
 			}
-			if processCompletionMarkerAnswered(loaded.history, p.ID) {
-				continue
-			}
-			th := &threadState{ID: p.OwnerID, PersistHistory: true, state: binding}
-			if _, err := s.pauseCompletionAfterRestart(th); err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
+			query.Cursor, query.AtRevision = page.NextCursor, &page.Revision
 		}
-	}
-	// Worker results can be pending even when their parent is not loaded.
-	// Inspect the durable delivery ledger without starting worker runtimes.
-	sessions, err := binding.Sessions.List(0)
+	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	for _, meta := range sessions {
-		if !meta.CreatedAt.Before(s.recoveryBootAt) || meta.ArchivedAt != nil || meta.Visibility == pluginhost.SessionVisibilityPlugin || meta.ParentID != "" || projectExecutionDisabled(meta.Source) {
-			continue
-		}
-		store, err := s.agentThreadStore(binding, meta.ID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		stateDirs, err := s.threadArtifactStateDirs(meta.ID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		artifactDirs := make([]string, 0, len(stateDirs))
-		for _, dir := range stateDirs {
-			artifactDirs = append(artifactDirs, statepath.SessionArtifactDir(dir, meta.ID))
-		}
-		pending, err := agentcontrol.ReadPendingAgentCompletions(binding.Documents, meta.ID, store, artifactDirs)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		workers, err := store.ListThreads()
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		interrupted := false
-		for _, worker := range workers {
-			if worker.ID != meta.ID && worker.Source.Kind != agentthread.SourceRoot && worker.UpdatedAt.Before(s.recoveryBootAt) && (worker.Status == agentthread.StatusRunning || worker.Status == agentthread.StatusPending) {
-				interrupted = true
-			}
-		}
-		harnessDirs := make([]string, 0, len(artifactDirs))
-		for _, dir := range artifactDirs {
-			harnessDirs = append(harnessDirs, filepath.Join(dir, "harness"))
-		}
-		queued, err := harness.NewDocumentStore(binding.Documents, meta.ID, harnessDirs...).ListQueueItems()
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		for _, item := range queued {
-			if item.Kind == "agent_spawn" && item.CreatedAt.Before(s.recoveryBootAt) {
-				interrupted = true
-			}
-		}
-		if len(pending) == 0 && !interrupted {
-			continue
-		}
-		loaded, err := s.loadPersistedThreadSnapshot(binding, meta.ID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		reason := ""
-		if interrupted {
-			reason = "interrupted"
-		}
-		for _, result := range pending {
-			if !agentCompletionMarkerAnswered(loaded.history, result.ResultID) {
-				reason = "background_result"
-				break
-			}
-		}
-		if reason != "" {
-			th := &threadState{ID: meta.ID, PersistHistory: true, state: binding}
-			if _, err := s.holdRestartRecovery(th, reason); err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-		}
-	}
 	items := []RestartRecoveryItem{}
-	query := persistence.Query{Namespace: restartRecoveryNamespace, Limit: 256}
-	for {
-		page, err := binding.Documents.Read(context.Background(), query)
+	entry, cancelEntry := s.threadEntryBuilder(binding)
+	defer cancelEntry()
+	for _, rec := range candidates {
+		active, err := session.ThreadExecutionActive(s.rt.SessionDir, rec.ThreadID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		for _, doc := range page.Documents {
-			var rec restartRecoveryRecord
-			if err := json.Unmarshal(doc.Value, &rec); err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			if rec.Dismissed || (rec.State != "pending" && !(rec.State == "running" && rec.UpdatedAt.Before(s.recoveryBootAt))) {
-				continue
-			}
-			active, err := session.ThreadExecutionActive(s.rt.SessionDir, rec.ThreadID)
-			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			if active {
-				continue
-			}
-			meta, found, err := binding.Sessions.Find(rec.ThreadID)
-			if !found && err == nil {
-				continue
-			}
-			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			if meta.ArchivedAt != nil || meta.Visibility == pluginhost.SessionVisibilityPlugin || meta.ParentID != "" || projectExecutionDisabled(meta.Source) {
-				continue
-			}
-			loaded, err := s.loadPersistedThreadSnapshot(binding, rec.ThreadID)
-			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			turns := turnsFromPersistedHistory(rec.ThreadID, loaded.displayHistory, time.Now().UTC(), s.participantResolver(binding))
-			if len(turns) == 0 {
-				continue
-			}
-			last := turns[len(turns)-1]
-			if rec.State == "running" && last.Status == TurnStatusCompleted {
-				continue
-			}
-			entry, cancel := s.threadEntryBuilder(binding)
-			thread := entry(relocatedSessionMetadata(meta, s.registeredWorkspaces())).thread
-			cancel()
-			thread.Turns = []Turn{last}
-			reason := rec.Reason
-			if reason == "" {
-				reason = "interrupted"
-			}
-			items = append(items, RestartRecoveryItem{Thread: thread, TurnID: last.ID, Reason: reason})
+		if active {
+			continue
 		}
-		if page.NextCursor == "" {
-			break
+		meta, found, err := binding.Sessions.Find(rec.ThreadID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
 		}
-		query.Cursor, query.AtRevision = page.NextCursor, &page.Revision
+		if !found || !restartRecoverySessionEligible(meta) {
+			continue
+		}
+		history, err := loadPersistedMessages(binding.Sessions.WithContext(ctx), rec.ThreadID, true)
+		if err != nil {
+			if errors.Is(err, session.ErrSessionNotFound) {
+				continue
+			}
+			return s.writeResponse(req.ID, nil, err)
+		}
+		turns := turnsFromPersistedHistory(rec.ThreadID, history, time.Now().UTC(), s.participantResolver(binding))
+		if len(turns) == 0 {
+			continue
+		}
+		last := turns[len(turns)-1]
+		// A terminal can be persisted before the recovery record is updated.
+		// A replayed input may retain its existing display turn ID.
+		settled := false
+		if rec.State == "running" {
+			for _, message := range history {
+				if strings.EqualFold(message.Role, "meta") && message.Content == turnTerminalHistoryRecord &&
+					(message.ClientID == rec.TurnID || message.ClientID == last.ID) &&
+					!message.At.Before(rec.AllowedAt) && message.At.Before(s.recoveryBootAt) {
+					settled = true
+					break
+				}
+			}
+		}
+		if settled {
+			continue
+		}
+		// A user may start, dismiss, or finish work while history is loading.
+		view, err := binding.Documents.Read(ctx, persistence.Query{Namespace: restartRecoveryNamespace, Keys: []string{rec.ThreadID}})
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if len(view.Documents) == 0 {
+			continue
+		}
+		var current restartRecoveryRecord
+		if err := json.Unmarshal(view.Documents[0].Value, &current); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if current.Dismissed || current.State != rec.State || current.TurnID != rec.TurnID || current.Reason != rec.Reason ||
+			!current.AllowedAt.Equal(rec.AllowedAt) || !current.UpdatedAt.Equal(rec.UpdatedAt) || current.UnexpectedExit != rec.UnexpectedExit {
+			continue
+		}
+		active, err = session.ThreadExecutionActive(s.rt.SessionDir, rec.ThreadID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if active {
+			continue
+		}
+		meta, found, err = binding.Sessions.Find(rec.ThreadID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if !found || !restartRecoverySessionEligible(meta) {
+			continue
+		}
+		last.Status = TurnStatusInterrupted
+		thread := entry(relocatedSessionMetadata(meta, s.registeredWorkspaces())).thread
+		thread.Turns = []Turn{last}
+		items = append(items, RestartRecoveryItem{Thread: thread, TurnID: last.ID, Reason: "interrupted"})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Thread.UpdatedAt.After(items[j].Thread.UpdatedAt) })
 	return s.writeResponse(req.ID, struct {
 		Items []RestartRecoveryItem `json:"items"`
 	}{items}, nil)
+}
+
+func restartRecoverySessionEligible(meta session.Session) bool {
+	return meta.ArchivedAt == nil && meta.Visibility != pluginhost.SessionVisibilityPlugin && meta.ParentID == "" && !projectExecutionDisabled(meta.Source)
 }
 
 func (s *Server) handleRestartRecoveryDismiss(req Request) error {

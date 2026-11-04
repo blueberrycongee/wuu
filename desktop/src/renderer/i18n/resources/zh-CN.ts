@@ -1,6 +1,5 @@
 export const zhCN = {
-  "restartRecovery.title": "恢复未完成的任务",
-  "restartRecovery.description": "有 {count} 个会话未完成，是否从已保存的进度继续？",
+  "restartRecovery.description": "{count} 个会话意外中断",
   "restartRecovery.defer": "暂不继续",
   "restartRecovery.continue": "全部继续",
   "restartRecovery.applying": "正在处理…",
