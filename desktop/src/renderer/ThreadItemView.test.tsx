@@ -893,7 +893,7 @@ describe("ThreadItemView", () => {
     await act(async () => actions[0].click());
     expect(copy).toHaveBeenCalledWith(body);
     act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "source-session" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "source-session" });
     expect(onEditMessage).not.toHaveBeenCalled();
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");

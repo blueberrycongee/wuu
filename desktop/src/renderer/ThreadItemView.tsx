@@ -2,8 +2,6 @@ import { ComposerInput, type ComposerInputHandle } from "./ComposerInput";
 import { pluginReferenceDraft, pluginReferenceParts } from "./ComposerPluginReferences";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
-import { ConversationTriggers } from "./ConversationTriggers";
-import { ENABLE_CONVERSATION_TRIGGERS } from "./FeatureFlags";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import {
   memo,
@@ -230,7 +228,7 @@ function BuiltInThreadItemView({
         && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
-          void application.invoke("conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
+          void application.invoke(sessionMessage ? "thread.activate" : "conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
         }
       };
       return (
@@ -381,8 +379,6 @@ function BuiltInThreadItemView({
               getText={() => owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? ""}
               placement={actionsPersistent ? "persistent" : "overlay"}
               timestamp={actionsVisible ? turnAnswerReadyAt : undefined}
-              trailingAction={ENABLE_CONVERSATION_TRIGGERS && item.id === latestAgentMessageID && owningThreadId
-                ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
               showCopy={actionsVisible && copyable}
               showFork={forkVisible && messageActions !== "copy-only"}
               onFork={

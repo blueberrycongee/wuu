@@ -77,12 +77,6 @@ Command completion is event-driven; there are no timed model rechecks. Use Monit
 
 Historical `process` and legacy `bash` records remain renderable. New calls use `bash` control actions; the standalone `process` tool is no longer registered.
 
-### Inspect triggers in the desktop
-
-The Trigger entry is currently hidden by the desktop feature flag. When enabled, the **Trigger** button beside Copy, Fork, and the timestamp on the latest assistant reply opens this conversation's background process triggers. It shows whether each trigger is waiting, has received a notification, has been handled, or was cancelled or stopped. Expand **Source and recent output** to inspect the command and its output tail; viewing output here does not consume the model's notification.
-
-**Cancel automatic continuation** cancels future exit notifications without stopping the background task. A turn that has already started continues. These controls cover Wuu-managed processes; plugin schedules and external engines' own watchers are not listed.
-
 ## Directory, environment, and permissions
 
 `cwd` defaults to the workspace root and must resolve to an existing, permitted directory. Worktree-bound workers execute in their assigned checkout. Each `bash` call starts a new shell; `cd`, aliases, and temporary environment changes do not persist between calls.
