@@ -41,9 +41,6 @@ type ConversationThreadData = {
     readonly title?: string;
     readonly title_revision?: number;
     readonly source?: string;
-    readonly project_id?: string;
-    readonly project_exists?: boolean;
-    readonly project_role?: "side" | "worker";
     readonly model_provider: string;
     readonly model: string;
     readonly model_variant?: string;

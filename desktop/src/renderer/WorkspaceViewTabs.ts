@@ -63,18 +63,6 @@ export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): Workspa
   return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
 }
 
-// The current project's overview beside the conversation, shared across selections.
-export type WorkspaceProjectViewTab = {
-  kind: "project";
-  id: string;
-  projectID: string;
-  title: string;
-};
-
-export function workspaceProjectViewTab(projectID: string, title: string): WorkspaceProjectViewTab {
-  return { kind: "project", id: "project", projectID, title };
-}
-
 export type WorkspaceViewTab =
   | { kind: "new"; id: string }
   | { kind: "side-thread"; id: "side-thread" }
@@ -82,8 +70,7 @@ export type WorkspaceViewTab =
   | WorkspaceDiffViewTab
   | WorkspaceFileViewTab
   | WorkspacePluginViewTab
-  | WorkspaceArtifactViewTab
-  | WorkspaceProjectViewTab;
+  | WorkspaceArtifactViewTab;
 
 // The conversation participates in focus history without becoming a resource tab.
 export const WORKSPACE_CONVERSATION_TAB_ID = "conversation";

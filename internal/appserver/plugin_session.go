@@ -1079,7 +1079,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	var control *session.Control
 	if processDelivery {
 		// A captured process reports observations to its own conversation,
-		// including one managed by a different plugin or Project Agent. Keep
+		// including one managed by a different plugin. Keep
 		// the current control fence so pause/takeover still revokes delivery.
 		current, managed, err := binding.Sessions.ReadControl(params.SessionID)
 		if err != nil {

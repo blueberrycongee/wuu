@@ -30,7 +30,7 @@ Provider 凭据优先使用环境变量引用。工具输出可能遮蔽密钥�
 |---|---|
 | `default_provider`、`providers` | 选择模型服务、端点、凭据和连接选项 |
 | `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
-| `agent.model_roles`、`agent.model_aliases`、`agent.project_models` | 路由模型工作 |
+| `agent.model_roles`、`agent.model_aliases` | 路由模型工作 |
 | `agent.permission_mode` | 设置本地执行权限 |
 | `ptc`、`execution_environments` | 选择用户管理的工具运行时和执行适配器 |
 
@@ -78,7 +78,7 @@ Git 提交署名仍在**设置 → 常规 → Git**中调整。
 只修改现有用户文件中的相关字段，不要覆盖其他设置。编辑后先完成正在运行的工作，
 再完全退出并重新启动 Wuu，以应用全部改动。有效模型改动可以自动刷新，但保存文件
 不保证所有运行时设置立即更新。项目层可以覆盖允许的 Agent 字段；Provider 连接、
-PTC、执行环境和 Project Agent 模型默认值须写入用户配置，而非项目设置。
+PTC 和执行环境默认值须写入用户配置，而非项目设置。
 自定义配置提供者可能使用其他权威来源，而不是此文件。
 
 ## 工具加载
@@ -104,24 +104,6 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 在 auto 模式下使用原生加载，或用 `false` 关闭原生加载而保留客户端发现。只有端点确实实现了对应模型的原生协议
 时才启用；仅接受未知字段并不够。
 
-## Project Agent 模型选择
-
-在启用 Project Agent 的构建中，协调者使用主对话模型。在用户配置中
-分别设置技术负责人和持久执行者的默认模型，然后完全退出并重新启动 Wuu：
-
-```json
-{ "agent": { "project_models": {
-  "technical_lead": { "provider": "anthropic", "model": "your-lead-model" },
-  "executor": { "provider": "openai", "model": "your-execution-model" }
-} } }
-```
-
-使用已配置的服务名称和模型 ID。省略角色或留空时继承协调者模型。执行者未配置时还会沿用旧 Worker 默认值；
-旧 Side/Worker 配置继续用于原有团队流程。服务支持时，
-每个选择也接受 `effort` 和 `variant`。默认值只影响新建成员，已有会话保留保存的
-选择；创建时明确指定的 `model_alias` 优先于角色默认值。参见
-[app-server 协议](../automation/app-server.md)。
-
 ## 指令与插件设置
 
 团队共享规则放在 `AGENTS.md` 中。核心 `instructions` 对象控制文件名、项目根标记、用户目录和可选的旧指令发现。顶层旧字段 `memory` 用于迁移指令发现设置，不是 Memory 插件设置接口。
@@ -133,17 +115,11 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 `agent.max_parallel` 设置通用匿名 worker 的执行容量，默认 `5`；`0` 表示采用默认值，负数无效。
 
 ```json
-{ "agent": { "max_parallel": 5, "project_max_parallel": 0 } }
+{ "agent": { "max_parallel": 5 } }
 ```
 
 排队或等待子任务的 worker 不占用通常的执行槽位。这是执行容量设置，不是要求每个任务都委派，也不是所有后台进程的总量上限。[子代理行为](../desktop/subagents.md)由已启用的委派插件负责。
 
-
-`agent.project_max_parallel` 单独限制每个 Project Agent lead 的新受管 worker 准入数量。默认值 `0` 继承解析后的 `agent.max_parallel`，负数无效。Lead 与持久 side 会话不占用此 worker 容量；未明确角色的旧受管会话按 worker 计算。
-
-限制依据共享持久会话成员关系和操作系统执行租约。启动前预留及短暂的元数据修改会保守地占用容量。停止 worker 后，只有执行清理结束才释放容量。降低上限或接管已经运行的会话不会取消当前工作；后续准入等待占用降到上限以下。
-
-每次新准入都读取有效配置。共享会话存储的服务器须使用一致策略才能保证共同上限；独立存储或机器之间不共享全局容量。持久排队的项目输入通过合并且有上限的退避重试，在远端执行结束或进程退出后继续运行；等待时不发模型请求。跨服务器的 worker 顺序为尽力保证，并非全局 FIFO。手动启动在写入用户输入前返回容量已满错误。
 
 ## 显式自动化配置
 

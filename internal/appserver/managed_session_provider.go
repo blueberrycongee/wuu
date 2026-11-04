@@ -34,24 +34,25 @@ type ManagedSessionSubmit struct {
 	AllowStart bool                  `json:"allow_start"`
 }
 type ManagedSessionSubmission struct {
-	Admitted     bool `json:"admitted"`
+	Admitted bool `json:"admitted"`
+	// Retained for v1 clients; the host no longer applies project capacity policy.
 	CapacityFull bool `json:"capacity_full"`
 }
 
 // MechanismFactory belongs in every app-server composition that supports
 // managed sessions. Disabling coordination does not remove ordinary session
 // control, while graph edges retain these mechanisms through provider cleanup.
-func (b *ProjectCoordinatorBridge) MechanismFactory() runtime.NativeProviderFactory {
+func (b *managedSessionBridge) MechanismFactory() runtime.NativeProviderFactory {
 	return runtime.NativeProviderFactory{ID: ManagedSessionModule, DefaultEnabled: true, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
 		if input.Registry == nil || input.RetainState == nil {
 			return nil, errors.New("managed sessions require a captured service graph and state factory")
 		}
-		return &managedSessionMechanisms{bridge: b, registry: input.Registry, retainState: input.RetainState, store: projectProviderStore(input.Registry, ManagedSessionModule)}, nil
+		return &managedSessionMechanisms{bridge: b, registry: input.Registry, retainState: input.RetainState, store: managedSessionStore(input.Registry, ManagedSessionModule)}, nil
 	}}
 }
 
 type managedSessionMechanisms struct {
-	bridge      *ProjectCoordinatorBridge
+	bridge      *managedSessionBridge
 	registry    *pluginhost.ServiceRegistry
 	retainState func() (*runtime.State, error)
 	store       *session.Store
@@ -95,7 +96,7 @@ func (m *managedSessionMechanisms) ProvidedServices() []pluginhost.ServiceDescri
 func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call pluginhost.ServiceInvokeParams) (result json.RawMessage, resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			resultErr = projectServiceError(resultErr)
+			resultErr = managedSessionError(resultErr)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -108,7 +109,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 	if call.CallerScope != nil {
 		background = background || pluginhost.IsBackgroundExecution(call.CallerScope.Context)
 	}
-	var scope *projectCallScope
+	var scope *managedSessionCallScope
 	var binding *runtime.State
 	var err error
 	if background {
@@ -122,7 +123,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		defer release()
 		binding = scope.state
 	} else {
-		scope, err = projectScopeForCall(ctx, call)
+		scope, err = managedSessionScopeForCall(ctx, call)
 		if err != nil {
 			return nil, err
 		}
@@ -138,8 +139,8 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		defer cancel()
 	}
 	s := scope.registration.server
-	ctx = context.WithValue(ctx, projectCallScopeKey{}, scope)
-	ctx = context.WithValue(ctx, projectExecutionContextKey{}, call.ExecutionID)
+	ctx = context.WithValue(ctx, managedSessionCallScopeKey{}, scope)
+	ctx = context.WithValue(ctx, managedSessionExecutionContextKey{}, call.ExecutionID)
 	store := m.store.WithContext(ctx)
 	switch call.Method {
 	case "create":
@@ -151,7 +152,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 			return nil, errors.New("managed session owner and source are required")
 		}
 		params := hostSessionCreateParamsFromPlugin(input.SessionCreateParams)
-		params.ProjectRole, params.SharedWorkspaceSessionID, params.InitialInput = input.Role, input.SharedWorkspaceSessionID, input.InitialInput
+		params.Role, params.SharedWorkspaceSessionID, params.InitialInput = input.Role, input.SharedWorkspaceSessionID, input.InitialInput
 		th, err := s.createHostSessionThreadWithStore(binding, store, input.Owner, input.Source, input.SessionID, params)
 		if err != nil {
 			return nil, err
@@ -197,9 +198,6 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		} else {
 			_, admitted = s.steerSessionInput(th, input.Message, snapshot)
 		}
-		if errors.Is(err, session.ErrProjectWorkerCapacity) {
-			return json.Marshal(ManagedSessionSubmission{CapacityFull: true})
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -224,52 +222,12 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown managed session mechanism"}
 	}
 }
-func (p *ProjectCoordinationProvider) callManagedSession(ctx context.Context, method string, input, output any) error {
-	raw, err := json.Marshal(input)
-	if err != nil {
-		return err
-	}
-	if p.registry == nil {
-		return errors.New("project provider has no captured service graph")
-	}
-	raw, serviceErr := p.registry.Call(ctx, p.ID(), pluginhost.ServiceCallParams{Service: ManagedSessionService, Method: method, Params: raw, ExecutionID: projectExecutionID(ctx)})
-	if serviceErr != nil {
-		switch serviceErr.Code {
-		case "project_control_changed":
-			return errors.Join(session.ErrControlChanged, serviceErr)
-		case "project_work_changed":
-			return errors.Join(session.ErrProjectWorkChanged, serviceErr)
-		}
-		return serviceErr
-	}
-	if output == nil {
-		return nil
-	}
-	return json.Unmarshal(raw, output)
-}
-func (p *ProjectCoordinationProvider) createManagedSession(ctx context.Context, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
-	input := ManagedSessionCreate{Owner: owner, Source: source, SessionID: id, Role: params.ProjectRole, SharedWorkspaceSessionID: params.SharedWorkspaceSessionID, InitialInput: params.InitialInput,
-		SessionCreateParams: pluginhost.SessionCreateParams{Speed: params.Speed, RequestID: params.RequestID, Name: params.Name, Visibility: params.Visibility, ParentSessionID: params.ParentSessionID, ContextSource: params.ContextSource, Workspace: params.Workspace, WorkspaceID: params.WorkspaceID, WorkspaceRoot: params.WorkspaceRoot, ModelAlias: params.ModelAlias, Provider: params.Provider, Model: params.Model, Variant: params.Variant, Effort: params.Effort, PermissionMode: params.PermissionMode, Instructions: params.Instructions}}
-	var result pluginhost.SessionCreateResult
-	if err := p.callManagedSession(ctx, "create", input, &result); err != nil {
-		return nil, err
-	}
-	return p.ensureThreadLoaded(p.binding, result.SessionID)
-}
-func (p *ProjectCoordinationProvider) interruptManagedSession(ctx context.Context, id string) error {
-	if id == "" {
-		return nil
-	}
-	return p.callManagedSession(ctx, "interrupt", struct {
-		SessionID string `json:"session_id"`
-	}{id}, nil)
-}
 
 // Each consumer owns its client identity and dependency lifetime even though all
 // clients address the same selected physical state provider.
-func projectProviderStore(registry *pluginhost.ServiceRegistry, consumer string) *session.Store {
+func managedSessionStore(registry *pluginhost.ServiceRegistry, consumer string) *session.Store {
 	return session.NewClient(context.Background(), func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
-		raw, err := registry.Call(ctx, consumer, pluginhost.ServiceCallParams{Service: session.ServiceName, Method: method, Params: params, ExecutionID: projectExecutionID(ctx)})
+		raw, err := registry.Call(ctx, consumer, pluginhost.ServiceCallParams{Service: session.ServiceName, Method: method, Params: params, ExecutionID: managedSessionExecutionID(ctx)})
 		if err != nil {
 			return nil, err
 		}
@@ -277,9 +235,26 @@ func projectProviderStore(registry *pluginhost.ServiceRegistry, consumer string)
 	})
 }
 
-type projectExecutionContextKey struct{}
+type managedSessionExecutionContextKey struct{}
 
-func projectExecutionID(ctx context.Context) string {
-	id, _ := ctx.Value(projectExecutionContextKey{}).(string)
+func managedSessionExecutionID(ctx context.Context) string {
+	id, _ := ctx.Value(managedSessionExecutionContextKey{}).(string)
 	return id
+}
+
+func managedSessionError(err error) error {
+	var serviceErr *pluginhost.HostServiceError
+	if errors.As(err, &serviceErr) {
+		return serviceErr
+	}
+	code := "managed_session_request_failed"
+	switch {
+	case errors.Is(err, session.ErrControlChanged):
+		code = "control_changed"
+	case errors.Is(err, session.ErrSessionNotFound):
+		code = "session_not_found"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		code = "request_cancelled"
+	}
+	return &pluginhost.HostServiceError{Code: code, Message: err.Error()}
 }

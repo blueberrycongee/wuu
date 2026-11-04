@@ -322,20 +322,11 @@ export class ApplicationSubmission {
     this.publish();
     let optimisticThreadID: string | undefined;
     try {
-      const projectDraft = !target && source.kind === "draft" && source.project && initial.initialized?.features?.project_agent && context.kind === "project";
       let thread = prepareThread ? await prepareThread() : target;
       if (this.disposed) return false;
       if (!thread) {
         let params = { ...runtime.params };
         if (runtime.worktree) params = { ...params, workspace: "worktree", ...(runtime.worktree.startBranch ? { base_revision: runtime.worktree.startBranch } : {}) };
-        if (projectDraft && context.kind === "project") {
-          const line = message.text.split("\n").find(line => line.trim())?.trim().replace(/\s+/g, " ") ?? "";
-          // Project coordinators use the server's default permission policy,
-          // not the ordinary workspace composer's permission selection.
-          params = { engine: "wuu", provider: runtime.params.provider, model: runtime.params.model,
-            effort: runtime.params.effort, speed: runtime.params.speed, workspace_id: context.project_id, cwd: context.cwd,
-            project: { name: customDraftConversationTitle(source.kind === "draft" ? source.title : undefined, t("projects.newProject")) || (line.length > 48 ? `${line.slice(0, 47)}…` : line) } };
-        }
         const creating = window.wuu.startThread(params, context).then(async result => {
           if (operation.creationCancelled && result.thread) {
             try {
@@ -356,7 +347,7 @@ export class ApplicationSubmission {
       if (this.disposed) return false;
       // An edit's authoritative prepare result is adopted even if Stop arrived.
       operation.thread = thread;
-      const customTitle = !target && !projectDraft && !operation.creationCancelled
+      const customTitle = !target && !operation.creationCancelled
         ? customDraftConversationTitle(source.kind === "draft" ? source.title : undefined, t("tabs.newConversation")) : "";
       const originalTitle = thread.title;
       if (customTitle) thread = { ...thread, title: customTitle };

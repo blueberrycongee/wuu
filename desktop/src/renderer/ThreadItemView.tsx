@@ -63,7 +63,6 @@ import {
 } from "./TurnNotice";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
 import { showErrorToast } from "./Toast";
-import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
@@ -205,9 +204,6 @@ function BuiltInThreadItemView({
       const displayText = text;
       if (isInternalUserNotificationItem(item)) {
         return null;
-      }
-      if (isProjectEvent(item)) {
-        return <ProjectEventRow item={item} />;
       }
       const copyable = messageActions !== "none" && displayText.trim() !== "";
       const editable = Boolean(

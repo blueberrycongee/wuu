@@ -13,9 +13,6 @@ export interface NavigationThreadV1 {
   readonly parent_id?: string;
   readonly agent_path?: string;
   readonly source?: string;
-  readonly project_id?: string;
-  readonly project_exists?: boolean;
-  readonly project_role?: "side" | "worker";
   readonly model_provider: string;
   readonly model: string;
   readonly engine_id?: string;
@@ -69,7 +66,6 @@ export interface ApplicationNavigationViewV1 {
   readonly canRevealThread: boolean;
   readonly canCreateWorkspace: boolean;
   readonly canChooseWorkspace: boolean;
-  readonly projectAgentEnabled: boolean;
   readonly accountAvailable: boolean;
   readonly update: NavigationUpdateV1;
   readonly browser?: { readonly tabs: readonly NavigationWebsiteV1[]; readonly activeTabId?: string; readonly canCreate: boolean; readonly canReopenTab: boolean };
@@ -86,7 +82,6 @@ export interface ApplicationNavigationActionMapV1 {
   "navigation.pin-thread": { input: { readonly threadId: string; readonly pinned: boolean }; result: void };
   "navigation.archive-thread": { input: { readonly threadId: string; readonly force?: boolean }; result: { readonly ok: true } | { readonly ok: false; readonly error: string; readonly forceRetryable?: boolean } };
   "navigation.delete-thread": { input: { readonly threadId: string }; result: void };
-  "navigation.adopt-thread": { input: { readonly projectId: string; readonly threadId: string }; result: void };
   "navigation.create-folder": { input: { readonly name: string; readonly threadId?: string }; result: void };
   "navigation.rename-folder": { input: { readonly folderId: string; readonly name: string }; result: void };
   "navigation.delete-folder": { input: { readonly folderId: string }; result: void };

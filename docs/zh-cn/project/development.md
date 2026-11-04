@@ -28,16 +28,6 @@ macOS 源码启动器会跨 LaunchServices 保留启动终端的 `PATH`、shell/
 
 桌面安装包在 `Resources/tools` 中内置一份校验过 checksum 的固定版本 ripgrep，并把该目录追加到核心的 `PATH` 末尾，因此即使系统没有安装 `rg`，搜索工具和 agent 的 shell 命令也能使用它；`PATH` 中已有的 `rg` 优先。`make dev` 不会下载它。如需在开发时使用内置版本，先运行一次 `npm --prefix desktop run build:ripgrep`；否则核心使用 `PATH` 中的 `rg`，或回退到内置的搜索实现。
 
-Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有可供用户开启的设置。
-已有项目会话仍可阅读，但不能运行，也不会恢复队列中的任务。开发此功能时，运行
-`npm --prefix desktop run dev -- --project-agent`，或使用
-`go build -tags project_agent -o bin/wuu ./cmd/wuu` 构建 CLI。
-`go test -tags project_agent ./internal/appserver` 验证开启后的行为；普通 Go 测试
-验证发布构建的关闭行为。打包发布时必须省略此构建标签。
-
-`npm --prefix desktop run test:e2e:project-agent` 验证后端能力字段缺省、关闭和开启时
-的界面，将截图与结果保存到 `desktop/out/e2e/project-agent-gate/`。
-
 构建桌面后，运行 `npm --prefix desktop run test:e2e:settings-overlay`，验证真实的
 原生设置菜单，而不是主 renderer 中隐藏的尺寸测量副本。测试检查可见边界、实际绘制
 像素、点击命中、关闭与焦点、运行中对话和草稿在设置往返后的保留，以及首次呈现确认
@@ -748,7 +738,7 @@ iOS 的核心集成、模拟器构建和设备构建在三个独立任务中运�
 
 Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
-Go 验证拆分为静态及跨平台检查、其他 Go 包、插件验收，以及三个 appserver 测试分片。Project Agent 构建同样分三片运行完整的带标签 appserver 套件。每片通过 `go test -list` 枚举已编译包中的全部顶层测试、示例及 fuzz 种子测试，按名称分配，再用 `-count=1` 实际执行；清单随运行上传。可通过 `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3` 复现一个分片，最后可追加 `project_agent`；编号从零开始。CI 合约测试验证分配完整且能传递失败。
+Go 验证拆分为静态及跨平台检查、其他 Go 包、插件验收，以及三个 appserver 测试分片。每片通过 `go test -list` 枚举已编译包中的全部顶层测试、示例及 fuzz 种子测试，按名称分配，再用 `-count=1` 实际执行；清单随运行上传。可通过 `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3` 复现一个分片；编号从零开始。CI 合约测试验证分配完整且能传递失败。
 
 其他 Go 包验证保留 Makefile 中的包发现与测试调用，仅增加 JSON 报告以记录逐测试耗时。`go-package-timings` 产物保留原始 stdout／stderr、结构化事件和汇总；缓存结果标记为重放，不当作本次实测。测试和构建失败仍会使该任务失败。
 

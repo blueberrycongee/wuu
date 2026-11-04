@@ -22,7 +22,6 @@ import { activitiesForThread, emptyActivitySessions, mergeActivityList, reduceAc
 import type { ApplicationSideConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
 import { ApplicationSideConversation, isApplicationSideConversationAction } from "./ApplicationSideConversation";
 import { ApplicationFileSelection } from "./ApplicationFileSelection";
-import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import type { ApplicationSearchActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-search";
 import { ApplicationSearch, isApplicationSearchAction } from "./ApplicationSearch";
@@ -247,17 +246,6 @@ export class ApplicationController implements HostApplicationService {
       this.publish();
     }).catch(() => {
       // Live activity events still populate the view when initial listing races core startup.
-    });
-  }
-  private projectsOwner?: ApplicationProjects;
-  get projects(): ApplicationProjects {
-    return this.projectsOwner ??= new ApplicationProjects({
-      getSource: () => ({ contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
-        enabled: Boolean(this.state.activeContext && this.state.initialized?.features?.project_agent) }),
-      updateThread: thread => {
-        this.updateState(state => updateThreadByID(state, thread.id, current => mergeSidebarThread(current, thread)));
-        this.sidebarCache.updateCachedSidebarThread(thread);
-      },
     });
   }
   private terminalOwner?: ApplicationTerminals;
@@ -637,7 +625,6 @@ export class ApplicationController implements HostApplicationService {
     for (const id of this.draftRevisions.keys()) if (!next.sessionTabs.some(tab => tab.id === id)) this.draftRevisions.delete(id);
     this.state = next;
     this.connectorLoginOwner?.reconcile();
-    this.projectsOwner?.notifyChanged();
     this.onboardingOwner?.notifyChanged();
     this.environmentOwner?.notifyChanged();
     this.syncActivities();
@@ -718,8 +705,6 @@ export class ApplicationController implements HostApplicationService {
       this.webWorkspaceOwner = undefined;
       this.onboardingOwner?.dispose(); this.onboardingOwner = undefined;
       this.fileSelectionOwner = undefined;
-      this.projectsOwner?.dispose();
-      this.projectsOwner = undefined;
       const terminalCleanup = this.terminalOwner?.dispose();
       this.terminalOwner = undefined;
       // Web destinations may reuse native IDs across application generations.
@@ -1583,17 +1568,15 @@ export class ApplicationController implements HostApplicationService {
         }); return;
       }
       case "tab.new": {
-        const { workspaceId, project } = input as ApplicationActionMapV1["tab.new"]["input"];
+        const { workspaceId } = input as ApplicationActionMapV1["tab.new"]["input"];
         const workspace = workspaceId ? this.state.projects.find(item => item.id === workspaceId) : undefined;
         if (workspaceId && (!workspace || workspace.missing)) throw new Error(`Workspace unavailable: ${workspaceId}`);
         const context = workspace ? { kind: "project" as const, project_id: workspace.id, cwd: workspace.path } : this.state.activeContext;
         if (!context) throw new Error("No workspace is selected");
-        if (project && context.kind !== "project") throw new Error("Project drafts require a workspace");
         const existing = this.state.sessionTabs.find(item => item.kind === "draft" && !this.submissionOwner?.getPendingDraftTabIds().includes(item.id) && sameRuntimeContext(item.context, context));
         const tab = existing ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
         await this.selectTab(tab, signal);
         if (this.state.activeSessionTabID !== tab.id) throw new Error("Draft navigation was superseded");
-        if (project !== undefined) await this.invoke("draft.set-project-mode", { project }, { signal });
         await this.applicationNavigation.invoke("navigation.reveal-region", { region: "primary" }, signal);
         return { tabId: tab.id };
       }
@@ -1601,15 +1584,6 @@ export class ApplicationController implements HostApplicationService {
         const { tabId, title } = input as ApplicationActionMapV1["draft.rename"]["input"];
         if (!title.trim() || !this.state.sessionTabs.some(item => item.id === tabId && item.kind === "draft")) return;
         this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, title: title.trim() } : item) })); return;
-      }
-      case "draft.set-project-mode": {
-        const { project } = input as ApplicationActionMapV1["draft.set-project-mode"]["input"];
-        const tabId = this.state.activeSessionTabID;
-        const tab = this.state.sessionTabs.find(item => item.id === tabId);
-        if (tab?.kind !== "draft" || Boolean(tab.project) === project) return;
-        if (project && tab.context.kind !== "project") throw new Error("Project drafts require a workspace");
-        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, project: project ? true as const : undefined, title: project ? translateCurrent("projects.newProject")
-          : item.title === translateCurrent("projects.newProject") ? translateCurrent("tabs.newConversation") : item.title } : item) })); return;
       }
       case "navigation.show-section": {
         const { section } = input as ApplicationActionMapV1["navigation.show-section"]["input"];
@@ -1797,7 +1771,6 @@ export class ApplicationController implements HostApplicationService {
         items: Object.freeze(state.sessionTabs.map(tab => Object.freeze({ id: tab.id, kind: tab.kind,
           title: sessionTabLabel(tab, state), workspaceId: tab.context.kind === "project" ? tab.context.project_id : undefined,
           workspaceRoot: tab.context.cwd, threadId: tab.kind === "thread" ? tab.threadID : undefined,
-          project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
       restartRecovery: Object.freeze(this.restartRecovery.map(item => Object.freeze({

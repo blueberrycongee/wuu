@@ -53,7 +53,7 @@ func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing
 	assertToolInvocationState(t, rt.Documents, invocation.ID, toolledger.InvocationRunning)
 
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 	th.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	turnID := session.NewID()
 	userMessage := providers.ChatMessage{Role: "user", Content: "start"}
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 	if err == nil && acquired {
 		th.startTurnLocked(turnID, userMessage, time.Now().UTC())
 	}

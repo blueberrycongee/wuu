@@ -35,7 +35,6 @@ export interface ApplicationArtifactV1 {
 }
 export type ApplicationPreviewTabV1 =
   | { readonly kind: "new" | "side-thread" | "files" | "review" | "terminal" | "browser"; readonly id: string }
-  | { readonly kind: "project"; readonly id: string; readonly projectID: string; readonly title: string }
   | { readonly kind: "file"; readonly id: string; readonly context: ApplicationPreviewContextV1; readonly path: string; readonly title: string;
       readonly selection?: { readonly startLineNumber: number; readonly startColumn: number; readonly endLineNumber?: number; readonly endColumn?: number }; readonly anchor?: string }
   | { readonly kind: "diff"; readonly id: string; readonly threadID: string; readonly path: string; readonly title: string; readonly selection: ApplicationDiffSelectionV1 }
@@ -66,14 +65,12 @@ export interface ApplicationPreviewActionMapV1 {
   "preview.open-artifact": { input: { readonly threadId: string; readonly artifactId: string; readonly sha256?: string; readonly page?: number }; result: void };
   "preview.open-tool": { input: { readonly toolId: "files" | "review" | "terminal" | "browser"; readonly activate?: boolean }; result: void };
   "preview.open-plugin": { input: { readonly entryId: string; readonly pluginId: string; readonly generation: string; readonly viewTypeId: string; readonly title: string; readonly icon?: ApplicationPreviewIconV1 }; result: void };
-  "preview.open-project": { input: { readonly projectId: string; readonly title: string }; result: void };
   "preview.open-side-thread": { input: Record<string, never>; result: void };
   "preview.new-tab": { input: Record<string, never>; result: { readonly tabId: string } };
   "preview.focus-tab": { input: { readonly tabId?: string }; result: void };
   "preview.close-tab": { input: { readonly tabId: string }; result: void };
   "preview.reorder-tab": { input: { readonly tabId: string; readonly overTabId: string }; result: void };
   "preview.close-tabs": { input: { readonly tabIds: readonly string[] }; result: void };
-  "preview.follow-project": { input: { readonly project?: { readonly id: string; readonly title: string } }; result: void };
   /** Restore the conversation entry without changing the selected resource. */
   "preview.open-conversation": { input: Record<string, never>; result: void };
   /** Close the entry for the selected session without deleting or stopping it. */

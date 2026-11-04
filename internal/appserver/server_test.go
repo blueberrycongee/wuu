@@ -2291,7 +2291,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
+	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/advanced/update: %v", err)
 	}
@@ -2314,7 +2314,6 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("unexpected verification model: %+v", role)
 	}
 	if rt.StreamRunner.MaxSteps != 12 ||
-		result.ProjectModels.Side.Model != "side-model" || result.ProjectModels.Worker.Model != "worker-model" ||
 		rt.StreamRunner.Temperature != 0.4 ||
 		rt.StreamRunner.CompactThresholdPct != 0.5 ||
 		rt.StreamRunner.CompactKeepRecentTokens != 20000 ||
@@ -6815,7 +6814,6 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		{name: "unknown workspace", params: ThreadStartParams{Workspace: "elsewhere"}},
 		{name: "start point without worktree", params: ThreadStartParams{BaseRevision: "HEAD"}},
 		{name: "ephemeral worktree", params: ThreadStartParams{Workspace: "worktree", Ephemeral: true}},
-		{name: "project worktree", params: ThreadStartParams{Workspace: "worktree", WorkspaceID: "project", CWD: rt.RootDir, Project: &ThreadProjectParams{Name: "Project"}}},
 		{name: "missing start point", params: ThreadStartParams{Workspace: "worktree", BaseRevision: "no-such-branch"}},
 	}
 	for index, tc := range cases {
@@ -6825,12 +6823,6 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		}
 		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
 			t.Fatalf("%s: thread/start should fail", tc.name)
-		}
-		if tc.params.Project != nil {
-			failure := fmt.Sprint(responseByID(t, parseOutput(t, out.String()), id)["error"])
-			if !strings.Contains(failure, "a project starts in the shared workspace") {
-				t.Fatalf("project worktree request should be rejected explicitly: %s", failure)
-			}
 		}
 	}
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list"}`)); err != nil {

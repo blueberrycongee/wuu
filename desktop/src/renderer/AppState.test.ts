@@ -1,7 +1,6 @@
 import { createComposerMessage, createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
 import { localTurnTiming, forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { upsertTurn } from "./AppState";
-import { projectDirectory } from "./ProjectSessions";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -907,17 +906,6 @@ describe("summarizeThreadsForSidebar", () => {
 });
 
 describe("mergeSidebarThread", () => {
-  it("retains resolved coordinator availability across turn events but accepts deletion and release", () => {
-    const existing = { ...threadWithUserTexts(["hello"]), source: "project-session", project_id: "coordinator", project_exists: true };
-    const event = { ...existing, project_exists: undefined };
-    const merged = mergeSidebarThread(existing, event);
-    expect(summarizeThreadsForSidebar([merged])[0].project_exists).toBe(true);
-    const orphan = mergeSidebarThread(merged, { ...event, project_exists: false });
-    expect(summarizeThreadsForSidebar([orphan])[0].project_exists).toBe(false);
-    expect(mergeSidebarThread(orphan, event).project_exists).toBe(false);
-    expect(mergeSidebarThread(merged, { ...event, source: undefined, project_id: undefined }).project_exists).toBeUndefined();
-    expect(mergeSidebarThread(merged, { ...event, project_id: "other" }).project_exists).toBeUndefined();
-  });
 
   it("preserves a known title and preview when an incoming snapshot omits them", () => {
     const existing = threadWithUserTexts(["今天我在这里面提交的内容"]);
@@ -1914,30 +1902,6 @@ describe("AppState stream cache lifecycle", () => {
     }
   });
 
-  it("clears project execution when its last member is interrupted without removing membership", () => {
-    const coordinator = { ...threadWithUserTexts([]), id: "project", source: "project" };
-    const member: Thread = {
-      ...threadWithUserTexts([]), source: "project-session", project_id: coordinator.id,
-      status: "in_progress", turns: [{ id: "member-turn", status: "in_progress", items: [], items_view: "full" }],
-      session_control: { manager_id: coordinator.id, manager_name: "Project", state: "active", revision: 1 },
-    };
-    const threads = [coordinator, member];
-    expect(projectDirectory(summarizeThreadsForSidebar(threads), {}).summaries.get(coordinator.id)?.running).toBe(true);
-    const next = reduceServerEvent({
-      ...initialState, activeContext: { kind: "no_project", cwd: "/repo" }, thread: member, threads,
-    }, {
-      kind: "notification", workdir: "/repo", message: {
-        method: "turn/completed", params: {
-          thread_id: member.id, turn: { id: "member-turn", status: "interrupted", items: [], items_view: "full" },
-        },
-      },
-    });
-    const directory = projectDirectory(summarizeThreadsForSidebar(next.threads), {});
-    expect(directory.summaries.get(coordinator.id)?.running).toBe(false);
-    expect(directory.managedSessionIDs.has(member.id)).toBe(true);
-    expect(next.thread?.session_control).toEqual(member.session_control);
-    expect(next.thread?.turns.at(-1)?.status).toBe("interrupted");
-  });
 
   it("releases buffered streams when a completed turn carries final item snapshots", () => {
     const textKey = streamTextKey("turn-1", "agent-1", "text");

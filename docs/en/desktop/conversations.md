@@ -14,7 +14,7 @@ The normal sidebar includes cross-workspace **Recent**. Opening the window order
 
 New conversations appear at the top of Recent, including while the first message is waiting to start. Existing conversations keep their relative positions when work starts or finishes. You can drag rows to save a preferred order; later arrivals appear above them. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, new entries wait until the interaction ends, except for the conversation you are creating or selecting. Status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
 
-These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
+These conversations remain in their workspace lists too. Pinned and archived conversations are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
 
 ## Dictate a message
 

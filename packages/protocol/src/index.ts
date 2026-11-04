@@ -221,7 +221,6 @@ export type InitializeResult = {
   extension_inventory?: ExtensionInventoryRecord[];
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
-  project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
   // Local connectable directory, ready before settings or onboarding opens.
   catalog_providers?: CatalogProviderSummary[];
@@ -231,8 +230,6 @@ export type InitializeResult = {
 };
 
 export type FeatureFlags = {
-  // Build-time Project Agent capability. Absence means disabled.
-  project_agent?: boolean;
   // Advertises that this client can host the embedded browser backend
   // (hidden WebContentsView + CDP bridge). Mirrors appserver.FeatureFlags.
   browser?: boolean;
@@ -716,7 +713,6 @@ export type ConfigChangedNotification = {
   variant?: string;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
-  project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
 };
 
@@ -938,7 +934,6 @@ export type ConfigModelUpdateResult = {
   model_profile?: ModelProfileSummary;
   tool_surface?: ToolSurfaceSummary;
   extension_trust?: ExtensionTrustSummary;
-  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
   providers?: ProviderSummary[];
@@ -1004,13 +999,6 @@ export type ModelAliasSummary = {
   model: string;
   effort?: string;
   variant?: string;
-};
-
-export type ProjectModelsConfig = {
-  technical_lead?: Partial<ModelAliasSummary>;
-  executor?: Partial<ModelAliasSummary>;
-  side?: Partial<ModelAliasSummary>;
-  worker?: Partial<ModelAliasSummary>;
 };
 
 export type ModelCapabilitySummary = {
@@ -1446,14 +1434,12 @@ export type RuntimeAdvancedSettingsUpdate = {
   disable_auto_compact?: boolean;
   provider_context_window?: number;
   model_aliases?: Record<string, ModelAliasSummary>;
-  project_models?: ProjectModelsConfig;
   verification_model?: ModelAliasSummary;
 };
 
 export type ConfigAdvancedUpdateResult = {
   advanced_settings: AdvancedSettingsSummary;
   model_aliases?: Record<string, ModelAliasSummary>;
-  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   providers?: ProviderSummary[];
 };
@@ -2202,14 +2188,7 @@ export type Thread = {
   title?: string;
   /** Monotonic persisted title revision; independent of turn timestamps. */
   title_revision?: number;
-  // "project" marks a project coordinator; "project-session" a session it manages.
   source?: string;
-  // The coordinator that manages this session.
-  project_id?: string;
-  /** Resolved coordinator existence, including archived projects. Omitted by incremental events. */
-  project_exists?: boolean;
-  // Managed sessions share the ordinary thread lifecycle. Older members are workers.
-  project_role?: "side" | "worker";
   model_provider: string;
   model: string;
   model_variant?: string;
@@ -2262,46 +2241,6 @@ export type ThreadStartParams = {
   /** Branch, tag, or commit a worktree starts from; defaults to the project's HEAD. */
   base_revision?: string;
   handoff?: ThreadHandoffParams;
-  // Start a project coordinator in the workspace instead of a conversation.
-  project?: { name: string };
-};
-
-// The user's changes to a project's membership: adopt brings an ordinary
-// conversation of the project's workspace under the project; release makes a
-// managed session an ordinary conversation again.
-export type ProjectWorkPhase = "planning" | "executing" | "verifying" | "reviewing" | "accepted" | "delivering" | "delivered" | "blocked" | "stopped";
-export type ProjectRoleUsage = {
-  role: string; provider: string; model: string;
-  input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
-};
-export type ProjectWork = {
-  id: string; project_id: string; version: number; revision: number;
-  title: string; brief: string; acceptance: string; authority: string; source_refs?: string;
-  phase: ProjectWorkPhase; lead_id: string; executor_id?: string; workspace: string;
-  summary?: string; evidence?: string; code_ref?: string; review?: string;
-  delivery?: string; blocker?: string; submission_turn_id?: string; review_turn_id?: string;
-  lead_dispatch?: ProjectWorkDispatch; executor_dispatch?: ProjectWorkDispatch;
-  usage?: ProjectRoleUsage[];
-};
-export type ProjectWorkDispatch = {
-  session_id: string; state: string; turn_id?: string; client_id?: string;
-  delivery_state?: "queued" | "steering" | "consumed";
-};
-export type ProjectWorkParams = {
-  project_id: string; operation: "list" | "get" | "stop" | "resume";
-  request_id?: string; work_id?: string; revision?: number;
-  brief?: string; acceptance?: string; authority?: string; source_refs?: string;
-};
-export type ProjectWorkList = { project_id: string; works: ProjectWork[]; usage: ProjectRoleUsage[] };
-
-export type ProjectSessionParams = {
-  action: "adopt" | "release";
-  project_id: string;
-  session_id: string;
-};
-
-export type ProjectSessionResult = {
-  thread: Thread;
 };
 
 export type ThreadHandoffParams = {
@@ -2856,9 +2795,7 @@ export type ThreadItem = {
   // their trusted source and plugin-selected presentation separately.
   origin?: string;
   origin_id?: string;
-  // Host messages to a project coordinator name their event: "project_result",
-  // "project_takeover", "project_pause", "project_return", "project_adopted" or
-  // "project_released"; related_session_id names the managed session.
+  // Producer-defined cause for a generated message.
   cause?: string;
   presentation_kind?: string;
   arguments?: string;
@@ -3491,8 +3428,6 @@ export type WuuDesktopApi = {
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   takeOverManagedSession?: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
-  projectWork?: (params: ProjectWorkParams) => Promise<ProjectWorkList | ProjectWork>;
-  projectSession?: (params: ProjectSessionParams) => Promise<ProjectSessionResult>;
   startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;
   readRemoteAttachment?: (ref: string) => Promise<string>;

@@ -84,9 +84,6 @@ test('synthetic application snapshots remain stable across subscriptions and own
   assert.equal(other.ownerTabId, 'second');
   assert.notStrictEqual(file, other);
   assert.strictEqual(file, app.fileSelection.getSnapshot({ ownerTabId: 'first' }));
-  const project = app.projects.getSnapshot('first');
-  assert.equal(app.projects.getSnapshot('second').projectId, 'second');
-  assert.strictEqual(project, app.projects.getSnapshot('first'));
   for (const read of [app.settingsControls.getPages, app.settingsControls.getConflicts, app.settingsControls.getDiagnostics,
     app.composerPresentation.getComposerInlineCompletionProviders]) {
     assert.strictEqual(read(), read());

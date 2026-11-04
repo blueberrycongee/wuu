@@ -64,6 +64,9 @@ func (s *Server) handleThreadStart(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if len(params.RetiredProject) != 0 && string(params.RetiredProject) != "null" {
+		return s.writeResponse(req.ID, nil, errRetiredSession)
+	}
 	id := session.NewID()
 	persistHistory := !params.Ephemeral
 	threadCWD := strings.TrimSpace(params.CWD)
@@ -97,9 +100,6 @@ func (s *Server) handleThreadStart(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New(`base_revision requires workspace "worktree"`))
 		}
 	case "worktree":
-		if params.Project != nil {
-			return s.writeResponse(req.ID, nil, errors.New("a project starts in the shared workspace"))
-		}
 		// Only a persisted, non-handoff session records the binding that later
 		// turns, listing, and deletion use to find and reclaim the checkout.
 		if params.Ephemeral {
@@ -184,27 +184,12 @@ func (s *Server) handleThreadStart(req Request) error {
 	if _, err := s.requireRequestAccess(req, MethodThreadStart, executionEffects(selection.Provider, selection.Model, selection.PermissionMode, string(engineID)), actualWorkspace); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	// Compound project/handoff/worktree creation has its own admission semantics;
+	// Compound handoff/worktree creation has its own admission semantics;
 	// it is not advertised as a generic delegated create operation.
-	if !s.Principal(s.requestAccessContext(req)).IsOwner() && (params.Project != nil || params.Handoff != nil || workspace == "worktree") {
+	if !s.Principal(s.requestAccessContext(req)).IsOwner() && (params.Handoff != nil || workspace == "worktree") {
 		return s.writeResponse(req.ID, nil, &access.Denied{Action: MethodThreadStart, Reason: "delegated-create-variant-unsupported"})
 	}
 
-	if params.Project != nil {
-		th, err := s.startProjectThread(binding, selection, engineID, params)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		th.mu.Lock()
-		thread := th.snapshotLocked()
-		th.mu.Unlock()
-		// Host session creation already announced the thread.
-		if err := s.writeResponse(req.ID, ThreadStartResult{Thread: thread}, nil); err != nil {
-			return err
-		}
-		s.pruneCachedThreads(thread.ID)
-		return nil
-	}
 	if params.Handoff != nil {
 		th, err := s.startHandoffThread(binding, selection, params)
 		if err != nil {
@@ -555,7 +540,7 @@ func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, th
 			started = req.timing.now()
 			fresh := th.threadResumeSnapshotLocked(params)
 			th.mu.Unlock()
-			fresh.ChildAgents, fresh.ProjectExists = thread.ChildAgents, thread.ProjectExists
+			fresh.ChildAgents = thread.ChildAgents
 			fresh.Worktree = thread.Worktree
 			fresh.Pinned, fresh.FolderID, fresh.WorkspaceID = thread.Pinned, thread.FolderID, thread.WorkspaceID
 			if thread.TitleRevision >= fresh.TitleRevision {
@@ -1352,7 +1337,7 @@ func (s *Server) handleThreadList(req Request) error {
 		if thread.Ephemeral {
 			continue
 		}
-		if thread.ReadOnly && !projectExecutionDisabled(thread.Source) {
+		if thread.ReadOnly && !retiredSessionSource(thread.Source) {
 			continue
 		}
 		if thread.Archived {
@@ -1451,7 +1436,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 			entry.pinnedAt = persisted.pinnedAt
 			thread = entry.thread
 		}
-		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || (thread.ReadOnly && !projectExecutionDisabled(thread.Source)) || thread.Archived {
+		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || (thread.ReadOnly && !retiredSessionSource(thread.Source)) || thread.Archived {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1525,7 +1510,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if thread.Ephemeral {
 			continue
 		}
-		if thread.ReadOnly && !projectExecutionDisabled(thread.Source) {
+		if thread.ReadOnly && !retiredSessionSource(thread.Source) {
 			continue
 		}
 		if !thread.Archived {
@@ -1553,13 +1538,8 @@ func (s *Server) threadListResult(binding *runtime.State, entries map[string]thr
 	}
 	sortThreadListEntries(threads)
 	result := make([]Thread, 0, len(threads))
-	projectExistence := make(map[string]bool)
 	for _, entry := range threads {
-		entry.thread, err = s.withProjectGrouping(binding, entry.thread, projectExistence)
-		if err != nil {
-			return ThreadListResult{}, err
-		}
-		entry.thread.SessionControl = s.threadSessionControl(binding, entry.thread.ID, controls[entry.thread.ID])
+		entry.thread.SessionControl = threadSessionControl(controls[entry.thread.ID])
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
 		// status per checkout, and a workspace can store one for many
 		// sessions. Running those on every list blocks the app server.
@@ -1935,8 +1915,6 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = metadata.Instructions
-	th.ProjectID = projectIDForSession(metadata)
-	th.ProjectRole = projectRoleForSession(metadata)
 	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" {
 		applyThreadRuntimeSelection(th, selection)
@@ -2042,9 +2020,7 @@ func (s *Server) threadEntryBuilder(binding *runtime.State) (func(session.Sessio
 			thread: Thread{
 				ID:                    sess.ID,
 				Source:                sess.Source,
-				ReadOnly:              projectExecutionDisabled(sess.Source),
-				ProjectID:             projectIDForSession(sess),
-				ProjectRole:           projectRoleForSession(sess),
+				ReadOnly:              retiredSessionSource(sess.Source),
 				Preview:               firstNonEmpty(sess.Title, sess.Summary),
 				Title:                 sess.Title,
 				TitleRevision:         sess.TitleRevision,
@@ -2079,34 +2055,7 @@ func (s *Server) threadEntryBuilder(binding *runtime.State) (func(session.Sessio
 }
 
 func (s *Server) threadWithChildAgents(binding *runtime.State, thread Thread) (Thread, error) {
-	var err error
-	thread, err = s.withProjectGrouping(binding, thread, nil)
-	if err != nil {
-		return thread, err
-	}
 	return s.threadWithChildAgentsStatus(binding, thread, true)
-}
-
-// A missing coordinator makes its surviving sessions recoverable as ordinary
-// rows. Archived coordinators still exist; their absence from active lists is
-// not evidence that membership ended. Cache lookups across each list request.
-func (s *Server) withProjectGrouping(binding *runtime.State, thread Thread, cache map[string]bool) (Thread, error) {
-	if thread.Source != projectSessionSource || thread.ProjectID == "" {
-		return thread, nil
-	}
-	exists, cached := cache[thread.ProjectID]
-	if !cached {
-		parent, found, err := binding.Sessions.Find(thread.ProjectID)
-		if err != nil {
-			return thread, err
-		}
-		exists = found && parent.Source == projectSource
-		if cache != nil {
-			cache[thread.ProjectID] = exists
-		}
-	}
-	thread.ProjectExists = &exists
-	return thread, nil
 }
 
 func (s *Server) threadWithChildAgentsStatus(binding *runtime.State, thread Thread, worktreeStatus bool) (Thread, error) {
