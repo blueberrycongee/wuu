@@ -520,8 +520,10 @@ WUU_DESKTOP_CORE="$PWD/.tmp/performance/wuu-core" WUU_SWITCH_CHECK_BUDGET=1 desk
 
 CI 检查大历史样本的重复切换，恢复调用、布局及样式重算的上限由
 [`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json)
-定义。计数包括观察器和输入探针的开销。护栏拒绝提高上限、删除计数项或改变工作负载；
-原始结果、报告、日志和最终合成截图以 `session-switch-evidence` 工件上传。
+定义。计数包括观察器和输入探针的开销。恢复调用和布局次数要求每次切换都不超过上限；
+样式重算使用每个大历史会话三次切换的中位数，因为页面动画可能随时机增加计数。
+证据中保留各次样本和最大值。护栏拒绝提高上限、删除计数项或改变工作负载；原始结果、
+报告、日志和最终合成截图以 `session-switch-evidence` 工件上传。
 
 诊断时去掉 `WUU_SWITCH_CHECK_BUDGET`，可设置 `WUU_SWITCH_TURNS=3000`、
 `WUU_SWITCH_ROUNDS` 或 `WUU_SWITCH_INIT_DELAY_MS=600`。
