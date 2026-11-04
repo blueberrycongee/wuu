@@ -10,13 +10,14 @@ const clickReady = require("./mcp-click.cjs");
 module.exports = async function prepareMCPFixture({ fixture, output }) {
   let endpoint, authorizationURL;
   let failedInitializations = 0;
+  let droppedInitializations = 0;
   let pauseToolList = null;
   let markBusyStarted, releaseBusy;
   const busyStarted = new Promise(resolve => { markBusyStarted = resolve; });
   const busyRelease = new Promise(resolve => { releaseBusy = resolve; });
   const manualRedirect = "https://callback.example.test/mcp";
   const codes = new Map();
-  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, conversationCalls: [], offeredTools: [], checks: [] };
+  const evidence = { registration: 0, exchanges: 0, initializationDrops: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, conversationCalls: [], offeredTools: [], checks: [] };
   const peer = createServer(async (request, response) => {
     const url = new URL(request.url, endpoint);
     if (url.pathname === "/connector-mcp") evidence.connectorRequests++;
@@ -90,6 +91,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
     }
     if (request.method !== "POST") { response.writeHead(request.method === "DELETE" ? 204 : 405).end(); return; }
     const rpc = JSON.parse(body);
+    if (rpc.method === "initialize" && droppedInitializations > 0) {
+      droppedInitializations--;
+      evidence.initializationDrops++;
+      response.destroy(); return;
+    }
     if (rpc.method === "initialize" && failedInitializations > 0) {
       failedInitializations--;
       response.writeHead(503).end(); return;
@@ -367,8 +373,35 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);
       await connectorAction("connect");
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      // Authorization can succeed while the subsequent transport handshake fails.
+      // Retry that connection without consuming another OAuth grant.
+      droppedInitializations = 1;
       await fetch(authorizationURL);
-      await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
+      await until(() => document.querySelector('[role="dialog"] [role="alert"]'));
+      assert.equal(evidence.initializationDrops, 1, "The transport must actually close during the authorized handshake");
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
+      const registrationsAfterAuthorization = evidence.registration;
+      const exchangesAfterAuthorization = evidence.exchanges;
+      await capture("connector-authorized-connection-failed");
+      await evaluate(async () => {
+        await window.wuu.setThemePreference("dark");
+        document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+      });
+      win.setSize(800, 900);
+      await capture("connector-authorized-connection-failed-dark-narrow-large");
+      await click(['[role="dialog"]', "取消"]);
+      await until(selector => document.querySelector(selector)?.getAttribute("data-connected") === "false" && document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
+      await capture("connector-disconnected-with-saved-access-dark-narrow-large");
+      await evaluate(async () => {
+        await window.wuu.setThemePreference("light");
+        document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+      });
+      win.setSize(1280, 900);
+      await capture("connector-disconnected-with-saved-access");
+      await connectorAction("connect");
+      await until(selector => document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
+      assert.equal(evidence.registration, registrationsAfterAuthorization, "Adding a disconnected connector with saved access must not reauthorize");
+      assert.equal(evidence.exchanges, exchangesAfterAuthorization, "Reconnecting must preserve the same grant");
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
       assert.equal(evidence.identityCalls, 1, "Only user Connect runs the admitted account probe");
       await capture("connector-connected-compact-light");
@@ -395,8 +428,16 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
       await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      failedInitializations = 1;
       await fetch(authorizationURL);
+      await until(() => document.querySelector('[role="dialog"] [role="alert"]'));
+      const registrationsBeforeRetry = evidence.registration;
+      const exchangesBeforeRetry = evidence.exchanges;
+      await clickElement('[role="dialog"] [data-testid="mcp-login-retry"]');
       await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("data-connected") === "true");
+      assert.equal(evidence.registration, registrationsBeforeRetry, "A connection retry must not register a new OAuth client");
+      assert.equal(evidence.exchanges, exchangesBeforeRetry, "A connection retry must retain the accepted grant");
+      evidence.checks.push("Post-authorization connection failures retain the grant; retry and the disconnected add action reconnect without another OAuth exchange");
       const retainedIdentity = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
       assert.equal(retainedIdentity.identity?.account?.id, "fixture-user-42", "Enabling a sibling connection must retain verified identity across runtime snapshots");
       assert.equal(evidence.identityCalls, 2, "A runtime refresh must not re-probe accounts");

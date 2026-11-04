@@ -687,14 +687,14 @@ it("invalidates pending connector actions on a remote context change even when c
   expect(button(connectorRow(), "mcp.connect").disabled).toBe(false);
 });
 
-it("offers reconnect for saved authorization without presenting it as a verified account", async () => {
+it("offers connect for saved authorization without presenting it as a verified account", async () => {
   const source = connectorControls({
     listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, auth_status: "oauth", configuration_enabled: true }] }),
     getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true, scopes: ["documents:read", "comments:write"] }),
   });
   await render(source);
   expect(source.getMCPAuthStatus).toHaveBeenCalledWith(connector.name);
-  expect(connectorRow().querySelector('[data-connector-action="reconnect"]')).not.toBeNull();
+  expect(connectorRow().querySelector('[data-connector-action="connect"]')).not.toBeNull();
   expect(connectorRow().querySelector("[data-connector-identity]")).toBeNull();
   expect(connectorRow().textContent).not.toContain("documents:read");
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
@@ -822,10 +822,13 @@ it("reports a partial disconnect failure and still attempts credential cleanup a
   expect(connectorRow().textContent).not.toContain("runtime stop failed");
 });
 
-it("reconnects without removing the existing authorization before replacement succeeds", async () => {
-  const source = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true, auth_status: "oauth" }] }) });
+it("reauthorizes a rejected saved grant without removing it before replacement succeeds", async () => {
+  const source = connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true, state: "auth_required", auth_status: "not_logged_in" }] }),
+    getMCPAuthStatus: vi.fn().mockResolvedValue({ name: connector.name, authenticated: true }),
+  });
   await render(source);
-  await click(button(connectorRow(), "connector.reconnect"));
+  await click(button(connectorRow(), "mcp.connect"));
   expect(document.querySelector('[data-confirm-action="confirm"]')).toBeNull();
   expect(source.startMCPLogin).toHaveBeenCalledWith(connector.name);
   expect(source.removeMCPAuth).not.toHaveBeenCalled();

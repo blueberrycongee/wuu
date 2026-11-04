@@ -349,6 +349,16 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
     }
   }
   async function connect(server: MCPServerStatus): Promise<void> {
+    // A previous OAuth grant can survive a failed transport connection. Reuse
+    // it unless the server explicitly says that authorization is required.
+    if (!server.connected && server.configuration_enabled && !["auth_required", "needs_auth", "needs_client_registration"].includes(server.state)) {
+      const authorization = await controls.getMCPAuthStatus(server.name);
+      if (!current()) return;
+      if (authorization.authenticated) {
+        await controls.connectMCPServer(server.name);
+        return;
+      }
+    }
     if (controls.requestMCPConnectorLogin && controls.takeMCPConnectorLogin && controls.getPendingMCPConnectorLogin && controls.cancelMCPConnectorLogin) {
       setPreparing(server.name);
       const revision = loginIntentRevision.current;
@@ -405,16 +415,13 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
     const connected = server.connected && ["ready", "connected"].includes(server.state) && !server.error;
     const working = retained || busy === server.name || preparing === server.name || login?.server.name === server.name;
     const saved = server.configuration_enabled || server.connected || authorized || server.auth_status === "oauth";
-    // Saved access that no longer works asks to be reconnected; the action says
-    // why. A connection that was never authorized keeps offering a plain add.
-    const reconnect = !connected && (authorized || server.auth_status === "oauth");
     // The description says what a service does. Accounts appear only to tell
     // apart connections that share a name.
     const duplicate = visible.some(other => other.name !== server.name && other.connector?.title === connector.title);
     const accountLabel = account ? [`${account.label || account.email || account.id}${account.kind === "bot" ? ` (${t("connector.bot")})` : ""}`, workspace ? workspace.label || workspace.id : ""].filter(Boolean).join(" · ") : "";
     const secondary = working ? t("mcp.working") : duplicate && accountLabel ? accountLabel : connector.description || "";
     const diagnostic = [server.error, authorization?.error].filter(Boolean).join("\n\n");
-    return { connector, authorized, account, available, connected, working, saved, reconnect, secondary, diagnostic };
+    return { connector, authorized, account, available, connected, working, saved, secondary, diagnostic };
   }
   function verifyIdentity(server: MCPServerStatus): Promise<void> {
     return act(server.name, "identity", async () => {
@@ -447,10 +454,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
             role={view.working ? "status" : undefined}>{view.secondary}</div> : null}
         </div>
         <div className="mcp-service-actions">
-          {view.available && !view.connected ? view.reconnect
-            ? <button type="button" className="settings-button" data-connector-action="reconnect" disabled={locked}
-              onClick={() => void act(server.name, "connect", () => connect(server))}>{t("connector.reconnect")}</button>
-            : <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-action="connect" disabled={locked}
+          {view.available && !view.connected ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-action="connect" disabled={locked}
               title={t("mcp.connect")} onClick={() => void act(server.name, "connect", () => connect(server))}>
               <Plus className="icon" aria-hidden="true" /><span className="sr-only">{t("mcp.connect")}</span>
             </button> : null}
@@ -515,7 +519,7 @@ function MCPLogin({ server, managed = false, catalog, onClose, onConnected }: { 
   const [finishing, setFinishing] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [retry, setRetry] = useState(0);
-  const attempt = useRef<{ loginID?: string; state?: string; authorized?: boolean; cancelled: boolean }>({ cancelled: false });
+  const attempt = useRef<{ loginID?: string; state?: string; authorized?: boolean; connecting?: boolean; cancelled: boolean }>({ cancelled: false });
   const complete = useRef(onConnected);
   complete.current = onConnected;
   useEffect(() => {
@@ -535,7 +539,11 @@ function MCPLogin({ server, managed = false, catalog, onClose, onConnected }: { 
         const result = managed ? await controls.pollMCPConnectorLogin!() : await controls.pollMCPLogin(current.loginID!);
         if (current.cancelled) return;
         if (result.status === "success") { complete.current(); return; }
-        if (result.status === "error") { setError(result.error || t("mcp.loginFailed")); return; }
+        if (result.status === "error") {
+          if (result.authorized) { current.authorized = true; setAuthorized(true); }
+          setError(result.error || t("mcp.loginFailed"));
+          return;
+        }
         setReady(result.phase !== "starting");
         timer = setTimeout(() => { void poll(); }, 750);
       } catch (failure) { if (!current.cancelled && !isPluginLifecycleCancellation(failure)) setError(toastErrorMessage(failure)); }
@@ -564,8 +572,9 @@ function MCPLogin({ server, managed = false, catalog, onClose, onConnected }: { 
   }, [controls, server.name, server.oauth_redirect_uri, t, retry, managed]);
 
   async function finish(): Promise<void> {
-    if (finishing) return;
     const current = attempt.current;
+    if (current.connecting) return;
+    current.connecting = true;
     setFinishing(true);
     setError("");
     try {
@@ -586,12 +595,13 @@ function MCPLogin({ server, managed = false, catalog, onClose, onConnected }: { 
       await controls.connectMCPServer(server.name);
       if (!current.cancelled) onConnected();
     } catch (failure) { if (!current.cancelled && !isPluginLifecycleCancellation(failure)) setError(toastErrorMessage(failure)); }
-    finally { if (!current.cancelled) setFinishing(false); }
+    finally { current.connecting = false; if (!current.cancelled) setFinishing(false); }
   }
 
   const title = t("mcp.loginNamed", { name: server.connector?.title || server.display_name || server.name });
   const dismiss = () => onClose(error ? { action: authorized ? "connect" : "login", diagnostic: error } : undefined);
   const retryLogin = () => {
+    if (attempt.current.authorized) { void finish(); return; }
     if (managed) void controls.retryMCPConnectorLogin!().then(() => setRetry(value => value + 1)).catch(failure => {
       if (!attempt.current.cancelled) setError(toastErrorMessage(failure));
     });
@@ -608,7 +618,7 @@ function MCPLogin({ server, managed = false, catalog, onClose, onConnected }: { 
       {finishButton}
     </>}>
       {error ? <p role="alert" data-tone="error">{t(authorized ? "connector.connectFailed" : "connector.signInFailed")}</p>
-        : <p role="status">{t(ready ? manual ? "mcp.manualHint" : "connector.browserWaiting" : "connector.opening")}</p>}
+        : <p role="status">{t(finishing && authorized ? "mcp.connecting" : ready ? manual ? "mcp.manualHint" : "connector.browserWaiting" : "connector.opening")}</p>}
       {codeField}
     </ConnectorHandshake>;
   }
@@ -618,7 +628,7 @@ function MCPLogin({ server, managed = false, catalog, onClose, onConnected }: { 
     {finishButton}
   </>}>
     <div className="mcp-dialog-body">
-      {error ? <MCPFailure message={t(authorized ? "mcp.connectionFailed" : "mcp.loginFailed")} diagnostic={error} /> : <p role="status">{t(ready ? manual ? "mcp.manualHint" : "mcp.browserWaiting" : "mcp.loginStarting")}</p>}
+      {error ? <MCPFailure message={t(authorized ? "mcp.connectionFailed" : "mcp.loginFailed")} diagnostic={error} /> : <p role="status">{t(finishing && authorized ? "mcp.connecting" : ready ? manual ? "mcp.manualHint" : "mcp.browserWaiting" : "mcp.loginStarting")}</p>}
       {codeField}
     </div>
   </Modal>;
