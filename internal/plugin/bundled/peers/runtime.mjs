@@ -869,6 +869,7 @@ function isRuntimeRequest(value) {
 // plugins/peers/src/index.ts
 var promptCapability = "agent.system_prompt.section";
 var lifecycleCapability = "agent.turn.lifecycle";
+var clientCapability = "plugin.client.request";
 var stateKey = "peers.state.v1";
 var requestPrefix = "peer:req:";
 var responsePrefix = "peer:reply:";
@@ -891,6 +892,7 @@ var terminalState = (state) => ["completed", "failed", "interrupted", "discarded
 var digest = (value) => createHash("sha256").update(value).digest("hex");
 var date = (value) => Date.parse(value);
 var PeersPlugin = class {
+  concurrentCapabilities = [promptCapability, clientCapability];
   workspaceID = "";
   stop = new AbortController();
   maintenance;
@@ -925,6 +927,7 @@ var PeersPlugin = class {
       ],
       capabilities: [
         { id: promptCapability, kind: "transform", version: 1 },
+        { id: clientCapability, kind: "decision", version: 1 },
         { id: lifecycleCapability, kind: "observe", version: 1, error_policy: "isolate" }
       ],
       required_services: services.map(requireKernelService)
@@ -980,6 +983,7 @@ var PeersPlugin = class {
     const record = {
       id: requestID,
       source_session_id: sourceID,
+      source_turn_id: call.turn_id,
       target_session_id: target.session_id,
       target_name: truncateUTF8(displayName(target), maxStoredNameBytes),
       state: "accepted",
@@ -1063,6 +1067,27 @@ ${message}` },
   }
   async invokeCapability(call, host) {
     if (call.capability === promptCapability) return { output: { text: promptSection } };
+    if (call.capability === clientCapability) {
+      const request = call.input;
+      if (request.method !== "requests.list") throw new Error(`unknown peers client method ${JSON.stringify(request.method)}`);
+      const sourceID = request.input?.source_session_id?.trim();
+      if (!sourceID) throw new Error("source_session_id is required");
+      const sessions = await this.sharedSessions(host);
+      if (!sessions.some((session) => session.session_id === sourceID)) throw new Error("peer request source is not available in this workspace");
+      const state = await readState(host);
+      const requests = Object.values(state.requests).filter((record) => record.source_session_id === sourceID && record.workspace_id === this.workspaceID && record.source_turn_id).sort((left, right) => left.created_at.localeCompare(right.created_at)).map((record) => {
+        const target = sessions.find((session) => session.session_id === record.target_session_id);
+        return {
+          id: record.id,
+          source_turn_id: record.source_turn_id,
+          session_id: record.target_session_id,
+          name: target ? displayName(target) : record.target_name,
+          state: record.state,
+          available: !!target
+        };
+      });
+      return { output: { result: { requests } } };
+    }
     if (call.capability !== lifecycleCapability) throw new Error(`unknown peers capability ${JSON.stringify(call.capability)}`);
     const input = call.input;
     if (input.request_id.startsWith(responsePrefix)) {

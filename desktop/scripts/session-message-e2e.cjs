@@ -224,7 +224,6 @@ const message = index => `#user-msg-peer-main-turn-${String(index + 1).padStart(
 const card = index => `${message(index)} .session-message-source`;
 const artifactCard = index => `.cached-conversation-pane[data-active="true"][data-thread-id="${artifactSessions[index - 5].id}"] [data-wuu-component="turn-artifacts"]`;
 const mainInput = '[data-main-conversation-composer] .composer textarea';
-const splitInput = id => `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`;
 async function input(selector, text) {
   await click(selector);
   await until(selector => document.activeElement === document.querySelector(selector), 'native input focus', selector);
@@ -436,9 +435,10 @@ async function stopRecording() {
   await pendingFrame;
   fs.writeFileSync(path.join(output, 'recording.json'), JSON.stringify({ boundary, frames: recordings }, null, 2));
 }
-async function closeSplit() {
-  await click('.conversation-split-close');
-  await until(() => !document.querySelector('.conversation-split-pane'), 'split closed');
+async function activeConversation(id) {
+  await until(id => document.querySelector('.cached-conversation-pane[data-active="true"]')?.dataset.threadId === id
+    && !document.querySelector('.conversation-split-pane'), 'source opens in the main conversation', id);
+  await settle();
 }
 async function setPresentation(theme, size) {
   await evaluate(async (theme, size) => {
@@ -491,15 +491,15 @@ async function captureVisualMatrix() {
         await capture(scene); pass(scene, geometry);
       }
     }
-    // A short body must not let an unbroken source title set the grid's
-    // intrinsic width. Exercise the actual narrow split, not a component mock.
+    // A short body must not let an unbroken source title widen the narrow view.
     await openMain();
-    await click(card(4));
-    await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-cjk"]'), 'CJK source split');
     await showInViewport(card(4));
     await settle();
-    await checkCardGeometry(4, `short-body-cjk-split-${theme}-${size}px-820`, cjkTitle);
-    await closeSplit();
+    await checkCardGeometry(4, `short-body-cjk-${theme}-${size}px-820`, cjkTitle);
+    await click(card(4));
+    await activeConversation('peer-cjk');
+    await capture(`cjk-source-${theme}-${size}px-820`);
+    await openMain();
   }
 }
 app.on('browser-window-created', (_event, win) => { main ||= win; });
@@ -599,15 +599,17 @@ async function run() {
   await capture('request-card-light');
   startRecording();
   await click(card(0), 0.93);
-  await until(() => document.querySelectorAll('.conversation-split-pane').length === 2, 'source conversation split');
-  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, splitInput('peer-main')), 'Keep my primary draft');
-  await input(splitInput('peer-request'), 'Keep my source draft');
-  await capture('request-open-split');
-  await click(card(0), 0.12);
-  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, splitInput('peer-request')), 'Keep my source draft');
-  await closeSplit();
+  await activeConversation('peer-request');
+  await input(mainInput, 'Keep my source draft');
+  await capture('request-open-main');
+  await openMain();
   assert.equal(await evaluate(selector => document.querySelector(selector)?.value, mainInput), 'Keep my primary draft');
-  pass('whole-card native clicks and repeated opening preserve both split drafts');
+  await click(card(0), 0.12);
+  await activeConversation('peer-request');
+  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, mainInput), 'Keep my source draft');
+  await openMain();
+  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, mainInput), 'Keep my primary draft');
+  pass('whole-card native clicks and repeated navigation preserve both conversation drafts');
 
   await evaluate(selector => { document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }); document.querySelector(selector).focus(); }, card(0));
   key('Tab');
@@ -619,13 +621,13 @@ async function run() {
   }, 'native Shift+Tab exposes source focus ring', card(0));
   await capture('request-keyboard-focus');
   key('Return');
-  await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-request"]'), 'Enter opens related session');
-  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, splitInput('peer-request')), 'Keep my source draft');
-  await closeSplit();
+  await activeConversation('peer-request');
+  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, mainInput), 'Keep my source draft');
+  await openMain();
   await evaluate(selector => document.querySelector(selector).focus(), card(0));
   key('Space');
-  await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-request"]'), 'Space opens related session');
-  await closeSplit();
+  await activeConversation('peer-request');
+  await openMain();
   pass('native Enter/Space open the source and recover its draft');
 
   assert.equal(await evaluate(selector => document.querySelector(selector)?.getAttribute('aria-expanded'), `${message(1)} .user-message-expand-toggle`), 'false');
@@ -687,10 +689,10 @@ async function run() {
   await click(`${message(1)} .user-message-expand-toggle`);
   pass('expansion retains complete reply; expansion and copy do not navigate');
   await click(card(1));
-  await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-reply"]'), 'reply source split');
-  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, splitInput('peer-main')), 'Keep my primary draft');
-  await capture('reply-open-split');
-  await closeSplit();
+  await activeConversation('peer-reply');
+  await capture('reply-open-main');
+  await openMain();
+  assert.equal(await evaluate(selector => document.querySelector(selector)?.value, mainInput), 'Keep my primary draft');
   pass('reply card navigates to its own source and retains the primary draft');
 
   for (const index of [2, 3]) {

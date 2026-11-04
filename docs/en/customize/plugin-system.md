@@ -23,6 +23,25 @@ does not provide a second official authoring SDK for those processes.
 The Go core remains the runtime host. `internal/sdk` is an internal facade for
 embedding the host in Wuu entry points; it is not a plugin authoring API.
 
+## Peer request cards
+
+With Peers enabled, new coordination requests appear as compact cards below the
+source turn in the default desktop conversation. A card opens the peer in the
+main conversation; the header offers a return to the source, preserving its
+unsent draft. Session-message source links also open the main conversation.
+Cards use the same spacing and corner radius as inline error notices and follow
+the UI font preference.
+
+The status belongs to the specific request, not the peer's later activity.
+Archived or missing targets are unavailable; a failed status refresh shows
+“Status unavailable”. Cards refresh while the source conversation is visible
+and are removed when Peers is disabled.
+
+This initial implementation displays requests retained by Peers: at most 64
+records, with settled requests eligible for pruning after seven days or when
+capacity is needed. Older records without a source turn ID have no card. The
+original tool results and session messages remain in conversation history.
+
 ## Bundled TypeScript runtimes
 
 The nine bundled business plugins are `todo`, `ask-user`, `memory`, `subagent`,

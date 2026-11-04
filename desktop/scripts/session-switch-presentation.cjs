@@ -86,7 +86,7 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     await waitFor(win, index => document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id') === `switch-thread-${index}`, index);
   };
   async function openRelatedSplit() {
-    const selector = '.cached-conversation-pane[data-active="true"] .session-message-source';
+    const selector = '.cached-conversation-pane[data-active="true"] .message-action-button:is([aria-label="Open related session"], [aria-label="打开关联会话"])';
     for (let attempt = 0; attempt < 20; attempt++) {
       const position = await evaluate(win, selector => {
         const node = document.querySelector(selector), viewport = node?.closest('.scroll-region');
