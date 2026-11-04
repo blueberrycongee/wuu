@@ -157,7 +157,7 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle",
         accessory={config.accessory}
         activity={motion === "static" ? "idle" : activity ?? status}
         motionPaused={motion !== "expressive"}
-        ambient={motion === "expressive"}
+        ambient={motion === "expressive" && !disableMorph}
         idlePerspective={{ yaw: 0, pitch: 2, strength: 1 }}
         animate={active && motion === "expressive" ? "always" : "hover"}
         style={{

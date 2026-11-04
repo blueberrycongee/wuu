@@ -86,6 +86,10 @@ func TestQueuedShutdownRetainsExternalProviderUntilCancellation(t *testing.T) {
 	if err := binding.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// Queue execution follows explicit recovery approval, not history loading.
+	if err := srv.recordRecoveryTurn(th, "approved-recovery", "running"); err != nil {
+		t.Fatal(err)
+	}
 	entered, resume := make(chan struct{}), make(chan struct{})
 	defer func() {
 		select {

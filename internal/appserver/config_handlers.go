@@ -531,6 +531,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			Name:              presentation.DisplayName,
 			Description:       presentation.ShortDescription,
 			LongDescription:   presentation.LongDescription,
+			Family:            presentation.Family,
 			Developer:         presentation.DeveloperName,
 			Icon:              extensionIconDescriptor(item.Icon),
 			Kind:              extensions.KindPlugin,
@@ -676,9 +677,11 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 
 	for _, module := range snapshot.NativeRendererModules() {
 		enabled := true
+		presentation := pluginPresentation(pluginpkg.Manifest{Interface: module.Interface})
 		records = append(records, ExtensionInventoryRecord{
 			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
 			Icon:       extensionIconDescriptor(module.Icon),
+			Family:     presentation.Family,
 			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
 			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
 			PackageSource: "bundled", ApprovalState: ExtensionApprovalOfficial,
@@ -747,10 +750,11 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 }
 
 type pluginInterface struct {
-	DisplayName      string `json:"displayName"`
-	ShortDescription string `json:"shortDescription"`
-	LongDescription  string `json:"longDescription"`
-	DeveloperName    string `json:"developerName"`
+	Family           *ExtensionFamilyDescriptor `json:"family"`
+	DisplayName      string                     `json:"displayName"`
+	ShortDescription string                     `json:"shortDescription"`
+	LongDescription  string                     `json:"longDescription"`
+	DeveloperName    string                     `json:"developerName"`
 }
 
 // pluginPresentation resolves what people see for a plugin. An interface
@@ -769,7 +773,17 @@ func pluginPresentation(manifest pluginpkg.Manifest) pluginInterface {
 		}
 		return ""
 	}
+	if presentation.Family != nil {
+		family := presentation.Family
+		family.ID = strings.TrimSpace(family.ID)
+		family.Name = strings.TrimSpace(family.Name)
+		family.Description = strings.TrimSpace(family.Description)
+		if family.ID == "" || family.Name == "" {
+			presentation.Family = nil
+		}
+	}
 	return pluginInterface{
+		Family:           presentation.Family,
 		DisplayName:      first(presentation.DisplayName, manifest.Name, manifest.ID),
 		ShortDescription: first(presentation.ShortDescription, manifest.Description),
 		LongDescription:  first(presentation.LongDescription),
@@ -2416,11 +2430,7 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 }
 
 func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
-	begin := s.beginThreadRuntimeSelectionMutation
-	if params.ApplyAt == "next_step" {
-		begin = s.beginNextStepModelSelection
-	}
-	th, release, err := begin(params.ThreadID)
+	th, intent, release, err := s.selectThreadModel(params)
 	if err != nil {
 		if errors.Is(err, errThreadRuntimeSelectionBusy) {
 			return s.writeRunError(req.ID, "thread_busy", err)
@@ -2428,6 +2438,26 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer release()
+	if intent != nil {
+		return s.writeThreadModelSelectionResponse(req, th, intent)
+	}
+	return s.writeThreadModelSelectionResponse(req, th)
+}
+
+func (s *Server) selectThreadModel(params ConfigModelUpdateParams) (selected *threadState, selectedIntent *session.Session, releaseSelection func(), resultErr error) {
+	begin := s.beginThreadRuntimeSelectionMutation
+	if params.ApplyAt == "next_step" {
+		begin = s.beginNextStepModelSelection
+	}
+	th, release, err := begin(params.ThreadID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			release()
+		}
+	}()
 	th.mu.Lock()
 
 	provider, model := th.ModelProvider, th.Model
@@ -2438,21 +2468,21 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if params.ModelOptions != nil && len(*params.ModelOptions) > 0 {
 		entry, ok := enginecatalog.Lookup(engineID)
 		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
-			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
+			return nil, nil, nil, errors.New("this engine does not expose additional model options")
 		}
 	}
 	if agentengine.NormalizeEngineID(engineID) == agentengine.EngineWuu && params.ResetModel {
-		return s.writeResponse(req.ID, nil, errors.New("reset_model applies only to external engines"))
+		return nil, nil, nil, errors.New("reset_model applies only to external engines")
 	}
 	if params.Speed != nil {
 		speed = strings.TrimSpace(*params.Speed)
 		if err := validateSpeed(speed); err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
 	}
 	if params.ApplyAt != "next_step" && agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
 		if params.Provider != "" && params.Provider != provider {
-			return s.writeResponse(req.ID, nil, errors.New("an external engine owns its provider selection"))
+			return nil, nil, nil, errors.New("an external engine owns its provider selection")
 		}
 		if params.ResetModel {
 			model, effort, speed, modelOptions = "", "", "", nil
@@ -2476,9 +2506,9 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 			permission = config.NormalizePermissionMode(*params.PermissionMode)
 		}
 		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, "", effort, speed, permission, false, modelOptions); err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
-		return s.writeThreadModelSelectionResponse(req, th)
+		return th, nil, release, nil
 	}
 	if provider == "" {
 		provider = s.rt.ProviderName
@@ -2495,22 +2525,22 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}
 	services, err := th.state.Services()
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	view, err := services.Config.Read(context.Background())
 	cfg := view.Config
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	if params.ApplyAt != "next_step" {
 		cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
 	}
 	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
 	if providerCfg.Type == "chatgpt" {
@@ -2520,11 +2550,11 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		err := s.validateChatGPTModel(ctx, selected, services.ChatGPT)
 		cancel()
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
 	}
 	if providerCfg.Models[model].Disabled {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("model %s is disabled", model))
+		return nil, nil, nil, fmt.Errorf("model %s is disabled", model)
 	}
 	ruleName, ruleCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
 	if params.Variant != nil {
@@ -2543,7 +2573,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if variant != "" {
 		if _, ok := modelvariant.OptionsForProvider(ruleName, ruleCfg, model, variant); !ok {
 			if provider == previousProvider && model == previousModel && (params.Variant != nil || params.Effort != nil) {
-				return s.writeResponse(req.ID, nil, fmt.Errorf("model %s does not support variant %s", model, variant))
+				return nil, nil, nil, fmt.Errorf("model %s does not support variant %s", model, variant)
 			}
 			variant, effort = "", ""
 		}
@@ -2555,7 +2585,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		}
 	}
 	if err := modelvariant.ApplySpeed(ruleCfg, model, speed, &selection); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	if permission == "" {
 		permission = config.NormalizePermissionMode(s.rt.Permissions.Mode)
@@ -2574,14 +2604,14 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if params.ApplyAt == "next_step" {
 		intent, err := s.commitNextStepModelSelection(th, session.RuntimeSelection{Provider: resolvedName, Model: model, Variant: selection.Variant, Effort: selection.LegacyEffort, Speed: speed, PermissionMode: permission, ApproveForMe: approveForMe})
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
-		return s.writeThreadModelSelectionResponse(req, th, &intent)
+		return th, &intent, release, nil
 	}
 	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe, nil); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
-	return s.writeThreadModelSelectionResponse(req, th)
+	return th, nil, release, nil
 }
 
 func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState, intents ...*session.Session) error {

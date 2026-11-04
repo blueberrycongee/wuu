@@ -335,6 +335,7 @@ function SettingsViewContent({
         const entry = (provider.models ?? []).find((candidate) => candidate.id === model);
         return {
           provider: provider.name, model, label: entry?.display_name || model,
+          supportsTools: entry?.capabilities?.tools,
           variants: (entry?.variants?.length ? entry.variants.map((variant) => variant.id) : entry?.supported_efforts ?? []).filter(Boolean),
         };
       }),

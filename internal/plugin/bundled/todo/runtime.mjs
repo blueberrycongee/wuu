@@ -553,6 +553,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.inspect": "host.session.inspect",
   "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",

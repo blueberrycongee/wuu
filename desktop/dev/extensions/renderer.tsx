@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import type {
   ExtensionInventoryRecord,
   ExtensionPackageUpdateParams,
+  MCPServerStatus,
   SkillSummary,
 } from "../../src/shared/protocol";
 import { SkillsCatalog } from "../../src/renderer/SkillsCatalog";
@@ -19,6 +20,22 @@ import "../../src/renderer/styles.css";
 const params = new URLSearchParams(location.search);
 const empty = params.has("empty");
 const long = params.has("long");
+const artwork = import.meta.glob<string>([
+  "../../../internal/plugin/bundled/*/icon.webp",
+  "../../../internal/plugin/bundled/account-connectors/assets/*.svg",
+], { eager: true, query: "?url", import: "default" });
+const assetKey = (id: string, path: string) => `../../../internal/plugin/bundled/${id}/${path}`;
+const connectors: MCPServerStatus[] = empty ? [] : [
+  ["atlassian", "Atlassian", "Search and update Jira issues and Confluence pages."],
+  ["linear", "Linear", "Find and update issues, projects, and comments in Linear."],
+  ["notion", "Notion", "Search and edit pages in your Notion workspace."],
+  ["sentry", "Sentry", "Investigate errors and performance issues in Sentry."],
+].map(([name, title, description]) => ({
+  name, plugin_id: "account-connectors", state: "stopped", connected: false, tool_count: 0,
+  plugin_active: true, configurable: true, configuration_enabled: false,
+  connector: { title, description, icon: name === "notion" ? { path: "assets/notion.svg" }
+    : { light: `assets/${name}-light.svg`, dark: `assets/${name}-dark.svg` } },
+}));
 
 const skills: SkillSummary[] = empty ? [] : [
   { name: "browser", source: "bundled", user_invocable: false, disable_model_invoke: false, description: "嵌入式浏览器自动化：在后台的隐藏网页宿主里导航、观察并操作网页。" },
@@ -26,6 +43,8 @@ const skills: SkillSummary[] = empty ? [] : [
   { name: "skill-creator", source: "bundled", user_invocable: true, disable_model_invoke: false, description: "Guide for creating effective skills." },
   { name: "cua-mac", source: "plugin:cua-mac", user_invocable: false, disable_model_invoke: false, description: "Observe and control native macOS apps through Accessibility, ScreenCaptureKit, and native input." },
   { name: "code-review", source: "user", user_invocable: true, disable_model_invoke: false, description: "按仓库约定审查当前改动，只报告有证据的缺陷。" },
+  { name: "current-time", source: "user", user_invocable: true, disable_model_invoke: false, description: "" },
+  { name: long ? "automation-with-an-exceptionally-long-skill-name-without-a-description" : "automation", source: "plugin:automation", user_invocable: true, disable_model_invoke: false, description: "" },
   {
     name: long ? "release-notes-with-an-exceptionally-long-skill-name" : "release-notes",
     source: "project",
@@ -47,7 +66,7 @@ const record = (
   id,
   name,
   description,
-  icon: icon ? { name: icon } : undefined,
+  icon: artwork[assetKey(id, "icon.webp")] ? { path: "icon.webp" } : icon ? { name: icon } : undefined,
   kind: "plugin",
   state: "active",
   fingerprint: `sha256:${id.padEnd(12, "0")}9f2c4e71a0b3d58e6f1c`,
@@ -60,6 +79,8 @@ const record = (
 });
 
 const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
+  record("account-connectors", "Account Connectors", "", "Connect your tools and accounts."),
+  record("current-time", long ? "Current time with an exceptionally long plugin name without a description" : "current-time", "clock", "", { enabled: false, runtime_state: "stopped" }),
   record("automation", "Automation", "clock", "Schedule prompts and recurring Agent work.", {
     developer: "Wuu",
     long_description: "Runs saved prompts on a schedule, either as new conversations or by waking an existing one, so recurring checks and reports happen without you.",
@@ -138,7 +159,7 @@ function Fixture(): JSX.Element {
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = params.get("theme") || "light";
     document.documentElement.dataset.platform = "darwin";
-    applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
+    applyMessageFlowFontSize(Number(params.get("size")) || 15);
   }, []);
   const application = useMemo<ReturnType<typeof createPreviewApplication>>(() => {
     const base = createPreviewApplication();
@@ -165,9 +186,15 @@ function Fixture(): JSX.Element {
       listSkillsForThread: async ({threadId}) => ({contextKey:snapshot.contextKey, threadId, skills}),
       readSkill: async () => ({content: skillContent}),
       refresh: async () => structuredClone(skills), update,
-      loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
+      loadIcon: async (id, _fingerprint, path) => {
+        const url = artwork[assetKey(id, path)];
+        if (!url) throw new Error(`Preview icon unavailable: ${id}/${path}`);
+        return url;
+      },
     };
     return { ...base, catalog, settingsControls: {...base.settingsControls,
+      listMCPServers: async () => ({ servers: connectors }),
+      getMCPAuthStatus: async (name) => ({ name, authenticated: name === "notion" }),
       getConflicts: () => noDiagnostics, getDiagnostics: () => noDiagnostics,
       getPluginSetting: async ({id, key}) => ({id, key, scope: "user", value: settings[key]}),
       setPluginSetting: async ({id, key, value}) => ({id, key, scope: "user", value: settings[key] = value}),

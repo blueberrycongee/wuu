@@ -1,5 +1,6 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
+import { RestartRecovery } from "./RestartRecoveryNotice";
 import { AccountScreen } from "./AccountScreen";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
@@ -1613,6 +1614,7 @@ export function App({ application, slots, shellPluginId }: {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
+          data-active-session-tab-id={tabs.activeTabId}
           data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
           data-settings-open={settingsOpen ? "" : undefined}
           data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
@@ -1881,6 +1883,7 @@ export function App({ application, slots, shellPluginId }: {
       )}
       </>
 
+      {!poppedOutMode && initialized && onboardingComplete && <RestartRecovery application={application} />}
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={gitStatus}

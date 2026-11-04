@@ -16,7 +16,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AVATAR_HUES } from "./DefaultAvatar";
-import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
+import { prefersReducedMotion, subscribeReducedMotion, useReducedMotion } from "./motion";
 import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMascotMotion";
 import {
   useConversationBecameRenderActive,
@@ -219,6 +219,7 @@ export function WuuMascot({
   style,
   ...svgProps
 }: WuuMascotProps): JSX.Element | null {
+  const reducedMotion = useReducedMotion();
   const renderActive = useConversationRenderActive();
   const becameRenderActive = useConversationBecameRenderActive();
   const revealSnap = useConversationRevealSnap();
@@ -382,6 +383,7 @@ export function WuuMascot({
         traits={identityTraits}
         perspective={attention === "idle" && idlePerspective ? idlePerspective : WUU_MASCOT_ACTIVITY_PERSPECTIVES[attention]}
         animate={animate}
+        motionPaused={motionPaused || reducedMotion || !renderActive || visible === false}
         expression={expression ?? WUU_MASCOT_ACTIVITY_EXPRESSIONS[activity]}
         focusable={false}
         pointerEvents="none"

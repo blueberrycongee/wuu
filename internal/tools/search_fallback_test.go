@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestGrepFallbackLongLinesAndPagination(t *testing.T) {
+func TestGrepLongLinesAndPagination(t *testing.T) {
 	root := t.TempDir()
 	// An irrelevant generated line must not hide later matches. A match beyond
 	// the display limit must still count, even when it occurs twice on one line.
@@ -16,7 +16,6 @@ func TestGrepFallbackLongLinesAndPagination(t *testing.T) {
 	content := long + "\n" + long + " needle needle\r\n" + strings.Repeat("needle\n", grepPageSize)
 	mustWriteFile(t, filepath.Join(root, "generated.txt"), content)
 	kit := searchFixtureKit(t, root, t.TempDir())
-	t.Setenv("PATH", t.TempDir()) // Exercise the actual no-ripgrep dispatch.
 	page := parseSearchFixturePage(t, searchFixtureCall(t, kit, "grep", map[string]any{"pattern": "needle"}))
 	if page.Total != grepPageSize+1 || len(page.Matches) == 0 {
 		t.Fatalf("unexpected long-line page: total=%d matches=%d", page.Total, len(page.Matches))
@@ -55,7 +54,7 @@ func TestGrepFallbackLongLinesAndPagination(t *testing.T) {
 	}
 }
 
-func TestGrepFallbackGitIgnoreAcrossModes(t *testing.T) {
+func TestGrepGitIgnoreAcrossModes(t *testing.T) {
 	root := searchFixtureRepo(t)
 	mustWriteFile(t, filepath.Join(root, ".gitignore"), "thirdparty/\n*.generated\n!keep.generated\n")
 	mustWriteFile(t, filepath.Join(root, "thirdparty", "large.txt"), strings.Repeat("x", 128*1024)+"needle\n")
@@ -68,7 +67,7 @@ func TestGrepFallbackGitIgnoreAcrossModes(t *testing.T) {
 	searchFixtureGit(t, root, "add", "-f", "drop.generated")
 	want := []string{"keep.generated", "sub/visible.txt"}
 	ctx := context.Background()
-	matches, err := grepWithFallback(ctx, nil, root, "needle", root, "", grepOptions{}, 0)
+	matches, err := grepWithRipgrep(ctx, nil, root, "needle", root, "", grepOptions{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,20 +78,20 @@ func TestGrepFallbackGitIgnoreAcrossModes(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("content files = %v, want %v", got, want)
 	}
-	files, err := grepFilesWithMatchesFallback(ctx, root, "needle", root, "", grepOptions{}, 0)
+	files, err := grepFilesWithMatchesRG(ctx, root, "needle", root, "", grepOptions{}, 0)
 	if err != nil || !reflect.DeepEqual(files, want) {
 		t.Fatalf("files = %v, err = %v", files, err)
 	}
-	counts, total, err := grepCountMatchesFallback(ctx, root, "needle", root, "", grepOptions{}, 0)
+	counts, total, err := grepCountMatchesRG(ctx, root, "needle", root, "", grepOptions{}, 0)
 	if err != nil || total != 2 || len(counts) != 2 || counts[0].File != want[0] || counts[1].File != want[1] {
 		t.Fatalf("counts = %v, total = %d, err = %v", counts, total, err)
 	}
-	explicit, err := grepWithFallback(ctx, nil, root, "needle", filepath.Join(root, "drop.generated"), "", grepOptions{}, 0)
+	explicit, err := grepWithRipgrep(ctx, nil, root, "needle", filepath.Join(root, "drop.generated"), "", grepOptions{}, 0)
 	if err != nil || len(explicit) != 1 {
 		t.Fatalf("explicit ignored file = %v, err = %v", explicit, err)
 	}
 	// A scoped directory still uses parent and nested ignore rules.
-	files, err = grepFilesWithMatchesFallback(ctx, root, "needle", filepath.Join(root, "sub"), "", grepOptions{}, 0)
+	files, err = grepFilesWithMatchesRG(ctx, root, "needle", filepath.Join(root, "sub"), "", grepOptions{}, 0)
 	if err != nil || !reflect.DeepEqual(files, []string{"sub/visible.txt"}) {
 		t.Fatalf("scoped files = %v, err = %v", files, err)
 	}

@@ -30,6 +30,7 @@ import { CatalogSearchField } from "./CatalogSearchField";
 import { DefaultExtensionIcon } from "./DefaultExtensionIcon";
 import { confirmAction } from "./ConfirmDialog";
 import { extensionPackageApproval, pluginToggle } from "./extensionPackageState";
+import { groupPluginFamilies, type PluginFamilyGroup } from "./pluginFamilies";
 import { translateCurrent, useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Modal } from "./Modal";
@@ -207,21 +208,21 @@ function SkillsCatalogView({
     [extensionInventory],
   );
 
+  const pluginGroups = useMemo(() => groupPluginFamilies(plugins, locale), [plugins, locale]);
   const visiblePlugins = useMemo(() => {
     const query = filter.trim().toLowerCase();
-    const items = [...plugins].sort((left, right) =>
-      left.name.localeCompare(right.name, locale),
+    if (!query) return pluginGroups;
+    return pluginGroups.filter(group =>
+      [group.name, group.description, ...group.members.flatMap(record =>
+        [record.name, record.description, ...(record.requested_permissions ?? [])])]
+        .some(value => value?.toLowerCase().includes(query)),
     );
-    if (!query) {
-      return items;
-    }
-    return items.filter((record) =>
-      [record.name, record.description, ...(record.requested_permissions ?? [])]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(query)),
-    );
-  }, [filter, locale, plugins]);
+  }, [filter, pluginGroups]);
   const selectedPlugin = plugins.find((record) => record.id === selectedPluginID);
+  const selectedFamily = pluginGroups.find(group => group.family && group.id === selectedPluginID);
+  const parentFamily = selectedPlugin?.family
+    ? pluginGroups.find(group => group.members.some(record => record.id === selectedPlugin.id))
+    : undefined;
   // Notices and skill rows name related plugins the way their cards do.
   const pluginName = (id: string) =>
     plugins.find((record) => (record.provenance.plugin_id ?? record.id) === id)?.name ?? id;
@@ -404,8 +405,9 @@ function SkillsCatalogView({
           canUpdate={capabilities.update}
           canRemove={capabilities.remove}
           canInstall={capabilities.install}
+          backLabel={parentFamily?.name}
           onBack={() => {
-            setSelectedPluginID("");
+            setSelectedPluginID(parentFamily?.id ?? "");
           }}
           onToggle={() => void updateExtensionPackage(selectedPlugin, pluginToggle(selectedPlugin).action)}
           onPrimaryAction={(action) => void updateExtensionPackage(selectedPlugin, action)}
@@ -435,6 +437,30 @@ function SkillsCatalogView({
             onClose={() => setPackageActionMenu(null)}
           />
         ) : null}
+      </section>
+    );
+  }
+
+  if (selectedFamily) {
+    return (
+      <section className="settings-page skills-catalog plugin-page" aria-label={selectedFamily.name} data-wuu-component="plugin-family-detail">
+        <nav className="settings-page-back" aria-label={t("skills.tabPlugins")}>
+          <button type="button" onClick={() => setSelectedPluginID("")}>
+            <ChevronLeft className="icon" aria-hidden="true" />{t("skills.tabPlugins")}
+          </button>
+        </nav>
+        <SettingsPageHeader title={selectedFamily.name} description={selectedFamily.description} />
+        <SettingsSection title={t("skills.familyComponents")} description={t("skills.familyComponentsHint")}>
+          <div className="plugin-catalog-grid">
+            {selectedFamily.members.map(record => (
+              <PluginRow key={record.id} record={record} showState
+                attention={pluginAttention(record, t, pluginName)}
+                toggleDisabled={Boolean(packageMutation)} toggleBusy={packageMutation.startsWith(`${record.id}:`)}
+                onOpen={() => setSelectedPluginID(record.id)}
+                onToggle={capabilities.update ? () => togglePlugin(record) : undefined} />
+            ))}
+          </div>
+        </SettingsSection>
       </section>
     );
   }
@@ -517,8 +543,13 @@ function SkillsCatalogView({
 
       {activeTab === "plugins" ? <div className="plugin-catalog-grid">
         <MCPServices filter={filter} catalogView />
-        {visiblePlugins.map(record => (
-          <PluginRow
+        {visiblePlugins.map(group => {
+          if (group.family) return <PluginFamilyRow key={group.id} group={group}
+            attention={group.members.map(record => pluginAttention(record, t, pluginName))
+              .sort((a, b) => Number(b?.tone === "danger") - Number(a?.tone === "danger")).find(Boolean)}
+            onOpen={() => setSelectedPluginID(group.id)} />;
+          const record = group.members[0];
+          return <PluginRow
             key={record.id}
             record={record}
             attention={pluginAttention(record, t, pluginName)}
@@ -526,8 +557,8 @@ function SkillsCatalogView({
             toggleBusy={packageMutation.startsWith(`${record.id}:`)}
             onOpen={() => setSelectedPluginID(record.id)}
             onToggle={capabilities.update ? () => togglePlugin(record) : undefined}
-          />
-        ))}
+          />;
+        })}
       </div> : null}
 
       {activeTab === "skills" && officialSkills.length > 0 ? (
@@ -770,7 +801,9 @@ function PluginDetailPage({
   onReload,
   onPreviewSkill,
   onMoreActions,
+  backLabel,
 }: {
+  backLabel?: string;
   record: ExtensionInventoryRecord;
   skills: readonly SkillSummary[];
   pluginName: (id: string) => string;
@@ -839,7 +872,7 @@ function PluginDetailPage({
       <nav className="settings-page-back" aria-label={t("skills.tabPlugins")}>
         <button type="button" onClick={onBack} data-testid="plugin-page-back">
           <ChevronLeft className="icon" aria-hidden="true" />
-          {t("skills.tabPlugins")}
+          {backLabel ?? t("skills.tabPlugins")}
         </button>
       </nav>
 
@@ -975,6 +1008,33 @@ function PluginMark({ record, className = "catalog-row-mark" }: {
   );
 }
 
+function PluginFamilyRow({ group, attention, onOpen }: {
+  group: PluginFamilyGroup<ExtensionInventoryRecord>;
+  attention?: PluginAttention;
+  onOpen: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const { servers } = useMCPServices();
+  const needsAuth = group.members.some(record => pluginToggle(record).on && servers.some(server =>
+    server.plugin_id === (record.provenance.plugin_id ?? record.id)
+    && ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state)));
+  const enabled = group.members.filter(record => pluginToggle(record).on).length;
+  return (
+    <div className="catalog-row plugin-row plugin-family-row" data-plugin-family={group.id}>
+      <button className="catalog-row-open" type="button" onClick={onOpen}
+        aria-label={t("skills.pluginDetailLabel", { name: group.name })}>
+        <span className="catalog-row-mark"><PluginBlocksIcon aria-hidden="true" /></span>
+        <TruncatedText className="catalog-row-title" text={group.name} />
+        <span className="catalog-row-description">{t("skills.familyStatus", { enabled, count: group.members.length })}</span>
+        {attention || needsAuth ? <TruncatedText className="catalog-row-description plugin-attention-reason" data-tone={attention?.tone ?? "warning"} text={attention?.label ?? t("mcp.needsAuth")}>
+          <AlertCircle className="icon-sm" aria-hidden="true" />{attention?.label ?? t("mcp.needsAuth")}
+        </TruncatedText> : group.description ? <TruncatedText as="span" className="catalog-row-description" text={group.description} /> : null}
+      </button>
+      <ChevronRight className="icon plugin-family-chevron" aria-hidden="true" />
+    </div>
+  );
+}
+
 // Keep each entry in place when its state changes. The row opens details;
 // inactive plugins offer enablement and active plugins expose a menu.
 function PluginRow({
@@ -982,6 +1042,7 @@ function PluginRow({
   attention,
   toggleDisabled = false,
   toggleBusy = false,
+  showState = false,
   onOpen,
   onToggle,
 }: {
@@ -989,6 +1050,7 @@ function PluginRow({
   attention?: PluginAttention;
   toggleDisabled?: boolean;
   toggleBusy?: boolean;
+  showState?: boolean;
   onOpen: () => void;
   /** Omitted when the catalog cannot change packages. */
   onToggle?: () => void;
@@ -1015,12 +1077,13 @@ function PluginRow({
         onClick={onOpen}
       >
         <PluginMark record={record} />
-        <span className="catalog-row-title">{record.name}</span>
+        <TruncatedText className="catalog-row-title" text={record.name} />
+        {showState ? <span className="catalog-row-description">{t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}</span> : null}
         {attention ? (
-          <span className="catalog-row-description plugin-attention-reason" data-tone={attention.tone}>
+          <TruncatedText className="catalog-row-description plugin-attention-reason" data-tone={attention.tone} text={attention.label}>
             {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
             {attention.label}
-          </span>
+          </TruncatedText>
         ) : needsMCPAuth ? <span className="catalog-row-description plugin-attention-reason" data-tone="warning">{t("mcp.needsAuth")}</span> : record.description ? (
           <TruncatedText as="span" className="catalog-row-description" text={record.description} />
         ) : null}
@@ -1069,7 +1132,7 @@ function CatalogRow({
   return (
     <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
       {artwork}
-      <span className="catalog-row-title">{title}</span>
+      <TruncatedText className="catalog-row-title" text={title} />
       {description ? <TruncatedText as="span" className="catalog-row-description" text={description} /> : null}
       {trailing}
       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
@@ -1089,7 +1152,7 @@ function SkillsList({
   const { t } = useI18n();
 
   return (
-    <SettingsGroup>
+    <SettingsGroup className="skill-catalog-grid">
       {skills.map((skill) => {
         const pluginID = pluginSkillID(skill.source);
         return (

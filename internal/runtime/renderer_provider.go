@@ -31,6 +31,7 @@ type RendererModule struct {
 	ID, SubjectID, Fingerprint, Entry string
 	Name, Description                 string
 	Icon                              *pluginpkg.IconSpec
+	Interface                         json.RawMessage
 	Services                          []pluginhost.ServiceDescriptor
 	Requirements                      []pluginhost.ServiceRequirement
 }
@@ -69,11 +70,15 @@ func nativeRendererModules() []RendererModule {
 	for index := range modules {
 		modules[index].Requirements = []pluginhost.ServiceRequirement{{Name: "ui.application", MajorVersion: 1, Required: true}}
 	}
-	return append(modules, RendererModule{ID: defaultApplicationModule, SubjectID: defaultApplicationModule,
+	modules = append(modules, RendererModule{ID: defaultApplicationModule, SubjectID: defaultApplicationModule,
 		Name: "Wuu Application", Icon: &pluginpkg.IconSpec{Name: "app-application"}, Description: "Application state, actions and background work.",
 		Fingerprint: "ui-application-v1:" + version.Info().Version + ":" + version.Info().Commit,
 		Entry:       "wuu-builtin:default-application", Services: []pluginhost.ServiceDescriptor{{Name: "ui.application", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.application.describe.input.v1", OutputSchema: "ui.application.describe.output.v1"}}}}})
 
+	for index := range modules {
+		modules[index].Interface = json.RawMessage(`{"family":{"id":"wuu.interface","name":"Wuu Interface","description":"Navigation, conversations, composition, previews and settings."}}`)
+	}
+	return modules
 }
 
 // rendererServiceClient adds a renderer transport to a package's graph node.

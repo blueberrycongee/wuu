@@ -1,4 +1,4 @@
-import { Check, FileDiff, GitBranch, Plus, Search } from "./WuuIcons";
+import { ArrowUpRight, Check, FileDiff, GitBranch, Plus, Search } from "./WuuIcons";
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
 import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "./ComposerFloatingMenu";
@@ -7,7 +7,6 @@ import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
-import { TruncatedText } from "./TruncatedText";
 
 export function ComposerBranchPicker({
   gitStatus, disabled, pending = false, open, onToggle, onSelect, onCreate, onOpenWorktree, worktreeStart, inToolRail = false,
@@ -156,16 +155,15 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
             ? t("composer.branchDirtyFiles", { count: gitStatus.dirty_count })
             : "";
           return (
-            <Tooltip asChild content={worktreePath} key={branch}><button aria-label={worktreePath ? `${branch}\n${worktreePath}` : branch} type="button" role={worktreePath ? "menuitem" : "menuitemradio"} aria-checked={worktreePath ? undefined : selected}
+            <button key={branch} aria-label={worktreePath ? `${branch}, ${t("git.openExistingWorktree")}: ${worktreePath}` : branch} type="button" role={worktreePath ? "menuitem" : "menuitemradio"} aria-checked={worktreePath ? undefined : selected}
               disabled={!selectable(branch)}
               onClick={() => void run(() => select(branch))}>
               <GitBranch />
               <span>
-                <TruncatedText className="project-picker-item-title" text={branch}>
+                <span className="project-picker-item-title">
                   {separator > 0 ? <span className="composer-branch-prefix">{branch.slice(0, separator)}</span> : null}
                   {branch.slice(separator)}
-                </TruncatedText>
-                {worktreePath ? <span className="branch-worktree-action">{t("git.openExistingWorktree")}</span> : null}
+                </span>
               </span>
               <span className="composer-branch-trailing">
                 {dirty ? (
@@ -173,9 +171,9 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
                     <FileDiff aria-hidden="true" />{gitStatus.dirty_count}
                   </span></Tooltip>
                 ) : null}
-                {selected ? <Check /> : null}
+                {worktreePath ? <ArrowUpRight aria-hidden="true" /> : selected ? <Check /> : null}
               </span>
-            </button></Tooltip>
+            </button>
           );
         })}
       </div> : null}

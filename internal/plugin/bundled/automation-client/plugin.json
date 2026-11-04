@@ -18,6 +18,11 @@
     "timeout": 30
   },
   "interface": {
+    "family": {
+      "id": "wuu.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring agent work."
+    },
     "displayName": "Automation tools",
     "shortDescription": "Cron model tool for the selected scheduling provider.",
     "developerName": "Wuu",

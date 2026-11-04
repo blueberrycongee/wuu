@@ -140,6 +140,8 @@ Open **Plugins** to manage standalone MCP services. A plugin's MCP services appe
 
 Connection controls show state, tool count, and errors. For entries in MCP services, Disconnect ends only the current connection without deleting its definition or credentials. Connector Disconnect instead signs out locally and persists the disabled preference, as described above. Refresh reconnects with the already-loaded configuration and discovers tools again. Edit changes the saved definition, including its startup preference. Remove deletes the standalone definition; a same-named project definition may become visible again. Removing a definition keeps its saved OAuth credentials; use **Remove OAuth login** first when you also want to sign out.
 
+When a plugin connection and a manual configuration share a service name or endpoint, the catalog labels their sources separately; removing one does not disconnect the other. Removing a standalone definition does not wait for unrelated conversations. Once the removal is applied, retained connections reject new tool calls while accepted calls finish under their existing timeout. Other running Wuu hosts apply the change when they observe the saved configuration.
+
 Restart Wuu after editing definitions on disk. Refresh is not a configuration-file reload. The older Settings MCP deep link remains available for compatibility; the main management entry is Plugins.
 
 Tools receive model-visible names such as `mcp_docs_search`, with normalization for unsupported characters and long names. Large or infrequently used tool definitions can be deferred and found through tool search. The current tool surface and permission policy can still limit availability or execution.

@@ -2,7 +2,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
 import { ChevronDown, CornerUpLeft, Quote, Trash2, X } from "./WuuIcons";
-import { Tooltip } from "./Tooltip";
 import "./PdfQuoteCards.css";
 
 /** Draft and sent PDF references open only on explicit pointer or keyboard activation. */
@@ -143,8 +142,7 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
         onBlur={event => preview.blur(event.relatedTarget)}
         onKeyDown={event => event.stopPropagation()}>
         <div className="pdf-quote-preview-heading">
-          {onOpenSource ? <Tooltip content={t("responseSelection.source")}>
-            <button type="button" className="pdf-quote-preview-source pdf-quote-source-action" disabled={openingSource}
+          {onOpenSource ? <button type="button" className="pdf-quote-preview-source pdf-quote-source-action" disabled={openingSource}
               aria-label={`${t("responseSelection.source")}: ${sourceLabel}${location ? ` · ${location}` : ""}`}
               onClick={async () => {
                 const request = ++sourceRequest.current;
@@ -153,8 +151,7 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
                   const opened = await onOpenSource();
                   if (request === sourceRequest.current && opened) preview.close();
                 } finally { if (request === sourceRequest.current) setOpeningSource(false); }
-              }}>{sourceHeading}</button>
-          </Tooltip> : <div className="pdf-quote-preview-source">{sourceHeading}</div>}
+              }}>{sourceHeading}</button> : <div className="pdf-quote-preview-source">{sourceHeading}</div>}
           {onRemove ? <button type="button" className="pdf-quote-icon-action pdf-quote-remove-action" aria-label={t("responseSelection.remove")}
               onClick={() => { preview.close(); onRemove(); }}><Trash2 aria-hidden="true" /></button>
             : null}

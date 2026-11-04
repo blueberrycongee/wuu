@@ -36,7 +36,7 @@ locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graph
 launches discover standard user install locations and, when needed, login-shell
 paths. After installing a CLI while Wuu is running, use Settings → Agents → Refresh.
 
-Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH` or its built-in search fallback.
+Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH`. The `glob` and `grep` tools require ripgrep and report an error if it is unavailable.
 
 Project Agent is experimental and disabled in default and release builds. It
 has no user setting to enable it. Existing project conversations remain readable,
@@ -707,9 +707,13 @@ blocking remain separate. Wall-clock P50/P75 are diagnostic, never CI gates.
 CI checks repeated large-fixture switches against the resume-call, layout, and
 style-recalculation ceilings in
 [`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json).
-These counters include the observer and input probe. The ratchet rejects higher
-ceilings, removed counters, or a changed workload. It uploads raw results, a
-report, logs, and a final synthetic screenshot as `session-switch-evidence`.
+These counters include the observer and input probe. Resume calls and layouts
+must meet their ceilings on every switch. Style recalculations use the median
+of three switches to each large session: page-wide animations can add work that
+varies with timing. Individual samples and their maximum remain in the evidence.
+The ratchet rejects higher ceilings, removed counters, or a changed workload. It
+uploads raw results, a report, logs, and a final synthetic screenshot as
+`session-switch-evidence`.
 
 For diagnostics, omit `WUU_SWITCH_CHECK_BUDGET` and set `WUU_SWITCH_TURNS=3000`,
 `WUU_SWITCH_ROUNDS`, or `WUU_SWITCH_INIT_DELAY_MS=600`. `WUU_SWITCH_TRACE=1`
