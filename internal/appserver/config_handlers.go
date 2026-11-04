@@ -680,6 +680,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		presentation := pluginPresentation(pluginpkg.Manifest{Interface: module.Interface})
 		records = append(records, ExtensionInventoryRecord{
 			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
+			Icon:       extensionIconDescriptor(module.Icon),
 			Family:     presentation.Family,
 			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
 			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,

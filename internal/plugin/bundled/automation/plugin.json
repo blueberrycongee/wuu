@@ -3,7 +3,7 @@
   "id": "automation",
   "name": "Automation Scheduler",
   "description": "Default scheduling provider for Agent prompts.",
-  "icon": "clock",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "author": {
     "name": "Wuu"
