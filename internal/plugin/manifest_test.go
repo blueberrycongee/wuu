@@ -367,6 +367,40 @@ func TestLoadManifestPreservesAndValidatesConnectorMetadata(t *testing.T) {
 	}
 }
 
+// Connector icons are served by the icon reader only when declared, so the
+// manifest must confine them to safe package images.
+func TestLoadManifestConfinesConnectorIcons(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "assets", "brand.svg"), `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>`)
+	writeFile(t, filepath.Join(root, "assets", "script.svg"), `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+	writeFile(t, filepath.Join(root, "assets", "brand.txt"), "text")
+	path := filepath.Join(root, ManifestFilename)
+	declare := func(icon string) (Plugin, error) {
+		writeFile(t, path, `{"id":"connector-fixture","mcp_servers":{"docs":{"url":"https://example.test/mcp","enabled":false,"connector":{"title":"Documents","icon":`+icon+`}}}}`)
+		return LoadManifest(path, "user")
+	}
+	item, err := declare(`{"path":"./assets/brand.svg"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if icon := item.MCPServers["docs"].Connector.Icon; icon == nil || icon.Path != "assets/brand.svg" {
+		t.Fatalf("icon = %+v", icon)
+	}
+	for _, invalid := range []string{
+		`{"path":"../outside.svg"}`,
+		`{"path":"/etc/brand.svg"}`,
+		`{"path":"assets/brand.txt"}`,
+		`{"path":"assets/script.svg"}`,
+		`{"path":"assets/missing.svg"}`,
+		`{"light":"assets/brand.svg"}`,
+		`{"path":"assets/brand.svg","dark":"assets/brand.svg"}`,
+	} {
+		if _, err := declare(invalid); err == nil {
+			t.Fatalf("accepted connector icon %s", invalid)
+		}
+	}
+}
+
 func TestDesktopContentRendererManifestContract(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "desktop.js"), "export function activateContent() {}")

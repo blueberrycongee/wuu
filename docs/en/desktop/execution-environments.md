@@ -1,10 +1,12 @@
 # Execution environments
 
-Choose **Settings → Built-in agent → Execution environments** to run workspace tools in a container or on a remote machine. Local execution remains the default. Install the same Wuu revision in the environment; a protocol mismatch stops execution.
+Set `execution_environments` in [user configuration](../reference/configuration.md) to run workspace tools in a container or on a remote machine. Local execution remains the default. Install the same Wuu revision in the environment; a protocol mismatch stops execution.
 
-Create a profile under **Settings → Built-in agent → Execution environments**, then select it as the default for new conversations in the same section. The choice and profile are saved with each conversation. Editing or deleting the profile does not move an existing conversation. Older conversations retain local execution. Forks inherit the profile and receive a separate environment unless sharing is enabled. Inplace subagents and read-only side conversations use their parent’s environment.
+Create a named entry under `execution_environments.profiles` and set `execution_environments.default` to that name, or `local` for local execution. Finish active work, fully quit Wuu, and restart it after editing. The choice and profile are saved with each conversation. Editing or deleting the profile does not move an existing conversation. Older conversations retain local execution. Forks inherit the profile and receive a separate environment unless sharing is enabled. Inplace subagents and read-only side conversations use their parent’s environment.
 
 File tools, search, shell commands, Git, programmatic tool calling and background processes all use that environment. Process controls and completion events return to the desktop. Published artifacts are copied back as immutable snapshots, with a 256 MiB limit per artifact. Model connections, plugins, browser integration, notes and history remain on the host. This setting does not sandbox extensions.
+
+These profiles apply to workspace-bound built-in conversations. Personal user-bound runtimes do not use `execution_environments`. Restarting does not replace the saved environment of an existing conversation.
 
 ## Start with Docker
 
@@ -40,9 +42,9 @@ Linux command write restrictions require Landlock ABI 3 or later. If unavailable
 
 ## Sharing, retention and recovery
 
-By default, conversations have separate environment identities. **Share between conversations** opts into one filesystem; tool state and process ownership remain separate. Host mounts deliberately share their source directory regardless of this switch.
+By default, conversations have separate environment identities. `shared: true` opts into one filesystem; tool state and process ownership remain separate. Host mounts deliberately share their source directory regardless of this switch.
 
-**Keep environment files** retains a Docker container, Singularity workspace, SSH workspace or cloud filesystem across clean disconnects. Modal takes a filesystem snapshot, Daytona stops the environment, and Vercel uses persistent sandboxes. Shared environments are retained for other conversations. Retention does not guarantee that running processes survive a cloud stop, provider timeout or machine restart. Missing retained state produces an error instead of silently replacing a saved filesystem.
+`persistent: true` retains a Docker container, Singularity workspace, SSH workspace or cloud filesystem across clean disconnects. Modal takes a filesystem snapshot, Daytona stops the environment, and Vercel uses persistent sandboxes. Shared environments are retained for other conversations. Retention does not guarantee that running processes survive a cloud stop, provider timeout or machine restart. Missing retained state produces an error instead of silently replacing a saved filesystem.
 
 Without retention, Docker containers are removed on runtime shutdown; Singularity state is removed after its connection closes; SSH workspaces are removed when the detached worker exits after its idle timeout. Cloud environments are stopped/deleted on clean disconnect. Abrupt host termination can leave resources behind. Retained/shared cloud resources and snapshots may continue to incur charges; remove them using the provider’s dashboard or CLI when no longer needed. Removing a profile only removes configuration.
 
@@ -218,8 +220,6 @@ WUU_EXECUTION_E2E_IMAGE=wuu-execution:local go test ./internal/executionworker -
 For Singularity/Apptainer, set `WUU_EXECUTION_E2E_SIF` to a current worker SIF image and run `go test ./internal/executionworker -run TestSingularity -count=1 -v`.
 
 For SSH, set `WUU_EXECUTION_E2E_SSH` to a JSON SSH profile for a disposable test server, then run `go test ./internal/executionworker -run TestSSHEnvironmentEndToEnd -count=1 -v`. The test creates files and processes in its own environment directories.
-
-Desktop acceptance uses `npm --prefix desktop run test:e2e:execution-environments`. It exercises the real renderer with a synthetic settings bridge and writes screenshots plus a JSON receipt under `desktop/out/e2e/execution-environments`. It does not authenticate cloud accounts. Live provider validation requires credentials and a published worker image in that provider.
 
 ## Worker compatibility
 

@@ -1,5 +1,6 @@
 .rich-table-wrap {
   position: relative;
+  min-width: 0;
 }
 
 .rich-table-scroll {

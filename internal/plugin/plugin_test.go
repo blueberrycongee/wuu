@@ -174,6 +174,50 @@ func TestDiscoverWithOptionsHidesBundledCUAByDefault(t *testing.T) {
 	}
 }
 
+func TestDiscoverWithOptionsHidesPersonalProductInReleaseBuilds(t *testing.T) {
+	previous := personalProductBuild
+	personalProductBuild = "0"
+	t.Cleanup(func() { personalProductBuild = previous })
+
+	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
+		GOOS:      "darwin",
+		LookPath:  func(command string) (string, error) { return command, nil },
+		LookupEnv: func(string) (string, bool) { return "", false },
+	})
+	for _, item := range plugins {
+		if item.ID == "personal" || item.ID == "personal-calendar" {
+			t.Fatalf("%s must stay out of release builds: %+v", item.ID, item)
+		}
+	}
+}
+
+func TestDiscoverWithOptionsIncludesPersonalProductInSourceBuilds(t *testing.T) {
+	previous := personalProductBuild
+	personalProductBuild = "1"
+	t.Cleanup(func() { personalProductBuild = previous })
+
+	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
+		GOOS:      "darwin",
+		LookPath:  func(command string) (string, error) { return command, nil },
+		LookupEnv: func(string) (string, bool) { return "", false },
+	})
+	found := map[string]bool{}
+	for _, item := range plugins {
+		if item.ID != "personal" && item.ID != "personal-calendar" {
+			continue
+		}
+		if !item.Official || item.Source != "bundled" {
+			t.Fatalf("%s provenance = official:%v source:%q", item.ID, item.Official, item.Source)
+		}
+		found[item.ID] = true
+	}
+	for _, id := range []string{"personal", "personal-calendar"} {
+		if !found[id] {
+			t.Fatalf("bundled %s plugin missing from source build: %+v", id, plugins)
+		}
+	}
+}
+
 func TestDiscoverWithOptionsIncludesBundledPeers(t *testing.T) {
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
 		GOOS:      "darwin",

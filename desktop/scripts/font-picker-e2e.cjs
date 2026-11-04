@@ -75,7 +75,7 @@ async function run() {
     localStorage.setItem("wuu.appearance.v1", JSON.stringify({ codeFont: fonts[3] }));
   }, fonts);
   await click(".sidebar-account-trigger");
-  await click('[data-settings-page="providers"]');
+  await click('[data-settings-entry="settings"]');
   await click('.settings-nav-item[data-wuu-page="appearance"]');
   await waitFor(() => document.querySelectorAll('[data-testid="settings-typography"] .appearance-font-picker').length === 3);
 

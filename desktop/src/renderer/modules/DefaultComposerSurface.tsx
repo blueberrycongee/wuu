@@ -48,12 +48,11 @@ export function DefaultComposerSurface({ application, slots, ...layout }: Defaul
   return <OwnedComposer key={pane} application={application} slots={slots} {...layout} pane={pane} ownerTabId={ownerTabId} />;
 }
 
-async function openComposerPlugins(application: ApplicationServiceV1, pluginId?: string, connectServer?: string): Promise<void> {
+async function openComposerPlugins(application: ApplicationServiceV1, pluginId?: string): Promise<void> {
   const record = application.catalog.getSnapshot().inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === pluginId);
   await application.invoke("catalog.select-section", { section: "plugins" });
   await application.invoke("catalog.select-plugin", { pluginId: record?.id ?? "" });
   await application.invoke("navigation.show-section", { section: "catalog" });
-  if (connectServer) await application.settingsControls.requestMCPConnectorLogin?.(connectServer);
 }
 
 function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, variant }: {
@@ -64,7 +63,7 @@ function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, var
   const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
     conversationPluginsSupported: view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
-    openPlugins: (pluginId?: string, connectServer?: string) => openComposerPlugins(application, pluginId, connectServer),
+    openPlugins: (pluginId?: string) => openComposerPlugins(application, pluginId),
   }), [application, slots, ownerTabId, presentation, view.composerRuntime.owners]);
   if (view.sideConversation.parentThreadId !== parentThreadId) return null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
@@ -106,7 +105,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
     conversationPluginsSupported: view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
-    openPlugins: (pluginId?: string, connectServer?: string) => openComposerPlugins(application, pluginId, connectServer),
+    openPlugins: (pluginId?: string) => openComposerPlugins(application, pluginId),
   }), [application, slots, ownerTabId, presentation, view.composerRuntime.owners]);
   const [, redraw] = useReducer(value => value + 1, 0);
   const attachments = useMemo(() => createApplicationComposerAttachments(application, () => redraw()), [application]);
@@ -320,7 +319,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectRuntimeModel={async (provider, model, variant) => (await controls.chooseRuntime({ kind: "provider-model", provider, model, variant })).accepted}
       onSelectRuntimeEffort={async variant => (await controls.chooseRuntime({ kind: "effort", variant })).accepted}
       onSelectPermissionMode={(mode, approveForMe) => { run(controls.choosePermission(mode, approveForMe)); setMenu(null); }}
-      onOpenSettings={() => run(application.invoke("settings.open", { pageId: "providers" }))}
+      onOpenSettings={() => run(application.invoke("settings.open", {}))}
       onOpenSkillsCatalog={() => run(application.invoke("catalog.select-section", { section: "skills" }).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "blank" })); }} onOpenWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "folder" })); }}

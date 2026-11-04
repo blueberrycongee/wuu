@@ -52,16 +52,23 @@ export class NativeTooltip {
     window.webContents.setZoomFactor(zoom);
     window.setBounds({ x: Math.round(origin.x + hint.x * zoom), y: Math.round(origin.y + hint.y * zoom),
       width: Math.ceil(hint.width * zoom), height: Math.ceil(hint.height * zoom) });
-    const height = await window.webContents.executeJavaScript(`new Promise(resolve => {
+    const size = await window.webContents.executeJavaScript(`new Promise(resolve => {
       const hint = document.getElementById('hint'), value = ${JSON.stringify(hint)};
-      hint.textContent = value.text; Object.assign(hint.style, value.style, {width: value.width + 'px'});
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve(hint.getBoundingClientRect().height)));
-    })`);
-    if (revision !== this.revision || window.isDestroyed()) return;
+      hint.textContent = value.text;
+      Object.assign(hint.style, value.style, {width: 'max-content', maxWidth: value.style.maxWidth || '320px'});
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const intrinsic = hint.getBoundingClientRect();
+        hint.style.width = intrinsic.width + 'px';
+        const measured = hint.getBoundingClientRect();
+        resolve({width: measured.width, height: measured.height});
+      }));
+    })`) as { width: number; height: number } | null;
+    if (revision !== this.revision || window.isDestroyed() || !size) return;
     // The native renderer may resolve a fallback font differently from the shell.
-    // Measure its actual text so long hints cannot be clipped at a line break.
-    window.setBounds({ x: Math.round(origin.x + hint.x * zoom), y: Math.round(origin.y + (hint.y + (hint.height - height) / 2) * zoom),
-      width: Math.ceil(hint.width * zoom), height: Math.ceil(height * zoom) });
+    // Size to that renderer's own text so a wider fallback cannot turn a short
+    // one-line hint into two lines; the shell max-width still caps long hints.
+    window.setBounds({ x: Math.round(origin.x + hint.x * zoom), y: Math.round(origin.y + (hint.y + (hint.height - size.height) / 2) * zoom),
+      width: Math.ceil(size.width * zoom), height: Math.ceil(size.height * zoom) });
     window.showInactive();
   }
 

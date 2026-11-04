@@ -1,14 +1,19 @@
-/* Plugins catalog. Plugins and skills are separate tabs; plugins group by
- * what they need from you (attention, on, off) into settings groups, and a
- * row opens the plugin's own page. */
+/* Plugins and skills share the same browsing scale and spacing. */
 
 .skills-scroll-region {
   background: var(--paper);
 }
 
-/* The catalog shares the settings column and section rhythm. Its heading
- * names the selected category; search and catalog actions follow below. */
+/* Both catalogs share a browsing measure; detail pages keep the settings measure. */
+.skills-catalog:not(.plugin-page) {
+  --settings-column-width: 1040px;
+  --settings-gap: var(--space-6);
+}
+
+/* The catalog shares the settings section rhythm. Its heading names the
+ * selected category; search and catalog actions follow below. */
 .catalog-toolbar {
+  --control-field-height: var(--control-search-height);
   display: flex;
   min-width: 0;
   align-items: center;
@@ -17,6 +22,8 @@
 
 .catalog-toolbar > .catalog-search {
   flex: 1 1 auto;
+  border-color: var(--hairline);
+  border-radius: var(--radius-pill);
 }
 
 /* The search gives up width first; the actions keep their labels. */
@@ -130,28 +137,184 @@ button.catalog-row,
   white-space: nowrap;
 }
 
-/* A plugin row is one open target across the row with the switch stacked
- * above it in the trailing column. Both grids fix that column to the
- * switch's footprint (its target less the overhang it gives back), so the
- * copy ends before the switch instead of running under it. */
-.plugin-row {
-  align-items: stretch;
+.catalog-add {
+  border-radius: var(--radius-pill);
+  padding-inline: var(--space-4);
 }
 
-.plugin-row[data-switch] {
-  --catalog-row-trailing: calc((var(--switch-target-width) + var(--switch-track-width)) / 2);
+.plugin-catalog-grid,
+.skill-catalog-grid {
+  --catalog-mark-size: calc(var(--icon-size) * 2);
+  --catalog-row-pad: var(--space-3);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  /* Item padding owns vertical separation; the gutter separates the columns. */
+  gap: 0 var(--space-8);
 }
 
-.plugin-row > .catalog-row-open {
+.plugin-catalog-grid > .settings-section,
+.plugin-catalog-grid > .settings-section > .settings-section-body,
+.plugin-catalog-grid > .settings-section > .settings-section-body > .settings-group {
+  display: contents;
+}
+
+.plugin-catalog-grid :is(.plugin-row, .mcp-service) {
+  display: grid;
+  grid-template-columns: var(--catalog-mark-size) minmax(0, 1fr) auto;
+  column-gap: var(--space-3);
+  min-width: 0;
+  min-height: calc(var(--catalog-mark-size) + var(--catalog-row-pad) * 2);
+  border: 0;
+}
+
+.plugin-catalog-grid .plugin-row {
+  align-items: center;
+}
+
+.plugin-catalog-grid .catalog-row-open {
+  grid-column: 1 / 3;
+  grid-row: 1;
+  grid-template-columns: var(--catalog-mark-size) minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-content: start;
+  padding-block: var(--catalog-row-pad);
+  border-radius: var(--radius-sm);
+}
+
+/* Let the hover surface extend beyond the aligned artwork and action columns. */
+.plugin-catalog-grid :is(.plugin-row, .mcp-service),
+.skill-catalog-grid > .catalog-row {
+  width: calc(100% + var(--space-2) * 2);
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.plugin-catalog-grid :is(.plugin-row, .mcp-service):hover,
+.skill-catalog-grid > .catalog-row:hover {
+  background: var(--surface-2);
+}
+
+/* Service styles load later, so explicitly keep the same open rows as packages. */
+.plugin-catalog-grid .mcp-service + .mcp-service {
+  border-top: 0;
+}
+
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) {
+  width: var(--catalog-mark-size);
+  height: var(--catalog-mark-size);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+:is(.plugin-catalog-grid, .skill-catalog-grid) .catalog-row-mark {
+  grid-row: 1 / span 2;
+  align-self: start;
+}
+
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) > svg {
+  width: 64%;
+  height: 64%;
+}
+
+/* Asset images carry their own artwork and inset; do not shrink them like
+ * line icons or put a second tile behind a brand's existing background. */
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark):has(> :is(.plugin-icon-themed, .plugin-icon-asset)) {
+  border: 0;
+  background: transparent;
+}
+
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) > :is(.plugin-icon-themed, .plugin-icon-asset) {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: contain;
+}
+
+.plugin-catalog-grid .catalog-row-action {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
+  /* Match the icon's top inset even when the adjacent description wraps. */
+  margin-top: var(--catalog-row-pad);
+}
+
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-title, .mcp-service-name) {
+  font-size: var(--font-ui);
+  line-height: 1.4;
+}
+
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-description, .mcp-service-status) {
+  margin-top: 2px;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.plugin-catalog-grid :is(.catalog-row-action, .mcp-service-actions > .settings-icon-button) {
+  width: var(--catalog-mark-size);
+  min-height: var(--catalog-mark-size);
+  color: var(--ink);
+}
+
+.plugin-catalog-grid :is(.catalog-row-action, .mcp-service-actions > .settings-icon-button) > svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.plugin-catalog-grid .mcp-service {
+  padding-block: var(--catalog-row-pad);
+}
+
+.plugin-catalog-grid .connector-mark {
+  align-self: start;
+}
+
+.plugin-catalog-grid .mcp-service-status {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.plugin-catalog-grid .mcp-service-actions {
+  align-self: start;
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+}
+
+.plugin-catalog-grid .mcp-load-failure {
   grid-column: 1 / -1;
-  grid-row: 1;
 }
 
-.plugin-row > .catalog-row-switch {
-  position: relative;
-  z-index: 1;
-  grid-row: 1;
-  align-self: center;
+.plugin-catalog-grid:not(:has(.plugin-row, .mcp-service, .mcp-load-failure)) {
+  display: none;
+}
+
+/* The catalog empty state covers packages and services together. */
+.plugin-catalog:has(.mcp-service, .mcp-load-failure) > .settings-group-empty {
+  display: none;
+}
+
+@container settings-page (width < 48em) {
+  .plugin-catalog-grid,
+  .skill-catalog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Two service actions need their own line when the reading column is narrow. */
+@container settings-page (max-width: 32em) {
+  .plugin-catalog-grid .mcp-service:has(.mcp-service-actions > :nth-child(2)) {
+    grid-template-columns: var(--catalog-mark-size) minmax(0, 1fr);
+  }
+
+  .plugin-catalog-grid .mcp-service:has(.mcp-service-actions > :nth-child(2)) > .mcp-service-actions {
+    grid-column: 2;
+    justify-self: start;
+    margin-inline-start: 0;
+  }
 }
 
 /* A catalog mutation locks controls without making the whole page flash.
@@ -160,33 +323,35 @@ button.catalog-row,
   opacity: 1;
 }
 
-.catalog-row-switch[data-mutation-blocked][aria-busy="true"] {
-  cursor: progress;
+.skill-catalog-grid > .catalog-row {
+  grid-template-columns: var(--catalog-mark-size) minmax(0, 1fr) var(--icon-size);
+  column-gap: var(--space-3);
+  min-height: calc(var(--catalog-mark-size) + var(--catalog-row-pad) * 2);
+  align-content: start;
+  padding-block: var(--catalog-row-pad);
+  border: 0;
+  border-radius: var(--radius-sm);
 }
 
-/* Keep the hovered track stable while the request holds the native lock. */
-.catalog-row-switch[data-mutation-blocked]:hover {
-  --switch-track-color: var(--switch-track-off-hover);
+/* Ownership stays below the description so long plugin names do not take
+ * width away from the skill's title or collide with its preview control. */
+.skill-catalog-grid .catalog-row > .catalog-row-meta {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: start;
+  max-width: 100%;
+  margin-top: var(--space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.catalog-row-switch[data-mutation-blocked][aria-checked="true"]:hover {
-  --switch-track-color: var(--switch-track-on-hover);
-}
-
-/* Off plugins keep their place but step back. */
-.plugin-row:not([data-on]) .catalog-row-mark {
-  color: var(--ink-tertiary);
-}
-
-/* In a narrow column the owning plugin moves under the description, so the
- * name keeps the width it needs. */
-@container settings-page (max-width: 32em) {
-  .catalog-row > .catalog-row-meta {
-    grid-column: 2;
-    grid-row: 3;
-    justify-self: start;
-    margin-top: var(--space-1);
-  }
+.skill-catalog-grid .catalog-row > .settings-disclosure-chevron {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: start;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-top: calc((var(--catalog-mark-size) - var(--icon-size)) / 2);
 }
 
 /* Notices carry a state, not a grouping: a soft status tint with the

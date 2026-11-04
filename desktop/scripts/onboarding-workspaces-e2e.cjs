@@ -230,6 +230,23 @@ async function run() {
   assert.deepEqual(scan.filter(row => row.selected).map(row => row.name).sort(), ['api-server', 'website']);
   observed.push({ scenario: 'real history discovery', candidates: scan.length, selected: scan.filter(row => row.selected).length });
   await screenshot('wide');
+  const workspaceEdges = await evaluate(() => {
+    const card = document.querySelector('.onboarding-choice-card').getBoundingClientRect();
+    const scroller = document.querySelector('.onboarding-workspaces');
+    const row = document.querySelector('.onboarding-workspace-row');
+    const toolbar = document.querySelector('.onboarding-workspace-toolbar').getBoundingClientRect();
+    return {
+      cardRight: card.right,
+      scrollbarLeft: scroller.getBoundingClientRect().right - (scroller.offsetWidth - scroller.clientWidth),
+      rowContentRight: row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight),
+      toolbarRight: toolbar.right,
+    };
+  });
+  assert.ok(workspaceEdges.scrollbarLeft >= workspaceEdges.cardRight - 0.5,
+    'The workspace scrollbar gutter stays outside the card content column');
+  assert.ok(Math.abs(workspaceEdges.rowContentRight - workspaceEdges.toolbarRight) <= 1,
+    'Workspace row content and the footer share the card content edge');
+  observed.push({ scenario: 'workspace scrollbar sits outside the card', ...workspaceEdges });
   await evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await screenshot('wide-dark');
   await evaluate(() => { document.documentElement.dataset.theme = 'light'; });

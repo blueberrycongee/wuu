@@ -302,7 +302,7 @@ async function run() {
     const start = report.events.length;
     if (target === 'settings') {
       await click('.sidebar-account-trigger');
-      await click('button[role="menuitem"][data-settings-page="providers"]');
+      await click('button[role="menuitem"][data-settings-entry="settings"]');
     } else {
       await click(target === 'chat' ? '[data-wuu-component="conversations-section"]' : `[data-ribbon-id="${pages[target].tab}"]`);
     }

@@ -1,5 +1,9 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
-import { draftPluginReferences, pluginReferencePlainText } from "./ComposerPluginReferences";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
+import type { MCPServerStatus } from "../shared/protocol";
+import { draftPluginReferences, pluginReferencePlainText, type DraftPluginReference } from "./ComposerPluginReferences";
+import { ComposerPluginIcon } from "./ComposerPluginIcon";
+import { useComposerServices } from "./ComposerServicesContext";
 import "./ComposerInput.css";
 
 export interface RichComposerInput {
@@ -73,27 +77,58 @@ function placeSelection(root: HTMLElement, start: number, end: number): void {
   selection?.addRange(range);
 }
 
-function renderValue(root: HTMLElement, value: string): void {
+type ReferenceNode = { reference: DraftPluginReference; element: HTMLSpanElement };
+
+function renderValue(root: HTMLElement, value: string): ReferenceNode[] {
   const nodes: Node[] = [];
+  const references: ReferenceNode[] = [];
+  // Keep portal containers alive while typing so brand images do not remount.
+  const existing = Array.from(root.querySelectorAll<HTMLSpanElement>(":scope > .composer-plugin-reference"));
   let offset = 0;
   for (const ref of draftPluginReferences(value)) {
     nodes.push(document.createTextNode(value.slice(offset, ref.start)));
-    const chip = document.createElement("span");
+    const index = existing.findIndex(element => element.dataset.pluginToken === ref.token);
+    const chip = index < 0 ? document.createElement("span") : existing.splice(index, 1)[0];
     chip.contentEditable = "false";
     chip.className = "composer-plugin-reference";
     chip.dataset.pluginToken = ref.token;
-    chip.textContent = ref.text;
     chip.title = [ref.plugin.plugin_id, ref.plugin.mcp_server, ref.plugin.account_id, ref.plugin.workspace_id].filter(Boolean).join(" · ");
+    if (index < 0) {
+      const mark = document.createElement("span");
+      mark.className = "composer-reference-mark";
+      mark.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.className = "composer-reference-name";
+      label.textContent = ref.text.replace(/^@/, "");
+      // Text and the icon footprint exist before the parent measures draft height.
+      chip.append(mark, label);
+    }
+    references.push({ reference: ref, element: chip.firstElementChild as HTMLSpanElement });
     nodes.push(chip);
     offset = ref.end;
   }
   nodes.push(document.createTextNode(value.slice(offset)));
   root.replaceChildren(...nodes);
+  return references;
 }
 
 /** Native text editing stays in place until the draft contains an atomic reference. */
 export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function ComposerInput({ value, resetKey, onValueChange, ...props }, ref) {
   const [rich, setRich] = useState(() => draftPluginReferences(value).length > 0);
+  const [referenceNodes, setReferenceNodes] = useState<ReferenceNode[]>([]);
+  const [servers, setServers] = useState<MCPServerStatus[]>([]);
+  const services = useComposerServices();
+  useEffect(() => {
+    if (!rich || !services) return;
+    let active = true;
+    setServers([]);
+    // Connector metadata only decorates the draft; unavailable metadata keeps
+    // the package icon without blocking editing or changing the saved identity.
+    void services.settingsControls.listMCPServers().then(result => {
+      if (active) setServers(result.servers);
+    }, () => { if (active) setServers([]); });
+    return () => { active = false; };
+  }, [rich, services?.settingsControls]);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const editor = useRef<HTMLDivElement>(null);
   const live = useRef(value);
@@ -153,7 +188,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
     const root = editor.current;
     if (nodeValue(root) !== value) {
       const selected = currentSelection();
-      renderValue(root, value);
+      setReferenceNodes(renderValue(root, value));
       if (document.activeElement === root || restoreFocus.current) {
         root.focus({ preventScroll: true });
         placeSelection(root, Math.min(selected[0], value.length), Math.min(selected[1], value.length));
@@ -172,7 +207,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
     live.current = next;
     selection.current = selected;
     if (editor.current && !composing.current) {
-      renderValue(editor.current, next);
+      setReferenceNodes(renderValue(editor.current, next));
       placeSelection(editor.current, ...selected);
     }
     callbacks.current.onValueChange(next);
@@ -186,7 +221,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
     selection.current = [event.target.selectionStart, event.target.selectionEnd];
     onValueChange(event.target.value);
   }} />;
-  return <div
+  return <><div
     {...props}
     ref={editor}
     className={`composer-rich-input ${props.className ?? ""}`}
@@ -251,5 +286,8 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
         publish(live.current.slice(0, ref.start) + live.current.slice(ref.end), [ref.start, ref.start]);
       }
     }}
-  />;
+  />{referenceNodes.map(({ reference, element }, index) => createPortal(
+    <ComposerPluginIcon plugin={reference.plugin} server={servers.find(server => server.name === reference.plugin.mcp_server)} className="composer-reference-icon" />,
+    element, `${reference.token}:${index}`
+  ))}</>;
 });

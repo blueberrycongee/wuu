@@ -141,7 +141,7 @@ async function run() {
     report.afterAccountClick = await evaluate(() => ({focused:document.hasFocus(),trigger:document.querySelector('button[aria-label="Account menu"]')?.outerHTML}));
     save();
     const menu = await until(async () => {
-      for (const contents of [win.webContents,...visibleContents()].reverse()) if (await contents.executeJavaScript("(() => { const e=document.querySelector('[role=menuitem][data-settings-page=providers]'); const r=e?.getBoundingClientRect(); return Boolean(r?.width && e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))); })()")) return contents;
+      for (const contents of [win.webContents,...visibleContents()].reverse()) if (await contents.executeJavaScript("(() => { const e=document.querySelector('[role=menuitem][data-settings-entry=settings]'); const r=e?.getBoundingClientRect(); return Boolean(r?.width && e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))); })()")) return contents;
       return null;
     }, 'native Settings menu item');
     await capture(`${name}-menu`);
@@ -155,7 +155,7 @@ async function run() {
     assert.equal(await evaluate(() => document.querySelector('textarea').value), draft);
     current.checks.push('Presented menu dismisses on outside pointer input without taking composer focus or changing draft');
     await click('button[aria-label="Account menu"]');
-    await click('[role=menuitem][data-settings-page=providers]');
+    await click('[role=menuitem][data-settings-entry=settings]');
     await until(() => evaluate(() => Boolean(document.querySelector('.settings-embedded'))), 'Settings page via current user path');
     current.settingsGeometry = await checkViewport();
     await capture(`${name}-settings`);

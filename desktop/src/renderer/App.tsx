@@ -418,11 +418,6 @@ export function App({ application, slots, shellPluginId }: {
   }, [application]);
   const onboardingComplete = useSyncExternalStore(application.onboarding.subscribe, () => application.onboarding.getSnapshot().completed);
 
-  const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
-  const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
-    void application.invoke("settings.open", { pageId }).catch(showErrorToast);
-  }, [application]);
-
   const {
     workspaceViewTabs,
     workspaceConversationOpen,

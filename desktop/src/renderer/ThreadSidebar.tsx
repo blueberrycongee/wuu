@@ -945,22 +945,22 @@ function ThreadRows({
                 className="thread-row-actions"
                 aria-label={t("threadSidebar.actions")}
               >
-                <Tooltip asChild content={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}><button
+                <button
                   className={`sidebar-row-icon-button thread-row-action ${thread.pinned ? "active" : ""}`}
                   type="button"
                   aria-label={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}
                   onClick={() => togglePinned(thread)}
                 >
                   <Pin className="icon-sm" />
-                </button></Tooltip>
-                <Tooltip asChild content={t("sidebar.archiveAction")}><button
+                </button>
+                <button
                   className="sidebar-row-icon-button thread-row-action archive"
                   type="button"
                   aria-label={t("sidebar.archiveAction")}
                   onClick={() => onArchive(thread)}
                 >
                   <Archive className="icon-sm" />
-                </button></Tooltip>
+                </button>
               </div>
           </div>
         );

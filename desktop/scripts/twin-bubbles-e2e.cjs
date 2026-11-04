@@ -806,8 +806,8 @@ async function runDomOnly() {
         const input = document.querySelector('.mosaic-name-input');
         Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
         input.dispatchEvent(new window.Event('input', { bubbles:true })); await nextFrame();
-        document.querySelector('.mosaic-name-save').click();
-        await wait(window, () => !document.querySelector('.mosaic-name-dialog'), 'rename saved');
+        document.querySelector('[data-action="save-avatar"]').click();
+        await wait(window, () => !document.querySelector('.mosaic-avatar-dialog'), 'rename saved');
       };
       await rename('<Cloud twin>');
       assert.equal(document.querySelector('[data-wuu-plugin="personal"] > span:last-child').textContent, '<Cloud twin>');
@@ -818,8 +818,8 @@ async function runDomOnly() {
     });
     await check("DOM: Settings remains reachable and uses the same twin identity", async () => {
       document.querySelector('.sidebar-account-trigger').click();
-      await wait(window, () => !!document.querySelector('[data-settings-page="providers"]'), 'account settings action');
-      document.querySelector('[data-settings-page="providers"]').click();
+      await wait(window, () => !!document.querySelector('[data-settings-entry="settings"]'), 'account settings action');
+      document.querySelector('[data-settings-entry="settings"]').click();
       await wait(window, () => !!document.querySelector('[data-wuu-component="plugin-settings-navigation"] [data-plugin-avatar]'), 'twin Settings identity');
       const mark = document.querySelector('[data-wuu-component="plugin-settings-navigation"] [data-agent-avatar-id]');
       assert.equal(mark.dataset.agentAvatarId, 'wuu-mascot');

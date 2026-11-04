@@ -4,7 +4,8 @@ import { composerInputElement, type ComposerInputHandle } from "./ComposerInput"
 import { draftPluginReferences, pluginReferenceToken } from "./ComposerPluginReferences";
 import { useComposerServices } from "./ComposerServicesContext";
 import { useI18n } from "./i18n";
-import { Puzzle, Settings } from "./WuuIcons";
+import { Puzzle } from "./WuuIcons";
+import { ComposerPluginIcon } from "./ComposerPluginIcon";
 import { showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
@@ -64,7 +65,7 @@ export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | 
     }
     return false;
   }
-  return { id, available: Boolean(services), open, query, setQuery, fromMention, setOpen: toggle, close: () => setOpen(false), observe, choose, handleKeyDown,
+  return { id, available: Boolean(services), open, query, fromMention, setOpen: toggle, close: () => setOpen(false), observe, choose, handleKeyDown,
     inputElement: () => inputRef.current ? composerInputElement(inputRef.current) : null };
 }
 export type ComposerPluginMenu = ReturnType<typeof useComposerPluginMenu>;
@@ -89,51 +90,46 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
   const inventory = services.catalog.getSnapshot().inventory;
   const supported = services.conversationPluginsSupported === true;
   const matches = (text: string) => text.toLocaleLowerCase().includes(menu.query.toLocaleLowerCase());
+  // Only what can be referenced now is listed; connecting and enabling happen
+  // in the plugin catalog, reached from the last row.
   const entries = [
-    ...servers.map(server => {
+    ...servers.flatMap(server => {
       const identity = server.identity;
       const account = identity?.state === "verified" ? [identity.account?.label ?? identity.account?.email ?? identity.account?.id, identity.workspace?.label ?? identity.workspace?.id].filter(Boolean).join(" · ") : "";
       const name = server.connector?.title ?? server.display_name ?? server.name;
       const duplicateName = servers.some(other => other.name !== server.name && (other.connector?.title ?? other.display_name ?? other.name) === name);
       const ready = server.connected && server.configuration_enabled !== false && server.state !== "disabled" && server.plugin_active !== false && !!server.tool_names?.length;
-      return { key: `mcp:${server.name}`, name, description: server.connector?.description ?? inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id)?.description,
-        detail: account ? `${account}${duplicateName ? ` · ${server.name}` : ""}` : (ready && server.auth_status === "oauth" ? `${t("composer.pluginsIdentityUnavailable")}${duplicateName ? ` · ${server.name}` : ""}` : name !== server.name ? server.name : ""),
-        reason: server.connector?.setup_required || (server.plugin_active === false ? t("composer.pluginsDisabled") : ""),
+      if (!ready) return [];
+      return [{ key: `mcp:${server.name}`, name, description: server.connector?.description ?? inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id)?.description,
+        // Internal server names appear only to tell same-named connections apart.
+        detail: duplicateName ? [account, server.name].filter(Boolean).join(" · ") : "",
         plugin: { plugin_id: server.plugin_id, mcp_server: server.name, resource_url: server.resource_url, authorization_id: server.authorization_id,
           ...(identity?.state === "verified" ? { account_id: identity.account?.id, workspace_id: identity.workspace?.id } : {}) } as PluginReference,
-        ready, server };
+        server }];
     }),
-    ...inventory.filter(item => item.kind === "plugin" && item.conversation_tools?.length).map(item => ({
-      key: `plugin:${item.id}`, name: item.name, description: item.description, detail: item.id,
-      reason: item.enabled === false || item.runtime_state !== "active" ? t("composer.pluginsDisabled") : "",
-      plugin: { plugin_id: item.provenance.plugin_id }, ready: item.enabled !== false && item.runtime_state === "active", server: undefined,
+    ...inventory.filter(item => item.kind === "plugin" && item.conversation_tools?.length && item.enabled !== false && item.runtime_state === "active").map(item => ({
+      key: `plugin:${item.id}`, name: item.name, description: item.description, detail: "",
+      plugin: { plugin_id: item.provenance.plugin_id }, server: undefined,
     })),
-  ].filter(item => matches([item.name, item.description, item.detail].filter(Boolean).join(" ")))
-    .sort((a, b) => Number(b.ready) - Number(a.ready));
-  function manage(pluginId?: string, server?: MCPServerStatus): void {
+  ].filter(item => matches([item.name, item.description, item.detail].filter(Boolean).join(" ")));
+  function openPlugins(): void {
     menu.close();
-    void services!.openPlugins?.(pluginId, server?.connector && !server.connector.setup_required && server.plugin_active !== false ? server.name : undefined).catch(showActionErrorToast);
+    void services!.openPlugins?.().catch(showActionErrorToast);
   }
   return <div className="composer-plugin-choices">
-    <input className="composer-plugin-search" aria-label={t("composer.pluginsSearch")} placeholder={t("composer.pluginsSearch")}
-      value={menu.query} onChange={event => menu.setQuery(event.target.value)} />
-    <div className="composer-plus-menu-section">{t("composer.plugins")}</div>
     {!supported ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsEngineUnsupported")}</p> : null}
     {loading ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsLoading")}</p> : null}
     {error ? <div className="composer-plugin-notice" role="alert">{t("composer.pluginsLoadFailed")} <button type="button" onClick={() => setRevision(value => value + 1)}>{t("settings.errorRetry")}</button></div> : null}
-    {!loading && !error && !entries.length ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
-    {entries.map(entry => <div className="composer-plugin-row" key={entry.key}>
-      <button type="button" role="menuitem" data-plugin-choice data-plugin-key={entry.key} disabled={!supported || !entry.ready}
-        title={entry.description} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
-        <Puzzle className="icon-lg" aria-hidden="true" />
-        <span className="composer-plugin-row-copy"><span>{entry.name}</span>
-          {entry.description ? <span className="composer-plugin-detail">{entry.description}</span> : null}
-          {entry.detail ? <span className="composer-plugin-detail">{entry.detail}</span> : null}
-          {entry.reason ? <span className="composer-plugin-detail">{entry.reason}</span> : null}</span>
-      </button>
-      {services.openPlugins ? <button type="button" className="composer-plugin-manage" aria-label={t(entry.ready || entry.server?.connector?.setup_required || entry.server?.plugin_active === false ? "composer.pluginsManageNamed" : "composer.pluginsConnectNamed", { name: entry.name })}
-        onClick={() => manage(entry.plugin.plugin_id, entry.ready ? undefined : entry.server)}>{entry.ready || entry.server?.connector?.setup_required || entry.server?.plugin_active === false ? <Settings className="icon-md" /> : t("composer.pluginsConnect")}</button> : null}
-    </div>)}
-    {services.openPlugins ? <button type="button" role="menuitem" onClick={() => manage()}><Puzzle className="icon-lg" />{t("composer.pluginsBrowse")}</button> : null}
+    {!loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
+    {entries.map(entry => {
+      const secondary = entry.detail || entry.description;
+      return <button type="button" role="menuitem" className="composer-plugin-row" key={entry.key} data-plugin-choice data-plugin-key={entry.key}
+        disabled={!supported} title={secondary} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
+        <ComposerPluginIcon plugin={entry.plugin} server={entry.server} className="composer-plugin-mark" />
+        <span className="composer-plugin-name">{entry.name}</span>
+        {secondary ? <span className="composer-plugin-detail">{secondary}</span> : null}
+      </button>;
+    })}
+    {services.openPlugins ? <button type="button" role="menuitem" className="composer-plugin-row composer-plugin-browse" onClick={() => openPlugins()}><Puzzle aria-hidden="true" /><span className="composer-plugin-name">{t("composer.pluginsBrowse")}</span></button> : null}
   </div>;
 }
