@@ -107,6 +107,10 @@ jobs:
         run: |
           node --test ../../release-tools/scripts/release-version.test.mjs
           node ../scripts/release-version.mjs check "$RELEASE_TAG"
+      - name: Install ripgrep for search tests
+        run: |
+          node scripts/fetch-ripgrep.cjs
+          echo "$PWD/build/tools" >> "$GITHUB_PATH"
       - name: Install release credentials
         env:
           WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
