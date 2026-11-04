@@ -30,7 +30,8 @@ func ResolveForProvider(providerName string, provider config.ProviderConfig, mod
 	if strings.EqualFold(variant, "none") || (variant == "" && strings.EqualFold(legacyEffort, "none")) {
 		desc := compatDescriptor(providerName, provider, model)
 		if isGLM53(desc.APIID) || AnthropicRequiresBoundThinking(desc.APIID) ||
-			isMiniMaxM31(desc.APIID) || isMiniMaxM31(desc.ModelID) || isKimiK31(desc.APIID) {
+			isMiniMaxM31(desc.APIID) || isMiniMaxM31(desc.ModelID) || isKimiK31(desc.APIID) ||
+			forceAdaptiveThinking(provider.Models[model].Options) {
 			// These models cannot disable reasoning. Migrate the retired switch to
 			// the least expensive valid tier rather than falling back to max.
 			variant = "low"
