@@ -475,7 +475,7 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		return err
 	}
 	recoveryState := "idle"
-	if status == TurnStatusInterrupted && s.closed.Load() {
+	if status == TurnStatusInterrupted && s.closed.Load() && !s.shutdownRequested.Load() {
 		recoveryState = "pending"
 	}
 	if err := s.recordRecoveryTurn(th, turnID, recoveryState); err != nil {

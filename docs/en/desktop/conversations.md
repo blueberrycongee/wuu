@@ -36,7 +36,7 @@ Automatic retries retain the existing workload and shared workflow limits. A new
 
 ## Choose what continues after restarting
 
-When Wuu restarts with unfinished conversations or pending background results, **Resume unfinished tasks** shows how many conversations are waiting. Click **Continue all** to continue them from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry.
+After an unexpected exit interrupts running conversations, **Resume unfinished tasks** shows how many were interrupted during the previous run. Click **Continue all** to continue them from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. Previously completed, failed, or manually stopped turns and old background results are not counted as interrupted conversations.
 
 **Not now**, Escape, or closing the dialog keeps all those conversations paused. Opening their history or receiving another completion notification does not restart them. You can continue later from a conversation or send a new instruction. Dismissing the dialog preserves saved history and pending results; it does not undo earlier effects or stop separately managed background commands. Archived conversations and plugin-private sessions are excluded.
 

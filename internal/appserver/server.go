@@ -351,6 +351,7 @@ type Server struct {
 	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
+	shutdownRequested            atomic.Bool
 	pluginGenerationMutation     atomic.Bool
 	pluginGenerationRefreshing   atomic.Bool
 	pluginAdditivePreparation    atomic.Pointer[pluginAdditivePreparation]
@@ -370,6 +371,7 @@ type Server struct {
 	presenceLease                *session.AppServerPresenceLease
 	bootOwner                    bool
 	recoveryBootAt               time.Time
+	previousRecoveryBootAt       time.Time
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
@@ -1490,7 +1492,14 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodThreadListAll:
 		return s.handleThreadListAll(req)
 	case "thread/recovery/list":
-		return s.handleRestartRecoveryList(req)
+		if !s.startBackground(func() {
+			if err := s.handleRestartRecoveryList(ctx, req); err != nil {
+				log.Printf("wuu: thread/recovery/list: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case "thread/recovery/dismiss":
 		return s.handleRestartRecoveryDismiss(req)
 	case MethodThreadListArchived:
@@ -1669,6 +1678,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodActivityStop:
 		return s.handleActivityStop(req)
 	case MethodShutdown:
+		s.shutdownRequested.Store(true)
 		if err := s.writeResponse(req.ID, OKResult{OK: true}, nil); err != nil {
 			return err
 		}

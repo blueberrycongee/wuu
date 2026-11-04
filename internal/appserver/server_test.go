@@ -8513,7 +8513,7 @@ func TestServerInterruptedPartialTurnReloadsInterrupted(t *testing.T) {
 			dispatchPayload(t, reloaded, "recovery", "thread/recovery/list", struct{}{})
 			recovery := remarshal[struct {
 				Items []RestartRecoveryItem `json:"items"`
-			}](t, responseByID(t, parseOutput(t, reloadOut.String()), "recovery")["result"])
+			}](t, waitForResponseByID(t, reloadOut, "recovery")["result"])
 			if shutdown {
 				if len(recovery.Items) != 1 || recovery.Items[0].Thread.ID != threadID || recovery.Items[0].Reason != "interrupted" {
 					t.Fatalf("shutdown recovery = %+v", recovery.Items)
