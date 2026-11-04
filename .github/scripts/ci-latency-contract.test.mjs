@@ -81,18 +81,18 @@ test('overlapped macOS acceptance joins every native check and fails on either l
     const command = (path, body) => writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
     command(join(bin, 'git'), 'echo fixture-commit');
     command(join(bin, 'node'), 'echo approval >> "$RECORD"; test "$FAIL_APPROVAL" != 1');
-    command(join(root, 'desktop/node_modules/.bin/electron'), 'echo "native:$1" >> "$RECORD"; if [ "$FAIL_HEADER" = 1 ] && [ "$1" = desktop/scripts/settings-sidebar-hit-e2e.cjs ]; then exit 1; fi');
-    command(join(bin, 'shasum'), 'test "$(grep -c "^native:" "$RECORD")" -eq 4 || exit 7; echo hash >> "$RECORD"; test "$FAIL_HASH" != 1');
-    for (const failure of [{}, { FAIL_HEADER: '1' }, { FAIL_APPROVAL: '1' }, { FAIL_HEADER: '1', FAIL_APPROVAL: '1' }, { FAIL_HASH: '1' }]) {
+    command(join(root, 'desktop/node_modules/.bin/electron'), 'echo "native:$1" >> "$RECORD"; if [ "$FAIL_HEADER" = 1 ] && [ "$1" = desktop/scripts/settings-sidebar-hit-e2e.cjs ]; then exit 1; fi; if [ "$FAIL_MESSAGE_FLOW" = 1 ] && [ "$1" = desktop/scripts/personal-message-flow-e2e.cjs ]; then exit 1; fi');
+    command(join(bin, 'shasum'), 'test "$(grep -c "^native:" "$RECORD")" -eq 5 || exit 7; echo hash >> "$RECORD"; test "$FAIL_HASH" != 1');
+    for (const failure of [{}, { FAIL_HEADER: '1' }, { FAIL_MESSAGE_FLOW: '1' }, { FAIL_APPROVAL: '1' }, { FAIL_HEADER: '1', FAIL_APPROVAL: '1' }, { FAIL_HASH: '1' }]) {
       const record = join(root, 'record'); writeFileSync(record, '');
       const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], {
         cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RECORD: record,
           WUU_TITLEBAR_OUTPUT: join(root, 'header'), WUU_ERROR_FEEDBACK_OUTPUT: join(root, 'error'),
-          WUU_SETTINGS_OVERLAY_OUTPUT: join(root, 'overlay'), FAIL_HEADER: '0', FAIL_APPROVAL: '0', FAIL_HASH: '0', ...failure },
+          WUU_SETTINGS_OVERLAY_OUTPUT: join(root, 'overlay'), FAIL_HEADER: '0', FAIL_MESSAGE_FLOW: '0', FAIL_APPROVAL: '0', FAIL_HASH: '0', ...failure },
       });
       assert.equal(result.status, Object.keys(failure).length ? 1 : 0, result.stdout + result.stderr);
       const events = readFileSync(record, 'utf8').trim().split('\n');
-      assert.equal(events.filter(event => event.startsWith('native:')).length, 4);
+      assert.equal(events.filter(event => event.startsWith('native:')).length, 5);
       assert(events.includes('approval'));
       assert.equal(events.at(-1), 'hash');
     }

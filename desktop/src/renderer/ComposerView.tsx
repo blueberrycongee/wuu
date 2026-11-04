@@ -1394,6 +1394,7 @@ export function Composer({
     <div
       className="composer-stack"
       data-wuu-component="composer"
+      data-composer-owner-tab-id={services?.ownerTabId}
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
