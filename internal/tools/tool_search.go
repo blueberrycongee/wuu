@@ -31,7 +31,7 @@ const (
 	maxRGRecordBytes         = 1024 * 1024
 )
 
-var errRipgrepUnavailable = errors.New("ripgrep not available")
+var errRipgrepUnavailable = errors.New("ripgrep (rg) is required for search; install ripgrep and ensure it is on PATH")
 
 // ---------------------------------------------------------------------------
 // grep
@@ -195,7 +195,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 		files, ok := loadSearchCursor[string](cachePath, args.Offset)
 		if !ok {
 			var err error
-			files, err = grepFilesWithMatches(ctx, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
+			files, err = grepFilesWithMatchesRG(ctx, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
 			if err != nil {
 				return "", err
 			}
@@ -230,7 +230,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 		var total int
 		if !ok {
 			var err error
-			counts, total, err = grepCountMatches(ctx, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
+			counts, total, err = grepCountMatchesRG(ctx, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
 			if err != nil {
 				return "", err
 			}
@@ -270,13 +270,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 			var err error
 			matches, err = grepWithRipgrep(ctx, t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
 			if err != nil {
-				if !errors.Is(err, errRipgrepUnavailable) {
-					return "", err
-				}
-				matches, err = grepWithFallback(ctx, t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
-				if err != nil {
-					return "", err
-				}
+				return "", err
 			}
 			_ = saveSearchCursor(cachePath, matches)
 		}
@@ -391,13 +385,7 @@ func (t *GlobTool) Execute(ctx context.Context, argsJSON string) (string, error)
 		var err error
 		matches, err = globWithRipgrep(ctx, execRoot, searchRoot, args.Pattern, 0)
 		if err != nil {
-			if !errors.Is(err, errRipgrepUnavailable) {
-				return "", err
-			}
-			matches, err = globWithFallback(execRoot, searchRoot, args.Pattern, 0)
-			if err != nil {
-				return "", err
-			}
+			return "", err
 		}
 		if len(t.env.ProtectedPaths) > 0 {
 			visible := matches[:0]
@@ -679,6 +667,11 @@ func grepWithRipgrep(ctx context.Context, env *Env, rootDir, pattern, searchRoot
 		return nil, errRipgrepUnavailable
 	}
 	cmd.Dir = rootDir
+	if env := protectedPathEnv(ctx); env != nil {
+		if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+			return nil, err
+		}
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -826,47 +819,6 @@ func relativeRGPath(rootDir, matchPath string) string {
 	return filepath.ToSlash(rel)
 }
 
-func grepWithFallback(ctx context.Context, env *Env, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepMatch, error) {
-	compilePattern := pattern
-	if opts.ignoreCase {
-		compilePattern = "(?i)" + pattern
-	}
-	re, err := regexp.Compile(compilePattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid regex: %w", err)
-	}
-
-	matches := make([]grepMatch, 0, searchResultCapacity(limit))
-	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
-		if limit > 0 && len(matches) >= limit {
-			return filepath.SkipAll
-		}
-		return scanFallbackLines(ctx, path, func(lineNum int, line []byte) bool {
-			if re.Match(line) {
-				matches = append(matches, grepMatch{
-					File:    rel,
-					Line:    lineNum,
-					Content: grepMatchContentForPath(env, rootDir, rel, string(line)),
-				})
-				if limit > 0 && len(matches) >= limit {
-					return false
-				}
-			}
-			return true
-		})
-	})
-	if walkErr != nil {
-		return nil, walkErr
-	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].File == matches[j].File {
-			return matches[i].Line < matches[j].Line
-		}
-		return matches[i].File < matches[j].File
-	})
-	return matches, nil
-}
-
 func grepMatchContentForPath(env *Env, rootDir, path, content string) string {
 	if isWuuCredentialPath(filepath.Join(rootDir, filepath.FromSlash(path))) {
 		return "[REDACTED: Wuu credential file content]"
@@ -888,6 +840,11 @@ func globWithRipgrep(ctx context.Context, rootDir, searchRoot, pattern string, l
 		return nil, errRipgrepUnavailable
 	}
 	cmd.Dir = searchRoot
+	if env := protectedPathEnv(ctx); env != nil {
+		if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+			return nil, err
+		}
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -961,55 +918,11 @@ func splitNullTerminated(data []byte, atEOF bool) (advance int, token []byte, er
 	return 0, nil, nil
 }
 
-func globWithFallback(rootDir, searchRoot, pattern string, limit int) ([]string, error) {
-	matches := make([]string, 0, searchResultCapacity(limit))
-	_ = filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		rel, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if matchGlob(pattern, rel) {
-			matches = append(matches, rel)
-		}
-		if limit > 0 && len(matches) >= limit {
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	sort.Strings(matches)
-	return matches, nil
-}
-
 // ---------------------------------------------------------------------------
 // grep output_mode: files_with_matches
 // ---------------------------------------------------------------------------
 
-func grepFilesWithMatches(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
-	files, err := grepFilesWithMatchesRG(ctx, rootDir, pattern, searchRoot, include, opts, limit)
-	if err != nil {
-		if !errors.Is(err, errRipgrepUnavailable) {
-			return nil, err
-		}
-		return grepFilesWithMatchesFallback(ctx, rootDir, pattern, searchRoot, include, opts, limit)
-	}
-	return files, nil
-}
-
 func grepFilesWithMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
-	if protectedPathEnv(ctx) != nil {
-		return nil, errRipgrepUnavailable
-	}
 	name := lookupRG()
 	if name == "" {
 		return nil, errRipgrepUnavailable
@@ -1039,6 +952,11 @@ func grepFilesWithMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, i
 
 	cmd := rgCommand(ctx, name, args...)
 	cmd.Dir = rootDir
+	if env := protectedPathEnv(ctx); env != nil {
+		if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+			return nil, err
+		}
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -1099,55 +1017,11 @@ func grepFilesWithMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, i
 	return files, nil
 }
 
-func grepFilesWithMatchesFallback(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
-	compilePattern := pattern
-	if opts.ignoreCase {
-		compilePattern = "(?i)" + pattern
-	}
-	re, err := regexp.Compile(compilePattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid regex: %w", err)
-	}
-
-	files := make([]string, 0, searchResultCapacity(limit))
-	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
-		if limit > 0 && len(files) >= limit {
-			return filepath.SkipAll
-		}
-		return scanFallbackLines(ctx, path, func(_ int, line []byte) bool {
-			if re.Match(line) {
-				files = append(files, rel)
-				return false
-			}
-			return true
-		})
-	})
-	if walkErr != nil {
-		return nil, walkErr
-	}
-	sort.Strings(files)
-	return files, nil
-}
-
 // ---------------------------------------------------------------------------
 // grep output_mode: count
 // ---------------------------------------------------------------------------
 
-func grepCountMatches(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
-	counts, total, err := grepCountMatchesRG(ctx, rootDir, pattern, searchRoot, include, opts, limit)
-	if err != nil {
-		if !errors.Is(err, errRipgrepUnavailable) {
-			return nil, 0, err
-		}
-		return grepCountMatchesFallback(ctx, rootDir, pattern, searchRoot, include, opts, limit)
-	}
-	return counts, total, nil
-}
-
 func grepCountMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
-	if protectedPathEnv(ctx) != nil {
-		return nil, 0, errRipgrepUnavailable
-	}
 	name := lookupRG()
 	if name == "" {
 		return nil, 0, errRipgrepUnavailable
@@ -1177,6 +1051,11 @@ func grepCountMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, inclu
 
 	cmd := rgCommand(ctx, name, args...)
 	cmd.Dir = rootDir
+	if env := protectedPathEnv(ctx); env != nil {
+		if err := env.confineProtectedCommand(ctx, cmd); err != nil {
+			return nil, 0, err
+		}
+	}
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -1217,49 +1096,6 @@ func grepCountMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, inclu
 				Count: count,
 			})
 		}
-	}
-	sort.SliceStable(counts, func(i, j int) bool {
-		return counts[i].File < counts[j].File
-	})
-	return counts, total, nil
-}
-
-func grepCountMatchesFallback(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
-	compilePattern := pattern
-	if opts.ignoreCase {
-		compilePattern = "(?i)" + pattern
-	}
-	re, err := regexp.Compile(compilePattern)
-	if err != nil {
-		return nil, 0, fmt.Errorf("invalid regex: %w", err)
-	}
-
-	counts := make([]grepCountResult, 0, searchResultCapacity(limit))
-	total := 0
-	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
-		count := 0
-		err := scanFallbackLines(ctx, path, func(_ int, line []byte) bool {
-			if re.Match(line) {
-				count++
-			}
-			return true
-		})
-		if err != nil {
-			return err
-		}
-		if count > 0 {
-			total += count
-			if limit <= 0 || len(counts) < limit {
-				counts = append(counts, grepCountResult{
-					File:  rel,
-					Count: count,
-				})
-			}
-		}
-		return nil
-	})
-	if walkErr != nil {
-		return nil, 0, walkErr
 	}
 	sort.SliceStable(counts, func(i, j int) bool {
 		return counts[i].File < counts[j].File

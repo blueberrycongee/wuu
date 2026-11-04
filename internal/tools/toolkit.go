@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -1908,58 +1907,6 @@ func suggestSimilarFile(absPath string) string {
 	return bestName
 }
 
-func matchGlob(pattern, path string) bool {
-	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
-	path = filepath.ToSlash(path)
-	if pattern == "" {
-		return false
-	}
-	if !strings.Contains(pattern, "/") {
-		matched, _ := filepath.Match(pattern, filepath.Base(path))
-		return matched
-	}
-	re, err := regexp.Compile(globToRegexp(pattern))
-	if err != nil {
-		return false
-	}
-	return re.MatchString(path)
-}
-
-func globToRegexp(pattern string) string {
-	var b strings.Builder
-	b.WriteString("^")
-	for i := 0; i < len(pattern); i++ {
-		switch pattern[i] {
-		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				if i+2 < len(pattern) && pattern[i+2] == '/' {
-					b.WriteString("(?:.*/)?")
-					i += 2
-					continue
-				}
-				if i+2 >= len(pattern) && i > 0 && pattern[i-1] == '/' {
-					b.WriteString(".*")
-					i++
-					continue
-				}
-				b.WriteString("[^/]*")
-				i++
-				continue
-			}
-			b.WriteString("[^/]*")
-		case '?':
-			b.WriteString("[^/]")
-		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(pattern[i])
-		default:
-			b.WriteByte(pattern[i])
-		}
-	}
-	b.WriteString("$")
-	return b.String()
-}
-
 // ── Ripgrep helpers ────────────────────────────────────────────────
 
 type grepMatch struct {
@@ -1998,29 +1945,17 @@ type rgJSONEvent struct {
 var (
 	rgLookupPath = exec.LookPath
 	rgCommand    = exec.CommandContext
-	rgPathOnce   sync.Once
-	rgPath       string
 )
 
 func lookupRG() string {
-	rgPathOnce.Do(func() {
-		path, err := rgLookupPath("rg")
-		if err == nil {
-			rgPath = path
-		}
-	})
-	return rgPath
-}
-
-func resetRGForTests() {
-	rgPathOnce = sync.Once{}
-	rgPath = ""
+	path, err := rgLookupPath("rg")
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
-	if protectedPathEnv(ctx) != nil {
-		return nil
-	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -2030,9 +1965,6 @@ func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
 }
 
 func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string, opts grepOptions) *exec.Cmd {
-	if protectedPathEnv(ctx) != nil {
-		return nil
-	}
 	name := lookupRG()
 	if name == "" {
 		return nil
