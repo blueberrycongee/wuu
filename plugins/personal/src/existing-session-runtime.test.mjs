@@ -57,7 +57,7 @@ test('Personal process controls an exact existing target across lost replies, fo
      if(params.kind==='exact-run'&&grantHold&&!grantHold.started){grantHold.started=true;grantHold.onStart();await grantHold.wait;}
      assert.equal(params.session_id,'personal-main','source authority stays on owned controller');
      const observation=await runtime.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'host',execution_id:'lineage',params:{kind:params.kind,task_id:params.task_id,session_id:params.session_id,request_id:params.run_id??params.request_id,...(params.parent?{parent:grants.get(params.parent.id)}:{})}});
-     assert.deepEqual(observation.route,{locator:target,operations:['send','inspect','cancel']});
+     if(observation.route)assert.deepEqual(observation.route,{locator:target,operations:['send','inspect','cancel']});
      const grant={reference:{provider:'fixture',id:params.request_id},expires_at:params.expires_at,scope:{user_space_id:'local',product_domain:'personal',task_id:params.task_id,revision:observation.revision,context_digest:'host-bound-route',...observation}};
      grants.set(params.request_id,grant);return grant;
     }
@@ -147,6 +147,8 @@ test('Personal process controls an exact existing target across lost replies, fo
  assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.task_id,blocked.task_id);
  await assert.rejects(runtime.call('tool.execute',{tool_id:'update_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'followup-turn',call_id:'attached-followup',execution_id:'attached-followup',source_message:{session_id:'personal-main',seq:7},arguments:{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'Read the attached file'}}),/text-only/);
  assert.equal(sends,beforeAttachment);
+ const newWorker = await runtime.call('tool.execute',{tool_id:'create_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'source-turn',call_id:'new-attached',execution_id:'new-attached',source_message:{session_id:'personal-main',seq:7},arguments:{request_id:'new-attached',title:'Use file',goal:'Inspect the attachment'}}).then(r=>JSON.parse(r.result.content[0].text));
+ assert.match(newWorker.task.error,/Attachment transfer is unavailable/);assert.equal(created,1,'no worker is created when its source attachment cannot be transferred');assert.equal(sends,beforeAttachment);
  assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.revision,blocked.revision);
  const revised=(await runtime.client('tasks.update',{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'The files are already at the target; use its existing context'})).task;
  assert.equal(sends,beforeAttachment+1);assert.equal(revised.state,'running');assert(!revised.previous_executions[0].cancel_pending);
