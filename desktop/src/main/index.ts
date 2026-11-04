@@ -2499,10 +2499,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
-  ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
-  ipcMain.handle("wuu:session-control-take", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/take", params));
-  // A project and its managed sessions live in one workspace; route to the
-  // app-server that owns the named project or session.
   ipcMain.handle("wuu:codex-pets-list", () => {
     const snapshot = codexPetsSnapshot();
     // Sync the pet window from the renderer-side list call so a failed

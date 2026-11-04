@@ -29,7 +29,7 @@ SDK 包目前仍为 `0.1.0`；这个数字不能独立标识源代码修订或�
 
 ## Project Agent 移除
 
-Project Agent 及其实验契约 `project.coordination@1`、`project_session` 工具、桌面 `application.projects` API、项目草稿模式，以及 `session.domain@1` 的项目工作方法均已移除。已核验这些宿主和仓库 SDK 契约的移除前参考为 main 修订 `e1de6e0ca`（SDK `0.1.0`）。移除边界是 [PR #1167](https://github.com/blueberrycongee/wuu/pull/1167)；在该 PR 合入前的后续修订也可能仍保留这些契约。产品版本和 SDK 包版本号不能单独标识支持范围。
+Project Agent 及其实验契约 `project.coordination@1`、`project_session` 工具、桌面 `application.projects` API、项目草稿模式、`session.domain@1` 的项目工作方法，以及旧 `thread/control/take` 和 `thread/control/return` RPC 均已移除。已核验这些宿主和仓库 SDK 契约的移除前参考为 main 修订 `e1de6e0ca`（SDK `0.1.0`）。移除边界是 [PR #1167](https://github.com/blueberrycongee/wuu/pull/1167)；在该 PR 合入前的后续修订也可能仍保留这些契约。产品版本和 SDK 包版本号不能单独标识支持范围。
 
 升级前应移除对这些契约的依赖及其组合选择。没有内置替代项目调度器；自行实现协调的扩展可使用 `host.managed-session@1` 和公共会话生命周期。普通工作区项目仍受支持。原生 managed-session 响应保留 `capacity_full: false`，执行准入保留原有四个传输参数，但忽略已移除的容量参数。
 

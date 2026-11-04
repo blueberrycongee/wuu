@@ -56,7 +56,7 @@ a compatibility guarantee from sharing SDK version `0.1.0`.
 
 ## Project Agent retirement
 
-Project Agent and its experimental `project.coordination@1` service, `project_session` tool, desktop `application.projects` API, project draft mode, and project work methods on `session.domain@1` have been removed. The pre-removal reference checked for these host and repository SDK contracts is main revision `e1de6e0ca` (SDK `0.1.0`). The removal boundary is [PR #1167](https://github.com/blueberrycongee/wuu/pull/1167); later revisions that precede that merge may also retain them. Product version and SDK package number alone do not identify support.
+Project Agent and its experimental `project.coordination@1` service, `project_session` tool, desktop `application.projects` API, project draft mode, project work methods on `session.domain@1`, and the legacy `thread/control/take` and `thread/control/return` RPCs have been removed. The pre-removal reference checked for these host and repository SDK contracts is main revision `e1de6e0ca` (SDK `0.1.0`). The removal boundary is [PR #1167](https://github.com/blueberrycongee/wuu/pull/1167); later revisions that precede that merge may also retain them. Product version and SDK package number alone do not identify support.
 
 Remove dependencies on those contracts and their composition selections before upgrading. There is no replacement project scheduler. Extensions that implement their own coordination can use `host.managed-session@1` and the public session lifecycle; ordinary workspace projects remain supported. The native managed-session response retains `capacity_full: false`, and execution admission retains its four wire arguments while ignoring the retired capacity inputs.
 
