@@ -54,6 +54,14 @@ The currently accepted capability versions and lifecycle 2 are not marked for
 removal. Experimental contracts and previously removed service majors do not gain
 a compatibility guarantee from sharing SDK version `0.1.0`.
 
+## Project Agent retirement
+
+Project Agent and its experimental `project.coordination@1` service, `project_session` tool, desktop `application.projects` API, project draft mode, project work methods on `session.domain@1`, and the legacy `thread/control/take` and `thread/control/return` RPCs have been removed. The pre-removal reference checked for these host and repository SDK contracts is main revision `e1de6e0ca` (SDK `0.1.0`). The removal boundary is [PR #1167](https://github.com/blueberrycongee/wuu/pull/1167); later revisions that precede that merge may also retain them. Product version and SDK package number alone do not identify support.
+
+Remove dependencies on those contracts and their composition selections before upgrading. There is no replacement project scheduler. Extensions that implement their own coordination can use `host.managed-session@1` and the public session lifecycle; ordinary workspace projects remain supported. The native managed-session response retains `capacity_full: false`, and execution admission retains its four wire arguments while ignoring the retired capacity inputs.
+
+Existing Project Agent conversations remain readable in the regular session list. They cannot execute or resume queued work on restart. Historical work records remain in storage and migrate as opaque records; old `project_models` and `project_max_parallel` configuration keys are ignored. Start a new ordinary conversation to continue work. Reverting requires the previous executable and a consistent backup; upgrading does not cancel external effects that already occurred.
+
 ## Safe upgrade and recovery
 
 1. Keep the previous executable, plugin artifacts, composition source and a

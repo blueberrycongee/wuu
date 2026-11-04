@@ -55,7 +55,7 @@ api.registerUIContribution({
 
 默认会话 provider 仅在会话为空时渲染 `wuu.default-conversation/welcome`；输入框和消息流位于该 Slot 之外。内容贡献可替换整个欢迎页，也可分别替换 `wuu.default-conversation/welcome.greeting`、`welcome.mascot` 或 `welcome.usage`。返回 `null` 可隐藏某一部分。每个 Slot 只接受一个内容提供方，并遵循上述冲突、包装和卸载规则。
 
-欢迎页的 context 为 `ConversationWelcomeContextV1`：包含 `projectDraft` 和三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。各部分的 context 包含 `projectDraft`；项目草稿或没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
+欢迎页的 context 为 `ConversationWelcomeContextV1`：包含三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
 
 例如，以下布局将用量摘要移到问候上方并隐藏吉祥物：
 

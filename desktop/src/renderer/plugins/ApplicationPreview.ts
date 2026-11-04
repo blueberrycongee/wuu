@@ -5,15 +5,15 @@ import { clearWorkspacePreviewScroll, readWorkspacePreviewRecovery, writeWorkspa
 import { collectTurnArtifacts } from "../ArtifactOutputs";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
 import { closeViewTab, closeViewTabsWhere, focusViewTab, openViewTab, reorderViewTabs,
-  workspaceArtifactViewTab, workspaceDiffViewTab, workspaceFileViewTab, workspacePluginViewTab, workspaceProjectViewTab,
+  workspaceArtifactViewTab, workspaceDiffViewTab, workspaceFileViewTab, workspacePluginViewTab,
   workspaceToolViewTab, WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceViewTabsState } from "../WorkspaceViewTabs";
 
 type PreviewTabs = Pick<ApplicationPreviewWorkspaceV1, "tabs" | "activeTabId" | "activeFileTabId" | "conversationOpen" | "conversationSelected">;
 
 const actions = new Set<keyof ApplicationPreviewActionMapV1>([
-  "preview.open-file", "preview.open-diff", "preview.open-artifact", "preview.open-tool", "preview.open-plugin", "preview.open-project",
+  "preview.open-file", "preview.open-diff", "preview.open-artifact", "preview.open-tool", "preview.open-plugin",
   "preview.open-side-thread", "preview.new-tab", "preview.focus-tab", "preview.close-tab", "preview.close-tabs", "preview.reorder-tab",
-  "preview.follow-project", "preview.open-conversation", "preview.close-conversation", "preview.show-conversation",
+  "preview.open-conversation", "preview.close-conversation", "preview.show-conversation",
 ]);
 export function isApplicationPreviewAction(action: string): action is keyof ApplicationPreviewActionMapV1 {
   return actions.has(action as keyof ApplicationPreviewActionMapV1);
@@ -118,17 +118,6 @@ export class ApplicationPreview {
         const value = input as ApplicationPreviewActionMapV1["preview.open-plugin"]["input"];
         this.update(openViewTab(this.state, workspacePluginViewTab({ id: value.entryId, pluginId: value.pluginId,
           generation: value.generation, view: value.viewTypeId, title: value.title, icon: value.icon && { ...value.icon } }), { replaceActiveNewTab: true })); break;
-      }
-      case "preview.open-project": {
-        const { projectId, title } = input as ApplicationPreviewActionMapV1["preview.open-project"]["input"];
-        this.update(openViewTab(this.state, workspaceProjectViewTab(projectId, title))); break;
-      }
-      case "preview.follow-project": {
-        const { project } = input as ApplicationPreviewActionMapV1["preview.follow-project"]["input"];
-        const tab = this.state.tabs.find(tab => tab.kind === "project");
-        if (tab && project) this.update(openViewTab(this.state, workspaceProjectViewTab(project.id, project.title), { activate: false }));
-        else if (tab) this.closeTabs([tab.id]);
-        break;
       }
       case "preview.open-side-thread": this.update(openViewTab(this.state, { kind: "side-thread", id: "side-thread" }, { replaceActiveNewTab: true })); break;
       case "preview.new-tab": {

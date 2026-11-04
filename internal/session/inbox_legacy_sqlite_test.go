@@ -165,32 +165,7 @@ func validateInboxControls(db interface {
 		return err
 	}
 	if workID != "" {
-		var revision, version int
-		var phase, payload string
-		err := db.QueryRow(`SELECT revision,version,phase,payload FROM project_work WHERE id=?`, workID).Scan(&revision, &version, &phase, &payload)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrControlChanged
-		}
-		if err != nil {
-			return err
-		}
-		if revision != workRevision || phase == "stopped" || workVersion > 0 && version != workVersion {
-			return ErrControlChanged
-		}
-		if cause == "project" {
-			var work ProjectWork
-			if err := json.Unmarshal([]byte(payload), &work); err != nil {
-				return err
-			}
-			current := work.LeadInput
-			if target == work.ExecutorID {
-				current = work.ExecutorInput
-			}
-			if current == nil || current.ClientID != clientID {
-				return ErrControlChanged
-			}
-		}
-
+		return ErrControlChanged
 	}
 
 	var controls []Control

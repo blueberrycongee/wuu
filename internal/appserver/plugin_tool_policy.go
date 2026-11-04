@@ -26,7 +26,7 @@ func (s *Server) configureSessionToolPolicy(binding *runtime.State, sessionID st
 		return err
 	}
 	encoded := strings.TrimSpace(metadata.ToolPolicyJSON)
-	if encoded == "" && metadata.Source != projectSource && metadata.Source != projectSessionSource {
+	if encoded == "" {
 		return nil
 	}
 	var policy pluginhost.SessionToolPolicy
@@ -39,23 +39,6 @@ func (s *Server) configureSessionToolPolicy(binding *runtime.State, sessionID st
 		return errors.New("the selected agent engine cannot enforce session tool_policy")
 	}
 	guarded := newSessionToolPolicyExecutor(threadRuntime.StreamRunner.Tools, policy)
-	if metadata.Source == projectSource || metadata.Source == projectSessionSource {
-		projectPolicy, err := ProjectToolConfiguration(s.projectServiceContext(context.Background(), binding), threadRuntime.PluginHost, metadata)
-		if err != nil {
-			return err
-		}
-		guarded = newSessionToolPolicyExecutor(guarded, projectPolicy)
-	}
-	if metadata.Source == projectSessionSource {
-		guard, ok := guarded.(*sessionToolPolicyExecutor)
-		if !ok {
-			guard = &sessionToolPolicyExecutor{base: guarded}
-			guarded = guard
-		}
-		guard.acquire = func(call providers.ToolCall) (func(), error) {
-			return s.acquireProjectWorkToolForBinding(binding, metadata, call, guard.base)
-		}
-	}
 	threadRuntime.StreamRunner.Tools = guarded
 	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
 		threadRuntime.Toolkit.SetToolPolicy(guard.allowed)

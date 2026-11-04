@@ -38,18 +38,6 @@ paths. After installing a CLI while Wuu is running, use Settings → Agents → 
 
 Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH`. The `glob` and `grep` tools require ripgrep and report an error if it is unavailable.
 
-Project Agent is experimental and disabled in default and release builds. It
-has no user setting to enable it. Existing project conversations remain readable,
-but cannot run or recover queued work in these builds. To develop the feature,
-run `npm --prefix desktop run dev -- --project-agent`, or build the CLI with
-`go build -tags project_agent -o bin/wuu ./cmd/wuu`. Run its behavioral suite with
-`go test -tags project_agent ./internal/appserver`; ordinary Go tests cover the
-disabled release behavior. Packaged releases must omit this build tag.
-
-`npm --prefix desktop run test:e2e:project-agent` checks the renderer against
-absent, disabled and enabled backend capabilities, saving screenshots and results
-under `desktop/out/e2e/project-agent-gate/`.
-
 After building the desktop, `npm --prefix desktop run test:e2e:settings-overlay`
 exercises the real native Settings menu, not its hidden DOM measurement copy.
 It checks visible bounds, painted pixels, hit targets, dismissal and focus,
@@ -1001,7 +989,7 @@ iOS integration, simulator and device builds run as three independent jobs, each
 
 Renderer changes run Desktop and Clients because the Web client imports renderer sources. Other desktop changes run Desktop, Clients, and native OS checks. Shared protocol, client core, Go, plugins/SDK, dependency locks outside these scoped directories, build scripts, and unknown paths conservatively run all suites. Runtime Markdown under prompts or plugins is not exempt. Go CI supplies PostgreSQL for database-backed coverage.
 
-Go validation separates static/cross-platform checks, other Go packages, plugin acceptance, and three appserver test shards. The Project Agent build runs the complete tagged appserver suite in three shards too. Each shard enumerates the compiled package with `go test -list`, partitions all top-level tests, examples and fuzz seed tests by name, and executes its selection with `-count=1`. Inventories are uploaded with the run. To reproduce a shard, run `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3`, optionally adding `project_agent` as the last argument; indexes are zero-based. CI contract tests verify exhaustive selection and failure propagation.
+Go validation separates static/cross-platform checks, other Go packages, plugin acceptance, and three appserver test shards. Each shard enumerates the compiled package with `go test -list`, partitions all top-level tests, examples and fuzz seed tests by name, and executes its selection with `-count=1`. Inventories are uploaded with the run. To reproduce a shard, run `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3`; indexes are zero-based. CI contract tests verify exhaustive selection and failure propagation.
 
 The other-Go-packages lane keeps the Makefile package discovery and test invocation, adding only JSON reporting for per-test timing evidence. The `go-package-timings` artifact retains raw stdout/stderr, structured events and a summary; cached results are marked as replayed rather than current measurements. Test and build failures still fail the lane.
 

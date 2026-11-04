@@ -22,7 +22,6 @@ import {
   Plus,
   Search,
   SquarePen,
-  Project,
 } from "./WuuIcons";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -71,7 +70,6 @@ import {
   sidebarThreadSortTime,
   type ThreadSummary,
 } from "./AppState";
-import { projectDirectory } from "./ProjectSessions";
 import {
   OrganizationThreadList,
   ThreadRowTitle,
@@ -221,7 +219,7 @@ const SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY = "wuu.desktop.sidebarCollapsedFun
 const SIDEBAR_RECENTS_COLLAPSED_KEY = "wuu.desktop.sidebarRecentsCollapsed";
 const SIDEBAR_PINNED_ITEMS_KEY = "wuu.desktop.sidebarPinnedItems";
 const LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY = "wuu.desktop.sidebarPinnedContainers";
-const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["projects", "pinned", "folders", "workspace"] as const;
+const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["pinned", "folders", "workspace"] as const;
 type SidebarFunctionalGroupID = (typeof SIDEBAR_FUNCTIONAL_GROUP_IDS)[number];
 type SidebarPinnedItem = {
   kind: "thread" | "folder" | "workspace";
@@ -281,9 +279,7 @@ function loadSidebarFunctionalGroupOrder(): SidebarFunctionalGroupID[] {
       window.localStorage.getItem(SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY) ?? "[]",
     );
     if (!Array.isArray(parsed)) return [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
-    // Projects take Collaboration's saved place. Remove this mapping once no
-    // saved order predates Collaboration's removal.
-    const order = [...new Set(parsed.map((id) => id === "collaboration" ? "projects" : id).filter(
+    const order = [...new Set(parsed.filter(
       (id): id is SidebarFunctionalGroupID =>
         typeof id === "string"
         && SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID),
@@ -472,8 +468,6 @@ export function AppSidebar({
   onSelectWorkspaceThread: selectNativeWorkspaceThread,
   onRemoveWorkspace,
   onRelocateWorkspace,
-  onCreateProject,
-  onAdoptIntoProject,
   onReorderSections,
   onPointerEnter,
   onPointerLeave,
@@ -552,10 +546,6 @@ export function AppSidebar({
   onSelectWorkspaceThread: (workspaceID: string, threadID: string) => void;
   onRemoveWorkspace: (id: string) => void;
   onRelocateWorkspace: (id: string) => void;
-  // Open a project draft, in the given workspace or the active one.
-  onCreateProject?: (workspaceID?: string) => void;
-  // The user dropped a conversation onto a project.
-  onAdoptIntoProject?: (projectID: string, threadID: string) => void;
   // Fires when the user drops a reorderable sidebar section in a new
   // position. The next array is the FULL sectionOrder with the moved
   // entry swapped into place. App.tsx persists this via the same
@@ -1191,24 +1181,13 @@ export function AppSidebar({
   const unreadThreads = attentionThreads.unread;
   const recentThreads = attentionThreads.recent;
   const attentionCount = runningThreads.length + unreadThreads.length;
-  const projectIndex = useMemo(
-    () => projectDirectory(allSidebarThreads, lastViewedTurnByThreadID, activeThreadID),
-    [activeThreadID, allSidebarThreads, lastViewedTurnByThreadID],
-  );
   const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
-    (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
-      && (id !== "pinned" || hasPinnedRows)
+    (id) => (id !== "pinned" || hasPinnedRows)
       && (id !== "folders" || visibleFolderSortableIDs.length > 0),
-  ), [functionalGroupOrder, onCreateProject, hasPinnedRows, projectIndex, visibleFolderSortableIDs.length]);
-  // Projects list apart from workspaces unless the user pinned or filed them.
-  const projectRows = useMemo(() => projectIndex.projects
-    .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
-    .sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0) || a.id.localeCompare(b.id)),
-  [organization.folderByThreadID, projectIndex]);
+  ), [functionalGroupOrder, hasPinnedRows, visibleFolderSortableIDs.length]);
   const conversationCandidates = useMemo(() => allSidebarThreads
-    .filter((thread) => !thread.archived && !thread.pinned
-      && !projectIndex.summaries.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id)),
-  [allSidebarThreads, projectIndex]);
+    .filter((thread) => !thread.archived && !thread.pinned),
+  [allSidebarThreads]);
   const {
     threads: recentConversations,
     interactionProps: conversationInteractionProps,
@@ -1219,19 +1198,17 @@ export function AppSidebar({
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
-    const projectIDs = new Set(projectIndex.projects.map((thread) => thread.id));
     for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
       const project = sidebarWorkspaces.find((candidate) => candidate.id === workspaceID);
       // Cached buckets can overlap while a fork's workspace metadata refreshes.
       // Classify the same session snapshot in every bucket before publishing nodes.
       next[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread).filter(
         (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] &&
-          !projectIDs.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id) &&
           project !== undefined && threadBelongsToWorkspace(thread, project),
       );
     }
     return next;
-  }, [allSidebarThreads, organization.folderByThreadID, projectIndex, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  }, [allSidebarThreads, organization.folderByThreadID, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
   const selectedConversationID = activeThreadID ?? activeSessionTabID;
   const recentSelectionVisible = !recentsCollapsed && (recentConversations.some(thread => thread.id === activeThreadID)
     || draftConversations.some(draft => draft.id === activeSessionTabID));
@@ -1255,14 +1232,12 @@ export function AppSidebar({
     return {
       workspaces: sidebarWorkspaces,
       threadsByWorkspaceID,
-      sessionsByProjectID: projectIndex.sessionsByProjectID,
       activeThreadID,
       lastViewedTurnByThreadID: lastViewedTurnByThreadID,
     };
   }, [
     activeThreadID,
     allSidebarThreads,
-    projectIndex,
     sidebarWorkspaces,
     lastViewedTurnByThreadID,
     workspaceThreadsByWorkspaceID,
@@ -1536,7 +1511,6 @@ export function AppSidebar({
           {folderThreads.length > 0 ? (
             <OrganizationThreadList
               threads={folderThreads}
-              projectSummaries={projectIndex.summaries}
               activeID={activeThreadID}
               selectedID={selectionSection === "organization" ? activeThreadID : null}
               pendingThreadID={pendingThreadID}
@@ -1597,7 +1571,6 @@ export function AppSidebar({
           onRenameThread={onRenameThread}
           onRemoveWorkspace={onRemoveWorkspace}
           onRelocateWorkspace={onRelocateWorkspace}
-          onCreateProject={onCreateProject}
           workspacePinned={pinned}
           onToggleWorkspacePinned={(id) => pinned
             ? unpinContainer({ kind: "workspace", id })
@@ -1893,68 +1866,7 @@ export function AppSidebar({
               items={visibleFunctionalGroupOrder}
               strategy={verticalListSortingStrategy}
             >
-              {visibleFunctionalGroupOrder.map((groupID) => groupID === "projects" ? (
-                <SortableFunctionalGroup
-                  key={groupID}
-                  id={groupID}
-                  ariaLabel={t("sidebar.projects")}
-                  itemDropIndicator={sidebarSortIndicator?.id === groupID
-                    ? sidebarSortIndicator.position
-                    : undefined}
-                  headingLabel={t("sidebar.projects")}
-                  collapsed={collapsedFunctionalGroupIDs.has(groupID)}
-                  collapseLabel={t(
-                    collapsedFunctionalGroupIDs.has(groupID)
-                      ? "sidebar.expandSection"
-                      : "sidebar.collapseSection",
-                    { section: t("sidebar.projects") },
-                  )}
-                  onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
-                  action={onCreateProject ? (
-                    <Tooltip asChild content={t("projects.newProject")}><button
-                      className="sidebar-functional-action"
-                      type="button"
-                      aria-label={t("projects.newProject")}
-                      disabled={!hasRuntimeContext}
-                      onClick={() => activateNative(() => onCreateProject())}
-                    >
-                      <Plus aria-hidden="true" />
-                    </button></Tooltip>
-                  ) : undefined}
-                >
-                  <div className="sidebar-functional-group-body">
-                    {projectRows.length > 0 ? (
-                      <OrganizationThreadList
-                        threads={projectRows}
-                        projectSummaries={projectIndex.summaries}
-                        activeID={activeThreadID}
-                        selectedID={selectionSection === "organization" ? activeThreadID : null}
-                        pendingThreadID={pendingThreadID}
-                        lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-                        onSelect={onSelectThread}
-                        onTogglePinned={onTogglePinned}
-                        onArchive={onArchiveThread}
-                        onDelete={onDeleteThread}
-                        onRename={onRenameThread}
-                        onDropSession={onAdoptIntoProject
-                          ? (project, threadID) => onAdoptIntoProject(project.id, threadID)
-                          : undefined}
-                      />
-                    ) : onCreateProject ? (
-                      // With no project yet, the group offers its first one.
-                      <button
-                        className="nav-item project-new-item"
-                        type="button"
-                        disabled={!hasRuntimeContext}
-                        onClick={() => activateNative(() => onCreateProject())}
-                      >
-                        <Project className="icon-lg" />
-                        <span>{t("projects.newProject")}</span>
-                      </button>
-                    ) : null}
-                  </div>
-                </SortableFunctionalGroup>
-              ) : groupID === "pinned" ? (
+              {visibleFunctionalGroupOrder.map((groupID) => groupID === "pinned" ? (
                 <SortableFunctionalGroup
                   key={groupID}
                   id={groupID}
@@ -2008,7 +1920,6 @@ export function AppSidebar({
                             >
                               <OrganizationThreadList
                                 threads={[thread]}
-                                projectSummaries={projectIndex.summaries}
                                 activeID={activeThreadID}
                                 selectedID={selectionSection === "organization" ? activeThreadID : null}
                                 pendingThreadID={pendingThreadID}
@@ -2292,9 +2203,7 @@ export function AppSidebar({
                 <div className="sidebar-functional-group-drag-overlay">
                   <span>
                     {t(
-                      draggingFunctionalGroupID === "projects"
-                        ? "sidebar.projects"
-                        : draggingFunctionalGroupID === "pinned"
+                      draggingFunctionalGroupID === "pinned"
                         ? "sidebar.pinned"
                         : draggingFunctionalGroupID === "folders"
                           ? "sidebar.folders"

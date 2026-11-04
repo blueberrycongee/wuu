@@ -30,22 +30,18 @@ function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture"
 // Escaped contracts: one creation owner, cancellation before/after admission,
 // source-bound adoption, ordered queue handoff, and uncertain delivery recovery.
 describe("application submission ownership",()=>{
-  it.each([false, true])("preserves creation permission policy for project=%s",async(project)=>{
+  it("preserves conversation creation permission policy",async()=>{
     const created={...thread(),permission_mode:"standard"};
     window.wuu={startThread:vi.fn().mockResolvedValue({thread:created}),startTurn:vi.fn().mockResolvedValue({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
     const f=fixture(undefined,false,"fixture",{provider:"chosen",model:"chosen-model",effort:"high",speed:"",permission_mode:"read_only",approve_for_me:true});
     const workspace={kind:"project" as const,project_id:"workspace",cwd:"/workspace"};
     const state=f.getState();
-    f.setState({...state,activeContext:workspace,initialized:{...state.initialized!,features:{project_agent:true}},sessionTabs:state.sessionTabs.map(tab=>tab.kind==="draft"?{...tab,context:workspace,project:project ? true as const : undefined}:tab)});
+    f.setState({...state,activeContext:workspace,sessionTabs:state.sessionTabs.map(tab=>tab.kind==="draft"?{...tab,context:workspace}:tab)});
     expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(true);
     await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
     const params=vi.mocked(window.wuu.startThread).mock.calls[0][0]!;
     expect(params).toMatchObject({provider:"chosen",model:"chosen-model",effort:"high"});
-    if(project){
-      expect(params).toMatchObject({engine:"wuu",workspace_id:"workspace",cwd:"/workspace",project:{name:"hello"}});
-      expect(params).not.toHaveProperty("permission_mode");
-      expect(params).not.toHaveProperty("approve_for_me");
-    }else expect(params).toMatchObject({permission_mode:"read_only",approve_for_me:true});
+    expect(params).toMatchObject({permission_mode:"read_only",approve_for_me:true});
   });
   it.each([false, true])("checkpoints retained inputs before disposal and fences late settlement (failure=%s)",async(failed)=>{
     const starting=deferred<{turn:Thread["turns"][number]}>();

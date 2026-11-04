@@ -435,9 +435,6 @@ func (t *Toolkit) rebuildRegistry() {
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
-	if e.ProjectSessions != nil {
-		registered = append(registered, NewProjectSessionTool(e))
-	}
 	// Register the PTC entry only with a session runtime; model exposure is
 	// separately controlled by the optional global and family settings.
 	t.codeModeMu.RLock()
@@ -1163,25 +1160,10 @@ func (t *Toolkit) ConfigureSurfaceForProviderModel(providerName, model string, f
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
 	kind := modelprofile.SurfaceWorker
-	if t.env != nil && t.env.ProjectSessions != nil {
-		kind = modelprofile.SurfaceProjectSession
-	} else if forMainAgent {
+	if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
-}
-
-// SetProjectSessions adds project operations to the ordinary session toolkit.
-func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
-	if t == nil || t.env == nil {
-		return
-	}
-	if t.env.ProjectSessions == nil && handler == nil {
-		return
-	}
-	t.env.ProjectSessions = handler
-	t.rebuildRegistry()
-	t.SetActiveProfile(t.ActiveProfile(), true)
 }
 
 func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelprofile.SurfaceKind) {
@@ -1191,8 +1173,7 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	// A project surface includes its session tool even without a model profile.
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectSession {
+	if (p == modelprofile.Profile{}) {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return

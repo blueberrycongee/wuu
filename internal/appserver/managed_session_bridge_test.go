@@ -13,8 +13,8 @@ import (
 // Failure cases: closing one connection retires another, an admitted callback
 // jumps to the newest server/state, unbind leaks autonomous work, and a later
 // connection cannot reuse the runtime after all earlier connections close.
-func TestProjectBridgeRegistrationLifetime(t *testing.T) {
-	bridge := NewProjectCoordinatorBridge()
+func TestManagedSessionBridgeRegistrationLifetime(t *testing.T) {
+	bridge := newManagedSessionBridge()
 	first := New(newTestRuntime(t, &fakeClient{}), &lockedBuffer{})
 	second := New(newTestRuntime(t, &fakeClient{}), &lockedBuffer{})
 	t.Cleanup(first.Close)
@@ -88,8 +88,8 @@ func TestProjectBridgeRegistrationLifetime(t *testing.T) {
 	finish()
 }
 
-func TestProjectBridgeRejectsUnreadyOrDifferentGraphState(t *testing.T) {
-	bridge := NewProjectCoordinatorBridge()
+func TestManagedSessionBridgeRejectsUnreadyOrDifferentGraphState(t *testing.T) {
+	bridge := newManagedSessionBridge()
 	server := New(newTestRuntime(t, &fakeClient{}), &lockedBuffer{})
 	t.Cleanup(server.Close)
 	unbind, err := bridge.Bind(server)
@@ -110,8 +110,8 @@ func TestProjectBridgeRejectsUnreadyOrDifferentGraphState(t *testing.T) {
 	}
 }
 
-func TestProjectScopeUsesAuthenticatedCallerContext(t *testing.T) {
-	bridge := NewProjectCoordinatorBridge()
+func TestManagedSessionScopeUsesAuthenticatedCallerContext(t *testing.T) {
+	bridge := newManagedSessionBridge()
 	server := New(newTestRuntime(t, &fakeClient{}), &lockedBuffer{})
 	t.Cleanup(server.Close)
 	unbind, err := bridge.Bind(server)
@@ -120,16 +120,16 @@ func TestProjectScopeUsesAuthenticatedCallerContext(t *testing.T) {
 	}
 	defer unbind()
 	state := &runtime.State{Documents: server.rt.Documents, Sessions: server.rt.Sessions}
-	origin := server.projectServiceContext(context.Background(), state)
+	origin := server.managedSessionContext(context.Background(), state)
 	call := pluginhost.ServiceInvokeParams{CallerScope: &pluginhost.ExecutionScope{Context: origin}}
-	scope, err := projectScopeForCall(context.Background(), call)
+	scope, err := managedSessionScopeForCall(context.Background(), call)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if scope.registration.server != server || scope.state != state {
 		t.Fatal("nested provider callback lost its originating server/state")
 	}
-	if _, err := projectScopeForCall(context.Background(), pluginhost.ServiceInvokeParams{}); err == nil {
+	if _, err := managedSessionScopeForCall(context.Background(), pluginhost.ServiceInvokeParams{}); err == nil {
 		t.Fatal("accepted a caller without a captured host scope")
 	}
 }

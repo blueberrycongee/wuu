@@ -110,12 +110,11 @@ func (s *Server) handleInitialize(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
-		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
 		CatalogProviders:   catalogProviderSummaries(),
-		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode, ProjectAgent: projectAgentEnabled},
+		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode},
 	}, nil)
 }
 
@@ -137,7 +136,6 @@ func (s *Server) handleConfigRead(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
-		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -1206,7 +1204,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
+	if modelAliases != nil || verificationModel != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1221,9 +1219,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		}
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
-		}
-		if params.ProjectModels != nil {
-			candidate.Agent.ProjectModels = *params.ProjectModels
 		}
 		if err := candidate.Validate(); err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1240,7 +1235,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 			ProviderContextWindow:   params.ProviderContextWindow,
 			ModelAliases:            modelAliases,
 			VerificationModel:       verificationModel,
-			ProjectModels:           params.ProjectModels,
 		})
 	})
 	if err != nil {
@@ -1266,7 +1260,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.rt.ModelRoles = roleSelections
-	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 	s.rt.ModelBudget = modelBudget
 	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
@@ -1289,7 +1282,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
-		ProjectModels:    cfg.Agent.ProjectModels,
 		ModelRoles:       s.currentModelRoleSummaries(),
 		Providers:        s.providerSummaries(),
 	}, nil)
@@ -1814,7 +1806,6 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
 		ModelAliases:     s.currentModelAliasSummaries(),
-		ProjectModels:    s.rt.ProjectModels,
 		Provider:         resolvedName,
 		Model:            model,
 		Effort:           effort,
@@ -1900,7 +1891,6 @@ func (s *Server) applyModelSelectionToRuntime(
 	}
 
 	s.rt.ModelRoles = roleSelections
-	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
 	if explicitSelection && s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
@@ -1974,7 +1964,6 @@ func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return ConfigModelUpdateResult{
 		ModelAliases:     s.currentModelAliasSummaries(),
-		ProjectModels:    s.rt.ProjectModels,
 		Provider:         s.rt.ProviderName,
 		Model:            s.rt.Model,
 		Effort:           s.currentDisplayEffort(),
@@ -2207,7 +2196,6 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		}
 		return s.writeResponse(req.ID, ConfigProviderRemoveResult{
 			ModelAliases:     s.currentModelAliasSummaries(),
-			ProjectModels:    s.rt.ProjectModels,
 			Provider:         s.rt.ProviderName,
 			Model:            s.rt.Model,
 			Variant:          s.currentVariant(),
@@ -2617,8 +2605,8 @@ func (s *Server) selectThreadModel(params ConfigModelUpdateParams) (selected *th
 func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState, intents ...*session.Session) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	result := ConfigModelUpdateResult{
-		ModelAliases: s.currentModelAliasSummaries(), ProjectModels: s.rt.ProjectModels,
-		Provider: s.rt.ProviderName, Model: s.rt.Model,
+		ModelAliases: s.currentModelAliasSummaries(),
+		Provider:     s.rt.ProviderName, Model: s.rt.Model,
 		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
 		MaxParallel: s.rt.MaxParallel(), Permissions: s.permissionSummaryForThread(th),
 		ExtensionTrust: s.currentExtensionTrustSummary(), ModelProfile: modelProfile,

@@ -206,7 +206,6 @@ var ARTIFACT_STORE_DESCRIPTOR = {
 };
 
 // packages/plugin-sdk/src/coordination.ts
-var PROJECT_COORDINATION_SERVICE = "project.coordination";
 var MANAGED_SESSION_SERVICE = "host.managed-session";
 function descriptor2(name, methods) {
   return { name, version: "1.0.0", methods: methods.map((method) => ({
@@ -215,28 +214,6 @@ function descriptor2(name, methods) {
     output_schema: `${name}.${method}.output.v1`
   })) };
 }
-var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
-  "scheduler",
-  "session",
-  "work",
-  "membership",
-  "create",
-  "turn",
-  "user-input",
-  "inbox",
-  "schedule",
-  "recover",
-  "instructions",
-  "member-work",
-  "coordinator",
-  "enqueue",
-  "capacity",
-  "work-list",
-  "tool-policy",
-  "tool-validate",
-  "tool-config",
-  "admission"
-]);
 var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
 
 // packages/plugin-sdk/src/tool-service.ts
@@ -370,7 +347,6 @@ var sessionDomainArity = {
   "ListParticipantRuns": [2, 1],
   "ListParticipants": [1, 1],
   "ListPluginTurnLifecycleOutbox": [0, 1],
-  "ListProjectWork": [1, 1],
   "ListTokenUsage": [0, 1],
   "LoadActiveHistoryRecords": [2, 1],
   "LoadCompactionNote": [2, 2],
@@ -389,8 +365,6 @@ var sessionDomainArity = {
   "MostRecentForCWD": [2, 1],
   "NewInferenceJournalRuntime": [1, 1],
   "PendingInbox": [1, 1],
-  "PendingProjectWork": [1, 1],
-  "ProjectWorkOperation": [1, 2],
   "PutContextSeed": [1, 1],
   "PutPluginTurnLifecycleOutbox": [3, 0],
   "PutSessionLaunch": [1, 1],
@@ -399,9 +373,7 @@ var sessionDomainArity = {
   "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
-  "ReadProjectWork": [1, 1],
   "RebuildSessionIndexes": [0, 0],
-  "ReconcileProjectWork": [2, 0],
   "ReleaseHeldUserWork": [2, 0],
   "RenameFolder": [2, 1],
   "ReorderFolders": [1, 0],
@@ -414,7 +386,6 @@ var sessionDomainArity = {
   "RewriteHistoryRecordsForEngineEdit": [6, 0],
   "SaveDriverCheckpoint": [2, 0],
   "SaveModelInputReceipt": [2, 0],
-  "SaveProjectWork": [3, 1],
   "SaveRequestContextCheckpoint": [2, 0],
   "SearchHistoryPage": [4, 1],
   "SearchHistoryQuery": [1, 1],
@@ -422,7 +393,6 @@ var sessionDomainArity = {
   "SetEngineRef": [2, 1],
   "SetHistoryEngineTurnID": [5, 0],
   "SetModelSelection": [4, 1],
-  "SetProjectMembership": [4, 1],
   "SetNextStepModelSelection": [2, 1],
   "SetRuntimeSelection": [2, 1],
   "SetSource": [2, 1],

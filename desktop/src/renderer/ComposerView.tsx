@@ -269,7 +269,7 @@ export function Composer({
   topAccessory?: ReactNode;
   statusAccessory?: ReactNode;
   inlineSelection?: ReactNode;
-  // The conversation's permission mode cannot change, as for a project coordinator.
+  // The conversation's permission mode cannot change.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
   runtimeControlsTarget?: HTMLElement | null;

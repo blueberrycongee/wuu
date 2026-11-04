@@ -138,8 +138,6 @@ func copyEphemeralAdmissionProjectionLocked(th *threadState) *threadState {
 		Owner:            th.Owner,
 		Visibility:       th.Visibility,
 		Instructions:     th.Instructions,
-		ProjectID:        th.ProjectID,
-		ProjectRole:      th.ProjectRole,
 		ParentID:         th.ParentID,
 		AgentPath:        th.AgentPath,
 		historyHeadSeq:   th.historyHeadSeq,

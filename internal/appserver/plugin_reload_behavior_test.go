@@ -257,7 +257,7 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 		_ = srv.refreshPluginGenerationIfChanged()
 		thread := &threadState{ID: "waiting-for-recovery", state: testRuntimeState(t, rt)}
 		thread.mu.Lock()
-		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread, 0)
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
 		thread.mu.Unlock()
 		if err != nil || acquired {
 			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
@@ -550,7 +550,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 				t.Fatal("worker did not start")
 			}
 			th.mu.Lock()
-			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th)
 			if admissionErr == nil && acquired {
 				th.releaseThreadExecutionLeaseLocked()
 			}
@@ -904,7 +904,7 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 					t.Fatal(err)
 				}
 				th.mu.Lock()
-				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 				if acquired {
 					th.releaseThreadExecutionLeaseLocked()
 				}

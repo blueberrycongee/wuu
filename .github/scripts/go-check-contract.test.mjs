@@ -15,7 +15,6 @@ const selected = {
   GO_REQUIRED: 'true',
   GO_VALIDATION_RESULT: 'success',
   GO_RACE_RESULT: 'success',
-  PROJECT_AGENT_RESULT: 'success',
   ARCHITECTURE_REQUIRED: 'true',
   ARCHITECTURE_RESULT: 'success',
 };
@@ -33,7 +32,7 @@ test('the Go gate waits for the independent race job', () => {
 test('selected Go and architecture checks must all succeed', () => {
   assert.equal(passes(), true);
   for (const result of ['failure', 'cancelled', 'skipped', '']) {
-    for (const name of ['GO_VALIDATION_RESULT', 'GO_RACE_RESULT', 'PROJECT_AGENT_RESULT', 'ARCHITECTURE_RESULT']) {
+    for (const name of ['GO_VALIDATION_RESULT', 'GO_RACE_RESULT', 'ARCHITECTURE_RESULT']) {
       assert.equal(passes({ [name]: result }), false, `${name}=${result}`);
     }
   }
@@ -43,10 +42,10 @@ test('selected Go and architecture checks must all succeed', () => {
 test('unselected checks must be skipped, not failed or run unexpectedly', () => {
   const unselected = {
     GO_REQUIRED: 'false', GO_VALIDATION_RESULT: 'skipped', GO_RACE_RESULT: 'skipped',
-    PROJECT_AGENT_RESULT: 'skipped', ARCHITECTURE_REQUIRED: 'false', ARCHITECTURE_RESULT: 'skipped',
+    ARCHITECTURE_REQUIRED: 'false', ARCHITECTURE_RESULT: 'skipped',
   };
   assert.equal(passes(unselected), true);
-  for (const name of ['GO_VALIDATION_RESULT', 'GO_RACE_RESULT', 'PROJECT_AGENT_RESULT', 'ARCHITECTURE_RESULT']) {
+  for (const name of ['GO_VALIDATION_RESULT', 'GO_RACE_RESULT', 'ARCHITECTURE_RESULT']) {
     assert.equal(passes({ ...unselected, [name]: 'failure' }), false, name);
     assert.equal(passes({ ...unselected, [name]: 'success' }), false, name);
   }
@@ -55,7 +54,7 @@ test('unselected checks must be skipped, not failed or run unexpectedly', () => 
 // This boundary previously existed only as a manual development command. Its
 // result must fail the required job, not become an optional diagnostic workflow.
 test('architecture conformance requires the MCP reload executable and its evidence', () => {
-  const architecture = workflow.split('\n  architecture-conformance:\n')[1]?.split('\n  project-agent-check:\n')[0];
+  const architecture = workflow.split('\n  architecture-conformance:\n')[1]?.split('\n  go-check:\n')[0];
   const step = architecture?.split('      - name: Verify MCP authentication across compatible reloads\n')[1]?.split('      - name: ')[0];
   assert.ok(step, 'selected-service MCP reload must run in the required architecture job');
   assert.doesNotMatch(step, /continue-on-error:/);

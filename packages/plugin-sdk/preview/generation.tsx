@@ -1,6 +1,6 @@
 import { previewContributions } from "./contributions.js";
 import { scopeApplicationWebWorkspace } from '../dist/ui-web-workspace.js';
-import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
 import * as React from 'react';
 import { createLocaleTranslator } from '../dist/localization.js';
 import type {
@@ -103,7 +103,6 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
         onboarding: scopeApplicationOnboarding(() => application.onboarding, controller.signal, assertActive),
         browser: scopeApplicationBrowser(() => application.browser, controller.signal, assertActive),
         fileSelection: scopeApplicationFileSelection(() => application.fileSelection, controller.signal, assertActive),
-        projects: scopeApplicationProjects(() => application.projects, controller.signal, assertActive),
         terminals: scopeApplicationTerminals(() => application.terminals, controller.signal, assertActive),
         catalog: scopeApplicationCatalog(() => application.catalog, controller.signal, assertActive),
         previewContent: scopeApplicationPreviewContent(() => application.previewContent, controller.signal, assertActive),

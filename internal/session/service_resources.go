@@ -40,11 +40,8 @@ func (j *remoteInferenceJournal) invoke(ctx context.Context, method string, args
 var _ providers.InferenceJournal = (*remoteInferenceJournal)(nil)
 
 // The OS gate and descriptor are host mechanisms shared across every selected
-// session generation. Only membership and persistent reset state are delegated.
+// session generation. Persistent reset state is delegated.
 func (s *Store) TryAcquireThreadExecutionLease(dir, id string) (*DocumentThreadExecutionLease, bool, error) {
-	return s.TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id, 0)
-}
-func (s *Store) TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id string, limit int) (*DocumentThreadExecutionLease, bool, error) {
 	dir, id = strings.TrimSpace(dir), strings.TrimSpace(id)
 	if dir == "" || id == "" {
 		return nil, false, errors.New("session directory and thread id are required")
@@ -72,35 +69,8 @@ func (s *Store) TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id string, l
 		}
 	}()
 	var generation int64
-	for {
-		active, known := []string{}, []string{}
-		if limit > 0 {
-			rows, err := s.List(0)
-			if err != nil {
-				return nil, false, err
-			}
-			for _, row := range rows {
-				known = append(known, row.ID)
-				if row.ID == id {
-					continue
-				}
-				live, err := ThreadExecutionActive(dir, row.ID)
-				if err != nil {
-					return nil, false, err
-				}
-				if live {
-					active = append(active, row.ID)
-				}
-			}
-		}
-		err := s.invoke("AdmitThreadExecution", []any{id, limit, active, known}, []any{&generation})
-		if errors.Is(err, errAdmissionChanged) {
-			continue
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		break
+	if err := s.invoke("AdmitThreadExecution", []any{id, 0, []string{}, []string{}}, []any{&generation}); err != nil {
+		return nil, false, err
 	}
 	keep = true
 	return &DocumentThreadExecutionLease{file: file, threadID: id, resetGeneration: generation, remote: s.WithContext(context.Background())}, true, nil

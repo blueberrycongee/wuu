@@ -14,7 +14,6 @@ type StoredDraft = {
   kind: "draft" | "thread";
   context: RuntimeContext;
   threadID?: string;
-  project?: true;
   prompt: string;
   updatedAt: number;
 };
@@ -52,7 +51,6 @@ function parseDraft(value: unknown, now: number): StoredDraft | undefined {
       ? { kind: "project", project_id: context.project_id, cwd: context.cwd }
       : { kind: "no_project", cwd: context.cwd },
     ...(entry.kind === "thread" ? { threadID: entry.threadID } : {}),
-    ...(entry.kind === "draft" && entry.project === true ? { project: true } : {}),
     prompt: entry.prompt, updatedAt: entry.updatedAt,
   };
 }
@@ -64,7 +62,7 @@ function tabFromDraft(entry: StoredDraft): SessionTab {
         title: translateCurrent("thread.untitled"), ...draft }
     : { id: entry.id, kind: "draft", context: entry.context,
         title: translateCurrent("tabs.newConversation"), createdAt: entry.updatedAt,
-        ...(entry.project ? { project: true } : {}), ...draft };
+        ...draft };
 }
 
 function writeStored(snapshot: StoredRecovery): void {
@@ -124,7 +122,7 @@ export function writeComposerDraftRecovery(tabs: SessionTab[], activeTabID: stri
       if (tab.kind === "skills") return [];
       const old = oldDrafts.find((entry) => entry.id === tab.id && sameRecoveryContext(entry.context, tab.context));
       const entry = parseDraft({ id: tab.id, kind: tab.kind, context: tab.context,
-        ...(tab.kind === "thread" ? { threadID: tab.threadID } : tab.project ? { project: true } : {}), prompt: tab.prompt,
+        ...(tab.kind === "thread" ? { threadID: tab.threadID } : {}), prompt: tab.prompt,
         updatedAt: old?.prompt === tab.prompt ? old.updatedAt : now }, now);
       return entry ? [entry] : [];
     }).sort((left, right) => right.updatedAt - left.updatedAt);
