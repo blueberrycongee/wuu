@@ -72,6 +72,11 @@ func TestQueuedShutdownAndSuccessorSerializeOnWorkerLease(t *testing.T) {
 	first.beforeRuntimeInstallForTest = func(thread *runtime.ThreadRuntime) {
 		thread.AgentControl.SetQueuedManagerSpawnHookForTest(func(string) { close(entered); <-resume })
 	}
+	// This fixture represents a user-approved recovery; history loading alone
+	// no longer authorizes the restored worker queue.
+	if err := first.recordRecoveryTurn(th, "approved-recovery", "running"); err != nil {
+		t.Fatal(err)
+	}
 	old, err := first.ensureThreadRuntime(th)
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +111,9 @@ func TestQueuedShutdownAndSuccessorSerializeOnWorkerLease(t *testing.T) {
 	next.mu.Unlock()
 	if err != nil || !acquired {
 		t.Fatalf("successor admission: %v, %v", acquired, err)
+	}
+	if err := second.recordRecoveryTurn(next, "approved-successor", "running"); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := second.ensureThreadRuntime(next); err != nil {
 		t.Fatal(err)
@@ -180,6 +188,9 @@ func TestShutdownRejectsQueuedWorkerPausedBeforeSpawn(t *testing.T) {
 	})
 	srv.beforeRuntimeInstallForTest = func(thread *runtime.ThreadRuntime) {
 		thread.AgentControl.SetQueuedManagerSpawnHookForTest(func(string) { close(entered); <-resume })
+	}
+	if err := srv.recordRecoveryTurn(th, "approved-recovery", "running"); err != nil {
+		t.Fatal(err)
 	}
 	thread, err := srv.ensureThreadRuntime(th)
 	if err != nil {

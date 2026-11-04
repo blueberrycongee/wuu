@@ -2180,6 +2180,12 @@ export type SessionOrganization = {
   folders: SessionOrganizationGroup[];
 };
 
+export type RestartRecoveryItem = {
+  thread: Thread;
+  turn_id: string;
+  reason: "interrupted" | "background_result";
+};
+
 export type Thread = {
   /** Attached by the selected GUI connection, not trusted from remote JSON. */
   session_locator?: SessionLocatorV1;
@@ -3597,6 +3603,8 @@ export type WuuDesktopApi = {
   polishText: (text: string) => Promise<TextPolishResult>;
   listThreads: (cwd?: string) => Promise<{ threads: Thread[] }>;
   listAllThreads: () => Promise<{ threads: Thread[] }>;
+  listRestartRecovery?: () => Promise<{ items: RestartRecoveryItem[] }>;
+  dismissRestartRecovery?: (threadIDs: string[]) => Promise<void>;
   // Settings → Archive panel uses this to surface archived sessions across
   // every cwd after a restart; the active list above stays non-archived.
   listArchivedThreads: () => Promise<{ threads: Thread[] }>;

@@ -5,6 +5,8 @@ import "sort"
 // Resource declarations are explicit protocol registration. A new method must
 // declare its scope before non-owner callers can reach its handler.
 var resourceMethods = map[string]string{
+	"thread/recovery/list":               "global",
+	"thread/recovery/dismiss":            "global",
 	MethodStateInspectionsList:           "global",
 	MethodStateInspectionsReconcile:      "global",
 	"thread/artifact/cancel":             "session",

@@ -1,4 +1,11 @@
 export const zhCN = {
+  "restartRecovery.title": "恢复未完成的任务",
+  "restartRecovery.description": "有 {count} 个会话未完成，是否从已保存的进度继续？",
+  "restartRecovery.defer": "暂不继续",
+  "restartRecovery.continue": "全部继续",
+  "restartRecovery.applying": "正在处理…",
+  "restartRecovery.loadFailed": "未能读取待恢复的任务。请重新打开 Wuu 后重试。",
+  "restartRecovery.actionFailed": "部分会话未能恢复，请重试。",
   "composer.plugins": "插件",
   "composer.pluginsLoading": "正在加载插件…",
   "composer.pluginsLoadFailed": "未能加载连接，请重试。",

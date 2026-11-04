@@ -36,7 +36,7 @@ import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
+import type { InitializeResult, PopOutInitResult, RestartRecoveryItem, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
@@ -331,6 +331,9 @@ export class ApplicationController implements HostApplicationService {
   private readonly listeners = new Set<() => void>();
   private revision = 0;
   private snapshot: ApplicationSnapshotV1;
+  private restartRecovery: RestartRecoveryItem[] = [];
+  private recoveryLoading = false;
+  private recoveryResolving = false;
   private draft = "";
   private readonly draftRevisions = new Map<string, number>();
   private readonly draftResources = new ApplicationDraftResources(() => {
@@ -798,12 +801,27 @@ export class ApplicationController implements HostApplicationService {
         return !next.thread && active?.kind === "draft" ? { ...next, activeSessionTabID: active.id } : next;
       });
       if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
+      void this.refreshRestartRecovery();
       return loaded;
     })();
     return this.load;
   }
 
+  private async refreshRestartRecovery(): Promise<void> {
+    if (!window.wuu.listRestartRecovery || this.recoveryLoading || this.recoveryResolving) return;
+    this.recoveryLoading = true;
+    try {
+      const result = await window.wuu.listRestartRecovery();
+      if (this.lifetime?.signal.aborted) return;
+      this.restartRecovery = result.items;
+      this.publish();
+    } catch {
+      if (!this.lifetime?.signal.aborted) showErrorToast(translateCurrent("restartRecovery.loadFailed"));
+    } finally { this.recoveryLoading = false; }
+  }
+
   private receive(event: ServerEvent): void {
+    if (event.kind === "notification" && event.message.method === "thread/recoveryChanged") void this.refreshRestartRecovery();
     this.environmentOwner?.receive(event);
     this.eventEffects?.receive(event);
     const activities = reduceActivitySessionEvent(this.activitySessions, event);
@@ -1256,6 +1274,39 @@ export class ApplicationController implements HostApplicationService {
         if (!cursor || this.knownThread(threadId)?.history_cursor !== cursor) throw new Error("Conversation history cursor changed");
         if (!window.wuu.loadEarlierThreadHistory) throw new Error("Earlier conversation history is unavailable");
         await window.wuu.loadEarlierThreadHistory(threadId, cursor);
+        return;
+      }
+      case "conversation.resolve-recovery": {
+        if (this.recoveryResolving) return;
+        const { threadIds } = input as ApplicationActionMapV1["conversation.resolve-recovery"]["input"];
+        const candidates = [...this.restartRecovery];
+        this.recoveryResolving = true;
+        try {
+          const deferred = candidates.filter(item => !threadIds.includes(item.thread.id));
+          if (deferred.length) {
+            if (!window.wuu.dismissRestartRecovery) throw new Error("Restart recovery is unavailable");
+            await window.wuu.dismissRestartRecovery(deferred.map(item => item.thread.id));
+            this.restartRecovery = this.restartRecovery.filter(item => !deferred.includes(item));
+            this.publish();
+          }
+          const failures: unknown[] = [];
+          for (const item of candidates.filter(item => threadIds.includes(item.thread.id))) {
+            signal?.throwIfAborted();
+            if (this.lifetime?.signal.aborted) return;
+            const thread = item.thread;
+            const native = !thread.engine_id || thread.engine_id === "wuu";
+            try {
+              const result = await window.wuu.startTurn(thread.id, native ? "" : translateCurrent("turnFailure.continuePrompt"),
+                undefined, undefined, thread.permission_mode, undefined, undefined,
+                resolveThreadRuntimeContext(thread, this.state.projects), undefined, native ? item.turn_id : undefined);
+              this.restartRecovery = this.restartRecovery.filter(candidate => candidate !== item);
+              if (this.lifetime?.signal.aborted) return;
+              this.updateState(state => updateThreadByID(state, thread.id, current => upsertTurn(current, result.turn)));
+              this.publish();
+            } catch (error) { failures.push(error); }
+          }
+          if (failures.length) throw new AggregateError(failures, "Some conversations could not be resumed");
+        } finally { this.recoveryResolving = false; }
         return;
       }
       case "conversation.continue": {
@@ -1749,6 +1800,11 @@ export class ApplicationController implements HostApplicationService {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      restartRecovery: Object.freeze(this.restartRecovery.map(item => Object.freeze({
+        threadId: item.thread.id, title: item.thread.title || item.thread.preview || translateCurrent("thread.untitled"),
+        workspace: workspaceNameForContext(resolveThreadRuntimeContext(item.thread, state.projects), state.projects),
+        updatedAt: item.thread.updated_at, reason: item.reason,
+      }))),
       activities: Object.freeze(Object.values(this.activitySessions.byKey).map(activity => Object.freeze({ ...activity,
         interaction: activity.interaction && Object.freeze({ ...activity.interaction }) }))),
       browserDockTarget: this.browserDockTarget,
