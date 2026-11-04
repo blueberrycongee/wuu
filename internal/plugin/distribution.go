@@ -140,7 +140,11 @@ func resolvePackageSource(ctx context.Context, source string, options Distributi
 		if err != nil {
 			return nil, err
 		}
-		return &ResolvedPackage{Path: identity, Identity: identity, Inspection: inspection}, nil
+		path := identity
+		if inspection.SourceKind == PackageSourceFile {
+			path = inspection.SourcePath
+		}
+		return &ResolvedPackage{Path: path, Identity: identity, Inspection: inspection}, nil
 	}
 	if lock.LockVersion != 1 {
 		return nil, fmt.Errorf("unsupported distribution lock version %d", lock.LockVersion)

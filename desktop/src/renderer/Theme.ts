@@ -1,3 +1,4 @@
+import { builtInContentThemes, type ContentTheme } from "./ContentPalettes";
 import type {
   ExtensionInventoryRecord,
   ExtensionThemeDescriptor,
@@ -133,6 +134,12 @@ export function availableExtensionThemes(
   });
 }
 
+export function availableContentThemes(
+  inventory: readonly ExtensionInventoryRecord[] | undefined,
+): ContentTheme[] {
+  return [...builtInContentThemes(), ...availableExtensionThemes(inventory)];
+}
+
 export function selectedExtensionThemeKey(mode: AppliedTheme = currentAppliedTheme()): string {
   return window.localStorage?.getItem(`${EXTENSION_THEME_KEY}.${mode}`) ?? "";
 }
@@ -143,7 +150,7 @@ export function applyExtensionTheme(theme: AvailableExtensionTheme): void {
   paintExtensionTheme(theme);
 }
 
-function paintExtensionTheme(theme: AvailableExtensionTheme): void {
+function paintExtensionTheme(theme: ContentTheme): void {
   clearExtensionThemeTokens();
   document.documentElement.dataset.theme = theme.base;
   const explicitTokens = new Set(Object.keys(theme.tokens));
@@ -183,7 +190,7 @@ export function selectExtensionTheme(mode: AppliedTheme, key: string): void {
 function applySelectedTheme(): void {
   clearExtensionThemeTokens();
   const selected = selectedExtensionThemeKey();
-  const theme = availableExtensionThemes(themeInventory).find(
+  const theme = availableContentThemes(themeInventory).find(
     (candidate) => candidate.base === currentAppliedTheme() &&
       (candidate.key === selected || candidate.legacyKeys.includes(selected)),
   );

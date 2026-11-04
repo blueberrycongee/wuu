@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT, WEB_WORKSPACE_ZOOM_MIN, WEB_WORKSPACE_ZOOM_MAX } from "../shared/webWorkspace";
 import {
+  HISTORY_FREQUENCY_DECAY_MS,
   persistentWebWorkspaceURL,
   type WebWorkspaceBookmark,
   type WebWorkspaceHistoryEntry,
@@ -103,8 +104,10 @@ export class WebWorkspaceLibrary {
     const url = persistentWebWorkspaceURL(input);
     if (!url) return;
     const previous = this.store.history.find((entry) => entry.url === url);
+    const now = Date.now();
+    const visitScore = 1 + (previous ? (previous.visitScore ?? 1) * Math.exp(-Math.max(0, now - previous.visitedAt) / HISTORY_FREQUENCY_DECAY_MS) : 0);
     this.store.history = [
-      { id: previous?.id ?? randomUUID(), url, title: titleText(title, url), visitedAt: Date.now() },
+      { id: previous?.id ?? randomUUID(), url, title: titleText(title, url), visitedAt: now, visitScore },
       ...this.store.history.filter((entry) => entry.url !== url),
     ].slice(0, MAX_HISTORY);
     this.pruneHistory();
@@ -243,7 +246,9 @@ export class WebWorkspaceLibrary {
           const url = entry && persistentWebWorkspaceURL(entry.url);
           if (!url || !validId(entry.id) || !validTime(entry.visitedAt) || seen.has(url)) continue;
           seen.add(url);
-          this.store.history.push({ id: entry.id, url, title: titleText(entry.title, url), visitedAt: entry.visitedAt });
+          this.store.history.push({ id: entry.id, url, title: titleText(entry.title, url), visitedAt: entry.visitedAt,
+            ...(typeof entry.visitScore === "number" && Number.isFinite(entry.visitScore) && entry.visitScore >= 1
+              ? { visitScore: entry.visitScore } : {}) });
         }
       }
       if ("bookmarks" in data && Array.isArray(data.bookmarks)) {

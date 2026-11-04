@@ -36,7 +36,6 @@ import {
   initialState,
   requireThread,
   syncRunningThreadStreamItems,
-  isScratchThread,
   isStateActiveThreadRunning,
   isCoalescedBackgroundThreadEvent,
   isThreadExecuting,
@@ -60,7 +59,6 @@ import {
   reduceServerEvent,
   resolveComposerRunningAction,
   resolveThreadRuntimeContext,
-  scratchThreadSummaries,
   sortThreads,
   summarizeThreadsForSidebar,
   threadBelongsToWorkspace,
@@ -884,7 +882,6 @@ describe("summarizeThreadsForSidebar", () => {
     expect(summary.worktree?.base_repo).toBe("/repo/project");
     expect(threadWorkspacePath(summary)).toBe("/repo/project");
     expect(threadBelongsToWorkspace(summary, project)).toBe(true);
-    expect(isScratchThread(summary, [project])).toBe(false);
   });
 
   it("keeps sessions with a project after its path changes", () => {
@@ -906,7 +903,6 @@ describe("summarizeThreadsForSidebar", () => {
 
     expect(summary.workspace_id).toBe(project.id);
     expect(threadBelongsToWorkspace(summary, project)).toBe(true);
-    expect(isScratchThread(summary, [project])).toBe(false);
   });
 });
 
@@ -957,7 +953,7 @@ describe("resolveThreadRuntimeContext", () => {
     });
   });
 
-  it("resolves a scratch thread to a no_project context rooted at its own cwd", () => {
+  it("resolves a legacy thread outside registered projects to a no_project context rooted at its own cwd", () => {
     const thread = threadWithUserTexts(["hello"]);
     thread.cwd = "/Users/me/.wuu/scratch/2026-07-03";
     thread.workspace_kind = "scratch";
@@ -979,13 +975,12 @@ describe("resolveThreadRuntimeContext", () => {
     });
   });
 
-  it("prefers a cwd match against a registered project over a stale workspace_kind label, consistent with isScratchThread", () => {
+  it("prefers a cwd match against a registered project over a stale workspace_kind label", () => {
     // Same fixture shape as the worktree fork session case above:
     // cwd belongs to the project, but workspace_kind still says "scratch"
     // (e.g. a legacy thread from before the project was registered at that
-    // path). isScratchThread treats the cwd match as authoritative and
-    // returns false (not scratch); resolveThreadRuntimeContext must agree
-    // and resolve to the project's context rather than no_project.
+    // path). The cwd match is authoritative, so this resolves to the project
+    // rather than no_project.
     const thread = threadWithUserTexts(["continue in a worktree"]);
     thread.cwd = "/Users/me/.wuu/worktrees/fork-1/project";
     thread.workspace_kind = "scratch";
@@ -995,7 +990,6 @@ describe("resolveThreadRuntimeContext", () => {
       base_head: "d955824f",
     };
 
-    expect(isScratchThread(thread, [project])).toBe(false);
     expect(resolveThreadRuntimeContext(thread, [project])).toEqual({
       kind: "project",
       project_id: project.id,
@@ -1607,6 +1601,30 @@ describe("AppState stream cache lifecycle", () => {
     streamTextStore.clearItem("turn-1", "agent-1");
     streamTextStore.clearItem("turn-1", "reasoning-1");
     streamTextStore.clearItem("turn-bg", "agent-bg");
+  });
+
+  it.each(["agentMessage", "reasoning"])("publishes the first visible %s delta again after a whitespace retry", (kind) => {
+    const key = streamTextKey("turn-1", "agent-1", "text");
+    const state = { ...initialState, thread: threadWithUserTexts(["hi"]) };
+    const ingest = (operation: "delta" | "replace", text: string) => handleStreamingNotification({
+      kind: "notification", workdir: "/repo", message: {
+        method: `item/${kind}/${operation}`,
+        params: { thread_id: "thread-1", turn_id: "turn-1", item_id: "agent-1", [operation === "delta" ? "delta" : "text"]: text },
+      },
+    }, state);
+
+    expect(ingest("delta", "\n\u00a0")).toBe("stream");
+    expect(ingest("delta", "first")).toBe("stream-state");
+    expect(ingest("delta", " answer")).toBe("stream");
+    expect(ingest("replace", "")).toBe("stream");
+    expect(streamTextStore.get(key)).toBe("\n\u00a0first answer");
+    expect(ingest("delta", "\t")).toBe("stream");
+    expect(ingest("delta", "second")).toBe("stream-state");
+    expect(streamTextStore.get(key)).toBe("\tsecond");
+    expect(ingest("replace", " ")).toBe("stream");
+    expect(ingest("replace", "third")).toBe("stream-state");
+    expect(ingest("delta", " answer")).toBe("stream");
+    expect(streamTextStore.get(key)).toBe("third answer");
   });
 
   it("keeps visible text through an empty replace while resetting the next delta base", () => {
@@ -3289,16 +3307,6 @@ describe("sidebar pin/archive matrix", () => {
     expect(pinned).not.toContain("scratch-archived-pinned");
   });
 
-  it("scratchThreadSummaries drops pinned and archived entries (move semantics)", () => {
-    const all = summaries([
-      { id: "scratch-live" },
-      { id: "scratch-pinned", pinned: true },
-      { id: "scratch-archived", archived: true },
-    ]);
-    expect(
-      scratchThreadSummaries(all, []).map((thread) => thread.id),
-    ).toEqual(["scratch-live"]);
-  });
 });
 
 describe("applyLoadedRuntimeWithDraftCarry (R2: draft follows a pill switch)", () => {
@@ -3583,12 +3591,12 @@ describe("sessionTabLabel (draft tabs read as their workspace)", () => {
     expect(sessionTabLabel(tab, state)).toBe("acme-web");
   });
 
-  it("labels a no-project draft tab as 对话", () => {
+  it("labels a legacy no-project draft tab as 无工作区", () => {
     const tab = createDraftSessionTab("draft:initial:no_project:/scratch", {
       kind: "no_project",
       cwd: "/scratch",
     });
-    expect(sessionTabLabel(tab, state)).toBe("对话");
+    expect(sessionTabLabel(tab, state)).toBe("无工作区");
   });
 
   it("does not surface the typed prompt in the draft label", () => {
@@ -3779,7 +3787,7 @@ describe("AppState English localization", () => {
     expect(conversationSearchContextLabel(scratchThread, [])).toBe("No workspace");
     expect(conversationSearchThreadMeta(scratchThread)).toBe("Pinned · Unknown time");
     expect(sessionTabLabel(draft, { ...initialState, projects: [] })).toBe(
-      "Conversations",
+      "No workspace",
     );
     const attachmentPreview = turnPreview({
       id: "turn-attachments",

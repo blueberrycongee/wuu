@@ -1,5 +1,5 @@
 import { Tooltip } from "./Tooltip";
-import { showErrorToast } from "./Toast";
+import { showActionErrorToast } from "./Toast";
 import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
 import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
 import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
@@ -209,13 +209,37 @@ function failureKind(
       return "context";
   }
   const status = failureStatusCode(error, message);
+  const lower = (message ?? "").toLowerCase();
   if (display?.category === "auth" || status === 401 || status === 403) return "auth";
   if (status === 404 || error?.code === "model_not_found") return "model";
-  if (status === 429) return "rateLimit";
+  if (
+    error?.code === "insufficient_quota" ||
+    error?.code === "usage_limit_reached" ||
+    lower.includes("insufficient_quota") ||
+    lower.includes("quota exceeded") ||
+    lower.includes("usage_limit_reached") ||
+    lower.includes("credit balance is too low") ||
+    lower.includes("billing_error") ||
+    lower.includes("allocated quota exceeded")
+  ) {
+    return "quota";
+  }
+  if (
+    status === 429 ||
+    error?.code === "rate_limit_error" ||
+    error?.code === "throttling" ||
+    error?.code === "resource_exhausted" ||
+    lower.includes("rate limit") ||
+    lower.includes("rate_limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("resource_exhausted") ||
+    lower.includes("resource has been exhausted")
+  ) {
+    return "rateLimit";
+  }
   if (status === 408 || status === 504) return "timeout";
   if (status !== undefined && status >= 500) return "unavailable";
   if (display?.category === "network") {
-    const lower = (message ?? "").toLowerCase();
     if (/timeout|deadline exceeded/.test(lower)) return "timeout";
     // The connection was up and the reply had started; the address is fine.
     if (/\beof\b|before response\.completed/.test(lower)) return "dropped";
@@ -321,7 +345,7 @@ export function TurnFailureNotice({
     try {
       await recover();
     } catch (recoverError) {
-      showErrorToast(recoverError);
+      showActionErrorToast(recoverError);
     } finally {
       setRecoverPending(false);
     }
@@ -406,10 +430,37 @@ export function TurnFailureNotice({
 function reconnectReason(item: ThreadItem): string | undefined {
   if (item.reason) return item.reason;
   const text = (item.text ?? "").toLowerCase();
-  if (text.includes("authentication") || text.includes("unauthorized")) return "authentication";
-  if (text.includes("rate limit") || text.includes("too many requests")) return "rate_limit";
+  if (
+    text.includes("authentication") ||
+    text.includes("unauthorized") ||
+    text.includes("unauthenticated") ||
+    text.includes("not logged in") ||
+    text.includes("/login")
+  ) {
+    return "authentication";
+  }
+  if (
+    text.includes("insufficient_quota") ||
+    text.includes("quota exceeded") ||
+    text.includes("usage_limit_reached") ||
+    text.includes("credit balance is too low") ||
+    text.includes("billing_error") ||
+    text.includes("allocated quota exceeded")
+  ) {
+    return "quota";
+  }
+  if (
+    text.includes("rate limit") ||
+    text.includes("rate_limit") ||
+    text.includes("too many requests") ||
+    text.includes("resource_exhausted") ||
+    text.includes("resource has been exhausted")
+  ) {
+    return "rate_limit";
+  }
   if (text.includes("overloaded")) return "overloaded";
   if (text.includes("timeout") || text.includes("deadline")) return "deadline";
+  if (/\beof\b|before response\.completed/.test(text)) return "incomplete_stream";
   return undefined;
 }
 

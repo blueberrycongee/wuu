@@ -7,7 +7,7 @@ import { readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory }
 import { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } from "../AppearancePreferences";
 import { listLocalFonts, isMonospaceFont } from "../LocalFonts";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
+import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableContentThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import type { InitializeResult } from "../../shared/protocol";
 import { createElement } from "react";
@@ -21,6 +21,7 @@ import { ENABLE_REMOTE_CONTROL } from "../FeatureFlags";
 export function createApplicationSettingsControls(options: {
   host?: PluginHost;
   controller?: WorkbenchController;
+  connectorLogin?: { request(name: string): Promise<void>; getPending(): string | undefined; take(): Promise<import("../../shared/protocol").MCPServerStatus | undefined>; cancel(): void; start(): Promise<import("../../shared/protocol").MCPLoginStartResult>; poll(): Promise<import("../../shared/protocol").MCPLoginPollResult>; retry(): Promise<void> };
 } = {}): ApplicationSettingsControlsV1 {
   let skinSource: ReturnType<typeof getShellSkins> | undefined;
   let skinView: ReturnType<ApplicationSettingsControlsV1["getShellSkins"]>;
@@ -28,6 +29,15 @@ export function createApplicationSettingsControls(options: {
   const controller = () => { if (!options.controller) throw new Error("Application workbench provider is unavailable"); return options.controller; };
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
+    ...(options.connectorLogin ? {
+      requestMCPConnectorLogin: (name: string) => options.connectorLogin!.request(name),
+      getPendingMCPConnectorLogin: () => options.connectorLogin!.getPending(),
+      takeMCPConnectorLogin: () => options.connectorLogin!.take(),
+      cancelMCPConnectorLogin: () => options.connectorLogin!.cancel(),
+      startMCPConnectorLogin: () => options.connectorLogin!.start(),
+      pollMCPConnectorLogin: () => options.connectorLogin!.poll(),
+      retryMCPConnectorLogin: () => options.connectorLogin!.retry(),
+    } : {}),
     capabilities: Object.freeze({
       systemPermissions: window.wuu?.platform === "darwin" && typeof window.wuu?.getSystemPermissions === "function",
       permissionGuide: typeof window.wuu?.onSystemPermissionGuideChanged === "function",
@@ -52,7 +62,15 @@ export function createApplicationSettingsControls(options: {
       pets: hostSupports("listCodexPets"),
       diagnostics: typeof window.wuu?.getPluginDiagnostics === "function"
     }),
-    currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme,
+    currentAppliedTheme, observeAppliedTheme, selectedExtensionThemeKey, selectExtensionTheme,
+    availableExtensionThemes: inventory => availableContentThemes(inventory).map(theme => ({
+      key: theme.key, legacyKeys: theme.legacyKeys, name: theme.name, base: theme.base,
+      preview: {
+        canvas: theme.tokens["--wuu-color-canvas"] ?? (theme.base === "dark" ? "#191a1c" : "#fcfcfd"),
+        ink: theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+        accent: theme.tokens["--wuu-color-accent"] ?? theme.tokens["--wuu-accent"] ?? theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+      },
+    })),
     observeContentThemeSelection: listener => {
       window.addEventListener("wuu-theme-selection", listener);
       window.addEventListener("storage", listener);
@@ -293,6 +311,14 @@ export function createApplicationSettingsControls(options: {
     startMCPAuth: async (...args) => {
       if (typeof window.wuu?.startMCPAuth !== "function") throw new Error("Settings operation unavailable: startMCPAuth");
       return window.wuu.startMCPAuth(...args);
+    },
+    getMCPAuthStatus: async (...args) => {
+      if (typeof window.wuu?.getMCPAuthStatus !== "function") throw new Error("Settings operation unavailable: getMCPAuthStatus");
+      return window.wuu.getMCPAuthStatus(...args);
+    },
+    refreshMCPIdentity: async (...args) => {
+      if (typeof window.wuu?.refreshMCPIdentity !== "function") throw new Error("Settings operation unavailable: refreshMCPIdentity");
+      return window.wuu.refreshMCPIdentity(...args);
     },
     finishMCPAuth: async (...args) => {
       if (typeof window.wuu?.finishMCPAuth !== "function") throw new Error("Settings operation unavailable: finishMCPAuth");

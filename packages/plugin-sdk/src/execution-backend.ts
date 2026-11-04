@@ -64,19 +64,20 @@ export interface ExecutionProcessV4 {
   completion_delivered_at?: string;
   completion_consumed_by?: string;
   notifications_cancelled_at?: string;
-  recheck_minutes?: number;
-  next_recheck_at?: string;
-  pending_recheck_at?: string;
   action?: string;
 }
 /** Go wire casing and nanosecond durations are intentional; do not use milliseconds here. */
 export interface ExecutionProcessReadOptionsV4 {
+  /** Optional stdout/stderr selection; omission keeps merged output. */
+  Stream?: "stdout" | "stderr";
   MaxBytes: number;
   OffsetBytes: number | null;
   Wait: number;
   MinDwell: number;
 }
 export interface ExecutionProcessOutputV4 {
+  /** Must echo a requested Stream; missing acknowledgement means unsupported. */
+  Stream?: "stdout" | "stderr";
   Process: ExecutionProcessV4;
   Output: string;
   Truncated: boolean;
@@ -88,7 +89,7 @@ export interface ExecutionProcessOutputV4 {
   Duration: number;
 }
 export interface ExecutionProcessEventV4 {
-  Type: "started" | "updated" | "failed" | "stopped" | "cleaned_up" | "recheck_due";
+  Type: "started" | "updated" | "failed" | "stopped" | "cleaned_up";
   Cause: "" | "natural_exit" | "requested_stop";
   Process: ExecutionProcessV4;
 }
@@ -124,10 +125,8 @@ export interface ExecutionBackendMethodsV4 {
   "process/input_available": { input: ProcessID; result: boolean };
   "process/completion_pending": { input: ProcessID; result: boolean };
   "process/completion_delivered": { input: ProcessID & { consumer: string }; result: ExecutionProcessV4 };
-  "process/recheck": { input: ProcessID & { minutes: number }; result: ExecutionProcessV4 };
   "process/cancel_notifications": { input: ProcessID; result: ExecutionProcessV4 };
   "process/completion_mode": { input: ProcessID & { mode: "resume" | "detached" }; result: ExecutionProcessV4 };
-  "process/recheck_delivered": { input: ProcessID; result: ExecutionProcessV4 };
   "process/cleanup": { input: null; result: { Cleaned: ExecutionProcessV4[] | null } };
   "export/read": { input: { token: string; offset: number }; result: { data: string; eof: boolean } };
   "export/close": { input: { token: string }; result: Record<string, never> };
@@ -303,7 +302,7 @@ export function delegateExecutionBackendV4(options: ExecutionBackendDelegateOpti
     return closing;
   };
   const methods: ExecutionBackendV4["methods"] = {};
-  for (const method of ["execute", "run_code", "process/start", "process/list", "process/get", "process/read", "process/write", "process/resize", "process/stop", "process/input_available", "process/completion_pending", "process/completion_delivered", "process/recheck", "process/cancel_notifications", "process/completion_mode", "process/recheck_delivered", "process/cleanup", "export/read", "export/close"] as const) {
+  for (const method of ["execute", "run_code", "process/start", "process/list", "process/get", "process/read", "process/write", "process/resize", "process/stop", "process/input_available", "process/completion_pending", "process/completion_delivered", "process/cancel_notifications", "process/completion_mode", "process/cleanup", "export/read", "export/close"] as const) {
     Object.defineProperty(methods, method, { enumerable: true, value: (input: unknown, context: ExecutionBackendContextV4) => call(method, input, context) });
   }
   return {

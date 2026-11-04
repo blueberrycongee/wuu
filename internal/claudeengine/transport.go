@@ -12,14 +12,25 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // maxLineBytes bounds a single NDJSON line. Tool results can be large.
-const maxLineBytes = 32 * 1024 * 1024
+const (
+	maxLineBytes        = 32 * 1024 * 1024
+	stderrTailLines     = 6
+	stderrTailLineBytes = 700
+)
+
+var (
+	stderrURLQuery  = regexp.MustCompile(`\?[^\s"']+`)
+	stderrOpaqueRun = regexp.MustCompile(`[A-Za-z0-9_\-.]{40,}`)
+)
 
 // Transport is the NDJSON framing layer over one claude CLI child process.
 // It owns the child lifecycle and the interrupt sequence (stdin EOF, then
@@ -33,6 +44,8 @@ type Transport struct {
 	closeErr     error
 	closeOnce    sync.Once
 	terminateErr error
+	stderrLines  []string
+	stderrDone   chan struct{}
 
 	gracePeriod time.Duration
 
@@ -87,13 +100,13 @@ func NewTransport(opts TransportOptions) (*Transport, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
-	t := &Transport{cmd: cmd, stdin: stdin}
+	t := &Transport{cmd: cmd, stdin: stdin, stderrDone: make(chan struct{})}
 	if opts.GracePeriod <= 0 {
 		opts.GracePeriod = 500 * time.Millisecond
 	}
 	t.gracePeriod = opts.GracePeriod
-	t.readLoop(stdout)
 	t.stderrLoop(stderr)
+	t.readLoop(stdout)
 	return t, nil
 }
 
@@ -121,7 +134,15 @@ func (t *Transport) readLoop(r io.Reader) {
 				if !errors.Is(err, io.EOF) {
 					t.fireClose(fmt.Sprintf("read stdout: %v", err))
 				} else {
-					t.fireClose("claude exited")
+					select {
+					case <-t.stderrDone:
+					case <-time.After(100 * time.Millisecond):
+					}
+					reason := "claude exited"
+					if stderr := t.stderrSummary(); stderr != "" {
+						reason = "claude exited: " + stderr
+					}
+					t.fireClose(reason)
 				}
 				return
 			}
@@ -131,11 +152,13 @@ func (t *Transport) readLoop(r io.Reader) {
 
 func (t *Transport) stderrLoop(r io.Reader) {
 	go func() {
+		defer close(t.stderrDone)
 		reader := bufio.NewReaderSize(r, 64*1024)
 		for {
 			line, err := readLine(reader)
 			if len(line) > 0 {
 				t.mu.Lock()
+				t.appendStderrLocked(line)
 				handlers := make([]func(string), len(t.stderrHandlers))
 				copy(handlers, t.stderrHandlers)
 				t.mu.Unlock()
@@ -148,6 +171,31 @@ func (t *Transport) stderrLoop(r io.Reader) {
 			}
 		}
 	}()
+}
+
+func (t *Transport) appendStderrLocked(line string) {
+	line = stderrURLQuery.ReplaceAllString(line, "?<redacted>")
+	line = stderrOpaqueRun.ReplaceAllString(line, "<redacted>")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	if len(line) > stderrTailLineBytes {
+		line = line[:stderrTailLineBytes]
+		for len(line) > 0 && !utf8.ValidString(line) {
+			line = line[:len(line)-1]
+		}
+	}
+	t.stderrLines = append(t.stderrLines, line)
+	if len(t.stderrLines) > stderrTailLines {
+		t.stderrLines = append(t.stderrLines[:0], t.stderrLines[len(t.stderrLines)-stderrTailLines:]...)
+	}
+}
+
+func (t *Transport) stderrSummary() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Join(t.stderrLines, "\n")
 }
 
 func readLine(r *bufio.Reader) (string, error) {

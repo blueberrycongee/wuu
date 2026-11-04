@@ -1,4 +1,5 @@
 import { Tooltip } from "./Tooltip";
+import { HISTORY_FREQUENCY_DECAY_MS } from "../shared/webWorkspaceLibrary";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi } from "../../../packages/plugin-sdk/src/ui-web-workspace";
 import type { WebWorkspaceLibraryStateV1 as WebWorkspaceLibraryState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
@@ -40,13 +41,15 @@ export function WebWorkspaceAddress({
   const suggestions = useMemo(() => {
     const query = value.trim().toLowerCase();
     if (!addressFocused || !query || !libraryState) return [];
-    const entries = new Map<string, { url: string; title: string; searchable: string; bookmarked: boolean; time: number }>();
+    const entries = new Map<string, { url: string; title: string; searchable: string; bookmarked: boolean; time: number; frequency: number }>();
+    const now = Date.now();
     for (const entry of libraryState.history) {
-      entries.set(entry.url, { url: entry.url, title: entry.title, searchable: `${entry.title}\n${entry.url}`.toLowerCase(), bookmarked: false, time: entry.visitedAt });
+      const frequency = (entry.visitScore ?? 1) * Math.exp(-Math.max(0, now - entry.visitedAt) / HISTORY_FREQUENCY_DECAY_MS);
+      entries.set(entry.url, { url: entry.url, title: entry.title, searchable: `${entry.title}\n${entry.url}`.toLowerCase(), bookmarked: false, time: entry.visitedAt, frequency });
     }
     for (const entry of libraryState.bookmarks) {
       const visit = entries.get(entry.url);
-      entries.set(entry.url, { url: entry.url, title: entry.title, searchable: `${entry.title}\n${visit?.searchable ?? entry.url}`.toLowerCase(), bookmarked: true, time: visit?.time ?? entry.createdAt });
+      entries.set(entry.url, { url: entry.url, title: entry.title, searchable: `${entry.title}\n${visit?.searchable ?? entry.url}`.toLowerCase(), bookmarked: true, time: visit?.time ?? entry.createdAt, frequency: visit?.frequency ?? 0 });
     }
     const words = query.split(/\s+/);
     const prefix = query.replace(/^https?:\/\/(?:www\.)?/, "");
@@ -55,7 +58,8 @@ export function WebWorkspaceAddress({
     return [...entries.values()].filter(entry => words.every(word => entry.searchable.includes(word)))
       .map(entry => ({ ...entry, rank: entry.url.toLowerCase().replace(/^https?:\/\/(?:www\.)?/, "").startsWith(prefix) ? 0
         : entry.title.toLowerCase().startsWith(query) ? 1 : 2 }))
-      .sort((a, b) => a.rank - b.rank || Number(b.bookmarked) - Number(a.bookmarked) || b.time - a.time)
+      .map(entry => ({ ...entry, score: Math.log1p(entry.frequency) + (entry.bookmarked ? 0.25 : 0) }))
+      .sort((a, b) => a.rank - b.rank || b.score - a.score || b.time - a.time)
       .slice(0, 8);
   }, [value, addressFocused, libraryState]);
   const showSuggestions = active && addressFocused && suggestionsOpen && suggestions.length > 0;

@@ -2,6 +2,7 @@ package claudeengine
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -224,5 +225,86 @@ func TestTerminalFailureDetails(t *testing.T) {
 				t.Fatalf("error events = %d, want 1", failures)
 			}
 		})
+	}
+}
+
+func TestSystemAPIErrorRetryLifecycle(t *testing.T) {
+	t.Run("recovers after system api_error retry", func(t *testing.T) {
+		var phases []providers.StreamLifecyclePhase
+		done := make(chan turnOutcome, 1)
+		sub := newTurnSubscription(func(ev providers.StreamEvent) {
+			if ev.Type == providers.EventLifecycle && ev.Lifecycle != nil {
+				phases = append(phases, ev.Lifecycle.Phase)
+			}
+		}, done)
+		sub.handleLine(`{"type":"system","subtype":"api_error","attempt":1,"max_retries":5,"error":{"message":"529 Overloaded"}}`)
+		sub.handleLine(`{"type":"system","subtype":"api_error","attempt":2,"max_retries":5,"error":{"message":"529 Overloaded"}}`)
+		sub.handleLine(`{"type":"stream_event","event":{"type":"message_start"}}`)
+		sub.handleLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Recovered"}}}`)
+		sub.handleLine(`{"type":"result","subtype":"success","is_error":false,"result":"Recovered"}`)
+		out := <-done
+		if out.err != nil || out.result.Result.Content != "Recovered" {
+			t.Fatalf("outcome = %+v", out)
+		}
+		want := []providers.StreamLifecyclePhase{
+			providers.StreamPhaseReconnecting,
+			providers.StreamPhaseReconnecting,
+			providers.StreamPhaseConnected,
+		}
+		if len(phases) != len(want) {
+			t.Fatalf("phases = %v, want %v", phases, want)
+		}
+		for i := range want {
+			if phases[i] != want[i] {
+				t.Fatalf("phases = %v, want %v", phases, want)
+			}
+		}
+	})
+
+	t.Run("settles reconnect as failed when turn fails after retry", func(t *testing.T) {
+		var lifecycles []providers.StreamLifecycle
+		done := make(chan turnOutcome, 1)
+		sub := newTurnSubscription(func(ev providers.StreamEvent) {
+			if ev.Type == providers.EventLifecycle && ev.Lifecycle != nil {
+				lifecycles = append(lifecycles, *ev.Lifecycle)
+			}
+		}, done)
+		sub.handleLine(`{"type":"system","subtype":"api_error","attempt":3,"max_retries":3,"error":{"message":"529 Overloaded"}}`)
+		sub.handleLine(`{"type":"result","subtype":"error_during_execution","is_error":true}`)
+		out := <-done
+		if out.err == nil || !strings.Contains(out.err.Error(), "529 Overloaded") {
+			t.Fatalf("err = %v, want 529 Overloaded", out.err)
+		}
+		if len(lifecycles) != 2 || lifecycles[0].Phase != providers.StreamPhaseReconnecting || lifecycles[1].Phase != providers.StreamPhaseFailed || lifecycles[1].RetryCount != 3 {
+			t.Fatalf("lifecycles = %+v, want reconnecting then failed (retryCount=3)", lifecycles)
+		}
+	})
+}
+
+func TestTransportStderrPreservedOnExit(t *testing.T) {
+	if os.Getenv("WUU_CLAUDE_STDERR_HELPER") == "1" {
+		_, _ = os.Stderr.WriteString("Error: Invalid API key. Please run /login\n")
+		os.Exit(1)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := NewTransport(TransportOptions{
+		BinaryPath: exe,
+		Args:       []string{"-test.run=^TestTransportStderrPreservedOnExit$"},
+		Env:        append(os.Environ(), "WUU_CLAUDE_STDERR_HELPER=1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	done := make(chan string, 1)
+	transport.OnClose(func(reason string) {
+		done <- reason
+	})
+	reason := <-done
+	if !strings.Contains(reason, "Invalid API key") {
+		t.Fatalf("close reason = %q, want stderr diagnostic preserved", reason)
 	}
 }

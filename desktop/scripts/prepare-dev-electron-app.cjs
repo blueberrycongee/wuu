@@ -20,7 +20,8 @@ const electronPackagePath = join(desktopRoot, "node_modules", "electron", "packa
 const builtHelper = join(desktopRoot, "build", "bin", "wuu-cua-mac");
 const builtPiPHelper = join(desktopRoot, "build", "bin", "wuu-cua-mac-pip");
 const helperBuildInfo = join(desktopRoot, "build", "bin", "wuu-cua-mac.build.json");
-const identityVersion = 9;
+const builtSpeechHelper = join(desktopRoot, "build", "bin", "wuu-speech-mac");
+const identityVersion = 10;
 
 function prepareDevElectronApp(signing = { identity: "-", fingerprint: "adhoc", name: "ad-hoc" }) {
   const electronVersion = JSON.parse(readFileSync(electronPackagePath, "utf8")).version;
@@ -67,9 +68,11 @@ function prepareDevElectronApp(signing = { identity: "-", fingerprint: "adhoc", 
     "NSCameraUsageDescription",
     "Wuu uses the camera only when you allow a website to use it.",
   );
+  setPlistString(info, "NSSpeechRecognitionUsageDescription", "Wuu transcribes your voice into text when you start dictation.");
   const packagedHelper = helperPathForApp(devApp);
   const packagedPiPHelper = pipHelperPathForApp(devApp);
   mkdirSync(join(devApp, "Contents", "Resources", "bin"), { recursive: true });
+  copyFileSync(builtSpeechHelper, join(devApp, "Contents", "Resources", "bin", "wuu-speech-mac"));
   copyFileSync(builtHelper, packagedHelper);
   copyFileSync(builtPiPHelper, packagedPiPHelper);
   run("codesign", [
@@ -114,7 +117,8 @@ function devHostIsCurrent(
   try {
     const marker = JSON.parse(readFileSync(markerPath, "utf8"));
     if (
-      marker.electronVersion !== electronVersion
+      hashFile(builtSpeechHelper) !== hashFile(join(devApp, "Contents", "Resources", "bin", "wuu-speech-mac"))
+      || marker.electronVersion !== electronVersion
       || marker.helperHash !== helperHash
       || marker.builtHelperHash !== builtHelperHash
       || marker.builtPiPHelperHash !== builtPiPHelperHash

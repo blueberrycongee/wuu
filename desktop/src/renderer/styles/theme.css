@@ -280,20 +280,27 @@
 /* --- 外观 segmented control (settings page) --- */
 .theme-segmented {
   display: inline-flex;
+  align-items: center;
+  min-height: var(--control-field-height);
   gap: 2px;
   padding: 2px;
-  background: var(--surface-2);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+  border-radius: 6px;
 }
 
 .theme-segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--control-field-height) - 6px);
   border: 0;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  font-size: var(--font-ui);
-  padding: 4px 12px;
-  border-radius: var(--radius-xs);
+  font-size: var(--font-sm);
+  padding: 0 12px;
+  border-radius: 4px;
   cursor: pointer;
 }
 
@@ -303,7 +310,7 @@
 
 .theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) {
   background: var(--paper);
-  color: var(--ink);
+  color: var(--ink-strong);
   font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 1px 2px var(--shadow-color-subtle);
 }

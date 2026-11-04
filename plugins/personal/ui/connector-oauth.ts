@@ -4,7 +4,6 @@ const permissions:Record<string,Array<[string,string]>>={
  gmail:[['读取邮件','https://www.googleapis.com/auth/gmail.readonly'],['创建草稿','https://www.googleapis.com/auth/gmail.compose'],['发送邮件','https://www.googleapis.com/auth/gmail.send']],
  'google-calendar':[['读取事件','https://www.googleapis.com/auth/calendar.events.readonly'],['创建、改期、取消事件','https://www.googleapis.com/auth/calendar.events']],
  drive:[['已选择文件','https://www.googleapis.com/auth/drive.file']],notion:[['读取内容','read_content'],['追加报告','insert_content']],
- github:[['PR','pull_requests:read'],['Issue','issues:read'],['CI','checks:read'],['Release','contents:read']],
  slack:[['已选公开频道历史','channels:history'],['已选私有频道历史','groups:history']],feishu:[['所选会话消息','im:message:readonly']],
 };
 function result(raw:unknown){if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('invalid_oauth_status');const value=raw as Record<string,unknown>;if(typeof value.attempt_id!=='string'||typeof value.state!=='string')throw Error('invalid_oauth_status');return value as {attempt_id:string;state:string;error_code?:string}}
@@ -23,7 +22,7 @@ export function createConnectorOAuth(react:typeof React){const h=react.createEle
   }catch(error){if(isCurrent()){pending.current=false;setState('idle');const code=error&&typeof error==='object'&&'code'in error&&typeof error.code==='string'?error.code:'';setMessage(code==='oauth_client_not_configured'?'宿主尚未配置此服务的 OAuth 客户端。请先完成安全配置；账号尚未接通。':`无法开始授权${code?`（${code}）`:''}。没有确认账号已接通。`)}}
  };
  const busy=!['idle','connected','failed','cancelled','expired'].includes(state);
- return h('div',{className:'personal-connector-oauth'},h('label',null,'仅授权这些资源 ID（每行一个）',h('textarea',{value:resource,disabled:busy,rows:2,onChange:(e:React.ChangeEvent<HTMLTextAreaElement>)=>setResource(e.target.value)})),h('fieldset',{disabled:busy},h('legend',null,provider==='notion'?'需核实的集成能力（须在 Notion 集成设置配置）':provider==='github'?'需核实的仓库权限':'所需权限'),...(permissions[provider]??[]).map(([label,scope])=>h('label',{key:scope},h('input',{type:'checkbox',checked:selected.includes(scope),onChange:()=>setSelected(previous=>previous.includes(scope)?previous.filter(s=>s!==scope):[...previous,scope])}),label))),
+ return h('div',{className:'personal-connector-oauth'},h('label',null,'仅授权这些资源 ID（每行一个）',h('textarea',{value:resource,disabled:busy,rows:2,onChange:(e:React.ChangeEvent<HTMLTextAreaElement>)=>setResource(e.target.value)})),h('fieldset',{disabled:busy},h('legend',null,provider==='notion'?'需核实的集成能力（须在 Notion 集成设置配置）':'所需权限'),...(permissions[provider]??[]).map(([label,scope])=>h('label',{key:scope},h('input',{type:'checkbox',checked:selected.includes(scope),onChange:()=>setSelected(previous=>previous.includes(scope)?previous.filter(s=>s!==scope):[...previous,scope])}),label))),
   ['slack','feishu'].includes(provider)?h('label',null,h('input',{type:'checkbox',checked:allowWork,disabled:busy,onChange:()=>setAllowWork(v=>!v)}),'允许 Personal 任务读取所选工作频道；不自动纳入个人记忆。未勾选则逐次确认。'):null,
   h('div',{className:'personal-connectors-controls'},h('button',{'data-oauth-start':true,disabled:busy,onClick:()=>void begin()},existing?'重新授权':'开始授权'),busy?h('button',{onClick:()=>void cancel()},'取消授权'):null),message?h('p',{role:'status'},message):null,cancellationUnknown?h('p',{role:'alert','data-oauth-cancellation-unknown':true},'先前授权的取消尚未核实；请在授权页停止操作，并刷新连接状态核对是否已接通。'):null,
  );};}

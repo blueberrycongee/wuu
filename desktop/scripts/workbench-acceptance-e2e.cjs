@@ -208,7 +208,7 @@ const activePane = '.cached-conversation-pane[data-active="true"]';
 const composer = '.conversation-pane .composer textarea';
 const scroller = '.conversation-pane > .scroll-region';
 const conversations = '[data-wuu-component="conversations-section"]';
-const settings = 'button[role="menuitem"][data-settings-page="providers"]';
+const settings = 'button[role="menuitem"][data-settings-entry="settings"]';
 const plugins = '.sidebar-ribbon button[aria-label="Extensions"]';
 const leftToggle = '.section-sidebar-toggle';
 const rightToggle = '.shell-right-sidebar-toggle';
@@ -506,12 +506,12 @@ async function run() {
     await selectThread('acceptance-reading');
     win.webContents.sendInputEvent({ type: 'mouseMove', x: 800, y: 500 });
     await settle();
-    const conversationsLabel = await evaluate(() => {
-      const label = [...document.querySelectorAll('.project-row-name')].find(node => node.textContent.trim() === 'Conversations');
+    const workspaceLabel = await evaluate(() => {
+      const label = [...document.querySelectorAll('.project-row-name')].find(node => node.textContent.trim() === 'Acceptance project');
       return label && { text: label.textContent, width: label.clientWidth, contentWidth: label.scrollWidth };
     });
-    assert.ok(conversationsLabel && conversationsLabel.width > 0 && conversationsLabel.contentWidth <= conversationsLabel.width + 1,
-      `Built-in Conversations label fits at default size: ${JSON.stringify(conversationsLabel)}`);
+    assert.ok(workspaceLabel && workspaceLabel.width > 0 && workspaceLabel.contentWidth <= workspaceLabel.width + 1,
+      `Workspace label fits at default size: ${JSON.stringify(workspaceLabel)}`);
     const reading = await geometry('conversations');
     await click(plugins, 'plugins');
     await waitFor(() => document.querySelector('.skills-catalog'));
@@ -750,16 +750,18 @@ async function run() {
     return { labels, pages };
   });
 
-  await test('runtime edit commits when leaving through ribbon', async () => {
-    await goSettings('Built-in agent'); await dockSidebar();
-    const field = '[data-testid="settings-advanced"] input';
-    await fill(field, '73');
-    await click(conversations, 'runtime-blur-save-via-ribbon');
+  await test('commit attribution persists when leaving through ribbon', async () => {
+    await goSettings('General'); await dockSidebar();
+    const field = '[data-testid="settings-git-attribution"]';
+    const previous = await evaluate(selector => document.querySelector(selector).getAttribute('aria-checked'), field);
+    await click(field, 'general-attribution-save');
+    await waitFor(({ field, previous }) => document.querySelector(field)?.getAttribute('aria-checked') !== previous, { field, previous });
+    await click(conversations, 'general-leave-via-ribbon');
     await waitFor(() => !document.querySelector('.settings-workbench-layer'));
-    await goSettings('Built-in agent');
-    await waitFor(selector => document.querySelector(selector)?.value === '73', field, 'runtime setting persisted after ribbon navigation');
-    assert.ok(rpc.some(r => r.channel === 'wuu:config-advanced-update' && r.completed), 'Real core settings update completed');
-    await capture('runtime-persisted');
+    await goSettings('General');
+    await waitFor(({ field, previous }) => document.querySelector(field)?.getAttribute('aria-checked') !== previous, { field, previous });
+    assert.ok(rpc.some(r => r.channel === 'wuu:config-general-update' && r.completed), 'Real core settings update completed');
+    await capture('general-attribution-persisted');
   });
 
   await test('provider connect validation and inline cancellation', async () => {

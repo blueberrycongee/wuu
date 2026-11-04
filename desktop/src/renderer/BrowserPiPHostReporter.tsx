@@ -22,6 +22,12 @@ interface HostLayoutReport {
   obstacles: HostRect[];
 }
 
+interface HostLayoutElements {
+  host: Element | null;
+  obstacles: Element[];
+  modals: Element[];
+}
+
 type HostLayoutReporter = (payload: HostLayoutReport | null) => void;
 
 export function BrowserPiPHostReporter(): null {
@@ -62,10 +68,11 @@ export function BrowserPiPHostReporter(): null {
 
     let frame = 0;
     let last = "";
+    let elements: HostLayoutElements;
     const send = (): void => {
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
-      const payload = readBrowserPiPHostLayout(document);
+      const payload = measureHostLayout(elements);
       // A fixed-width column may not change during a window resize. Still
       // refresh main's window-size baseline so subsequent moves can follow it.
       const key = JSON.stringify([payload, window.innerWidth, window.innerHeight]);
@@ -92,11 +99,12 @@ export function BrowserPiPHostReporter(): null {
       resizeObserver = new ResizeObserver(send);
     }
     const watchSizes = (): void => {
+      // The set changes on relevant DOM mutations, not on each window frame.
+      elements = findHostLayoutElements(document);
       if (!resizeObserver) return;
       const next = new Set<Element>();
-      const host = document.querySelector(HOST_SELECTOR);
-      if (host) next.add(host);
-      document.querySelectorAll(`${OBSTACLE_SELECTOR},${MODAL_SELECTOR}`).forEach((element) => next.add(element));
+      if (elements.host) next.add(elements.host);
+      for (const element of [...elements.obstacles, ...elements.modals]) next.add(element);
       for (const element of observed) {
         if (!next.has(element)) resizeObserver.unobserve(element);
       }
@@ -119,7 +127,7 @@ export function BrowserPiPHostReporter(): null {
     mutationObserver.observe(document.body, {
       childList: true, subtree: true, attributes: true,
       attributeFilter: [
-        "aria-modal", "open", "hidden", "inert", "data-pip-anchor-host", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
+        "aria-modal", "open", "hidden", "inert", "data-pip-anchor-host", "data-pip-obstacle", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
       ],
     });
     window.addEventListener("resize", schedule);
@@ -139,17 +147,28 @@ export function BrowserPiPHostReporter(): null {
 }
 
 export function readBrowserPiPHostLayout(root: ParentNode): HostLayoutReport | null {
+  return measureHostLayout(findHostLayoutElements(root));
+}
+
+function findHostLayoutElements(root: ParentNode): HostLayoutElements {
+  return {
+    host: root.querySelector(HOST_SELECTOR),
+    obstacles: [...root.querySelectorAll(OBSTACLE_SELECTOR)],
+    modals: [...root.querySelectorAll(MODAL_SELECTOR)],
+  };
+}
+
+function measureHostLayout(elements: HostLayoutElements): HostLayoutReport | null {
   // Native child windows sit above renderer overlays regardless of CSS z-index.
   // Suspend their presentation while a dialog owns the foreground; reporting
   // the column again restores existing cards without changing task control.
-  for (const modal of root.querySelectorAll(MODAL_SELECTOR)) {
+  for (const modal of elements.modals) {
     if (visibleRect(modal)) return null;
   }
-  const hostElement = root.querySelector(HOST_SELECTOR);
-  const host = hostElement ? visibleRect(hostElement) : null;
+  const host = elements.host ? visibleRect(elements.host) : null;
   if (!host) return null;
   const obstacles: HostRect[] = [];
-  root.querySelectorAll(OBSTACLE_SELECTOR).forEach((element) => {
+  elements.obstacles.forEach((element) => {
     const rect = visibleRect(element);
     if (rect) obstacles.push(rect);
   });
@@ -160,7 +179,8 @@ export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
   return records.some((record) => {
     if (record.type === "attributes") {
       return record.attributeName === "aria-modal" || record.attributeName === "open"
-        || record.attributeName === "data-pip-anchor-host" || elementMentionsHost(record.target);
+        || record.attributeName === "data-pip-anchor-host" || record.attributeName === "data-pip-obstacle"
+        || elementMentionsHost(record.target);
     }
     return [...record.addedNodes, ...record.removedNodes].some(elementMentionsHost);
   });

@@ -360,6 +360,7 @@ type Server struct {
 	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configNonCatalogFingerprint  string
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
@@ -368,6 +369,7 @@ type Server struct {
 	refreshConfigForTest         func() error
 	presenceLease                *session.AppServerPresenceLease
 	bootOwner                    bool
+	recoveryBootAt               time.Time
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
@@ -479,6 +481,10 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 			s.startupErr = fmt.Errorf("import legacy side threads: %w", err)
 			return s
 		}
+	}
+	if err := s.initializeRestartRecovery(binding, bootOwner); err != nil {
+		s.startupErr = err
+		return s
 	}
 	if bootOwner {
 		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
@@ -855,6 +861,9 @@ func (s *Server) Close() {
 		s.closeChatGPTLogins()
 		if s.sessionOperationCancel != nil {
 			s.sessionOperationCancel()
+		}
+		if s.rt != nil {
+			s.rt.DrainCanceledMCPAuth()
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
@@ -1480,6 +1489,10 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleThreadList(req)
 	case MethodThreadListAll:
 		return s.handleThreadListAll(req)
+	case "thread/recovery/list":
+		return s.handleRestartRecoveryList(req)
+	case "thread/recovery/dismiss":
+		return s.handleRestartRecoveryDismiss(req)
 	case MethodThreadListArchived:
 		return s.handleThreadListArchived(req)
 	case MethodThreadSearch:
@@ -1639,6 +1652,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleMCPRefresh(ctx, req)
 	case MethodMCPAuthStart:
 		return s.handleMCPAuthStart(ctx, req)
+	case MethodMCPIdentityRefresh:
+		return s.handleMCPIdentityRefresh(ctx, req)
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:
@@ -1707,6 +1722,10 @@ func sanitizeStreamEvent(ev providers.StreamEvent) StreamEventPayload {
 	}
 	if ev.Message != nil && !ev.Message.Hidden {
 		out.Message = ev.Message
+	}
+	if ev.Notice != nil {
+		notice := *ev.Notice
+		out.Notice = &notice
 	}
 	if ev.ToolCall != nil {
 		out.ToolCall = ev.ToolCall

@@ -137,7 +137,13 @@ app.whenReady().then(async () => {
       win = new BrowserWindow({ width, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true", webPreferences: {
         preload: path.join(__dirname, "image-layout-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
       } });
+      win.setContentSize(width, 820);
       await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+      await until(() => Boolean(document.querySelector(".project-row")));
+      await evaluate(() => {
+        const workspace = document.querySelector(".project-row");
+        if (workspace.getAttribute("aria-expanded") !== "true") workspace.click();
+      });
       await until(() => document.querySelectorAll(".project-thread-list .thread-row").length === 2);
       await select("pictures");
       if (width === 420) {
@@ -306,13 +312,17 @@ app.whenReady().then(async () => {
               if (table) {
                 // Wide tables scroll within the message; both edges of a preview
                 // must remain reachable without overflowing the conversation.
-                const tableBounds = table.getBoundingClientRect();
-                const initialScroll = table.scrollLeft;
-                table.scrollLeft = 0;
+                // Rich tables keep their scroll range on the inner region so the
+                // copy/expand actions stay pinned while the table moves.
+                const scroller = table.classList.contains("rich-table-wrap")
+                  ? table.querySelector(":scope > .rich-table-scroll") : table;
+                const tableBounds = scroller.getBoundingClientRect();
+                const initialScroll = scroller.scrollLeft;
+                scroller.scrollLeft = 0;
                 const left = image.getBoundingClientRect().left;
-                table.scrollLeft = table.scrollWidth;
+                scroller.scrollLeft = scroller.scrollWidth;
                 const right = image.getBoundingClientRect().right;
-                table.scrollLeft = initialScroll;
+                scroller.scrollLeft = initialScroll;
                 // Table previews keep a readable intrinsic width; carousel
                 // thumbnails scale with the available conversation column.
                 const readable = table.classList.contains("rich-table-wrap") ? rect.width >= 100 : rect.width > 0;

@@ -377,8 +377,10 @@ export interface PluginUIConversationComposerProps {
   onStop(): void;
 }
 
-/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+/** Decorative host identity. Static is the default; ambient preserves its configured appearance. */
 export interface PluginUIAvatarProps {
+  /** Optional mascot-v1:shape:accessory:hue style. Omit for the host brand identity. */
+  readonly avatarKey?: string;
   readonly size?: number;
   readonly status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
   readonly motion?: "static" | "ambient";
@@ -656,6 +658,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerViewType(definition: ViewTypeDefinition): Disposable;
   /** Set a declared navigation entry title for this generation only (1–64 characters). */
   setNavigationTitle(id: string, title: string): boolean;
+  /** Set an owned navigation Avatar style. null keeps prior artwork (or an empty slot) while loading; undefined restores its declared icon. Generation-scoped. */
+  setNavigationAvatar(id: string, avatarKey: string | null | undefined): boolean;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;
   registerThemeTokens(tokens: ThemeTokens): Disposable;
@@ -1608,7 +1612,8 @@ export interface HostServiceContracts {
         attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
-      presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
+      /** background_event retains model input and history without a conversation bubble. */
+      presentation?: { kind: "query_bubble" | "session_message" | "background_event"; text: string; name?: string; related_session_id?: string };
       cause?: string;
       if_running?: "queue" | "steer";
       reply_to_turn_id?: string;
@@ -3145,6 +3150,7 @@ export * from "./ui-conversation.js";
 export * from "./ui-composer-runtime.js";
 export * from "./ui-environment.js";
 export * from "./ui-submission.js";
+export * from "./ui-plugin-reference.js";
 export * from "./ui-search.js";
 export * from "./ui-terminals.js";
 export * from "./ui-browser.js";

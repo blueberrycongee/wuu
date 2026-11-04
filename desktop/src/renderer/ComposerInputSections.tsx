@@ -1,5 +1,10 @@
+import { ComposerInput, composerInputElement, type ComposerInputHandle } from "./ComposerInput";
+import { showActionErrorToast } from "./Toast";
+import { useComposerPluginMenu } from "./ComposerPluginMenu";
+import { pluginReferenceParts } from "./ComposerPluginReferences";
 import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
+import { DictationButton, DictationErrorToast, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import type { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
@@ -204,10 +209,11 @@ export function SplitPaneComposer({
   onInterrupt: () => void;
 }): JSX.Element {
   const readOnly = sessionReadOnly || interactionDisabled;
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const connected = useWorkbenchConnected();
   const sendDisabled = requestedSendDisabled || draftPending || Boolean(stopState) || !connected;
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<ComposerInputHandle>(null);
+  const pluginMenu = useComposerPluginMenu(textareaRef, updateVisiblePrompt, queryHistorySessionID, readOnly);
   const composing = useRef(false);
   const [submissionRevision, setSubmissionRevision] = useState(0);
   const inputDraftUpdates = useRef<string[]>([]);
@@ -237,11 +243,20 @@ export function SplitPaneComposer({
   const submittedDraftRef = useRef<string | undefined>(undefined);
   useEffect(() => () => { submittedDraftRef.current = undefined; }, []);
   useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
+  const dictation = useComposerDictation({
+    owner: JSON.stringify([queryHistorySessionID, workspaceId, turnId]),
+    disabled: Boolean(readOnly || cameraOpen), prompt, locale,
+    onText: (text, send) => {
+      setPrompt(text);
+      if (send && !sendDisabled && !readOnly) submitDraft(text);
+      focusComposerSoon();
+    },
+  });
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
-  const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
-  const showContinue = continuation && !running && !submitting && !hasDraft && !readOnly;
+  const showStop = !dictation.active && (Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft));
+  const showContinue = !dictation.active && continuation && !running && !submitting && !hasDraft && !readOnly;
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
 
   function focusComposerSoon(): void {
@@ -372,13 +387,22 @@ export function SplitPaneComposer({
     onPasteAttachmentFiles(dropped);
   }
 
-  function submitComposer(): void {
-    const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
-    const currentPrompt = hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt;
+  function submitComposer(promptOverride?: string): void {
+    if (dictation.active) { void dictation.stop(true); return; }
+    submitDraft(promptOverride);
+  }
+
+  function submitDraft(promptOverride?: string): void {
+    const visiblePrompt = promptOverride ?? textareaRef.current?.value ?? visiblePromptValue;
+    const currentPrompt = promptOverride ?? (hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt);
     const currentSignature = JSON.stringify([currentPrompt, images.map(image => image.id), files.map(file => file.id), selections]);
     if (readOnly || sendDisabled || submittedDraftRef.current === currentSignature) return;
     resetQueryHistoryNavigation();
-    const contentParts = collapsedContentPartsForPrompt(currentPrompt);
+    const contentParts = pluginReferenceParts(currentPrompt, collapsedContentPartsForPrompt(currentPrompt));
+    if (contentParts?.some(part => part.type === "plugin_reference") && !services?.conversationPluginsSupported) {
+      showActionErrorToast(new Error(t("composer.pluginsEngineUnsupported")));
+      return;
+    }
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : currentPrompt;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
     submittedDraftRef.current = currentSignature;
@@ -407,18 +431,19 @@ export function SplitPaneComposer({
     }
     // Keep focus restoration in the user action, without viewport scrolling.
     const textarea = textareaRef.current;
-    if (textarea && document.activeElement !== textarea) {
+    if (textarea && document.activeElement !== composerInputElement(textarea)) {
       textarea.focus({ preventScroll: true });
     }
   }
 
-  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
     if (readOnly) {
       return;
     }
     if (isComposerTextComposing(event)) {
       return;
     }
+    if (pluginMenu.handleKeyDown(event)) return;
     if (event.key === "Tab") {
       if (!event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.repeat && inline.actions.accept()) {
         event.preventDefault();
@@ -446,6 +471,7 @@ export function SplitPaneComposer({
   return (
     <footer className="composer-wrap dock-composer-wrap split-composer" data-pip-obstacle="composer">
       <div className="composer-stack">
+        <DictationErrorToast key={dictation.sessionId} message={dictation.error} />
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">
             {cameraOpen && !readOnly ? (
@@ -508,10 +534,12 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                <div className={`${framed ? "composer-editor" : "composer-bar"} split-composer-bar`}>
+                <div className={`${framed ? "composer-editor" : "composer-bar"} split-composer-bar${dictation.active ? " is-dictating" : ""}`}
+                  onKeyDown={event => { if (dictation.active && event.key === "Escape") { event.stopPropagation(); dictation.cancel(); } }}>
+                  {dictation.active && dictation.api && <DictationRecording api={dictation.api} sessionId={dictation.sessionId} phase={dictation.phase} stop={dictation.stop} cancel={dictation.cancel} />}
                   <div className="composer-bar-left">
-                    {framed ? (
-                      <ComposerPlusButton variant="dock" disabled={readOnly} commands={[]} menuAnchorRef={shellRef}
+                    {framed || services ? (
+                      <ComposerPlusButton variant="dock" disabled={readOnly} commands={[]} pluginMenu={pluginMenu} menuAnchorRef={shellRef}
                         onAddAttachment={() => attachmentInputRef.current?.click()}
                         mobileAttachments={mobileWeb ? { onTakePhoto: openCamera, onPickPhotos: () => photosInputRef.current?.click(), onPickFiles: () => attachmentInputRef.current?.click() } : undefined}
                         onSelectCommand={() => {}} />
@@ -536,25 +564,28 @@ export function SplitPaneComposer({
                       </button></Tooltip>
                     )}
                   </div>
-                  <textarea
+                  <ComposerInput
                     ref={textareaRef}
+                    resetKey={queryHistorySessionID}
                     data-wuu-component="composer-input"
                     value={visiblePromptValue}
                     placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : (placeholder ?? t("composer.continueBranch"))}
-                    disabled={readOnly}
-                    aria-readonly={readOnly}
+                    disabled={readOnly || dictation.active}
+                    aria-readonly={readOnly || dictation.active}
                     aria-describedby={inline.text ? inline.descriptionId : undefined}
                     onFocus={() => inline.observe()}
                     onBlur={() => inline.observe()}
                     onSelect={() => inline.observe()}
                     onCompositionStart={() => { composing.current = true; inline.observe(true); }}
                     onCompositionEnd={() => { composing.current = false; inline.observe(false); }}
-                    onChange={(event) => {
-                      updateVisiblePrompt(event.target.value);
+                    onValueChange={(nextValue) => {
+                      updateVisiblePrompt(nextValue);
+                      pluginMenu.observe(nextValue);
                       inline.observe();
                     }}
                     onPaste={(event) =>
                       handleCollapsedComposerPaste(event, {
+                        input: textareaRef.current,
                         readOnly,
                         fileAttachmentsEnabled: true,
                         onPasteAttachmentFiles,
@@ -568,6 +599,7 @@ export function SplitPaneComposer({
                     {t("composer.inlineCompletionAvailable", { text: inline.text })}
                   </span> : null}
                   <div className="composer-bar-right">
+                    {dictation.api && !dictation.active && <DictationButton disabled={readOnly || draftPending || cameraOpen} start={dictation.start} />}
                     {showStop ? (
                       <Tooltip asChild content={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}><button
                         className="composer-action-button composer-stop-button"
@@ -593,14 +625,14 @@ export function SplitPaneComposer({
                         data-wuu-state={draftPending ? "submitting" : "send"}
                         aria-busy={draftPending || undefined}
                         onPointerDown={(event) => {
-                          if (event.button === 0 && document.activeElement === textareaRef.current) {
+                          if (event.button === 0 && textareaRef.current && document.activeElement === composerInputElement(textareaRef.current)) {
                             event.preventDefault();
                           }
                         }}
                         type="button"
-                        onClick={submitComposer}
+                        onClick={() => submitComposer()}
                         aria-label={sendLabel}
-                        disabled={readOnly || sendDisabled || !hasDraft}
+                        disabled={readOnly || sendDisabled || (dictation.active ? dictation.phase !== "listening" : !hasDraft)}
                       >
                         {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
                       </button></Tooltip>

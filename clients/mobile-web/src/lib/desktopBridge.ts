@@ -7,6 +7,7 @@ import { pickComputerFolder } from "./folderPicker";
 import { isNative, openNativeURL, saveNativeArtifact } from "./native";
 import {
   RemoteClient,
+  RPCResponseError,
   pair,
   type Credentials,
   type HostState,
@@ -25,6 +26,7 @@ import type {
   MessageFlowFontSize,
   PluginConflictPreferences,
   PluginClientCancelResult,
+  PluginClientRequestResult,
   PluginDesktopActivationParams,
   ProjectListResult,
   ProviderModelSummary,
@@ -1019,7 +1021,7 @@ export class RemoteDesktopBridge {
         if (requestID) pluginRequests.set(requestID, { ...identity, workdir, revision });
         try {
           const { workspace_id: _workspaceID, ...request } = params;
-          return await this.call("plugin/client/request", request, workdir);
+          return { ok: true, value: await this.call<PluginClientRequestResult>("plugin/client/request", request, workdir) };
         } catch (error) {
           // A local RPC deadline only forgets its reply. Stop the host work too,
           // while the original connection still owns this request identity.
@@ -1030,7 +1032,7 @@ export class RemoteDesktopBridge {
               console.error("Plugin runtime cancellation failed", cancelError);
             });
           }
-          throw error;
+          return { ok: false, error: { message: error instanceof Error ? error.message : String(error), code: error instanceof RPCResponseError ? error.code : undefined } };
         } finally {
           if (requestID) pluginRequests.delete(requestID);
         }
@@ -1055,6 +1057,7 @@ export class RemoteDesktopBridge {
       refreshMCPServer: (name) => this.call("mcp/refresh", { name }),
       startMCPAuth: (name) => this.call("mcp/auth/start", { name }),
       getMCPAuthStatus: (name) => this.call("mcp/auth/status", { name }),
+      refreshMCPIdentity: (name) => this.call("mcp/identity/refresh", { name }),
       removeMCPAuth: (name) => this.call("mcp/auth/remove", { name }),
       pollXAILogin: (login_id) => this.call("auth/xai/login/poll", { login_id }),
       cancelXAILogin: (login_id) => this.call("auth/xai/login/cancel", { login_id }),

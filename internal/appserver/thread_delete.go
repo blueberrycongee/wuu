@@ -192,6 +192,12 @@ func (s *Server) handleThreadDelete(req Request) error {
 		}
 	}
 
+	if err := persistence.Update(context.Background(), binding.Documents, func(tx *persistence.Tx) error {
+		return tx.Delete(restartRecoveryNamespace, id)
+	}); err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restart recovery cleanup: %w", err))
+	}
+
 	// The document commit is irreversible. Surface an incomplete selected
 	// artifact cleanup and allow an explicit retry even when the row is gone.
 	_, artifactErr := services.Artifacts.DeleteThread(context.Background(), id)

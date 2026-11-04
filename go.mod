@@ -7,6 +7,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
+	github.com/evanw/esbuild v0.25.11
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jezek/xgb v1.3.1

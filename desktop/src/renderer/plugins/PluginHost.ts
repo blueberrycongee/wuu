@@ -1,3 +1,4 @@
+import { parseAgentAvatarConfig, serializeAgentAvatarConfig } from "../AgentAvatarMark";
 import { BrowserControlsProvider } from "../BrowserControlsContext";
 import { PluginViewAttachmentPreviews } from "./PluginViewAttachmentPreviews";
 import { PluginConversationScope } from "./PluginConversationScope";
@@ -70,6 +71,7 @@ export interface PluginViewEntryDeclaration {
 }
 
 export interface RegisteredPluginViewEntry extends PluginViewEntryDeclaration {
+  readonly avatarKey?: string | null;
   readonly pluginId: string;
   readonly generation: string;
 }
@@ -181,6 +183,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerViewType(definition: ViewTypeDefinition): Disposable;
   /** Presentation only: update one declared navigation entry owned by this generation. */
   setNavigationTitle(id: string, title: string): boolean;
+  /** Override an owned navigation icon. null retains prior artwork while loading; undefined restores its manifest icon. */
+  setNavigationAvatar(id: string, avatarKey: string | null | undefined): boolean;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   /** Register a custom content renderer (message, tool result, document, file). */
@@ -506,6 +510,7 @@ interface GenerationState {
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
   readonly navigationTitles: Map<string, string>;
+  readonly navigationAvatars: Map<string, string | null>;
   readonly commands: CommandRecord[];
   readonly conversationCards: ConversationCardRecord[];
   readonly styles: StyleRecord[];
@@ -549,6 +554,7 @@ const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({}
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
 
 const ACTIVATION_TIMEOUT_MS = 30_000;
+let nextNoticeHostID = 1;
 
 export class PluginGenerationSupersededError extends Error {
   constructor(pluginId: string, generation: string) {
@@ -562,6 +568,7 @@ export class PluginGenerationSupersededError extends Error {
  * This lifecycle boundary provides cleanup and startup recovery, not strong isolation.
  */
 export class PluginHost {
+  private readonly noticeHostID = nextNoticeHostID++;
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
   readonly applicationProviders = new ApplicationProviders();
@@ -1218,6 +1225,13 @@ export class PluginHost {
         throw new Error("Plugin runtime requests are unavailable");
       }
       this.assertActive(state);
+      const graphGeneration = state.graphGeneration;
+      // Committed inventory precedes asynchronous renderer replacement. A live
+      // React contribution can therefore still belong to an obsolete Go graph.
+      const graphRetired = () => state.graphGeneration !== graphGeneration
+        || (this.inventoryGraphs !== undefined
+          && (!this.inventoryGraphs.has(state.pluginId) || this.inventoryGraphs.get(state.pluginId) !== graphGeneration));
+      if (graphRetired()) throw new PluginLifecycleCancellationError();
       options?.signal?.throwIfAborted();
       const controller = new AbortController();
       const abort = () => controller.abort(options?.signal?.reason);
@@ -1227,7 +1241,7 @@ export class PluginHost {
         const result = await this.runtimeInvoker({
           pluginId: state.pluginId,
           generation: state.generation,
-          graphGeneration: state.graphGeneration,
+          graphGeneration,
           ...(service !== undefined ? { service } : {}),
           method: requireNonEmpty(method, "plugin runtime method"),
           input,
@@ -1240,12 +1254,13 @@ export class PluginHost {
           ...(options?.userInput ? { userInput: options.userInput } : {}),
         });
         this.assertActive(state);
+        if (graphRetired()) throw new PluginLifecycleCancellationError();
         controller.signal.throwIfAborted();
         return result;
       } catch (error) {
         // A retired invocation is not a failure in its successor's workspace.
         // Fence rejected results too: transport can reject before cleanup callbacks run.
-        if (state.disposed || state.lifetime.signal.aborted) throw new PluginLifecycleCancellationError(error);
+        if (state.disposed || state.lifetime.signal.aborted || graphRetired()) throw new PluginLifecycleCancellationError(error);
         if (controller.signal.aborted) throw controller.signal.reason;
         const operation = `${service ?? "runtime"}/${method}`.replace(/[^a-zA-Z0-9_.:/-]/g, "_").slice(0, 160);
         this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "runtime",
@@ -1287,7 +1302,8 @@ export class PluginHost {
       showNotice: (input: { message: string; tone?: "info" | "error"; key?: string }) => {
         this.assertActive(state);
         const id = showToast({ message: input.message, tone: input.tone,
-          dedupeKey: `plugin:${state.pluginId}:${input.key ?? input.message}` });
+          // Code fingerprints can repeat after reload; notice ownership follows the activation.
+          dedupeKey: `plugin:${this.noticeHostID}:${state.pluginId}:${state.generation}:${state.activation}:${input.key ?? input.message}` });
         const dispose = () => { if (id !== undefined) dismissToast(id); state.lifetime.signal.removeEventListener("abort", dispose); };
         state.lifetime.signal.addEventListener("abort", dispose, { once: true });
         return createDisposable(dispose);
@@ -1609,6 +1625,22 @@ export class PluginHost {
         });
         state.teardown.push(disposable);
         return disposable;
+      },
+
+      setNavigationAvatar: (id: string, avatarKey: string | null | undefined) => {
+        this.assertUsable(state);
+        if (!state.declaredContributions?.navigation?.some(entry => entry.id === id)) return false;
+        if (avatarKey != null) {
+          const config = typeof avatarKey === "string" ? parseAgentAvatarConfig(avatarKey) : null;
+          if (!config || serializeAgentAvatarConfig(config) !== avatarKey) throw new Error("Invalid navigation avatar style");
+        }
+        // A replacement may retain the prior presentation while its owner reloads durable identity.
+        const next = avatarKey === null ? state.navigationAvatars.get(id) ?? this.activeGenerations.get(state.pluginId)?.navigationAvatars.get(id) ?? null : avatarKey;
+        if (state.navigationAvatars.get(id) === next) return true;
+        if (next === undefined) state.navigationAvatars.delete(id);
+        else state.navigationAvatars.set(id, next);
+        if (state.active) this.refreshPublicState();
+        return true;
       },
 
       setNavigationTitle: (id: string, title: string) => {
@@ -2038,7 +2070,7 @@ export class PluginHost {
         pluginId: state.pluginId,
         generation: state.generation,
       });
-      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title })));
+      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title, ...(state.navigationAvatars.has(entry.id) ? { avatarKey: state.navigationAvatars.get(entry.id) } : {}) })));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
     }
@@ -2068,7 +2100,7 @@ export class PluginHost {
       || compareText(left.pluginId, right.pluginId)
       || compareText(left.id, right.id);
     const nextNavigation = Object.freeze(navigationEntries.sort(compareViewEntry));
-    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation) || this.navigationSnapshot.some((entry, index) => entry.title !== nextNavigation[index]?.title)) {
+    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation) || this.navigationSnapshot.some((entry, index) => entry.title !== nextNavigation[index]?.title || entry.avatarKey !== nextNavigation[index]?.avatarKey)) {
       this.navigationSnapshot = nextNavigation;
       changed = true;
     }
@@ -2302,6 +2334,7 @@ function createGenerationState(
     generation,
     declaredContributions,
     navigationTitles: new Map(),
+    navigationAvatars: new Map(),
     shells: [],
     applicationProviders: [],
     uiSlots: [],

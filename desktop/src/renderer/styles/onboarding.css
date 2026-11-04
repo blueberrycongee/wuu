@@ -481,9 +481,11 @@
 .onboarding-stage-permissions .onboarding-heading { text-align: left; }
 .onboarding-stage-permissions .onboarding-lead { max-width: 34em; }
 
-/* Reserve the scrollbar inside the card; its footer stays visible while
- * a long workspace list scrolls above it. Short lists keep their height. */
+/* The scroller reaches through the card's right padding so the platform's
+ * scrollbar sits outside the content column. Rows then share the footer's
+ * right edge even when a short list does not scroll. */
 .onboarding-workspaces {
+  margin-inline-end: calc((var(--card-padding) + var(--scrollbar-width)) * -1);
   scrollbar-gutter: stable;
 }
 .onboarding-workspaces > .onboarding-status { padding-inline: var(--space-2); }

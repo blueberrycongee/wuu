@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { applyThemePreference, availableContentThemes, selectExtensionTheme } from "../../src/renderer/Theme";
 import { createRoot } from "react-dom/client";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
@@ -89,6 +90,19 @@ applyTheme(theme);
 // `?stream=<name>` replaces the streaming sample to inspect where the cursor
 // sits while a fenced code block is still the last visible block.
 const streamSamples: Record<string, string> = {
+  table: `下面的项目对比用于检查表格的悬停操作、横向滚动和展开阅读。
+
+| 方向 | 代表项目 | 现在主要做什么 |
+| --- | --- | --- |
+${Array.from({ length: 12 }, (_, index) => `| ${["个人助手网关", "通用开发平台", "代码编辑工具"][index % 3]} | [Example ${index + 1}](https://example.com/project-${index + 1}) / \`workspace-agent-${index + 1}\` | ${"通过可组合的工具、跨会话记忆和共享工作区支持长时间运行的任务。".repeat(index % 3 + 1)} |`).join("\n")}
+
+| 图片 | 说明 |
+| --- | --- |
+| ![Preview sample](${new URL(mediaURL, location.href).href}) | 从展开的表格打开图片，再关闭图片返回表格。 |
+
+| 空表格 |  |
+| --- | --- |
+`,
   math: String.raw`行内公式 $E = mc^2$ 与 \(a^2 + b^2 = c^2\) 跟随正文。
 
 $$
@@ -245,7 +259,8 @@ function FailureSurface(): JSX.Element {
 function Fixture(): JSX.Element {
   const params = new URLSearchParams(location.search);
   const [size, setSize] = useState<number>(Number(params.get("size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default);
-  const [theme, setTheme] = useState(params.get("theme") || "light");
+  const [theme, setTheme] = useState<"light" | "dark">(params.get("theme") === "dark" ? "dark" : "light");
+  const [palette, setPalette] = useState(params.get("palette") || "");
   const [surface, setSurface] = useState(params.get("surface") || "stream");
   const turns = surface === "images" ? mediaTurns : params.get("content") === "currency" ? currencyTurns : conversationTurns;
   const [live, setLive] = useState(params.has("lateTerminal") || params.has("live"));
@@ -254,7 +269,10 @@ function Fixture(): JSX.Element {
   const key = `reading-fixture-${run}`;
   const streamSample = streamSamples[params.get("stream") ?? ""] ?? sample;
   useEffect(() => applyMessageFlowFontSize(size), [size]);
-  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    applyThemePreference(theme);
+    selectExtensionTheme(theme, palette ? `builtin:${palette}:${theme}` : "");
+  }, [theme, palette]);
   useEffect(() => {
     if (!playing) return;
     let offset = 0;
@@ -275,7 +293,8 @@ function Fixture(): JSX.Element {
     <header className="fixture-toolbar">
       <strong>Wuu · 消息流排版验收</strong>
       <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{Array.from(new Set([MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, MESSAGE_FLOW_FONT_SIZE_RANGE.default, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max])).sort((a, b) => a - b).map(value => <option key={value}>{value}</option>)}</select></label>
-      <label>主题<select aria-label="主题" value={theme} onChange={event => setTheme(event.target.value)}><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label>主题<select aria-label="主题" value={theme} onChange={event => setTheme(event.target.value as "light" | "dark")}><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label>配色<select aria-label="配色" value={palette} onChange={event => setPalette(event.target.value)}><option value="">默认</option>{availableContentThemes(undefined).filter(option => option.base === theme).map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
       <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="images">消息图片</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option><option value="failures">失败与中断</option></select></label>
       <label><input aria-label="流式状态" type="checkbox" checked={live} onChange={event => setLive(event.target.checked)} />显示流式光标</label>
       <button type="button" disabled={playing || surface !== "stream"} onClick={() => { setRun(value => value + 1); setPlaying(true); }}>逐段播放</button>

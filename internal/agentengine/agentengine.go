@@ -228,8 +228,11 @@ type Registry struct {
 type ThreadBinding struct {
 	ThreadID string
 	RootDir  string
-	Model    string
-	Effort   string
+	// AdditionalDirectories are registered projects available without moving the conversation.
+	// PermissionMode still controls whether mutations are allowed.
+	AdditionalDirectories []string
+	Model                 string
+	Effort                string
 	// Speed is empty to inherit, "standard" to disable acceleration, or "fast".
 	Speed string
 	// ModelOptions carries native option IDs and values; adapters preserve wire types.

@@ -98,14 +98,22 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(): void {
+  const project = {
+    id: "collapse-project",
+    name: "Collapse Project",
+    path: workspace,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  window.localStorage.setItem(
+    "wuu.desktop.expandedSidebarSectionIDs",
+    JSON.stringify([project.id]),
+  );
   // Fresh arrays on every call — mirrors production, where each
   // project-state reload replaces state.projects with a new identity.
-  const workspaceState = (): {
-    projects: never[];
-    active_context: { kind: "no_project"; cwd: string };
-  } => ({
-    projects: [],
-    active_context: { kind: "no_project", cwd: workspace },
+  const workspaceState = () => ({
+    projects: [project],
+    active_context: { kind: "project" as const, project_id: project.id, cwd: workspace },
   });
   const pinnedThread: Thread = {
     id: "thread-pinned-collapse",
@@ -113,7 +121,8 @@ function installWuuApi(): void {
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
-    workspace_kind: "scratch",
+    workspace_id: "collapse-project",
+    workspace_kind: "project",
     status: "idle",
     read_only: false,
     pinned: true,
@@ -173,7 +182,7 @@ async function flushAsync(): Promise<void> {
 
 function conversationSectionHeader(): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(
-    'button[aria-label="收起 对话 的对话"], button[aria-label="展开 对话 的对话"]',
+    'button[aria-label="收起 Collapse Project 的对话"], button[aria-label="展开 Collapse Project 的对话"]',
   );
 }
 
@@ -508,11 +517,25 @@ describe("sidebar collapse-state independence", () => {
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
   });
 
+  it("opens Settings on General from the account menu", async () => {
+    installWuuApi();
+    await act(async () => {
+      root = createRoot(container);
+      root.render(await createDefaultApplicationTestView());
+    });
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
+    await act(async () => { await import("./SettingsView"); });
+    await flushAsync();
+    expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("general");
+  });
+
   it.each([
     ['folder', '[data-section-id="__wuu_folder_sort__:folder-collapse"] button[aria-expanded]'],
     ['pinned', '[data-functional-group-id="pinned"] button[aria-expanded]'],
     ['workspace', '[data-functional-group-id="workspace"] button[aria-expanded]'],
-    ['scratch', 'button[aria-label="收起 对话 的对话"], button[aria-label="展开 对话 的对话"]'],
+    ['project', 'button[aria-label="收起 Collapse Project 的对话"], button[aria-label="展开 Collapse Project 的对话"]'],
   ])("preserves the %s fold across settings visits and theme changes", async (_section, selector) => {
     installWuuApi();
     await act(async () => {
@@ -532,7 +555,7 @@ describe("sidebar collapse-state independence", () => {
 
     for (const theme of [null, "dark", "light"] as const) {
       await click(container.querySelector(".sidebar-account-trigger"));
-      await click(document.querySelector('[data-settings-page="providers"]'));
+      await click(document.querySelector('[data-settings-entry="settings"]'));
       await act(async () => { await import("./SettingsView"); });
       expect(container.querySelector(".settings-embedded")).not.toBeNull();
       if (theme) {
@@ -549,7 +572,7 @@ describe("sidebar collapse-state independence", () => {
     expect(header()?.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("collapses the active 对话 section on the first header click", async () => {
+  it("collapses the active project section on the first header click", async () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
@@ -589,8 +612,9 @@ describe("sidebar collapse-state independence", () => {
     };
     await click('.sidebar-account-trigger');
     // The account menu is portaled outside the mounted App container.
-    await click('[data-settings-page="providers"]', document);
+    await click('[data-settings-entry="settings"]', document);
     await act(async () => { await import("./SettingsView"); });
+    await click('.settings-nav [data-wuu-page="providers"]');
     await click('[data-provider="codex-account"]');
     const sourceValue = () => container.querySelector('.connection-fields .model-service-status')?.textContent;
     expect(sourceValue()).toContain(translateCurrent("settings.codexSourceSaved"));
@@ -626,8 +650,9 @@ describe("sidebar collapse-state independence", () => {
     };
     await click('.sidebar-account-trigger');
     // The account menu is portaled outside the mounted App container.
-    await click('[data-settings-page="providers"]', document);
+    await click('[data-settings-entry="settings"]', document);
     await act(async () => { await import("./SettingsView"); });
+    await click('.settings-nav [data-wuu-page="providers"]');
     await click('[data-provider="grok-account"]');
     expect(window.wuu.authenticateEngine).not.toHaveBeenCalled();
     await click('[data-testid="grok-login-start"]');

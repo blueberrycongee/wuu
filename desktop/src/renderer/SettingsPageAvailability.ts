@@ -20,18 +20,18 @@ export function browserSettingsAvailable(): boolean {
   );
 }
 
-export function availableSettingsPage(page: SettingsPage | undefined, browserSettingsAllowed = true): SettingsPage {
-  const next = page ?? "providers";
-  if (next === "subscriptions" || next === "agents") {
+export function availableSettingsPage(page: SettingsPage, browserSettingsAllowed = true): SettingsPage {
+  if (page === "advanced") return "general";
+  if (page === "subscriptions" || page === "agents") {
     return "providers";
   }
-  if (next === "remote" && !remoteControlAvailable()) {
+  if (page === "remote" && !remoteControlAvailable()) {
     return "providers";
   }
-  if (next === "browser" && (!browserSettingsAllowed || !browserSettingsAvailable())) {
+  if (page === "browser" && (!browserSettingsAllowed || !browserSettingsAvailable())) {
     return "providers";
   }
-  return next;
+  return page;
 }
 
 export function isConfigurablePlugin(

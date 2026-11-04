@@ -36,7 +36,7 @@ locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graph
 launches discover standard user install locations and, when needed, login-shell
 paths. After installing a CLI while Wuu is running, use Settings → Agents → Refresh.
 
-Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH` or its built-in search fallback.
+Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH`. The `glob` and `grep` tools require ripgrep and report an error if it is unavailable.
 
 Project Agent is experimental and disabled in default and release builds. It
 has no user setting to enable it. Existing project conversations remain readable,
@@ -292,8 +292,11 @@ and user profiles with a loopback synthetic provider, exercising real Electron
 input, preload, main and Go. It checks light/dark themes, 1280/640px windows,
 IM/regular bubbles, readable text, clipping, native disclosure and keyboard
 focus, manual continuation after HTTP 401, and automatic recovery after HTTP 503.
-The details must preserve the core's diagnostic; raw provider error bodies may
-be normalized before reaching the renderer.
+The details must preserve the core's diagnostic. For structured native-provider
+errors, the core extracts the error message, redacts credential-shaped fragments,
+and limits the detail to 200 Unicode characters. Other response fields and
+unstructured proxy pages are not forwarded. Unparseable errors retain their
+failure category.
 
 Session CI runs both font sizes against its existing renderer/core builds and
 uploads synthetic screenshots, geometry, logs and build hashes. Evidence defaults
@@ -461,6 +464,10 @@ issue together, plus permanent revocation and retired-client callbacks.
 
 ### MCP authentication across reloads
 
+The required Public provider conformance CI job runs this gate on a version-stamped
+fixture executable and checks its source, binary hash and passing boundary report.
+Only reports and diagnostic logs are uploaded, never fixture credential stores.
+
 Run `go run ./scripts/mcp-auth-reload-e2e` to exercise the shared runtime and
 app-server protocol against a loopback OAuth/MCP service. It saves synthetic
 credentials in a disposable file store, then covers authenticated startup,
@@ -469,8 +476,23 @@ tool call, disable/re-enable, and adding the first MCP server after empty startu
 It checks that managers and transport sessions remain generation-owned and that
 RPC responses do not expose credentials. No model or external engine is invoked.
 
-The fixture uses the runtime's explicit OAuth-service injection; it does not test
-macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
+Pending authentication retains its original manager and selected credential
+services, rather than transferring OAuth state to a replacement. Compatible
+reloads may continue; disable, resource/source changes and credential-authority
+changes revoke the attempt. Prepared restart-only provider configuration is
+compared internally; secret or mutable provider settings conservatively prevent
+cross-generation reuse. Cancellation, connection close and expiry release the
+retained generation after physical cleanup.
+
+Equivalent selected credential authorities share bounded, process-local refresh
+gates; token publication still uses credential compare-and-swap. This is not
+distributed or multi-host refresh coordination. The existing publication writer
+remains serialized, so another publication can wait for retirement; credential
+I/O does not hold the generation lookup or manager-wide locks.
+
+The fixture explicitly selects the headless composition and its file credential
+provider, without discovering business plugins. It does not test macOS Keychain
+or the desktop UI. Receipts, connection identities and RPC output
 are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
 another evidence directory.
 
@@ -685,9 +707,13 @@ blocking remain separate. Wall-clock P50/P75 are diagnostic, never CI gates.
 CI checks repeated large-fixture switches against the resume-call, layout, and
 style-recalculation ceilings in
 [`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json).
-These counters include the observer and input probe. The ratchet rejects higher
-ceilings, removed counters, or a changed workload. It uploads raw results, a
-report, logs, and a final synthetic screenshot as `session-switch-evidence`.
+These counters include the observer and input probe. Resume calls and layouts
+must meet their ceilings on every switch. Style recalculations use the median
+of three switches to each large session: page-wide animations can add work that
+varies with timing. Individual samples and their maximum remain in the evidence.
+The ratchet rejects higher ceilings, removed counters, or a changed workload. It
+uploads raw results, a report, logs, and a final synthetic screenshot as
+`session-switch-evidence`.
 
 For diagnostics, omit `WUU_SWITCH_CHECK_BUDGET` and set `WUU_SWITCH_TURNS=3000`,
 `WUU_SWITCH_ROUNDS`, or `WUU_SWITCH_INIT_DELAY_MS=600`. `WUU_SWITCH_TRACE=1`
@@ -969,11 +995,23 @@ The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone
 
 [Native mobile](../../../.github/workflows/native-mobile.yml) runs iOS core integration and unsigned simulator/device builds on pull requests and `main` pushes that change the iOS client, shared native fixtures, remote protocol, or Go dependencies. Manual `workflow_dispatch` also runs the existing Android integration, Release builds and lint. These checks do not cover device signing, store distribution, or physical phone interaction.
 
-[The main CI workflow](../../../.github/workflows/ci.yml) selects jobs from the complete PR diff, including deleted files and both sides of renames. Repository metadata checks remain lightweight and always run on PRs. Documentation-only and native-phone-only changes skip the main product suites; native phones keep their dedicated workflow.
+iOS integration, simulator and device builds run as three independent jobs, each with its own evidence upload. CI uses `bash clients/native/verify.sh ios-core` for the real-server integration lane; standalone `ios` and `all` modes still include the simulator build. A failed job does not cancel the other two.
+
+[The main CI workflow](../../../.github/workflows/ci.yml) selects jobs from the complete PR diff, including deleted files and both sides of renames. Repository contracts and metadata checks must pass before the shared build. For selected non-unit Desktop suites, dependency installation overlaps those checks on the same runner; all branches are joined and failures remain fatal. That runner then produces a source- and hash-verified immutable renderer/core artifact, avoiding a separate producer queue hop; documentation-only and unit-only changes do not install build dependencies. Documentation-only and native-phone-only changes skip the main product suites; native phones keep their dedicated workflow.
 
 Renderer changes run Desktop and Clients because the Web client imports renderer sources. Other desktop changes run Desktop, Clients, and native OS checks. Shared protocol, client core, Go, plugins/SDK, dependency locks outside these scoped directories, build scripts, and unknown paths conservatively run all suites. Runtime Markdown under prompts or plugins is not exempt. Go CI supplies PostgreSQL for database-backed coverage.
 
-Desktop validation runs six independent Linux jobs in parallel: unit/type checks and renderer recovery; file/response selection; conversation corpus replay; image/stream/resize layout; session/core interactions; and shell/onboarding/settings. Each job has its own build, Electron profile, Xvfb display, and evidence uploads. A failed group does not cancel the other groups. `Desktop check` remains the stable summary and rejects any failed or cancelled selected group.
+Go validation separates static/cross-platform checks, other Go packages, plugin acceptance, and three appserver test shards. The Project Agent build runs the complete tagged appserver suite in three shards too. Each shard enumerates the compiled package with `go test -list`, partitions all top-level tests, examples and fuzz seed tests by name, and executes its selection with `-count=1`. Inventories are uploaded with the run. To reproduce a shard, run `node .github/scripts/go-test-shard.mjs ./internal/appserver 0 3`, optionally adding `project_agent` as the last argument; indexes are zero-based. CI contract tests verify exhaustive selection and failure propagation.
+
+The other-Go-packages lane keeps the Makefile package discovery and test invocation, adding only JSON reporting for per-test timing evidence. The `go-package-timings` artifact retains raw stdout/stderr, structured events and a summary; cached results are marked as replayed rather than current measurements. Test and build failures still fail the lane.
+
+Public provider conformance runs independent controller, authority and cooperation groups. Each builds the tested revision, retains its boundary assertions and evidence, and validates its own reports. All Go matrix groups use `fail-fast: false`; their aggregate results still feed `Go check`. Splitting work adds runner demand, so evaluate queue time as well as job execution before claiming a wall-clock improvement.
+
+Windows pull-request packaging uses an explicit CI validation mode with fast level-1 archive compression and no outer installer recompression. The differential-aware inner NSIS archive keeps its format and update settings but also uses fast compression. Installer/ZIP formats, file contents, native-module rebuilding, packaged PTY/runtime verification and evidence remain unchanged. These are validation artifacts, not published releases; their sizes and compression performance are not release-fidelity evidence. Main/tag pushes and manual runs retain the normal release compression defaults.
+
+Linux pull-request packaging limits xz compression to four threads while retaining the existing preset, archive formats, payload and package verification. Only the packaging child receives this validation setting; other events retain inherited defaults. Compression bytes and sizes may differ from release artifacts. Phase timestamps separate prerequisite builds, packaging and verification so CI measurements do not attribute the whole packaging step to compression.
+
+Desktop validation runs eight independent Linux jobs in parallel: two unit shards with type checks and renderer recovery; file/response selection; conversation corpus replay; image/stream/resize layout; session/core interactions; session lifecycle; and shell/onboarding/settings. Unit shards start directly after selection without waiting for an artifact they do not use. Non-unit jobs verify and consume the same-run build artifact; each journey retains its own Electron profile, Xvfb display, and evidence uploads. The session and shell jobs use three bounded, isolated workers, retaining all eleven session and twelve shell journeys. The lifecycle job retains all six journeys in three isolated lanes: presentation alone; switch followed by archive; and request lifecycle, footer and terminal handoff. All workers are joined before evidence upload, including failures. Layout keeps two batches to limit contention in motion-continuity checks: feature/inspection alongside resize, then stream/image, with private displays and original journey deadlines. File-selection CI runs the same four visual variants in two isolated processes and joins exactly 24 unique cases; only declared flat PNG/JSON/log evidence is uploaded, never child profiles. Annotation acceptance keeps its unsharded four-variant command. Corpus replay balances all twelve samples across three private workers, joins all results, then retains the separate text-only sample-02 replay even when a worker fails. The stable Desktop gate requires every selected unit and E2E partition to succeed. A failed group does not cancel the other groups. `Desktop check` remains the stable summary and rejects any failed or cancelled selected group.
 
 For changes only to standalone E2E entrypoints listed in [the suite map](../../../.github/scripts/desktop-ci-suites.json), CI selects the union of their groups without unrelated Clients/native checks. Shared helpers, preloads, fixtures, production code, styles, dependencies, CI configuration, and unknown paths keep the conservative full-group fallback. This avoids assuming that component filenames describe their complete dependency graph. No test commands, assertions, scenario matrices, or evidence uploads are removed; manual runs execute every group. Extend the map only after verifying that an entrypoint is not a shared helper. Run `node --test .github/scripts/select-ci.test.mjs` to verify selection against temporary Git changes, including deletions and mixed scopes.
 

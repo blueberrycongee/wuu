@@ -1,5 +1,6 @@
 const { execFileSync, spawnSync } = require("node:child_process");
-const { statSync, readFileSync } = require("node:fs");
+const { mkdtempSync, rmSync, statSync, readFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
 const yaml = require("js-yaml");
 const { join, resolve } = require("node:path");
 const { releaseSigningIdentity } = require("./check-release-signing.cjs");
@@ -19,6 +20,22 @@ for (const name of requiredBinaries) {
   const path = join(bin, name);
   if (!(statSync(path).mode & 0o111)) throw new Error(`${name} is not executable`);
   execFileSync("codesign", ["--verify", "--strict", ...requirementArgs, path]);
+}
+if (release) {
+  const home = mkdtempSync(join(tmpdir(), "wuu-release-plugins-"));
+  try {
+    const plugins = JSON.parse(execFileSync(join(bin, "wuu-core"), ["plugin", "list", "--json"], {
+      encoding: "utf8",
+      env: { ...process.env, WUU_HOME: home },
+    }));
+    const ids = new Set(plugins.map(plugin => plugin.id));
+    if (!ids.has("side")) throw new Error("Packaged core did not discover bundled plugins");
+    for (const id of ["personal", "personal-calendar"]) {
+      if (ids.has(id)) throw new Error(`Packaged core must not include ${id}`);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 }
 const rg = join(app, "Contents", "Resources", "tools", "rg");
 if (!(statSync(rg).mode & 0o111)) throw new Error("bundled rg is not executable");

@@ -210,9 +210,9 @@ func classifyToolKind(name string) ToolKind {
 		return ToolKindPlugin
 	case "grep", "glob":
 		return ToolKindSearch
-	case "tool_search":
+	case "tool_search", "list_workspaces":
 		return ToolKindDiscovery
-	case "bash", "process", codeModeExecToolName:
+	case "bash", codeModeExecToolName:
 		return ToolKindShell
 	case "git":
 		return ToolKindGit

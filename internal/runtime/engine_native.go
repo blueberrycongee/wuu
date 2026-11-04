@@ -433,7 +433,7 @@ func (c *nativeEngineCallbacks) event(ctx context.Context, event providers.Strea
 	return c.call(ctx, "event", pluginprotocol.EngineGatewayParams{Event: &wire}, nil)
 }
 func (c *nativeEngineCallbacks) binding(in pluginprotocol.EngineBinding) agentengine.ThreadBinding {
-	result := agentengine.ThreadBinding{ThreadID: in.ThreadID, RootDir: in.RootDir, Model: in.Model, Effort: in.Effort, Speed: in.Speed, ModelOptions: in.ModelOptions, PermissionMode: in.PermissionMode, Instructions: in.Instructions, ExternalRef: in.ExternalRef}
+	result := agentengine.ThreadBinding{ThreadID: in.ThreadID, RootDir: in.RootDir, AdditionalDirectories: in.AdditionalDirectories, Model: in.Model, Effort: in.Effort, Speed: in.Speed, ModelOptions: in.ModelOptions, PermissionMode: in.PermissionMode, Instructions: in.Instructions, ExternalRef: in.ExternalRef}
 	for _, server := range in.MCPServers {
 		result.MCPServers = append(result.MCPServers, agentengine.MCPServer{Name: server.Name, URL: server.URL})
 	}
@@ -478,7 +478,7 @@ type nativeWuuEngineFactory struct{}
 
 func (*nativeWuuEngineFactory) Descriptor(context.Context) (agentengine.Descriptor, error) {
 	requiresHostModel := true
-	return agentengine.Descriptor{ID: agentengine.EngineWuu, Version: "1", RequiresHostModel: &requiresHostModel, Capabilities: []string{userHostContextCapability, "native-tool-loop", "native-session-resume", "canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection"}}, nil
+	return agentengine.Descriptor{ID: agentengine.EngineWuu, Version: "1", RequiresHostModel: &requiresHostModel, Capabilities: []string{userHostContextCapability, "native-tool-loop", "conversation-plugins", "native-session-resume", "canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection"}}, nil
 }
 func (*nativeWuuEngineFactory) Open(context.Context, agentengine.OpenRequest) (agentengine.Session, error) {
 	return nil, errors.New("selected loop engine requires bound execution resources")

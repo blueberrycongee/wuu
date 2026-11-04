@@ -1,3 +1,4 @@
+import { decodePluginRuntimeResponse } from "../../shared/pluginRuntimeIPC";
 import { PluginConversationAttachment, PluginConversationView, PluginConversationComposer, PluginConversationMessage } from "./PluginConversation";
 import { MarkdownContent } from "../RichContent";
 import { PluginAvatar } from "../PluginAvatar";
@@ -66,7 +67,7 @@ export const desktopPluginHost = new PluginHost({
     try {
       const result = await response;
       signal?.throwIfAborted();
-      return result.result;
+      return decodePluginRuntimeResponse(result).result;
     } finally {
       signal?.removeEventListener("abort", cancel);
     }
@@ -495,8 +496,15 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
   const activatePresentation = Reflect.get(value, "activatePresentation");
   if (typeof activatePresentation === "function") return { activatePresentation: api => Reflect.apply(activatePresentation, value, [api]) as void | Promise<void> };
   const activate = Reflect.get(value, "activate");
-  if (typeof activate !== "function") throw new Error("Desktop plugin module must export activate(api) or activatePresentation(api)");
-  return { activate: api => Reflect.apply(activate, value, [api]) as void | Promise<void> };
+  if (typeof activate === "function") return { activate: api => Reflect.apply(activate, value, [api]) as void | Promise<void> };
+  const defaultExport = Reflect.get(value, "default");
+  if (typeof defaultExport === "object" && defaultExport !== null && typeof Reflect.get(defaultExport, "initialize") !== "function") {
+    const defaultPresentation = Reflect.get(defaultExport, "activatePresentation");
+    if (typeof defaultPresentation === "function") return { activatePresentation: api => Reflect.apply(defaultPresentation, defaultExport, [api]) as void | Promise<void> };
+    const defaultActivate = Reflect.get(defaultExport, "activate");
+    if (typeof defaultActivate === "function") return { activate: api => Reflect.apply(defaultActivate, defaultExport, [api]) as void | Promise<void> };
+  }
+  throw new Error("Desktop plugin module must export activate(api) or activatePresentation(api)");
 }
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {

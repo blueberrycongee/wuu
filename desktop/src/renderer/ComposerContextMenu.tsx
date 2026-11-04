@@ -1,3 +1,5 @@
+import type { ComposerInputHandle } from "./ComposerInput";
+import { pluginReferencePlainText } from "./ComposerPluginReferences";
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useActiveContextMenu } from "./ActiveContextMenu";
 import { useOptionalDesktopControls } from "./DesktopControlsContext";
@@ -40,7 +42,7 @@ export { placeContextMenu } from "./ContextMenuPlacement";
 //   - Another context menu opening → close (useActiveContextMenu).
 
 type ComposerContextMenuProps = {
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  textareaRef: RefObject<ComposerInputHandle | null>;
   x: number;
   y: number;
   hasSelection: boolean;
@@ -149,7 +151,7 @@ function WebComposerContextMenu({ textareaRef, x, y, hasSelection, disabled = fa
   // guarantee the menu closes before React re-renders, so we never
   // observe the textarea mid-update.
   const readSelection = (): {
-    textarea: HTMLTextAreaElement;
+    textarea: ComposerInputHandle;
     start: number;
     end: number;
     value: string;
@@ -183,7 +185,7 @@ function WebComposerContextMenu({ textareaRef, x, y, hasSelection, disabled = fa
     // not block the cut. The text has already been removed from the
     // textarea, and re-inserting it on clipboard failure would be more
     // surprising than simply having the cut take effect.
-    void navigator.clipboard.writeText(selectedText);
+    void navigator.clipboard.writeText(pluginReferencePlainText(selectedText));
     // Place the caret at the cut boundary after React re-renders the
     // textarea with the new value.
     requestAnimationFrame(() => {
@@ -204,7 +206,7 @@ function WebComposerContextMenu({ textareaRef, x, y, hasSelection, disabled = fa
     }
     const { textarea, start, end, value } = selection;
     const selectedText = value.slice(start, end);
-    void navigator.clipboard.writeText(selectedText);
+    void navigator.clipboard.writeText(pluginReferencePlainText(selectedText));
     // Restore focus so the user can keep editing from the same selection
     // after the menu closes.
     textarea.focus();

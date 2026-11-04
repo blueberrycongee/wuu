@@ -65,6 +65,7 @@ syncBuiltinESMExports();
 const { pathToFileURL, fileURLToPath } = require('node:url');
 const { app, BrowserWindow, ipcMain, contentTracing } = prepareOnly ? {} : require('electron');
 const { budget, assertSample } = require('./session-switch-budget.cjs');
+const { waitForSessionContentFrame } = require('./session-switch-readiness.cjs');
 const desktop = path.resolve(__dirname, '..');
 const mainBundle = path.resolve(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main/index.js'));
 const turns = Number(process.env.WUU_SWITCH_TURNS || budget.fixture.turns);
@@ -888,29 +889,7 @@ async function switchTo(win, index, scenario) {
   await debug.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
   // Observe in the renderer: host polling and IPC scheduling must not define
   // the content endpoint. Two frames are a paint opportunity, not GPU proof.
-  const contentFrameMs = await evaluate(win, index => new Promise((resolve, reject) => {
-    const deadline = performance.now() + 30000;
-    let readyFrames = 0;
-    const check = () => {
-      if (performance.now() > deadline) return reject(new Error('Target conversation never became visible'));
-      const pane = document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-${index}"]`);
-      const viewport = document.querySelector('.conversation-pane > .scroll-region');
-      const rect = viewport?.getBoundingClientRect();
-      const turns = pane?.getElementsByClassName('turn');
-      const last = turns?.[turns.length - 1];
-      const lastRect = last?.getBoundingClientRect();
-      const ready = window.__switchProbe.start !== undefined && pane && !pane.closest('[inert]') &&
-        last?.textContent.includes(`Session ${index} question`) && lastRect && rect &&
-        lastRect.bottom > rect.top && lastRect.top < rect.bottom && lastRect.height > 0;
-      readyFrames = ready ? readyFrames + 1 : 0;
-      if (readyFrames >= 2) {
-        if (window.__switchTrace) performance.mark(`switch-${index}-content`);
-        return resolve(performance.now() - window.__switchProbe.start);
-      }
-      requestAnimationFrame(check);
-    };
-    requestAnimationFrame(check);
-  }), index);
+  const contentFrameMs = await evaluate(win, waitForSessionContentFrame, index);
   await evaluate(win, () => new Promise((resolve, reject) => {
     const deadline = performance.now() + 30000;
     const check = () => {
@@ -996,7 +975,6 @@ async function switchTo(win, index, scenario) {
     for (const timing of result.rpc) {
       assert.ok(Number.isFinite(timing.ms), `${scenario}/${index}: ${timing.channel} lost its completed RPC duration`);
     }
-    if (checkBudget && scenario === 'repeat' && result.history === 'large') assertSample(result.work);
   }
   console.log(JSON.stringify(result));
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), draft, 'Runtime refresh lost the typed draft');
@@ -1145,6 +1123,20 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
     for (let round = 0; round < rounds; round++) {
       for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
+    }
+    if (checkBudget) {
+      for (const index of [1, 5]) {
+        const samples = results.filter(result => result.scenario === 'repeat' && result.index === index);
+        assert.equal(samples.length, budget.fixture.rounds, `Missing repeated samples for session ${index}`);
+        const styleCounts = samples.map(sample => sample.work.recalcStyleCount);
+        assert.ok(styleCounts.every(count => Number.isFinite(count) && count >= 0), `Invalid style count for session ${index}`);
+        styleCounts.sort((a, b) => a - b);
+        // Page-wide animation can add a variable number of style recalculations.
+        // Keep per-switch bounds for deterministic work and gate the median style count.
+        const recalcStyleCount = styleCounts[Math.floor(styleCounts.length / 2)];
+        console.log(`Session ${index} style recalculations: ${styleCounts.join(', ')}; median ${recalcStyleCount}`);
+        for (const sample of samples) assertSample({ ...sample.work, recalcStyleCount });
+      }
     }
     for (const index of [2, 3, 4, 5, 0, 1, 5, 0]) await switchTo(main, index, 'pool-churn');
     if (!sameWorkspace) {

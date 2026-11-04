@@ -21,10 +21,12 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/mcp"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -214,6 +216,9 @@ func (p *protocol) auth(ctx context.Context) error {
 	return nil
 }
 func waitConnected(ctx context.Context, manager *mcp.Manager) error {
+	if manager == nil {
+		return errors.New("selected tool provider did not create an MCP manager")
+	}
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -271,7 +276,7 @@ func run(report *receipt, output string) (err error) {
 		report.Wire = append([]wireEvent(nil), f.wire...)
 		f.mu.Unlock()
 	}()
-	path := filepath.Join(scratch, "synthetic-oauth.json")
+	path := filepath.Join(scratch, "home", "credentials.json")
 	oauth := mcp.NewOAuthManager(credentialstore.NewFileStore(path), f.server.Client())
 	start, err := oauth.Start(ctx, mcp.OAuthStartOptions{ServerID: "docs", ResourceURL: f.server.URL + "/mcp", RedirectURI: "http://127.0.0.1/callback", ClientID: "fixture"})
 	if err != nil {
@@ -281,7 +286,13 @@ func run(report *receipt, output string) (err error) {
 		return err
 	}
 	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: f.server.URL, Model: "fixture", APIKey: "synthetic-unused"}}, MCPServers: map[string]config.MCPServerConfig{"docs": {URL: f.server.URL + "/mcp", Transport: "http", OAuth: &config.MCPOAuthConfig{ClientID: "fixture", RedirectURI: "http://127.0.0.1/callback"}}}}
-	opts := runtime.Options{RootDir: scratch, HomeDir: scratch, Config: cfg, SafeMode: true, MCPOAuth: mcp.NewOAuthManager(credentialstore.NewFileStore(path), f.server.Client())}
+	// Safe mode intentionally activates no tool provider. Select the ordinary
+	// native graph explicitly, without discovering any host/business packages,
+	// and keep its selected credential backend inside this disposable fixture.
+	cfg.Composition = composition.DefaultConfig("headless")
+	cfg.Composition.Patches = []composition.Patch{{Modules: map[string]bool{credentialstore.OSModule: false, credentialstore.FileModule: true}}}
+	packages := []pluginpkg.Plugin{}
+	opts := runtime.Options{RootDir: scratch, HomeDir: scratch, Config: cfg, DiscoveredPlugins: &packages}
 	rt, err := runtime.NewSession(opts)
 	if err != nil {
 		return err
@@ -348,6 +359,7 @@ func run(report *receipt, output string) (err error) {
 	if err = p.auth(ctx); err != nil {
 		return fmt.Errorf("replacement auth RPC: %w", err)
 	}
+	report.Checks = append(report.Checks, "Distinct replacement manager retains saved credentials before the pending callback")
 	var finished appserver.MCPAuthFinishResult
 	if err = p.client.Call(ctx, "mcp/auth/finish", appserver.MCPAuthFinishParams{Name: "docs", State: pending.State, Code: "replacement"}, &finished); err != nil {
 		return fmt.Errorf("login spanning replacement: %w", err)
@@ -479,7 +491,6 @@ func run(report *receipt, output string) (err error) {
 		return err
 	}
 	opts.Config.MCPServers = nil
-	opts.MCPOAuth = mcp.NewOAuthManager(credentialstore.NewFileStore(path), f.server.Client())
 	rt, err = runtime.NewSession(opts)
 	if err != nil {
 		return err
@@ -503,11 +514,11 @@ func run(report *receipt, output string) (err error) {
 	report.Checks = append(report.Checks, "First MCP added after zero-MCP startup uses persisted credentials and auth RPC")
 	// Logout must fence a background connection that already received its
 	// authentication and is only waiting for the final catalog response.
-	otherLogin, err := opts.MCPOAuth.Start(ctx, mcp.OAuthStartOptions{ServerID: "other", ResourceURL: f.server.URL + "/mcp", RedirectURI: "http://127.0.0.1/callback", ClientID: "fixture"})
+	otherLogin, err := oauth.Start(ctx, mcp.OAuthStartOptions{ServerID: "other", ResourceURL: f.server.URL + "/mcp", RedirectURI: "http://127.0.0.1/callback", ClientID: "fixture"})
 	if err != nil {
 		return err
 	}
-	if _, err = opts.MCPOAuth.Finish(ctx, mcp.OAuthFinishOptions{ServerID: "other", ResourceURL: f.server.URL + "/mcp", State: otherLogin.State, Code: "replacement"}); err != nil {
+	if _, err = oauth.Finish(ctx, mcp.OAuthFinishOptions{ServerID: "other", ResourceURL: f.server.URL + "/mcp", State: otherLogin.State, Code: "replacement"}); err != nil {
 		return err
 	}
 	manager := rt.Toolkit.MCPManager()

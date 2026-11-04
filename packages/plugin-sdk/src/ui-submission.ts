@@ -1,8 +1,10 @@
+import type { ApplicationPluginReferenceV1 } from "./ui-plugin-reference.js";
 import type { ApplicationResponseSelectionV1 } from "./ui-composer.js";
 import type { ApplicationConversationTurnV1 } from "./ui-conversation.js";
 
 /** Ordered text and references; attachment bytes stay with the draft resource owner. */
 export type ApplicationSubmissionContentPartV1 =
+  | { readonly type: "plugin_reference"; readonly text: string; readonly plugin: ApplicationPluginReferenceV1 }
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "pasted_text"; readonly text: string; readonly title?: string; readonly local_path?: string }
   | { readonly type: "response_selection"; readonly text: string; readonly selection: ApplicationResponseSelectionV1 }

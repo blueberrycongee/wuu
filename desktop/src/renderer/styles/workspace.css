@@ -2669,33 +2669,6 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   padding: var(--menu-inset);
 }
 
-.runtime-engine-options {
-  display: flex;
-  gap: 2px;
-}
-
-.codex-runtime-menu .runtime-engine-option {
-  position: relative;
-  width: auto;
-  height: 38px;
-  min-width: 0;
-  align-items: center;
-  flex: 0 1 auto;
-  border-radius: var(--radius-xs);
-  color: var(--ink-secondary);
-  padding: 0 10px;
-  text-align: left;
-}
-
-.codex-runtime-menu .runtime-engine-option[aria-checked="true"] {
-  background: var(--selection-surface);
-  color: var(--ink);
-}
-
-.codex-runtime-menu .runtime-engine-option:hover:not(:disabled) {
-  background: var(--menu-hover);
-}
-
 .codex-runtime-menu .runtime-engine-option:disabled {
   cursor: default;
   opacity: 1;
@@ -2734,10 +2707,6 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: 2px;
-}
-
-.codex-model-item[aria-checked="true"] {
-  background: var(--menu-hover);
 }
 
 /* The one control in the panel that is dragged, so it is the one with weight:
@@ -2870,7 +2839,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   text-align: left;
 }
 
-.codex-runtime-menu button:hover {
+.codex-runtime-menu button:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
@@ -2904,14 +2873,16 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   --runtime-summary-padding-bottom: var(--space-2);
   --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
   --runtime-effort-block: 36px;
-  --runtime-summary-gap: calc(var(--space-1) * 2.5);
+  --runtime-summary-gap: var(--space-2);
+  --runtime-model-group-gap: var(--space-1);
   --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
   --runtime-summary: calc(
     2px + var(--runtime-summary-padding-top) + var(--runtime-summary-padding-bottom)
     + var(--runtime-summary-context, 1) * var(--runtime-context-row)
     + var(--runtime-selection-row)
     + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
-    + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * var(--runtime-summary-gap)
+    + var(--runtime-summary-context, 1) * var(--runtime-summary-gap)
+    + var(--runtime-summary-effort, 0) * var(--runtime-model-group-gap)
   );
   position: relative;
   display: block;
@@ -3020,6 +2991,16 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   padding: var(--runtime-summary-padding-top) var(--space-2) var(--runtime-summary-padding-bottom);
 }
 
+/* The model and its effort control form one group beneath the source path. */
+.runtime-panel-model-group {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--runtime-model-group-gap);
+}
+
 /* Where the model comes from, as a quiet path above it. */
 .runtime-panel-context {
   display: flex;
@@ -3116,11 +3097,11 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-tertiary);
 }
 
-/* The thumb stays inside the track at both ends, including its focus ring. */
+/* The track and model button share outer guides; labels and icons keep their
+ * own reading inset. The thumb stays inside the track, including its focus ring. */
 .runtime-panel-effort {
   height: var(--runtime-effort-block);
   flex: 0 0 auto;
-  padding-inline: var(--runtime-content-inset) 0;
 }
 
 /* Focus stays within the painted control edge so keyboard use does not move
@@ -3203,12 +3184,6 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   color: var(--ink);
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);
-}
-
-.codex-runtime-menu .runtime-engine-option[aria-checked="true"],
-.codex-runtime-menu .runtime-provider-option[aria-checked="true"],
-.runtime-panel .codex-model-item[aria-checked="true"] {
-  background: var(--selection-surface);
 }
 
 .runtime-panel .runtime-engine-option[aria-checked="true"] > svg:not(.engine-icon),
@@ -3471,6 +3446,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   width: var(--runtime-context-row);
   height: var(--runtime-context-row);
   flex: 0 0 auto;
+  margin-inline-end: calc(-1 * var(--runtime-content-inset));
   justify-content: center;
   padding: 0;
   border-radius: var(--radius-xs);

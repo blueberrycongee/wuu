@@ -5,12 +5,13 @@ const { contextBridge, ipcRenderer } = require("electron");
 // composer state and argument serialization run unchanged in Chromium.
 const cwd = process.env.WUU_SELECTION_E2E_CWD || process.cwd();
 const now = new Date().toISOString();
+const project = { id: "response-selection-workspace", name: "Response selection workspace", path: cwd, created_at: now, updated_at: now };
 const answer = "Native drag selection starts here.\n\nRepeated 😀 café 中文 target. Middle separator. Repeated 😀 café 中文 target.\n\nLast paragraph stays visible.";
 function thread(id) {
   const live = id === "selection-main" && process.env.WUU_SELECTION_E2E_STREAMING === "true";
   return {
     id, preview: id === "selection-main" ? "Selection main fixture" : "Selection other fixture",
-    cwd, model_provider: "e2e", model: "mock-selection", status: live ? "in_progress" : "idle", created_at: now, updated_at: now,
+    cwd, workspace_id: project.id, workspace_kind: "project", model_provider: "e2e", model: "mock-selection", status: live ? "in_progress" : "idle", created_at: now, updated_at: now,
     turns: [{ id: `${id}-turn`, terminal: !live, status: live ? "in_progress" : "completed", items_view: "full", started_at: now, ...(!live ? { completed_at: now } : {}),
       items: [
         { id: `${id}-user`, type: "user_message", status: "completed", text: "Select part of the answer.", ...(id === "selection-main" ? { related_session_id: "selection-other", input_text: "Related selection fixture" } : {}) },
@@ -24,7 +25,7 @@ const listeners = new Set();
 ipcRenderer.on("selection:server-event", (_event, event) => {
   for (const listener of listeners) listener(event);
 });
-const projectList = () => ({ projects: [], active_context: { kind: "no_project", cwd } });
+const projectList = () => ({ projects: [project], active_context: { kind: "project", project_id: project.id, cwd } });
 function record(method, args) {
   ipcRenderer.send("selection:bridge-call", { method, args });
 }
@@ -36,7 +37,7 @@ function acceptUserMessage(threadID, turn, sourceID, text, contentParts) {
 }
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   initialize: async () => ({ protocol_version: "e2e", general_settings: settings, provider: "e2e", model: "mock-selection", workspace_root: cwd, providers: [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true, api_key_configured: true }] }),
-  listProjects: async () => projectList(), selectNoProject: async () => projectList(),
+  listProjects: async () => projectList(), selectProject: async () => projectList(),
   updateGeneralSettings: async value => ({ general_settings: settings = { ...settings, ...value } }),
   getBuildInfo: async () => ({ desktop: { version: "selection-e2e", date: now } }),
   listThreads: async () => ({ threads }), listArchivedThreads: async () => ({ threads: [] }),

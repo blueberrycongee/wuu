@@ -12,31 +12,44 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // maxLineBytes bounds a single NDJSON line. Codex notifications are normally
 // well under 1MB; reasoning deltas can be large, so 16MB matches the reference
 // client and guards the parser against pathological input.
-const maxLineBytes = 16 * 1024 * 1024
+const (
+	maxLineBytes        = 16 * 1024 * 1024
+	stderrTailLines     = 6
+	stderrTailLineBytes = 700
+)
+
+var (
+	stderrURLQuery  = regexp.MustCompile(`\?[^\s"']+`)
+	stderrOpaqueRun = regexp.MustCompile(`[A-Za-z0-9_\-.]{40,}`)
+)
 
 // Transport is the NDJSON framing layer over a codex app-server process.
 // It owns the child process lifecycle; the client owns JSON-RPC semantics.
 type Transport struct {
 	cmd *exec.Cmd
 
-	mu       sync.Mutex
-	stdin    io.WriteCloser
-	stdout   io.ReadCloser
-	stderr   io.ReadCloser
-	closed   bool
-	closeErr error
-	writeMu  sync.Mutex
-	stopOnce sync.Once
-	waitDone chan struct{}
-	waitErr  error
+	mu          sync.Mutex
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	stderr      io.ReadCloser
+	closed      bool
+	closeErr    error
+	writeMu     sync.Mutex
+	stopOnce    sync.Once
+	waitDone    chan struct{}
+	stderrDone  chan struct{}
+	stderrLines []string
+	waitErr     error
 
 	lineHandlers   []func(string)
 	stderrHandlers []func(string)
@@ -88,9 +101,9 @@ func NewTransport(opts TransportOptions) (*Transport, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start codex app-server: %w", err)
 	}
-	t := &Transport{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, waitDone: make(chan struct{})}
-	stdoutDone := t.readLoop(stdout)
+	t := &Transport{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, waitDone: make(chan struct{}), stderrDone: make(chan struct{})}
 	stderrDone := t.stderrLoop(stderr)
+	stdoutDone := t.readLoop(stdout)
 	go func() {
 		// Drain both pipes before Wait closes them, including terminal messages
 		// written just before a normal process exit.
@@ -128,7 +141,15 @@ func (t *Transport) readLoop(r io.Reader) <-chan struct{} {
 				if !errors.Is(err, io.EOF) {
 					t.fireClose(fmt.Sprintf("read stdout: %v", err))
 				} else {
-					t.fireClose("codex app-server exited")
+					select {
+					case <-t.stderrDone:
+					case <-time.After(100 * time.Millisecond):
+					}
+					reason := "codex app-server exited"
+					if stderr := t.stderrSummary(); stderr != "" {
+						reason = "codex app-server exited: " + stderr
+					}
+					t.fireClose(reason)
 				}
 				go func() { _ = t.Close() }()
 				return
@@ -143,11 +164,13 @@ func (t *Transport) stderrLoop(r io.Reader) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer close(t.stderrDone)
 		reader := bufio.NewReaderSize(r, 64*1024)
 		for {
 			line, err := readLine(reader)
 			if len(line) > 0 {
 				t.mu.Lock()
+				t.appendStderrLocked(line)
 				handlers := make([]func(string), len(t.stderrHandlers))
 				copy(handlers, t.stderrHandlers)
 				t.mu.Unlock()
@@ -161,6 +184,31 @@ func (t *Transport) stderrLoop(r io.Reader) <-chan struct{} {
 		}
 	}()
 	return done
+}
+
+func (t *Transport) appendStderrLocked(line string) {
+	line = stderrURLQuery.ReplaceAllString(line, "?<redacted>")
+	line = stderrOpaqueRun.ReplaceAllString(line, "<redacted>")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	if len(line) > stderrTailLineBytes {
+		line = line[:stderrTailLineBytes]
+		for len(line) > 0 && !utf8.ValidString(line) {
+			line = line[:len(line)-1]
+		}
+	}
+	t.stderrLines = append(t.stderrLines, line)
+	if len(t.stderrLines) > stderrTailLines {
+		t.stderrLines = append(t.stderrLines[:0], t.stderrLines[len(t.stderrLines)-stderrTailLines:]...)
+	}
+}
+
+func (t *Transport) stderrSummary() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Join(t.stderrLines, "\n")
 }
 
 // readLine reads one line up to maxLineBytes.

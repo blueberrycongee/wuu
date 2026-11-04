@@ -89,9 +89,9 @@ func TestSearchHelpersSortFullSetBeforePaging(t *testing.T) {
 	for i := 519; i >= 0; i-- {
 		mustWriteFile(t, filepath.Join(root, fmt.Sprintf("file-%03d.txt", i)), "needle\n")
 	}
-	files, err := globWithFallback(root, root, "**/*.txt", 0)
+	files, err := globWithRipgrep(context.Background(), root, root, "**/*.txt", 0)
 	if err != nil {
-		t.Fatalf("glob fallback: %v", err)
+		t.Fatalf("glob: %v", err)
 	}
 	if len(files) != 520 || files[0] != "file-000.txt" || files[519] != "file-519.txt" {
 		t.Fatalf("glob did not return globally sorted full set: len=%d first=%q last=%q", len(files), files[0], files[len(files)-1])

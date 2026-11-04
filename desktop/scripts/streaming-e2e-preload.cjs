@@ -2,7 +2,14 @@ const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
-const runtimeContext = { kind: "no_project", cwd };
+const project = {
+  id: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? "tabbar-demo" : "e2e-workspace",
+  name: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? "Tabbar demo" : "E2E workspace",
+  path: cwd,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+const runtimeContext = { kind: "project", project_id: project.id, cwd };
 let startedThreadCount = 0;
 let workspacePreviewReadFailed = false;
 const threads = new Map();
@@ -10,10 +17,7 @@ const heldMessages = new Map();
 
 function projectList() {
   return {
-    projects: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? [{
-      id: "tabbar-demo", name: "Tabbar demo", path: cwd,
-      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-    }] : [],
+    projects: [project],
     active_context: runtimeContext
   };
 }
@@ -27,6 +31,8 @@ function mockThread(id, source) {
     model: "mock-stream",
     ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { model_variant: "medium" } : {}),
     cwd,
+    workspace_id: project.id,
+    workspace_kind: "project",
     status: "idle",
     ...(source ? { source } : {}),
     created_at: now,
@@ -37,7 +43,9 @@ function mockThread(id, source) {
 
 // Opt-in sidebar overflow for the scroll-fade regression using the same bridge.
 const sidebarSeedTime = Date.now();
-for (let index = 0; index < Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0); index++) {
+const sidebarSeedCount = new URLSearchParams(location.search).has("emptyRecent")
+  ? 0 : Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0);
+for (let index = 0; index < sidebarSeedCount; index++) {
   const thread = mockThread(`sidebar-fade-${index}`);
   thread.preview = `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`;
   thread.created_at = thread.updated_at = new Date(sidebarSeedTime - index * 1000).toISOString();
@@ -85,6 +93,14 @@ const workspaceDemoFiles = {
 function workspaceDemoPath(path) {
   const normalized = path.replace(/\\/g, "/");
   return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
+}
+
+async function catalogThreads() {
+  if (process.env.WUU_RECENT_CATALOG_E2E) {
+    const catalog = await ipcRenderer.invoke("test:recent-catalog");
+    if (catalog) { threads.clear(); for (const thread of catalog) threads.set(thread.id, thread); }
+  }
+  return [...threads.values()];
 }
 
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
@@ -225,8 +241,8 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     threads.set(threadId, thread);
     return { thread };
   },
-  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
-  listAllThreads: async () => ({ threads: [...threads.values()] }),
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? await catalogThreads() : [] }),
+  listAllThreads: async () => ({ threads: await catalogThreads() }),
   getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {

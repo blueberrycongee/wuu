@@ -374,6 +374,12 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		activePluginSubjects[item.SubjectID] = struct{}{}
 	}
 	runtimeStatuses := make(map[string]pluginhost.Status)
+	conversationTools := make(map[string][]string)
+	for _, definition := range snapshot.PluginHost.ToolDefinitions() {
+		if tool, ok := snapshot.PluginHost.Tool(definition.Name); ok && (s.rt.Toolkit == nil || !s.rt.Toolkit.IsToolDisabled(definition.Name)) {
+			conversationTools[tool.PluginID] = append(conversationTools[tool.PluginID], definition.Name)
+		}
+	}
 	if snapshot.PluginHost != nil {
 		for _, status := range snapshot.PluginHost.Statuses() {
 			runtimeStatuses[status.ID] = status
@@ -520,13 +526,15 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		settingsPages := viewEntries(item.SettingsPages)
 		presentation := pluginPresentation(item.Manifest)
 		packageRecord := ExtensionInventoryRecord{
-			ID:              item.SubjectID,
-			Name:            presentation.DisplayName,
-			Description:     presentation.ShortDescription,
-			LongDescription: presentation.LongDescription,
-			Developer:       presentation.DeveloperName,
-			Icon:            extensionIconDescriptor(item.Icon),
-			Kind:            extensions.KindPlugin,
+			ConversationTools: conversationTools[item.ID],
+			ID:                item.SubjectID,
+			Name:              presentation.DisplayName,
+			Description:       presentation.ShortDescription,
+			LongDescription:   presentation.LongDescription,
+			Family:            presentation.Family,
+			Developer:         presentation.DeveloperName,
+			Icon:              extensionIconDescriptor(item.Icon),
+			Kind:              extensions.KindPlugin,
 			Provenance: extensions.Provenance{
 				Kind:     extensions.KindPlugin,
 				Source:   pluginSource,
@@ -669,8 +677,10 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 
 	for _, module := range snapshot.NativeRendererModules() {
 		enabled := true
+		presentation := pluginPresentation(pluginpkg.Manifest{Interface: module.Interface})
 		records = append(records, ExtensionInventoryRecord{
 			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
+			Family:     presentation.Family,
 			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
 			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
 			PackageSource: "bundled", ApprovalState: ExtensionApprovalOfficial,
@@ -689,6 +699,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			}
 		}
 		dependencies := snapshot.PluginHost.Dependencies()
+		dependencyIssues := snapshot.PluginHost.DependencyIssues()
 		for index := range records {
 			record := &records[index]
 			if record.Kind != extensions.KindPlugin {
@@ -697,6 +708,13 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			edges, admitted := dependencies[record.Provenance.PluginID]
 			if !admitted {
 				continue
+			}
+			// Catalog resolution cannot describe optional edges omitted by the committed mixed graph.
+			record.ActivationIssues = nil
+			for _, issue := range dependencyIssues[record.Provenance.PluginID] {
+				record.ActivationIssues = append(record.ActivationIssues, ExtensionPluginActivationIssue{
+					Kind: issue.Kind, RelatedPluginID: issue.Provider,
+				})
 			}
 			var resolved, required []string
 			for _, edge := range edges {
@@ -731,10 +749,11 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 }
 
 type pluginInterface struct {
-	DisplayName      string `json:"displayName"`
-	ShortDescription string `json:"shortDescription"`
-	LongDescription  string `json:"longDescription"`
-	DeveloperName    string `json:"developerName"`
+	Family           *ExtensionFamilyDescriptor `json:"family"`
+	DisplayName      string                     `json:"displayName"`
+	ShortDescription string                     `json:"shortDescription"`
+	LongDescription  string                     `json:"longDescription"`
+	DeveloperName    string                     `json:"developerName"`
 }
 
 // pluginPresentation resolves what people see for a plugin. An interface
@@ -753,7 +772,17 @@ func pluginPresentation(manifest pluginpkg.Manifest) pluginInterface {
 		}
 		return ""
 	}
+	if presentation.Family != nil {
+		family := presentation.Family
+		family.ID = strings.TrimSpace(family.ID)
+		family.Name = strings.TrimSpace(family.Name)
+		family.Description = strings.TrimSpace(family.Description)
+		if family.ID == "" || family.Name == "" {
+			presentation.Family = nil
+		}
+	}
 	return pluginInterface{
+		Family:           presentation.Family,
 		DisplayName:      first(presentation.DisplayName, manifest.Name, manifest.ID),
 		ShortDescription: first(presentation.ShortDescription, manifest.Description),
 		LongDescription:  first(presentation.LongDescription),
@@ -1145,18 +1174,22 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	snapshot, err := s.rt.LoadEffectiveConfigSnapshot()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.rt.RefreshExtensions(cfg); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	activationErr := s.rt.PublishExtensionRefresh(snapshot.Config)
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	if activationErr == nil {
+		activationErr = s.recordCatalogPublishedConfig(snapshot.Source)
 	}
 	inventory, skills := s.currentExtensionState()
 	return s.writePluginGenerationResponse(req, ExtensionCatalogRefreshResult{
 		ExtensionInventory: inventory,
 		Skills:             skills,
-	}, nil, releaseMutation)
+	}, activationErr, releaseMutation)
 }
 
 func (s *Server) handleConfigAdvancedUpdate(req Request) error {

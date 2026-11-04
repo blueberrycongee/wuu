@@ -2,8 +2,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"github.com/blueberrycongee/wuu/internal/tools"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,12 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/userspace"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // A user-host boundary must be installed before any state exists, while legacy
@@ -125,16 +130,39 @@ func (v *testUserHostIsolationVerifier) VerifyUserHostIsolation(context.Context,
 }
 
 func TestUserHostConfigDoesNotInheritExecutableCodingExtensions(t *testing.T) {
-	cfg := config.Config{Hooks: map[string][]config.HookEntry{"x": {}}, MCPServers: map[string]config.MCPServerConfig{"coding": {}}, MCPJson: &config.MCPJsonTrust{}}
+	enabled := true
+	cfg := config.Config{Hooks: map[string][]config.HookEntry{"x": {}}, MCPServers: map[string]config.MCPServerConfig{"coding": {URL: "https://coding.example.test/mcp"}, "plugin.connector-fixture.docs": {Enabled: &enabled}}, MCPJson: &config.MCPJsonTrust{}}
+	// Reconstruct from the persisted source, as a host restart does.
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reopened config.Config
+	if err := json.Unmarshal(raw, &reopened); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	catalog := []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "connector-fixture", MCPServers: map[string]config.MCPServerConfig{"docs": {URL: "https://docs.example.test/mcp", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Documents"}}}}}}
+	codingServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{}), catalog)
+	if !codingServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
+		t.Fatal("Coding lost saved connector preference after restart")
+	}
+	personalServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}), catalog)
+	if personalServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
+		t.Fatal("Personal imported Coding connector preference after restart")
+	}
+	if _, exists := personalServers["coding"]; exists {
+		t.Fatal("Personal imported standalone Coding endpoint")
+	}
 	legacy := userHostConfig(cfg, userspace.Binding{})
-	if len(legacy.Hooks) != 1 || len(legacy.MCPServers) != 1 {
+	if len(legacy.Hooks) != 1 || len(legacy.MCPServers) != 2 {
 		t.Fatal("Coding config changed")
 	}
 	personal := userHostConfig(cfg, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"})
 	if personal.Hooks != nil || personal.MCPServers != nil || personal.MCPJson != nil {
 		t.Fatal("Personal inherited Coding executable extensions")
 	}
-	if len(cfg.Hooks) != 1 || len(cfg.MCPServers) != 1 {
+	if len(cfg.Hooks) != 1 || len(cfg.MCPServers) != 2 {
 		t.Fatal("shared config was mutated")
 	}
 }
@@ -217,5 +245,65 @@ func TestUserHostSessionStorageIsolatedFromCodingAcrossRestart(t *testing.T) {
 			t.Fatalf("personal=%v session=%+v found=%v err=%v", tc.personal, got, found, err)
 		}
 		closeSession(rt)
+	}
+}
+
+// A host-only capability surface must not forget a conversation's pinned
+// isolation when deciding which local projects it can disclose or grant.
+func TestExternalWorkspaceCatalogHonorsPinnedEnvironment(t *testing.T) {
+	for _, isolated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("isolated=%v", isolated), func(t *testing.T) {
+			root, home, state, project := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+			catalog, err := json.Marshal(map[string]any{"projects": []map[string]string{{"id": "project", "name": "Local project", "path": project}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, "projects.json"), catalog, 0600); err != nil {
+				t.Fatal(err)
+			}
+			kit, err := tools.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := &Session{RootDir: root, WuuHome: home, StateDir: state, Toolkit: kit}
+			defer owner.executionEnvironmentManager().Close()
+			if isolated {
+				owner.executionEnvironmentConfig = executionenv.Config{Default: "remote", Profiles: map[string]executionenv.Profile{"remote": {Backend: "command", Command: []string{"unused-test-adapter"}}}}
+			}
+			if err := owner.PinExecutionEnvironment("conversation", ""); err != nil {
+				t.Fatal(err)
+			}
+			// The saved session choice, not the current default or parent toolkit,
+			// owns the catalog boundary after settings change or runtime reload.
+			owner.executionEnvironmentConfig = executionenv.Config{}
+			thread, err := owner.NewThreadCapabilityRuntime("conversation", root, ThreadModelSelection{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer owner.releasePluginGeneration(thread.PluginGeneration)
+			want := 1
+			if isolated {
+				want = 0
+			}
+			if got := thread.Toolkit.RegisteredWorkspaces(); len(got) != want {
+				t.Errorf("engine grants: got %v, want %d projects", got, want)
+			}
+			raw, err := thread.Toolkit.Execute(context.Background(), providers.ToolCall{Name: "list_workspaces", Arguments: `{}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result struct {
+				Workspaces []workspaces.Workspace `json:"workspaces"`
+			}
+			if err := json.Unmarshal([]byte(raw), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Workspaces) != want {
+				t.Errorf("MCP discovery: got %s, want %d projects", raw, want)
+			}
+			if thread.Toolkit.ExecutionEnvironment() != nil {
+				t.Fatal("host capabilities must remain local")
+			}
+		})
 	}
 }

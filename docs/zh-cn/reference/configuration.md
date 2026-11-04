@@ -32,6 +32,7 @@ Provider 凭据优先使用环境变量引用。工具输出可能遮蔽密钥�
 | `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
 | `agent.model_roles`、`agent.model_aliases`、`agent.project_models` | 路由模型工作 |
 | `agent.permission_mode` | 设置本地执行权限 |
+| `ptc`、`execution_environments` | 选择用户管理的工具运行时和执行适配器 |
 
 改变 JSON 字段大小写不能绕过限制。其他允许的项目字段仍可能影响提示、工具、Hook 和服务，因此这种过滤不代表陌生仓库可以安全执行。
 
@@ -58,6 +59,28 @@ Provider 条目为一条模型连接命名。例如，下面的用户配置片�
 
 [外部引擎](../getting-started/external-engines.md)是独立程序，不是 provider 类型。机器本地的 `engines` 配置控制检测、可执行文件选择和默认引擎。在桌面中修改某个会话的模型，不一定改变工作区默认值；需要影响未来会话时，应从设置中修改。
 
+## 内置 Agent 设置
+
+桌面不再提供单独的「内置 Agent」设置页。上下文管理、程序化工具调用和执行环境
+仍可通过用户配置文件修改，已有值保持不变。这些设置不控制外部引擎。
+Git 提交署名仍在**设置 → 常规 → Git**中调整。
+
+| 字段 | 含义 |
+| --- | --- |
+| `agent.disable_auto_compact` | `true` 关闭自动压缩；省略或设为 `false` 时启用。 |
+| `agent.compact_threshold_pct` | 压缩触发比例，如 `0.5` 表示 50%；`0` 或省略表示自动。自定义值须大于 `0` 且小于 `1`。 |
+| `agent.compact_keep_recent_tokens` | 压缩后保留的最近原始上下文 token 预算；`0` 或省略使用 20,000。 |
+| `providers.<name>.context_window` | 指定连接的上下文窗口覆盖值；`0` 或省略时使用识别到的模型信息。 |
+| `agent.max_context_tokens` | 模型上限未知时的回退上下文上限；`0` 或省略时自动确定。 |
+| `ptc.enabled` | 内置引擎的程序化工具调用开关，默认为 `true`。 |
+| `execution_environments.default`、`execution_environments.profiles` | 新会话的默认环境和命名环境配置，详见[执行环境](../desktop/execution-environments.md)。 |
+
+只修改现有用户文件中的相关字段，不要覆盖其他设置。编辑后先完成正在运行的工作，
+再完全退出并重新启动 Wuu，以应用全部改动。有效模型改动可以自动刷新，但保存文件
+不保证所有运行时设置立即更新。项目层可以覆盖允许的 Agent 字段；Provider 连接、
+PTC、执行环境和 Project Agent 模型默认值须写入用户配置，而非项目设置。
+自定义配置提供者可能使用其他权威来源，而不是此文件。
+
 ## 工具加载
 
 `agent.tool_loading` 默认为 `auto`。已支持的官方接口使用原生加载：
@@ -83,8 +106,8 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 
 ## Project Agent 模型选择
 
-在启用 Project Agent 的构建中，协调者使用主对话模型。可以在设置 → 运行时中
-分别选择技术负责人和持久执行者的默认模型，也可以修改用户配置：
+在启用 Project Agent 的构建中，协调者使用主对话模型。在用户配置中
+分别设置技术负责人和持久执行者的默认模型，然后完全退出并重新启动 Wuu：
 
 ```json
 { "agent": { "project_models": {

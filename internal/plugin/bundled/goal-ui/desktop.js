@@ -48,20 +48,23 @@ export async function activate(api) {
     for (const listener of listeners.get(id) || []) listener();
   }
   async function refresh(id) {
-    if (!id || disposed) return;
+    if (!id || disposed || api.signal.aborted) return;
     const revision = (revisions.get(id) || 0) + 1;
     revisions.set(id, revision);
     try {
       const value = await requestGoal("get_goal", { thread_id: id });
-      if (disposed || revisions.get(id) !== revision) return;
+      if (disposed || api.signal.aborted || revisions.get(id) !== revision) return;
       const goal = value?.goal || null;
       publish(id, { goal, error: "", loaded: true });
     } catch (error) {
+      // The host proves graph retirement independently of provider error text.
+      // Keep the prior presentation until its replacement owns the composer.
+      if (api.signal.aborted || error?.code === "WUU_PLUGIN_SCOPE_RETIRED") return;
       if (!disposed && revisions.get(id) === revision) {
         const message = String(error.message || error);
-        // Electron wraps the host's exact missing-provider message. Keep
-        // version mismatches and provider failures visible to the user.
-        if (message.endsWith("no provider for service goal.control")) {
+        // Only host-proven, unconfigured optional absence hides this control.
+        // Selected-provider failures and version mismatches remain visible.
+        if (error?.code === "service_optional_absent") {
           publish(id, { goal: null, error: "", loaded: true, unavailable: true });
         } else {
           publish(id, { ...(cache.get(id) || empty), loaded: true, unavailable: false, error: message });

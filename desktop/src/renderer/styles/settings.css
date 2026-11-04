@@ -2,14 +2,14 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
-  --settings-canvas: var(--surface-1);
-  --settings-card: var(--theme-override-color-surface, var(--gray-0));
+  --settings-canvas: var(--paper);
+  --settings-card: color-mix(in srgb, var(--surface-1) 55%, var(--paper));
   /* A group is a sheet lifted off the canvas: a large corner, a faint edge
    * and a soft shadow, so grouping reads without a gray frame. */
   --settings-group-radius: var(--radius-md);
-  --settings-group-shadow: var(--shadow-card);
+  --settings-group-shadow: none;
   /* Row breathing room; empty lines and list rows share it. */
-  --settings-row-pad-block: var(--space-4);
+  --settings-row-pad-block: var(--space-3);
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -115,14 +115,13 @@
   white-space: nowrap;
 }
 
-/* Search is a filled control rather than a page row. Its text starts on the
- * row-label axis, so scanning the rail keeps one left edge. */
+/* Search is a subtle filter bar in the rail. */
 .settings-search {
   position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  margin: var(--space-2) 0 var(--space-1);
+  margin: var(--space-1) 0;
 }
 
 .settings-search > .icon {
@@ -134,20 +133,28 @@
 
 .settings-search input {
   width: 100%;
-  min-height: var(--sidebar-row-height);
+  min-height: 28px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: var(--field-bg);
-  box-shadow: var(--shadow-soft);
+  border-radius: 6px;
+  background: var(--ink-overlay-4);
+  box-shadow: none;
   color: var(--ink);
   font: inherit;
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   padding: 0 var(--control-padding-inline) 0 calc(var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
-  transition: background var(--motion-fast) var(--ease-out);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
 .settings-search input:hover {
-  background: var(--field-hover-bg);
+  background: var(--ink-overlay-6);
+}
+
+.settings-search input:focus {
+  background: var(--field-bg);
+  border-color: var(--hairline-strong);
+  outline: none;
 }
 
 .settings-search input::placeholder {
@@ -158,20 +165,20 @@
   margin: 0;
   padding: var(--space-2) var(--sidebar-row-pad-x);
   color: var(--ink-tertiary);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   line-height: var(--line-ui);
 }
 
-/* App preferences sit at the top without a label; labeled groups follow, and
- * plugin-contributed pages keep their own group. */
+/* Built-in pages sit in categorized groups; plugin-contributed pages
+ * follow under their own subtle label. */
 .settings-nav {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--sidebar-functional-group-gap);
+  gap: 16px;
   overflow-y: auto;
-  margin-top: var(--space-2);
+  margin-top: var(--space-1);
   padding-bottom: var(--space-3);
 }
 
@@ -180,26 +187,28 @@
 .settings-nav-group {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--sidebar-row-gap);
+  gap: 2px;
 }
 
 /* A group label names a cluster without competing with its rows. */
 .settings-nav-group-label {
   margin: 0 0 2px;
-  padding: 0 var(--sidebar-row-pad-x);
-  color: var(--sidebar-heading-ink);
-  font-size: var(--sidebar-heading-size, var(--font-sm));
-  font-weight: var(--weight-regular);
+  padding: 2px var(--sidebar-row-pad-x);
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.01em;
   line-height: var(--line-ui);
 }
 
 .settings-nav-item {
   display: flex;
   width: 100%;
+  min-height: var(--sidebar-row-height);
   height: auto;
   align-items: center;
   gap: var(--sidebar-nav-column-gap);
-  border-radius: var(--sidebar-row-radius);
+  border-radius: 6px;
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
@@ -210,15 +219,16 @@
 }
 
 .settings-nav-item:hover {
-  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
+  background: var(--sidebar-row-hover-bg);
   color: var(--ink);
 }
 
 /* Share the navigation selection surface without changing label metrics. */
 .settings-nav-item.active {
-  background: var(--sidebar-row-selected-bg);
-  box-shadow: var(--sidebar-row-selected-shadow);
+  background: var(--selection-surface);
+  box-shadow: none;
   color: var(--ink-strong);
+  font-weight: var(--weight-medium);
 }
 
 /* =========================================================================
@@ -351,13 +361,16 @@
    * hundreds of px of slack left in the column. */
   container-name: settings-page;
   container-type: inline-size;
-  --settings-column-width: calc(var(--font-ui) * 50);
+  --settings-column-width: 660px;
   /* Every picker and text field on a page shares one width, so trailing
    * controls start on one edge down a group instead of following their
    * current value's length. */
-  --settings-control-width: calc(var(--font-ui) * 16);
+  --settings-control-width: 200px;
+  --settings-number-control-width: 112px;
+  --control-field-height: 32px;
+  --settings-row-pad-block: 12px;
   --settings-pad: var(--page-padding);
-  --settings-gap: var(--section-gap);
+  --settings-gap: 28px;
   width: min(calc(var(--settings-column-width) + var(--settings-pad) * 2), 100%);
   /* flex-shrink: 0 keeps the bottom padding inside the scrollable area
    * when content exceeds the viewport height. */
@@ -365,8 +378,7 @@
   flex-direction: column;
   gap: var(--settings-gap);
   margin: 0 auto;
-  padding: var(--section-gap) var(--settings-pad) calc(var(--settings-pad) * 2);
-  animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
+  padding: 8px var(--settings-pad) calc(var(--settings-pad) * 2);
 }
 
 /* --- Page title ----------------------------------------------------------
@@ -413,17 +425,18 @@
  * ------------------------------------------------------------------------- */
 
 .settings-page-header {
-  --settings-title-line: calc(var(--font-heading) * 1.3);
+  --settings-title-line: 28px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-2) var(--space-6);
+  align-items: center;
+  gap: 4px var(--space-6);
+  padding-bottom: 2px;
 }
 
 .settings-page-heading {
   display: grid;
   min-width: 0;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
 .settings-page-title {
@@ -431,15 +444,15 @@
   color: var(--ink-strong);
   font-size: var(--font-heading);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
-  line-height: 1.3;
+  letter-spacing: -0.015em;
+  line-height: 28px;
 }
 
 .settings-page-description {
-  max-width: 60ch;
+  max-width: 62ch;
   margin: 0;
   color: var(--ink-soft);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
@@ -481,11 +494,13 @@
 }
 
 .settings-language-options {
-  flex-wrap: wrap;
+  width: auto;
+  max-width: 100%;
+  flex-wrap: nowrap;
 }
 
 .settings-language-options button {
-  flex: 1 0 auto;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -497,7 +512,17 @@
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--section-heading-gap);
+  gap: 10px;
+}
+
+/* Headerless sections merge seamlessly into the preceding section's table. */
+.settings-section + .settings-section:not(:has(> .settings-section-header)) {
+  margin-top: calc(-1 * var(--settings-gap, 28px));
+}
+
+.settings-inline-row-anchor,
+.settings-inline-section-anchor {
+  display: contents;
 }
 
 /* The heading attaches to the body by half an em. Related body blocks
@@ -506,12 +531,12 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 12px;
 }
 
 .settings-section-header {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
 }
@@ -519,19 +544,20 @@
 .settings-section-heading {
   display: grid;
   min-width: 0;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
 .settings-section-title {
   margin: 0;
   color: var(--ink-strong);
   font-size: var(--font-title);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
   line-height: 1.4;
 }
 
 .settings-section-description {
-  max-width: 60ch;
+  max-width: 62ch;
   margin: 0;
   color: var(--ink-soft);
   font-size: var(--font-sm);
@@ -566,11 +592,20 @@
   gap: var(--space-2);
 }
 
-/* Text fields and pickers take the page's control width, so their edges line
- * up down a group; numbers keep their narrower field. */
-.settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+/* Text fields, pickers, unit inputs, and paired file actions take the page's
+ * control width so their left and right edges align down a group. */
+.settings-row-control > :is(.settings-input:not(.settings-input-num-center), .settings-input-unit, .select-menu),
+.settings-row-control:has(> .background-file-picker) {
   width: var(--settings-control-width);
   max-width: 100%;
+}
+
+.settings-row-control > .settings-input-unit > .settings-input-num {
+  width: 100%;
+}
+
+.settings-row-control:has(> .background-file-picker) > .settings-button {
+  flex: 1 1 0;
 }
 
 /* Notes below a group: font loading, save failures, list errors. */
@@ -582,23 +617,88 @@
 }
 
 /* --- Group ----------------------------------------------------------------
- * One lifted sheet per group; rows inside are separated by the softer
- * hairline and never carry their own frames.
+ * Clean divided rows directly on the reading column (Linear / Notion style);
+ * rows inside are separated by a soft hairline without a boxed card frame.
  * ------------------------------------------------------------------------- */
 
 .settings-group {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--settings-group-radius);
-  background: var(--settings-card);
-  box-shadow: var(--settings-group-shadow);
-  padding-inline: var(--card-padding);
+  border: 0;
+  border-top: 1px solid var(--hairline-soft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-inline: 0;
 }
 
-.settings-group > .settings-row:last-child {
+.settings-group > .settings-row:last-child,
+.settings-group > .settings-inline-row-anchor:last-child > .settings-row:last-child {
   border-bottom: 0;
+}
+
+/* Progressive disclosure for low-level runtime & execution parameters. */
+.settings-advanced-disclosure {
+  min-width: 0;
+  border: 0;
+  border-top: 1px solid var(--hairline-soft);
+  border-bottom: 1px solid var(--hairline-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-advanced-disclosure-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--settings-row-pad-block) 0;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.settings-advanced-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-advanced-disclosure-summary:hover .settings-advanced-disclosure-title {
+  color: var(--ink);
+}
+
+.settings-advanced-disclosure-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-advanced-disclosure-title {
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+}
+
+.settings-advanced-disclosure-description {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.45;
+}
+
+.settings-advanced-disclosure[open] > .settings-advanced-disclosure-summary > .settings-disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+.settings-advanced-disclosure-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-4) 0 var(--space-2);
+  border-top: 1px solid var(--hairline-soft);
 }
 
 /* Empty and loading lines stand in for rows at a row's height. */
@@ -643,7 +743,7 @@
 .settings-row-label {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
   min-width: 0;
 }
 
@@ -668,7 +768,7 @@
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
   line-height: 1.5;
-  max-width: 60ch;
+  max-width: 58ch;
   /* Descriptions can quote paths, which have no spaces to break at. */
   overflow-wrap: anywhere;
 }
@@ -755,8 +855,13 @@
 /* SelectMenu triggers share the input chrome so a row mixing both reads as
  * one control family. */
 .settings-row .settings-select-trigger {
+  min-height: var(--control-field-height);
   border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--field-bg);
   box-shadow: none;
+  font-size: var(--font-sm);
+  padding: 0 10px;
 }
 
 .settings-row-control-value {
@@ -764,7 +869,8 @@
   align-items: center;
   gap: var(--space-2);
   color: var(--ink-soft);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
+  font-family: var(--font-mono);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -784,7 +890,7 @@
   --chevron-tip-inset: calc(8.125 / 24);
 }
 
-:is(.catalog-row, .plugin-contribution, .model-service-card) > .settings-disclosure-chevron {
+:is(.catalog-row, .plugin-contribution, .model-service-card, .settings-advanced-disclosure-summary) > .settings-disclosure-chevron {
   margin-inline-end: calc(var(--icon-size) * var(--chevron-tip-inset) * -1);
 }
 
@@ -798,14 +904,14 @@
   width: 100%;
   min-height: var(--control-field-height);
   height: auto;
-  line-height: 1.5;
+  line-height: 1.4;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   background: var(--field-bg);
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   font-weight: 400;
-  padding: var(--control-padding-block) var(--control-padding-inline);
+  padding: 4px 10px;
   transition:
     background var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
@@ -866,7 +972,7 @@
 
 /* Keep native steppers available on hover and keyboard focus. */
 .settings-input-num-center {
-  width: 5em;
+  width: 4.25em;
   padding: 0;
   text-align: center;
 }
@@ -891,20 +997,22 @@
   display: inline-flex;
   min-height: var(--control-field-height);
   height: auto;
-  line-height: 1.5;
+  line-height: 1.4;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
+  gap: 6px;
   min-width: 0;
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
   background: var(--control-secondary-bg);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
-  padding: var(--control-padding-block) var(--control-padding-inline);
+  padding: 4px 12px;
   transition:
     background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out),
     transform var(--motion-fast) var(--ease-out);
 }
@@ -918,6 +1026,7 @@
 
 .settings-button:hover:not(:disabled) {
   background: var(--control-secondary-hover-bg);
+  border-color: var(--hairline-strong);
 }
 
 .settings-button:active:not(:disabled) {
@@ -932,31 +1041,37 @@
 /* Filled action: strongest contrast pair in the ramp. The hover mixes a
  * paper tint so it lightens in light theme and dims in dark theme. */
 .settings-button-primary {
-  background: var(--gray-900);
+  border-color: transparent;
+  background: var(--ink-strong);
   color: var(--paper);
 }
 
 .settings-button-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--gray-900) 90%, var(--paper));
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ink-strong) 90%, var(--paper));
 }
 
 .settings-button-ghost {
+  border-color: transparent;
   box-shadow: none;
   background: transparent;
   color: var(--ink-soft);
 }
 
 .settings-button-ghost:hover:not(:disabled) {
+  border-color: transparent;
   background: var(--ink-overlay-6);
   color: var(--ink);
 }
 
 .settings-button-danger {
+  border-color: transparent;
   background: var(--danger-soft);
   color: var(--danger);
 }
 
 .settings-button-danger:hover:not(:disabled) {
+  border-color: transparent;
   background: var(--danger-border);
 }
 
@@ -971,11 +1086,11 @@
 /* A ghost button has no box at rest, so the last one in a page, section, or
  * hero action row ends on its glyph (icon) or text, not its padding. The
  * hover fill reaches past the edge. */
-:is(.settings-page-actions, .settings-section-actions, .settings-detail-actions) > .settings-button-ghost:last-child {
+:is(.settings-page-actions, .settings-section-actions, .settings-detail-actions, .settings-row-control) > .settings-button-ghost:last-child {
   margin-inline-end: calc(var(--control-padding-inline) * -1);
 }
 
-:is(.settings-page-actions, .settings-section-actions, .settings-detail-actions) > .settings-button-ghost.settings-icon-button:last-child {
+:is(.settings-page-actions, .settings-section-actions, .settings-detail-actions, .settings-row-control) > .settings-button-ghost.settings-icon-button:last-child {
   margin-inline-end: calc((var(--control-field-height) - var(--icon-size)) / -2);
 }
 
@@ -1612,9 +1727,11 @@ button.settings-engine-expand:hover {
  * ----------------------------------------------------------------------------- */
 
 .settings-theme-options {
-  display: flex;
-  gap: var(--space-4);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   min-width: 0;
+  margin-bottom: 2px;
 }
 
 /* The cards split the column, so their edges meet the groups below, and
@@ -1622,13 +1739,12 @@ button.settings-engine-expand:hover {
 .settings-theme-card {
   display: flex;
   min-width: 0;
-  flex: 1 1 0;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--space-2);
+  gap: 6px;
   padding: 0;
   background: transparent;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
 }
 
 /* The preview is a container so its skeleton scales with the card. */
@@ -1637,11 +1753,13 @@ button.settings-engine-expand:hover {
   display: block;
   overflow: hidden;
   width: 100%;
-  aspect-ratio: 2 / 1;
+  aspect-ratio: 2.25 / 1;
   container-type: inline-size;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  transition: border-color var(--motion-fast) var(--ease-out);
+  border-radius: 8px;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .settings-theme-card:hover .settings-theme-preview {
@@ -1649,7 +1767,8 @@ button.settings-engine-expand:hover {
 }
 
 .settings-theme-card.active .settings-theme-preview {
-  border-color: var(--ink-strong);
+  border-color: var(--wuu-accent);
+  box-shadow: inset 0 0 0 1px var(--wuu-accent);
 }
 
 .settings-theme-card-label {
@@ -1666,6 +1785,7 @@ button.settings-engine-expand:hover {
 
 .settings-theme-card.active .settings-theme-card-label {
   color: var(--ink);
+  font-weight: var(--weight-medium);
 }
 
 /* Drawn like the native radios in onboarding: a boundary ring at rest, a
@@ -1681,7 +1801,41 @@ button.settings-engine-expand:hover {
 }
 
 .settings-theme-card.active .settings-theme-card-radio {
-  box-shadow: inset 0 0 0 calc(var(--icon-size-sm) * 0.3) var(--ink-strong);
+  box-shadow: inset 0 0 0 calc(var(--icon-size-sm) * 0.3) var(--wuu-accent);
+}
+
+.settings-palette-swatch {
+  display: inline-flex;
+  position: relative;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2em;
+  height: 2em;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--palette-ink) 20%, var(--palette-canvas));
+  border-radius: 50%;
+  background: var(--palette-canvas);
+  color: var(--palette-ink);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+}
+
+.settings-palette-swatch i {
+  position: absolute;
+  inset: auto 0 0;
+  height: 0.3em;
+  background: var(--palette-accent);
+}
+
+.select-menu-trigger.settings-palette-trigger {
+  min-height: calc(2 * var(--font-sm) + 12px);
+}
+
+.settings-palette-menu .select-menu-item {
+  gap: var(--space-3);
+  padding-block: var(--space-2);
 }
 
 .settings-theme-preview-window {
@@ -1715,7 +1869,8 @@ button.settings-engine-expand:hover {
   border-radius: var(--radius-pill);
 }
 
-.settings-theme-preview-line-title {
+.settings-theme-preview-window .settings-theme-preview-line.settings-theme-preview-line-title {
+  background: var(--settings-preview-accent, var(--settings-preview-light-line));
   width: 60%;
   height: 4cqi;
 }
@@ -1772,9 +1927,10 @@ button.settings-engine-expand:hover {
 .plugin-settings-editor-body {
   display: grid;
   min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding-inline: var(--card-padding);
+  border: 0;
+  border-top: 1px solid var(--hairline-soft);
+  border-radius: 0;
+  padding-inline: 0;
 }
 
 .plugin-settings-editor-body > .settings-row:last-child {
@@ -1914,8 +2070,14 @@ button.settings-engine-expand:hover {
   gap: var(--settings-gap);
 }
 
+:is(.settings-usage-card, .settings-usage-stats) {
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--settings-group-radius);
+  background: var(--settings-card);
+}
+
 .settings-usage-card {
-  padding-block: var(--card-padding);
+  padding: var(--card-padding);
 }
 
 /* Headline numbers share one card, divided like a table row. Four fit side
@@ -2543,23 +2705,23 @@ button.settings-engine-expand:hover {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--section-heading-gap);
+  gap: var(--space-2);
 }
 
 .settings-archive-group-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
+  justify-content: flex-start;
+  gap: var(--space-2);
 }
 
 .settings-archive-group-name {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   color: var(--ink-strong);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   line-height: 1.4;
 }
@@ -2575,9 +2737,19 @@ button.settings-engine-expand:hover {
 }
 
 .settings-archive-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ink-overlay-6);
+  color: var(--ink-soft);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-archive-row {
@@ -2588,7 +2760,7 @@ button.settings-engine-expand:hover {
   justify-content: space-between;
   gap: var(--space-4);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--settings-row-pad-block) 0;
+  padding: 10px 0;
 }
 
 .settings-archive-row:last-child {
@@ -2599,16 +2771,19 @@ button.settings-engine-expand:hover {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  flex-direction: column;
-  gap: var(--space-1);
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
 }
 
 .settings-archive-title {
   display: block;
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: var(--ink);
+  color: var(--ink-strong);
   font-size: var(--font-ui);
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -2616,10 +2791,12 @@ button.settings-engine-expand:hover {
 }
 
 .settings-archive-time {
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .settings-archive-restore {
@@ -2823,8 +3000,12 @@ button.settings-engine-expand:hover {
   border: 0;
   border-right: 1px solid var(--hairline-soft);
   border-radius: 0;
-  background: var(--workbench-canvas-bg);
+  background: color-mix(in srgb, var(--surface-1) 60%, var(--paper));
   box-shadow: none;
+}
+
+:root[data-theme="dark"] .app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar {
+  background: var(--workbench-canvas-bg);
 }
 
 .app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar .sidebar-content {
@@ -2852,8 +3033,10 @@ button.settings-engine-expand:hover {
 }
 
 .app-shell .settings-embedded .settings-navigation-title {
-  margin: 0;
+  margin: 0 0 2px;
   padding-block: 0;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
 }
 
 .app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed .settings-sidebar,

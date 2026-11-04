@@ -28,6 +28,7 @@ import {
   type UsageOverviewParams,
   type WindowResizeState,
   type WuuDesktopApi,
+  type WorkspaceFileChange,
 } from "../shared/protocol";
 
 import type { ChromeOverlayApi, ChromeOverlayEvent } from "../shared/chromeOverlay";
@@ -163,6 +164,16 @@ const api: WuuDesktopApi = {
     ipcRenderer.on("wuu:desktop-update-changed", listener);
     return () => ipcRenderer.removeListener("wuu:desktop-update-changed", listener);
   },
+  ...(process.platform === "darwin" ? { dictation: {
+    start: (id: string, locale: string) => ipcRenderer.invoke("wuu:dictation-start", id, locale),
+    stop: (id: string) => ipcRenderer.invoke("wuu:dictation-stop", id),
+    cancel: (id: string) => ipcRenderer.invoke("wuu:dictation-cancel", id),
+    onEvent: (listener: (event: import("../shared/protocol").DictationEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: import("../shared/protocol").DictationEvent) => listener(event);
+      ipcRenderer.on("wuu:dictation-event", handler);
+      return () => { ipcRenderer.removeListener("wuu:dictation-event", handler); };
+    },
+  } } : {}),
   getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
   requestSystemPermission: (permission, presentation) => ipcRenderer.invoke("wuu:system-permission-request", permission, presentation),
   updateSystemPermissionGuide: presentation => ipcRenderer.send("wuu:system-permission-guide-update", presentation),
@@ -225,6 +236,25 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-read", path, root),
   writeWorkspaceFile: (params, root?: string) =>
     ipcRenderer.invoke("wuu:file-write", params, root),
+  watchWorkspaceFile: async (path, root, listener) => {
+    const id = crypto.randomUUID();
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      ipcRenderer.removeListener("wuu:file-watch-change", receive);
+      void ipcRenderer.invoke("wuu:file-watch-stop", id).catch(error => console.error("File watch cleanup failed", error));
+    };
+    const receive = (_event: Electron.IpcRendererEvent, watchId: string, change: WorkspaceFileChange) => {
+      if (stopped || watchId !== id) return;
+      if (change.type === "error") stop();
+      listener(change);
+    };
+    ipcRenderer.on("wuu:file-watch-change", receive);
+    try { await ipcRenderer.invoke("wuu:file-watch-start", id, path, root); }
+    catch (error) { stop(); throw error; }
+    return stop;
+  },
   resolveWorkspaceFileReference: (reference: string, root?: string) =>
     ipcRenderer.invoke("wuu:file-reference-resolve", reference, root),
   startTerminalSession: (params) =>
@@ -362,6 +392,7 @@ const api: WuuDesktopApi = {
   refreshMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-refresh", name),
   startMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-start", name),
   getMCPAuthStatus: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-status", name),
+  refreshMCPIdentity: (name: string) => ipcRenderer.invoke("wuu:mcp-identity-refresh", name),
   finishMCPAuth: (name: string, state: string, code: string) =>
     ipcRenderer.invoke("wuu:mcp-auth-finish", name, state, code),
   removeMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-remove", name),
@@ -467,6 +498,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:message-flow-font-size-set", fontSize),
   listThreads: (cwd?: string) => ipcRenderer.invoke("wuu:thread-list", cwd),
   listAllThreads: () => ipcRenderer.invoke("wuu:thread-list-all"),
+  listRestartRecovery: () => ipcRenderer.invoke("wuu:thread-recovery-list"),
+  dismissRestartRecovery: (threadIDs: string[]) => ipcRenderer.invoke("wuu:thread-recovery-dismiss", threadIDs),
   listArchivedThreads: () =>
     ipcRenderer.invoke("wuu:thread-list-archived"),
   searchThreads: (query: string, limit?: number) =>

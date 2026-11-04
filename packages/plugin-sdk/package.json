@@ -80,6 +80,8 @@
     "dist/ui-catalog.d.ts",
     "dist/ui-conversation.js",
     "dist/ui-conversation.d.ts",
+    "dist/ui-plugin-reference.js",
+    "dist/ui-plugin-reference.d.ts",
     "dist/ui-composer-presentation.js",
     "dist/ui-composer-presentation.d.ts",
     "dist/ui-composer-runtime.js",

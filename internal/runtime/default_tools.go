@@ -45,7 +45,7 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		kit.SetNativeDeferredToolDiscovery(s.NativeDeferredToolDiscovery)
 		kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		bindToolkitHooks(kit, generation.hooks)
-		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), s.WuuHome, s.UserBinding()))
+		configureToolkitWorkspaceScope(kit, s.WuuHome, s.UserBinding())
 		var manager *mcp.Manager
 		if !s.UserBinding().IsUser() {
 			manager, err = startMCPManager(cfg, generation.active, required, generation.mcpOAuth)

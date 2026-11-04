@@ -1,14 +1,11 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { createContext, type ReactNode } from "react";
 import { isTouchWebShell } from "./ComposerFocus";
 
 // Settings pages share one hierarchy: a page header, titled sections, and
-// bordered groups of rows. Page components render their own header so page
-// actions (add, refresh) sit beside the title instead of on a row.
+// clean divided rows. Page components render their own header at the top of
+// the reading column so titles, descriptions, and page-level actions stay
+// aligned on the same reading axis (Linear / Notion layout).
 
-/** The settings window's titlebar slot. Inside it a page's title follows the
- * "Settings /" crumb and its actions sit at the strip's trailing edge, so the
- * page itself opens on its content. */
 export const SettingsTitlebarSlot = createContext<HTMLElement | null>(null);
 
 export function SettingsPageHeader({
@@ -20,22 +17,7 @@ export function SettingsPageHeader({
   description?: ReactNode;
   actions?: ReactNode;
 }): JSX.Element {
-  const slot = useContext(SettingsTitlebarSlot);
   const showDescription = Boolean(description) && !isTouchWebShell();
-  if (slot) {
-    return (
-      <>
-        {createPortal(
-          <>
-            <h1 className="settings-page-title">{title}</h1>
-            {actions ? <div className="settings-page-actions">{actions}</div> : null}
-          </>,
-          slot,
-        )}
-        {showDescription ? <p className="settings-page-description">{description}</p> : null}
-      </>
-    );
-  }
   return (
     <header className="settings-page-header">
       <div className="settings-page-heading">

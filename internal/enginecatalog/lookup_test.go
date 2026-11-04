@@ -190,6 +190,40 @@ func TestResolveInvalidOverrideDoesNotSearchInstallDirs(t *testing.T) {
 	}
 }
 
+func TestAntigravityResolvePreservesStandaloneAndExplicitOverrides(t *testing.T) {
+	home := withIsolatedHome(t)
+	t.Setenv("WUU_ANTIGRAVITY_BINARY", "")
+	binDir := filepath.Join(home, ".local", "bin")
+	cli := writeExec(t, filepath.Join(binDir, "agy"))
+	entry, ok := Lookup("antigravity")
+	if !ok {
+		t.Fatal("Antigravity catalog entry missing")
+	}
+	missing := filepath.Join(home, "missing", "agy")
+	if _, err := entry.Resolve(missing); err == nil {
+		t.Fatal("missing explicit override fell through to installed CLI")
+	}
+	standalone := writeExec(t, filepath.Join(binDir, "agy_acp_server"))
+	resolved, err := entry.Resolve("")
+	if err != nil || resolved != standalone {
+		t.Fatalf("standalone selection = %q, %v; want %q", resolved, err, standalone)
+	}
+	resolved, err = entry.Resolve(cli)
+	if err != nil || resolved != cli {
+		t.Fatalf("explicit CLI selection = %q, %v; want %q", resolved, err, cli)
+	}
+	if err := os.Remove(standalone); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		archive := writeExec(t, filepath.Join(binDir, "agy_acp_server.par"))
+		resolved, err = entry.Resolve("")
+		if err != nil || resolved != archive {
+			t.Fatalf("standalone archive selection = %q, %v; want %q", resolved, err, archive)
+		}
+	}
+}
+
 func TestInstallUserPathPrependsInstallDirs(t *testing.T) {
 	home := withIsolatedHome(t)
 	localBin := filepath.Join(home, ".local", "bin")

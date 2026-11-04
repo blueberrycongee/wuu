@@ -174,15 +174,33 @@ async function interruptedPanelMotion() {
     await waitFor(() => !moving(), "sheet opening finishes");
     const openX = x();
     const samples = [];
-    for (let cycle = 0; cycle < 3; cycle++) {
-      toggle.click();
-      await waitFor(() => x() > openX + (dockedX - openX) * 0.15 && moving(), "sheet exit is in flight");
-      const before = x();
-      toggle.click();
-      const after = [];
-      for (let count = 0; count < 3; count++) { await frame(); after.push(x()); }
-      samples.push({ before, after });
-      await waitFor(() => toggle.getAttribute("aria-pressed") === "true" && !moving() && Math.abs(x() - openX) < 1, "reversed sheet reaches open endpoint");
+    const rootStyle = document.documentElement.style;
+    const exitDuration = rootStyle.getPropertyValue("--sheet-exit-duration");
+    // Keep the real transition and its docking timer alive while a busy runner
+    // yields frames. Seek its midpoint explicitly instead of racing a 220ms exit.
+    rootStyle.setProperty("--sheet-exit-duration", "10000ms");
+    try {
+      for (let cycle = 0; cycle < 3; cycle++) {
+        toggle.click();
+        let exit;
+        await waitFor(() => {
+          exit = panel.getAnimations().find(animation => animation.transitionProperty === "transform" && animation.playState === "running");
+          return toggle.getAttribute("aria-pressed") === "false" && exit;
+        }, "sheet exit is in flight");
+        exit.pause();
+        exit.currentTime = exit.effect.getComputedTiming().endTime * 0.5;
+        const before = x();
+        if (!(before > openX + 1 && before < dockedX - 1)) throw new Error("Sheet reversal must start between its endpoints");
+        exit.play();
+        toggle.click();
+        const after = [];
+        for (let count = 0; count < 3; count++) { await frame(); after.push(x()); }
+        samples.push({ before, after });
+        await waitFor(() => toggle.getAttribute("aria-pressed") === "true" && !moving() && Math.abs(x() - openX) < 1, "reversed sheet reaches open endpoint");
+      }
+    } finally {
+      if (exitDuration) rootStyle.setProperty("--sheet-exit-duration", exitDuration);
+      else rootStyle.removeProperty("--sheet-exit-duration");
     }
     toggle.click();
     await waitFor(() => toggle.getAttribute("aria-pressed") === "false" && !moving() && Math.abs(x() - dockedX) < 1, "sheet returns to dock");
@@ -484,8 +502,8 @@ app.whenReady().then(async () => {
   ipcMain.on("test:browser-bounds", (_event, payload) => browserBounds.push(payload.rect));
   ipcMain.on("test:pip-host", () => {});
   await win.loadFile(renderer);
-  await until(() => document.querySelector(".thread-row-main"));
-  await evaluate(() => document.querySelector(".thread-row-main").click());
+  await until(() => document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main"));
+  await evaluate(() => document.querySelector(".sidebar-session-row:not([data-draft-id]) .thread-row-main").click());
   await until(() => document.querySelector(".turn"));
   await settle();
   const resources = await evaluate(() => performance.getEntriesByType("resource").map(entry => entry.name).filter(name => name.startsWith("file:") && /\.(?:js|css)$/.test(name)));

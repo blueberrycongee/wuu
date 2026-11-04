@@ -34,8 +34,30 @@ This example needs both declared files. Omit `runtime` for a desktop-only or dec
 | `dependencies` | Package relationships as `{ id, version?, optional? }`; required dependencies must be available and match the version constraint |
 | `breaks` | Hard incompatibilities; an active incompatible pair rejects the activation plan |
 | `conflicts` | Soft conflicts reported without automatically disabling either package |
-| `skills`, `hooks`, `mcpServers` | Contributions using the corresponding [skill](skill-authoring.md), [hook](hooks.md), and [MCP](mcp.md) contracts |
+| `skills`, `hooks`, `mcpServers` / `mcp_servers` | Contributions using the corresponding [skill](skill-authoring.md), [hook](hooks.md), and [MCP](mcp.md) contracts |
 | `contributes` | Commands, themes, settings, UI declarations, and view entry points |
+
+### Product families
+
+Packages delivered as one product can declare the same `interface.family`:
+
+```json
+{
+  "interface": {
+    "family": {
+      "id": "example.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring work."
+    }
+  }
+}
+```
+
+Use a stable, publisher-namespaced `id` and the same `name` and optional `description` in each member. The catalog and enabled sidebar show one family entry, including when only one member is installed. Search also matches member names and descriptions. Open the family to see component availability, failures, permissions and settings; direct links to individual packages still work. Incomplete family metadata (empty ID or name) leaves the package ungrouped.
+
+Families are presentation metadata, available to bundled and community packages alike. They do not install missing members, establish dependencies, grant trust, or enable, disable or update packages together. Each component retains its own source, lifecycle and settings. Older hosts ignore this optional metadata; no data migration is needed.
+
+### Package dependencies
 
 `dependencies` adds version checks without changing the package schema. For example:
 
@@ -81,6 +103,87 @@ is not an implicit request to replace an existing provider; conflicting provider
 still need an explicit composition choice.
 
 ## Declarative contributions
+
+### MCP connector cards
+
+A plugin-owned MCP server's optional `connector` metadata presents it as an account connector. It uses the existing server definition, connection lifecycle, OAuth store, and plugin ownership; it does not register a second service. Metadata on a standalone service is informational and does not change its ordinary MCP controls. A declarative-only plugin needs no `runtime` or `desktop` entry:
+
+```json
+{
+  "schema_version": 1,
+  "id": "workspace-connector",
+  "name": "Workspace Connector",
+  "version": "0.1.0",
+  "mcp_servers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Notion",
+        "description": "Work with the workspace you authorize.",
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
+        "icon": { "path": "assets/notion.svg" }
+      }
+    }
+  }
+}
+```
+
+`connector` has these fields:
+
+| Field | Contract |
+| --- | --- |
+| `title` | Required, nonblank display name. |
+| `description` | Optional short explanation of the service. |
+| `documentation_url` | Optional absolute HTTPS link to provider documentation, without embedded credentials. The default catalog does not display it. |
+| `setup_required` | Optional explanation of missing application setup. A nonblank value leaves the connector out of the default catalog and composer, so it never offers connection or authorization. |
+| `identity_probe` | Optional fixed, read-only MCP call and bounded JSON-pointer mapping for provider-reported identity. Admitted only from the active trusted package, not standalone configuration. |
+| `icon` | Optional brand image: `{ "path": "..." }` or `{ "light": "...", "dark": "..." }`, package-relative SVG, PNG, or WebP under the same limits as the plugin `icon`. Shown in a neutral tile on the card, the sign-in dialog, and the composer plugin menu; served only for the owning plugin generation. Cards without one, and standalone services, use a generic mark. |
+
+Declare `enabled: false` explicitly for lazy account onboarding: a new installation must not initiate account connection. The example's canonical server name is `plugin.workspace-connector.notion`; user preferences and OAuth credentials use that same identity. Connect checks the selected configuration provider's revision before saving the enabled preference, then uses the ordinary MCP connection and OAuth flow. Connector Disconnect removes local OAuth credentials and persists `enabled: false`, without claiming provider-side revocation. Disabling the plugin stops its owned servers; no fallback connector is substituted.
+
+The default application provider offers optional settings controls `requestMCPConnectorLogin`, `getPendingMCPConnectorLogin`, `takeMCPConnectorLogin`, and `cancelMCPConnectorLogin` for an explicit Connect intent. The process-local checkpoint observes the original configuration receipt; it is never serialized and never replays a write. Attachment validates the context, presentation, package fingerprint/provenance, resource, and enabled state. A changed preference requires successor graph controls; an already-enabled connector can use current controls after fresh validation.
+
+Automatic login is started once by the owner, not by a mounted dialog. Optional `startMCPConnectorLogin` and `pollMCPConnectorLogin` attach to that operation and retain in-flight and terminal receipts across compatible presentation replacement; `retryMCPConnectorLogin` requires an explicit retry after failure. Only an opaque native login handle crosses this process-local handoff: OAuth state, authorization URLs, codes and credentials remain outside the checkpoint. Detaching a view does not cancel the login; explicit cancellation, context/navigation/source changes and expiry do. Native start returns a handle before discovery so cancellation can stop a pending browser launch. Polling may report `phase: "starting"` or `"waiting"` while pending. Backend authority revocation is still terminal, never silently retried. Manual-redirect login retains its existing dialog-owned behavior and requires an explicit retry after interruption; its OAuth material is not checkpointed. Independent providers may omit these optional methods; scoped control cancellation remains mandatory.
+
+The current picker supports the Coding/current-project host only. OAuth storage is keyed by the canonical server name, not project identity: projects using that name and the same credential provider share the account, including replacement and local sign-out. User-bound Personal/twin hosts exclude shared MCP configuration from their runtime; the backend reports setup unavailable and rejects connector mutations instead of mixing domain preferences or credentials. Existing dedicated Personal connectors are unaffected. Extending this flow requires domain-scoped connection identity, preferences, and credential storage, not a permanent product-ID check. A resource URL binds credentials to a remote endpoint; it grants neither display-location nor domain authority. Without an admitted identity probe, the card leaves account identity unverified.
+
+Use a real provider endpoint and truthful setup requirements. A URL is not proof that the provider supports dynamic client registration. Do not ship a Connect action when a fixed OAuth client, preview enrollment, or administrator setup is still missing. See the [bundled account connector guide](mcp.md#connect-an-account) for the current provider limitations.
+
+#### Verified connection identity
+
+Merge this fragment into the plugin-owned server definition (not user configuration):
+
+```json
+{
+  "connector": {
+    "title": "Notion",
+    "identity_probe": {
+      "tool": "notion-get-self",
+      "arguments": {},
+      "result": "single_text_json",
+      "account": { "id": "/user/id", "label": "/user/name", "email": "/user/email", "kind": "/user/type" },
+      "workspace": { "id": "/workspace/id", "label": "/workspace/name" }
+    }
+  },
+  "tool_overrides": { "notion-get-self": { "read_only": true } }
+}
+```
+
+The named tool must be in the connected server's live tool catalog and explicitly marked `read_only: true` in the same package's `tool_overrides`; server hints alone are insufficient. `arguments` is a fixed JSON object, never generated code. `result` selects either MCP `structuredContent` (`structured_content`) or exactly one text block containing a JSON object (`single_text_json`). Mappings are bounded RFC 6901 JSON pointers, not expressions. Account ID is required; workspace ID is required when a workspace mapping is declared. Optional labels/email may be absent or empty. Only normalized string IDs and display fields are retained; raw responses are not persisted. Fixed arguments are limited to 8 KiB and 16 nested levels; pointers to 512 bytes and 32 segments. The identity decoder accepts a complete tool result up to 64 KiB; retained IDs/names/kind are limited to 512 bytes and email to 320 bytes. The transport reads under its existing 8 MiB message / 4 MiB SSE-event bounds before applying the stricter identity limit.
+
+The host runs this probe only after the user's successful Connect or explicit identity refresh, with the existing OAuth grant and selected credential provider. Startup, status, catalog reads, and token refresh do not run it. Probe failure leaves authorization and transport intact and reports identity unavailable. The cached result is bound to the grant, resource and admitted package declaration; token refresh retains that grant identity, while completed new authorization replaces it. Cancelled or replaced operations cannot publish a late result. Legacy credentials are not migrated by reads; explicit verification can attach identity safely. Account/workspace names never select credentials, authorize tools, or prove the OAuth application brand. This contract does not expand access into Personal/twin domains.
+
+#### Conversation references
+
+The default composer discovers MCP connections through `listMCPServers` and runtime tool plugins through catalog `conversation_tools`. A theme or service-only package does not need a second opt-out. Use canonical `provenance.plugin_id`, not the catalog record's subject ID, when constructing a runtime plugin reference.
+
+`plugin_reference` message parts carry readable `text` and a `plugin` object (`ApplicationPluginReferenceV1`). Runtime references use `plugin_id`; MCP references also retain `mcp_server`, `resource_url`, opaque `authorization_id`, and any verified `account_id` / `workspace_id`. Preserve the complete part across draft restoration, queueing, editing, and submission. These identifiers are selections, not credentials or execution grants. The host resolves tool names and revalidates connection identity at admission and turn start. An OAuth refresh retains the authorization ID; a new login replaces it. MCP clients bind to their accepted grant and fail if a replacement login supersedes it.
+
+An engine's `conversation-plugins` capability promises that its turn consumes the host's selected plugin tools and instructions while retaining ordinary permission checks. External engines receive the explicitly selected tools through the existing turn-scoped MCP bridge. Unsupported adapters must omit this capability; the host rejects referenced submissions instead of silently dropping their intent. New references during an active turn are queued, because an existing external bridge cannot acquire a new connection midway through execution.
+
+### Themes and settings
 
 Themes, shell skins, and settings need no desktop module. For example, merge this fragment into a manifest:
 
@@ -271,6 +374,12 @@ Preparation can validate persisted state, but the old generation can still chang
 Use it for activation-owned background work and stop timers in shutdown. Cleanup
 may still use the unscoped lifecycle host to persist state or release resources;
 do not make cleanup depend on an already-aborted signal.
+
+Process shutdown has a bounded acknowledgement window. If it expires, the host
+terminates the process and reports cleanup as unconfirmed, not successful.
+Physical termination does not confirm pending external writes or undo their effects;
+check their state before retrying. A runtime that exits normally without replying
+may still complete shutdown successfully.
 
 ## Tools and capabilities
 
@@ -527,6 +636,14 @@ and their budgeted `model_text`. Local working-copy paths, credentials, host ret
 objects and execution authority are not exported. Preserve unknown provider option
 keys and opaque native item data when copying a snapshot.
 
+Tool calls may include an optional `thought_signature`, scoped by
+`provider_item_provider` and `provider_item_model`. Preserve this opaque value
+verbatim with its call and origin through model, driver, tool-batch, and session
+round trips. Preserve parallel-call order as well. The host omits foreign-origin
+signatures when preparing a request for a different provider or model. This is
+an additive version-1 field; external providers that rebuild tool calls must
+forward it to support signed Gemini continuations.
+
 These are logical snapshots, not guarantees of identical HTTP bytes or a cache
 hit. Plugins must invalidate retained snapshots when their context, route, model,
 adapter, native-state compatibility or media changes. The host remains responsible
@@ -751,7 +868,11 @@ belongs to the plugin generation and may outlive the tool callback. Cancelling
 a read or aborting the original call's signal does not stop that accepted process;
 call `stopProcess` for explicit cancellation.
 
-`readProcess` returns merged output, byte cursors, truncation and a process snapshot.
+`readProcess` returns output, byte cursors, truncation and a process snapshot.
+Omitting `stream` preserves merged output. With host.process 1.2, `stream: "stdout"`
+or `stream: "stderr"` selects an independent byte cursor and the result echoes
+`stream`. Old records, PTYs and backends without separate streams fail explicitly;
+the SDK rejects a missing stream acknowledgement. Raw output remains passive.
 Reads accept 4 bytes to 1 MiB (default 64 KiB), and up to 30 seconds of waiting.
 Use `next_offset`, including when UTF-8 framing or log retention changes a read's
 length. `stopProcess` stops the entire process tree. A zero timeout means no deadline;
@@ -766,6 +887,14 @@ private child without granting arbitrary private-session access. Output and proc
 exit alone never wake a conversation. Plugins own framing, filtering, event policy
 and durable history; handles do not survive a runtime restart. The bundled
 [Monitor plugin](plugins.md#monitor-background-events) demonstrates this surface.
+
+For observation inputs, `presentation.kind: "background_event"` keeps the event
+in model context and durable history while omitting its input bubble from the
+conversation. Assistant output, tool activity and turn failures remain visible.
+This presentation is available to any plugin using `host.session.send` or
+`sendProcessEvent`; it does not change admission, steering or request deduplication.
+Human input retains its ordinary presentation. Older hosts reject the new kind;
+update the host and clients together before using it.
 
 ## Providing a service
 
@@ -837,7 +966,7 @@ Local UI control is an exception to ordinary generation retention. Updating an o
 
 ## Development and distribution
 
-`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` declares contracts in the actual host; `prepare` then validates state through the selected services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
+`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.13 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` declares contracts in the actual host; `prepare` then validates state through the selected services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
 
 `wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
 

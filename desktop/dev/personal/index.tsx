@@ -462,6 +462,22 @@ function setActivity(status: "idle" | "thinking" | "responding") {
     if (status === "responding") publish("item/agentMessage/delta", {item_id:"synthetic-avatar-message",delta:"这是合成状态演示，正在回复。"});
   }
 }
+// Deterministic message-flow events for the production renderer acceptance run.
+if (params.has("messageFlow")) {
+  let streamID = 0;
+  let streamedText = "";
+  const publish = (method: string, extra: Record<string, unknown> = {}) => host.publishHostEvent({kind:"notification",message:{method,params:{thread_id:"synthetic-main",turn_id:`flow:${streamID}`,...extra}}});
+  const append = (role: "user" | "assistant", content: string) => {
+    histories.mosaic.push({seq: (histories.mosaic.at(-1)?.seq ?? 0) + 1, role, content, at: now});
+    host.publishHostEvent({type:"routine-state-changed"});
+  };
+  Object.assign(window, {__messageFlowFixture: {
+    append,
+    start() { streamID++; streamedText = ""; publish("turn/started"); },
+    delta(text: string) { streamedText += text; publish("item/agentMessage/delta", {item_id:`flow-message:${streamID}`, delta:text}); },
+    finish() { append("assistant", streamedText); publish("turn/completed", {turn:{id:`flow:${streamID}`}}); },
+  }});
+}
 async function start(){
   const scoped = (window as unknown as {__scopedFixture?: {call(method:string):Promise<any>}}).__scopedFixture;
   const personalSource = params.has("genui") && scoped ? (await scoped.call("personal-source")) : undefined;
