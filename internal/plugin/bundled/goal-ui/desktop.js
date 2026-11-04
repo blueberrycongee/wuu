@@ -62,9 +62,9 @@ export async function activate(api) {
       if (api.signal.aborted || error?.code === "WUU_PLUGIN_SCOPE_RETIRED") return;
       if (!disposed && revisions.get(id) === revision) {
         const message = String(error.message || error);
-        // Electron wraps the host's exact missing-provider message. Keep
-        // version mismatches and provider failures visible to the user.
-        if (message.endsWith("no provider for service goal.control")) {
+        // Only host-proven, unconfigured optional absence hides this control.
+        // Selected-provider failures and version mismatches remain visible.
+        if (error?.code === "service_optional_absent") {
           publish(id, { goal: null, error: "", loaded: true, unavailable: true });
         } else {
           publish(id, { ...(cache.get(id) || empty), loaded: true, unavailable: false, error: message });

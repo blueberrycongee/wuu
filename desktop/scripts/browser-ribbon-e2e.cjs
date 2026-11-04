@@ -169,7 +169,8 @@ function key(keyCode) {
   }, devURL ? path.join(root, "out/renderer") : output, path.join(output, "native-preload.cjs"), devURL);
   const readySurfaces = new Set();
   ipcMain.handle("wuu:chrome-overlay-ready", event => { readySurfaces.add(event.sender.id); return nativeHost.ready(event); });
-  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => nativeHost.painted(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token, generation) => nativeHost.prepared(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation, viewport) => nativeHost.painted(event, token, generation, viewport));
   ipcMain.on("wuu:chrome-overlay-command", (event, message) => nativeHost.command(event, message));
   app.on("web-contents-created", (_event, contents) => {
     contents.on("console-message", event => console.error("Native renderer:", event.message));

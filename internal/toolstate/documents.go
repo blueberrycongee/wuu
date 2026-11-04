@@ -31,20 +31,23 @@ type Batch struct {
 }
 
 type Invocation struct {
-	ID                 string
-	BatchID            string
-	ParentInvocationID string
-	ProviderCallID     string
-	ToolName           string
-	ToolKind           providers.ToolCallKind
-	Arguments          string
-	ReplayPolicy       string
-	State              string
-	Result             *toolresult.Result
-	PreparedAt         int64
-	RunningAt          int64
-	SettledAt          int64
-	ProjectedAt        int64
+	ID                   string
+	BatchID              string
+	ParentInvocationID   string
+	ProviderCallID       string
+	ThoughtSignature     string `json:",omitempty"`
+	ProviderItemProvider string `json:",omitempty"`
+	ProviderItemModel    string `json:",omitempty"`
+	ToolName             string
+	ToolKind             providers.ToolCallKind
+	Arguments            string
+	ReplayPolicy         string
+	State                string
+	Result               *toolresult.Result
+	PreparedAt           int64
+	RunningAt            int64
+	SettledAt            int64
+	ProjectedAt          int64
 }
 
 // Project joins history admission and result disposal in the caller's atomic

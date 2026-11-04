@@ -19,7 +19,7 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
   localOnly?: boolean;
   matchTriggerWidth?: boolean;
   onOpenAccount?: () => void;
-  onOpenSettings: (page: "providers" | "usage") => void;
+  onOpenSettings: (page?: "providers" | "usage") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const desktop = useDesktopControls();
@@ -74,7 +74,11 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
   }, [open]);
 
   const close = () => { setOpen(false); anchor.current?.focus(); };
-  const navigate = (page: "providers" | "usage") => { close(); onOpenSettings(page); };
+  const navigate = (page?: "providers" | "usage") => {
+    close();
+    if (page) onOpenSettings(page);
+    else onOpenSettings();
+  };
   const logout = async () => {
     if (!driver || busy) return;
     generation.current++;
@@ -97,12 +101,13 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
       ...(accountEnabled && phoneNavigation ? [{ action: "devices" as const, label: t("account.computersAndAccount") }] : []),
       { action: "usage", label: t("settings.usage") },
       ...(driver && onOpenAccount ? [{ action: "account" as const, label: t(account.username ? "account.manage" : "account.linkDevices") }] : []),
-      { action: "providers", label: t("sidebar.settings") },
+      { action: "settings", label: t("sidebar.settings") },
       ...(account.username ? [{ action: "logout" as const, label: t(busy ? "account.busy" : "account.logout"), disabled: busy }] : []),
     ], error, notice: notice ? t("account.localLogout") : undefined,
   };
   const action = (value: ChromeAccountAction) => {
     if (value === "logout") void logout();
+    else if (value === "settings") navigate();
     else if (value === "usage" || value === "providers") navigate(value);
     else if (value === "devices") { close(); phoneNavigation?.openDevices(); }
     else if (value === "account") { close(); onOpenAccount?.(); }

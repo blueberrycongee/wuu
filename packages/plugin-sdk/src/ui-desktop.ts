@@ -56,7 +56,7 @@ export type ApplicationDesktopChromeOverlayAppearanceV1 = {
 };
 export type ApplicationDesktopChromeAccountTriggerV1 = { title: string; initials?: string; disabled: boolean; open: boolean; label: string };
 export type ApplicationDesktopChromeDesktopUpdateV1 = { state: "available" | "ready" | "error" | "downloading" | "checking" | "prompting" | "installing"; label: string; progressLabel: string; busy: boolean; percent?: number };
-export type ApplicationDesktopChromeAccountActionV1 = "devices" | "usage" | "account" | "providers" | "logout";
+export type ApplicationDesktopChromeAccountActionV1 = "devices" | "usage" | "account" | "settings" | "providers" | "logout";
 export type ApplicationDesktopChromeAccountPanelV1 = {
   label: string;
   profile?: { title: string; initials: string; server?: string };

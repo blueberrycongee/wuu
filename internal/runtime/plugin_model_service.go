@@ -248,8 +248,16 @@ func modelRequestError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return serviceError("request_cancelled", "model request was cancelled")
 	}
-	// Provider failures can contain response bodies or credential fragments.
-	// Keep the typed category, not the provider's raw error, on the plugin wire.
 	failure := providers.NormalizeFailure(err)
-	return serviceError("inference_failed", "model request failed: "+string(failure.Category))
+	message := "model request failed: " + string(failure.Category)
+	var modelErr *modelFailureError
+	if errors.As(err, &modelErr) {
+		// A selected adapter already supplied its display message. Preserve it
+		// through subsequent model service boundaries instead of reducing it
+		// to the category again, while applying the shared diagnostic bound.
+		message = providers.DurableInferenceFailure(failure).Message
+	} else if detail := providers.ProviderFailureDetail(err); detail != "" {
+		message += ": " + detail
+	}
+	return serviceError("inference_failed", message)
 }

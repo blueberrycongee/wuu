@@ -2024,6 +2024,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			ProviderItemID:       tc.ProviderItemID,
 			ProviderItemProvider: tc.ProviderItemProvider,
 			ProviderItemModel:    tc.ProviderItemModel,
+			ThoughtSignature:     tc.ThoughtSignature,
 			Name:                 tc.Name,
 			Arguments:            tc.Arguments,
 			Kind:                 providers.NormalizeToolCallKind(tc.Kind),

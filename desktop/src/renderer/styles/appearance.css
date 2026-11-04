@@ -125,7 +125,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
   .turn-file-diff-body, .workspace-terminal-screen, .activity-command) {
   letter-spacing: normal;
 }
-.rich-content, .composer textarea, .user-message-edit-input,
+.rich-content, .composer :is(textarea, .composer-rich-input), .user-message-edit-input,
 .user-message-raw-query, .workspace-markdown-reading {
   font-family: var(--appearance-content-font, var(--appearance-ui-font, system-ui, sans-serif));
   letter-spacing: var(--tracking-prose);
@@ -161,7 +161,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.composer textarea, .workspace-markdown-reading {
+.composer :is(textarea, .composer-rich-input), .workspace-markdown-reading {
   font-size: var(--font-ui);
 }
 /* Composer drafts take the conversation reading line from composer.css. */
@@ -176,7 +176,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
      * as the composer. Apply before focus so focusing never changes geometry. */
     font-size: max(16px, var(--font-ui), 1em);
   }
-  :root[data-host-kind="web"] .composer textarea {
+  :root[data-host-kind="web"] .composer :is(textarea, .composer-rich-input) {
     /* Small text can trigger Safari's focus zoom. Keep input readable without
      * disabling pinch zoom or reducing a user's larger font preference. */
     font-size: max(16px, var(--conversation-message-font-size, 16px));

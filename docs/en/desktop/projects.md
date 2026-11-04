@@ -48,8 +48,9 @@ does not resolve interface dependencies or authorize integration.
 
 ## Models, usage and responsiveness
 
-The coordinator uses its conversation model. **Settings → Runtime → Project
-Agent models** selects defaults for the technical lead and persistent executor.
+The coordinator uses its conversation model. Set technical lead and persistent
+executor defaults through `agent.project_models` in [user configuration](../reference/configuration.md#project-agent-model-choices), then fully quit and restart Wuu.
+These defaults apply to newly created members, not existing sessions.
 An unset role inherits the coordinator model; an unset executor also honors an
 existing worker default. Existing sessions retain their model selections.
 Choose sufficient technical judgment for the lead and an economical model that

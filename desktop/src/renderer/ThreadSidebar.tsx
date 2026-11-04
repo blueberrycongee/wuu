@@ -43,6 +43,7 @@ import {
   moveThreadInOrder,
   persistThreadOrder,
   reconcileThreadOrder,
+  reconcileThreadArrivalOrder,
   storedThreadOrder,
   type ThreadDropPosition,
 } from "./SidebarThreadOrder";
@@ -218,13 +219,19 @@ export function WorkspaceGroup({
       ),
     [project.id, project.path, sourceWorkspaceThreads],
   );
-  const [threadOrder, setThreadOrder] = useState<string[]>(() =>
-    storedThreadOrder(project.id),
+  const [arrivalOrder, setArrivalOrder] = useState(() => ({
+    ids: storedThreadOrder(project.id), newestCreatedAt: 0,
+  }));
+  const reconciledArrivalOrder = useMemo(
+    () => reconcileThreadArrivalOrder(unorderedWorkspaceThreads, arrivalOrder),
+    [arrivalOrder, unorderedWorkspaceThreads],
   );
-  const reconciledThreadOrder = useMemo(
-    () => reconcileThreadOrder(unorderedWorkspaceThreads, threadOrder),
-    [threadOrder, unorderedWorkspaceThreads],
-  );
+  useLayoutEffect(() => {
+    // Remember positions, not row data. Completion refreshes cannot move rows,
+    // and late history must not evict newer sessions from the visible window.
+    if (reconciledArrivalOrder !== arrivalOrder) setArrivalOrder(reconciledArrivalOrder);
+  }, [arrivalOrder, reconciledArrivalOrder]);
+  const reconciledThreadOrder = reconciledArrivalOrder.ids;
   const workspaceThreads = useMemo(() => {
     const threadsByID = new Map(
       unorderedWorkspaceThreads.map((thread) => [thread.id, thread]),
@@ -241,7 +248,7 @@ export function WorkspaceGroup({
   ): void {
     const next = moveThreadInOrder(reconciledThreadOrder, activeThreadID, overThreadID, position);
     if (next === reconciledThreadOrder) return;
-    setThreadOrder(next);
+    setArrivalOrder({ ...reconciledArrivalOrder, ids: next });
     persistThreadOrder(project.id, next);
   }
   const workspaceHasUnread = workspaceThreads.some((thread) =>
@@ -938,22 +945,22 @@ function ThreadRows({
                 className="thread-row-actions"
                 aria-label={t("threadSidebar.actions")}
               >
-                <Tooltip asChild content={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}><button
+                <button
                   className={`sidebar-row-icon-button thread-row-action ${thread.pinned ? "active" : ""}`}
                   type="button"
                   aria-label={t(thread.pinned ? "sidebar.unpin" : "sidebar.pin")}
                   onClick={() => togglePinned(thread)}
                 >
                   <Pin className="icon-sm" />
-                </button></Tooltip>
-                <Tooltip asChild content={t("sidebar.archiveAction")}><button
+                </button>
+                <button
                   className="sidebar-row-icon-button thread-row-action archive"
                   type="button"
                   aria-label={t("sidebar.archiveAction")}
                   onClick={() => onArchive(thread)}
                 >
                   <Archive className="icon-sm" />
-                </button></Tooltip>
+                </button>
               </div>
           </div>
         );

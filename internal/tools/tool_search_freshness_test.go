@@ -265,8 +265,7 @@ func TestSearchFreshPageKeepsContinuationBound(t *testing.T) {
 	}
 }
 
-func TestSearchFreshPageWithoutRevisionOrRipgrep(t *testing.T) {
-	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
+func TestSearchFreshPageWithoutRevision(t *testing.T) {
 	root := t.TempDir()
 	kit := searchFixtureKit(t, root, t.TempDir())
 	// A failed revision computation is represented by an empty context revision.

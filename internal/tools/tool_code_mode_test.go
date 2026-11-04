@@ -591,15 +591,15 @@ func TestPTCBackgroundProcessesSurviveProgramsAndReturnThroughTools(t *testing.T
 			t.Fatalf("process lost owner/lifetime: %+v %v", p, err)
 		}
 	}
-	polled := runPTCProgram(t, kit, `return await Promise.all(load("processes").map(async id=>JSON.parse((await tools.process({action:"read",process_id:id})).content[0].text).status));`)
+	polled := runPTCProgram(t, kit, `return await Promise.all(load("processes").map(async id=>JSON.parse((await tools.bash({action:"read",process_id:id})).content[0].text).status));`)
 	if polled.IsError || polled.TextProjection() != `["running","running","running"]` {
 		t.Fatalf("processes did not survive into the next program: %+v", polled)
 	}
-	stopped := runPTCProgram(t, kit, `return JSON.parse((await tools.process({action:"stop",process_id:load("processes")[2]})).content[0].text).status;`)
+	stopped := runPTCProgram(t, kit, `return JSON.parse((await tools.bash({action:"stop",process_id:load("processes")[2]})).content[0].text).status;`)
 	if stopped.IsError || stopped.TextProjection() != "stopped" {
 		t.Fatalf("process stop=%+v", stopped)
 	}
-	written := runPTCProgram(t, kit, `await Promise.all(load("processes").slice(0,2).map((id,i)=>tools.process({action:"write",process_id:id,input:String(i+1)+"\n"})));`)
+	written := runPTCProgram(t, kit, `await Promise.all(load("processes").slice(0,2).map((id,i)=>tools.bash({action:"write",process_id:id,input:String(i+1)+"\n"})));`)
 	if written.IsError {
 		t.Fatal(written.TextProjection())
 	}
@@ -616,7 +616,7 @@ func TestPTCBackgroundProcessesSurviveProgramsAndReturnThroughTools(t *testing.T
 			t.Fatal("managed processes never completed")
 		}
 	}
-	read := runPTCProgram(t, kit, `const results=await Promise.all(load("processes").slice(0,2).map(id=>tools.process({action:"read",process_id:id,wait_ms:30000}))); for(const r of results)console.log(r.content[0].text);`)
+	read := runPTCProgram(t, kit, `const results=await Promise.all(load("processes").slice(0,2).map(id=>tools.bash({action:"read",process_id:id,wait_ms:30000}))); for(const r of results)console.log(r.content[0].text);`)
 	if read.IsError || (!strings.Contains(read.TextProjection(), "DONE_1") || !strings.Contains(read.TextProjection(), "DONE_2")) {
 		t.Fatalf("process observation=%+v", read)
 	}
@@ -752,7 +752,7 @@ func TestPTCRepeatedProgramAllowsLeafPolling(t *testing.T) {
 	t.Setenv("WUU_HOME", t.TempDir())
 	kit := newCodeModeTestToolkit(t)
 	for i := 0; i < 4; i++ {
-		result := runPTCProgram(t, kit, `await tools.process({action:"list"}); return true;`)
+		result := runPTCProgram(t, kit, `await tools.bash({action:"list"}); return true;`)
 		if result.IsError {
 			t.Fatalf("poll %d: %+v", i, result)
 		}

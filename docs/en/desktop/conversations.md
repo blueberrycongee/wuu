@@ -34,6 +34,12 @@ Automatic recovery is separate: a pending network connection shows **Waiting for
 
 Automatic retries retain the existing workload and shared workflow limits. A new model round receives its own operation allowance; transport changes, nested recovery, ambiguous billable submissions and waiting still share the workflow budget. Confirmed progress does not reset that shared budget. Explicit Continue starts a new workflow after the preceding turn has settled.
 
+## Choose what continues after restarting
+
+After an unexpected exit interrupts running conversations, a notice shows how many were interrupted during the previous run. You can continue using Wuu while it is visible. Click **Continue all** to continue those conversations from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. Previously completed, failed, or manually stopped turns and old background results are not counted as interrupted conversations.
+
+Dismiss the notice to keep those conversations paused. Opening their history or receiving another completion notification does not restart them. You can continue later from a conversation or send a new instruction. Dismissing the notice preserves saved history and pending results; it does not undo earlier effects or stop separately managed background commands. Archived conversations and plugin-private sessions are excluded.
+
 ## Recover unsent text
 
 Wuu automatically restores unsent text in the same window after a reload. No setting is required. Recovery copies stay local to that window for up to 24 hours, with at most 20 drafts and 32K characters per draft. Closing the window clears them. Attachments and quoted context are not restored, and recovered text is never sent automatically.

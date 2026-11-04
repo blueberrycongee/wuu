@@ -36,6 +36,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -73,18 +74,10 @@ var errQueuedTurnCancelled = errors.New("queued turn was cancelled before admiss
 
 const maxCancelledPendingSubmissions = 1024
 
-type agentCompletionTurnKind string
-
-const (
-	agentCompletionTurnKindCompletion agentCompletionTurnKind = "completion"
-	agentCompletionTurnKindRecheck    agentCompletionTurnKind = "recheck"
-)
-
 type agentCompletionTurn struct {
 	agentID   string
 	resultID  string
 	processID string
-	kind      agentCompletionTurnKind
 	msg       providers.ChatMessage
 	snapshot  *subagent.SubAgentSnapshot
 }
@@ -881,6 +874,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if hasPluginReferences(params.ContentParts) {
+		return s.writeResponse(req.ID, nil, errors.New("queue plugin references for the next turn so its tools and account can be validated before execution"))
+	}
 	params.ThreadID = strings.TrimSpace(params.ThreadID)
 	params.Prompt = strings.TrimSpace(params.Prompt)
 	params.ExpectedTurnID = strings.TrimSpace(params.ExpectedTurnID)
@@ -1110,7 +1106,7 @@ func (s *Server) steerAgentCompletion(binding *runtime.State, threadID, resultID
 		// Admission reconciles a saved answer without another model request.
 		return false
 	}
-	if th.completionDeliveryPaused([]string{resultID}, nil) {
+	if s.completionDeliveryPaused(th, []string{resultID}, nil) {
 		return true
 	}
 	th.mu.Lock()
@@ -1543,13 +1539,25 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		th.runtimePluginRevision = s.pluginRuntimeRevision.Load()
 		th.mu.Unlock()
 		if threadRuntime.AgentControl != nil {
-			threadRuntime.AgentControl.StartWorkerTerminalRecovery()
-			// New only restores durable queue metadata. Start restored workers after
-			// this runtime has won installation, configuration is complete,
-			// and subscribeThreadRuntime has attached the model resolver and reliable
-			// terminal finalizer. A zero-latency worker can now safely resolve and
-			// finalize against the installed thread runtime.
-			threadRuntime.AgentControl.StartQueuedWork()
+			// Same-boot runtime replacement can recover workers immediately;
+			// a pre-restart conversation waits for an admitted user choice.
+			allowed := !th.PersistHistory || th.Visibility == pluginhost.SessionVisibilityPlugin || th.ParentID != "" || !th.CreatedAt.Before(s.recoveryBootAt)
+			if !allowed {
+				err := persistence.Update(context.Background(), th.state.Documents, func(tx *persistence.Tx) error {
+					var rec restartRecoveryRecord
+					_, err := tx.Get(restartRecoveryNamespace, th.ID, &rec)
+					allowed = !rec.AllowedAt.Before(s.recoveryBootAt)
+					return err
+				})
+				if err != nil {
+					providers.DebugLogf("restart worker recovery gate for %q: %v", th.ID, err)
+					allowed = false
+				}
+			}
+			if allowed {
+				threadRuntime.AgentControl.StartWorkerTerminalRecovery()
+				threadRuntime.AgentControl.StartQueuedWork()
+			}
 			s.replayPendingAgentCompletions(th.state, th.ID, threadRuntime)
 		}
 		s.replayPendingProcessCompletions(th.state, th.ID, threadRuntime.AgentControl, threadRuntime.ProcessManager)
@@ -2013,6 +2021,11 @@ func userMessageFromPrompt(prompt string, images []providers.InputImage, files [
 		msg.DisplayContent = display
 	}
 	if len(contentPartSets) > 0 {
+		for _, part := range contentPartSets[0] {
+			if part.Type == "plugin_reference" && (part.Text == "" || part.Plugin == nil || part.Plugin.PluginID == "" && part.Plugin.MCPServer == "") {
+				return providers.ChatMessage{}, errors.New("invalid plugin reference; remove it and select the plugin again")
+			}
+		}
 		parts := normalizeMessageContentParts(contentPartSets[0])
 		var flattened strings.Builder
 		for _, part := range parts {
@@ -2025,6 +2038,8 @@ func userMessageFromPrompt(prompt string, images []providers.InputImage, files [
 		// match exactly.
 		if len(parts) > 0 && strings.TrimSpace(flattened.String()) == prompt {
 			msg.ContentParts = parts
+		} else if hasPluginReferences(contentPartSets[0]) {
+			return providers.ChatMessage{}, errors.New("plugin references do not match the message; restore the draft and select them again")
 		}
 	}
 	return msg, nil
@@ -2042,6 +2057,11 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 		switch part.Type {
 		case "text", "pasted_text":
 			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
+		case "plugin_reference":
+			if part.Plugin == nil || part.Plugin.PluginID == "" && part.Plugin.MCPServer == "" {
+				continue
+			}
+			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
 		case "file_selection":
 			if !validFileSelectionPart(part) {
 				continue
@@ -2050,6 +2070,9 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
 		default:
 			continue
+		}
+		if part.Type != "plugin_reference" {
+			part.Plugin = nil
 		}
 		selection := part.Selection
 		part.Selection = nil
@@ -2827,6 +2850,13 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 
 func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) (durabilityErr error) {
 	ctx = runtime.WithInvocationState(ctx, binding)
+	// Reading history may install a runtime. Restored workers and nested result
+	// delivery start only after ordinary work passes turn admission, including
+	// the restart gate. All model resolvers and finalizers are installed by now.
+	if threadRuntime != nil && threadRuntime.AgentControl != nil && turnRuntime.ToolPolicy == nil && !turnRuntime.CompactOnly {
+		threadRuntime.AgentControl.StartWorkerTerminalRecovery()
+		threadRuntime.AgentControl.StartQueuedWork()
+	}
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
@@ -2875,6 +2905,42 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		}
 	}
 	capabilityErr := instructionsErr
+	referenceParts := latestPluginReferenceParts(history)
+	if capabilityErr == nil && hasPluginReferences(referenceParts) {
+		servers := pluginReferenceServers(referenceParts)
+		if len(servers) > 0 && (turnKit == nil || turnKit.MCPManager() == nil) {
+			capabilityErr = errors.New("this conversation cannot execute MCP connections; choose an engine with conversation plugin support")
+		} else {
+			if turnKit != nil {
+				var pluginTools []string
+				for _, part := range referenceParts {
+					if part.Type != "plugin_reference" || part.Plugin == nil || part.Plugin.MCPServer != "" {
+						continue
+					}
+					for _, definition := range binding.Host.ToolDefinitions() {
+						if tool, ok := binding.Host.Tool(definition.Name); ok && tool.PluginID == part.Plugin.PluginID {
+							pluginTools = append(pluginTools, definition.Name)
+						}
+					}
+				}
+				turnKit.SetConversationTools(servers, pluginTools)
+				defer turnKit.SetConversationTools(nil, nil)
+			}
+			if len(servers) > 0 {
+				manager := turnKit.MCPManager()
+				generation := manager.Generation()
+				turnKit.FreezeToolSurface()
+				defer turnKit.UnfreezeToolSurface()
+				_, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
+				currentManager, managerErr := s.mcpManager()
+				if managerErr != nil || currentManager != manager || manager.Generation() != generation {
+					capabilityErr = errors.New("plugin connections changed while starting this turn; select the connections again")
+				}
+			} else {
+				_, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
+			}
+		}
+	}
 	// A restricted turn must not initialize an external bridge before its
 	// admitted engine has proved that it can enforce the restriction.
 	if (turnRuntime.DisableTools || turnRuntime.ToolPolicy != nil) && (runner == nil || agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu ||
@@ -2900,6 +2966,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	var engineDescriptor agentengine.Descriptor
 	if capabilityErr == nil {
 		engineDescriptor, capabilityErr = s.engineDescriptorForState(ctx, binding, agentengine.NormalizeEngineID(th.EngineID))
+	}
+	if capabilityErr == nil && hasPluginReferences(referenceParts) && !slices.Contains(engineDescriptor.Capabilities, "conversation-plugins") {
+		capabilityErr = errors.New("the selected engine does not support conversation plugins; choose a compatible engine or remove the references")
 	}
 	hostSteering := slices.Contains(engineDescriptor.Capabilities, "host-managed-steering")
 	nativeSteering := !hostSteering && slices.Contains(engineDescriptor.Capabilities, "active-turn-steering")
@@ -3407,7 +3476,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 						}
 						continue
 					}
-					if th.completionDeliveryPaused([]string{completion.ResultID}, nil) {
+					if s.completionDeliveryPaused(th, []string{completion.ResultID}, nil) {
 						continue
 					}
 					message := control.AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
@@ -3434,7 +3503,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
 						continue
 					}
-					if th.completionDeliveryPaused(nil, []string{p.ID}) {
+					if s.completionDeliveryPaused(th, nil, []string{p.ID}) {
 						continue
 					}
 					// An answer can survive a restart before its delivery acknowledgement.
@@ -4961,6 +5030,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		userMsgSeq = seq
 		th.historyHeadSeq = max(th.historyHeadSeq, seq)
 	}
+	if snapshot.ToolPolicy == nil && !snapshot.CompactOnly {
+		if err := s.recordRecoveryTurn(th, turnID, "running"); err != nil {
+			th.releaseThreadExecutionLeaseLocked()
+			th.mu.Unlock()
+			cancel()
+			return startedThreadTurn{}, false, err
+		}
+	}
 	userMsg.Seq = userMsgSeq
 	if commitAfterAppend != nil {
 		if err := commitAfterAppend(); err != nil {
@@ -5106,7 +5183,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs); err != nil {
 					return err
 				}
-				if admitted.completionDeliveryPaused(snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs) {
+				if s.completionDeliveryPaused(admitted, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs) {
 					return errCompletionDeliveryPaused
 				}
 				return nil
@@ -5537,7 +5614,7 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 		if resultID := strings.TrimSpace(turn.resultID); resultID != "" {
 			completionResultIDs = append(completionResultIDs, resultID)
 		}
-		if processID := strings.TrimSpace(turn.processID); processID != "" && turn.kind != agentCompletionTurnKindRecheck {
+		if processID := strings.TrimSpace(turn.processID); processID != "" {
 			processCompletionIDs = append(processCompletionIDs, processID)
 		}
 	}
@@ -5559,22 +5636,8 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
 					return err
 				}
-				if admitted.completionDeliveryPaused(completionResultIDs, processCompletionIDs) {
+				if s.completionDeliveryPaused(admitted, completionResultIDs, processCompletionIDs) {
 					return errCompletionDeliveryPaused
-				}
-				// Rechecks belong to live processes, so they must not pass through
-				// the natural-exit completion gate or acquire its delivery marker.
-				for _, entry := range pending {
-					if entry.kind != agentCompletionTurnKindRecheck {
-						continue
-					}
-					p, err := threadRuntime.ProcessManager.Get(entry.processID)
-					if err != nil {
-						return errors.Join(errRetryableTurnAdmission, err)
-					}
-					if p.RecheckMinutes <= 0 || (p.Status != process.StatusStarting && p.Status != process.StatusRunning) {
-						return errAgentCompletionAlreadyDelivered
-					}
 				}
 				*admittedMsg = combineAgentCompletionMessages(pending)
 				if clientID := agentCompletionClientID(pending); clientID != "" {
@@ -5867,7 +5930,6 @@ func cloneAgentCompletionTurns(turns []agentCompletionTurn) []agentCompletionTur
 	out := make([]agentCompletionTurn, 0, len(turns))
 	for i, turn := range turns {
 		out = append(out, agentCompletionTurn{
-			kind:      turn.kind,
 			agentID:   turn.agentID,
 			resultID:  turn.resultID,
 			processID: turn.processID,

@@ -17,7 +17,7 @@ import type { ApplicationConversationActionMapV1, ApplicationConversationActions
 import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 } from "./ui-submission.js";
 import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
 import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogThreadSkillsInputV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
-import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
+import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1, PreviewFileSaveV1, PreviewFileChangeV1 } from "./ui-preview-content.js";
 import type { ApplicationConversationThreadItemV1, ApplicationConversationDetailsActionMapV1, ApplicationConversationDetailV1, ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
 import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
@@ -104,6 +104,14 @@ export interface ApplicationSnapshotV1 {
     readonly loading: boolean;
     readonly error?: string;
   };
+  /** Unfinished work awaiting a user choice after a restart. Reading it never resumes execution. */
+  readonly restartRecovery?: readonly {
+    readonly threadId: string;
+    readonly title: string;
+    readonly workspace: string;
+    readonly updatedAt: string;
+    readonly reason: "interrupted" | "background_result";
+  }[];
   readonly composer: ComposerSnapshotV1;
   readonly activities: readonly ApplicationActivityV1[];
   readonly browserDockTarget?: BrowserDockTargetV1;
@@ -160,6 +168,8 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
   "navigation.cancel": { input: { readonly requestId?: number }; result: void };
   "conversation.load-earlier": { input: { readonly threadId: string; readonly cursor: string }; result: void };
+  /** Continue selected recovery candidates and leave the remaining ones paused. */
+  "conversation.resolve-recovery": { input: { readonly threadIds: readonly string[] }; result: void };
   "conversation.continue": { input: { readonly threadId: string; readonly turnId?: string; readonly text: string }; result: { readonly accepted: boolean } };
   "conversation.read-usage": { input: { readonly timezone: string }; result: SettingsReadonly<Pick<ApplicationSettingsUsageResponseV1, "total_sessions" | "metrics" | "days">> };
   "conversation.load-item": { input: { readonly threadId: string; readonly turnId: string; readonly itemId: string }; result: ApplicationConversationThreadItemV1 };
@@ -485,8 +495,17 @@ export function scopeApplicationSettingsControls(source: () => ApplicationSettin
     getPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["getPluginSetting"]>) => invoke(() => source().getPluginSetting(...args)),
     setPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["setPluginSetting"]>) => invoke(() => source().setPluginSetting(...args)),
     getPluginDiagnostics: (...args: Parameters<ApplicationSettingsControlsV1["getPluginDiagnostics"]>) => invoke(() => source().getPluginDiagnostics(...args)),
+    getMCPAuthStatus: (...args: Parameters<ApplicationSettingsControlsV1["getMCPAuthStatus"]>) => invoke(() => source().getMCPAuthStatus(...args)),
+    refreshMCPIdentity: (...args: Parameters<ApplicationSettingsControlsV1["refreshMCPIdentity"]>) => invoke(() => source().refreshMCPIdentity(...args)),
     readMCPDefinition: (...args: Parameters<ApplicationSettingsControlsV1["readMCPDefinition"]>) => invoke(() => source().readMCPDefinition(...args)),
     configureMCPServers: (...args: Parameters<ApplicationSettingsControlsV1["configureMCPServers"]>) => invoke(() => source().configureMCPServers(...args)),
+    get requestMCPConnectorLogin() { return read(() => source().requestMCPConnectorLogin) ? (name: string) => invoke(() => source().requestMCPConnectorLogin!(name)) : undefined; },
+    get getPendingMCPConnectorLogin() { return read(() => source().getPendingMCPConnectorLogin) ? () => read(() => source().getPendingMCPConnectorLogin!()) : undefined; },
+    get takeMCPConnectorLogin() { return read(() => source().takeMCPConnectorLogin) ? () => invoke(() => source().takeMCPConnectorLogin!()) : undefined; },
+    get cancelMCPConnectorLogin() { return read(() => source().cancelMCPConnectorLogin) ? () => read(() => source().cancelMCPConnectorLogin!()) : undefined; },
+    get startMCPConnectorLogin() { return read(() => source().startMCPConnectorLogin) ? () => invoke(() => source().startMCPConnectorLogin!()) : undefined; },
+    get pollMCPConnectorLogin() { return read(() => source().pollMCPConnectorLogin) ? () => invoke(() => source().pollMCPConnectorLogin!()) : undefined; },
+    get retryMCPConnectorLogin() { return read(() => source().retryMCPConnectorLogin) ? () => invoke(() => source().retryMCPConnectorLogin!()) : undefined; },
     startMCPLogin: (...args: Parameters<ApplicationSettingsControlsV1["startMCPLogin"]>) => invoke(() => source().startMCPLogin(...args)),
     pollMCPLogin: (...args: Parameters<ApplicationSettingsControlsV1["pollMCPLogin"]>) => invoke(() => source().pollMCPLogin(...args)),
     cancelMCPLogin: (...args: Parameters<ApplicationSettingsControlsV1["cancelMCPLogin"]>) => invoke(() => source().cancelMCPLogin(...args)),
@@ -546,6 +565,40 @@ export function scopeApplicationPreviewContent(source: () => ApplicationPreviewC
     openFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().openFile(target, { signal }), options),
     listDirectory: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().listDirectory(target, { signal }), options),
     readFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().readFile(target, { signal }), options),
+    saveFile: (input: PreviewFileSaveV1, options?: PreviewContentOptionsV1) => invoke(signal => {
+      const provider = source();
+      if (!provider.capabilities.saveFile || !provider.saveFile) throw new Error("File saving unavailable");
+      return provider.saveFile(input, { signal });
+    }, options),
+    watch: async (target: PreviewFileTargetV1, listener: (change: PreviewFileChangeV1) => void,
+      options?: PreviewContentOptionsV1): Promise<() => void> => {
+      assertActive(); signal.throwIfAborted(); options?.signal?.throwIfAborted();
+      const provider = source();
+      if (!provider.capabilities.watch || !provider.watch) throw new Error("File observation unavailable");
+      const lifetime = new AbortController();
+      let release: (() => void) | undefined;
+      const stop = () => {
+        if (lifetime.signal.aborted) return;
+        lifetime.abort();
+        signal.removeEventListener("abort", stop);
+        options?.signal?.removeEventListener("abort", stop);
+        release?.();
+      };
+      signal.addEventListener("abort", stop, { once: true });
+      options?.signal?.addEventListener("abort", stop, { once: true });
+      try {
+        release = await provider.watch(Object.freeze({ ...target }), change => {
+          if (lifetime.signal.aborted) return;
+          if (change.type === "error") stop();
+          listener(change);
+        }, { signal: lifetime.signal });
+        if (lifetime.signal.aborted) {
+          release();
+          lifetime.signal.throwIfAborted();
+        }
+        return stop;
+      } catch (error) { stop(); throw error; }
+    },
     revealItem: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().revealItem(target, { signal }), options),
     showItemMenu: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().showItemMenu(target, { signal }), options),
     exportFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().exportFile(target, { signal }), options),

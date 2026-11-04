@@ -297,6 +297,12 @@ app.whenReady().then(async () => {
   await click('.workspace-panel-globalize');
   await waitFor(() => !document.querySelector('.workspace-conversation-tab'));
   const reviewTabs = await tabs();
+  // The conversation tab disappears before the exiting sheet returns to the
+  // dock. Wait for that layout phase, then keep the real pointer hit assertion.
+  await waitFor(() => {
+    const panel = document.querySelector('.workspace-right-panel');
+    return panel && !panel.hasAttribute('data-sheet');
+  });
   await pointerClick(".workspace-panel-add");
   await click('[data-wuu-tool="review"]');
   await waitFor((count) => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === count, reviewTabs.length);

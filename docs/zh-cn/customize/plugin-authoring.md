@@ -34,8 +34,30 @@
 | `dependencies` | `{ id, version?, optional? }` 形式的包关系；必需依赖必须可用且满足版本约束 |
 | `breaks` | 硬不兼容关系；不兼容的包同时启用会拒绝激活计划 |
 | `conflicts` | 软冲突，只报告，不自动禁用任何一方 |
-| `skills`、`hooks`、`mcpServers` | 分别使用[技能](skill-authoring.md)、[hook](hooks.md)、[MCP](mcp.md) 契约的贡献 |
+| `skills`、`hooks`、`mcpServers` / `mcp_servers` | 分别使用[技能](skill-authoring.md)、[hook](hooks.md)、[MCP](mcp.md) 契约的贡献 |
 | `contributes` | 命令、主题、设置、UI 声明和视图入口 |
+
+### 产品插件族
+
+作为同一产品交付的多个包可以声明相同的 `interface.family`：
+
+```json
+{
+  "interface": {
+    "family": {
+      "id": "example.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring work."
+    }
+  }
+}
+```
+
+使用稳定、带发布者命名空间的 `id`，各成员填写相同的 `name` 和可选的 `description`。插件目录和已启用侧栏按族显示一个入口，即使只安装了其中一个成员也一样。搜索同时匹配成员名称和描述。打开插件族后可以查看组件的启用状态、故障、权限和设置；直接打开单个包的链接仍然有效。族信息不完整（ID 或名称为空）时，包保持独立显示。
+
+内置插件和社区插件使用相同的展示信息。插件族不会安装缺少的成员、建立依赖、授予信任，也不会统一启停或更新包。各组件保留自己的来源、生命周期和设置。旧宿主忽略这项可选信息，不需要数据迁移。
+
+### 包依赖
 
 `dependencies` 在不改变包 schema 的前提下增加版本检查。例如：
 
@@ -74,6 +96,87 @@
 安装附加插件并不隐含替换现有 provider；存在 provider 冲突时，仍需明确选择组合。
 
 ## 声明式贡献
+
+### MCP 连接器卡片
+
+插件所属 MCP 服务的可选 `connector` 元数据将其展示为账号连接器。它复用已有服务定义、连接生命周期、OAuth 凭据存储和插件归属，不会注册第二个服务。独立服务的元数据仅用于说明，不改变普通 MCP 管理操作。纯声明式插件无需 `runtime` 或 `desktop` 入口：
+
+```json
+{
+  "schema_version": 1,
+  "id": "workspace-connector",
+  "name": "Workspace Connector",
+  "version": "0.1.0",
+  "mcp_servers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http",
+      "enabled": false,
+      "connector": {
+        "title": "Notion",
+        "description": "Work with the workspace you authorize.",
+        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
+        "icon": { "path": "assets/notion.svg" }
+      }
+    }
+  }
+}
+```
+
+`connector` 支持以下字段：
+
+| 字段 | 契约 |
+| --- | --- |
+| `title` | 必填且非空白的显示名称。 |
+| `description` | 可选的简短服务说明。 |
+| `documentation_url` | 可选的服务商文档链接，必须是绝对 HTTPS 地址，且不内嵌凭据。默认目录不显示该链接。 |
+| `setup_required` | 可选的应用配置缺失说明。非空白时，默认目录和输入框都不列出该连接器，也不提供连接或授权操作。 |
+| `identity_probe` | 可选的固定只读 MCP 调用及有界 JSON Pointer 映射，用于读取服务商返回的身份；仅接受活动的受信任插件包声明，不接受独立配置注入。 |
+| `icon` | 可选的品牌图片：`{ "path": "..." }` 或 `{ "light": "...", "dark": "..." }`，使用包内相对路径的 SVG、PNG 或 WebP，限制与插件 `icon` 相同。显示在连接器卡片、登录对话框和输入框插件菜单的中性底板中，只为所属插件版本提供。未声明图标的卡片和独立服务显示通用图标。 |
+
+按需连接账号时，必须显式声明 `enabled: false`，避免首次安装就开始账号连接。示例的规范服务名是 `plugin.workspace-connector.notion`，用户偏好和 OAuth 凭据使用同一身份。连接操作先检查当前配置提供方的版本并保存启用偏好，再使用普通 MCP 连接与 OAuth 流程。连接器的断开操作会删除本机 OAuth 凭据，并持久化 `enabled: false`，不表示已撤销服务商侧的授权。禁用插件会停止所属服务，不会替换为其他连接器。
+
+默认应用提供方通过可选设置控件 `requestMCPConnectorLogin`、`getPendingMCPConnectorLogin`、`takeMCPConnectorLogin` 和 `cancelMCPConnectorLogin` 接收明确的连接意图。进程内检查点观察原始配置写入的结果，不会序列化或重放写入。重新附着时会验证上下文、页面、包指纹与来源、资源及启用状态。修改启用偏好必须等待后继图谱的控件；已启用的连接器可以在重新验证后使用当前控件。
+
+自动登录由所有者启动一次，而不是由挂载的对话框启动。可选的 `startMCPConnectorLogin` 和 `pollMCPConnectorLogin` 附着到同一个操作，在兼容的界面替换期间保留进行中与终态回执；`retryMCPConnectorLogin` 仅接受失败后的明确重试。此进程内交接只持有不透明的原生登录句柄，不在检查点中保存 OAuth state、授权网址、验证码或凭据。界面卸载不会取消登录；明确取消、上下文或导航或来源变化以及到期会取消。原生启动在发现服务前返回句柄，因此可以取消尚未打开的浏览器登录。等待中的轮询可返回 `phase: "starting"` 或 `"waiting"`。后端授权所有权撤销仍是终止条件，不会静默重试。手动重定向登录保留原有的对话框所有权，中断后需要明确重试，不保存其 OAuth 数据。独立提供方可以省略这些可选方法，但仍须遵守控件作用域取消规则。
+
+当前选择入口仅支持 Coding/当前项目宿主。OAuth 存储以规范服务名而非项目身份为键：使用同一服务名及凭据提供方的项目共享账号，更换账号和本地退出也会影响它们。绑定用户的 Personal/twin 宿主会从运行配置中排除共享 MCP 定义，后端报告配置不可用并拒绝连接器修改，避免混用不同域的偏好或凭据。现有 Personal 专用连接器不受影响。扩展此流程需要按域隔离连接身份、偏好和凭据存储，而不是永久按产品 ID 判断。资源 URL 将凭据绑定到远程端点，不授予显示位置或域归属权限。没有获准的身份探测时，卡片不会将账号身份标为已验证。
+
+使用真实的服务商端点，并如实声明配置要求。有 URL 不等于支持动态客户端注册。如果还缺少固定 OAuth 客户端、预览资格或管理员配置，不应提供连接按钮。当前服务商限制见[内置账号连接器指南](mcp.md#连接账号)。
+
+#### 已验证的连接身份
+
+将下面片段合并到插件所属服务定义中，而非用户配置：
+
+```json
+{
+  "connector": {
+    "title": "Notion",
+    "identity_probe": {
+      "tool": "notion-get-self",
+      "arguments": {},
+      "result": "single_text_json",
+      "account": { "id": "/user/id", "label": "/user/name", "email": "/user/email", "kind": "/user/type" },
+      "workspace": { "id": "/workspace/id", "label": "/workspace/name" }
+    }
+  },
+  "tool_overrides": { "notion-get-self": { "read_only": true } }
+}
+```
+
+工具必须存在于已连接服务的实时工具目录，并在同一插件包的 `tool_overrides` 中显式标记 `read_only: true`；仅有服务端提示不够。`arguments` 是固定 JSON 对象，不是生成代码。`result` 选择 MCP `structuredContent`（`structured_content`），或恰好一个包含 JSON 对象的文本块（`single_text_json`）。映射使用有界 RFC 6901 JSON Pointer，不支持表达式。账号 ID 必填；声明工作区映射时工作区 ID 也必填。可选名称或邮箱可以缺失或为空。只保存规范化的字符串 ID 与展示字段，不持久化原始响应。固定参数上限为 8 KiB、嵌套 16 层；指针上限为 512 字节、32 段。身份解码器仅接受不超过 64 KiB 的完整工具结果；保存的 ID、名称和类型各不超过 512 字节，邮箱不超过 320 字节。传输层先按现有的 8 MiB 消息 / 4 MiB SSE 事件上限读取，再应用更严格的身份结果上限。
+
+宿主只在用户成功连接或主动刷新身份后，使用现有 OAuth 授权及当前凭据提供方执行探测。启动、状态/目录读取和 token 刷新都不会运行探测。失败不会影响已有授权与传输连接，只报告身份暂不可用。缓存与授权、资源和获准的插件声明绑定；token 刷新保持授权身份，成功的新授权会替换它。已取消或被替换的操作无法写入迟到结果。读取不会迁移旧凭据；主动验证可安全补充身份。账号/工作区名称不用于选择凭据、授权工具，也不能证明 OAuth 应用品牌。本契约不扩大 Personal/twin 域的访问权限。
+
+#### 对话引用
+
+默认输入框通过 `listMCPServers` 发现 MCP 连接，通过目录的 `conversation_tools` 发现提供运行时工具的插件。主题和仅提供后台服务的包不需要额外声明退出。构造运行时插件引用时，请使用规范的 `provenance.plugin_id`，而不是目录记录的 subject ID。
+
+`plugin_reference` 消息片段携带可读的 `text` 和 `plugin` 对象（`ApplicationPluginReferenceV1`）。运行时引用使用 `plugin_id`；MCP 引用还保留 `mcp_server`、`resource_url`、不透明的 `authorization_id`，以及可用的已验证 `account_id` / `workspace_id`。草稿恢复、排队、编辑和提交时应完整保留片段。这些标识表示用户选择，不是凭据或执行授权。宿主解析工具名称，并在接收消息和开始轮次时重新验证连接身份。OAuth 刷新保留授权标识，新登录则替换它。MCP 客户端绑定已接受的授权；新登录取代它后，旧客户端会失败。
+
+引擎声明 `conversation-plugins`，即承诺本轮使用宿主选中的插件工具和说明，并保留原有权限检查。外部引擎通过现有的轮次级 MCP 桥接获得明确选中的工具。不支持的适配器应省略该能力；宿主会拒绝带引用的提交，避免静默丢失用户意图。运行中的轮次收到新引用时应排队，因为已有的外部桥接不能在执行中途取得新连接。
+
+### 主题与设置
 
 主题、外壳皮肤和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
 
@@ -241,6 +344,10 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 使用此信号，并在 shutdown 中停止定时器。清理仍可使用不绑定执行作用域的
 生命周期 host 保存状态或释放资源，不应依赖已经中止的信号完成清理。
 
+进程关闭只在有限时间内等待确认。超时后，宿主会终止进程，并报告清理未获确认，
+而不是清理成功。进程已终止不代表待完成的外部写入成功，也不代表其副作用被撤销；
+重试前应先核实状态。运行时正常退出但未回复关闭请求，仍可视为成功关闭。
+
 ## 工具和能力
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
@@ -319,6 +426,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.settings.get/list` | 声明的设置值 |
 | `host.credentials.request` | 使用宿主持有的 Bearer 凭据向限定 HTTPS 来源发送请求 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
+| `host.session.model` | 通过有效的所有者界面读取或修改插件拥有的用户空间会话模型 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
 | `host.workspace.status/apply/discard` | 检查或处理所拥有会话工作区中的改动 |
 | `execution.update` | 报告活动执行的进展 |
@@ -329,6 +437,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。 返回结果描述最终完成的比较：`swapped: false` 返回当前值，`swapped: true` 返回替换后的值（删除后为 `null`）。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
+
+`host.session.model` 读取调用插件所拥有会话的当前 provider 和模型。修改时须同时提供 `provider` 和 `model`。调用需要同一用户空间内有效的所有者界面，并检查会话归属；会话忙碌时拒绝修改。成功的选择保存在该会话中，不修改其他会话或全局默认值。已获准的委派任务保留自身的授权和模型选择。此服务不配置凭据，也不选择外部引擎。
 
 `host.session.list` 的 owned 结果，以及调用插件所拥有会话的 `host.session.inspect` 结果，在可用时包含 `creation_request_id`。该字段是原始 `host.session.create` 请求 ID，在首个轮次开始前也可返回，因此插件能发现已被接纳但响应丢失的创建请求。shared 列表和对其他所有者会话的检查不返回此字段。它仅用于请求关联，不授予会话控制权限。
 
@@ -454,6 +564,8 @@ async function requestText(host: RuntimeHost, content: string) {
 
 `LogicalModelRequestV1` 包含 `version: 1`、提供商和模型身份、有序消息与工具、缓存提示、模型选项、工具选择、媒体准入和原生回放状态。消息保留 reasoning block、提供商原生 item 及其回退历史、工具调用和结果、发现的工具 schema，以及已解析的图片和文件字节。富工具结果保留 artifact 和延迟媒体引用，以及经过预算限制的 `model_text`。不导出本地临时文件路径、凭据、宿主重试对象或执行权限。复制快照时应保留未知的提供商选项和不透明原生数据。
 
+工具调用可包含可选字段 `thought_signature`，其来源由 `provider_item_provider` 和 `provider_item_model` 标记。在模型、driver、工具批次和会话之间传递时，应将此不透明值与原调用及来源一起原样保留，也应保留并行调用的顺序。宿主在为其他提供商或模型准备请求时会移除外来签名。这是版本 1 的新增可选字段；重新构造工具调用的外部提供方需要透传该字段，才能支持带签名的 Gemini 续接。
+
 这是逻辑快照，不保证最终 HTTP 字节完全相同或缓存一定命中。上下文、路由、模型、适配器、原生状态兼容性或媒体变化时，插件需要使旧快照失效。已配置凭据、提供商请求准备、取消和推理用量记录仍由宿主负责。原生转发不能配置任意端点或凭据。
 
 | 扩展点 | 契约 |
@@ -567,7 +679,9 @@ TypeScript 运行时适配器中的 `model.adapter` 和 `model.middleware` 处�
 generation 所有，可以活过工具回调。取消读取或中止原始调用的信号不会停止已接纳的进程；
 显式取消应调用 `stopProcess`。
 
-`readProcess` 返回合并输出、字节游标、截断信息和进程状态。单次读取范围为 4 字节到
+`readProcess` 返回输出、字节游标、截断信息和进程状态。不指定 `stream` 时仍返回合并输出。
+host.process 1.2 支持 `stream: "stdout"` 或 `stream: "stderr"`，分别使用独立游标，结果回传 `stream`。
+旧记录、PTY 或不支持分流的后端会明确报错；SDK 会拒绝缺少流确认的结果。原始输出本身不唤醒会话。单次读取范围为 4 字节到
 1 MiB，默认 64 KiB，最多等待 30 秒。应使用返回的 `next_offset`，因为 UTF-8 分块及日志
 保留策略可能影响实际长度。`stopProcess` 停止整个进程树。超时为零表示无截止时间，
 但会话归档或删除、generation 关闭、宿主退出仍会停止进程。`follow_parent: true` 让已完成
@@ -578,6 +692,12 @@ generation 所有，可以活过工具回调。取消读取或中止原始调用
 事件，而不会获得任意私有会话的访问权。输出及进程退出本身不会唤醒会话。插件负责分行、
 过滤、事件策略和持久历史；运行时重启后句柄失效。内置 [Monitor 插件](plugins.md#监控后台事件)
 演示了这个接口。
+
+观察类输入可以使用 `presentation.kind: "background_event"`：事件仍进入模型上下文和
+持久历史，但不显示输入气泡。助手回答、工具活动和轮次失败仍正常显示。
+任何插件都可通过 `host.session.send` 或 `sendProcessEvent` 使用此展示类型，
+接纳、插入当前轮次和请求去重规则保持一致。真实用户输入仍使用普通展示。
+旧宿主会拒绝这个新类型，使用前应一起更新宿主和客户端。
 
 ## 提供服务
 

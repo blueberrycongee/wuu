@@ -95,6 +95,14 @@ function workspaceDemoPath(path) {
   return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
 }
 
+async function catalogThreads() {
+  if (process.env.WUU_RECENT_CATALOG_E2E) {
+    const catalog = await ipcRenderer.invoke("test:recent-catalog");
+    if (catalog) { threads.clear(); for (const thread of catalog) threads.set(thread.id, thread); }
+  }
+  return [...threads.values()];
+}
+
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   acquireArtifactSource: input => ipcRenderer.invoke("test:artifact-acquire",input),
   releaseArtifactSource: id => ipcRenderer.invoke("test:artifact-release",id),
@@ -233,8 +241,8 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     threads.set(threadId, thread);
     return { thread };
   },
-  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
-  listAllThreads: async () => ({ threads: [...threads.values()] }),
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? await catalogThreads() : [] }),
+  listAllThreads: async () => ({ threads: await catalogThreads() }),
   getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {

@@ -36,6 +36,7 @@ const report = { status: "running", platform: process.platform, versions: proces
 const save = () => fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
 const trace = value => fs.appendFileSync(path.join(output, "events.jsonl"), JSON.stringify({ at: Date.now(), ...value }) + "\n");
 let win, host, page, dropPaint = false;
+let lastReadyGeometry, holdLayout = false, heldLayout;
 const failures = [];
 app.on("web-contents-created", (_event, contents) => {
   contents.on("console-message", details => trace({ kind: "console", id: contents.id, message: details.message }));
@@ -122,7 +123,12 @@ async function run() {
   await app.whenReady();
   host = new ChromeOverlayHost((owner, event) => {
     trace({ kind: "event", ...event });
-    if (event.command.type === "dismiss" && event.command.reason === "failed") failures.push(event);
+    if (event.command.type === "dismiss" && event.command.reason === "failed") {
+      failures.push(event);
+      const view = menuView();
+      trace({ kind: "failed-native-geometry", bounds: view?.getBounds(), visible: view?.getVisible(),
+        zoom: view?.webContents.getZoomFactor(), lastReadyGeometry });
+    }
     owner.webContents.send("wuu:chrome-overlay-event", event);
   },
     path.join(desktop, "out/renderer"), path.join(desktop, "out/preload/chromeOverlay.cjs"));
@@ -131,10 +137,41 @@ async function run() {
     return host.show(win, request);
   });
   ipcMain.handle("wuu:chrome-overlay-hide", (_event, token, generation) => host.hide(win, token, generation));
-  ipcMain.handle("wuu:chrome-overlay-ready", event => { trace({ kind: "ready", id: event.sender.id }); return host.ready(event); });
-  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => {
+  ipcMain.handle("wuu:chrome-overlay-ready", event => {
+    const state = host.ready(event);
+    trace({ kind: "ready", id: event.sender.id, target: state?.bounds });
+    // Keep first-opening geometry in the evidence even when the host retires a
+    // renderer before failure screenshots can inspect it.
+    void evaluate(event.sender, async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { viewport: { width: innerWidth, height: innerHeight },
+        root: document.documentElement.getBoundingClientRect().toJSON(),
+        surface: document.querySelector(".chrome-overlay-surface")?.getBoundingClientRect().toJSON(),
+        rows: [...document.querySelectorAll('[role="menuitem"]')].map(row => row.getBoundingClientRect().toJSON()),
+        visibility: document.visibilityState, ratio: devicePixelRatio };
+    }).then(geometry => {
+      lastReadyGeometry = { at: Date.now(), id: event.sender.id, geometry };
+      trace({ kind: "ready-geometry", ...lastReadyGeometry,
+        bounds: menuView()?.getBounds(), visible: menuView()?.getVisible(), zoom: event.sender.getZoomFactor() });
+    })
+      .catch(error => trace({ kind: "ready-geometry-unavailable", id: event.sender.id, error: String(error) }));
+    return state;
+  });
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token, generation) => {
+    trace({ kind: "prepared", token, generation });
+    // Interrupt only delivery of the layout phase to observe the real native
+    // preparation rectangle while the shipping renderer stays hidden/inert.
+    const send = event.sender.send;
+    if (holdLayout) event.sender.send = function (channel, state, ...rest) {
+      if (channel === "wuu:chrome-overlay-state" && state?.phase === "layout") heldLayout = { sender: event.sender, state };
+      else send.call(this, channel, state, ...rest);
+    };
+    try { host.prepared(event, token, generation); }
+    finally { event.sender.send = send; }
+  });
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation, viewport) => {
     trace({ kind: "painted", token, generation, dropped: dropPaint });
-    if (!dropPaint) host.painted(event, token, generation);
+    if (!dropPaint) host.painted(event, token, generation, viewport);
   });
   ipcMain.on("wuu:chrome-overlay-command", (event, command) => host.command(event, command));
   win = new BrowserWindow({ width: 1180, height: 820, show: true,
@@ -186,7 +223,7 @@ async function run() {
     await openMenu(); await click(win.webContents, "textarea"); await closed(); await focusedComposer();
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Outside click retains composer focus");
     const settingsMenu = await openMenu();
-    await click(settingsMenu.view.webContents, '[data-settings-page="providers"]'); await closed();
+    await click(settingsMenu.view.webContents, '[data-settings-entry="settings"]'); await closed();
     await until(() => evaluate(win.webContents, () => {
       const e = document.querySelector(".settings-main"), r = e?.getBoundingClientRect();
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
@@ -198,6 +235,32 @@ async function run() {
     scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings navigation and exact draft preservation");
     scenario.status = "passed"; save();
   }
+  for (const cancel of ["escape", "outside"]) {
+    holdLayout = true; heldLayout = undefined;
+    await click(win.webContents, ".sidebar-account-trigger");
+    await until(() => heldLayout && menuView()?.getVisible(), "native preparation awaits renderer layout");
+    const preparing = menuView(), pending = heldLayout.state;
+    assert.ok(win.webContents.isFocused() && !preparing.webContents.isFocused(), "Owner retains keyboard focus during native preparation");
+    const hidden = await evaluate(preparing.webContents, () => {
+      const surface = document.querySelector(".chrome-overlay-surface");
+      return { inert: surface?.inert, visibility: surface && getComputedStyle(surface).visibility };
+    });
+    assert.deepEqual(hidden, { inert: true, visibility: "hidden" }, "Prepared content is not shown or interactive before layout");
+    const event = { sender: preparing.webContents, senderFrame: preparing.webContents.mainFrame };
+    host.command(event, { token: pending.token, generation: pending.generation, command: { type: "account-action", action: "providers" } });
+    assert.equal(await evaluate(win.webContents, () => Boolean(document.querySelector(".settings-shell"))), false, "Preparation cannot invoke a menu business action");
+    fs.writeFileSync(path.join(output, `preparing-${cancel}-shell.png`), (await win.webContents.capturePage()).toPNG());
+    if (cancel === "escape") key(win.webContents, "Escape");
+    else await click(win.webContents, "textarea");
+    await closed();
+    host.prepared(event, pending.token, pending.generation);
+    host.painted(event, pending.token, pending.generation, pending.bounds);
+    assert.equal(preparing.getVisible(), false, "Late preparation/paint acknowledgements cannot reopen a cancelled menu");
+    holdLayout = false; heldLayout = undefined;
+    trace({ kind: "preparation-cancel-passed", cancel, hidden });
+  }
+  report.preparation = "Owner focus retained; hidden inert content cannot invoke actions; Escape/outside cancel and fence late acknowledgements";
+  save();
   // Reproduce a loaded renderer that never acknowledges its first presentation.
   // Only transport delivery is interrupted; the shipping UI and host are intact.
   dropPaint = true;

@@ -1,3 +1,4 @@
+import { encodePluginRuntimeResponse } from "./pluginRuntimeIPC";
 import { DictationService } from "./dictation";
 import { spawn as spawnDictationHelper } from "node:child_process";
 import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
@@ -240,6 +241,7 @@ import {
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
+import { registerWorkspaceFileWatches } from "./workspaceFileWatches";
 import { WorkspaceDirectoryReader } from "./workspaceDirectoryReader";
 import createWorkspaceDirectoryWorker from "./workspaceDirectoryWorker?nodeWorker";
 import {
@@ -1897,6 +1899,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:git-create-pr", (event, params: GitPullRequestParams, root?: string) =>
     gitServiceForEvent(event).createPullRequest(params ?? {}, root),
   );
+  registerWorkspaceFileWatches(workspaceFilesForEvent);
   ipcMain.handle("wuu:file-tree-list", (event, root?: string) =>
     workspaceFilesForEvent(event).fileTreeList(root),
   );
@@ -2411,7 +2414,7 @@ app.whenReady().then(async () => {
     }
     return inventory;
   });
-  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
+  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => encodePluginRuntimeResponse(async () => {
     if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
       throw new Error("User host and workspace routes cannot be combined");
     }
@@ -2446,7 +2449,7 @@ app.whenReady().then(async () => {
     return pluginRuntimeRequests.request(owner, request, params, undefined, () => {
       event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
     });
-  });
+  }));
   ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
     pluginRuntimeRequests.cancel(`window:${event.sender.id}`, params));
   ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
@@ -2593,6 +2596,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:mcp-auth-status", (event, name: string) =>
     appServerRequest<MCPAuthStatusResult>(event, "mcp/auth/status", { name }),
+  );
+  ipcMain.handle("wuu:mcp-identity-refresh", (event, name: string) =>
+    appServerRequest<MCPAuthStatusResult>(event, "mcp/identity/refresh", { name }),
   );
   ipcMain.handle("wuu:mcp-auth-finish", (event, name: string, state: string, code: string) =>
     appServerRequest<MCPAuthFinishResult>(event, "mcp/auth/finish", { name, state, code }),
@@ -2927,6 +2933,12 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:thread-list-all", (event) =>
     appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
+  );
+  ipcMain.handle("wuu:thread-recovery-list", (event) =>
+    appServerRequest(event, "thread/recovery/list"),
+  );
+  ipcMain.handle("wuu:thread-recovery-dismiss", (event, threadIDs: string[]) =>
+    appServerRequest(event, "thread/recovery/dismiss", { thread_ids: threadIDs }),
   );
   ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
     appServerRequest(event, "thread/search", {
@@ -3298,7 +3310,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:chrome-overlay-show", (event, request: ChromeOverlayRequest) => chromeOverlayHost.show(webWorkspaceSender(event), request));
   ipcMain.handle("wuu:chrome-overlay-hide", (event, token: string, generation: number) => chromeOverlayHost.hide(webWorkspaceSender(event), token, generation));
   ipcMain.handle("wuu:chrome-overlay-ready", event => chromeOverlayHost.ready(event));
-  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number) => chromeOverlayHost.painted(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token: string, generation: number) => chromeOverlayHost.prepared(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number, viewport: { width: number; height: number }) => chromeOverlayHost.painted(event, token, generation, viewport));
   ipcMain.on("wuu:chrome-overlay-command", (event, message) => chromeOverlayHost.command(event, message));
   ipcMain.handle("wuu:web-workspace-tabs-initialize", (event, destinations: WebWorkspaceLegacyDestination[]) =>
     webWorkspaceHost.initializeTabs(webWorkspaceSender(event), destinations));

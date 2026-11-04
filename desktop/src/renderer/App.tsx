@@ -1,5 +1,6 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
+import { RestartRecovery } from "./RestartRecoveryNotice";
 import { AccountScreen } from "./AccountScreen";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
@@ -67,6 +68,7 @@ import {
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { threadHasConversationMedia } from "./ConversationMediaSettle";
 import { UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ConversationPresentationLoading, type ConversationPresentationRegion, useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
 import { createEnvironmentPanelActions } from "./EnvironmentActions";
@@ -416,11 +418,6 @@ export function App({ application, slots, shellPluginId }: {
     void application.invoke("navigation.show-account", { open }).catch(showErrorToast);
   }, [application]);
   const onboardingComplete = useSyncExternalStore(application.onboarding.subscribe, () => application.onboarding.getSnapshot().completed);
-
-  const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
-  const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
-    void application.invoke("settings.open", { pageId }).catch(showErrorToast);
-  }, [application]);
 
   const {
     workspaceViewTabs,
@@ -1122,8 +1119,15 @@ export function App({ application, slots, shellPluginId }: {
     // its static chrome without displaying a message overlay on that route.
     enabled: initialized && application.getSnapshot().phase !== "error",
   });
+  const activeThreadHasMedia = useMemo(
+    () => pendingViewSwitch?.kind === "thread" && pendingViewSwitch.targetID === activeThreadID
+      ? threadHasConversationMedia(activeThread)
+      : false,
+    [activeThread, activeThreadID, pendingViewSwitch?.kind, pendingViewSwitch?.targetID],
+  );
   useConversationSwitchReady({
     visible: conversationVisible,
+    mediaExpected: activeThreadHasMedia,
     pendingViewSwitch,
     activeThreadID,
     viewportRef: conversationScrollRef,
@@ -1610,6 +1614,7 @@ export function App({ application, slots, shellPluginId }: {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
+          data-active-session-tab-id={tabs.activeTabId}
           data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
           data-settings-open={settingsOpen ? "" : undefined}
           data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
@@ -1734,7 +1739,9 @@ export function App({ application, slots, shellPluginId }: {
                 <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
-            <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            {!showingManagementCatalog || showingPrimaryPluginView ? (
+              <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            ) : null}
           </div>
           <ConversationTitleActions
             thread={activeThread}
@@ -1825,6 +1832,7 @@ export function App({ application, slots, shellPluginId }: {
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
               scopeKey={activeThreadID}
+              suspended={viewSwitchPending}
               onJump={jumpConversationToLatest}
               inline
             />
@@ -1875,6 +1883,7 @@ export function App({ application, slots, shellPluginId }: {
       )}
       </>
 
+      {!poppedOutMode && initialized && onboardingComplete && <RestartRecovery application={application} />}
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={gitStatus}

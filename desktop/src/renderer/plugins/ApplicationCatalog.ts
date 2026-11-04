@@ -25,12 +25,12 @@ export class ApplicationCatalog implements ApplicationCatalogV1 {
     const source = this.host.getSource();
     const inventory: CatalogExtensionV1[] = source.inventory.map(record => ({
       id:record.id, name:record.name, description:record.description, long_description:record.long_description,
-      developer:record.developer, icon:record.icon, kind:record.kind, provenance:record.provenance, state:record.state,
+      developer:record.developer, family:record.family, icon:record.icon, kind:record.kind, provenance:record.provenance, state:record.state,
       fingerprint:record.fingerprint, graph_generation:record.graph_generation, package_source:record.package_source,
       requested_permissions:record.requested_permissions, approval_state:record.approval_state,
       runtime_state:record.runtime_state, last_error:record.last_error, activation_issues:record.activation_issues,
       enabled:record.enabled, enabled_override:record.enabled_override, pending_update:record.pending_update,
-      contributions:record.contributions,
+      contributions:record.contributions, conversation_tools:record.conversation_tools,
     }));
     const capabilities = {install:hostSupports("installPluginPackage"),update:hostSupports("updateExtensionPackage"),remove:hostSupports("removePluginPackage")};
     const key = JSON.stringify([source.contextKey, inventory, capabilities]);

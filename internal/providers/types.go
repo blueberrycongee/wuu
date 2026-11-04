@@ -149,6 +149,9 @@ func NormalizeFinishReason(stopReason string, truncated bool, hasToolCalls bool)
 
 // ToolCall is a model requested tool execution.
 type ToolCall struct {
+	// ThoughtSignature is opaque provider state, replayed only to its originating
+	// provider/model. It is not tool input and must survive history persistence.
+	ThoughtSignature     string           `json:"thought_signature,omitempty"`
 	ID                   string           `json:"id,omitempty"`
 	ProviderItemID       string           `json:"provider_item_id,omitempty"`
 	ProviderItemProvider string           `json:"provider_item_provider,omitempty"`
@@ -275,6 +278,17 @@ type ResponseSelectionSource struct {
 	RangeText string `json:"range_text,omitempty"`
 }
 
+// PluginReference identifies a user-selected capability without granting authority.
+// Account and resource identity are checked again when a turn starts.
+type PluginReference struct {
+	AuthorizationID string `json:"authorization_id,omitempty"`
+	PluginID        string `json:"plugin_id,omitempty"`
+	MCPServer       string `json:"mcp_server,omitempty"`
+	ResourceURL     string `json:"resource_url,omitempty"`
+	AccountID       string `json:"account_id,omitempty"`
+	WorkspaceID     string `json:"workspace_id,omitempty"`
+}
+
 // MessageContentPart preserves the authored structure of one user message.
 // Providers still consume ChatMessage.Content as flattened text.
 type MessageContentPart struct {
@@ -288,12 +302,17 @@ type MessageContentPart struct {
 	Comment   string               `json:"comment,omitempty"`
 	ID        string               `json:"id,omitempty"`
 	Selection *ResponseSelection   `json:"selection,omitempty"`
+	Plugin    *PluginReference     `json:"plugin,omitempty"`
 }
 
 // CloneMessageContentParts returns independently mutable presentation metadata.
 func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
 	out := append([]MessageContentPart(nil), parts...)
 	for i := range out {
+		if out[i].Plugin != nil {
+			reference := *out[i].Plugin
+			out[i].Plugin = &reference
+		}
 		if out[i].Source != nil {
 			source := *out[i].Source
 			if source.PDF != nil {

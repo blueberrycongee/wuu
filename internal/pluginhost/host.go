@@ -87,6 +87,7 @@ type Host struct {
 	serviceRegistry     *ServiceRegistry
 	dependencies        map[string][]Dependency
 	dependencyErrors    map[string]error
+	dependencyIssues    map[string][]DependencyIssue
 	executions          *ExecutionTracker
 	background          map[string]*backgroundJob
 	backgroundCompleted []string
@@ -159,6 +160,7 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		registry.scopeTracker = h.executions
 		registry.moduleStatuses = h.Statuses
 		registry.dependencies = h.Dependencies
+		registry.dependencyIssues = h.DependencyIssues
 		registry.mu.Unlock()
 	}
 	for _, conflict := range conflicts {
@@ -968,7 +970,8 @@ type hostShutdown struct {
 }
 
 // ShutdownDone closes only when consumers, their dependencies and the owning
-// lifecycle graph have actually finished cleanup. A Close deadline does not
+// lifecycle graph have drained. Drain alone does not confirm successful cleanup;
+// consult the shutdown outcomes. A Close deadline does not
 // close this channel. Generation owners must retain registry and package roots
 // until this barrier closes.
 func (h *Host) ShutdownDone() <-chan struct{} {

@@ -47,6 +47,26 @@ GPT-6 Sol and Luna support reasoning levels from `none` through `max`, defaultin
 
 Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `none` selection to `low`; their defaults are `medium` and `high`, respectively. Wuu requests readable thinking summaries and lets the API drop thinking blocks invalidated by context changes while retaining valid signed blocks. These models reject forced tool choice, so Wuu expresses a required closing tool call as an instruction with automatic tool selection; this does not guarantee that the model calls it. See the official [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) and [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) migration guides.
 
+## Gemini tool compatibility
+
+For model IDs containing `gemini`, Wuu adapts tool definitions to Gemini's supported schema subset. A tool with `const: 3`, such as the interactive UI tool's version field, is sent as a numeric value with equal minimum and maximum bounds. String constants use a single-value enum. This avoids `400 Invalid JSON payload` / `Unknown name "const"` on gateways that use Google's OpenAPI schema, while keeping numeric tool arguments numeric.
+
+Other constant kinds retain their type and an explicit value hint; the tool must still validate the original constraint when it executes. Parameter names and literal defaults/examples are preserved. These adaptations apply to outgoing requests, without changing installed tool definitions or other models' schemas.
+
+Gemini's OpenAI-compatible Chat Completions API can return an opaque thought signature on a tool call. Wuu preserves it through streaming, saved history, and interrupted tool-result recovery, then sends it back with the same call and parallel-call order. Services that require this continuation state can reject a later request with HTTP 400 when it is missing, even after earlier requests succeeded. See Google's [thought signature guidance](https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures).
+
+Switching provider or model omits signatures from the previous origin on outgoing requests. Signatures already lost by an older Wuu version cannot be reconstructed; start a new conversation if that history is rejected. A generic `invalid_request` alone does not establish that a missing signature caused it.
+
+## Tencent HY4 and MiniMax M3.1
+
+Select `hy4` on Tencent TokenHub (`https://tokenhub.tencentmaas.com/v1`) or Token Plan (`https://tokenhub.tencentmaas.com/plan/v3`). HY4 accepts text and images, supports tools, and provides a 1,024,000-token context window with up to 64,000 output tokens. Wuu defaults to `high`; `none` sends Tencent's `no_think` value. See the official [HY4 guide](https://cloud.tencent.com/document/product/1823/132252) and [thinking parameters](https://cloud.tencent.com/document/product/1823/131208).
+
+OpenRouter offers `tencent/hy4` with its own limits and reasoning options: `none`, `low`, and `high` (default). Provider-specific limits and prices apply; the direct Tencent settings are not interchangeable with the gateway's settings.
+
+MiniMax connections include `MiniMax-M3.1-Flash`, with image and video input and a 1M context window. Reasoning is required: choose `low`, `medium`, `high`, `xhigh`, or `max` (default). A saved `none` selection becomes `low`. Existing M2 selections retain their metadata but are no longer advertised as new choices. See the [MiniMax text-generation guide](https://platform.minimax.io/docs/guides/text-generation).
+
+Catalog refreshes preserve metadata for saved selections removed from the bundled catalog. Retained metadata does not establish that a retired model is still served or included in your account's plan.
+
 ## Kimi K3.1 Pro
 
 Choose `kimi-k3.1-pro` or `kimi-k3.1-pro-highspeed` on Kimi's pay-as-you-go API (`https://api.moonshot.ai/v1` or `https://api.moonshot.cn/v1`). Kimi Code subscriptions use `k3.1-pro` or `k3.1-pro-highspeed` instead, at `https://api.kimi.com/coding/v1` or `https://api.kimi.ai/coding/v1`.
@@ -273,10 +293,10 @@ image for the model. External agent engines use their own file and image tools.
 The built-in engine enables programmatic tool calling (PTC) by default.
 Basic file and command tools also accept direct calls; `run_code` combines
 tools or processes their results.
-**Settings → Built-in agent → Programmatic tool calling** provides one switch
-for all models. Explicit saved choices are preserved; configurations
-that omit the switch use the default. Changes require idle turns and apply on
-the next turn. External engines keep their own tools.
+Set `ptc.enabled` in [user configuration](../reference/configuration.md#built-in-agent-settings)
+to enable or disable PTC for all models. Explicit saved choices are preserved;
+omitting the field uses the default. Finish active work, then fully quit and
+restart Wuu after editing. External engines keep their own tools.
 
 Interaction, explicit artifact delivery, context replacement, workspace changes,
 and agent/session lifecycle controls remain separate direct tools. Extensions

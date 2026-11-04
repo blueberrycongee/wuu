@@ -10,6 +10,8 @@ Go 宿主负责工具分派、执行身份、服务路由、持久化与权限�
 
 内置包和外部包使用相同的运行时与桌面注册契约。内置来源影响发现和信任，不会改变工具、能力或 UI 注册的含义。复制一个包并使用内置插件的 ID，不会让它成为官方包。
 
+内置 `account-connectors` 是纯声明式包：它通过 `mcp_servers` 提供公开的[连接器元数据](plugin-authoring.md#mcp-连接器卡片)，不包含运行时或私有注册表。包默认启用，但所有服务都保持禁用，直到用户主动连接。禁用该包会通过普通插件生命周期停止其贡献。
+
 ## 编写 SDK 与进程契约
 
 Wuu 只维护一套官方插件编写 SDK：`packages/plugin-sdk` 中的 TypeScript
@@ -70,6 +72,8 @@ npm 依赖。内置与第三方插件遵循相同的 JSONL 初始化、服务协
 未覆盖组合配置时，产品只包含通过依赖解析的包。移除或禁用附加插件后，其必需包消费者仍保持安装，但不会激活，并显示依赖诊断；可选消费者和独立包仍可激活。这不会放宽显式选择：用户组合中选定的模块或服务提供者不可用时，仍会拒绝准备。安装或启用被选中激活的消费者时，其必需依赖也必须可用。
 
 App-server 客户端可以通过 `extension/package/update` 一次提交相关启停选择，例如 `{"updates":[{"id":"plugin:user:provider","action":"disable"},{"id":"plugin:user:consumer","action":"disable"}]}`。宿主校验完整选择，准备一个候选，通过一次 compare-and-exchange 持久化设置，再激活该 generation。每项可提供 `fingerprint`，用于拒绝过期的目录选择。数组不能为空，包 subject ID 不能重复，动作只能是 `enable` 或 `disable`；不能同时提供顶层单包字段，即使字段值为空。信任和待处理包更新仍使用原有单包请求。批量请求不会授予信任或自动选择依赖。对于请求显式启用、已获信任且被选中的包，准备阶段必须满足其必需的包依赖和服务依赖。校验或准备失败，以及已确认的 compare-and-exchange 拒绝，会保留原设置和 generation。写入结果未知时，应重新读取配置再决定下一步，不能假定已经回滚或自动重试。提交后的激活失败按下文约定报告已提交状态。
+
+运行时将已准入的包关系带入同一张服务生命周期依赖图。满足条件的可选包依赖使提供方先于消费方准备和激活，并在消费方清理完成后退出，但不会传播提供方故障。如果服务绑定后某条可选包边形成环，宿主会忽略这条顺序边，而不是拒绝整个 generation。`registry.introspect` 的 `dependencies` 返回实际采用的图，`dependency_issues` 说明未采用的包关系（`optional_missing`、`optional_version_mismatch` 或 `optional_cycle`）。包版本与服务主版本独立；可选包依赖不授予服务调用权限。
 
 ## 运行时 generation
 

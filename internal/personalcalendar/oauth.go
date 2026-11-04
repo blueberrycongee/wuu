@@ -285,6 +285,10 @@ func (p *pending) stop(state, code string) {
 	if p.view.State == "pending" || p.view.State == "exchanging" {
 		p.view.State = state
 		p.view.ErrorCode = code
+		// Cancellation may let credential cleanup finish before this lock is acquired.
+		if p.cleanupError != nil {
+			p.view.ErrorCode = "credential_cleanup_failed"
+		}
 		p.view.AuthorizationURL = ""
 	}
 	p.mu.Unlock()

@@ -75,7 +75,7 @@ export type TurnViewProps = {
 export function TurnView(props: TurnViewProps): JSX.Element | null {
   const { slots, slotOwner } = useConversationControls();
   const projectedTurn = workspaceTurnForPresentation(props.turn);
-  if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
+  if (props.turn.items.length > 0 && projectedTurn.items.length === 0 && !props.turn.error && props.turn.status !== "failed") {
     return null;
   }
   const context: ConversationTurnSlotContextV1 = Object.freeze({

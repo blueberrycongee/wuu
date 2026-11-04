@@ -312,13 +312,17 @@ app.whenReady().then(async () => {
               if (table) {
                 // Wide tables scroll within the message; both edges of a preview
                 // must remain reachable without overflowing the conversation.
-                const tableBounds = table.getBoundingClientRect();
-                const initialScroll = table.scrollLeft;
-                table.scrollLeft = 0;
+                // Rich tables keep their scroll range on the inner region so the
+                // copy/expand actions stay pinned while the table moves.
+                const scroller = table.classList.contains("rich-table-wrap")
+                  ? table.querySelector(":scope > .rich-table-scroll") : table;
+                const tableBounds = scroller.getBoundingClientRect();
+                const initialScroll = scroller.scrollLeft;
+                scroller.scrollLeft = 0;
                 const left = image.getBoundingClientRect().left;
-                table.scrollLeft = table.scrollWidth;
+                scroller.scrollLeft = scroller.scrollWidth;
                 const right = image.getBoundingClientRect().right;
-                table.scrollLeft = initialScroll;
+                scroller.scrollLeft = initialScroll;
                 // Table previews keep a readable intrinsic width; carousel
                 // thumbnails scale with the available conversation column.
                 const readable = table.classList.contains("rich-table-wrap") ? rect.width >= 100 : rect.width > 0;

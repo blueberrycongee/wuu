@@ -250,8 +250,10 @@ WUU_ERROR_STYLE_FONT=20 npm --prefix desktop run test:e2e:error-message-style
 `WUU_DESKTOP_CORE` 指定已构建的核心。每次使用独立的应用与用户配置和 loopback
 合成模型服务，经过真实 Electron 输入、preload、主进程和 Go。检查浅色/深色、
 1280/640px 窗口、IM/普通气泡、字号与裁切、原生详情开合和键盘焦点、HTTP 401 后
-手动继续，以及 HTTP 503 后自动恢复。详情应保留核心输出的完整诊断；原始模型服务
-错误正文可能在到达渲染器前被归一化。
+手动继续，以及 HTTP 503 后自动恢复。详情应保留核心输出的诊断。对于原生适配器
+收到的结构化模型服务错误，核心提取错误消息、遮蔽凭据格式的片段，并将详情限制为
+200 个 Unicode 字符。其他响应字段和非结构化代理页面不会转发；无法解析的错误
+保留其失败类别。
 
 session CI 使用已有渲染器/核心构建运行两种字号，并上传合成截图、布局测量、日志
 和构建哈希。证据默认位于 `desktop/out/e2e/error-message-style-15/` 或
@@ -327,13 +329,27 @@ Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭
 
 ### MCP 重载期间的身份验证
 
+必需的 Public provider conformance CI 作业运行带当前版本标记的夹具程序，
+核对源码提交、可执行文件哈希和通过的边界报告。只上传报告及诊断日志，
+不会上传夹具凭据存储。
+
 运行 `go run ./scripts/mcp-auth-reload-e2e`，使用回环 OAuth/MCP 服务验证共享
 运行时与 app-server 协议。夹具将合成凭据保存到临时文件存储，覆盖带凭据启动、
 管理器代际替换、跨替换完成登录、旧代前台工具调用、禁用后重新启用，以及无 MCP
 启动后首次添加服务器。它还检查管理器和传输会话保持代际独立，RPC 响应不泄露凭据。
 夹具不会调用模型或外部引擎。
 
-此夹具通过运行时显式注入 OAuth 服务，不验证 macOS Keychain 或桌面 UI。
+待完成的认证保留最初的管理器和所选凭据服务，不把 OAuth 状态转交给新代。
+兼容重载可以继续；禁用、资源或来源变化、凭据权限主体变化会撤销尝试。
+重启生效的服务商配置按准备阶段的值在内部比较；含秘密或可变配置时，保守地
+禁止跨代复用。取消、连接关闭或到期后，等待物理清理完成再释放保留的代际。
+
+相同的所选凭据权限主体只共享有界的进程内刷新协调，凭据提交仍使用比较交换。
+这不提供分布式或多主机刷新保证。现有发布写操作仍串行化，其他发布可能等待
+旧代清理；凭据 I/O 不持有代际查找锁或管理器全局锁。
+
+此夹具显式选择 headless 组合及其文件凭据服务，不发现业务插件；
+不验证 macOS Keychain 或桌面 UI。
 结果、连接标识与 RPC 记录默认写入 `.tmp/e2e/mcp-auth-reload/`；可用
 `WUU_MCP_AUTH_E2E_OUTPUT` 指定其他证据目录。
 
@@ -504,8 +520,10 @@ WUU_DESKTOP_CORE="$PWD/.tmp/performance/wuu-core" WUU_SWITCH_CHECK_BUDGET=1 desk
 
 CI 检查大历史样本的重复切换，恢复调用、布局及样式重算的上限由
 [`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json)
-定义。计数包括观察器和输入探针的开销。护栏拒绝提高上限、删除计数项或改变工作负载；
-原始结果、报告、日志和最终合成截图以 `session-switch-evidence` 工件上传。
+定义。计数包括观察器和输入探针的开销。恢复调用和布局次数要求每次切换都不超过上限；
+样式重算使用每个大历史会话三次切换的中位数，因为页面动画可能随时机增加计数。
+证据中保留各次样本和最大值。护栏拒绝提高上限、删除计数项或改变工作负载；原始结果、
+报告、日志和最终合成截图以 `session-switch-evidence` 工件上传。
 
 诊断时去掉 `WUU_SWITCH_CHECK_BUDGET`，可设置 `WUU_SWITCH_TURNS=3000`、
 `WUU_SWITCH_ROUNDS` 或 `WUU_SWITCH_INIT_DELAY_MS=600`。

@@ -115,7 +115,9 @@ public struct ChatThread: Identifiable, Sendable {
                 (!($0["text"].string ?? "").isEmpty || !$0["images"].array.isEmpty || !$0["markdown_images"].array.isEmpty) }
             var messages: [ChatMessage] = items.compactMap { item in
                 guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call", "process_summary"].contains(type) else { return nil }
-                let sessionMessage = ["host", "plugin"].contains(item["origin"].string ?? "") && item["presentation_kind"].string == "session_message"
+                let generated = ["host", "plugin"].contains(item["origin"].string ?? "")
+                if type == "user_message", generated, item["presentation_kind"].string == "background_event" { return nil }
+                let sessionMessage = generated && item["presentation_kind"].string == "session_message"
                 // Host-marked model notifications are not user messages; attributed peer messages remain visible.
                 if type == "user_message", !sessionMessage,
                    ["wuu_process_notification", "wuu_agent_notification"].contains(item["name"].string ?? "") { return nil }

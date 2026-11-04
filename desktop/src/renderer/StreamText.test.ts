@@ -35,6 +35,43 @@ function installManualRAF(): {
 }
 
 describe("streamTextStore", () => {
+  it("tracks visible text through seeding, whitespace, replacement, and cleanup", () => {
+    const turnID = "turn-visibility";
+    const key = streamTextKey(turnID, "item", "text");
+    try {
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
+      streamTextStore.seed(key, "\n\t\u00a0");
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
+      streamTextStore.append(key, "你好");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
+      streamTextStore.seed(key, " ");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
+
+      streamTextStore.replace(key, "");
+      streamTextStore.replace(key, "");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
+      expect(streamTextStore.get(key)).toBe("\n\t\u00a0你好");
+      streamTextStore.append(key, " ");
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
+      expect(streamTextStore.get(key)).toBe(" ");
+      streamTextStore.append(key, "fresh answer");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
+
+      streamTextStore.set(key, "");
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
+      streamTextStore.replace(key, "replacement");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
+      streamTextStore.set(key, "\uFEFF\u2028");
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
+      streamTextStore.clearTurn(turnID);
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
+      streamTextStore.seed(key, "new item");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
+    } finally {
+      streamTextStore.clearTurn(turnID);
+    }
+  });
+
   it("appends plain incremental deltas", () => {
     const key = streamTextKey("turn-append", "item", "text");
     streamTextStore.set(key, "");
@@ -98,7 +135,9 @@ describe("streamTextStore subscriptions", () => {
       calls.push(value);
     });
     try {
+      expect(streamTextStore.hasVisibleText(key)).toBe(false);
       streamTextStore.seed(key, "hello");
+      expect(streamTextStore.hasVisibleText(key)).toBe(true);
       expect(calls).toEqual([]);
       raf.flush();
       expect(streamTextStore.has(key)).toBe(true);

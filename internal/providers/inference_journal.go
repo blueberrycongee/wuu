@@ -153,8 +153,9 @@ func DurableInferenceFailure(failure NormalizedFailure) InferenceJournalFailure 
 
 // inferenceFailureMessageSecrets matches credential-shaped fragments that
 // transport errors occasionally echo (auth URLs, header values, SDK client
-// options). The key prefix is kept so the message stays readable.
-var inferenceFailureMessageSecrets = regexp.MustCompile(`(?i)(bearer\s+|sk-|api[-_]?key\s*[=:]\s*|token\s*[=:]\s*|secret\s*[=:]\s*|password\s*[=:]\s*)[^\s,;\)\]\}"']+`)
+// options). The key prefix is kept so the message stays readable. Match an
+// existing marker in full so summaries remain stable across adapter boundaries.
+var inferenceFailureMessageSecrets = regexp.MustCompile(`(?i)(bearer\s+|sk-|(?:api[-_]?key|token|secret|password)["']?\s*[=:]\s*["']?)(?:\[redacted\]|[^\s,;\)\]\}"']+)`)
 
 // sanitizeInferenceFailureMessage derives the durable one-line summary from a
 // failure cause: redact credential-shaped fragments, collapse all whitespace

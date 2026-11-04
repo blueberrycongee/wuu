@@ -355,7 +355,6 @@ export function TurnEndArtifactOutputs({
           onOpen={(event) => openArtifact(single, event.currentTarget)}
           onContextMenu={(event) => fileActions.show(single, event)}
           openLabel={t("artifacts.openNamed", { name: single.name })}
-          wrapOverview={(overview) => <Tooltip content={single.name}>{overview}</Tooltip>}
         />
       ) : (
         <TurnOutputSummaryCard
@@ -365,7 +364,6 @@ export function TurnEndArtifactOutputs({
             name: artifact.name,
             icon: <ArtifactFileIcon artifact={artifact} />,
             trailing: <TurnOutputSummaryChevron />,
-            tooltip: artifact.name,
             onOpen: (event) => openArtifact(artifact, event.currentTarget),
             onContextMenu: (event) => fileActions.show(artifact, event),
             openLabel: t("artifacts.openNamed", { name: artifact.name }),
@@ -663,7 +661,6 @@ function ArtifactCard({
         onOpen={(event) => openArtifactFile(service, artifact, event.currentTarget, cwd, onPreview)}
         onContextMenu={(event) => fileActions.show(artifact, event)}
         openLabel={t("artifacts.openNamed", { name: artifact.name })}
-        wrapOverview={(overview) => <Tooltip content={artifact.name}>{overview}</Tooltip>}
       />
       {fileActions.menu}
     </>

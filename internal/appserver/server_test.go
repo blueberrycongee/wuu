@@ -15,6 +15,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,6 +56,8 @@ import (
 )
 
 func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
+	var identityCalls atomic.Int32
+	var identityFailure atomic.Bool
 	var baseURL string
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -67,7 +70,41 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 		case "/token":
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "app-server-secret", "refresh_token": "refresh-secret", "expires_in": 3600})
 		default:
-			http.NotFound(w, r)
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer app-server-secret" {
+				http.NotFound(w, r)
+				return
+			}
+			var req struct {
+				ID     int64  `json:"id"`
+				Method string `json:"method"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				return
+			}
+			var result any
+			switch req.Method {
+			case "initialize":
+				result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "fixture", "version": "1"}}
+			case "tools/list":
+				result = map[string]any{"tools": []any{map[string]any{"name": "get-self", "inputSchema": map[string]any{"type": "object"}}}}
+			case "tools/call":
+				identityCalls.Add(1)
+				if identityFailure.Load() {
+					result = map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": "app-server-secret"}}}
+				} else {
+					result = map[string]any{"content": []any{}, "structuredContent": map[string]any{"id": "owner", "name": "Account", "raw_secret": "app-server-secret"}}
+				}
+			default:
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 		}
 	}))
 	defer authServer.Close()
@@ -75,10 +112,13 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 
 	rt := newTestRuntime(t, &fakeClient{})
 	manager := mcp.NewManager()
+	defer manager.Close()
+	readonly := true
 	manager.Configure(map[string]mcp.ServerConfig{
 		"docs": {
-			Name: "docs",
-			URL:  baseURL,
+			Name:           "docs",
+			URL:            baseURL,
+			IdentitySource: "trusted-fixture", IdentityProbe: &config.MCPIdentityProbe{Tool: "get-self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id", Label: "/name"}}, ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
 			OAuth: &mcp.OAuthConfig{
 				ClientID:    "desktop-client",
 				RedirectURI: "http://127.0.0.1/callback",
@@ -125,6 +165,29 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	finish := remarshal[MCPAuthFinishResult](t, responseByID(t, parseOutput(t, out.String()), "finish")["result"])
 	if !finish.Auth.Authenticated || finish.Server.AuthStatus != string(mcp.MCPAuthStatusOAuth) {
 		t.Fatalf("finish result = %+v", finish)
+	}
+	if identityCalls.Load() != 0 {
+		t.Fatal("OAuth or status triggered identity probe")
+	}
+	for _, raw := range []string{`{"id":"connect","method":"mcp/connect","params":{"name":"docs"}}`, `{"id":"verified","method":"mcp/auth/status","params":{"name":"docs"}}`} {
+		if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if response := responseByID(t, parseOutput(t, out.String()), "connect"); response["error"] != nil {
+		t.Fatal(response)
+	}
+	verified := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "verified")["result"])
+	if identityCalls.Load() != 1 || verified.Identity == nil || verified.Identity.State != "verified" || verified.Identity.Account.ID != "owner" {
+		t.Fatalf("verified=%+v, calls=%d", verified, identityCalls.Load())
+	}
+	identityFailure.Store(true)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"identity-retry","method":"mcp/identity/refresh","params":{"name":"docs","tool":"unsafe","arguments":{"override":true}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	retry := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "identity-retry")["result"])
+	if identityCalls.Load() != 2 || !retry.Authenticated || retry.Identity == nil || retry.Identity.State != "unavailable" || !manager.Status()["docs"].Connected {
+		t.Fatalf("retry=%+v, calls=%d", retry, identityCalls.Load())
 	}
 	if strings.Contains(out.String(), "app-server-secret") || strings.Contains(out.String(), "refresh-secret") {
 		t.Fatalf("OAuth RPC leaked credentials: %s", out.String())
@@ -727,7 +790,7 @@ func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 		t.Fatalf("expected xiaomi catalog models, got %+v", xiaomi)
 	}
 	xiaomiModel := providerModelByID(t, xiaomi, "mimo-v2.5-pro")
-	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "models.dev" {
+	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "selected" {
 		t.Fatalf("unexpected xiaomi model summary: %+v", xiaomiModel)
 	}
 	if xiaomiModel.Capabilities.ContextWindow != 1048576 || !xiaomiModel.Capabilities.Reasoning {
@@ -8409,50 +8472,71 @@ func TestServerFailedTurnPersistsPairedToolHistoryAndReloadsFailure(t *testing.T
 }
 
 func TestServerInterruptedPartialTurnReloadsInterrupted(t *testing.T) {
-	client := newPartialBlockingStreamClient("partial answer")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
-	attachTestModelGeneration(t, rt)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
+	for _, shutdown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shutdown=%t", shutdown), func(t *testing.T) {
+			client := newPartialBlockingStreamClient("partial answer")
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.StreamRunner.Client = client
+			attachTestModelGeneration(t, rt)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
 
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
-		t.Fatalf("thread/start: %v", err)
-	}
-	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
-	startTurn := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
-	if err := srv.handleLine(context.Background(), []byte(startTurn)); err != nil {
-		t.Fatalf("turn/start: %v", err)
-	}
-	<-client.started
-	deltaMessages := waitForMethod(t, out, NotificationAgentMessageDelta)
-	delta := remarshal[AgentMessageDeltaNotification](t, notificationByMethod(t, deltaMessages, NotificationAgentMessageDelta)["params"])
-	if delta.Delta != "partial answer" {
-		t.Fatalf("live partial delta = %q", delta.Delta)
-	}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+				t.Fatalf("thread/start: %v", err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+			startTurn := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
+			if err := srv.handleLine(context.Background(), []byte(startTurn)); err != nil {
+				t.Fatalf("turn/start: %v", err)
+			}
+			<-client.started
+			deltaMessages := waitForMethod(t, out, NotificationAgentMessageDelta)
+			delta := remarshal[AgentMessageDeltaNotification](t, notificationByMethod(t, deltaMessages, NotificationAgentMessageDelta)["params"])
+			if delta.Delta != "partial answer" {
+				t.Fatalf("live partial delta = %q", delta.Delta)
+			}
 
-	interrupt := fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID)
-	if err := srv.handleLine(context.Background(), []byte(interrupt)); err != nil {
-		t.Fatalf("turn/interrupt: %v", err)
-	}
-	waitForMethod(t, out, NotificationTurnError)
+			if shutdown {
+				srv.Close()
+			} else {
+				interrupt := fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID)
+				if err := srv.handleLine(context.Background(), []byte(interrupt)); err != nil {
+					t.Fatalf("turn/interrupt: %v", err)
+				}
+				waitForMethod(t, out, NotificationTurnError)
+				srv.Close()
+			}
 
-	reloadOut := &lockedBuffer{}
-	reloaded := New(rt, reloadOut)
-	resume := fmt.Sprintf(`{"id":"reload","method":"thread/resume","params":{"session_id":%q}}`, threadID)
-	if err := reloaded.handleLine(context.Background(), []byte(resume)); err != nil {
-		t.Fatalf("thread/resume: %v", err)
-	}
-	result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadOut.String()), "reload")["result"])
-	if len(result.Thread.Turns) != 1 {
-		t.Fatalf("reloaded turns = %+v, want one interrupted turn", result.Thread.Turns)
-	}
-	turn := result.Thread.Turns[0]
-	if turn.Status != TurnStatusInterrupted || turn.Error == nil || !strings.Contains(turn.Error.Message, context.Canceled.Error()) || turn.CompletedAt == nil {
-		t.Fatalf("reloaded turn did not restore interruption: %+v", turn)
-	}
-	if len(turn.Items) < 3 || turn.Items[1].Type != ThreadItemAgentMessage || turn.Items[1].Text != "partial answer" || turn.Items[len(turn.Items)-1].Type != ThreadItemError {
-		t.Fatalf("reloaded partial turn items = %+v", turn.Items)
+			reloadOut := &lockedBuffer{}
+			reloaded := New(rt, reloadOut)
+			defer reloaded.Close()
+			dispatchPayload(t, reloaded, "recovery", "thread/recovery/list", struct{}{})
+			recovery := remarshal[struct {
+				Items []RestartRecoveryItem `json:"items"`
+			}](t, waitForResponseByID(t, reloadOut, "recovery")["result"])
+			if shutdown {
+				if len(recovery.Items) != 1 || recovery.Items[0].Thread.ID != threadID || recovery.Items[0].Reason != "interrupted" {
+					t.Fatalf("shutdown recovery = %+v", recovery.Items)
+				}
+			} else if len(recovery.Items) != 0 {
+				t.Fatalf("user stop must not be offered for restart: %+v", recovery.Items)
+			}
+			resume := fmt.Sprintf(`{"id":"reload","method":"thread/resume","params":{"session_id":%q}}`, threadID)
+			if err := reloaded.handleLine(context.Background(), []byte(resume)); err != nil {
+				t.Fatalf("thread/resume: %v", err)
+			}
+			result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadOut.String()), "reload")["result"])
+			if len(result.Thread.Turns) != 1 {
+				t.Fatalf("reloaded turns = %+v, want one interrupted turn", result.Thread.Turns)
+			}
+			turn := result.Thread.Turns[0]
+			if turn.Status != TurnStatusInterrupted || turn.Error == nil || !strings.Contains(turn.Error.Message, context.Canceled.Error()) || turn.CompletedAt == nil {
+				t.Fatalf("reloaded turn did not restore interruption: %+v", turn)
+			}
+			if len(turn.Items) < 3 || turn.Items[1].Type != ThreadItemAgentMessage || turn.Items[1].Text != "partial answer" || turn.Items[len(turn.Items)-1].Type != ThreadItemError {
+				t.Fatalf("reloaded partial turn items = %+v", turn.Items)
+			}
+		})
 	}
 }
 

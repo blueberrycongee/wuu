@@ -36,7 +36,7 @@ module.exports = api => {
     requestPluginRuntime: async request => {
       if (!["user:conversation-addon-slot", "user:conversation-addon-command"].includes(request.id)) return api.requestPluginRuntime(request);
       messageActionRequests.push(request);
-      return { result: null };
+      return { ok: true, value: { result: null } };
     },
     cancelPluginRuntime: async request => {
       if (!["user:conversation-addon-slot", "user:conversation-addon-command"].includes(request.id)) return api.cancelPluginRuntime(request);

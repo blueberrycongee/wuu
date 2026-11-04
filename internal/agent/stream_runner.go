@@ -550,6 +550,8 @@ func (r *StreamRunner) pendingToolResultMessages(ctx context.Context, history []
 			calls = append(calls, providers.ToolCall{
 				ID: invocation.ProviderCallID, Name: invocation.ToolName,
 				Kind: invocation.ToolKind, Arguments: invocation.Arguments,
+				ThoughtSignature:     invocation.ThoughtSignature,
+				ProviderItemProvider: invocation.ProviderItemProvider, ProviderItemModel: invocation.ProviderItemModel,
 			})
 			end++
 		}
@@ -1377,8 +1379,9 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		fbToolCalls := make([]providers.ToolCall, len(resp.ToolCalls))
 		copy(fbToolCalls, resp.ToolCalls)
 		for i := range fbToolCalls {
-			if strings.TrimSpace(fbToolCalls[i].ProviderItemID) != "" {
+			if strings.TrimSpace(fbToolCalls[i].ProviderItemID) != "" || fbToolCalls[i].ThoughtSignature != "" {
 				fbToolCalls[i].ProviderItemProvider = req.Provider
+				fbToolCalls[i].ProviderItemModel = req.Model
 			}
 		}
 		enrichToolCallsDisplay(s.tools, fbToolCalls)
@@ -1461,7 +1464,7 @@ func providerNameForNativeState(providerName, providerItemID, reasoningContent s
 	hasNativeState := strings.TrimSpace(providerItemID) != "" || strings.TrimSpace(reasoningContent) != "" || len(reasoningBlocks) > 0
 	if !hasNativeState {
 		for _, call := range toolCalls {
-			if strings.TrimSpace(call.ProviderItemID) != "" {
+			if strings.TrimSpace(call.ProviderItemID) != "" || call.ThoughtSignature != "" {
 				hasNativeState = true
 				break
 			}
@@ -1719,7 +1722,7 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventToolUseStart:
 				if event.ToolCall != nil {
-					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" {
+					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" || event.ToolCall.ThoughtSignature != "" {
 						event.ToolCall.ProviderItemProvider = req.Provider
 						event.ToolCall.ProviderItemModel = req.Model
 					}
@@ -1729,6 +1732,7 @@ func (s *streamStep) runReliableStream(
 						ProviderItemID:       event.ToolCall.ProviderItemID,
 						ProviderItemProvider: event.ToolCall.ProviderItemProvider,
 						ProviderItemModel:    event.ToolCall.ProviderItemModel,
+						ThoughtSignature:     event.ToolCall.ThoughtSignature,
 						Name:                 event.ToolCall.Name,
 						Arguments:            event.ToolCall.Arguments,
 						Kind:                 event.ToolCall.Kind,
@@ -1756,17 +1760,20 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventToolUseEnd:
 				if event.ToolCall != nil {
-					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" {
+					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" || event.ToolCall.ThoughtSignature != "" {
 						event.ToolCall.ProviderItemProvider = req.Provider
 						event.ToolCall.ProviderItemModel = req.Model
 					}
 					toolCall := enrichToolCallDisplay(s.tools, *event.ToolCall)
 					for _, tc := range pendingTools {
 						if tc.ID == toolCall.ID {
-							if strings.TrimSpace(toolCall.ProviderItemID) != "" {
+							if strings.TrimSpace(toolCall.ProviderItemID) != "" || toolCall.ThoughtSignature != "" {
 								tc.ProviderItemID = toolCall.ProviderItemID
 								tc.ProviderItemProvider = toolCall.ProviderItemProvider
 								tc.ProviderItemModel = toolCall.ProviderItemModel
+							}
+							if toolCall.ThoughtSignature != "" {
+								tc.ThoughtSignature = toolCall.ThoughtSignature
 							}
 							if strings.TrimSpace(toolCall.Name) != "" {
 								tc.Name = toolCall.Name

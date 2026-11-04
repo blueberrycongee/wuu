@@ -102,7 +102,7 @@ function normalizeDefinition(value: unknown): MCPServerConfig {
     if (definition.type !== "stdio") definition.transport = definition.type;
     delete definition.type;
   }
-  const fields = ["command", "args", "url", "transport", "env", "headers", "oauth", "enabled", "tool_timeout_ms", "tool_overrides"];
+  const fields = ["command", "args", "url", "transport", "env", "headers", "oauth", "enabled", "tool_timeout_ms", "tool_overrides", "connector"];
   for (const key of Object.keys(definition)) if (!fields.includes(key)) throw new Error(`Unsupported MCP field: ${key}`);
   if (definition.args !== undefined && (!Array.isArray(definition.args) || definition.args.some(arg => typeof arg !== "string"))) throw new Error("MCP arguments must be a JSON array of strings.");
   return definition as MCPServerConfig;

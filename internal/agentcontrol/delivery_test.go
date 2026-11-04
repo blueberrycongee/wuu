@@ -314,6 +314,14 @@ func TestPendingNestedCompletionRehydratesParentAfterRestart(t *testing.T) {
 	}
 	first.Close()
 
+	pending, err := ReadPendingAgentCompletions(nil, sessionID, agentthread.NewStore(filepath.Join(artifactDir, "threads")), []string{artifactDir})
+	if err != nil || len(pending) != 1 || pending[0].ResultID != resultID {
+		t.Fatalf("read-only restart discovery = %+v, %v", pending, err)
+	}
+	if consumer, err := first.AgentResultDeliveryConsumer(resultID); err != nil || consumer != agentResultConsumerNestedPending {
+		t.Fatalf("discovery consumed nested work: %q, %v", consumer, err)
+	}
+
 	secondClient := newNestedReplayBlockingClient()
 	second := newControl(secondClient)
 	t.Cleanup(func() {

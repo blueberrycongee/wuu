@@ -1,3 +1,5 @@
+import type { ComposerInputHandle } from "./ComposerInput";
+
 // Shared touch/mobile focus policy for the composer textarea.
 //
 // Mobile browsers can require a user gesture to open the software keyboard.
@@ -24,7 +26,7 @@ export function isTouchWebShell(): boolean {
  * layout/commit behavior is preserved.
  */
 export function focusComposerTextarea(
-  textarea: HTMLTextAreaElement | null,
+  textarea: ComposerInputHandle | null,
   selection?: number | "end",
 ): void {
   if (!textarea) {

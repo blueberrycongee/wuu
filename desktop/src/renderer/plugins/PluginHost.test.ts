@@ -638,6 +638,39 @@ describe("PluginHost", () => {
     expect(host.getNavigationEntries().some(entry => entry.pluginId === "named")).toBe(false);
   });
 
+  it("scopes navigation avatars to their declared entry and active generation", async () => {
+    const host = new PluginHost({ react: React });
+    let api!: PluginGenerationApi;
+    const install = (generation: string) => host.activateGeneration({ pluginId: "avatar-owner", generation,
+      contributions: { navigation: [{ id: "home", view: "home", title: "Agent", icon: { name: "mascot" } }], settings_pages: [{ id: "settings", view: "home", title: "Settings" }] },
+      register(value) { api = value; value.registerViewType({ id: "home", title: "Agent", render: () => null }); },
+    });
+    await install("one");
+    const original = host.getNavigationEntries();
+    expect(api.setNavigationAvatar("other", "mascot-v1:diamond:leaf:150")).toBe(false);
+    expect(host.getNavigationEntries()).toBe(original);
+    expect(() => api.setNavigationAvatar("home", "invalid")).toThrow();
+    api.setNavigationAvatar("home", "mascot-v1:diamond:leaf:150");
+    const changed = host.getNavigationEntries();
+    expect(changed[0].avatarKey).toBe("mascot-v1:diamond:leaf:150");
+    expect(changed).not.toBe(original);
+    api.setNavigationTitle("home", "Renamed");
+    expect(host.getNavigationEntries()[0].avatarKey).toBe(changed[0].avatarKey);
+    expect(host.getSettingsPages()[0].avatarKey).toBeUndefined();
+    const stable = host.getNavigationEntries();
+    api.setNavigationAvatar("home", "mascot-v1:diamond:leaf:150");
+    expect(host.getNavigationEntries()).toBe(stable);
+    api.setNavigationAvatar("home", undefined);
+    expect(host.getNavigationEntries()[0].avatarKey).toBeUndefined();
+    api.setNavigationAvatar("home", "mascot-v1:round:headset:222");
+    const old = api;
+    await install("two");
+    expect(host.getNavigationEntries()[0].avatarKey).toBeUndefined();
+    expect(() => old.setNavigationAvatar("home", "mascot-v1:diamond:leaf:150")).toThrow();
+    host.unload("avatar-owner");
+    expect(host.getNavigationEntries()).toHaveLength(0);
+  });
+
   it("publishes manifest View entries only after their View is registered", async () => {
     const host = new PluginHost({ react: React });
     await host.activateGeneration({
@@ -1005,7 +1038,7 @@ it("owns central notices by generation and rejects notices from retired handles"
   try {
     await host.activateGeneration({ pluginId: "notices", generation: "one", register: value => { api = value; } });
     api.showNotice({ message: "Could not refresh. Try again.", tone: "error", key: "refresh" });
-    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: "plugin:notices:refresh" });
+    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: expect.stringMatching(/^plugin:\d+:notices:one:1:refresh$/) });
     host.unload("notices");
     expect(dismiss).toHaveBeenCalledWith(71);
     expect(() => api.showNotice({ message: "stale" })).toThrow();
@@ -1071,4 +1104,98 @@ it.each(["resolve", "reject"])("fences a runtime %s after authoritative graph ha
   await expect(api.invokeRuntime("another-read")).rejects.toMatchObject({ code: "WUU_PLUGIN_SCOPE_RETIRED" });
   expect(invoke).toHaveBeenCalledTimes(1);
   host.unload("scope");
+});
+
+it.each(["two", "one"])("does not suppress a new activation's notice after retiring generation %s", async nextGeneration => {
+  const toast = await import("../Toast");
+  toast.clearToasts();
+  const show = vi.spyOn(toast, "showToast");
+  const host = new PluginHost({ react: React });
+  let api!: PluginGenerationApi;
+  const activate = async (generation: string) => host.activateGeneration({
+    pluginId: "notice-owner", generation, register(value) { api = value; },
+  });
+  try {
+    await activate("one");
+    const old = api;
+    old.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    const firstID = show.mock.results.at(-1)?.value;
+    expect(firstID).toBeTypeOf("number");
+    await activate(nextGeneration);
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    const nextID = show.mock.results.at(-1)?.value;
+    expect(nextID).toBeTypeOf("number");
+    expect(nextID).not.toBe(firstID);
+    expect(() => old.showNotice({ message: "Late old failure", key: "refresh" })).toThrow();
+    // Stable keys still deduplicate background failures within this activation.
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    expect(show.mock.results.at(-1)?.value).toBe(nextID);
+    toast.dismissToast(nextID);
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh" });
+    expect(show.mock.results.at(-1)?.value).toBeUndefined();
+    // Explicit retries use a distinct attempt key and remain observable.
+    api.showNotice({ message: "Refresh failed", tone: "error", key: "refresh:attempt-2" });
+    expect(show.mock.results.at(-1)?.value).toBeTypeOf("number");
+  } finally {
+    await host.unloadAndWait("notice-owner");
+    show.mockRestore();
+    toast.clearToasts();
+  }
+});
+
+it("does not let a retiring owner dismiss a replacement provider's notice", async () => {
+  const toast = await import("../Toast");
+  toast.clearToasts();
+  const show = vi.spyOn(toast, "showToast");
+  const host = new PluginHost({ react: React });
+  let old!: PluginGenerationApi, next!: PluginGenerationApi;
+  try {
+    await host.activateGeneration({ pluginId: "notice-provider", generation: "one", register(api) { old = api; } });
+    old.showNotice({ message: "Old failure", key: "refresh", tone: "error" });
+    const firstID = show.mock.results.at(-1)?.value;
+    await host.selectApplicationBinding({ pluginId: "notice-provider", generation: "two", id: "application" });
+    await host.activateGeneration({ pluginId: "notice-provider", generation: "two", register(api) {
+      next = api;
+      api.registerApplicationProvider({ id: "application", prepare: () => ({
+        activate: () => { api.showNotice({ message: "New failure", key: "refresh", tone: "error" }); },
+        deactivate: () => undefined,
+        createScope: () => { throw new Error("Unused application scope"); },
+        dispose: () => {},
+      }) });
+    } });
+    const nextID = show.mock.results.at(-1)?.value;
+    expect(nextID).toBeTypeOf("number");
+    expect(nextID).not.toBe(firstID);
+    // The old owner's abort ran during commit. A live duplicate still finds the new notice.
+    next.showNotice({ message: "New failure", key: "refresh", tone: "error" });
+    expect(show.mock.results.at(-1)?.value).toBe(nextID);
+  } finally {
+    await host.unloadAndWait("notice-provider");
+    show.mockRestore();
+    toast.clearToasts();
+  }
+});
+
+it("keeps notices isolated across concurrent scoped-content hosts", async () => {
+  const toast = await import("../Toast");
+  toast.clearToasts();
+  const show = vi.spyOn(toast, "showToast");
+  const first = new PluginHost({ react: React }), second = new PluginHost({ react: React });
+  let a!: PluginGenerationApi, b!: PluginGenerationApi;
+  try {
+    await first.activateGeneration({ pluginId: "scoped-notice", generation: "same", register(api) { a = api; } });
+    await second.activateGeneration({ pluginId: "scoped-notice", generation: "same", register(api) { b = api; } });
+    a.showNotice({ message: "First scope failed", key: "refresh", tone: "error" });
+    const firstID = show.mock.results.at(-1)?.value;
+    b.showNotice({ message: "Second scope failed", key: "refresh", tone: "error" });
+    const secondID = show.mock.results.at(-1)?.value;
+    expect(secondID).not.toBe(firstID);
+    await first.unloadAndWait("scoped-notice");
+    b.showNotice({ message: "Second scope failed", key: "refresh", tone: "error" });
+    expect(show.mock.results.at(-1)?.value).toBe(secondID);
+  } finally {
+    await first.unloadAndWait("scoped-notice");
+    await second.unloadAndWait("scoped-notice");
+    show.mockRestore(); toast.clearToasts();
+  }
 });

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { PinnedThreadList, WorkspaceGroup, WorkspaceList } from "./ThreadSidebar";
 import type { DesktopProject, Thread } from "../shared/protocol";
-import { summarizeThreadsForSidebar } from "./AppState";
+import { sortThreads, summarizeThreadsForSidebar } from "./AppState";
 import { setActiveLocale, translateCurrent } from "./i18n";
 import { ConfirmDialogHost } from "./ConfirmDialog";
 
@@ -214,7 +214,7 @@ describe("WorkspaceList", () => {
     renderHistory({
       activeThreadID: "created-new",
       threadsByWorkspaceID: { history: summarizeThreadsForSidebar([
-        makeWorkspaceThread("created-new", "/repo/history", pending.title, [], { status: "in_progress" }),
+        makeWorkspaceThread("created-new", "/repo/history", pending.title, [], { status: "in_progress", created_at: "2026-01-01T00:00:01Z" }),
         ...Array.from({ length: 30 }, (_, index) =>
           makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`)),
       ]) },
@@ -236,6 +236,59 @@ describe("WorkspaceList", () => {
     expect(historyTitles()).toHaveLength(5);
     renderHistory({ pendingConversations: [pending], activeThreadID: "history-20" });
     expect(historyTitles()).toEqual(["First message", "History 0", "History 1", "History 2", "History 3", "History 20"]);
+  });
+
+  it("keeps workspace rows and focus stable across consecutive completion refreshes", () => {
+    let threads = Array.from({ length: 7 }, (_, index) =>
+      makeWorkspaceThread(`completion-${index}`, "/repo/history", `Completion ${index}`,
+        [{ id: `turn-${index}`, status: "in_progress" }], { status: "in_progress" }),
+    );
+    const render = () => renderHistory({
+      activeThreadID: "completion-4",
+      threadsByWorkspaceID: { history: summarizeThreadsForSidebar(threads) },
+    });
+    render();
+    const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")];
+    act(() => rows[4].focus());
+    for (const id of ["completion-5", "completion-6"]) {
+      threads = threads.map(thread => thread.id === id ? {
+        ...thread, title: `${thread.title} finished`, preview: "Updated summary",
+        updated_at: "2026-11-02T07:00:00Z", status: "idle" as const,
+        turns: thread.turns.map(turn => ({ ...turn, status: "completed" as const })),
+      } : thread);
+      // Completion refreshes are activity-sorted by the workspace cache.
+      threads = sortThreads(threads);
+      render();
+      expect([...container.querySelectorAll(".thread-row-main")]).toEqual(rows);
+      expect(document.activeElement).toBe(rows[4]);
+      expect(rows[4].closest(".thread-row")?.getAttribute("aria-current")).toBe("page");
+      expect(rows[Number(id.at(-1))].getAttribute("aria-busy")).toBe("false");
+      expect(rows[Number(id.at(-1))].getAttribute("aria-label")).toContain("finished");
+    }
+    threads = threads.filter(thread => thread.id !== "completion-6");
+    render();
+    expect(rows[6].isConnected).toBe(false);
+    expect(document.activeElement).toBe(rows[4]);
+  });
+
+  it("keeps a newly shown conversation above late history while admitting later creations", () => {
+    const current = makeWorkspaceThread("new-session", "/repo/history", "New session", [], {
+      created_at: "2026-11-02T07:00:00Z", updated_at: "2026-11-02T07:00:00Z",
+    });
+    const history = Array.from({ length: 7 }, (_, index) =>
+      makeWorkspaceThread(`late-${index}`, "/repo/history", `Late history ${index}`));
+    const render = (threads: Thread[]) => renderHistory({ threadsByWorkspaceID: { history: summarizeThreadsForSidebar(threads) } });
+    render([current]);
+    const row = container.querySelector(".thread-row-main");
+    render([current, ...history]);
+    expect(historyTitles()).toEqual(["New session", ...history.slice(0, 4).map(thread => thread.title)]);
+    expect(container.querySelector(".thread-row-main")).toBe(row);
+    const created = makeWorkspaceThread("next-session", "/repo/history", "Next session", [], {
+      created_at: "2026-11-02T07:01:00Z", updated_at: "2026-11-02T07:01:00Z",
+    });
+    render([created, current, ...history]);
+    expect(historyTitles()).toEqual(["Next session", "New session", ...history.slice(0, 3).map(thread => thread.title)]);
+    expect(container.querySelectorAll(".thread-row-main")[1]).toBe(row);
   });
 
   it("adds hidden rows even when the next range is already visible as unread", () => {

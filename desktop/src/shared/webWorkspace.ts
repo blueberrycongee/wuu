@@ -64,7 +64,8 @@ export type WebWorkspaceTooltip = {
   y: number;
   width: number;
   height: number;
-  style: { fontFamily: string; fontSize: string; fontWeight: string; fontStyle: string; color: string; backgroundColor: string; border: string; borderRadius: string; padding: string; lineHeight: string };
+  /** maxWidth keeps the shell's wrapping cap when the native renderer resolves another font. */
+  style: { fontFamily: string; fontSize: string; fontWeight: string; fontStyle: string; color: string; backgroundColor: string; border: string; borderRadius: string; padding: string; lineHeight: string; maxWidth?: string };
 };
 
 export type WebWorkspacePopoverBounds = { x: number; y: number; width: number; height: number; focus: boolean };

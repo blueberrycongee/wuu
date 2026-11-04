@@ -240,7 +240,7 @@ describe("sidebar attention view", () => {
     expect(accountTrigger?.disabled).toBe(false);
     act(() => accountTrigger!.click());
     const settingsItem = document.querySelector<HTMLButtonElement>(
-      '[role="menuitem"][data-settings-page="providers"]',
+      '[role="menuitem"][data-settings-entry="settings"]',
     );
     expect(settingsItem).not.toBeNull();
     // The settings page is a lazy import behind Suspense, so let it resolve.

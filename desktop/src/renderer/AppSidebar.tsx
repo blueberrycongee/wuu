@@ -98,10 +98,12 @@ import {
 export { reorderSidebarSections } from "./SortableSidebarSection";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { useSidebarConversationActivity } from "./SidebarConversationActivity";
+import { groupPluginFamilies } from "./pluginFamilies";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
 import { pluginToggle } from "./extensionPackageState";
 import { PluginIcon } from "./PublicIcon";
+import { PluginAvatar } from "./PluginAvatar";
 import { SidebarBrand } from "./SidebarBrand";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
@@ -689,18 +691,18 @@ export function AppSidebar({
   );
   const extensionCatalog = useMemo(() => {
     if (navigation) return {
-      pluginCount: navigation.view.plugins.filter(row => row.kind === "plugin").length,
+      pluginCount: groupPluginFamilies(navigation.view.plugins.filter(row => row.kind === "plugin"), locale).length,
       skillCount: navigation.view.plugins.filter(row => row.kind === "skill").length,
-      enabledPlugins: navigation.view.plugins.filter(row => row.kind === "plugin" && row.enabled).sort((left, right) => left.name.localeCompare(right.name, locale)),
+      enabledPlugins: groupPluginFamilies(navigation.view.plugins.filter(row => row.kind === "plugin"), locale)
+        .filter(group => group.members.some(record => record.enabled)),
     };
     const records = extensionInventory ?? [];
     const plugins = records.filter((record) => record.kind === "plugin");
     return {
-      pluginCount: plugins.length,
+      pluginCount: groupPluginFamilies(plugins, locale).length,
       skillCount: records.filter((record) => record.kind === "skill").length,
-      enabledPlugins: plugins
-        .filter((record) => pluginToggle(record).on)
-        .sort((left, right) => left.name.localeCompare(right.name, locale)),
+      enabledPlugins: groupPluginFamilies(plugins, locale)
+        .filter(group => group.members.some(record => pluginToggle(record).on)),
     };
   }, [locale, extensionInventory, navigation]);
   const activateNative = useCallback((action: () => void, retainDraftIntent = false): void => {
@@ -1639,7 +1641,7 @@ export function AppSidebar({
           ...pluginNavigationEntries.map((entry) => ({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
-            icon: <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
+            icon: <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey || entry.icon && "name" in entry.icon && entry.icon.name === "mascot" ? <PluginAvatar avatarKey={entry.avatarKey} motion="ambient" /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>,
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
             pluginId: entry.pluginId,
@@ -1699,12 +1701,12 @@ export function AppSidebar({
                       type="button"
                       onClick={() => onOpenCatalogPlugin(record.id)}
                     >
-                      <PluginIcon
+                      {record.family ? <PluginBlocksIcon aria-hidden="true" /> : <PluginIcon
                         loadIcon={loadPluginIcon}
-                        icon={record.icon}
-                        pluginId={record.id}
-                        fingerprint={record.fingerprint ?? ""}
-                      />
+                        icon={record.members[0].icon}
+                        pluginId={record.members[0].id}
+                        fingerprint={record.members[0].fingerprint ?? ""}
+                      />}
                       <TruncatedText as="span" className="sidebar-section-label" text={record.name} />
                     </button>
                   ))
@@ -1728,7 +1730,7 @@ export function AppSidebar({
                   aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
                   onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
                 >
-                  <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
+                  <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey || entry.icon && "name" in entry.icon && entry.icon.name === "mascot" ? <PluginAvatar avatarKey={entry.avatarKey} motion="ambient" /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>
                   <span className="sidebar-section-label">{entry.title}</span>
                 </button>
               ))}

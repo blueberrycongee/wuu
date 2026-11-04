@@ -181,6 +181,10 @@ func TestProcessClientLifecycle(t *testing.T) {
 					if !errors.As(err, &remoteErr) || remoteErr.message != "synthetic shutdown probe failed" {
 						t.Errorf("shutdown rejection was lost: %T %v", err, err)
 					}
+				} else if mode == "shutdown-timeout" {
+					if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("unacknowledged cleanup = %v, want deadline diagnostic", err)
+					}
 				} else if mode == "shutdown-failure" {
 					var exitErr *exec.ExitError
 					if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
@@ -224,6 +228,35 @@ func TestProcessClientLifecycle(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Physical process retirement must not report an unacknowledged shutdown as
+// successful cleanup to the generation owner.
+func TestHostReportsProcessShutdownTimeout(t *testing.T) {
+	root := t.TempDir()
+	client, err := Start(context.Background(), ProcessConfig{
+		ID: "stalled-cleanup", Command: os.Args[0],
+		Args:       []string{"-test.run=^TestProcessClientLifecycle$"},
+		Env:        map[string]string{"WUU_PLUGINHOST_HELPER": "1", "WUU_PLUGINHOST_MODE": "shutdown-timeout"},
+		PluginRoot: root, ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(), Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := New(client)
+	defer host.Close(context.Background())
+	outcomes := host.CloseWithOutcomes(context.Background())
+	if len(outcomes) != 1 || outcomes[0].PluginID != "stalled-cleanup" || !errors.Is(outcomes[0].Err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown outcomes lost unconfirmed cleanup: %+v", outcomes)
+	}
+	select {
+	case <-host.ShutdownDone():
+	default:
+		t.Fatal("terminated process did not release physical drain barrier")
+	}
+	if client.cmd.ProcessState == nil {
+		t.Fatal("cleanup diagnostic prevented process retirement")
 	}
 }
 

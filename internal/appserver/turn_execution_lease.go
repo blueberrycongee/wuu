@@ -413,7 +413,7 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		// intentionally folds their output into the current visible turn, so their
 		// failure marker must target that same aggregate instead of an ephemeral ID.
 		if status == TurnStatusCompleted {
-			return nil
+			return s.recordRecoveryTurn(th, turnID, "idle")
 		}
 		clientID = ""
 	}
@@ -472,6 +472,13 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		StartedAt:           startedAt,
 		AnswerReadyAt:       answerReadyAt,
 	}); err != nil {
+		return err
+	}
+	recoveryState := "idle"
+	if status == TurnStatusInterrupted && s.closed.Load() && !s.shutdownRequested.Load() {
+		recoveryState = "pending"
+	}
+	if err := s.recordRecoveryTurn(th, turnID, recoveryState); err != nil {
 		return err
 	}
 	if reconnect == nil || status == TurnStatusCompleted {

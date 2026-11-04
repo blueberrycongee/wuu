@@ -323,7 +323,7 @@ app.whenReady().then(async () => {
         }
       }
       if (index === 2) assert.equal(await evaluate(win, () => document.querySelector('.image-preview-navigation')), null);
-      await evaluate(win, () => document.querySelector('.image-preview-toolbar .wuu-icon-x').closest('button').click());
+      await evaluate(win, () => document.querySelector('.image-preview-overlay .content-preview-close').click());
       await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
     }
   }

@@ -1,3 +1,4 @@
+import { ComposerPluginChoices, type ComposerPluginMenu } from "./ComposerPluginMenu";
 import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
 import { useComposerServices, useComposerConnectionDisplay } from "./ComposerServicesContext";
 import type { SettingsConnectionDisplayV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
@@ -344,27 +345,29 @@ function RuntimePanelSummary({
           ) : null}
         </div>
       ) : null}
-      <div className="runtime-panel-selection">
-        <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-          <TruncatedText className="runtime-panel-model-name" text={model} />
-          <ChevronRight aria-hidden="true" />
-        </button>
+      <div className="runtime-panel-model-group">
+        <div className="runtime-panel-selection">
+          <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
+            <TruncatedText className="runtime-panel-model-name" text={model} />
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {effortOptions.length > 1 ? (
+            <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
+          ) : null}
+        </div>
         {effortOptions.length > 1 ? (
-          <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
+          <div className="runtime-panel-effort">
+            <EffortSelector
+              options={effortOptions}
+              selectedVariant={selectedEffort}
+              disabled={effortDisabled}
+              busy={effortSaving}
+              onPreviewEffort={setPreviewEffort}
+              onSelectEffort={onSelectEffort}
+            />
+          </div>
         ) : null}
       </div>
-      {effortOptions.length > 1 ? (
-        <div className="runtime-panel-effort">
-          <EffortSelector
-            options={effortOptions}
-            selectedVariant={selectedEffort}
-            disabled={effortDisabled}
-            busy={effortSaving}
-            onPreviewEffort={setPreviewEffort}
-            onSelectEffort={onSelectEffort}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1495,12 +1498,12 @@ function defaultVariantForRuntimeModel(
 
 // Composer-bar "+" menu: the single entry point for everything the composer
 // can attach or invoke — attachments plus the full slash-command list
-// (built-in actions, prompts, and skills; future plugin actions join here).
-// Clicking a command behaves exactly like picking it in the "/" panel.
-// Open state is local, so the host's floating-menu registry needs no wiring.
+// (built-in actions, prompts, skills, and conversation plugins).
+// The @ trigger shares this panel and inserts at the active reference range.
 export function ComposerPlusButton({
   disabled,
   commands,
+  pluginMenu,
   menuAnchorRef,
   onAddAttachment,
   mobileAttachments,
@@ -1509,6 +1512,7 @@ export function ComposerPlusButton({
   variant: ComposerVariant;
   disabled: boolean;
   commands: ComposerSlashCommand[];
+  pluginMenu?: ComposerPluginMenu;
   menuAnchorRef: RefObject<HTMLElement | null>;
   onAddAttachment: () => void;
   // Mobile web presents three distinct attachment sources (camera, gallery,
@@ -1524,10 +1528,14 @@ export function ComposerPlusButton({
   const triggerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = pluginMenu?.open ?? localOpen;
+  const setOpen = (next: boolean) => { if (pluginMenu) pluginMenu.setOpen(next); else setLocalOpen(next); };
+  const close = () => { if (pluginMenu) pluginMenu.close(); else setLocalOpen(false); };
   const [openedFromEnd, setOpenedFromEnd] = useState(false);
-  useFloatingMenuFocus(menuRef, "", open, openedFromEnd);
-  const menuWidth = open ? composerMenuWidth(COMPOSER_COMMAND_MENU_WIDTH) : COMPOSER_COMMAND_MENU_WIDTH;
+  useFloatingMenuFocus(menuRef, "", open && !pluginMenu?.fromMention, openedFromEnd);
+  const preferredWidth = pluginMenu?.available ? 400 : COMPOSER_COMMAND_MENU_WIDTH;
+  const menuWidth = open ? composerMenuWidth(preferredWidth) : preferredWidth;
   const builtInCommands = commands.filter((command) => command.kind !== "skill");
   const skillCommands = commands.filter((command) => command.kind === "skill");
   const selectCommand = (command: ComposerSlashCommand): void => {
@@ -1544,7 +1552,7 @@ export function ComposerPlusButton({
       if (!(target instanceof Node)) {
         return;
       }
-      if (triggerRef.current?.contains(target)) {
+      if (triggerRef.current?.contains(target) || pluginMenu?.inputElement()?.contains(target)) {
         return;
       }
       if (isInsideFloatingMenu(target, "composer-plus")) {
@@ -1578,7 +1586,7 @@ export function ComposerPlusButton({
         onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
         onClick={() => {
           setOpenedFromEnd(false);
-          setOpen((current) => !current);
+          setOpen(!open);
         }}
         onKeyDown={(event) => {
           const side = open ? undefined : menuOpeningKey(event);
@@ -1602,11 +1610,13 @@ export function ComposerPlusButton({
           <div
             ref={menuRef}
             className="composer-context-menu composer-plus-menu"
+            id={pluginMenu?.id}
             role="menu"
             aria-label={t("composer.plusMenu")}
             style={{ "--composer-menu-width": `${menuWidth}px` } as CSSProperties}
-            onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), buttonRef.current)}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, close, pluginMenu?.fromMention ? pluginMenu.inputElement() : buttonRef.current)}
           >
+            {pluginMenu ? <ComposerPluginChoices menu={pluginMenu} /> : null}
             {mobileAttachments ? (
               <ComposerMobileAttachmentChoices
                 onTakePhoto={() => {
@@ -1633,11 +1643,10 @@ export function ComposerPlusButton({
               >
                 <Paperclip className="icon-lg" />
                 <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
-                <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
             )}
-            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands} onSelect={selectCommand} />
-            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands} onSelect={selectCommand} />
+            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
           </div>
         </FloatingMenuPortal>
       ) : null}

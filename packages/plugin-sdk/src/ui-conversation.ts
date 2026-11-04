@@ -159,6 +159,10 @@ type ConversationInputImageData = {
 type ConversationThreadItemTypeData = "user_message" | "agent_message" | "reasoning" | "tool_call" | "process_summary" | "context_compaction" | "stream_reconnect" | "error";
 type ConversationThreadItemStatusData = "in_progress" | "completed" | "failed";
 type ConversationMessageContentPartData = {
+    readonly type: "plugin_reference";
+    readonly text: string;
+    readonly plugin: import("./ui-plugin-reference.js").ApplicationPluginReferenceV1;
+} | {
     readonly type: "text";
     readonly text: string;
 } | {

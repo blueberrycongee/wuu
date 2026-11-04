@@ -121,6 +121,65 @@ describe("application shell assembly", () => {
     } finally { act(() => root.unmount()); for (const id of ["custom-shell", "first", "second", "independent-goal-ui"]) host.unload(id); }
   });
 
+  it("blocks retained shell input synchronously until the successor application commits", async () => {
+    const host = new PluginHost({ react: React });
+    const calls: string[] = [];
+    let release!: () => void, entered!: () => void;
+    const activation = new Promise<void>(resolve => { release = resolve; });
+    const activating = new Promise<void>(resolve => { entered = resolve; });
+    const provider = (generation: string) => host.applicationProviders.register({ pluginId: "business", generation, id: "application" }, {
+      id: "application", prepare: () => ({
+        activate: async () => { if (generation === "next") { entered(); await activation; } },
+        deactivate: () => undefined, dispose: () => {},
+        createScope: signal => ({
+          getSnapshot: () => ({ label: generation }),
+          invoke: async () => { signal.throwIfAborted(); calls.push(generation); },
+        }) as unknown as ApplicationServiceV1,
+      }),
+    });
+    const old = provider("old"), next = provider("next");
+    await host.applicationProviders.select(old);
+    await host.activateGeneration({ pluginId: "shell", generation: "stable", register: api => host.registerPresentation(api, presentation => {
+      presentation.registerApplicationShell({ id: "shell", render: ({ application }) =>
+        <button onClick={() => void application.invoke("catalog.select-plugin", { pluginId: "docs" })}>{(application.getSnapshot() as unknown as { label: string }).label}</button> });
+    }) });
+    const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+    const render = () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "stable", id: "shell" }} />);
+    let switching: Promise<void> | undefined;
+    try {
+      await act(async () => render());
+      const button = container.querySelector("button")!;
+      await act(async () => button.click());
+      expect(calls).toEqual(["old"]);
+      let inertAtAbort = false;
+      old.lifetime!.signal.addEventListener("abort", () => { inertAtAbort = Boolean(button.closest("[inert]")); });
+      await act(async () => { switching = host.applicationProviders.select(next); await activating; });
+      expect(inertAtAbort).toBe(true);
+      expect(button.closest("[inert]")).not.toBeNull();
+      expect(container.querySelector("button")).toBe(button);
+      // An unrelated parent render must not release the retired shell's gate.
+      await act(async () => render());
+      expect(button.closest("[inert]")).not.toBeNull();
+      expect(calls).toEqual(["old"]);
+      let inertAtPublication = false;
+      const unsubscribe = host.applicationProviders.subscribe(() => {
+        if (host.applicationProviders.current === next) inertAtPublication = Boolean(button.closest("[inert]"));
+      });
+      await act(async () => { release(); await switching; });
+      unsubscribe();
+      expect(inertAtPublication).toBe(true);
+      expect(container.querySelector("button")).toBe(button);
+      expect(button.textContent).toBe("next");
+      expect(button.closest("[inert]")).toBeNull();
+      await act(async () => button.click());
+      expect(calls).toEqual(["old", "next"]);
+    } finally {
+      release(); await switching;
+      act(() => root.unmount()); container.remove();
+      await host.unloadAndWait("shell"); await host.applicationProviders.remove(next); await host.applicationProviders.remove(old);
+    }
+  });
+
   it("rebinds retained settings subscriptions and window actions without replaying retired authority", async () => {
     const base = createApplicationSettingsControls();
     const skins = Object.freeze({ skins: [], selected: "default" });
@@ -190,6 +249,49 @@ describe("application shell assembly", () => {
     for (const generation of [old, next, third]) {
       for (const subscription of generation.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
     }
+  });
+
+  // A retained shell must fence input synchronously before its writer retires,
+  // keep local draft DOM, and restore controls only with the successor scope.
+  it("makes retained controls inert through writer replacement without remounting drafts", async () => {
+    const { service } = fixture();
+    const host = new PluginHost({ react: React });
+    const calls: string[] = [];
+    const provider = (generation: string) => host.applicationProviders.register({ pluginId: "writer", generation, id: "app" }, {
+      id: "app", prepare: () => ({ activate() {}, deactivate() { return undefined; }, dispose() {},
+        createScope: () => Object.assign(Object.create(service), { invoke: async () => { calls.push(generation); } }) as ApplicationServiceV1 }),
+    });
+    const first = provider("first"), next = provider("next");
+    await host.applicationProviders.select(first);
+    await host.activateGeneration({ pluginId: "shell", generation: "same", register: api => host.registerPresentation(api, presentation => {
+      presentation.registerApplicationShell({ id: "shell", render: ({ application }) => <main>
+        <input defaultValue="Keep this draft" /><button onClick={() => void application.invoke("catalog.select-plugin", { pluginId: "example" })}>Open</button>
+      </main> });
+    }) });
+    const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+    let finish = () => {};
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same", id: "shell" }} />));
+      const draft = container.querySelector('input')!, button = container.querySelector('button')!;
+      await act(async () => button.click()); expect(calls).toEqual(["first"]);
+      act(() => {
+        finish = host.applicationProviders.beginRetirement(new AbortController().signal);
+        // Inspect inside the notification turn, before React can commit a render.
+        expect(button.closest('[inert]')).not.toBeNull();
+      });
+      await act(async () => host.applicationProviders.select(undefined));
+      expect(container.querySelector('input')).toBe(draft);
+      expect(draft.value).toBe("Keep this draft");
+      expect(button.closest('[inert]')).not.toBeNull();
+      await act(async () => { await host.applicationProviders.select(next); finish(); });
+      expect(container.querySelector('input')).toBe(draft);
+      expect(button.closest('[inert]')).toBeNull();
+      await act(async () => button.click()); expect(calls).toEqual(["first", "next"]);
+      // Cancelling a prepared retirement also restores the still-current writer.
+      act(() => { finish = host.applicationProviders.beginRetirement(new AbortController().signal); });
+      expect(button.closest('[inert]')).not.toBeNull();
+      act(() => finish()); expect(button.closest('[inert]')).toBeNull();
+    } finally { act(() => root.unmount()); container.remove(); host.unload("shell"); await host.applicationProviders.select(undefined); }
   });
 
   it("keeps explicit recovery usable while a successor shell registers late", async () => {

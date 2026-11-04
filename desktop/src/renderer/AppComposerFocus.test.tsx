@@ -59,6 +59,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
             </span>
           ))}
           <textarea
+            data-wuu-component="composer-input"
             aria-label={label}
             value={prompt}
             onChange={(event) => {
@@ -1067,10 +1068,14 @@ describe("main composer focus continuity", () => {
     await flushAsync();
 
     await act(async () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
-    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-page="providers"]')!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
     await vi.waitFor(async () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.settings-nav [data-wuu-page="providers"]')!.click());
+    await vi.waitFor(async () => {
+      await flushAsync();
       expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
     });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());

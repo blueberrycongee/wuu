@@ -120,6 +120,7 @@ async function check(name, body) {
 }
 async function screenshot(name) {
   await frames();
+  state.pasteTrace = await evaluate(() => window.__composerPasteTrace?.events ?? []);
   const file = `${name}.png`;
   const layout = await evaluate((selector) => {
     const suffix = document.querySelector(selector);
@@ -194,7 +195,67 @@ app.whenReady().then(async () => {
   win.showInactive();
   win.webContents.debugger.attach("1.3");
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
-  await until((selector) => Boolean(document.querySelector(selector)), inputSelector);
+  await until((selector) => {
+    const input = document.querySelector(selector);
+    if (!input) return false;
+    // Temporary passive diagnostics for the intermittent native-paste failure.
+    // Install during the existing readiness poll, before baseline input; do not
+    // add a readiness barrier or change the paste gesture/assertions.
+    const events = [];
+    const nodes = new WeakMap();
+    let serial = 0;
+    const identity = node => {
+      if (!node) return null;
+      if (!nodes.has(node)) nodes.set(node, ++serial);
+      return nodes.get(node);
+    };
+    const summarize = props => props && typeof props === "object" ? ({
+      owner: props.queryHistorySessionID, ownerTabId: props.ownerTabId,
+      threadId: props.threadId, promptLength: typeof props.prompt === "string" ? props.prompt.length : undefined,
+      promptRevision: props.promptRevision, valueRevision: props.valueRevision,
+      valueLength: typeof props.value === "string" ? props.value.length : undefined,
+    }) : undefined;
+    const snapshot = target => {
+      const current = document.querySelector(selector);
+      const owners = [];
+      // Private React fields are optional evidence, never a readiness condition.
+      let fiber = current?.[Object.keys(current).find(key => key.startsWith("__reactFiber$"))];
+      while (fiber) {
+        const props = fiber.memoizedProps;
+        if (props && typeof props === "object" && ("queryHistorySessionID" in props || "ownerTabId" in props || "valueRevision" in props)) {
+          owners.push({ props: summarize(props), alternate: summarize(fiber.alternate?.memoizedProps) });
+        }
+        fiber = fiber.return;
+      }
+      return { input: identity(current), target: identity(target), active: identity(document.activeElement),
+        connected: target?.isConnected, length: current?.value.length,
+        disabled: current?.disabled, cards: document.querySelectorAll('[data-main-conversation-composer] .composer-collapsed-prompt-card').length,
+        owners };
+    };
+    const record = (kind, details = {}) => {
+      if (events.length < 150) events.push({ ms: performance.now(), kind, ...details });
+    };
+    window.__composerPasteTrace = { events };
+    for (const type of ["paste", "beforeinput", "input"]) {
+      document.addEventListener(type, event => {
+        if (events.length >= 150 || !(event.target instanceof HTMLTextAreaElement)) return;
+        const text = event.clipboardData?.getData("text/plain");
+        record(type + ":capture", { ...snapshot(event.target), inputType: event.inputType,
+          prevented: event.defaultPrevented, clipboardTypes: event.clipboardData ? Array.from(event.clipboardData.types) : undefined,
+          clipboardLength: text?.length, clipboardLines: text?.split(/\r\n|\r|\n/).length });
+        queueMicrotask(() => record(type + ":settled", { ...snapshot(event.target), prevented: event.defaultPrevented }));
+      }, true);
+    }
+    let previous = "";
+    new MutationObserver(() => {
+      if (events.length >= 150) return;
+      const next = snapshot();
+      const signature = JSON.stringify(next);
+      if (signature !== previous) { previous = signature; record("render", next); }
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+    record("ready", snapshot(input));
+    return true;
+  }, inputSelector);
   await check("no provider preserves native Tab and draft", async () => {
     await draft("Baseline native input");
     await noGhost("no plugin means no decoration");

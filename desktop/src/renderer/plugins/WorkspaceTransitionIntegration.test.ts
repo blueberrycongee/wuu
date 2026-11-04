@@ -45,7 +45,7 @@ async function fixture() {
   window.wuu = { ...originalBridge,
     loadPluginDesktopModule: async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }),
     reportPluginDesktopActivation: params => owner.report(params),
-    requestPluginRuntime: params => requests.request("window", owner.runtimeRequest(params.graph_generation, params.workspace_root), params),
+    requestPluginRuntime: async params => ({ ok: true, value: await requests.request("window", owner.runtimeRequest(params.graph_generation, params.workspace_root), params) }),
     cancelPluginRuntime: params => requests.cancel("window", params),
   } as WuuDesktopApi;
   const handles: PluginGenerationApi[] = [];

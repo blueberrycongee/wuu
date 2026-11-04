@@ -220,3 +220,178 @@ func TestInitialPluginHostFailureBlocksRequiredConsumers(t *testing.T) {
 		t.Fatalf("missing initial dependency diagnostic: %v", failures)
 	}
 }
+
+// A service consumer visited first can pull a package ahead of its optional
+// provider; preserving discovery order alone does not preserve this contract.
+func TestOptionalPackageDependencySurvivesServiceOrdering(t *testing.T) {
+	provider := testRuntimePlugin("b-provider")
+	provider.Version = "1.0.0"
+	consumer := testRuntimePlugin("c-consumer")
+	consumer.Dependencies = []pluginpkg.Dependency{{ID: provider.ID, Version: "^1.0.0", Optional: true}}
+	caller := testRuntimePlugin("a-caller")
+	var prepared, activated, closed []string
+	clients := map[string]*packageOrderingClient{}
+	for _, item := range []pluginpkg.Plugin{provider, consumer, caller} {
+		id := item.ID
+		clients[id] = &packageOrderingClient{fakeServicePluginClient: &fakeServicePluginClient{id: id}, onPrepare: func() { prepared = append(prepared, id) }, onActivate: func() { activated = append(activated, id) }, onClose: func() { closed = append(closed, id) }}
+	}
+	clients[consumer.ID].provided = []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}
+	clients[caller.ID].required = []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}
+	s := testGenerationSession(t, testPluginGeneration("old", &generationClient{id: "old"}))
+	s.RootDir = t.TempDir()
+	defer s.Cleanup()
+	candidate, err := s.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{caller, consumer, provider}, nil, nil,
+		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			return clients[cfg.ID], nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := candidate.host.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{provider.ID, consumer.ID, caller.ID}; !reflect.DeepEqual(prepared, want) {
+		t.Errorf("preparation order = %v, want %v", prepared, want)
+	}
+	if want := []string{provider.ID, consumer.ID, caller.ID}; !reflect.DeepEqual(activated, want) {
+		t.Errorf("activation order = %v, want %v", activated, want)
+	}
+	if want := []string{caller.ID, consumer.ID, provider.ID}; !reflect.DeepEqual(closed, want) {
+		t.Errorf("cleanup order = %v, want %v", closed, want)
+	}
+	if edges := candidate.host.Dependencies()[consumer.ID]; len(edges) != 1 || edges[0].Provider != provider.ID || edges[0].Required {
+		t.Errorf("resolved optional package edge lost: %+v", edges)
+	}
+}
+
+type packageOrderingClient struct {
+	*fakeServicePluginClient
+	onPrepare  func()
+	onActivate func()
+	onClose    func()
+}
+
+func (c *packageOrderingClient) Prepare(context.Context) error { c.onPrepare(); return nil }
+func (c *packageOrderingClient) Activate(ctx context.Context) error {
+	c.onActivate()
+	return c.fakeServicePluginClient.Activate(ctx)
+}
+func (c *packageOrderingClient) Close(ctx context.Context) error {
+	c.onClose()
+	return c.fakeServicePluginClient.Close(ctx)
+}
+
+func TestOptionalPackageResolutionDoesNotBlockConsumer(t *testing.T) {
+	for _, scenario := range []string{"missing", "wrong-version", "mixed-cycle", "failed-provider", "activation-failed"} {
+		t.Run(scenario, func(t *testing.T) {
+			provider := testRuntimePlugin("provider")
+			provider.Version = "1.0.0"
+			consumer := testRuntimePlugin("consumer")
+			consumer.Dependencies = []pluginpkg.Dependency{{ID: provider.ID, Version: "^1.0.0", Optional: true}}
+			plugins := []pluginpkg.Plugin{consumer}
+			if scenario == "wrong-version" {
+				provider.Version = "2.0.0"
+			}
+			if scenario != "missing" {
+				plugins = append(plugins, provider)
+			}
+			clients := map[string]*fakeServicePluginClient{
+				consumer.ID: {id: consumer.ID}, provider.ID: {id: provider.ID},
+			}
+			if scenario == "mixed-cycle" {
+				clients[consumer.ID].provided = []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}
+				clients[provider.ID].required = []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}
+			}
+			s := testGenerationSession(t, testPluginGeneration("old", &generationClient{id: "old"}))
+			s.RootDir = t.TempDir()
+			defer s.Cleanup()
+			candidate, err := s.buildPluginGeneration(config.Config{}, plugins, nil, nil,
+				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					if cfg.ID == provider.ID && scenario == "activation-failed" {
+						return &preparedGenerationClient{generationClient: &generationClient{id: cfg.ID}, activateErr: errors.New("provider activation failed")}, nil
+					}
+					if cfg.ID == provider.ID && scenario == "failed-provider" {
+						return nil, errors.New("provider initialization failed")
+					}
+					return clients[cfg.ID], nil
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = s.ActivatePluginGeneration(candidate, nil)
+			if scenario == "activation-failed" {
+				if !PluginGenerationWasCommitted(err) {
+					t.Fatalf("activation failure must report committed generation: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if !clients[consumer.ID].active {
+				t.Fatal("optional package blocked consumer")
+			}
+			if scenario == "failed-provider" || scenario == "activation-failed" {
+				return
+			}
+			snapshot := candidate.host.ServiceRegistry().Snapshot(0)
+			if edges := snapshot.Dependencies[consumer.ID]; len(edges) != 0 {
+				t.Errorf("unresolved optional relation became active edge: %+v", edges)
+			}
+			// Check the public introspection shape rather than coupling callers to
+			// the host's internal diagnostic representation.
+			raw, err := json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var diagnostics struct {
+				Issues map[string][]struct {
+					Provider string `json:"provider"`
+					Kind     string `json:"kind"`
+				} `json:"dependency_issues"`
+			}
+			if err := json.Unmarshal(raw, &diagnostics); err != nil {
+				t.Fatal(err)
+			}
+			kind := map[string]string{"missing": "optional_missing", "wrong-version": "optional_version_mismatch", "mixed-cycle": "optional_cycle"}[scenario]
+			found := false
+			for _, issue := range diagnostics.Issues[consumer.ID] {
+				found = found || issue.Provider == provider.ID && issue.Kind == kind
+			}
+			if !found {
+				t.Errorf("missing %s diagnostic: %s", kind, raw)
+			}
+		})
+	}
+}
+
+func TestBarePluginHostRejectsSelectedUnavailablePackage(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		t.Run(fmt.Sprint(mismatch), func(t *testing.T) {
+			consumer := testRuntimePlugin("consumer")
+			consumer.Dependencies = []pluginpkg.Dependency{{ID: "provider", Version: "^1.0.0"}}
+			plugins := []pluginpkg.Plugin{consumer}
+			modules := []string{consumer.ID}
+			if mismatch {
+				provider := testRuntimePlugin("provider")
+				provider.Version = "2.0.0"
+				plugins = append(plugins, provider)
+				modules = append(modules, provider.ID)
+			}
+			started := false
+			host, _, err := buildPluginHost(plugins, t.TempDir(), "", t.TempDir(), t.TempDir(), nil,
+				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					started = true
+					return &fakeServicePluginClient{id: cfg.ID}, nil
+				},
+				nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
+			if host != nil {
+				defer host.Close(context.Background())
+			}
+			if err == nil || started {
+				t.Fatalf("unavailable selected package must fail before startup: err=%v started=%v", err, started)
+			}
+		})
+	}
+}

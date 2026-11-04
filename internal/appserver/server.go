@@ -351,6 +351,7 @@ type Server struct {
 	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
+	shutdownRequested            atomic.Bool
 	pluginGenerationMutation     atomic.Bool
 	pluginGenerationRefreshing   atomic.Bool
 	pluginAdditivePreparation    atomic.Pointer[pluginAdditivePreparation]
@@ -360,6 +361,7 @@ type Server struct {
 	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configNonCatalogFingerprint  string
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
@@ -368,6 +370,8 @@ type Server struct {
 	refreshConfigForTest         func() error
 	presenceLease                *session.AppServerPresenceLease
 	bootOwner                    bool
+	recoveryBootAt               time.Time
+	previousRecoveryBootAt       time.Time
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
@@ -480,6 +484,10 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 			return s
 		}
 	}
+	if err := s.initializeRestartRecovery(binding, bootOwner); err != nil {
+		s.startupErr = err
+		return s
+	}
 	if bootOwner {
 		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
 			s.startupErr = err
@@ -519,6 +527,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 				return s.controlPluginSession(binding, ctx, pluginID, p)
 			},
 		)
+		unbindModel := rt.PluginSessionRouter.BindModel(s.pluginSessionModel)
 		unbindAuthorization := rt.PluginSessionRouter.BindExecutionAuthorization(rt.HandleExecutionAuthorization)
 		unbindSessionAccess := rt.PluginSessionRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, sessionID string, reference *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
 			if strings.HasPrefix(operation, "personal/") {
@@ -548,7 +557,14 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		})
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
 		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient(); unbindAuthorization(); unbindSessionAccess() }
+		s.pluginTurnUnbind = func() {
+			unbindTurns()
+			unbindModel()
+			unbindProcesses()
+			unbindClient()
+			unbindAuthorization()
+			unbindSessionAccess()
+		}
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
@@ -847,6 +863,9 @@ func (s *Server) Close() {
 		s.closeChatGPTLogins()
 		if s.sessionOperationCancel != nil {
 			s.sessionOperationCancel()
+		}
+		if s.rt != nil {
+			s.rt.DrainCanceledMCPAuth()
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
@@ -1472,6 +1491,17 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleThreadList(req)
 	case MethodThreadListAll:
 		return s.handleThreadListAll(req)
+	case "thread/recovery/list":
+		if !s.startBackground(func() {
+			if err := s.handleRestartRecoveryList(ctx, req); err != nil {
+				log.Printf("wuu: thread/recovery/list: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case "thread/recovery/dismiss":
+		return s.handleRestartRecoveryDismiss(req)
 	case MethodThreadListArchived:
 		return s.handleThreadListArchived(req)
 	case MethodThreadSearch:
@@ -1631,6 +1661,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleMCPRefresh(ctx, req)
 	case MethodMCPAuthStart:
 		return s.handleMCPAuthStart(ctx, req)
+	case MethodMCPIdentityRefresh:
+		return s.handleMCPIdentityRefresh(ctx, req)
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:
@@ -1646,6 +1678,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodActivityStop:
 		return s.handleActivityStop(req)
 	case MethodShutdown:
+		s.shutdownRequested.Store(true)
 		if err := s.writeResponse(req.ID, OKResult{OK: true}, nil); err != nil {
 			return err
 		}
