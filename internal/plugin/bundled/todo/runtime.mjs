@@ -525,6 +525,7 @@ var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
 };
 
 // packages/plugin-sdk/src/index.ts
+var MAX_SESSION_HANDOFF_BYTES = 256 * 1024;
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
 var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
