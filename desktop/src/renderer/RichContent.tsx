@@ -1071,23 +1071,21 @@ function RichImage({
       {t("imagePreview.loadFailed")}
     </span>
   ) : (
-    <Tooltip content={titleText}>
-      <img
-        className="rich-image"
-        ref={register}
-        src={resolvedSource}
-        alt={alt}
-        loading="lazy"
-        role="button"
-        tabIndex={0}
-        aria-label={
-          alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
-        }
-        onClick={event => handleActivate(event.currentTarget)}
-        onKeyDown={handleKeyDown}
-        onError={() => setFailedSource(resolvedSource ?? null)}
-      />
-    </Tooltip>
+    <img
+      className="rich-image"
+      ref={register}
+      src={resolvedSource}
+      alt={alt}
+      loading="lazy"
+      role="button"
+      tabIndex={0}
+      aria-label={
+        alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
+      }
+      onClick={event => handleActivate(event.currentTarget)}
+      onKeyDown={handleKeyDown}
+      onError={() => setFailedSource(resolvedSource ?? null)}
+    />
   );
   if (inline) {
     return <span className="rich-image-block inline">{image}</span>;
