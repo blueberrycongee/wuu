@@ -1,5 +1,3 @@
-//go:build !project_agent
-
 package appserver
 
 import (
@@ -8,9 +6,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-// Release builds must reject creation and direct execution, leave queued work
+// Retired sessions reject creation and direct execution, leave queued work
 // dormant across recovery, and keep ordinary conversation creation available.
-func TestProjectAgentDisabled(t *testing.T) {
+func TestRetiredSessionsRemainReadable(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WorkspaceID = "workspace-one"
 	for _, source := range []string{"project", "project-session"} {
@@ -28,17 +26,16 @@ func TestProjectAgentDisabled(t *testing.T) {
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	client := &rpcClient{server: srv, out: out}
-	if failure := client.call(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Disabled"}}, nil); failure == nil {
-		t.Fatal("release build created a project")
+	if failure := client.call(t, MethodThreadStart, map[string]any{"project": map[string]any{"name": "Removed"}}, nil); failure == nil {
+		t.Fatal("host created a project")
 	}
-	if failure := client.call(t, MethodProjectSession, ProjectSessionParams{Action: "adopt", ProjectID: "project", SessionID: "project-session"}, nil); failure == nil {
-		t.Fatal("release build accepted project membership changes")
+	if failure := client.call(t, "project/session", map[string]any{"action": "adopt", "project_id": "project", "session_id": "project-session"}, nil); failure == nil {
+		t.Fatal("host accepted project membership changes")
 	}
 	for _, id := range []string{"project", "project-session"} {
 		if failure := client.call(t, MethodTurnStart, TurnStartParams{ThreadID: id, Prompt: "run"}, nil); failure == nil {
-			t.Fatalf("release build executed %s", id)
+			t.Fatalf("host executed %s", id)
 		}
-		srv.drainSessionInboxForState(id, testRuntimeState(t, rt))
 		pending, err := rt.Sessions.PendingInbox(id)
 		if err != nil || len(pending) != 1 {
 			t.Fatalf("pending work changed for %s: %v, %v", id, pending, err)
@@ -46,7 +43,7 @@ func TestProjectAgentDisabled(t *testing.T) {
 		var result ThreadResumeResult
 		client.rpc(t, MethodThreadResume, ThreadResumeParams{SessionID: id}, &result)
 		if !result.Thread.ReadOnly || len(result.Thread.Turns) != 0 {
-			t.Fatalf("disabled project must remain readable and dormant: %+v", result.Thread)
+			t.Fatalf("retired session must remain readable and dormant: %+v", result.Thread)
 		}
 	}
 	var ordinary ThreadStartResult

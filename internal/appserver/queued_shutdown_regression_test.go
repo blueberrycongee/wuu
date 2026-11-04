@@ -107,7 +107,7 @@ func TestQueuedShutdownAndSuccessorSerializeOnWorkerLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	next.mu.Lock()
-	acquired, err := second.tryAcquireThreadExecutionLeaseLocked(next, 0)
+	acquired, err := second.tryAcquireThreadExecutionLeaseLocked(next)
 	next.mu.Unlock()
 	if err != nil || !acquired {
 		t.Fatalf("successor admission: %v, %v", acquired, err)

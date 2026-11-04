@@ -358,19 +358,15 @@ func (c *legacySessionConversion) table(table string, rows []map[string]any) (bo
 			key = inbox.ClientID
 			value = inbox
 		case "project_work", "project_work_operations":
-			var work ProjectWork
+			// Preserve retired feature data as opaque records during conversion.
+			var work map[string]any
 			if err := json.Unmarshal(legacyBytes(row["payload"]), &work); err != nil {
 				return true, err
 			}
-			value = work
 			if table == "project_work" {
-				var stored projectWorkDocument
-				stored.ProjectWork = work
-				if n, ok := row["reconciled_version"].(int64); ok {
-					stored.ReconciledVersion = int(n)
-				}
-				value = stored
+				work["reconciled_version"] = row["reconciled_version"]
 			}
+			value = work
 		case "session_history_retractions":
 			var retraction historyRetraction
 			if err := decodeLegacyRow(row, &retraction, nil); err != nil {

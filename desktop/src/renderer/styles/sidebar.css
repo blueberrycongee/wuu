@@ -2348,39 +2348,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   padding-left: var(--sidebar-session-indent);
 }
 
-/* A project row carries its glyph in the icon column and starts its title
- * after it, like a folder row, wherever the project is listed. */
-.sidebar-session-row.project-thread-row > .thread-row-main {
-  padding-left: calc(
-    var(--sidebar-session-indent, 0px) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap)
-  );
-}
-
-.project-thread-glyph {
-  position: absolute;
-  top: 50%;
-  left: calc(var(--sidebar-row-pad-x) + var(--sidebar-session-indent, 0px));
-  z-index: 1;
-  display: grid;
-  width: var(--sidebar-nav-icon-col);
-  height: var(--sidebar-nav-icon-col);
-  place-items: center;
-  color: var(--ink-soft);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.project-thread-glyph > svg {
-  width: var(--sidebar-primary-icon-size);
-  height: var(--sidebar-primary-icon-size);
-}
-
-/* Dropping a conversation on a project row adds it to the project. */
-.thread-row.project-thread-row.drop-active {
-  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 42%, transparent);
-}
-
 .thread-row-main > .thread-row-title {
   min-width: 0;
   /* Backspacing briefly leaves an empty title; keep its line box in place. */

@@ -135,15 +135,12 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
     onKeyDown={event => { const edge = menuOpeningKey(event); if (edge) { setWorkspaceMenuFromEnd(edge === "end"); setWorkspaceMenu(true); } }}
   >{selectedWorkspace!.name}</button>{greeting[1]}</> : greetingFor(hour, { kind: "wuu" });
   const activeDraft = view.drafts[view.drafts.activePane];
-  const activeTab = view.tabs.items.find(tab => tab.id === view.tabs.activeTabId);
-  const projectDraft = Boolean(activeTab?.project);
   const activity = activeDraft.text.trim() || activeDraft.imageIds.length || activeDraft.fileIds.length || activeDraft.selections.length ? "compose" : "idle";
-  const welcomeTitle = activeTab?.kind === "draft" && projectDraft ? t("projects.newProject") : title;
-  const welcomeContext = { projectDraft };
+  const welcomeContext = {};
   const mascot = <slots.Slot name="wuu.default-conversation/welcome.mascot" context={welcomeContext} fallback={<EmptyHomeMascot activity={activity} />} />;
   const greetingPart = <slots.Slot name="wuu.default-conversation/welcome.greeting" context={welcomeContext} fallback={<>
-    <h2>{welcomeTitle}</h2>
-    {workspaceMenu && greeting && !projectDraft ? <FloatingMenuPortal anchorRef={workspaceTriggerRef} owner="conversation-workspace" placement="below" align="left" width={composerMenuWidth(244)} flip>
+    <h2>{title}</h2>
+    {workspaceMenu && greeting ? <FloatingMenuPortal anchorRef={workspaceTriggerRef} owner="conversation-workspace" placement="below" align="left" width={composerMenuWidth(244)} flip>
       <div ref={workspaceMenuRef} role="menu" className="composer-context-menu"
         style={{ width: "var(--floating-menu-available-width)", maxHeight: "min(340px, var(--floating-menu-available-height))" }}
         onKeyDown={event => handleFloatingMenuKeyDown(event, () => setWorkspaceMenu(false), workspaceTriggerRef.current)}>
@@ -154,8 +151,8 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
       </div>
     </FloatingMenuPortal> : null}
   </>} />;
-  const usage = <slots.Slot name="wuu.default-conversation/welcome.usage" context={welcomeContext} fallback={projectDraft ? null : <EmptyHomeOverview application={application} />} />;
-  const welcome: ConversationWelcomeContextV1 = { projectDraft, mascot, greeting: greetingPart, usage };
+  const usage = <slots.Slot name="wuu.default-conversation/welcome.usage" context={welcomeContext} fallback={<EmptyHomeOverview application={application} />} />;
+  const welcome: ConversationWelcomeContextV1 = { mascot, greeting: greetingPart, usage };
   if (view.phase === "starting" || view.conversation.loading) return <RuntimeLoading status={view.connection.message ?? "connecting"} />;
   if (view.phase === "error" && !primary) return <RuntimeLoading status={view.conversation.error ?? view.connection.message ?? t("sideThread.unavailable")} />;
   return <WorkbenchConnectionContext.Provider value={view.connection.status === "connected"}>
@@ -172,7 +169,7 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
             separator={pane === "primary" ? <div className="conversation-split-resizer" role="separator" aria-orientation="vertical" aria-label={t("shell.resizeSplit")} aria-valuemin={CONVERSATION_SPLIT_MIN_PERCENT} aria-valuemax={CONVERSATION_SPLIT_MAX_PERCENT} aria-valuenow={Math.round(layout.splitLeftPercent ?? 50)} tabIndex={0} onPointerDown={layout.onSplitResizeStart} onDoubleClick={layout.onSplitSeparatorDoubleClick} onKeyDown={layout.onSplitSeparatorKey} /> : undefined} />)}
         </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={pending.turn as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
           : empty ? layout.visible === false ? null : <slots.Slot name="wuu.default-conversation/welcome" context={welcome}
-            fallback={<EmptyConversationHome title={welcomeTitle} mascot={mascot} heading={greetingPart}>{usage}</EmptyConversationHome>} />
+            fallback={<EmptyConversationHome title={title} mascot={mascot} heading={greetingPart}>{usage}</EmptyConversationHome>} />
           : <CachedConversationPanes threadIDs={ids} threadsByID={cached} activeThreadID={primary?.id} restoring={layout.restoring} activeContextCwd={view.workspaces.activeRoot}
             contextCompositionEntries={contexts} instructionFilesEntries={instructions} historyMessageEdit={editState} onStreamFrame={onStreamFrame} onCollapseComplete={onCollapseComplete}
             onDismissContextComposition={dismiss} onDismissInstructions={dismiss} canEditThreadMessage={canEdit} onForkMessage={fork} onOpenFile={openFile} onOpenURL={openURL} onOpenAgent={openAgent}

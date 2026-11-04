@@ -87,8 +87,6 @@ interface RenderOptions {
   sectionOrder?: string[];
   state?: AppState;
   collapsedSidebarSectionIDs?: Set<string>;
-  onCreateProject?: (workspaceID?: string) => void;
-  onAdoptIntoProject?: (projectID: string, threadID: string) => void;
   onStartNewThread?: () => void;
 }
 
@@ -115,8 +113,6 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       },
     },
     collapsedSidebarSectionIDs = new Set(),
-    onCreateProject,
-    onAdoptIntoProject,
     pinnedThreads = [],
     onTogglePinned = () => {},
     onStartNewThread = () => {},
@@ -175,8 +171,6 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onSelectWorkspaceThread={onSelectWorkspaceThread}
       onRemoveWorkspace={() => {}}
       onRelocateWorkspace={() => {}}
-      onCreateProject={onCreateProject}
-      onAdoptIntoProject={onAdoptIntoProject}
       onOpenSettings={() => {}}
     /></DesktopControlsProvider>
   );
@@ -424,9 +418,9 @@ describe("AppSidebar layout", () => {
   });
 
   it.each([
-    { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
-    // Projects take the place a saved order gave Collaboration.
-    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "projects", "workspace", "pinned"] },
+    { saved: ["workspace", "pinned"], expected: ["folders", "workspace", "pinned"] },
+    // Retired groups are ignored without resetting remaining preferences.
+    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "workspace", "pinned"] },
   ])("restores group order without resetting existing preferences: $saved", async ({ saved, expected }) => {
     // Empty groups have no heading; populate both optional groups to inspect their saved order.
     vi.stubGlobal("wuu", {
@@ -446,7 +440,7 @@ describe("AppSidebar layout", () => {
       preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
     };
     await act(async () => {
-      renderSidebar({ onCreateProject: vi.fn(), pinnedThreads: [pinned] });
+      renderSidebar({ pinnedThreads: [pinned] });
     });
     expect(order()).toEqual(expected);
   });
@@ -554,169 +548,6 @@ describe("AppSidebar layout", () => {
     };
   }
 
-  function projectsGroup(): HTMLElement {
-    const group = container.querySelector<HTMLElement>('.sidebar-functional-group[data-functional-group-id="projects"]');
-    if (!group) throw new Error("Projects group not rendered");
-    return group;
-  }
-
-  it("lists projects apart from their workspace", () => {
-    renderSidebar({
-      expandedSidebarSectionIDs: new Set(["project-1"]),
-      workspaceThreadsByWorkspaceID: {
-        "project-1": [
-          sidebarThread("coordinator", "Search overhaul", { source: "project" }),
-          sidebarThread("session", "Paginate results", { source: "project-session", project_id: "coordinator", status: "in_progress" }),
-          sidebarThread("orphan", "Orphaned session", { source: "project-session", project_id: "missing-project" }),
-          sidebarThread("chat", "Ordinary conversation"),
-        ],
-      },
-    });
-
-    const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row");
-    expect(projectRow?.textContent).toContain("Search overhaul");
-    expect(projectRow?.classList.contains("running")).toBe(true);
-    const workspace = container.querySelector<HTMLElement>('section[data-section-id="project-1"]');
-    const workspaceTitles = [...workspace!.querySelectorAll(".thread-row-title")].map((title) => title.textContent);
-    expect(workspaceTitles.sort()).toEqual(["Ordinary conversation", "Orphaned session"]);
-  });
-
-  it("keeps managed sessions out of ordinary rows after archive and a fresh sidebar mount", () => {
-    const coordinator = sidebarThread("coordinator", "Search overhaul", { source: "project" });
-    const members = [
-      sidebarThread("worker", "Paginate results", { source: "project-session", project_id: coordinator.id, project_exists: true, status: "in_progress" }),
-      sidebarThread("side", "Review results", { source: "project-session", project_id: coordinator.id, project_exists: true }),
-    ];
-    const chat = sidebarThread("chat", "Ordinary conversation");
-    const renderThreads = (threads: ThreadSummary[]) => renderSidebar({
-      onCreateProject: vi.fn(),
-      expandedSidebarSectionIDs: new Set(["project-1"]),
-      workspaceThreadsByWorkspaceID: { "project-1": threads },
-    });
-    const ordinaryTitles = () => [...container.querySelectorAll('section[data-section-id="project-1"] .thread-row-title')]
-      .map((title) => title.textContent);
-
-    renderThreads([coordinator, ...members, chat]);
-    expect(projectsGroup().querySelector(".project-thread-row")?.textContent).toContain(coordinator.title);
-    expect(ordinaryTitles()).toEqual([chat.title]);
-
-    // Archiving removes the coordinator from the sidebar cache, not its members.
-    renderThreads([...members, chat]);
-    expect(projectsGroup().querySelector(".project-thread-row")).toBeNull();
-    expect(ordinaryTitles()).toEqual([chat.title]);
-
-    // Active thread lists omit archived coordinators; no remembered parent is required.
-    act(() => root?.unmount());
-    root = null;
-    renderThreads([...members, chat]);
-    expect(ordinaryTitles()).toEqual([chat.title]);
-
-    // Deleted coordinators and old orphan records must not strand surviving sessions.
-    const orphans = members.map((member) => ({ ...member, project_exists: false }));
-    renderThreads([...orphans, chat]);
-    expect(ordinaryTitles().sort()).toEqual([chat.title, ...members.map((member) => member.title)].sort());
-    act(() => root?.unmount());
-    root = null;
-    renderThreads([...orphans, chat]);
-    expect(ordinaryTitles().sort()).toEqual([chat.title, ...members.map((member) => member.title)].sort());
-
-    renderThreads([coordinator, ...members, chat]);
-    expect(projectsGroup().querySelector(".project-thread-row")?.classList.contains("running")).toBe(true);
-    expect(ordinaryTitles()).toEqual([chat.title]);
-
-    // Only explicit release restores ordinary visibility.
-    renderThreads([coordinator, { ...members[0], source: undefined, project_id: undefined }, members[1], chat]);
-    expect(ordinaryTitles().sort()).toEqual([chat.title, members[0].title].sort());
-  });
-
-  it("clears a viewed project's unread dot without marking its hidden sessions read", () => {
-    const project = sidebarThread("coordinator", "Search overhaul", {
-      source: "project", latest_completed_turn_id: "project-turn-1",
-    });
-    const member = sidebarThread("member", "Paginate results", {
-      source: "project-session", project_id: project.id, latest_completed_turn_id: "member-turn-1",
-    });
-    const options: RenderOptions = {
-      workspaceThreadsByWorkspaceID: { "project-1": [project, member] },
-      onSelectThread: vi.fn(),
-    };
-    const hasProjectUnread = () => projectsGroup().querySelector(".project-thread-row")!.classList.contains("has-unread");
-    renderSidebar(options);
-    expect(hasProjectUnread()).toBe(true);
-    act(() => projectsGroup().querySelector<HTMLButtonElement>(".thread-row-main")!.click());
-    expect(options.onSelectThread).toHaveBeenCalledWith(project.id);
-    renderSidebar({ ...options, activeThreadID: project.id });
-    expect(hasProjectUnread()).toBe(false);
-
-    // After navigating away, the persisted read marker still clears the project,
-    // even though its member has never been opened.
-    const viewedOptions: RenderOptions = {
-      ...options,
-      state: {
-        ...initialState,
-        initialized: initialized(),
-        lastViewedTurnByThreadID: { [project.id]: "project-turn-1" },
-      },
-    };
-    renderSidebar(viewedOptions);
-    expect(hasProjectUnread()).toBe(false);
-    act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
-    const unreadList = container.querySelector('[aria-labelledby="sidebar-unread-heading"] .sidebar-unread-list');
-    expect(unreadList?.textContent).toContain(member.title);
-    expect(unreadList?.textContent).not.toContain(project.title);
-    act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
-
-    renderSidebar({
-      ...viewedOptions,
-      workspaceThreadsByWorkspaceID: {
-        "project-1": [{ ...project, latest_completed_turn_id: "project-turn-2" }, member],
-      },
-    });
-    expect(hasProjectUnread()).toBe(true);
-  });
-
-  it("opens a project draft and adopts a conversation dropped on a project", () => {
-    const create = vi.fn();
-    const adopt = vi.fn();
-    renderSidebar({
-      expandedSidebarSectionIDs: new Set(["project-1"]),
-      workspaceThreadsByWorkspaceID: {
-        "project-1": [
-          sidebarThread("coordinator", "Search overhaul", { source: "project" }),
-          sidebarThread("chat", "Ordinary conversation"),
-        ],
-      },
-      onCreateProject: create,
-      onAdoptIntoProject: adopt,
-    });
-
-    act(() => projectsGroup().querySelector<HTMLButtonElement>('button[aria-label="新建项目"]')!.click());
-    expect(create).toHaveBeenCalledTimes(1);
-
-    const conversation = [...container.querySelectorAll<HTMLElement>(".thread-row")]
-      .find((row) => row.textContent?.includes("Ordinary conversation"))!;
-    const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row")!;
-    const data = new Map<string, string>();
-    const transfer = {
-      get types() { return [...data.keys()]; },
-      setData: (type: string, value: string) => { data.set(type, value); },
-      getData: (type: string) => data.get(type) ?? "",
-      setDragImage: () => {},
-      effectAllowed: "",
-      dropEffect: "",
-    };
-    const drag = (target: HTMLElement, type: string) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, "dataTransfer", { value: transfer });
-      act(() => { target.dispatchEvent(event); });
-    };
-    drag(conversation, "dragstart");
-    drag(projectRow, "dragover");
-    expect(projectRow.classList.contains("drop-active")).toBe(true);
-    drag(projectRow, "drop");
-    expect(adopt).toHaveBeenCalledWith("coordinator", "chat");
-  });
-
   it("offers the empty Pinned group as a drop target only while a conversation is dragged", () => {
     const onTogglePinned = vi.fn();
     renderSidebar({
@@ -752,16 +583,8 @@ describe("AppSidebar layout", () => {
     expect(onTogglePinned).toHaveBeenCalledWith(expect.objectContaining({ id: "chat" }));
   });
 
-  it("offers a first project when there is none", () => {
-    const create = vi.fn();
-    renderSidebar({ onCreateProject: create });
-    const first = projectsGroup().querySelector<HTMLButtonElement>(".project-new-item");
-    expect(first?.textContent).toBe("新建项目");
-    act(() => first!.click());
-    expect(create).toHaveBeenCalledTimes(1);
-  });
 
-  it("omits an unavailable project section but keeps existing projects accessible", () => {
+  it("keeps retired project history accessible as ordinary conversations", () => {
     renderSidebar({});
     expect(container.querySelector('[data-functional-group-id="projects"]')).toBeNull();
     renderSidebar({
@@ -769,8 +592,7 @@ describe("AppSidebar layout", () => {
         "project-1": [sidebarThread("old-project", "Existing project", { source: "project", read_only: true })],
       },
     });
-    expect(projectsGroup().textContent).toContain("Existing project");
-    expect(projectsGroup().querySelector(".sidebar-functional-action")).toBeNull();
+    expect(container.querySelector(".sidebar-recent-group")?.textContent ?? container.textContent).toContain("Existing project");
   });
 
   it("renders projects in the workspace order", () => {

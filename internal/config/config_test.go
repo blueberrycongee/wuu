@@ -1331,10 +1331,6 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
     "model_roles": {
       "review": { "provider": " drop ", "model": "drop-model" },
       "compact": { "provider": "keep", "model": "keep-model" }
-    },
-    "project_models": {
-      "side": {"provider": " drop ", "model": "drop-model"},
-      "executor": {"provider": "keep", "model": "keep-model"}
     }
   }
 }`
@@ -1356,9 +1352,6 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
 	}
 	if saved.Agent.ModelRoles.Review != (ModelRoleConfig{}) {
 		t.Fatalf("removed provider's role must inherit the complete default selection: %+v", saved.Agent.ModelRoles.Review)
-	}
-	if saved.Agent.ProjectModels.Side != (ModelRoleConfig{}) || saved.Agent.ProjectModels.Executor.Provider != "keep" {
-		t.Fatalf("project model cleanup = %+v", saved.Agent.ProjectModels)
 	}
 	if !strings.Contains(string(data), `"provider": "keep"`) {
 		t.Fatalf("compact role provider was unexpectedly removed: %s", data)

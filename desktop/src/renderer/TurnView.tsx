@@ -28,7 +28,6 @@ import {
 import { turnEventForTurn } from "./TurnEvents";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
-import { groupProjectEvents, ProjectEventGroup } from "./ProjectViews";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -316,9 +315,7 @@ function TurnContent({
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {groupProjectEvents(userItems).map((entry) => Array.isArray(entry)
-        ? <ProjectEventGroup key={entry[0].id} items={entry} />
-        : renderThreadItem(entry, false))}
+      {userItems.map((item) => renderThreadItem(item, false))}
       {assistantDisplay ? (
         <AssistantTurnShell
           turn={turn}

@@ -15,7 +15,6 @@ import {
   ArrowLeft,
   SquarePen,
   Info,
-  Project,
   X,
 } from "./WuuIcons";
 import type {
@@ -53,7 +52,6 @@ import { Tooltip } from "./Tooltip";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
-import { useProjectActions } from "./ProjectActions";
 import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { conversationHeadingTitle } from "./ThreadTitles";
 import { showErrorToast } from "./Toast";
@@ -424,21 +422,11 @@ export function ConversationTitleActions({
   showRightPanelToggle = true,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
-  const projectActions = useProjectActions();
   // Controls for the covered conversation leave with it; new conversations
   // and the right panel stay available on every page.
   const control = pluginPageVisible ? undefined : thread?.session_control;
   const controlLabel = control ? t(`sessionControl.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
-  // Project membership is independent of user intervention; only extensions
-  // expose ownership state here.
-  const projectSession = thread && control && projectActions && thread.project_id === control.manager_id;
-  const management = projectSession ? <>
-    <Tooltip asChild content={t("projects.openCoordinator")}><button aria-description={t("projects.openCoordinator")} type="button" className="session-control-project"
-      onClick={() => projectActions.openThread(control.manager_id)}>
-      <Project aria-hidden="true" />
-      <span>{control.manager_name}</span>
-    </button></Tooltip>
-  </> : control ? <Tooltip asChild content={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}><span className="session-control-label">
+  const management = control ? <Tooltip asChild content={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}><span className="session-control-label">
     {control.manager_name} · {controlLabel}
   </span></Tooltip> : null;
   const environmentLabel = environmentPanelVisible

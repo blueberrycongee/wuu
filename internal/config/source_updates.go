@@ -119,13 +119,7 @@ func UpdateAdvancedRuntimeSource(data []byte, providerName string, update Advanc
 	setOptionalFloat(agent, "compact_threshold_pct", update.CompactThresholdPct, 0)
 	setOptionalInt(agent, "compact_keep_recent_tokens", update.CompactKeepRecentTokens)
 	setOptionalBool(agent, "disable_auto_compact", update.DisableAutoCompact)
-	if update.ProjectModels != nil {
-		if *update.ProjectModels == (ProjectModelsConfig{}) {
-			delete(agent, "project_models")
-		} else {
-			agent["project_models"] = *update.ProjectModels
-		}
-	}
+
 	if update.ModelAliases != nil {
 		aliases := make(map[string]any, len(update.ModelAliases))
 		for rawName, alias := range update.ModelAliases {
@@ -537,7 +531,7 @@ func RemoveProviderSource(data []byte, providerName, fallbackName, fallbackModel
 	// keeping its model or variant would route them through an unrelated
 	// provider. Aliases cannot inherit, so remove their entire entry too.
 	if agent, ok := raw["agent"].(map[string]any); ok {
-		for _, section := range []string{"model_roles", "project_models", "model_aliases"} {
+		for _, section := range []string{"model_roles", "model_aliases"} {
 			selections, _ := agent[section].(map[string]any)
 			for key, rawSelection := range selections {
 				selection, _ := rawSelection.(map[string]any)

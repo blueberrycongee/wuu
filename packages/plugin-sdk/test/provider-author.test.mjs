@@ -195,8 +195,8 @@ test('packed provider clients preserve wire values and callback scope', {timeout
         reply={session_id:'worker',created:false};
       } else if (service==='host.managed-session' && method==='submit') {
         assert.deepEqual(params.message,{Role:'user',Content:'inspect',ClientID:'input-2'});
-        reply={admitted:false,capacity_full:true};
-      } else if (service==='project.coordination' && method==='admission') reply={max_parallel:3};
+        reply={admitted:false,capacity_full:false};
+      }
       else assert.fail(`unexpected service ${service}/${method}`);
       send({id:message.id,result:reply});
     }
@@ -247,8 +247,7 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.deepEqual(result.facts.events,[indexBatch.events[1]]);
     assert.equal(result.facts.diagnostic_path,'provider://diagnostic');
     assert.equal(result.emptyFacts.events,null);
-    assert.deepEqual(result.admitted,{admitted:false,capacity_full:true});
-    assert.equal(result.admission.max_parallel,3);
+    assert.deepEqual(result.admitted,{admitted:false,capacity_full:false});
     send({id:'stop',method:'shutdown'}); await next(); child.stdin.end();
     const [code]=await exited; assert.equal(code,0,stderr);
   } finally { clearTimeout(watchdog); child?.kill(); lines?.close(); await rm(dir,{recursive:true,force:true}); }

@@ -316,11 +316,10 @@ for (const profileArgs of [["--user-data-dir=/tmp/wuu isolated"], ["--user-data-
   fakeRequire.resolve = require.resolve;
   require("node:vm").runInNewContext(devLauncherSource, {
     require: fakeRequire, __dirname, console,
-    process: { execPath: process.execPath, platform: "darwin", env: {}, argv: ["node", "dev.cjs", "--project-agent", ...profileArgs], exit: code => { throw new Error(`unexpected exit ${code}`); } },
+    process: { execPath: process.execPath, platform: "darwin", env: {}, argv: ["node", "dev.cjs", ...profileArgs], exit: code => { throw new Error(`unexpected exit ${code}`); } },
   });
   assert.deepEqual(Array.from(launched.slice(2)), ["--", ...profileArgs]);
   const coreArgs = builds.find(args => args[0].endsWith("build-core.cjs"));
-  assert.ok(coreArgs.includes("--project-agent"));
   assert.ok(!coreArgs.includes("--plugins-only"));
 }
 

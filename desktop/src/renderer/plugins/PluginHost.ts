@@ -8,7 +8,7 @@ import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../
 import { ApplicationProviders, type ApplicationProviderBinding, type ApplicationProviderRecord } from "./ApplicationProviders";
 import type { HostApplicationService } from "./HostApplicationService";
 import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
-import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1, ApplicationProviderDefinition,
@@ -918,7 +918,6 @@ export class PluginHost {
       onboarding: scopeApplicationOnboarding(() => service().onboarding, lifetime.signal, assertApplicationActive),
       browser: scopeApplicationBrowser(() => service().browser, lifetime.signal, assertApplicationActive),
       fileSelection: scopeApplicationFileSelection(() => service().fileSelection, lifetime.signal, assertApplicationActive),
-      projects: scopeApplicationProjects(() => service().projects, lifetime.signal, assertApplicationActive),
       terminals: scopeApplicationTerminals(() => service().terminals, lifetime.signal, assertApplicationActive),
       catalog: scopeApplicationCatalog(() => service().catalog, lifetime.signal, assertApplicationActive),
       previewContent: scopeApplicationPreviewContent(() => service().previewContent, lifetime.signal, assertApplicationActive),

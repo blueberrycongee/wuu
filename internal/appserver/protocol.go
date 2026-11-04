@@ -70,8 +70,6 @@ const (
 	MethodConfigProviderRemove            = "config/provider/remove"
 	MethodSkillList                       = "skill/list"
 	MethodThreadStart                     = "thread/start"
-	MethodProjectWork                     = "project/work"
-	MethodProjectSession                  = "project/session"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"
 	MethodThreadEditMessage               = "thread/edit-message"
@@ -223,14 +221,13 @@ type ConfigErrorNotification struct {
 }
 
 type ConfigChangedNotification struct {
-	Provider      string                       `json:"provider"`
-	Model         string                       `json:"model"`
-	Effort        string                       `json:"effort,omitempty"`
-	Variant       string                       `json:"variant,omitempty"`
-	ModelRoles    []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases  map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels config.ProjectModelsConfig   `json:"project_models,omitempty"`
-	Providers     []ProviderSummary            `json:"providers,omitempty"`
+	Provider     string                       `json:"provider"`
+	Model        string                       `json:"model"`
+	Effort       string                       `json:"effort,omitempty"`
+	Variant      string                       `json:"variant,omitempty"`
+	ModelRoles   []ModelRoleSummary           `json:"model_roles,omitempty"`
+	ModelAliases map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	Providers    []ProviderSummary            `json:"providers,omitempty"`
 }
 
 type Request struct {
@@ -334,7 +331,6 @@ type InitializeResult struct {
 	ToolSurface              *ToolSurfaceSummary                        `json:"tool_surface,omitempty"`
 	ModelRoles               []ModelRoleSummary                         `json:"model_roles,omitempty"`
 	ModelAliases             map[string]ModelAliasSummary               `json:"model_aliases,omitempty"`
-	ProjectModels            config.ProjectModelsConfig                 `json:"project_models,omitempty"`
 	Providers                []ProviderSummary                          `json:"providers,omitempty"`
 	AdvancedSettings         AdvancedSettingsSummary                    `json:"advanced_settings"`
 	GeneralSettings          GeneralSettingsSummary                     `json:"general_settings"`
@@ -343,8 +339,6 @@ type InitializeResult struct {
 }
 
 type FeatureFlags struct {
-	// ProjectAgent is a build-time capability; clients must treat absence as off.
-	ProjectAgent bool `json:"project_agent"`
 	// Browser advertises that this client can host the embedded browser
 	// backend (hidden WebContentsView + CDP bridge). Mirrored by
 	// desktop/src/shared/protocol.ts. Filled by config_handlers.handleInitialize.
@@ -548,7 +542,6 @@ type ConfigReadResult struct {
 	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -1254,7 +1247,6 @@ type ModelSelectionIntentSummary struct {
 
 type ConfigModelUpdateResult struct {
 	ModelSelection   *ModelSelectionIntentSummary `json:"model_selection,omitempty"`
-	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
 	Provider         string                       `json:"provider"`
 	Model            string                       `json:"model"`
@@ -1300,7 +1292,6 @@ type ConfigProviderRemoveParams struct {
 // merge provider/model/permissions into the initialized state, so the shape
 // intentionally matches that result.
 type ConfigProviderRemoveResult struct {
-	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
 	Provider         string                       `json:"provider"`
 	Model            string                       `json:"model"`
@@ -1323,14 +1314,12 @@ type ConfigAdvancedUpdateParams struct {
 	DisableAutoCompact      *bool                         `json:"disable_auto_compact,omitempty"`
 	ProviderContextWindow   *int                          `json:"provider_context_window,omitempty"`
 	ModelAliases            *map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels           *config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	VerificationModel       *ModelAliasSummary            `json:"verification_model,omitempty"`
 }
 
 type ConfigAdvancedUpdateResult struct {
 	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels    config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
 	Providers        []ProviderSummary            `json:"providers,omitempty"`
 }
@@ -1582,13 +1571,12 @@ type ProviderModelVariantSummary struct {
 
 type ThreadStartParams struct {
 	ModelOptions map[string]string `json:"model_options,omitempty"`
-	// Project starts a project coordinator in the workspace instead of an
-	// ordinary conversation.
-	Project     *ThreadProjectParams `json:"project,omitempty"`
-	Speed       string               `json:"speed,omitempty"`
-	Ephemeral   bool                 `json:"ephemeral,omitempty"`
-	CWD         string               `json:"cwd,omitempty"`
-	WorkspaceID string               `json:"workspace_id,omitempty"`
+	// Reject requests from clients that still offer the removed coordinator.
+	RetiredProject json.RawMessage `json:"project,omitempty"`
+	Speed          string          `json:"speed,omitempty"`
+	Ephemeral      bool            `json:"ephemeral,omitempty"`
+	CWD            string          `json:"cwd,omitempty"`
+	WorkspaceID    string          `json:"workspace_id,omitempty"`
 	// Engine selects the agent engine the thread is bound to. Empty is the
 	// settings default engine (or the built-in "wuu" engine); the binding is
 	// fixed at creation.
@@ -1702,23 +1690,6 @@ type EngineListResult struct {
 type EngineUpdateParams = config.EnginesSettingsUpdate
 
 type ThreadStartResult struct {
-	Thread Thread `json:"thread"`
-}
-
-type ThreadProjectParams struct {
-	Name string `json:"name"`
-}
-
-// ProjectSessionParams adds an ordinary conversation of the project's
-// workspace to the project (adopt), or makes a managed session an ordinary
-// conversation again (release). Both are the user's actions.
-type ProjectSessionParams struct {
-	Action    string `json:"action"`
-	ProjectID string `json:"project_id"`
-	SessionID string `json:"session_id"`
-}
-
-type ProjectSessionResult struct {
 	Thread Thread `json:"thread"`
 }
 
@@ -2569,16 +2540,10 @@ type Thread struct {
 	SessionControl       *ThreadSessionControl `json:"session_control,omitempty"`
 	ID                   string                `json:"id"`
 	Source               string                `json:"source,omitempty"`
-	// ProjectID is the coordinator conversation that manages this session.
-	ProjectID   string `json:"project_id,omitempty"`
-	ProjectRole string `json:"project_role,omitempty"`
-	// ProjectExists resolves grouping independently of coordinator visibility.
-	// Lists, resumes and metadata responses include it; incremental events may omit it.
-	ProjectExists *bool  `json:"project_exists,omitempty"`
-	ParentID      string `json:"parent_id,omitempty"`
-	AgentPath     string `json:"agent_path,omitempty"`
-	Preview       string `json:"preview"`
-	Title         string `json:"title,omitempty"`
+	ParentID             string                `json:"parent_id,omitempty"`
+	AgentPath            string                `json:"agent_path,omitempty"`
+	Preview              string                `json:"preview"`
+	Title                string                `json:"title,omitempty"`
 	// TitleRevision orders persisted title changes independently of turn activity.
 	TitleRevision  int64  `json:"title_revision,omitempty"`
 	ModelProvider  string `json:"model_provider"`

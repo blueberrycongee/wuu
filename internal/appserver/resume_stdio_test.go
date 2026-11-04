@@ -488,7 +488,7 @@ func TestRunStdioForceArchiveKeepsOtherSessionsResponsiveAndSameSessionOrdered(t
 			unblock := sync.OnceFunc(func() { close(settled) })
 			t.Cleanup(unblock)
 			th.mu.Lock()
-			acquired, err := server.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			acquired, err := server.tryAcquireThreadExecutionLeaseLocked(th)
 			th.startTurnLocked("owned-turn", providers.ChatMessage{}, time.Now().UTC())
 			th.turnCompletion = &threadTurnCompletion{turnID: "owned-turn", done: settled}
 			th.cancel = sync.OnceFunc(func() { close(interrupted) })

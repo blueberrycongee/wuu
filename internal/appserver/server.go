@@ -71,12 +71,9 @@ type threadState struct {
 	// Instructions are create-time session instructions appended to every
 	// refreshed runtime system prompt.
 	Instructions string
-	// ProjectID is the coordinator of a project's managed session.
-	ProjectID   string
-	ProjectRole string
-	ParentID    string
-	AgentPath   string
-	History     []providers.ChatMessage
+	ParentID     string
+	AgentPath    string
+	History      []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.
@@ -260,7 +257,7 @@ type Server struct {
 	deferredNotificationContent atomic.Bool
 	rendererClients             rendererClientScope
 	desktopSessionTransport     *desktopSessionTransportBridge
-	projectRegistration         *projectServerRegistration
+	managedSessionRegistration  *managedSessionRegistration
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
 	// methods. The desktop main pipeline leaves it nil so the methods
@@ -869,7 +866,7 @@ func (s *Server) Close() {
 		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
-		s.closeProjectInboxDrains()
+		s.managedSessionRegistration.Close()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
 			s.storageMaintenanceCancel()
@@ -1512,20 +1509,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleSessionShare(ctx, req)
 	case "thread/textSnapshot":
 		return s.handleThreadTextSnapshot(req)
-	case "thread/control/return":
-		return s.handleThreadControl(ctx, req)
-	case "thread/control/take":
-		return s.handleThreadTakeControl(req)
-	case MethodProjectWork, MethodProjectSession:
-		binding, err := s.rt.RetainState()
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		defer binding.Close()
-		if req.Method == MethodProjectWork {
-			return s.handleProjectWork(binding, req)
-		}
-		return s.handleProjectSession(binding, req)
+
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:

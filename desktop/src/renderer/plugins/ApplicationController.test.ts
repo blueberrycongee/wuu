@@ -305,17 +305,6 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().drafts.primary.text).toBe("Unsent");
   });
 
-  it("reconciles released project membership into the shared thread and sidebar", async () => {
-    const context = { kind: "no_project" as const, cwd: "/fixture" };
-    const thread = { id: "member", cwd: context.cwd, preview: "Member", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "",
-      status: "idle", turns: [], source: "project", project_id: "project" } as never;
-    window.wuu = { projectWork: vi.fn(), projectSession: vi.fn().mockResolvedValue({ thread: { ...thread as object, source: undefined, project_id: undefined } }) } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, initialized: { ...submissionInitialized!, features: { project_agent: true } } as never,
-      activeContext: context, thread, threads: [thread] });
-    await controller.projects.releaseSession({ projectId: "project", threadId: "member" });
-    expect(controller.getSnapshot().navigationWorkspace.threads.find(row => row.id === "member")?.project_id).toBeUndefined();
-    expect(controller.getSnapshot().conversationWorkspace.threads.find(row => row.id === "member")?.project_id).toBeUndefined();
-  });
 
   it("resolves search through the shared navigation and rejects a superseded target", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
@@ -1047,14 +1036,6 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().tabs.items.find(tab => tab.threadId === "created")?.draftText).toBe("");
   });
 
-  it("keeps a custom project draft title when its mode is selected again", async () => {
-    const context = { kind: "project" as const, project_id: "workspace", cwd: "/workspace" };
-    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
-      { id: "draft:a", kind: "draft", context, title: "My project", project: true, createdAt: 1, prompt: "", images: [], files: [] },
-    ] });
-    await controller.invoke("draft.set-project-mode", { project: true });
-    expect(controller.getState().sessionTabs[0].title).toBe("My project");
-  });
 
   it("keeps pending attachment ownership across draft navigation and rejects stale checkpoints", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
