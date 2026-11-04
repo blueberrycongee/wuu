@@ -1024,11 +1024,11 @@ function PluginFamilyRow({ group, attention, onOpen }: {
       <button className="catalog-row-open" type="button" onClick={onOpen}
         aria-label={t("skills.pluginDetailLabel", { name: group.name })}>
         <span className="catalog-row-mark"><PluginBlocksIcon aria-hidden="true" /></span>
-        <span className="catalog-row-title">{group.name}</span>
+        <TruncatedText className="catalog-row-title" text={group.name} />
         <span className="catalog-row-description">{t("skills.familyStatus", { enabled, count: group.members.length })}</span>
-        {attention || needsAuth ? <span className="catalog-row-description plugin-attention-reason" data-tone={attention?.tone ?? "warning"}>
+        {attention || needsAuth ? <TruncatedText className="catalog-row-description plugin-attention-reason" data-tone={attention?.tone ?? "warning"} text={attention?.label ?? t("mcp.needsAuth")}>
           <AlertCircle className="icon-sm" aria-hidden="true" />{attention?.label ?? t("mcp.needsAuth")}
-        </span> : group.description ? <TruncatedText as="span" className="catalog-row-description" text={group.description} /> : null}
+        </TruncatedText> : group.description ? <TruncatedText as="span" className="catalog-row-description" text={group.description} /> : null}
       </button>
       <ChevronRight className="icon plugin-family-chevron" aria-hidden="true" />
     </div>
@@ -1077,13 +1077,13 @@ function PluginRow({
         onClick={onOpen}
       >
         <PluginMark record={record} />
-        <span className="catalog-row-title">{record.name}</span>
+        <TruncatedText className="catalog-row-title" text={record.name} />
         {showState ? <span className="catalog-row-description">{t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}</span> : null}
         {attention ? (
-          <span className="catalog-row-description plugin-attention-reason" data-tone={attention.tone}>
+          <TruncatedText className="catalog-row-description plugin-attention-reason" data-tone={attention.tone} text={attention.label}>
             {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
             {attention.label}
-          </span>
+          </TruncatedText>
         ) : needsMCPAuth ? <span className="catalog-row-description plugin-attention-reason" data-tone="warning">{t("mcp.needsAuth")}</span> : record.description ? (
           <TruncatedText as="span" className="catalog-row-description" text={record.description} />
         ) : null}
@@ -1132,7 +1132,7 @@ function CatalogRow({
   return (
     <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
       {artwork}
-      <span className="catalog-row-title">{title}</span>
+      <TruncatedText className="catalog-row-title" text={title} />
       {description ? <TruncatedText as="span" className="catalog-row-description" text={description} /> : null}
       {trailing}
       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />

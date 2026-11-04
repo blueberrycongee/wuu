@@ -3,6 +3,7 @@ import type { MCPServerStatus } from "../shared/protocol";
 import type { ApplicationSettingsControlsV1, MCPDefinitionResult } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
+import { TruncatedText } from "./TruncatedText";
 import { Modal } from "./Modal";
 import { MCPServerEditor } from "./MCPServerEditor";
 import { MCPDiagnostic, MCPFailure } from "./MCPDiagnostic";
@@ -195,12 +196,12 @@ function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView 
       return <div className="mcp-service" key={server.name} data-mcp={server.name} aria-busy={busy === server.name}>
         <ConnectorMark server={server} />
         <div className="mcp-service-copy">
-          <div className="mcp-service-name">{name}</div>
+          <TruncatedText as="div" className="mcp-service-name" text={name} />
           {hasOtherConnectionSource(server, servers) || !pluginID && !server.editable ? <div className="mcp-service-status" data-mcp-source>{t(server.plugin_id ? "mcp.pluginConnection" : server.editable ? "mcp.manualConnection" : "mcp.projectManaged")}</div> : null}
-          <div className="mcp-service-status" data-attention={attention} role={attention || working ? "status" : undefined}>
+          <TruncatedText as="div" className="mcp-service-status" data-attention={attention} role={attention || working ? "status" : undefined} text={status}>
             {attention === "auth" ? <AlertTriangle className="icon-sm" aria-hidden="true" /> : attention ? <AlertCircle className="icon-sm" aria-hidden="true" /> : null}
             <span>{status}</span>
-          </div>
+          </TruncatedText>
           {diagnostic ? <MCPDiagnostic key={diagnostic} message={diagnostic} /> : null}
         </div>
         <div className="mcp-service-actions">
@@ -441,10 +442,10 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
       return <div className="mcp-service mcp-connector" key={server.name} data-connector={server.name} data-connected={view.connected} data-authorized={view.authorized === undefined ? "unknown" : view.authorized} aria-busy={view.working}>
         <ConnectorMark server={server} catalog={catalog} />
         <div className="mcp-service-copy">
-          <div className="mcp-service-name">{view.connector.title}</div>
+          <TruncatedText as="div" className="mcp-service-name" text={view.connector.title} />
           {hasOtherConnectionSource(server, servers) ? <div className="mcp-service-status" data-mcp-source>{t("mcp.pluginConnection")} · {t(view.connected ? "mcp.connected" : "mcp.notConnected")}</div> : null}
-          {view.secondary ? <div className="mcp-service-status" data-connector-identity={view.account && view.secondary !== view.connector.description ? "" : undefined}
-            role={view.working ? "status" : undefined}>{view.secondary}</div> : null}
+          {view.secondary ? <TruncatedText as="div" className="mcp-service-status" data-connector-identity={view.account && view.secondary !== view.connector.description ? "" : undefined}
+            role={view.working ? "status" : undefined} text={view.secondary} /> : null}
         </div>
         <div className="mcp-service-actions">
           {view.available && !view.connected ? view.reconnect

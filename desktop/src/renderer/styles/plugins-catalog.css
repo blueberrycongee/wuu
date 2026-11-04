@@ -172,6 +172,12 @@ button.catalog-row,
   align-items: center;
 }
 
+/* Center the mark across all copy when a component state or family summary
+ * adds a separate metadata line. */
+.plugin-catalog-grid .catalog-row-open:has(> .catalog-row-description + .catalog-row-description) > .catalog-row-mark {
+  grid-row: 1 / span 3;
+}
+
 /* Component state and family summaries precede the description. */
 .plugin-catalog-grid .catalog-row-description + .catalog-row-description {
   grid-row: 3;
@@ -180,9 +186,8 @@ button.catalog-row,
 .plugin-family-chevron {
   grid-column: 3;
   grid-row: 1;
-  align-self: start;
+  align-self: center;
   justify-self: center;
-  margin-top: calc(var(--catalog-row-pad) + (var(--catalog-mark-size) - var(--icon-size)) / 2);
   pointer-events: none;
 }
 
@@ -230,7 +235,7 @@ button.catalog-row,
 
 :is(.plugin-catalog-grid, .skill-catalog-grid) .catalog-row-mark {
   grid-row: 1 / span 2;
-  align-self: start;
+  align-self: center;
 }
 
 :is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) > svg {
@@ -255,9 +260,7 @@ button.catalog-row,
 .plugin-catalog-grid .catalog-row-action {
   grid-column: 3;
   grid-row: 1;
-  align-self: start;
-  /* Match the icon's top inset even when the adjacent description wraps. */
-  margin-top: var(--catalog-row-pad);
+  align-self: center;
 }
 
 :is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-title, .mcp-service-name) {
@@ -286,19 +289,22 @@ button.catalog-row,
   padding-block: var(--catalog-row-pad);
 }
 
-.plugin-catalog-grid .connector-mark {
-  align-self: start;
+/* Browsing copy stays on one line; truncated text reveals its full value on hover.
+ * Scope this to catalogs so onboarding and detail copy can still wrap. */
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-title, .catalog-row-description, .mcp-service-name, .mcp-service-status) {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
 }
 
-.plugin-catalog-grid .mcp-service-status {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+.plugin-catalog-grid .connector-mark {
+  align-self: center;
 }
 
 .plugin-catalog-grid .mcp-service-actions {
-  align-self: start;
+  align-self: center;
   flex-wrap: nowrap;
   gap: var(--space-1);
 }
@@ -320,19 +326,6 @@ button.catalog-row,
   .plugin-catalog-grid,
   .skill-catalog-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/* Two service actions need their own line when the reading column is narrow. */
-@container settings-page (max-width: 32em) {
-  .plugin-catalog-grid .mcp-service:has(.mcp-service-actions > :nth-child(2)) {
-    grid-template-columns: var(--catalog-mark-size) minmax(0, 1fr);
-  }
-
-  .plugin-catalog-grid .mcp-service:has(.mcp-service-actions > :nth-child(2)) > .mcp-service-actions {
-    grid-column: 2;
-    justify-self: start;
-    margin-inline-start: 0;
   }
 }
 
@@ -367,10 +360,9 @@ button.catalog-row,
 .skill-catalog-grid .catalog-row > .settings-disclosure-chevron {
   grid-column: 3;
   grid-row: 1 / span 2;
-  align-self: start;
+  align-self: center;
   width: var(--icon-size);
   height: var(--icon-size);
-  margin-top: calc((var(--catalog-mark-size) - var(--icon-size)) / 2);
 }
 
 /* Without a description, the title fills the mark's two-row area. Skill
@@ -523,7 +515,7 @@ button.catalog-row,
 /* --- Attention ------------------------------------------------------------ */
 
 /* The reason takes the tagline's line, led by its symbol so the tone never
- * rests on color alone. The symbol centers on the first line if it wraps. */
+ * rests on color alone. */
 .catalog-row-description.plugin-attention-reason {
   display: flex;
   align-items: flex-start;
@@ -534,6 +526,16 @@ button.catalog-row,
   flex: none;
   margin-top: calc((var(--font-sm) * 1.5 - var(--icon-size-sm)) / 2);
   color: var(--warning);
+}
+
+.plugin-catalog-grid .catalog-row-description.plugin-attention-reason {
+  display: block;
+}
+
+.plugin-catalog-grid .plugin-attention-reason svg {
+  margin-top: 0;
+  margin-inline-end: var(--space-1);
+  vertical-align: text-bottom;
 }
 
 .plugin-attention-reason[data-tone="danger"] svg {
