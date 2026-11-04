@@ -4,6 +4,7 @@ import type { PreviewFileV1 } from "../../../packages/plugin-sdk/src/ui-preview-
 import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
   AlertCircle,
+  ArrowUpRight,
   Check,
   ChevronRight,
   FileDiff,
@@ -22,7 +23,6 @@ import type {
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
-import { TruncatedText } from "./TruncatedText";
 import { showErrorToast } from "./Toast";
 import { WorktreeNotice } from "./WorktreeNotice";
 
@@ -306,7 +306,7 @@ function EnvironmentBranchMenu({
           const selected = branch === gitStatus.branch;
           const worktreePath = selected ? undefined : gitStatus.branch_worktrees?.find((worktree) => worktree.branch === branch)?.path;
           return (
-            <Tooltip asChild content={worktreePath} key={branch}><button aria-label={worktreePath ? `${branch}\n${worktreePath}` : branch} role="menuitem" type="button" aria-current={selected || undefined}
+            <button key={branch} aria-label={worktreePath ? `${branch}, ${t("git.openExistingWorktree")}: ${worktreePath}` : branch} role="menuitem" type="button" aria-current={selected || undefined}
               disabled={selected || submitting || (worktreePath ? !onOpenWorktree : !canCheckout)}
               onClick={async () => {
                 setSubmitting(true);
@@ -321,11 +321,10 @@ function EnvironmentBranchMenu({
               }}>
               <GitBranch className="icon" />
               <span className="environment-branch-name">
-                <TruncatedText text={branch} />
-                {worktreePath ? <span className="branch-worktree-action">{t("git.openExistingWorktree")}</span> : null}
+                <span>{branch}</span>
               </span>
-              {selected ? <Check className="icon" /> : null}
-            </button></Tooltip>
+              {worktreePath ? <ArrowUpRight className="icon" aria-hidden="true" /> : selected ? <Check className="icon" /> : null}
+            </button>
           );
         })}
       </div>
