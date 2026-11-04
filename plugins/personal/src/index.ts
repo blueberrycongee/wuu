@@ -1505,12 +1505,12 @@ export class PersonalPlugin implements RuntimePlugin {
         const mutationKey = call.source_message && ["update_task", "resume_task"].includes(call.tool_id) ? `${call.source_message.session_id}:${call.source_message.seq}:${call.tool_id}` : "";
         // A successful retry is checked before stale-question validation. It must not apply twice.
         const alreadyApplied = Boolean(mutationKey && target.input_mutations?.some(item => item.key === mutationKey));
-        if (!alreadyApplied && target.existing_session && mutationKey && call.source_message) {
+        if (!alreadyApplied && mutationKey && call.source_message) {
           if (call.source_message.session_id !== sessionID || call.source_message.seq < 1) throw new Error("invalid trusted source message");
           const page = await this.host.call("host.session.history.read", {session_id:sessionID,start_seq:call.source_message.seq,end_seq:call.source_message.seq,limit:1});
           const record = page.records?.find(record => record.seq === call.source_message!.seq);
           if (!record || record.role !== "user" || record.origin && record.origin !== "user" || record.hidden || record.read_only || record.truncated) throw new Error("Original follow-up request is unavailable; the existing task is unchanged");
-          if (record.attachments?.length) throw new Error("Existing-session follow-up is text-only; attachments cannot be transferred between hosts. The existing task is unchanged");
+          if (record.attachments?.length) throw new Error("Task follow-up is text-only; attachments cannot be transferred. The existing task is unchanged");
         }
         const links = await this.relationTargets(call.message_relation, agent, !alreadyApplied);
         if (links.length && !links.some(link => link.task_id === target.task_id)) throw new Error("task target conflicts with the user's explicit relation");

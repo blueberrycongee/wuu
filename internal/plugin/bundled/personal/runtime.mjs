@@ -4497,12 +4497,12 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
         if (target.agent_id !== agent.agent_id && agent.kind !== "main") throw new Error("matter belongs to another agent");
         const mutationKey = call.source_message && ["update_task", "resume_task"].includes(call.tool_id) ? `${call.source_message.session_id}:${call.source_message.seq}:${call.tool_id}` : "";
         const alreadyApplied = Boolean(mutationKey && target.input_mutations?.some((item) => item.key === mutationKey));
-        if (!alreadyApplied && target.existing_session && mutationKey && call.source_message) {
+        if (!alreadyApplied && mutationKey && call.source_message) {
           if (call.source_message.session_id !== sessionID || call.source_message.seq < 1) throw new Error("invalid trusted source message");
           const page = await this.host.call("host.session.history.read", { session_id: sessionID, start_seq: call.source_message.seq, end_seq: call.source_message.seq, limit: 1 });
           const record3 = page.records?.find((record4) => record4.seq === call.source_message.seq);
           if (!record3 || record3.role !== "user" || record3.origin && record3.origin !== "user" || record3.hidden || record3.read_only || record3.truncated) throw new Error("Original follow-up request is unavailable; the existing task is unchanged");
-          if (record3.attachments?.length) throw new Error("Existing-session follow-up is text-only; attachments cannot be transferred between hosts. The existing task is unchanged");
+          if (record3.attachments?.length) throw new Error("Task follow-up is text-only; attachments cannot be transferred. The existing task is unchanged");
         }
         const links = await this.relationTargets(call.message_relation, agent, !alreadyApplied);
         if (links.length && !links.some((link) => link.task_id === target.task_id)) throw new Error("task target conflicts with the user's explicit relation");
