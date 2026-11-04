@@ -24,20 +24,12 @@ func validateAttachmentHandoff(p pluginhost.SessionSendParams) ([]runtime.Client
 	for _, f := range h.Attachments {
 		encoded += len(f.Data)
 		if encoded > base64.StdEncoding.EncodedLen(pluginhost.MaxSessionHandoffBytes)+4*len(h.Attachments) {
-			return nil, errors.New("attachment handoff exceeds 256 KiB")
+			return nil, errors.New("attachment handoff exceeds 20 MiB")
 		}
 		files = append(files, runtime.ClientInputAttachment{SHA256: f.SHA256, Filename: f.Filename, MediaType: f.MediaType, Data: f.Data})
 	}
 	if err := runtime.ValidateClientUserInput(runtime.ClientUserInput{RequestID: "validate-handoff", Prompt: "handoff", Attachments: files}); err != nil {
 		return nil, err
-	}
-	total := 0
-	for _, f := range files {
-		b, _ := base64.StdEncoding.DecodeString(f.Data)
-		total += len(b)
-	}
-	if total > pluginhost.MaxSessionHandoffBytes {
-		return nil, errors.New("attachment handoff exceeds 256 KiB")
 	}
 	return files, nil
 }

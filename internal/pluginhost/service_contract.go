@@ -35,33 +35,34 @@ const (
 
 	KernelServiceMethod = "call"
 
-	KernelStorageGetService             = "host.storage.get"
-	KernelStorageSetService             = "host.storage.set"
-	KernelStorageDeleteService          = "host.storage.delete"
-	KernelStorageKeysService            = "host.storage.keys"
-	KernelStorageCompareExchangeService = "host.storage.compare-exchange"
-	KernelSettingsGetService            = "host.settings.get"
-	KernelSettingsListService           = "host.settings.list"
-	KernelCredentialsRequestService     = "host.credentials.request"
-	KernelSessionCreateService          = "host.session.create"
-	KernelSessionSendService            = "host.session.send"
-	KernelSessionListService            = "host.session.list"
-	KernelSessionCancelService          = "host.session.cancel"
-	KernelSessionInspectService         = "host.session.inspect"
-	KernelExecutionAuthorizationService = "host.execution.authorization"
-	KernelPersonalService               = "host.personal"
-	KernelSessionContextService         = "host.session.context"
-	KernelSessionControlService         = "host.session.control"
-	KernelSessionHistoryReadService     = "host.session.history.read"
-	KernelSessionHistorySearchService   = "host.session.history.search"
-	KernelSessionAttachmentReadService  = "host.session.attachment.read"
-	KernelWorkspaceStatusService        = "host.workspace.status"
-	KernelWorkspaceApplyService         = "host.workspace.apply"
-	KernelWorkspaceDiscardService       = "host.workspace.discard"
-	KernelUserQuestionAskService        = "host.user-question.ask"
-	KernelUserQuestionOfferService      = "host.user-question.offer"
-	KernelArtifactImportService         = "host.artifact.import"
-	KernelFileLockService               = "host.file-lock"
+	KernelStorageGetService                = "host.storage.get"
+	KernelStorageSetService                = "host.storage.set"
+	KernelStorageDeleteService             = "host.storage.delete"
+	KernelStorageKeysService               = "host.storage.keys"
+	KernelStorageCompareExchangeService    = "host.storage.compare-exchange"
+	KernelSettingsGetService               = "host.settings.get"
+	KernelSettingsListService              = "host.settings.list"
+	KernelCredentialsRequestService        = "host.credentials.request"
+	KernelSessionCreateService             = "host.session.create"
+	KernelSessionSendService               = "host.session.send"
+	KernelSessionListService               = "host.session.list"
+	KernelSessionCancelService             = "host.session.cancel"
+	KernelSessionInspectService            = "host.session.inspect"
+	KernelExecutionAuthorizationService    = "host.execution.authorization"
+	KernelPersonalService                  = "host.personal"
+	KernelSessionContextService            = "host.session.context"
+	KernelSessionControlService            = "host.session.control"
+	KernelSessionHistoryReadService        = "host.session.history.read"
+	KernelSessionHistorySearchService      = "host.session.history.search"
+	KernelSessionAttachmentSnapshotService = "host.session.attachment.snapshot"
+	KernelSessionAttachmentReadService     = "host.session.attachment.read"
+	KernelWorkspaceStatusService           = "host.workspace.status"
+	KernelWorkspaceApplyService            = "host.workspace.apply"
+	KernelWorkspaceDiscardService          = "host.workspace.discard"
+	KernelUserQuestionAskService           = "host.user-question.ask"
+	KernelUserQuestionOfferService         = "host.user-question.offer"
+	KernelArtifactImportService            = "host.artifact.import"
+	KernelFileLockService                  = "host.file-lock"
 
 	// KernelRegistryIntrospectService is the kernel's read-only registry
 	// introspection service: which services exist, at what version, provided
@@ -86,7 +87,7 @@ func KernelServiceDescriptors() []ServiceDescriptor {
 		KernelSettingsGetService, KernelSettingsListService,
 		KernelSessionCreateService, KernelSessionSendService, KernelSessionListService,
 		KernelSessionCancelService, KernelSessionInspectService, KernelSessionContextService,
-		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService,
+		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService, KernelSessionAttachmentSnapshotService,
 		KernelWorkspaceStatusService, KernelWorkspaceApplyService, KernelWorkspaceDiscardService,
 		KernelSessionControlService, KernelPersonalService, KernelExecutionAuthorizationService, KernelCredentialsRequestService, KernelSessionRouteService,
 	}

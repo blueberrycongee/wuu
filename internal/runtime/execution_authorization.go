@@ -318,7 +318,7 @@ func (s *Session) HandleExecutionAuthorization(ctx context.Context, pluginID str
 		return json.Marshal(struct {
 			executionauth.PolicyInfo
 			HostFeatures []string `json:"host_features"`
-		}{result, []string{"session-route.v1", "session-turn-tool-policy.v1", "session-attachment-handoff.v1"}})
+		}{result, []string{"session-route.v1", "session-turn-tool-policy.v1", "session-attachment-handoff.v1", "session-attachment-snapshot.v1"}})
 	}
 	if intent.Operation == "inspect" {
 		if ref == nil {

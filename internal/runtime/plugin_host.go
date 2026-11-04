@@ -285,6 +285,7 @@ func buildPluginHostWithPlan(ctx context.Context, plugins []pluginpkg.Plugin, pr
 		if resolved.Includes(kernel.ID()) {
 			handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
 			handler.ownerHost, handler.binding = host, binding
+			handler.attachmentDocuments = persistence.NewClient(kernelServiceCall(host, registry, persistence.ServiceName))
 			handler.artifacts = NewArtifactClient(kernelServiceCall(host, registry, ArtifactServiceName))
 			if kernel.state != nil {
 				handler.sessions = kernel.state.sessions

@@ -30,6 +30,7 @@ type pluginHostServices struct {
 	ownerHost              *pluginhost.Host
 	binding                userspace.Binding
 	artifacts              *ArtifactClient
+	attachmentDocuments    persistence.Documents
 	mu                     sync.RWMutex
 	active                 bool
 	open                   bool
@@ -257,7 +258,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 			return nil, err
 		}
 		return marshalServiceResult(result)
-	case pluginhost.HostServiceSessionAttachmentRead:
+	case pluginhost.HostServiceSessionAttachmentRead, pluginhost.HostServiceSessionAttachmentSnapshot:
 		var params pluginhost.SessionAttachmentReadParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
@@ -266,7 +267,20 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if accessErr != nil {
 			return nil, accessErr
 		}
-		result, err := readPluginSessionAttachment(ctx, s.sessions, s.artifacts, s.pluginID, s.binding, params)
+		if method == pluginhost.HostServiceSessionAttachmentSnapshot {
+			result, err := snapshotPluginSessionAttachment(ctx, s.sessions, s.artifacts, s.attachmentDocuments, s.pluginID, s.binding, params)
+			if err != nil {
+				return nil, err
+			}
+			return marshalServiceResult(result)
+		}
+		var result pluginhost.SessionAttachmentReadResult
+		var err error
+		if params.SnapshotID != "" {
+			result, err = readPluginAttachmentSnapshot(ctx, s.sessions, s.attachmentDocuments, s.pluginID, s.binding, params)
+		} else {
+			result, err = readPluginSessionAttachment(ctx, s.sessions, s.artifacts, s.pluginID, s.binding, params)
+		}
 		if err != nil {
 			return nil, err
 		}

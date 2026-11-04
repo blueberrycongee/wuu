@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
@@ -140,7 +141,8 @@ func TestRegisteredSessionTransportProcess(t *testing.T) {
 							err = readErr
 							break
 						}
-						files = append(files, map[string]any{"text": string(data), "origin": m.Origin, "read_only": m.ReadOnly})
+						digest := sha256.Sum256(data)
+						files = append(files, map[string]any{"sha256": hex.EncodeToString(digest[:]), "bytes": len(data), "media_type": f.MediaType, "origin": m.Origin, "read_only": m.ReadOnly})
 					}
 				}
 			}

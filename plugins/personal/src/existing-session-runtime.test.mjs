@@ -26,7 +26,7 @@ test('Personal process controls an exact existing target across lost replies, fo
  let grantHold;
  let autoRecover=false,backgroundDone;
  let sourceRecords=[];
- const fileBytes=Buffer.from('handoff fixture bytes'), fileData=fileBytes.toString('base64'), fileHash=createHash('sha256').update(fileBytes).digest('hex');
+ const fileBytes=Buffer.from('handoff fixture bytes'.repeat(80000)), fileData=fileBytes.toString('base64'), fileHash=createHash('sha256').update(fileBytes).digest('hex');
  let corruptAttachment=false;
  const routeInputs=[];let concurrentHold,concurrentReads=0;
  const host=async frame=>{
@@ -41,7 +41,7 @@ test('Personal process controls an exact existing target across lost replies, fo
     return {value};
    }
    case 'host.storage.keys':return {keys:[...storage.keys()].map(k=>k.slice('user:'.length))};
-   case 'host.storage.compare-exchange':{const current=storage.get(key)??null;if(current!==params.expected)return {swapped:false,value:current};storage.set(key,params.value);return {swapped:true,value:params.value};}
+   case 'host.storage.compare-exchange':{const current=storage.get(key)??null;if(current!==params.expected)return {swapped:false,value:current};assert(Buffer.byteLength(params.value)<1024*1024,'task storage must not contain PDF bytes');storage.set(key,params.value);return {swapped:true,value:params.value};}
    case 'host.file-lock':return method==='acquire'?{lock_id:'lock'}:{released:true};
    case 'host.client.invalidate':return {delivered:true};
    case 'host.background':if(autoRecover)backgroundDone=runtime.call('service.invoke',{service:'personal.recovery',method:'run',caller:'personal',execution_id:'background-recovery',params:{}}).catch(error=>error);return {job_id:'background',execution_id:'background'};
@@ -53,10 +53,11 @@ test('Personal process controls an exact existing target across lost replies, fo
    case 'host.session.context':return contexts[params.session_id];
    case 'host.session.inspect':assert.equal(params.session_id,'personal-main');if(params.request_id===revokedReview&&params.execution_authorization)throw Object.assign(Error('review grant revoked'),{code:'execution_authorization_required'});return {session:contexts['personal-main'],turn:params.turn_id?[...turns.values()].find(turn=>turn.turn_id===params.turn_id):params.request_id?turns.get(params.request_id):[...turns.values()].findLast(turn=>turn.turn_id?.startsWith('review-')&&turn.state==='running')};
    case 'host.session.send':assert.equal(params.session_id,'personal-main');assert.equal(params.presentation?.related_session_id,undefined,'external target must not become an owned local session relation');if(params.tool_policy){assert.deepEqual(params.tool_policy,{allow:[reviewName]});assert(!params.disable_tools);const turn={request_id:params.request_id,state:'running',turn_id:`review-${params.request_id}`};turns.set(params.request_id,turn);return {session_id:params.session_id,...turn};}assert.equal(params.disable_tools,true);turns.set(params.request_id,{request_id:params.request_id,state:'completed',turn_id:`feedback-${params.request_id}`});return {session_id:params.session_id,state:'running',turn_id:`feedback-${params.request_id}`};
-   case 'host.session.attachment.read':assert.equal(params.session_id,'personal-main');assert.equal(params.seq,7);assert.equal(params.sha256,fileHash);return {data:corruptAttachment?'eA==':fileData.slice(params.offset??0),offset:params.offset??0,total:fileData.length,content_type:'text/plain',name:'note.txt',sha256:fileHash};
+   case 'host.session.attachment.snapshot':if(corruptAttachment)throw Error('attachment changed');return {snapshot_id:'fixture-snapshot',attachment:sourceRecords[0].attachments[0]};
+   case 'host.session.attachment.read':assert(params.execution_authorization,'snapshot recovery needs a durable source-read grant');assert.equal(params.session_id,'personal-main');assert.equal(params.seq,7);assert.equal(params.sha256,fileHash);return {data:corruptAttachment?'eA==':fileData.slice(params.offset??0,(params.offset??0)+128*1024),offset:params.offset??0,total:fileData.length,content_type:'text/plain',name:'note.txt',sha256:fileHash};
    case 'host.session.history.read':return {session_id:params.session_id,records:sourceRecords.filter(record=>record.seq===params.start_seq),head_seq:0,snapshot_seq:0,has_more:false};
    case 'host.execution.authorization':{
-    if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run'],...(routingSupported?{host_features:['session-route.v1','session-attachment-handoff.v1',...(reviewSupported?['session-turn-tool-policy.v1']:[])]}:{})};
+    if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run'],...(routingSupported?{host_features:['session-route.v1','session-attachment-handoff.v1','session-attachment-snapshot.v1',...(reviewSupported?['session-turn-tool-policy.v1']:[])]}:{})};
     if(params.operation==='issue'){
      if(params.kind==='exact-run'&&grantHold&&!grantHold.started){grantHold.started=true;grantHold.onStart();await grantHold.wait;}
      assert.equal(params.session_id,'personal-main','source authority stays on owned controller');
@@ -159,14 +160,16 @@ test('Personal process controls an exact existing target across lost replies, fo
  sourceRecords=[]; // Restart/retry uses the original snapshot, not mutable source history.
  attached=(await runtime.client('tasks.reconcile',{task_id:attached.task_id})).task;
  assert.equal(attached.execution.status,'submitted');assert.deepEqual(routeInputs.at(-1),attachmentInput);assert.equal(sends,beforeAttachment+1);
+ const priorAccess=attached.attachment_access;assert(priorAccess?.authorization);
  sourceRecords=[{seq:7,role:'user',origin:'user',content:'New file request',attachments:[{kind:'file',index:0,name:'note.txt',mime_type:'text/plain',size:fileBytes.length,sha256:fileHash}]}];
  const updated=await runtime.call('tool.execute',{tool_id:'update_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'followup-turn',call_id:'attached-followup',execution_id:'attached-followup',source_message:{session_id:'personal-main',seq:7},arguments:{task_id:attached.task_id,expected_revision:attached.revision,goal:'Read the new attached file'}}).then(r=>JSON.parse(r.result.content[0].text));
  assert.equal(updated.task.state,'running');assert.equal(routeInputs.at(-1).params.input.attachment_handoff.request_id,updated.task.execution.request_id);
+ await assert.rejects(runtime.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'host',execution_id:'stale-attachment-access',params:{kind:'exact-run',task_id:attached.task_id,session_id:priorAccess.session_id,request_id:priorAccess.request_id,reference:priorAccess.authorization.reference,action:'user/session/attachment.read'}}),/unknown.*lineage|authorization changed/);
  corruptAttachment=true;await assert.rejects(createFromSource('corrupt-attachment'),/changed|digest/);corruptAttachment=false;
  const priorSends=sends;
- sourceRecords[0].attachments[0].size=262145;
- await assert.rejects(createFromSource('oversized-attachment'),/256 KiB/);assert.equal(sends,priorSends);
- await assert.rejects(runtime.call('tool.execute',{tool_id:'create_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'source-turn',call_id:'new-attached',execution_id:'new-attached',source_message:{session_id:'personal-main',seq:7},arguments:{request_id:'new-attached',title:'Use file',goal:'Inspect the attachment'}}),/256 KiB/);
+ sourceRecords[0].attachments[0].size=20*1024*1024+1;
+ await assert.rejects(createFromSource('oversized-attachment'),/20 MiB/);assert.equal(sends,priorSends);
+ await assert.rejects(runtime.call('tool.execute',{tool_id:'create_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'source-turn',call_id:'new-attached',execution_id:'new-attached',source_message:{session_id:'personal-main',seq:7},arguments:{request_id:'new-attached',title:'Use file',goal:'Inspect the attachment'}}),/20 MiB/);
  assert.equal(created,1,'oversized handoff does not create a worker');
  sourceRecords=[];
  // Review is an intent inside a host-bound isolated main turn, never immediate authority.

@@ -215,18 +215,19 @@ const (
 
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
-	HostServiceSessionCreate          HostServiceMethod = "host.session.create"
-	HostServiceSessionControl         HostServiceMethod = "host.session.control"
-	HostServiceSessionSend            HostServiceMethod = "host.session.send"
-	HostServiceSessionList            HostServiceMethod = "host.session.list"
-	HostServiceSessionCancel          HostServiceMethod = "host.session.cancel"
-	HostServiceSessionInspect         HostServiceMethod = "host.session.inspect"
-	HostServiceExecutionAuthorization HostServiceMethod = "host.execution.authorization"
-	HostServicePersonal               HostServiceMethod = "host.personal"
-	HostServiceSessionContext         HostServiceMethod = "host.session.context"
-	HostServiceSessionHistoryRead     HostServiceMethod = "host.session.history.read"
-	HostServiceSessionHistorySearch   HostServiceMethod = "host.session.history.search"
-	HostServiceSessionAttachmentRead  HostServiceMethod = "host.session.attachment.read"
+	HostServiceSessionCreate             HostServiceMethod = "host.session.create"
+	HostServiceSessionControl            HostServiceMethod = "host.session.control"
+	HostServiceSessionSend               HostServiceMethod = "host.session.send"
+	HostServiceSessionList               HostServiceMethod = "host.session.list"
+	HostServiceSessionCancel             HostServiceMethod = "host.session.cancel"
+	HostServiceSessionInspect            HostServiceMethod = "host.session.inspect"
+	HostServiceExecutionAuthorization    HostServiceMethod = "host.execution.authorization"
+	HostServicePersonal                  HostServiceMethod = "host.personal"
+	HostServiceSessionContext            HostServiceMethod = "host.session.context"
+	HostServiceSessionHistoryRead        HostServiceMethod = "host.session.history.read"
+	HostServiceSessionHistorySearch      HostServiceMethod = "host.session.history.search"
+	HostServiceSessionAttachmentSnapshot HostServiceMethod = "host.session.attachment.snapshot"
+	HostServiceSessionAttachmentRead     HostServiceMethod = "host.session.attachment.read"
 
 	// Workspaces. These methods operate only on an isolated workspace owned by
 	// a plugin-created session; callers never supply filesystem paths.
@@ -397,9 +398,9 @@ type SessionAttachmentHandoff struct {
 	Attachments []SessionHandoffAttachment `json:"attachments"`
 }
 
-// V1 is bounded so send envelopes and durable plugin snapshots fit existing RPC
-// and storage limits. Larger files need a separate streaming protocol.
-const MaxSessionHandoffBytes = 256 * 1024
+// Match the client attachment budget while keeping base64 envelopes within the
+// 64 MiB RPC frame limit. Source snapshots use separate bounded document chunks.
+const MaxSessionHandoffBytes = 20 * 1024 * 1024
 
 type SessionInput struct {
 	AttachmentHandoff *SessionAttachmentHandoff `json:"attachment_handoff,omitempty"`

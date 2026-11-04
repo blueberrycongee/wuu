@@ -130,7 +130,7 @@ func TestAttachmentHandoffRejectsInvalidEnvelope(t *testing.T) {
 			case "source":
 				handoff.Source.Seq = 0
 			case "size":
-				handoff.Attachments[0].Data = strings.Repeat("a", 400000)
+				handoff.Attachments[0].Data = strings.Repeat("a", base64.StdEncoding.EncodedLen(pluginhost.MaxSessionHandoffBytes)+100)
 			case "human":
 				p.UserInputRequestID = "human"
 			}
@@ -153,7 +153,8 @@ func TestTaskAttachmentHandoffLocalDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := []byte("background worker attachment")
+	// Exercise the admitted upper bound through normalization and durable delivery.
+	data := []byte(strings.Repeat("x", pluginhost.MaxSessionHandoffBytes))
 	hash := sha256.Sum256(data)
 	params := pluginhost.SessionSendParams{SessionID: target.SessionID, RequestID: "worker-run", Input: pluginhost.SessionInput{Prompt: "read attached file", AttachmentHandoff: &pluginhost.SessionAttachmentHandoff{Version: 1, SessionID: target.SessionID, RequestID: "worker-run", Source: providers.MessageRef{SessionID: "main", Seq: 7}, Attachments: []pluginhost.SessionHandoffAttachment{{SHA256: hex.EncodeToString(hash[:]), Filename: "notes.txt", MediaType: "text/plain", Data: base64.StdEncoding.EncodeToString(data)}}}}}
 	first, err := srv.sendPluginSession(ctx, "fixture", params)

@@ -52,10 +52,13 @@ retains the original wording and can include a bounded, explicitly labelled
 controller summary of relevant context. It does not copy the whole conversation
 or guarantee that ambiguous references are resolved correctly.
 
-Task handoffs transfer up to 16 attachments, at most 256 KiB of original bytes in
+Task handoffs transfer up to 16 attachments, at most 20 MiB of original bytes in
 total. The sender reads only attachments on the host-bound source message,
-checks their digests, and saves an immutable snapshot in the owner's plugin
-storage. Snapshots remain with task data for recovery. The target checks the
+checks their digests, and saves immutable 512 KiB base64 chunks through the selected
+state-document provider. Plugin task storage retains only a small manifest reference.
+Chunks bind the source message, plugin and user space; reads recheck current session
+access. The manifest is published only after all chunks commit. Snapshots follow
+workspace-state retention for recovery. The target checks the
 bytes and writes working copies in its own attachment directory. Files remain
 agent-origin input, and source labels grant no access to the source conversation.
 New tasks and task updates use the same path. Larger, unavailable, or changed

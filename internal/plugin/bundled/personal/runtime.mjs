@@ -554,7 +554,7 @@ var PERSONAL_AUTHORITY_METHODS = [
 ];
 
 // packages/plugin-sdk/src/index.ts
-var MAX_SESSION_HANDOFF_BYTES = 256 * 1024;
+var MAX_SESSION_HANDOFF_BYTES = 20 * 1024 * 1024;
 var CAPABILITY_PROTOCOL_V3 = 3;
 var SESSION_ATTENTION_CAPABILITY = "session.attention";
 var KERNEL_SERVICE_METHOD = "call";
@@ -579,6 +579,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
   "host.session.attachment.read": "host.session.attachment.read",
+  "host.session.attachment.snapshot": "host.session.attachment.snapshot",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -2978,7 +2979,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
     const services = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3,
-      required_services: [{ name: "agent.tools", major_version: 1, required: false }, { name: "session.transport", major_version: 1, required: false }, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
+      required_services: [{ name: "host.session.attachment.snapshot", major_version: 1, required: false }, { name: "agent.tools", major_version: 1, required: false }, { name: "session.transport", major_version: 1, required: false }, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
       provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map((name) => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [...PERSONAL_AUTHORITY_METHODS, { name: "resolve-lineage", input_schema: "execution.lineage.resolve.input.v1", output_schema: "execution.lineage.resolve.output.v1" }, ...methodNames.map((name) => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
         { id: "agent.system_prompt.section", kind: "transform", version: 1 },
@@ -2996,7 +2997,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence. A Calendar change source requires kind task, cron, and a verified matching Calendar source account/generation with a fixed window at most 31 days; first baseline is silent and no account connection is initiated.", input_schema: schema({ request_id: string2, title: string2, prompt: string2, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string2, cron: string2, timezone: string2, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: schema({ kind: { type: "string", enum: ["calendar"] }, account_id: string2, generation: string2, calendar_id: string2, time_min: string2, time_max: string2, timezone: string2 }, "kind", "account_id", "generation", "calendar_id", "time_min", "time_max", "timezone") }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string2, expected_revision: integer, title: string2, prompt: string2, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string2, cron: string2, timezone: string2, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
         { id: "list_sessions", description: "List existing registered sessions available to receive delegated work and unavailable hosts. Discovery is not control permission. Names can repeat: choose the exact returned locator, asking the user to disambiguate when needed. Owner-local targets use the registered desktop owner connection; federation targets retain their separate receiver policy. Never switch paths after a refusal, invent a locator, or replace an unavailable session.", input_schema: schema({}), activity: { read_only: true, concurrency_safe: true } },
-        { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. Include only the relevant conversation context needed to resolve references in handoff_context; it is controller-authored, not a user quote or authorization. Do not include unrelated private conversation. For an already-added session, supply its exact existing_session locator; never create a replacement. Attachments on the bound user message are transferred automatically up to 256 KiB total; larger files fail before dispatch. Never invent cross-host file paths. Preserve the user wording, distinguish your task goal from the original request. The host must authorize this exact target. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string2, title: string2, goal: string2, handoff_context: { type: "string", maxLength: 16e3 }, existing_session: existingTargetSchema, authorization_refs: { type: "array", items: string2 } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
+        { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. Include only the relevant conversation context needed to resolve references in handoff_context; it is controller-authored, not a user quote or authorization. Do not include unrelated private conversation. For an already-added session, supply its exact existing_session locator; never create a replacement. Attachments on the bound user message are transferred automatically up to 20 MiB total; larger files fail before dispatch. Never invent cross-host file paths. Preserve the user wording, distinguish your task goal from the original request. The host must authorize this exact target. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string2, title: string2, goal: string2, handoff_context: { type: "string", maxLength: 16e3 }, existing_session: existingTargetSchema, authorization_refs: { type: "array", items: string2 } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
         { id: "review_task_response", direct_only: true, description: "Only inside the host-admitted isolated controller review: record one decision for its exact task revision and worker response. Accept only a sufficient result; follow_up continues the same task with its existing authority, while ask_user requests missing user input. This records an intent, applied only after this review turn completes. It never grants new permission.", input_schema: schema({ task_id: string2, requirements_revision: integer, worker_request_id: string2, decision: { type: "string", enum: ["accept", "follow_up", "ask_user"] }, summary: string2, evidence: { type: "array", minItems: 1, maxItems: 20, items: string2 }, follow_up: string2, question: string2 }, "task_id", "requirements_revision", "worker_request_id", "decision", "summary", "evidence"), activity: { concurrency_safe: true } },
         { id: "accept_task_result", description: "From the main Personal controller, accept the current existing-session worker response after reviewing it against the task objective. A question or incomplete response requires a same-target follow-up, not acceptance. Bind the exact worker request_id and latest task revision. Record the decision and evidence; this grants no additional execution permission.", input_schema: schema({ task_id: string2, expected_revision: integer, request_id: string2, summary: string2, evidence: { type: "array", minItems: 1, maxItems: 20, items: string2 } }, "task_id", "expected_revision", "request_id", "summary", "evidence"), activity: { concurrency_safe: true } },
         { id: "list_tasks", description: "Find Personal matters by state or text, including tasks that need an answer. Independent goals use independent tasks; additions or corrections update the existing task.", input_schema: schema({ query: string2, state: string2 }), activity: { read_only: true, concurrency_safe: true } },
@@ -3613,18 +3614,14 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
     if (!record3 || record3.role !== "user" || record3.origin && record3.origin !== "user" || record3.hidden || record3.read_only || record3.truncated) throw new Error("Original user request is unavailable; delegation was not sent");
     const captured = { session_id: source.session_id, message_seq: source.seq, message_binding: "host_turn", original_text: record3.content || record3.display_content || "" };
     if (!record3.attachments?.length) return captured;
-    if (record3.attachments.length > 16 || record3.attachments.some((a) => !Number.isSafeInteger(a.size) || a.size <= 0) || record3.attachments.reduce((total, a) => total + a.size, 0) > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 256 KiB or 16 files; nothing was sent");
+    if (record3.attachments.length > 16 || record3.attachments.some((a) => !Number.isSafeInteger(a.size) || a.size <= 0) || record3.attachments.reduce((total, a) => total + a.size, 0) > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 20 MiB or 16 files; nothing was sent");
+    const policy = await executionGrants(this.host).describe();
+    if (!policy.host_features?.includes("session-attachment-snapshot.v1")) throw new Error("Host does not support durable attachment snapshots; nothing was sent");
     const attachments = [];
     for (const meta of record3.attachments) {
-      let data = "", total = Math.ceil(meta.size / 3) * 4;
-      while (data.length < total) {
-        const part = await this.host.call("host.session.attachment.read", { session_id: source.session_id, seq: source.seq, kind: meta.kind, index: meta.index, sha256: meta.sha256, offset: data.length });
-        if (part.offset !== data.length || part.total !== total || part.sha256 !== meta.sha256 || part.name !== meta.name || part.content_type !== meta.mime_type || !part.data.length || data.length + part.data.length > total) throw new Error("Attachment changed or is unavailable; nothing was sent");
-        data += part.data;
-      }
-      const bytes = Buffer.from(data, "base64");
-      if (bytes.length !== meta.size || bytes.toString("base64") !== data || createHash6("sha256").update(bytes).digest("hex") !== meta.sha256) throw new Error("Attachment digest mismatch; nothing was sent");
-      attachments.push({ sha256: meta.sha256, filename: meta.name, media_type: meta.mime_type, data });
+      const snapshot = await this.host.call("host.session.attachment.snapshot", { session_id: source.session_id, seq: source.seq, kind: meta.kind, index: meta.index, sha256: meta.sha256 });
+      if (!snapshot.snapshot_id || !isDeepStrictEqual(snapshot.attachment, meta)) throw new Error("Attachment changed or is unavailable; nothing was sent");
+      attachments.push({ sha256: meta.sha256, filename: meta.name, media_type: meta.mime_type, size: meta.size, kind: meta.kind, index: meta.index, snapshot_id: snapshot.snapshot_id });
     }
     const value = JSON.stringify({ source, attachments }), key = createHash6("sha256").update(value).digest("hex");
     const saved = await this.host.call("host.storage.compare_exchange", { scope: "user", key: this.key("attachment-handoff", key), expected: null, value });
@@ -3639,7 +3636,51 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
     if (!policy.host_features?.includes("session-attachment-handoff.v1")) throw Object.assign(new Error("Host does not support attachment handoff; nothing was sent"), { code: "session_operation_not_executed" });
     const { raw, value } = await this.read("attachment-handoff", key);
     if (!raw || !value || createHash6("sha256").update(raw).digest("hex") !== key) throw new Error("Persisted attachment snapshot is unavailable or changed; nothing was sent");
-    return { version: 1, session_id: task.execution.session_id, request_id: task.execution.request_id, ...value };
+    if (value.attachments.some((file) => file.snapshot_id)) {
+      const request_id = `personal-attachment-${id(task.task_id, String(task.requirements_revision), key, JSON.stringify(task.authorization?.reference))}`;
+      if (task.attachment_access?.request_id !== request_id) {
+        task = await this.change("task", task.task_id, (current) => {
+          if (!current || current.requirements_revision !== task.requirements_revision) throw new Error("Task changed before attachment access");
+          return { ...current, attachment_access: { request_id, session_id: value.source.session_id, snapshot: key } };
+        });
+      }
+      if (!authorizationCurrent(task.attachment_access?.authorization)) {
+        const authorization = await issueAuthorization(this.host, { request_id, expires_at: task.authorization.expires_at, kind: "exact-run", task_id: task.task_id, session_id: value.source.session_id, parent: task.authorization.reference, requested_actions: ["user/session/attachment.read"] });
+        task = await this.change("task", task.task_id, (current) => {
+          if (!current || current.attachment_access?.request_id !== request_id) throw new Error("Task changed before attachment access");
+          return { ...current, attachment_access: { ...current.attachment_access, authorization } };
+        });
+      }
+    }
+    const attachments = [];
+    let size = 0;
+    for (const file of value.attachments) {
+      let data = file.data;
+      if (data === void 0) {
+        if (!file.snapshot_id || !file.kind || file.index === void 0 || !Number.isSafeInteger(file.size) || file.size <= 0 || size + file.size > MAX_SESSION_HANDOFF_BYTES) throw new Error("Invalid attachment snapshot manifest; nothing was sent");
+        const parts = [], hash4 = createHash6("sha256");
+        const total = Math.ceil(file.size / 3) * 4;
+        let offset = 0, decoded = 0;
+        while (offset < total) {
+          const part = await this.host.call("host.session.attachment.read", { execution_authorization: task.attachment_access.authorization.reference, session_id: value.source.session_id, seq: value.source.seq, kind: file.kind, index: file.index, sha256: file.sha256, snapshot_id: file.snapshot_id, offset });
+          if (part.offset !== offset || part.total !== total || part.sha256 !== file.sha256 || part.name !== file.filename || part.content_type !== file.media_type || !part.data.length || offset + part.data.length > total) throw new Error("Attachment snapshot is unavailable or changed; nothing was sent");
+          const bytes = Buffer.from(part.data, "base64");
+          if (bytes.toString("base64") !== part.data) throw new Error("Invalid attachment snapshot bytes; nothing was sent");
+          hash4.update(bytes);
+          decoded += bytes.length;
+          parts.push(part.data);
+          offset += part.data.length;
+        }
+        if (decoded !== file.size || hash4.digest("hex") !== file.sha256) throw new Error("Attachment digest mismatch; nothing was sent");
+        size += decoded;
+        data = parts.join("");
+      } else {
+        size += Buffer.byteLength(data, "base64");
+        if (size > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 20 MiB; nothing was sent");
+      }
+      attachments.push({ sha256: file.sha256, filename: file.filename, media_type: file.media_type, data });
+    }
+    return { version: 1, session_id: task.execution.session_id, request_id: task.execution.request_id, source: value.source, attachments };
   }
   async createTask(input, agent, sourceSession, routineID, routineRevision, calendarChange, sourceMessage) {
     const requestID = text3(input, "request_id", true), taskID = `task-${id(this.space, agent.agent_id, requestID)}`;
@@ -3695,7 +3736,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
         return current.authorization_request?.request_id === request_id ? current : { ...current, authorization_request: { request_id, expires_at } };
       });
     }
-    const authorization = await issueAuthorization(this.host, { request_id, expires_at: task.authorization_request.expires_at, kind: "task-lineage", task_id: task.task_id, session_id: (await this.main()).main_session_id, max_depth: 2, parent: parent?.reference, requested_actions: task.existing_session ? [...routeActions, ...SESSION_DELIVERY_ACTIONS, "execution/grant/derive"] : ["user/session/create", ...TASK_EXECUTION_ACTIONS, "execution/grant/derive"] });
+    const authorization = await issueAuthorization(this.host, { request_id, expires_at: task.authorization_request.expires_at, kind: "task-lineage", task_id: task.task_id, session_id: (await this.main()).main_session_id, max_depth: 2, parent: parent?.reference, requested_actions: task.existing_session ? [...routeActions, ...SESSION_DELIVERY_ACTIONS, "user/session/attachment.read", "execution/grant/derive"] : ["user/session/create", ...TASK_EXECUTION_ACTIONS, "execution/grant/derive"] });
     return this.change("task", task.task_id, (current) => {
       if (!current || current.requirements_revision !== task.requirements_revision || current.cancel_requested) throw new Error("task authorization revision changed");
       return { ...current, authorization, authorization_state: void 0 };
@@ -4731,10 +4772,19 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
         if (!owning || !authorizationCurrent(owning.authorization) || !sameAuthorization(owning.authorization.reference, input.parent.reference) || input.parent.scope.task_id !== owning.routine_id || input.parent.scope.revision !== owning.config_revision || task.routine_revision !== owning.config_revision) throw new Error("unverified parent-child task lineage");
       }
     }
+    const attachmentAccess = input.kind === "exact-run" && task.attachment_access?.request_id === input.request_id && task.attachment_access?.session_id === sessionID;
+    if (attachmentAccess) {
+      const snapshot = task.attachment_snapshot ?? task.source.attachment_snapshot;
+      const saved = snapshot ? (await this.read("attachment-handoff", snapshot)).value : void 0;
+      if (!saved || task.attachment_access.snapshot !== snapshot || saved.source.session_id !== sessionID || terminalTask(task)) throw new Error("Attachment access is outside task scope");
+    }
     let runID = "", revision = task.requirements_revision;
     let authorization = task.authorization;
     if (input.kind === "exact-run") {
-      if (!sessionID && !task.execution.session_id && input.request_id === task.execution.create_request_id) {
+      if (attachmentAccess) {
+        runID = input.request_id;
+        authorization = task.attachment_access.authorization;
+      } else if (!sessionID && !task.execution.session_id && input.request_id === task.execution.create_request_id) {
         if (!task.execution.creation || !input.creation || !isDeepStrictEqual(task.execution.creation, input.creation)) throw new Error("pending task creation intent changed");
         runID = task.execution.request_id;
       } else if ((task.execution.controller_session_id ?? task.execution.session_id) === sessionID && input.request_id === task.execution.request_id && (cleanup || !terminalTask(task))) {
@@ -4756,7 +4806,7 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
     if (!requirements) throw new Error("unknown requirements revision");
     const context_digest = createHash6("sha256").update(JSON.stringify({ task_id: task.task_id, revision, goal: requirements.goal, source: requirements.source ?? task.source, ...requirements.attachment_snapshot ? { attachment_snapshot: requirements.attachment_snapshot } : {}, authorization_refs: requirements.authorization_refs, routine_id: task.routine_id, routine_revision: task.routine_revision })).digest("hex");
     if (!task.existing_session && input.parent?.scope.task_id === task.task_id && input.parent.scope.context_digest !== context_digest) throw new Error("parent task context changed");
-    return { ...task.existing_session ? { route: { locator: task.existing_session, operations: ["send", "inspect", "cancel"] } } : {}, ...!sessionID ? { creation: task.execution.creation } : {}, parent_task_id: input.parent?.scope.task_id ?? "", parent_revision: input.parent?.scope.revision ?? 0, task_id: task.task_id, run_id: runID, session_id: sessionID, revision, context_digest };
+    return { ...task.existing_session && !attachmentAccess ? { route: { locator: task.existing_session, operations: ["send", "inspect", "cancel"] } } : {}, ...!sessionID ? { creation: task.execution.creation } : {}, parent_task_id: input.parent?.scope.task_id ?? "", parent_revision: input.parent?.scope.revision ?? 0, task_id: task.task_id, run_id: runID, session_id: sessionID, revision, context_digest };
   }
   async history(sessionID, input, snapshot) {
     const limit = input.limit === void 0 ? 50 : Math.max(1, Math.min(50, number(input, "limit")));

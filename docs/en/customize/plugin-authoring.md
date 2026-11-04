@@ -499,7 +499,7 @@ reconcile its receipt before replacing it.
 `host.session.send.input.attachment_handoff` is an additive v1 envelope for
 agent-supplied bytes: `{version:1, session_id, request_id, source:{session_id,seq},
 attachments:[{sha256,filename,media_type,data}]}`. `data` is standard base64;
-at most 16 nonempty files and 256 KiB decoded bytes are accepted. Destination
+at most 16 nonempty files and 20 MiB decoded bytes are accepted. Destination
 and request IDs must match the send. It cannot combine with human input proofs,
 receipt resume, ordinary attachment references, or steering. Normal send grants,
 private-session ownership and receiver policy still apply. Source is asserted
@@ -510,6 +510,28 @@ copies and retains plugin-origin/read-only message provenance. Check the source
 host feature `session-attachment-handoff.v1`; older receivers reject the new
 field. Route receipts include the full envelope in their intent digest, so changed
 bytes cannot replay under the same operation ID.
+
+`host.session.attachment.snapshot` accepts the same source reference as attachment
+read (without offset or snapshot ID) and returns `{snapshot_id, attachment}`.
+It uses authorized visible history, freezes verified bytes in the selected
+`state.documents` provider, and publishes a manifest only after all 512 KiB
+base64 chunks commit. Repeated calls reuse the same source/plugin/user-space key;
+a partial commit or lost reply can be retried without replacing existing chunks.
+Pass `snapshot_id` and the original source reference to attachment read to recover
+128 KiB ranges without rereading the original message. Every range rechecks current
+session visibility and the complete binding and verifies the stored chunk digest.
+The snapshot service is a mutation and is unavailable during preparation. Check
+`session-attachment-snapshot.v1` before creating snapshots.
+
+Snapshot chunks are separate from plugin settings' 1 MiB value budget. Payload
+storage is approximately 4/3 of raw bytes plus a small manifest, with no payload
+copies in task revisions or route outboxes. Snapshots, including incomplete chunks,
+follow workspace-state retention; removal of source access prevents further reads.
+The final send remains a bounded in-memory envelope: 20 MiB decoded is about
+26.7 MiB base64 within the 64 MiB RPC frame limit. It is not an unbounded network
+stream; serialization and target normalization also allocate proportional to file
+size. Larger requests fail explicitly. Older receivers reject unsupported fields
+or their smaller size limit before admission.
 
 `host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. `tool_policy: { allow?: string[], deny?: string[] }` adds an attenuation-only policy for one isolated turn. Omitted `allow` retains the ordinary surface minus `deny`; explicit `allow: []` denies every tool. The host intersects this policy with existing session restrictions, checks actual and discovered tool execution, and restores the ordinary surface after success, failure or interruption. It never changes persistent session settings. Check the `session-turn-tool-policy.v1` host feature before relying on this contract.
 
