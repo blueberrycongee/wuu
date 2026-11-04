@@ -193,6 +193,12 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - name: Install ripgrep for search tests
+        if: matrix.suite == 'packages'
+        run: |
+          node desktop/scripts/fetch-ripgrep.cjs
+          echo "$GITHUB_WORKSPACE/desktop/build/tools" >> "$GITHUB_PATH"
+
       - name: Install plugin and SDK dependencies
         run: |
           npm ci --prefix packages/plugin-sdk
