@@ -391,6 +391,7 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await capture("connector-authorized-connection-failed-dark-narrow-large");
       await click(['[role="dialog"]', "取消"]);
       await until(selector => document.querySelector(selector)?.getAttribute("data-connected") === "false" && document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
+      assert.equal(await evaluate(selector => document.querySelector(selector).querySelectorAll("button").length, connectorRow), 1, "A disconnected connector exposes only the add action, even with saved authorization");
       await capture("connector-disconnected-with-saved-access-dark-narrow-large");
       await evaluate(async () => {
         await window.wuu.setThemePreference("light");

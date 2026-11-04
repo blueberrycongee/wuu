@@ -454,6 +454,7 @@ function connectorControls(overrides: Partial<Controls> = {}): Controls {
 it("offers an OAuth-required connector without saved access as a plain connect, hiding the transport error", async () => {
   await render(connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, state: "auth_required", error: authFailure }] }) }));
   expect(button(connectorRow(), "mcp.connect").disabled).toBe(false);
+  expect(connectorRow().querySelectorAll("button")).toHaveLength(1);
   expect(connectorRow().querySelector('[data-connector-action="reconnect"]')).toBeNull();
   expect(connectorRow().textContent).toContain(connector.connector!.description!);
   expect(connectorRow().textContent).not.toContain(authFailure);
@@ -695,6 +696,7 @@ it("offers connect for saved authorization without presenting it as a verified a
   await render(source);
   expect(source.getMCPAuthStatus).toHaveBeenCalledWith(connector.name);
   expect(connectorRow().querySelector('[data-connector-action="connect"]')).not.toBeNull();
+  expect(connectorRow().querySelectorAll("button")).toHaveLength(1);
   expect(connectorRow().querySelector("[data-connector-identity]")).toBeNull();
   expect(connectorRow().textContent).not.toContain("documents:read");
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
@@ -810,7 +812,7 @@ it("confirms connector disconnect, then stops runtime, removes local credentials
 
 it("reports a partial disconnect failure and still attempts credential cleanup and disabling", async () => {
   const source = connectorControls({
-    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true }] }),
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, ...connected, name: connector.name, configuration_enabled: true }] }),
     disconnectMCPServer: vi.fn().mockRejectedValue(new Error("runtime stop failed")),
   });
   await render(source);
@@ -845,7 +847,7 @@ it("preserves generic MCP disconnect semantics without deleting credentials or s
 
 
 it("dismisses an owned confirmation on controls replacement without mutating either context", async () => {
-  const previous = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true }] }) });
+  const previous = connectorControls({ listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, ...connected, name: connector.name, configuration_enabled: true }] }) });
   const next = connectorControls();
   await render(previous);
   await connectorMenu("mcp.disconnect");
@@ -877,13 +879,18 @@ it("does not treat unreadable credentials or runtime startup as verified authori
   expect(connectorRow().getAttribute("data-connected")).toBe("false");
   expect(connectorRow().getAttribute("data-authorized")).toBe("unknown");
   expect(connectorRow().textContent).not.toContain("credential store unavailable");
+  expect(connectorRow().querySelectorAll("button")).toHaveLength(1);
+  await render(connectorControls({
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, ...connected, name: connector.name, configuration_enabled: true }] }),
+    getMCPAuthStatus: vi.fn().mockRejectedValue(new Error("credential store unavailable")),
+  }));
   await connectorMenu("connector.errorDetails");
   expect(document.querySelector("[data-connector-diagnostic]")?.textContent).toContain("credential store unavailable");
 });
 
 it("preserves a failed disabled-preference save as an incomplete disconnect after runtime and credential cleanup", async () => {
   const source = connectorControls({
-    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, configuration_enabled: true }] }),
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [{ ...connector, ...connected, name: connector.name, configuration_enabled: true }] }),
     configureMCPServers: vi.fn().mockRejectedValue(new Error("configuration changed during disconnect")),
   });
   await render(source);
@@ -893,6 +900,26 @@ it("preserves a failed disabled-preference save as an incomplete disconnect afte
   expect(source.removeMCPAuth).toHaveBeenCalledWith(connector.name);
   expect(toastText()).toContain(translateCurrent("connector.disconnectIncomplete"));
   expect(connectorRow().querySelector<HTMLButtonElement>("[data-connector-menu]")!.disabled).toBe(false);
+});
+
+it("closes an open connector menu when the connection is lost", async () => {
+  let notify!: () => void;
+  const active = { ...connector, ...connected, name: connector.name, configuration_enabled: true };
+  let servers: MCPServerStatus[] = [active];
+  const source = connectorControls({
+    listMCPServers: vi.fn(async () => ({ servers })),
+    subscribe: vi.fn((listener: () => void) => { notify = listener; return vi.fn(); }),
+  });
+  await render(source);
+  await click(connectorRow().querySelector<HTMLButtonElement>("[data-connector-menu]")!);
+  expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  servers = [{ ...active, state: "error", connected: false, error: "connection lost" }];
+  await act(async () => notify());
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  expect(connectorRow().querySelectorAll("button")).toHaveLength(1);
+  servers = [active];
+  await act(async () => notify());
+  expect(document.querySelector('[role="menu"]')).toBeNull();
 });
 
 

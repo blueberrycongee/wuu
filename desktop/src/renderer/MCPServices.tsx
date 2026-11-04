@@ -95,6 +95,10 @@ function hasOtherConnectionSource(server: MCPServerStatus, servers: MCPServerSta
       || !!server.resource_url && server.resource_url === other.resource_url));
 }
 
+function connectorConnected(server: MCPServerStatus): boolean {
+  return server.connected && ["ready", "connected"].includes(server.state) && !server.error;
+}
+
 function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView = false }: MCPServicesProps): JSX.Element | null {
   const controls = useSettingsControls();
   const { servers, error: loadError, refresh } = useMCPServices();
@@ -261,6 +265,9 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
     return () => { confirmation.current?.abort(); };
   }, [controls]);
   useEffect(() => {
+    setMenu(previous => previous && !servers.some(server => server.name === previous.name && connectorConnected(server)) ? null : previous);
+  }, [servers]);
+  useEffect(() => {
     if (retained || claimedScope.current === scope || !enabled) return;
     let name: string | undefined, take: ApplicationSettingsControlsV1["takeMCPConnectorLogin"];
     try { take = controls.takeMCPConnectorLogin; name = controls.getPendingMCPConnectorLogin?.(); }
@@ -412,16 +419,15 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
     const account = identity?.state === "verified" ? identity.account : undefined;
     const workspace = account ? identity?.workspace : undefined;
     const available = !retained;
-    const connected = server.connected && ["ready", "connected"].includes(server.state) && !server.error;
+    const connected = connectorConnected(server);
     const working = retained || busy === server.name || preparing === server.name || login?.server.name === server.name;
-    const saved = server.configuration_enabled || server.connected || authorized || server.auth_status === "oauth";
     // The description says what a service does. Accounts appear only to tell
     // apart connections that share a name.
     const duplicate = visible.some(other => other.name !== server.name && other.connector?.title === connector.title);
     const accountLabel = account ? [`${account.label || account.email || account.id}${account.kind === "bot" ? ` (${t("connector.bot")})` : ""}`, workspace ? workspace.label || workspace.id : ""].filter(Boolean).join(" · ") : "";
     const secondary = working ? t("mcp.working") : duplicate && accountLabel ? accountLabel : connector.description || "";
     const diagnostic = [server.error, authorization?.error].filter(Boolean).join("\n\n");
-    return { connector, authorized, account, available, connected, working, saved, secondary, diagnostic };
+    return { connector, authorized, account, available, connected, working, secondary, diagnostic };
   }
   function verifyIdentity(server: MCPServerStatus): Promise<void> {
     return act(server.name, "identity", async () => {
@@ -438,11 +444,11 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
     <SettingsGroup>{visible.map(server => {
       const view = describe(server);
       const items: ThreadContextMenuItem[] = [];
-      if (view.available && view.connected) items.push({ label: t("connector.reconnect"), onSelect: () => act(server.name, "connect", () => connect(server)) });
-      if (view.available && view.connected && view.authorized && view.connector.identity_probe && !view.account) items.push({ label: t("connector.verifyIdentity"), onSelect: () => verifyIdentity(server) });
-      if (view.diagnostic && !retained) items.push({ label: t("connector.errorDetails"), onSelect: () => setDetails(server.name) });
-      if (view.available && view.saved) {
-        if (items.length) items.push({ separator: true });
+      if (view.available && view.connected) {
+        items.push({ label: t("connector.reconnect"), onSelect: () => act(server.name, "connect", () => connect(server)) });
+        if (view.authorized && view.connector.identity_probe && !view.account) items.push({ label: t("connector.verifyIdentity"), onSelect: () => verifyIdentity(server) });
+        if (view.diagnostic) items.push({ label: t("connector.errorDetails"), onSelect: () => setDetails(server.name) });
+        items.push({ separator: true });
         items.push({ label: t("mcp.disconnect"), danger: true, onSelect: () => act(server.name, "disconnect", () => disconnect(server)) });
       }
       return <div className="mcp-service mcp-connector" key={server.name} data-connector={server.name} data-connected={view.connected} data-authorized={view.authorized === undefined ? "unknown" : view.authorized} aria-busy={view.working}>
@@ -463,7 +469,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
             onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ name: server.name, x: bounds.right, y: bounds.bottom }); }}>
             <MoreHorizontal className="icon" aria-hidden="true" />
           </button> : null}
-          {menu?.name === server.name ? <ThreadContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} /> : null}
+          {items.length && menu?.name === server.name ? <ThreadContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} /> : null}
         </div>
       </div>;
     })}</SettingsGroup>
