@@ -496,6 +496,21 @@ the outer send reports `host_error` instead. Generic `service_unavailable`, othe
 errors, and timeouts do not prove non-admission; retain the request identity and
 reconcile its receipt before replacing it.
 
+`host.session.send.input.attachment_handoff` is an additive v1 envelope for
+agent-supplied bytes: `{version:1, session_id, request_id, source:{session_id,seq},
+attachments:[{sha256,filename,media_type,data}]}`. `data` is standard base64;
+at most 16 nonempty files and 256 KiB decoded bytes are accepted. Destination
+and request IDs must match the send. It cannot combine with human input proofs,
+receipt resume, ordinary attachment references, or steering. Normal send grants,
+private-session ownership and receiver policy still apply. Source is asserted
+provenance from the authenticated sender, not proof of human authorship or a
+capability to read another session. Producers must use authorized source reads.
+The receiver verifies digests and safe filenames before writing target working
+copies and retains plugin-origin/read-only message provenance. Check the source
+host feature `session-attachment-handoff.v1`; older receivers reject the new
+field. Route receipts include the full envelope in their intent digest, so changed
+bytes cannot replay under the same operation ID.
+
 `host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. `tool_policy: { allow?: string[], deny?: string[] }` adds an attenuation-only policy for one isolated turn. Omitted `allow` retains the ordinary surface minus `deny`; explicit `allow: []` denies every tool. The host intersects this policy with existing session restrictions, checks actual and discovered tool execution, and restores the ordinary surface after success, failure or interruption. It never changes persistent session settings. Check the `session-turn-tool-policy.v1` host feature before relying on this contract.
 
 A turn carrying `tool_policy` is a separate execution boundary: it cannot steer another turn, and incoming plugin or completion input is queued separately. Human `turn/steer` receives `isolated_turn_requires_queue` only when the input has not been admitted; the Desktop queues the same original input and client ID on the same captured connection for that exact refusal. Other errors and uncertain responses are not retried this way. Already-held input must use its existing resume flow. Owner interruption remains available. When allowing `run_code`, its embedded catalog and search/describe text can still describe tools excluded by the turn policy; actual nested calls remain checked. Use a direct-tool-only allowlist for a review that must not advertise unrelated bindings. Tool names restrict the surface, not task authority: the receiving plugin must still validate the exact task, run, revision and tool arguments.

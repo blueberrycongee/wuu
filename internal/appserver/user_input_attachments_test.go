@@ -106,3 +106,80 @@ func TestUserHostAttachmentWorkingRootRejectsSymlinkEscape(t *testing.T) {
 		t.Fatal("maintenance accepted an escaping working-root symlink")
 	}
 }
+
+// Agent byte envelopes must bind the target/run, validate content, and cannot
+// combine with an authenticated human submission or bypass private ownership.
+func TestAttachmentHandoffRejectsInvalidEnvelope(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
+	file := pluginhost.SessionHandoffAttachment{SHA256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881", Filename: "note.txt", MediaType: "text/plain", Data: "eA=="}
+	for _, name := range []string{"target", "run", "digest", "path", "source", "size", "human"} {
+		t.Run(name, func(t *testing.T) {
+			handoff := &pluginhost.SessionAttachmentHandoff{Version: 1, SessionID: "target", RequestID: "run", Source: providers.MessageRef{SessionID: "main", Seq: 7}, Attachments: []pluginhost.SessionHandoffAttachment{file}}
+			p := pluginhost.SessionSendParams{SessionID: "target", RequestID: "run", Input: pluginhost.SessionInput{Prompt: "read", AttachmentHandoff: handoff}}
+			switch name {
+			case "target":
+				handoff.SessionID = "another"
+			case "run":
+				handoff.RequestID = "another"
+			case "digest":
+				handoff.Attachments[0].SHA256 = strings.Repeat("0", 64)
+			case "path":
+				handoff.Attachments[0].Filename = "../outside"
+			case "source":
+				handoff.Source.Seq = 0
+			case "size":
+				handoff.Attachments[0].Data = strings.Repeat("a", 400000)
+			case "human":
+				p.UserInputRequestID = "human"
+			}
+			if _, err := validateAttachmentHandoff(p); err == nil {
+				t.Fatal("invalid envelope admitted")
+			}
+		})
+	}
+}
+
+func TestTaskAttachmentHandoffLocalDelivery(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("received delegated file")})
+	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
+	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer srv.Close()
+	ctx := pluginInvocationContext(t, rt, context.Background())
+	target, err := srv.createPluginSession(ctx, "fixture", pluginhost.SessionCreateParams{RequestID: "worker", Visibility: "plugin", ContextSource: "fresh", AgentID: "agent-main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("background worker attachment")
+	hash := sha256.Sum256(data)
+	params := pluginhost.SessionSendParams{SessionID: target.SessionID, RequestID: "worker-run", Input: pluginhost.SessionInput{Prompt: "read attached file", AttachmentHandoff: &pluginhost.SessionAttachmentHandoff{Version: 1, SessionID: target.SessionID, RequestID: "worker-run", Source: providers.MessageRef{SessionID: "main", Seq: 7}, Attachments: []pluginhost.SessionHandoffAttachment{{SHA256: hex.EncodeToString(hash[:]), Filename: "notes.txt", MediaType: "text/plain", Data: base64.StdEncoding.EncodeToString(data)}}}}}
+	first, err := srv.sendPluginSession(ctx, "fixture", params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMethod(t, out, NotificationTurnCompleted)
+	history, err := loadChatMessages(rt.Sessions, target.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copies := 0
+	for _, m := range history {
+		if len(m.Files) > 0 {
+			copies++
+			actual, e := os.ReadFile(m.Files[0].LocalPath)
+			if e != nil || string(actual) != string(data) || m.Origin == "user" || !m.ReadOnly {
+				t.Fatalf("invalid delivered file/provenance: %v", e)
+			}
+		}
+	}
+	if copies != 1 {
+		t.Fatalf("want one persisted file, got %d", copies)
+	}
+	replay, err := srv.sendPluginSession(ctx, "fixture", params)
+	if err != nil || replay.TurnID != first.TurnID {
+		t.Fatalf("repeated send changed run: %+v %v", replay, err)
+	}
+}

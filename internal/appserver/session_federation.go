@@ -419,7 +419,13 @@ func (s *Server) prepareFederationOperation(ctx context.Context, binding *runtim
 		if p.RequestID != "" && p.RequestID != request.OperationID {
 			return nil, errors.New("request_id must equal operation_id")
 		}
+		if _, err := validateAttachmentHandoff(p); err != nil {
+			return nil, err
+		}
 		p.RequestID = requestID
+		if p.Input.AttachmentHandoff != nil {
+			p.Input.AttachmentHandoff.RequestID = requestID
+		}
 		metadata, found, err := binding.Sessions.Find(p.SessionID)
 		if err != nil {
 			return nil, err

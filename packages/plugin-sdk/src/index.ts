@@ -694,6 +694,13 @@ export interface ClientInputAttachment {
  readonly media_type: string;
  readonly data: string;
 }
+/** Agent-supplied bytes; source is provenance, never permission or human input. */
+export interface SessionAttachmentHandoff {
+ version: 1; session_id: string; request_id: string; source: MessageRef;
+ attachments: Array<SessionInputAttachment & {data: string}>;
+}
+/** V1 aggregate decoded-byte limit; larger files require streaming support. */
+export const MAX_SESSION_HANDOFF_BYTES = 256 * 1024;
 export interface SessionInputAttachment { sha256: string; filename: string; media_type: string }
 export interface SessionHistoryAttachment { kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string }
 /** Renderer request envelope. Major version comes from required_services;
@@ -1606,6 +1613,7 @@ export interface HostServiceContracts {
       session_id: string;
       input: {
         prompt: string;
+        attachment_handoff?: SessionAttachmentHandoff;
         attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };

@@ -47,6 +47,22 @@ workspace and thread RPCs are not used on the Personal host.
 
 ## Sending, files and offline recovery
 
+When the assistant delegates a message to a new task or an existing session, it
+retains the original wording and can include a bounded, explicitly labelled
+controller summary of relevant context. It does not copy the whole conversation
+or guarantee that ambiguous references are resolved correctly.
+
+Task handoffs transfer up to 16 attachments, at most 256 KiB of original bytes in
+total. The sender reads only attachments on the host-bound source message,
+checks their digests, and saves an immutable snapshot in the owner's plugin
+storage. Snapshots remain with task data for recovery. The target checks the
+bytes and writes working copies in its own attachment directory. Files remain
+agent-origin input, and source labels grant no access to the source conversation.
+New tasks and task updates use the same path. Larger, unavailable, or changed
+files fail explicitly; local source paths are never substituted. Both hosts must
+support attachment handoff v1. Retries retain the exact run and snapshot; unknown
+outcomes are reconciled instead of inventing another operation.
+
 A prepared message is not accepted work. Before a send, the native client stores
 the exact prompt, attachment bytes and stable business request ID in app-private,
 no-backup retry storage scoped to login and host. An uncertain send survives

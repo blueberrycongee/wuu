@@ -380,10 +380,32 @@ type SessionInputAttachment struct {
 	MediaType string `json:"media_type"`
 }
 
+// SessionAttachmentHandoff carries agent-supplied bytes, never a human-input
+// proof. Source is provenance asserted by the authenticated sender, not authority
+// to read the source session. The envelope binds bytes to one destination/run.
+type SessionHandoffAttachment struct {
+	SHA256    string `json:"sha256"`
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+type SessionAttachmentHandoff struct {
+	Version     int                        `json:"version"`
+	SessionID   string                     `json:"session_id"`
+	RequestID   string                     `json:"request_id"`
+	Source      providers.MessageRef       `json:"source"`
+	Attachments []SessionHandoffAttachment `json:"attachments"`
+}
+
+// V1 is bounded so send envelopes and durable plugin snapshots fit existing RPC
+// and storage limits. Larger files need a separate streaming protocol.
+const MaxSessionHandoffBytes = 256 * 1024
+
 type SessionInput struct {
-	Attachments   []SessionInputAttachment `json:"attachments,omitempty"`
-	Prompt        string                   `json:"prompt"`
-	ContextBlocks []SessionContextBlock    `json:"context_blocks,omitempty"`
+	AttachmentHandoff *SessionAttachmentHandoff `json:"attachment_handoff,omitempty"`
+	Attachments       []SessionInputAttachment  `json:"attachments,omitempty"`
+	Prompt            string                    `json:"prompt"`
+	ContextBlocks     []SessionContextBlock     `json:"context_blocks,omitempty"`
 }
 
 type SessionInputPresentation struct {

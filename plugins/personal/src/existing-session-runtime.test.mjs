@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises';
@@ -25,6 +26,8 @@ test('Personal process controls an exact existing target across lost replies, fo
  let grantHold;
  let autoRecover=false,backgroundDone;
  let sourceRecords=[];
+ const fileBytes=Buffer.from('handoff fixture bytes'), fileData=fileBytes.toString('base64'), fileHash=createHash('sha256').update(fileBytes).digest('hex');
+ let corruptAttachment=false;
  const routeInputs=[];let concurrentHold,concurrentReads=0;
  const host=async frame=>{
   const {service,method,params}=frame.params;const key=`${params?.scope}:${params?.key}`;
@@ -50,9 +53,10 @@ test('Personal process controls an exact existing target across lost replies, fo
    case 'host.session.context':return contexts[params.session_id];
    case 'host.session.inspect':assert.equal(params.session_id,'personal-main');if(params.request_id===revokedReview&&params.execution_authorization)throw Object.assign(Error('review grant revoked'),{code:'execution_authorization_required'});return {session:contexts['personal-main'],turn:params.turn_id?[...turns.values()].find(turn=>turn.turn_id===params.turn_id):params.request_id?turns.get(params.request_id):[...turns.values()].findLast(turn=>turn.turn_id?.startsWith('review-')&&turn.state==='running')};
    case 'host.session.send':assert.equal(params.session_id,'personal-main');assert.equal(params.presentation?.related_session_id,undefined,'external target must not become an owned local session relation');if(params.tool_policy){assert.deepEqual(params.tool_policy,{allow:[reviewName]});assert(!params.disable_tools);const turn={request_id:params.request_id,state:'running',turn_id:`review-${params.request_id}`};turns.set(params.request_id,turn);return {session_id:params.session_id,...turn};}assert.equal(params.disable_tools,true);turns.set(params.request_id,{request_id:params.request_id,state:'completed',turn_id:`feedback-${params.request_id}`});return {session_id:params.session_id,state:'running',turn_id:`feedback-${params.request_id}`};
+   case 'host.session.attachment.read':assert.equal(params.session_id,'personal-main');assert.equal(params.seq,7);assert.equal(params.sha256,fileHash);return {data:corruptAttachment?'eA==':fileData.slice(params.offset??0),offset:params.offset??0,total:fileData.length,content_type:'text/plain',name:'note.txt',sha256:fileHash};
    case 'host.session.history.read':return {session_id:params.session_id,records:sourceRecords.filter(record=>record.seq===params.start_seq),head_seq:0,snapshot_seq:0,has_more:false};
    case 'host.execution.authorization':{
-    if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run'],...(routingSupported?{host_features:['session-route.v1',...(reviewSupported?['session-turn-tool-policy.v1']:[])]}:{})};
+    if(params.operation==='describe')return {default_lifetime_seconds:3600,max_lifetime_seconds:3600,authority_kinds:['fixture'],scope_kinds:['task-lineage','exact-run'],...(routingSupported?{host_features:['session-route.v1','session-attachment-handoff.v1',...(reviewSupported?['session-turn-tool-policy.v1']:[])]}:{})};
     if(params.operation==='issue'){
      if(params.kind==='exact-run'&&grantHold&&!grantHold.started){grantHold.started=true;grantHold.onStart();await grantHold.wait;}
      assert.equal(params.session_id,'personal-main','source authority stays on owned controller');
@@ -141,17 +145,30 @@ test('Personal process controls an exact existing target across lost replies, fo
  assert(routeInputs.at(-1).params.input.prompt.includes('Controller task goal (not a verbatim user quote)'));
  assert(routeInputs.at(-1).params.input.prompt.includes('Relevant earlier choice: use branch alpha'));
  assert.equal(sourceTask.handoff_context,'Relevant earlier choice: use branch alpha');
- sourceRecords=[{...sourceRecords[0],attachments:[{path:'/private/source-only.pdf'}]}];
- const beforeAttachment=sends, blocked=(await createFromSource('attachment-text-only')).task;
- assert.equal(sends,beforeAttachment);assert.equal(blocked.execution.dispatch_pending,false);assert.match(blocked.error,/Attachment transfer is unavailable/);
- assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.task_id,blocked.task_id);
- await assert.rejects(runtime.call('tool.execute',{tool_id:'update_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'followup-turn',call_id:'attached-followup',execution_id:'attached-followup',source_message:{session_id:'personal-main',seq:7},arguments:{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'Read the attached file'}}),/text-only/);
- assert.equal(sends,beforeAttachment);
- const newWorker = await runtime.call('tool.execute',{tool_id:'create_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'source-turn',call_id:'new-attached',execution_id:'new-attached',source_message:{session_id:'personal-main',seq:7},arguments:{request_id:'new-attached',title:'Use file',goal:'Inspect the attachment'}}).then(r=>JSON.parse(r.result.content[0].text));
- assert.match(newWorker.task.error,/Attachment transfer is unavailable/);assert.equal(created,1,'no worker is created when its source attachment cannot be transferred');assert.equal(sends,beforeAttachment);
- assert.equal((await runtime.client('tasks.get',{task_id:blocked.task_id})).task.revision,blocked.revision);
- const revised=(await runtime.client('tasks.update',{task_id:blocked.task_id,expected_revision:blocked.revision,goal:'The files are already at the target; use its existing context'})).task;
- assert.equal(sends,beforeAttachment+1);assert.equal(revised.state,'running');assert(!revised.previous_executions[0].cancel_pending);
+ sourceRecords=[{...sourceRecords[0],attachments:[{kind:'file',index:0,name:'note.txt',mime_type:'text/plain',size:fileBytes.length,sha256:fileHash}]}];
+ loseBeforeAdmission=true;
+ const beforeAttachment=sends;
+ let attached=(await createFromSource('attachment-delivery')).task;
+ assert.equal(attached.execution.status,'unknown');
+ const attachmentInput=structuredClone(routeInputs.at(-1));
+ assert.equal(attachmentInput.params.input.attachment_handoff.attachments[0].data,fileData);
+ assert.deepEqual(attachmentInput.params.input.attachment_handoff.source,{session_id:'personal-main',seq:7});
+ assert.equal(attachmentInput.params.input.attachment_handoff.request_id,attached.execution.request_id);
+ assert.equal(attached.execution.route_input.input.attachment_handoff,undefined,'task history does not duplicate file bytes');
+ await runtime.close();runtime=await start();
+ sourceRecords=[]; // Restart/retry uses the original snapshot, not mutable source history.
+ attached=(await runtime.client('tasks.reconcile',{task_id:attached.task_id})).task;
+ assert.equal(attached.execution.status,'submitted');assert.deepEqual(routeInputs.at(-1),attachmentInput);assert.equal(sends,beforeAttachment+1);
+ sourceRecords=[{seq:7,role:'user',origin:'user',content:'New file request',attachments:[{kind:'file',index:0,name:'note.txt',mime_type:'text/plain',size:fileBytes.length,sha256:fileHash}]}];
+ const updated=await runtime.call('tool.execute',{tool_id:'update_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'followup-turn',call_id:'attached-followup',execution_id:'attached-followup',source_message:{session_id:'personal-main',seq:7},arguments:{task_id:attached.task_id,expected_revision:attached.revision,goal:'Read the new attached file'}}).then(r=>JSON.parse(r.result.content[0].text));
+ assert.equal(updated.task.state,'running');assert.equal(routeInputs.at(-1).params.input.attachment_handoff.request_id,updated.task.execution.request_id);
+ corruptAttachment=true;await assert.rejects(createFromSource('corrupt-attachment'),/changed|digest/);corruptAttachment=false;
+ const priorSends=sends;
+ sourceRecords[0].attachments[0].size=262145;
+ await assert.rejects(createFromSource('oversized-attachment'),/256 KiB/);assert.equal(sends,priorSends);
+ await assert.rejects(runtime.call('tool.execute',{tool_id:'create_task',session_id:'personal-main',thread_id:'personal-main',turn_id:'source-turn',call_id:'new-attached',execution_id:'new-attached',source_message:{session_id:'personal-main',seq:7},arguments:{request_id:'new-attached',title:'Use file',goal:'Inspect the attachment'}}),/256 KiB/);
+ assert.equal(created,1,'oversized handoff does not create a worker');
+ sourceRecords=[];
  // Review is an intent inside a host-bound isolated main turn, never immediate authority.
  reviewSupported=true;
  const reviewCreate=async request_id=>(await runtime.client('tasks.create',{agent_id:agent.agent_id,request_id,title:'Scoped review',goal:'Finish the originally authorized task',existing_session:target})).task;
