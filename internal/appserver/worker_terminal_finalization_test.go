@@ -64,6 +64,10 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	owner := New(rt, out)
 	root := newThreadState(rootID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
 	root.state = testRuntimeState(t, rt)
+	// This fixture represents active work admitted by the user in this boot.
+	if err := owner.recordRecoveryTurn(root, "approved-work", "running"); err != nil {
+		t.Fatal(err)
+	}
 	// Keep the synthetic root-completion drain parked so the test can inspect
 	// the queued completion at the exact pre-lease-release boundary.
 	root.running = true
