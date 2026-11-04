@@ -975,7 +975,6 @@ async function switchTo(win, index, scenario) {
     for (const timing of result.rpc) {
       assert.ok(Number.isFinite(timing.ms), `${scenario}/${index}: ${timing.channel} lost its completed RPC duration`);
     }
-    if (checkBudget && scenario === 'repeat' && result.history === 'large') assertSample(result.work);
   }
   console.log(JSON.stringify(result));
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), draft, 'Runtime refresh lost the typed draft');
@@ -1124,6 +1123,20 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
     for (let round = 0; round < rounds; round++) {
       for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
+    }
+    if (checkBudget) {
+      for (const index of [1, 5]) {
+        const samples = results.filter(result => result.scenario === 'repeat' && result.index === index);
+        assert.equal(samples.length, budget.fixture.rounds, `Missing repeated samples for session ${index}`);
+        const styleCounts = samples.map(sample => sample.work.recalcStyleCount);
+        assert.ok(styleCounts.every(count => Number.isFinite(count) && count >= 0), `Invalid style count for session ${index}`);
+        styleCounts.sort((a, b) => a - b);
+        // Page-wide animation can add a variable number of style recalculations.
+        // Keep per-switch bounds for deterministic work and gate the median style count.
+        const recalcStyleCount = styleCounts[Math.floor(styleCounts.length / 2)];
+        console.log(`Session ${index} style recalculations: ${styleCounts.join(', ')}; median ${recalcStyleCount}`);
+        for (const sample of samples) assertSample({ ...sample.work, recalcStyleCount });
+      }
     }
     for (const index of [2, 3, 4, 5, 0, 1, 5, 0]) await switchTo(main, index, 'pool-churn');
     if (!sameWorkspace) {

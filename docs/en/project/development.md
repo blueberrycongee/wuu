@@ -707,9 +707,13 @@ blocking remain separate. Wall-clock P50/P75 are diagnostic, never CI gates.
 CI checks repeated large-fixture switches against the resume-call, layout, and
 style-recalculation ceilings in
 [`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json).
-These counters include the observer and input probe. The ratchet rejects higher
-ceilings, removed counters, or a changed workload. It uploads raw results, a
-report, logs, and a final synthetic screenshot as `session-switch-evidence`.
+These counters include the observer and input probe. Resume calls and layouts
+must meet their ceilings on every switch. Style recalculations use the median
+of three switches to each large session: page-wide animations can add work that
+varies with timing. Individual samples and their maximum remain in the evidence.
+The ratchet rejects higher ceilings, removed counters, or a changed workload. It
+uploads raw results, a report, logs, and a final synthetic screenshot as
+`session-switch-evidence`.
 
 For diagnostics, omit `WUU_SWITCH_CHECK_BUDGET` and set `WUU_SWITCH_TURNS=3000`,
 `WUU_SWITCH_ROUNDS`, or `WUU_SWITCH_INIT_DELAY_MS=600`. `WUU_SWITCH_TRACE=1`
