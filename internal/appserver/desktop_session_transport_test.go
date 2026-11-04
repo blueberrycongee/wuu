@@ -129,6 +129,22 @@ func TestRegisteredSessionTransportProcess(t *testing.T) {
 		var req Request
 		_ = json.Unmarshal(raw, &req)
 		switch req.Method {
+		case "fixture/attachments":
+			history, err := loadChatMessages(rt.Sessions, existing)
+			files := []map[string]any{}
+			if err == nil {
+				for _, m := range history {
+					for _, f := range m.Files {
+						data, readErr := os.ReadFile(f.LocalPath)
+						if readErr != nil {
+							err = readErr
+							break
+						}
+						files = append(files, map[string]any{"text": string(data), "origin": m.Origin, "read_only": m.ReadOnly})
+					}
+				}
+			}
+			_ = s.writeResponse(req.ID, files, err)
 		case "fixture/existing":
 			_ = s.writeResponse(req.ID, map[string]string{"session_id": existing}, nil)
 		case "fixture/release":

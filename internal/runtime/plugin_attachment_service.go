@@ -35,15 +35,29 @@ func recordAttachments(record session.HistoryRecord) []historyAttachment {
 		sum := sha256.Sum256(decoded)
 		result = append(result, historyAttachment{metadata: pluginhost.SessionHistoryAttachment{Kind: kind, Index: index, Name: name, MIMEType: media, Size: int64(len(decoded)), SHA256: hex.EncodeToString(sum[:])}, data: data})
 	}
-	var images []providers.InputImage
+	// App-server history uses snake_case; runtime/provider history also stores
+	// exported Go field names. Preserve both persisted representations.
+	var images []struct {
+		providers.InputImage
+		PersistedMediaType string `json:"media_type"`
+	}
 	if json.Unmarshal(record.Images, &images) == nil {
 		for i, image := range images {
+			if image.PersistedMediaType != "" {
+				image.MediaType = image.PersistedMediaType
+			}
 			add("image", i, fmt.Sprintf("image-%d", i+1), image.MediaType, image.Data)
 		}
 	}
-	var files []providers.InputFile
+	var files []struct {
+		providers.InputFile
+		PersistedMediaType string `json:"media_type"`
+	}
 	if json.Unmarshal(record.Files, &files) == nil {
 		for i, file := range files {
+			if file.PersistedMediaType != "" {
+				file.MediaType = file.PersistedMediaType
+			}
 			add("file", i, file.Filename, file.MediaType, file.Data)
 		}
 	}

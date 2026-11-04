@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -106,7 +107,9 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
    ({task}=await client('tasks.create',{agent_id:agent.agent_id,request_id:'actual-personal-task',title:'Use existing Coding session',goal:'Read existing work and report the result',existing_session:locator}));
    evidence.checks.push('startup Code Mode task uses actual owner client/grant path; no unsupported subprocess is executed');
   }else{
-  await pool.requestInContext<any>(source,'plugin/client/request',{...descriptor,user_space_id:'local',product_domain:'personal',method:'agents.send',input:{agent_id:agent.agent_id,request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.'},user_input:{request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.'}});
+  const bytes=Buffer.from('registered handoff file'),sha256=createHash('sha256').update(bytes).digest('hex');
+  const attachment={sha256,filename:'handoff.txt',media_type:'text/plain'};
+  await pool.requestInContext<any>(source,'plugin/client/request',{...descriptor,user_space_id:'local',product_domain:'personal',method:'agents.send',input:{agent_id:agent.agent_id,request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.',attachments:[attachment]},user_input:{request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.',attachments:[{...attachment,data:bytes.toString('base64')}]}});
   let rawCatalog='';for(let attempt=0;attempt<50&&!rawCatalog;attempt++){try{rawCatalog=await readFile(join(root,'personal.json.catalog'),'utf8');}catch{await new Promise(resolve=>setTimeout(resolve,100));}}
   const findCatalog=(value:any):any=>{if(typeof value==='string'){try{return findCatalog(JSON.parse(value));}catch{return undefined;}}if(value&&typeof value==='object'){if(Array.isArray(value.targets))return value;for(const entry of Object.values(value)){const result=findCatalog(entry);if(result)return result;}}};
   const catalog=findCatalog(JSON.parse(rawCatalog));expect(catalog).toBeDefined();
@@ -115,7 +118,7 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
   evidence.checks.push(`actual Personal list_sessions discovers named ${routeKind} target through selected catalog`);
   let createdReceipt='';for(let attempt=0;attempt<100&&!createdReceipt;attempt++){try{createdReceipt=await readFile(join(root,'personal.json.created'),'utf8');}catch{await new Promise(resolve=>setTimeout(resolve,100));}}expect(createdReceipt).toContain('actual-personal-task');
   for(let attempt=0;attempt<50&&!task?.execution?.existing_session;attempt++){const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.request_id==='actual-personal-task');if(!task?.execution?.existing_session)await new Promise(resolve=>setTimeout(resolve,100));}
-  expect(task).toBeDefined();expect(task.source.message_binding).toBe('host_turn');expect(task.source.original_text).toBe('Use my existing Coding workspace to read the existing work and return its result here.');
+  expect(task).toBeDefined();expect(task.error,JSON.stringify(task)).toBeUndefined();expect(task.source.message_binding).toBe('host_turn');expect(task.source.original_text).toBe('Use my existing Coding workspace to read the existing work and return its result here.');
   evidence.checks.push('same Personal conversation invokes actual create_task tool with observed catalog locator and original human request provenance');
   expect(task.execution.existing_session).toMatchObject(locator);evidence.checks.push(`generated Personal task selected exact existing ${routeKind} target`);
   if(!queued)await vi.waitFor(()=>expect(events.some(event=>event.kind==='notification'&&event.message.method==='turn/completed'&&(event.message.params as any)?.thread_id===agent.main_session_id)).toBe(true),{timeout:10000});
@@ -134,6 +137,7 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
   // Observe only: the real background outbox must wake, decide, and deliver.
   for(let attempt=0;attempt<600 && !(task.state==='completed'&&task.delivery?.status==='delivered');attempt++){const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.task_id===task.task_id);if(task.delivery?.status==='failed')break;if(!(task.state==='completed'&&task.delivery?.status==='delivered'))await new Promise(resolve=>setTimeout(resolve,200));}
   expect(task.state,JSON.stringify(task)).toBe('completed');expect(task.delivery.status).toBe('delivered');
+  if(!ptc){const files=await pool.requestInContext<any[]>(target,'fixture/attachments',{});expect(files.length).toBeGreaterThan(0);for(const file of files){expect(file.text).toBe('registered handoff file');expect(file.origin).not.toBe('user');expect(file.read_only).toBe(true);}evidence.checks.push('original attachment bytes traverse actual Personal source, desktop routing and target working-copy persistence');}
   expect(task.result.origin).toBe('controller_review');expect(task.result.summary).toContain('Controller reviewed');
   expect(task.requirements_revision).toBe(revision);expect(task.authorization).toEqual(rootAuthorization);expect(task.execution.existing_session).toMatchObject(locator);
   const reviews=JSON.parse(await readFile(join(root,'personal.json.reviews'),'utf8'));expect(reviews).toHaveLength(followup?2:1);
