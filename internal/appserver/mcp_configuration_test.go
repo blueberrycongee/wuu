@@ -405,6 +405,13 @@ func TestMCPConnectorExplicitEnableActivatesCanonicalPackageDefinition(t *testin
 	if responseByID(t, parseOutput(t, out.String()), "direct-disabled")["error"] == nil || requests.Load() != 0 {
 		t.Fatal("direct connect bypassed startup preference")
 	}
+	// Users connect accounts while a conversation runs. A connector preference
+	// is admitted like a plugin enable; standalone edits stay exclusive.
+	srv.threads = map[string]*threadState{"busy": {ID: "busy", running: true}}
+	callPluginPackageRPC(t, srv, "standalone-busy", MethodMCPConfigure, map[string]any{"servers": map[string]any{"local": map[string]any{"url": endpoint.URL}}})
+	if rejected := responseByID(t, parseOutput(t, out.String()), "standalone-busy"); !strings.Contains(fmt.Sprint(rejected["error"]), "turn is running") {
+		t.Fatalf("standalone MCP edit admitted during a running turn: %+v", rejected)
+	}
 	callPluginPackageRPC(t, srv, "enable", MethodMCPConfigure, map[string]any{"servers": map[string]any{name: map[string]any{"enabled": true}}, "revision": definition.Revision})
 	response := responseByID(t, parseOutput(t, out.String()), "enable")
 	if response["error"] != nil {
@@ -640,5 +647,52 @@ func TestLazyConnectorSurvivesCatalogAndConfigReload(t *testing.T) {
 		if status := manager.Status()[name]; status.State != mcp.MCPServerStateAuthRequired || status.Connected || status.ToolCount != 0 {
 			t.Fatalf("unauthorized server must remain available for explicit login, not tool use: %+v", status)
 		}
+	}
+}
+
+func TestMCPRemovalWhileUnrelatedTurnRuns(t *testing.T) {
+	prior := newTestRuntime(t, &fakeClient{})
+	preparePluginRuntimePathsForTest(t, prior)
+	cfg, _, err := config.LoadPath(prior.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	cfg.MCPServers = map[string]config.MCPServerConfig{"removed": {URL: "https://example.test/mcp", Enabled: &disabled}, "kept": {URL: "https://example.test/other", Enabled: &disabled}}
+	raw, _ := json.Marshal(cfg)
+	if err := os.WriteFile(prior.ConfigPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt := newConfigRefreshRuntime(t, prior)
+	out := &lockedBuffer{}
+	srv := newOwnerHandlerFixture(rt, out)
+	srv.threads = map[string]*threadState{"unrelated": {ID: "unrelated", running: true}}
+	callPluginPackageRPC(t, srv, "read", MethodMCPDefinitionRead, map[string]any{"name": "removed"})
+	definition := remarshal[MCPDefinitionResult](t, responseByID(t, parseOutput(t, out.String()), "read")["result"])
+	for _, revision := range []string{"stale", definition.Revision} {
+		callPluginPackageRPC(t, srv, revision, MethodMCPConfigure, map[string]any{"servers": map[string]any{"removed": nil}, "revision": revision})
+		response := responseByID(t, parseOutput(t, out.String()), revision)
+		if revision == "stale" {
+			if response["error"] == nil {
+				t.Fatal("stale removal accepted")
+			}
+			continue
+		}
+		if response["error"] != nil {
+			t.Fatalf("unrelated turn blocked removal: %+v", response)
+		}
+	}
+	saved, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := saved.MCPServers["removed"]; exists {
+		t.Fatal("removed definition survived")
+	}
+	if _, exists := saved.MCPServers["kept"]; !exists {
+		t.Fatal("unrelated definition removed")
+	}
+	if !srv.threads["unrelated"].running {
+		t.Fatal("unrelated turn was stopped")
 	}
 }

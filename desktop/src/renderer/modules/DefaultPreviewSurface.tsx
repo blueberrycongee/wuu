@@ -28,6 +28,7 @@ export function activatePresentation(api: ApplicationPresentationAPI): void {
   api.registerUISlot({ id: "header.workspace", cardinality: "one" });
   api.registerUISlot({ id: "workspace.tools", cardinality: "many" });
   api.registerUISlot({ id: "workspace.rail", cardinality: "many" });
+  api.registerUISlot({ id: "workspace.file-tree", cardinality: "one" });
   api.registerUISlot({ id: "workspace.view", cardinality: "one" });
   api.registerUISlot({ id: "content.preview", cardinality: "one" });
   registerPreviewContributions(api);

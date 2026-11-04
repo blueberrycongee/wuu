@@ -21,6 +21,7 @@ export function browserSettingsAvailable(): boolean {
 }
 
 export function availableSettingsPage(page: SettingsPage, browserSettingsAllowed = true): SettingsPage {
+  if (page === "advanced") return "general";
   if (page === "subscriptions" || page === "agents") {
     return "providers";
   }

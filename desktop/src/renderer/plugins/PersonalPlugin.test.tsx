@@ -133,38 +133,30 @@ it("keeps independent reply targets retryable with their drafts and files across
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Please adjust this");
   expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')?.textContent).toContain("reply.txt");
 });
-it("keeps a newer task reply draft isolated when an earlier message reply settles", async () => {
+it("keeps a newer message reply draft isolated when an earlier message reply settles", async () => {
   let finish!: (value: unknown) => void;
   const pending = new Promise(resolve => { finish = resolve; });
-  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  const ui = await mount(async method => method === "agents.send" ? pending : {}, main, [{ seq: 1, role: "assistant", content: "First topic" }, { seq: 2, role: "assistant", content: "Second topic" }]);
   await ui.edit("Main draft");
   await ui.click('[data-action="reply-message"]'); await ui.edit("First request"); await ui.click('.composer-send-button');
-  await ui.click('[data-action="close-replies"]'); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]'); await ui.edit("New task draft");
+  await ui.click('[data-action="close-replies"]'); await act(async () => ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1].click()); await ui.edit("New message draft");
   await act(async () => { finish({ state: "accepted" }); await pending; });
-  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("New task draft");
-  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain("Plan a trip");
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("New message draft");
+  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain("Second topic");
   await ui.click('.composer-send-button');
   const sends = ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send");
-  expect((sends[1][0].input as any).relation).toEqual({ metadata: { task_links: [{ task_id: "t1", requirements_revision: 1 }] } });
+  expect((sends[1][0].input as any).relation).toEqual({ reply_to: { session_id: "s-private", seq: 2 } });
   await ui.click('[data-action="close-replies"]'); expect(ui.container.querySelector('textarea')!.value).toBe("Main draft");
-});
-it("shows a verified task source once while replying to the current task revision", async () => {
-  const task = { task_id: "t1", title: "Task A", goal: "Current requirements", state: "running", revision: 4, requirements_revision: 2, source: { session_id: "s-private", message_seq: 1, message_binding: "host_turn" }, execution: { session_id: "execution-two" } };
-  const ui = await mount(undefined, main, [{ seq: 1, role: "user", content: "Original request", relation: { metadata: { task_links: [{ task_id: "t1", requirements_revision: 1 }] } } }], { tasks: [task] });
-  await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]');
-  expect(ui.container.querySelectorAll('.mosaic-replies [data-role="user"]')).toHaveLength(1);
-  await ui.edit("Update the task"); await ui.click('.composer-send-button');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { metadata: { task_links: [{ task_id: "t1", requirements_revision: 2, execution_session_id: "execution-two" }] } } }) }));
 });
 it("does not surface an earlier reply failure in a different target's panel", async () => {
   let rejectSend!: (error: Error) => void;
   const pending = new Promise((_resolve, reject) => { rejectSend = reject; });
-  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  const ui = await mount(async method => method === "agents.send" ? pending : {}, main, [{ seq: 1, role: "assistant", content: "First topic" }, { seq: 2, role: "assistant", content: "Second topic" }]);
   await ui.click('[data-action="reply-message"]'); await ui.edit("First request"); await ui.click('.composer-send-button');
-  await ui.click('[data-action="close-replies"]'); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]'); await ui.edit("Task draft");
+  await ui.click('[data-action="close-replies"]'); await act(async () => ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1].click()); await ui.edit("Second reply draft");
   await act(async () => { rejectSend(new Error("Only first reply failed")); await pending.catch(() => {}); });
   expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).toBeNull();
-  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Task draft");
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Second reply draft");
   await ui.click('[data-action="close-replies"]'); await ui.click('[data-action="reply-message"]');
   expect(ui.container.querySelector('.mosaic-replies [data-action="retry-message"]')).not.toBeNull();
 });
@@ -246,12 +238,6 @@ it("offers live replies only after durable identity and carries terminal task re
   await ui.edit("Follow up"); await ui.click('.composer-send-button');
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 9 }, ...relation } }) }));
 });
-it("stops a task with its reviewed revision without stopping the agent's current reply", async () => {
-  const ui = await mount(); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="stop-task"]');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "tasks.stop", input: { task_id: "t1", expected_revision: 3 } }));
-  expect(ui.invoke.mock.calls.some(([request]) => request.method === "agents.stop_reply")).toBe(false);
-});
-
 const fileDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 async function chooseFiles(container: HTMLElement, files: File[]) {
   const input = (container.querySelector('.mosaic-replies') ?? container).querySelector<HTMLInputElement>('input[type="file"]'); expect(input).not.toBeNull();
@@ -1070,18 +1056,15 @@ it("keeps newer quoted drafts and files separate from accepted sends when refres
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Newer reply draft");
 });
 
-it("recovers main, message and task drafts after a fresh plugin generation without sending", async () => {
+it("recovers main and message drafts after a fresh plugin generation without sending", async () => {
   const first = await mount();
   await first.edit("Main recovery");
   await first.click('[data-action="reply-message"]'); await first.edit("Message recovery");
-  await first.click('[data-action="close-replies"]'); await first.click('[data-task-id="t1"]');
-  await first.click('[data-action="reply-task"]'); await first.edit("Task recovery"); first.dispose();
+  first.dispose();
   const next = await mount();
   expect(next.container.querySelector('textarea')!.value).toBe("Main recovery");
   await next.click('[data-action="reply-message"]');
   expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Message recovery");
-  await next.click('[data-action="close-replies"]'); await next.click('[data-task-id="t1"]'); await next.click('[data-action="reply-task"]');
-  expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Task recovery");
   expect(next.invoke.mock.calls.some(([r]) => r.method === "agents.send")).toBe(false);
   next.dispose();
   const other = await mount(undefined, { ...main, main_session_id: "other-session" });
@@ -1296,19 +1279,6 @@ it("restores only related peer Held inputs in a reply and deduplicates history a
  admitted=true;await act(async()=>ui.publish());
  await vi.waitFor(()=>expect(panel().querySelectorAll('[data-receipt-id="receipt-own"]')).toHaveLength(1));
  expect(panel().querySelector('[data-receipt-id="receipt-own"]')).toHaveProperty("dataset.receiptState","completed");
-});
-
-it("limits task reply pending receipts to the current task revision and execution", async () => {
- const link={task_id:"t1",requirements_revision:2,execution_session_id:"run-two"};
- const task={task_id:"t1",title:"Current task",goal:"Review",state:"running",revision:3,requirements_revision:2,execution:{session_id:"run-two"}};
- const rows=[{id:"current",link},{id:"old-revision",link:{...link,requirements_revision:1}},{id:"old-execution",link:{...link,execution_session_id:"run-one"}},{id:"other-task",link:{...link,task_id:"t2"}}];
- const ui=await mount(undefined,main,[],{tasks:[task],open:async()=>({agent:main,session:{state:"completed"},pending_inputs:rows.map(({id,link})=>({receipt:receiptFixture(id),prompt:id,relation:{metadata:{task_links:[link]}}}))})});
- await ui.click('[data-task-id="t1"]');await ui.click('[data-action="reply-task"]');
- const panel=ui.container.querySelector('.mosaic-replies')!;
- expect(panel.querySelector('[data-receipt-id="receipt-current"]')).not.toBeNull();
- expect(panel.querySelectorAll('[data-receipt-id]')).toHaveLength(1);
- expect(panel.querySelector('[data-action="retry-message"]')).not.toBeNull();
- expect(panel.querySelector('[data-action="cancel-accepted-input"]')).toBeNull();
 });
 
 it("does not let uncertain draft status failure suppress a peer terminal state or history", async () => {

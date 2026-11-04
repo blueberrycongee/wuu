@@ -1873,7 +1873,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   line-height: var(--line-ui);
   border-radius: var(--radius-xs);
   color: var(--ink);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 
 .composer-plus-menu button > svg {

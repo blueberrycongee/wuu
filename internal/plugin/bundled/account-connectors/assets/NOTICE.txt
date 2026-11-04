@@ -1,0 +1,10 @@
+Linear, Atlassian, and Sentry marks from Simple Icons (CC0 1.0 Universal).
+Sources:
+https://github.com/simple-icons/simple-icons/blob/develop/icons/linear.svg
+https://github.com/simple-icons/simple-icons/blob/develop/icons/atlassian.svg
+https://github.com/simple-icons/simple-icons/blob/develop/icons/sentry.svg
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+The SVG paths are unchanged; fill colors provide light and dark theme variants.
+Brand names and marks belong to their respective owners. CC0 does not grant
+trademark rights. These integrations are not endorsed by those owners.

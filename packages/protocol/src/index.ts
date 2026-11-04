@@ -1159,6 +1159,8 @@ export type MCPConnectorDescriptor = {
   /** Package setup required before a plugin-owned connector can be enabled. */
   setup_required?: string;
   identity_probe?: MCPIdentityProbe;
+  /** Package-relative brand image, served only for the owning plugin generation. */
+  icon?: { path: string; light?: never; dark?: never } | { path?: never; light: string; dark: string };
 };
 export type MCPServerConfig = {
   connector?: MCPConnectorDescriptor;
@@ -1837,6 +1839,11 @@ export type WorkspaceFileReadResult = {
   renderable_url?: string;
   renderable_kind?: "image" | "pdf" | "video";
 };
+
+/** A target invalidation; consumers must re-read rather than count events. */
+export type WorkspaceFileChange =
+  | { type: "changed" }
+  | { type: "error"; message: string };
 
 export type WorkspaceFileSaveParams = {
   path: string;
@@ -3349,6 +3356,8 @@ export type WuuDesktopApi = {
   listWorkspaceDirectory: (path?: string, root?: string) => Promise<WorkspaceDirectoryListResult>;
   readWorkspaceFile: (path: string, root?: string) => Promise<WorkspaceFileReadResult>;
   writeWorkspaceFile: (params: WorkspaceFileSaveParams, root?: string) => Promise<WorkspaceFileSaveResult>;
+  /** Local desktop observation. The returned function releases this subscription. */
+  watchWorkspaceFile?: (path: string, root: string, listener: (change: WorkspaceFileChange) => void) => Promise<() => void>;
   resolveWorkspaceFileReference: (reference: string, root?: string) => Promise<WorkspaceFileReferenceResolveResult>;
   startTerminalSession: (params?: TerminalSessionStartParams) => Promise<TerminalSessionStartResult>;
   writeTerminalSession: (id: string, data: string) => Promise<TerminalSessionActionResult>;

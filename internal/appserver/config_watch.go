@@ -316,6 +316,7 @@ func (s *Server) applyExternalConfigChangeLocked(cfg config.Config) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
+	s.rt.RetireRemovedMCPServers(cfg)
 	providerCfg, resolvedName, err := cfg.ResolveProvider("")
 	if err != nil {
 		return err
