@@ -352,10 +352,13 @@
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
   /* Group labels and heading actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
-  /* One icon and text axis for navigation, plugins, projects, and account
-   * controls. Avatars occupy this same glyph slot. Icon, column, and row
-   * action sizes scale with the UI font in appearance.css. */
-  --sidebar-nav-column-gap: var(--space-2);
+  /* Keep navigation, workspace labels, and nested conversations on one text
+   * axis. The gap follows the UI em and snaps to whole pixels. */
+  --sidebar-nav-column-gap: round(nearest, calc(var(--font-ui) * 2 / 3), 1px);
+  /* Folder artwork starts at x=3.8 on the 24-unit SVG grid. Match its visible
+   * stroke to the text's optical edge, allowing 0.05em for the font sidebearing.
+   * Keep row surfaces and label columns fixed. */
+  --sidebar-leading-icon-inset: calc(var(--sidebar-primary-icon-size) * (3.8 - var(--icon-stroke) / 2) / 24 - var(--font-ui) * 0.05);
   --sidebar-tree-toggle-col: 14px;
   --sidebar-tree-column-gap: var(--space-1);
   --sidebar-accessory-gap: var(--space-2);
@@ -1878,6 +1881,14 @@ html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row 
   justify-self: center;
   color: var(--ink-soft);
   transition: color var(--motion-fast) var(--ease-out);
+}
+
+/* Translate the slot so folder open/close transforms remain independent. */
+.project-row-icon,
+.project-row > svg:not(.project-row-chevron),
+.nav-item > svg,
+.project-thread-glyph > svg {
+  translate: calc(-1 * var(--sidebar-leading-icon-inset)) 0;
 }
 
 .project-row-icon {
