@@ -354,6 +354,22 @@ button.catalog-row,
   margin-top: calc((var(--catalog-mark-size) - var(--icon-size)) / 2);
 }
 
+/* Without a description, the title fills the mark's two-row area. Skill
+ * ownership remains below that area, including when the title wraps. */
+:is(.plugin-catalog-grid .catalog-row-open, .skill-catalog-grid > .catalog-row):not(:has(> .catalog-row-description)) > .catalog-row-title {
+  grid-row: 1 / span 2;
+}
+
+:is(.plugin-catalog-grid .catalog-row-open, .skill-catalog-grid > .catalog-row):not(:has(> .catalog-row-description)) > :is(.catalog-row-mark, .settings-disclosure-chevron) {
+  align-self: center;
+  margin-top: 0;
+}
+
+.plugin-catalog-grid .plugin-row:not(:has(.catalog-row-description)) > .catalog-row-action {
+  align-self: center;
+  margin-top: 0;
+}
+
 /* Notices carry a state, not a grouping: a soft status tint with the
  * symbol, the message, an optional detail such as a process's own error,
  * and the action that recovers when there is one. */
