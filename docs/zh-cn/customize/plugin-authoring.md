@@ -37,6 +37,28 @@
 | `skills`、`hooks`、`mcpServers` / `mcp_servers` | 分别使用[技能](skill-authoring.md)、[hook](hooks.md)、[MCP](mcp.md) 契约的贡献 |
 | `contributes` | 命令、主题、设置、UI 声明和视图入口 |
 
+### 产品插件族
+
+作为同一产品交付的多个包可以声明相同的 `interface.family`：
+
+```json
+{
+  "interface": {
+    "family": {
+      "id": "example.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring work."
+    }
+  }
+}
+```
+
+使用稳定、带发布者命名空间的 `id`，各成员填写相同的 `name` 和可选的 `description`。插件目录和已启用侧栏按族显示一个入口，即使只安装了其中一个成员也一样。搜索同时匹配成员名称和描述。打开插件族后可以查看组件的启用状态、故障、权限和设置；直接打开单个包的链接仍然有效。族信息不完整（ID 或名称为空）时，包保持独立显示。
+
+内置插件和社区插件使用相同的展示信息。插件族不会安装缺少的成员、建立依赖、授予信任，也不会统一启停或更新包。各组件保留自己的来源、生命周期和设置。旧宿主忽略这项可选信息，不需要数据迁移。
+
+### 包依赖
+
 `dependencies` 在不改变包 schema 的前提下增加版本检查。例如：
 
 ```json

@@ -37,6 +37,28 @@ This example needs both declared files. Omit `runtime` for a desktop-only or dec
 | `skills`, `hooks`, `mcpServers` / `mcp_servers` | Contributions using the corresponding [skill](skill-authoring.md), [hook](hooks.md), and [MCP](mcp.md) contracts |
 | `contributes` | Commands, themes, settings, UI declarations, and view entry points |
 
+### Product families
+
+Packages delivered as one product can declare the same `interface.family`:
+
+```json
+{
+  "interface": {
+    "family": {
+      "id": "example.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring work."
+    }
+  }
+}
+```
+
+Use a stable, publisher-namespaced `id` and the same `name` and optional `description` in each member. The catalog and enabled sidebar show one family entry, including when only one member is installed. Search also matches member names and descriptions. Open the family to see component availability, failures, permissions and settings; direct links to individual packages still work. Incomplete family metadata (empty ID or name) leaves the package ungrouped.
+
+Families are presentation metadata, available to bundled and community packages alike. They do not install missing members, establish dependencies, grant trust, or enable, disable or update packages together. Each component retains its own source, lifecycle and settings. Older hosts ignore this optional metadata; no data migration is needed.
+
+### Package dependencies
+
 `dependencies` adds version checks without changing the package schema. For example:
 
 ```json

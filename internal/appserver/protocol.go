@@ -910,10 +910,18 @@ type ExtensionPluginActivationIssue struct {
 	RelatedPluginID string `json:"related_plugin_id"`
 }
 
+// ExtensionFamilyDescriptor groups related packages in discovery surfaces only.
+type ExtensionFamilyDescriptor struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
 type ExtensionInventoryRecord struct {
-	ConversationTools []string `json:"conversation_tools,omitempty"`
-	GraphGeneration   string   `json:"graph_generation,omitempty"`
-	ID                string   `json:"id"`
+	Family            *ExtensionFamilyDescriptor `json:"family,omitempty"`
+	ConversationTools []string                   `json:"conversation_tools,omitempty"`
+	GraphGeneration   string                     `json:"graph_generation,omitempty"`
+	ID                string                     `json:"id"`
 	// Name and Description are what people see: a plugin manifest's
 	// interface displayName and shortDescription, then its name and
 	// description, and the id when it names nothing.
