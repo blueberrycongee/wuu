@@ -1,6 +1,8 @@
 export function activate(api) {
   const React = api.react;
   const h = React.createElement;
+  // Only the conversation slots consume this optional service; headless Peers
+  // runtimes must remain usable without an application provider.
   const application = api.application;
   api.registerLocale({ id: "peer-en", locale: "en-US", entries: {
     "peers.open": "Open conversation", "peers.back": "Back", "peers.untitled": "Untitled conversation",
