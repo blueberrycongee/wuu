@@ -1289,18 +1289,23 @@ export class ApplicationController implements HostApplicationService {
             this.restartRecovery = this.restartRecovery.filter(item => !deferred.includes(item));
             this.publish();
           }
+          const failures: unknown[] = [];
           for (const item of candidates.filter(item => threadIds.includes(item.thread.id))) {
             signal?.throwIfAborted();
+            if (this.lifetime?.signal.aborted) return;
             const thread = item.thread;
             const native = !thread.engine_id || thread.engine_id === "wuu";
-            const result = await window.wuu.startTurn(thread.id, native ? "" : translateCurrent("turnFailure.continuePrompt"),
-              undefined, undefined, thread.permission_mode, undefined, undefined,
-              resolveThreadRuntimeContext(thread, this.state.projects), undefined, native ? item.turn_id : undefined);
-            this.restartRecovery = this.restartRecovery.filter(candidate => candidate !== item);
-            if (this.lifetime?.signal.aborted) return;
-            this.updateState(state => updateThreadByID(state, thread.id, current => upsertTurn(current, result.turn)));
-            this.publish();
+            try {
+              const result = await window.wuu.startTurn(thread.id, native ? "" : translateCurrent("turnFailure.continuePrompt"),
+                undefined, undefined, thread.permission_mode, undefined, undefined,
+                resolveThreadRuntimeContext(thread, this.state.projects), undefined, native ? item.turn_id : undefined);
+              this.restartRecovery = this.restartRecovery.filter(candidate => candidate !== item);
+              if (this.lifetime?.signal.aborted) return;
+              this.updateState(state => updateThreadByID(state, thread.id, current => upsertTurn(current, result.turn)));
+              this.publish();
+            } catch (error) { failures.push(error); }
           }
+          if (failures.length) throw new AggregateError(failures, "Some conversations could not be resumed");
         } finally { this.recoveryResolving = false; }
         return;
       }
