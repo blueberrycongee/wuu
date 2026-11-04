@@ -624,6 +624,8 @@ export type ExtensionInventoryRecord = {
   name: string;
   description?: string;
   long_description?: string;
+  /** Explicit product family; package lifecycle and trust remain independent. */
+  family?: { id: string; name: string; description?: string };
   developer?: string;
   icon?: ExtensionIconDescriptor;
   kind: ExtensionKind;

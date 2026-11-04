@@ -98,6 +98,7 @@ import {
 export { reorderSidebarSections } from "./SortableSidebarSection";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { useSidebarConversationActivity } from "./SidebarConversationActivity";
+import { groupPluginFamilies } from "./pluginFamilies";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
 import { pluginToggle } from "./extensionPackageState";
@@ -690,18 +691,18 @@ export function AppSidebar({
   );
   const extensionCatalog = useMemo(() => {
     if (navigation) return {
-      pluginCount: navigation.view.plugins.filter(row => row.kind === "plugin").length,
+      pluginCount: groupPluginFamilies(navigation.view.plugins.filter(row => row.kind === "plugin"), locale).length,
       skillCount: navigation.view.plugins.filter(row => row.kind === "skill").length,
-      enabledPlugins: navigation.view.plugins.filter(row => row.kind === "plugin" && row.enabled).sort((left, right) => left.name.localeCompare(right.name, locale)),
+      enabledPlugins: groupPluginFamilies(navigation.view.plugins.filter(row => row.kind === "plugin"), locale)
+        .filter(group => group.members.some(record => record.enabled)),
     };
     const records = extensionInventory ?? [];
     const plugins = records.filter((record) => record.kind === "plugin");
     return {
-      pluginCount: plugins.length,
+      pluginCount: groupPluginFamilies(plugins, locale).length,
       skillCount: records.filter((record) => record.kind === "skill").length,
-      enabledPlugins: plugins
-        .filter((record) => pluginToggle(record).on)
-        .sort((left, right) => left.name.localeCompare(right.name, locale)),
+      enabledPlugins: groupPluginFamilies(plugins, locale)
+        .filter(group => group.members.some(record => pluginToggle(record).on)),
     };
   }, [locale, extensionInventory, navigation]);
   const activateNative = useCallback((action: () => void, retainDraftIntent = false): void => {
@@ -1700,12 +1701,12 @@ export function AppSidebar({
                       type="button"
                       onClick={() => onOpenCatalogPlugin(record.id)}
                     >
-                      <PluginIcon
+                      {record.family ? <PluginBlocksIcon aria-hidden="true" /> : <PluginIcon
                         loadIcon={loadPluginIcon}
-                        icon={record.icon}
-                        pluginId={record.id}
-                        fingerprint={record.fingerprint ?? ""}
-                      />
+                        icon={record.members[0].icon}
+                        pluginId={record.members[0].id}
+                        fingerprint={record.members[0].fingerprint ?? ""}
+                      />}
                       <TruncatedText as="span" className="sidebar-section-label" text={record.name} />
                     </button>
                   ))

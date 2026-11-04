@@ -125,6 +125,8 @@ export type CatalogExtensionV1 = {
   name: string;
   description?: string;
   long_description?: string;
+  /** Explicit product family; groups presentation without sharing package authority. */
+  family?: { id: string; name: string; description?: string };
   developer?: string;
   icon?: CatalogIconDescriptorV1;
   kind: CatalogKindV1;

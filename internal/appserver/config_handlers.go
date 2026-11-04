@@ -531,6 +531,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			Name:              presentation.DisplayName,
 			Description:       presentation.ShortDescription,
 			LongDescription:   presentation.LongDescription,
+			Family:            presentation.Family,
 			Developer:         presentation.DeveloperName,
 			Icon:              extensionIconDescriptor(item.Icon),
 			Kind:              extensions.KindPlugin,
@@ -676,8 +677,10 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 
 	for _, module := range snapshot.NativeRendererModules() {
 		enabled := true
+		presentation := pluginPresentation(pluginpkg.Manifest{Interface: module.Interface})
 		records = append(records, ExtensionInventoryRecord{
 			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
+			Family:     presentation.Family,
 			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
 			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
 			PackageSource: "bundled", ApprovalState: ExtensionApprovalOfficial,
@@ -746,10 +749,11 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 }
 
 type pluginInterface struct {
-	DisplayName      string `json:"displayName"`
-	ShortDescription string `json:"shortDescription"`
-	LongDescription  string `json:"longDescription"`
-	DeveloperName    string `json:"developerName"`
+	Family           *ExtensionFamilyDescriptor `json:"family"`
+	DisplayName      string                     `json:"displayName"`
+	ShortDescription string                     `json:"shortDescription"`
+	LongDescription  string                     `json:"longDescription"`
+	DeveloperName    string                     `json:"developerName"`
 }
 
 // pluginPresentation resolves what people see for a plugin. An interface
@@ -768,7 +772,17 @@ func pluginPresentation(manifest pluginpkg.Manifest) pluginInterface {
 		}
 		return ""
 	}
+	if presentation.Family != nil {
+		family := presentation.Family
+		family.ID = strings.TrimSpace(family.ID)
+		family.Name = strings.TrimSpace(family.Name)
+		family.Description = strings.TrimSpace(family.Description)
+		if family.ID == "" || family.Name == "" {
+			presentation.Family = nil
+		}
+	}
 	return pluginInterface{
+		Family:           presentation.Family,
 		DisplayName:      first(presentation.DisplayName, manifest.Name, manifest.ID),
 		ShortDescription: first(presentation.ShortDescription, manifest.Description),
 		LongDescription:  first(presentation.LongDescription),

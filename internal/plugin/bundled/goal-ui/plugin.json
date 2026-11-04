@@ -20,6 +20,11 @@
     ]
   },
   "interface": {
+    "family": {
+      "id": "wuu.goals",
+      "name": "Goals",
+      "description": "Set persistent goals and manage their progress."
+    },
     "displayName": "Goal controls",
     "shortDescription": "Independent presentation for the selected goal.control provider.",
     "developerName": "Wuu",
