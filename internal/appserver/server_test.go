@@ -790,7 +790,7 @@ func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 		t.Fatalf("expected xiaomi catalog models, got %+v", xiaomi)
 	}
 	xiaomiModel := providerModelByID(t, xiaomi, "mimo-v2.5-pro")
-	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "models.dev" {
+	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "selected" {
 		t.Fatalf("unexpected xiaomi model summary: %+v", xiaomiModel)
 	}
 	if xiaomiModel.Capabilities.ContextWindow != 1048576 || !xiaomiModel.Capabilities.Reasoning {

@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,21 +49,21 @@ func catalogProviders() ([]Provider, error) {
 	return data.Providers, nil
 }
 
-// Keep saved MiniMax selections resolvable after upstream removes retired entries.
-// Read the raw embedded snapshot once, without applying discovery filters.
-var embeddedMiniMaxModels = sync.OnceValues(func() (map[string][]Model, error) {
-	var data catalogData
-	if err := json.Unmarshal(catalogJSON, &data); err != nil {
-		return nil, err
-	}
+// Preserve metadata for saved selections when upstream removes a model.
+// Archived models are never advertised as available choices.
+//
+//go:embed retired_models.json
+var retiredModelsJSON []byte
+
+var embeddedModels = sync.OnceValues(func() (map[string][]Model, error) {
 	models := make(map[string][]Model)
-	for _, provider := range data.Providers {
-		if isMiniMaxProviderID(provider.ID) {
-			for _, model := range provider.Models {
-				if isLegacyMiniMaxModel(model.ID) {
-					models[provider.ID] = append(models[provider.ID], model)
-				}
-			}
+	for _, raw := range [][]byte{retiredModelsJSON, catalogJSON} {
+		var data catalogData
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return nil, err
+		}
+		for _, provider := range data.Providers {
+			models[provider.ID] = append(models[provider.ID], provider.Models...)
 		}
 	}
 	return models, nil
@@ -73,7 +74,7 @@ func decodeCatalog(data []byte) (catalogData, error) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return catalogData{}, err
 	}
-	legacy, err := embeddedMiniMaxModels()
+	legacy, err := embeddedModels()
 	if err != nil {
 		return catalogData{}, err
 	}

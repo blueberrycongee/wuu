@@ -1,6 +1,7 @@
 package modelvariant
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -268,6 +269,9 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		if len(efforts) == 0 {
 			efforts = compatWidelySupportedEfforts()
 		}
+		// Adaptive-only connections cannot turn thinking off, even if the
+		// upstream catalog also advertises a non-thinking mode.
+		efforts = slices.DeleteFunc(efforts, func(effort string) bool { return effort == "none" })
 		effortKey := "effort"
 		if desc.APINPM == compatNPMOpenAICompatible {
 			effortKey = "reasoningEffort"
