@@ -43,6 +43,8 @@ const skills: SkillSummary[] = empty ? [] : [
   { name: "skill-creator", source: "bundled", user_invocable: true, disable_model_invoke: false, description: "Guide for creating effective skills." },
   { name: "cua-mac", source: "plugin:cua-mac", user_invocable: false, disable_model_invoke: false, description: "Observe and control native macOS apps through Accessibility, ScreenCaptureKit, and native input." },
   { name: "code-review", source: "user", user_invocable: true, disable_model_invoke: false, description: "按仓库约定审查当前改动，只报告有证据的缺陷。" },
+  { name: "current-time", source: "user", user_invocable: true, disable_model_invoke: false, description: "" },
+  { name: long ? "automation-with-an-exceptionally-long-skill-name-without-a-description" : "automation", source: "plugin:automation", user_invocable: true, disable_model_invoke: false, description: "" },
   {
     name: long ? "release-notes-with-an-exceptionally-long-skill-name" : "release-notes",
     source: "project",
@@ -78,6 +80,7 @@ const record = (
 
 const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
   record("account-connectors", "Account Connectors", "", "Connect your tools and accounts."),
+  record("current-time", long ? "Current time with an exceptionally long plugin name without a description" : "current-time", "clock", "", { enabled: false, runtime_state: "stopped" }),
   record("automation", "Automation", "clock", "Schedule prompts and recurring Agent work.", {
     developer: "Wuu",
     long_description: "Runs saved prompts on a schedule, either as new conversations or by waking an existing one, so recurring checks and reports happen without you.",
