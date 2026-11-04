@@ -104,6 +104,14 @@ export interface ApplicationSnapshotV1 {
     readonly loading: boolean;
     readonly error?: string;
   };
+  /** Unfinished work awaiting a user choice after a restart. Reading it never resumes execution. */
+  readonly restartRecovery?: readonly {
+    readonly threadId: string;
+    readonly title: string;
+    readonly workspace: string;
+    readonly updatedAt: string;
+    readonly reason: "interrupted" | "background_result";
+  }[];
   readonly composer: ComposerSnapshotV1;
   readonly activities: readonly ApplicationActivityV1[];
   readonly browserDockTarget?: BrowserDockTargetV1;
@@ -160,6 +168,8 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
   "navigation.cancel": { input: { readonly requestId?: number }; result: void };
   "conversation.load-earlier": { input: { readonly threadId: string; readonly cursor: string }; result: void };
+  /** Continue selected recovery candidates and leave the remaining ones paused. */
+  "conversation.resolve-recovery": { input: { readonly threadIds: readonly string[] }; result: void };
   "conversation.continue": { input: { readonly threadId: string; readonly turnId?: string; readonly text: string }; result: { readonly accepted: boolean } };
   "conversation.read-usage": { input: { readonly timezone: string }; result: SettingsReadonly<Pick<ApplicationSettingsUsageResponseV1, "total_sessions" | "metrics" | "days">> };
   "conversation.load-item": { input: { readonly threadId: string; readonly turnId: string; readonly itemId: string }; result: ApplicationConversationThreadItemV1 };

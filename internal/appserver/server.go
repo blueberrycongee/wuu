@@ -369,6 +369,7 @@ type Server struct {
 	refreshConfigForTest         func() error
 	presenceLease                *session.AppServerPresenceLease
 	bootOwner                    bool
+	recoveryBootAt               time.Time
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
@@ -480,6 +481,10 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 			s.startupErr = fmt.Errorf("import legacy side threads: %w", err)
 			return s
 		}
+	}
+	if err := s.initializeRestartRecovery(binding, bootOwner); err != nil {
+		s.startupErr = err
+		return s
 	}
 	if bootOwner {
 		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
@@ -1476,6 +1481,10 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleThreadList(req)
 	case MethodThreadListAll:
 		return s.handleThreadListAll(req)
+	case "thread/recovery/list":
+		return s.handleRestartRecoveryList(req)
+	case "thread/recovery/dismiss":
+		return s.handleRestartRecoveryDismiss(req)
 	case MethodThreadListArchived:
 		return s.handleThreadListArchived(req)
 	case MethodThreadSearch:

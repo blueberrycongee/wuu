@@ -2934,6 +2934,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:thread-list-all", (event) =>
     appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
   );
+  ipcMain.handle("wuu:thread-recovery-list", (event) =>
+    appServerRequest(event, "thread/recovery/list"),
+  );
+  ipcMain.handle("wuu:thread-recovery-dismiss", (event, threadIDs: string[]) =>
+    appServerRequest(event, "thread/recovery/dismiss", { thread_ids: threadIDs }),
+  );
   ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
     appServerRequest(event, "thread/search", {
       query: query ?? "",

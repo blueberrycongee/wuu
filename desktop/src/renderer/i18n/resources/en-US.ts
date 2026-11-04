@@ -1,6 +1,17 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "restartRecovery.title": "Resume unfinished tasks",
+  "restartRecovery.description": "Wuu has restarted. Choose conversations to continue from their saved progress.",
+  "restartRecovery.defer": "Not now",
+  "restartRecovery.continue": "Continue selected ({count})",
+  "restartRecovery.applying": "Applying…",
+  "restartRecovery.tasks": "Unfinished conversations",
+  "restartRecovery.interrupted": "Execution interrupted",
+  "restartRecovery.backgroundResult": "Background result waiting",
+  "restartRecovery.hint": "Unselected conversations stay paused. You can continue them later from the conversation.",
+  "restartRecovery.loadFailed": "Could not load unfinished tasks. Reopen Wuu to try again.",
+  "restartRecovery.actionFailed": "Some tasks could not be resumed and remain in the list. Please try again.",
   "composer.plugins": "Plugins",
   "composer.pluginsLoading": "Loading plugins…",
   "composer.pluginsLoadFailed": "Could not load connections. Try again.",

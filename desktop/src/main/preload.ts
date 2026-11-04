@@ -498,6 +498,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:message-flow-font-size-set", fontSize),
   listThreads: (cwd?: string) => ipcRenderer.invoke("wuu:thread-list", cwd),
   listAllThreads: () => ipcRenderer.invoke("wuu:thread-list-all"),
+  listRestartRecovery: () => ipcRenderer.invoke("wuu:thread-recovery-list"),
+  dismissRestartRecovery: (threadIDs: string[]) => ipcRenderer.invoke("wuu:thread-recovery-dismiss", threadIDs),
   listArchivedThreads: () =>
     ipcRenderer.invoke("wuu:thread-list-archived"),
   searchThreads: (query: string, limit?: number) =>

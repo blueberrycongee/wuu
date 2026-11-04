@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -516,7 +517,7 @@ func TestServerAutoResumesAndAcknowledgesNaturalProcessCompletion(t *testing.T) 
 	t.Fatalf("process %q disappeared from the registry", started.ID)
 }
 
-func TestThreadResumeReplaysProcessCompletionAcrossManagerRestart(t *testing.T) {
+func TestThreadResumeHoldsProcessCompletionAcrossManagerRestartUntilUserContinues(t *testing.T) {
 	mainClient := &fakeClient{response: providers.ChatResponse{Content: "continued after restart"}}
 	rt := newTestRuntime(t, mainClient)
 	threadID := "thread-process-restart"
@@ -577,6 +578,30 @@ terminal:
 	}
 	if err := server.handleLine(context.Background(), raw); err != nil {
 		t.Fatalf("thread/resume: %v", err)
+	}
+	if err := server.handleLine(context.Background(), []byte(`{"id":"recovery","method":"thread/recovery/list"}`)); err != nil {
+		t.Fatal(err)
+	}
+	recovery := remarshal[struct {
+		Items []RestartRecoveryItem `json:"items"`
+	}](t, responseByID(t, parseOutput(t, out.String()), "recovery")["result"])
+	if len(recovery.Items) != 1 || recovery.Items[0].Thread.ID != threadID || recovery.Items[0].Reason != "background_result" {
+		t.Fatalf("recovery candidates = %+v", recovery.Items)
+	}
+	if err := server.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"defer","method":"thread/recovery/dismiss","params":{"thread_ids":[%q]}}`, threadID))); err != nil {
+		t.Fatal(err)
+	}
+	if !server.completionDeliveryPaused(server.thread(threadID), nil, []string{started.ID}) {
+		t.Fatal("dismissing recovery released automatic delivery")
+	}
+	mainClient.mu.Lock()
+	callsBeforeChoice := len(mainClient.requests)
+	mainClient.mu.Unlock()
+	if callsBeforeChoice != 0 {
+		t.Fatalf("history resume silently called the model %d times", callsBeforeChoice)
+	}
+	if err := server.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"continue","method":"turn/start","params":{"thread_id":%q,"resume_after_turn_id":%q}}`, threadID, recovery.Items[0].TurnID))); err != nil {
+		t.Fatal(err)
 	}
 	waitForTurnCompletedForThread(t, out, threadID)
 

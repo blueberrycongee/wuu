@@ -1,5 +1,6 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
+import { RestartRecovery } from "./RestartRecoveryDialog";
 import { AccountScreen } from "./AccountScreen";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
@@ -1882,6 +1883,7 @@ export function App({ application, slots, shellPluginId }: {
       )}
       </>
 
+      {!poppedOutMode && initialized && onboardingComplete && <RestartRecovery application={application} />}
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={gitStatus}
