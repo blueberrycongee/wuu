@@ -61,7 +61,7 @@ export async function activate(api) {
       "oversizedAttachment": "This attachment exceeds the 20 MB download limit.",
       "today": "Today",
       "settings": "Settings",
-      "modelTitle": "Model", "modelHelp": "Used for twin replies and new tasks. Existing tasks keep their model.", "modelChoice": "Provider and model", "modelUnavailable": "No configured models are available. Add a connection in External connections.", "modelCurrentUnavailable": "Current selection is unavailable", "modelSaved": "Model saved", "modelBusy": "Wait for the current reply to finish before changing the model.", "notificationsTitle": "Notifications",
+      "modelTitle": "Model", "modelHelp": "Used for twin replies and new tasks. Existing tasks keep their model.", "modelChoice": "Provider and model", "modelUnavailable": "No configured models are available. Add a connection in External connections.", "modelCurrentUnavailable": "Current selection is unavailable", "modelBusy": "Wait for the current reply to finish before changing the model.", "notificationsTitle": "Notifications",
       "placeholder": "Message",
       "rendererContextLimited": "Only the most recently updated interfaces fit in the next message; older interface values will be omitted.",
       "stopped": "Stopped",
@@ -163,7 +163,7 @@ export async function activate(api) {
       "oversizedAttachment": "附件超过 20 MB 下载上限。",
       "today": "今天",
       "settings": "设置",
-      "modelTitle": "模型", "modelHelp": "用于 twin 回复和新任务。已有任务继续使用原来的模型。", "modelChoice": "服务商与模型", "modelUnavailable": "暂无可选模型。请先在外部连接中配置。", "modelCurrentUnavailable": "当前选择不可用", "modelSaved": "模型已保存", "modelBusy": "请等待当前回复结束后再切换模型。", "notificationsTitle": "通知",
+      "modelTitle": "模型", "modelHelp": "用于 twin 回复和新任务。已有任务继续使用原来的模型。", "modelChoice": "服务商与模型", "modelUnavailable": "暂无可选模型。请先在外部连接中配置。", "modelCurrentUnavailable": "当前选择不可用", "modelBusy": "请等待当前回复结束后再切换模型。", "notificationsTitle": "通知",
       "placeholder": "发送消息",
       "rendererContextLimited": "下一条消息只能附带最近更新的部分界面，较早的界面内容不会附带。",
       "stopped": "已停止",
@@ -434,6 +434,10 @@ export async function activate(api) {
     .mosaic-settings p { color:var(--ink-muted); }
     .mosaic-settings-group { display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-3); }
     .mosaic-settings-group h3, .mosaic-settings-group p { margin:0; }
+    .mosaic-settings-group > .plugin-ui-field:has(> .mosaic-model-select) {
+      display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:var(--space-2);width:100%;
+    }
+    .mosaic-model-select { width:100%;min-width:0; }
     .mosaic-model-full { display:none;overflow-wrap:anywhere; }
     @media (max-width:850px) { .mosaic-model-full { display:block; } }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
@@ -735,20 +739,36 @@ export async function activate(api) {
   });
   function PersonalPreferences({ locale, host }) {
     const t = key => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
-    const [model, setModel] = React.useState(null), [selectedModel, setSelectedModel] = React.useState(""), [modelError, setModelError] = React.useState(""), [modelSaving, setModelSaving] = React.useState(false), [modelSaved, setModelSaved] = React.useState(false);
+    const [model, setModel] = React.useState(null), [selectedModel, setSelectedModel] = React.useState(""), [modelError, setModelError] = React.useState(""), [modelSaving, setModelSaving] = React.useState(false);
     const availableModels = (host.settings?.listAvailableModels?.() ?? []).filter(item => item.supportsTools !== false);
     const modelKey = value => JSON.stringify([value.provider, value.model]);
     React.useEffect(() => { let active = true; call("model.get").then(result => { if (active) { setModel(result); setSelectedModel(modelKey(result)); } }).catch(cause => { if (active) setModelError(String(cause)); }); return () => { active = false; }; }, []);
-    const saveModel = async () => { const choice = availableModels.find(item => modelKey(item) === selectedModel); if (!choice || modelSaving) return; setModelSaving(true); setModelError(""); setModelSaved(false); try { const result = await call("model.update", {provider:choice.provider, model:choice.model}); setModel(result); setSelectedModel(modelKey(result)); setModelSaved(true); } catch (cause) { const message = String(cause); setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message); } finally { setModelSaving(false); } };
+    const saveModel = async key => {
+      const choice = availableModels.find(item => modelKey(item) === key);
+      if (!choice || modelSaving || key === modelKey(model)) return;
+      setSelectedModel(key);
+      setModelSaving(true);
+      setModelError("");
+      try {
+        const result = await call("model.update", { provider: choice.provider, model: choice.model });
+        setModel(result);
+        setSelectedModel(modelKey(result));
+      } catch (cause) {
+        setSelectedModel(modelKey(model));
+        const message = String(cause);
+        setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
+      } finally {
+        setModelSaving(false);
+      }
+    };
     const currentAvailable = availableModels.some(item => modelKey(item) === selectedModel);
     return h("section", { className: "mosaic-settings", "data-personal-preferences": true },
       h("section", { className: "mosaic-settings-group" }, h("h3", null, t("modelTitle")), h("p", null, t("modelHelp")), modelError && h("p", {role:"alert"}, modelError), !model ? (!modelError && h(LoadingState, {label:t("modelTitle")})) : h(React.Fragment, null,
-        h(Select, {label:t("modelChoice"), value:selectedModel, disabled:modelSaving || !availableModels.length, onChange:event => {setSelectedModel(event.target.value); setModelSaved(false);} },
+        h(Select, {className:"mosaic-model-select", label:t("modelChoice"), value:selectedModel, disabled:modelSaving || !availableModels.length, onChange:event => void saveModel(event.target.value) },
           !currentAvailable && h("option", {value:selectedModel}, `${model.provider} · ${model.model} (${t("modelCurrentUnavailable")})`),
           ...availableModels.map(item => h("option", {key:modelKey(item),value:modelKey(item)}, `${item.provider} · ${item.label}`))),
         h("p", {className:"mosaic-model-full"}, (() => { const selected = availableModels.find(item => modelKey(item) === selectedModel) ?? model; return `${selected.provider} · ${selected.label || selected.model}`; })()),
-        !availableModels.length && h("p", null, t("modelUnavailable")),
-        h(Button, {disabled:modelSaving || !currentAvailable || selectedModel === modelKey(model), onClick:() => void saveModel()}, t("save")), modelSaved && h("span", {role:"status"}, t("modelSaved")))),
+        !availableModels.length && h("p", null, t("modelUnavailable")))),
       h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
   }
 
