@@ -1,3 +1,4 @@
+import "./ReactDevPerformance";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { ChromeOverlayCommand, ChromeOverlayRendererApi, ChromeOverlayRendererRequest } from "../shared/chromeOverlay";

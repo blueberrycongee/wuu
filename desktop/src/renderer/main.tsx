@@ -1,3 +1,4 @@
+import "./ReactDevPerformance";
 import { flushTerminalCleanup } from "./RendererTerminalCleanup";
 import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
