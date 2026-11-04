@@ -170,23 +170,25 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		// A crash between the terminal write and the recovery-record update
-		// must not make an already-settled turn look interrupted.
+		turns := turnsFromPersistedHistory(rec.ThreadID, history, time.Now().UTC(), s.participantResolver(binding))
+		if len(turns) == 0 {
+			continue
+		}
+		last := turns[len(turns)-1]
+		// A terminal can be persisted before the recovery record is updated.
+		// A replayed input may retain its existing display turn ID.
 		settled := false
 		if rec.State == "running" {
 			for _, message := range history {
 				if strings.EqualFold(message.Role, "meta") && message.Content == turnTerminalHistoryRecord &&
-					message.ClientID == rec.TurnID && message.At.Before(s.recoveryBootAt) {
+					(message.ClientID == rec.TurnID || message.ClientID == last.ID) &&
+					!message.At.Before(rec.AllowedAt) && message.At.Before(s.recoveryBootAt) {
 					settled = true
 					break
 				}
 			}
 		}
 		if settled {
-			continue
-		}
-		turns := turnsFromPersistedHistory(rec.ThreadID, history, time.Now().UTC(), s.participantResolver(binding))
-		if len(turns) == 0 {
 			continue
 		}
 		// A user may start, dismiss, or finish work while history is loading.
@@ -211,7 +213,6 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 		if active {
 			continue
 		}
-		last := turns[len(turns)-1]
 		last.Status = TurnStatusInterrupted
 		thread := entry(relocatedSessionMetadata(meta, s.registeredWorkspaces())).thread
 		thread.Turns = []Turn{last}

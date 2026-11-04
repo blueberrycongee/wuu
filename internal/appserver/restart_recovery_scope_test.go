@@ -21,6 +21,7 @@ func TestRestartRecoveryOnlyLastUnexpectedExit(t *testing.T) {
 	previousBoot := now.Add(-2 * time.Hour)
 	cases := []struct {
 		id, state, reason string
+		recordTurnID      string
 		started           time.Time
 		unexpected        bool
 		terminal          string
@@ -34,6 +35,7 @@ func TestRestartRecoveryOnlyLastUnexpectedExit(t *testing.T) {
 		{id: "user-stopped", state: "idle", started: now.Add(-time.Hour), terminal: "interrupted"},
 		{id: "completed-before-exit", state: "running", started: now.Add(-time.Hour), terminal: "completed"},
 		{id: "failed-before-exit", state: "running", started: now.Add(-time.Hour), terminal: "failed"},
+		{id: "retried-completed", state: "running", recordTurnID: "retried-completed-turn-0002", started: now.Add(-time.Hour), terminal: "completed"},
 	}
 	for _, tc := range cases {
 		if _, err := rt.Sessions.CreateWithMetadata(tc.id, rt.RootDir); err != nil {
@@ -55,8 +57,12 @@ func TestRestartRecoveryOnlyLastUnexpectedExit(t *testing.T) {
 			return err
 		}
 		for _, tc := range cases {
+			turnID := tc.recordTurnID
+			if turnID == "" {
+				turnID = tc.id + "-turn-0001"
+			}
 			if err := tx.Put(restartRecoveryNamespace, tc.id, map[string]any{
-				"thread_id": tc.id, "turn_id": tc.id + "-turn-0001", "state": tc.state,
+				"thread_id": tc.id, "turn_id": turnID, "state": tc.state,
 				"reason": tc.reason, "allowed_at": tc.started, "updated_at": tc.started,
 				"unexpected_exit": tc.unexpected,
 			}); err != nil {
