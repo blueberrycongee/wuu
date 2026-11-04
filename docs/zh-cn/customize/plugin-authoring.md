@@ -319,6 +319,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.settings.get/list` | 声明的设置值 |
 | `host.credentials.request` | 使用宿主持有的 Bearer 凭据向限定 HTTPS 来源发送请求 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
+| `host.session.model` | 通过有效的所有者界面读取或修改插件拥有的用户空间会话模型 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
 | `host.workspace.status/apply/discard` | 检查或处理所拥有会话工作区中的改动 |
 | `execution.update` | 报告活动执行的进展 |
@@ -329,6 +330,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。 返回结果描述最终完成的比较：`swapped: false` 返回当前值，`swapped: true` 返回替换后的值（删除后为 `null`）。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
+
+`host.session.model` 读取调用插件所拥有会话的当前 provider 和模型。修改时须同时提供 `provider` 和 `model`。调用需要同一用户空间内有效的所有者界面，并检查会话归属；会话忙碌时拒绝修改。成功的选择保存在该会话中，不修改其他会话或全局默认值。已获准的委派任务保留自身的授权和模型选择。此服务不配置凭据，也不选择外部引擎。
 
 `host.session.list` 的 owned 结果，以及调用插件所拥有会话的 `host.session.inspect` 结果，在可用时包含 `creation_request_id`。该字段是原始 `host.session.create` 请求 ID，在首个轮次开始前也可返回，因此插件能发现已被接纳但响应丢失的创建请求。shared 列表和对其他所有者会话的检查不返回此字段。它仅用于请求关联，不授予会话控制权限。
 

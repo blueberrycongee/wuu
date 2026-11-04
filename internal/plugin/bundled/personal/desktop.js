@@ -1402,6 +1402,14 @@ ${personalReviewStyles}
         "oversizedAttachment": "This attachment exceeds the 20 MB download limit.",
         "today": "Today",
         "settings": "Settings",
+        "modelTitle": "Model",
+        "modelHelp": "Used for twin replies and new tasks. Existing tasks keep their model.",
+        "modelChoice": "Provider and model",
+        "modelUnavailable": "No configured models are available. Add a connection in External connections.",
+        "modelCurrentUnavailable": "Current selection is unavailable",
+        "modelSaved": "Model saved",
+        "modelBusy": "Wait for the current reply to finish before changing the model.",
+        "notificationsTitle": "Notifications",
         "placeholder": "Message",
         "rendererContextLimited": "Only the most recently updated interfaces fit in the next message; older interface values will be omitted.",
         "stopped": "Stopped",
@@ -1521,6 +1529,14 @@ ${personalReviewStyles}
         "oversizedAttachment": "\u9644\u4EF6\u8D85\u8FC7 20 MB \u4E0B\u8F7D\u4E0A\u9650\u3002",
         "today": "\u4ECA\u5929",
         "settings": "\u8BBE\u7F6E",
+        "modelTitle": "\u6A21\u578B",
+        "modelHelp": "\u7528\u4E8E twin \u56DE\u590D\u548C\u65B0\u4EFB\u52A1\u3002\u5DF2\u6709\u4EFB\u52A1\u7EE7\u7EED\u4F7F\u7528\u539F\u6765\u7684\u6A21\u578B\u3002",
+        "modelChoice": "\u670D\u52A1\u5546\u4E0E\u6A21\u578B",
+        "modelUnavailable": "\u6682\u65E0\u53EF\u9009\u6A21\u578B\u3002\u8BF7\u5148\u5728\u5916\u90E8\u8FDE\u63A5\u4E2D\u914D\u7F6E\u3002",
+        "modelCurrentUnavailable": "\u5F53\u524D\u9009\u62E9\u4E0D\u53EF\u7528",
+        "modelSaved": "\u6A21\u578B\u5DF2\u4FDD\u5B58",
+        "modelBusy": "\u8BF7\u7B49\u5F85\u5F53\u524D\u56DE\u590D\u7ED3\u675F\u540E\u518D\u5207\u6362\u6A21\u578B\u3002",
+        "notificationsTitle": "\u901A\u77E5",
         "placeholder": "\u53D1\u9001\u6D88\u606F",
         "rendererContextLimited": "\u4E0B\u4E00\u6761\u6D88\u606F\u53EA\u80FD\u9644\u5E26\u6700\u8FD1\u66F4\u65B0\u7684\u90E8\u5206\u754C\u9762\uFF0C\u8F83\u65E9\u7684\u754C\u9762\u5185\u5BB9\u4E0D\u4F1A\u9644\u5E26\u3002",
         "stopped": "\u5DF2\u505C\u6B62",
@@ -1794,6 +1810,10 @@ ${personalReviewStyles}
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
     .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
     .mosaic-settings p { color:var(--ink-muted); }
+    .mosaic-settings-group { display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-3); }
+    .mosaic-settings-group h3, .mosaic-settings-group p { margin:0; }
+    .mosaic-model-full { display:none;overflow-wrap:anywhere; }
+    @media (max-width:850px) { .mosaic-model-full { display:block; } }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -2228,44 +2248,70 @@ ${personalReviewStyles}
       }
       draftListeners.forEach((listener) => listener());
     });
-    function PersonalPreferences({ locale }) {
+    function PersonalPreferences({ locale, host }) {
       const t = (key) => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
-      const [preferences, setPreferences] = React.useState(null), [error, setError] = React.useState(""), [saving, setSaving] = React.useState(false);
+      const [model, setModel] = React.useState(null), [selectedModel, setSelectedModel] = React.useState(""), [modelError, setModelError] = React.useState(""), [modelSaving, setModelSaving] = React.useState(false), [modelSaved, setModelSaved] = React.useState(false);
+      const availableModels = (host.settings?.listAvailableModels?.() ?? []).filter((item) => item.supportsTools !== false);
+      const modelKey = (value) => JSON.stringify([value.provider, value.model]);
       React.useEffect(() => {
         let active = true;
-        call("settings.get").then((result2) => {
-          if (active) setPreferences(result2.settings);
+        call("model.get").then((result2) => {
+          if (active) {
+            setModel(result2);
+            setSelectedModel(modelKey(result2));
+          }
         }).catch((cause) => {
-          if (active) setError(String(cause));
+          if (active) setModelError(String(cause));
         });
         return () => {
           active = false;
         };
       }, []);
-      const save = async () => {
-        if (saving) return;
-        setSaving(true);
-        setError("");
+      const saveModel = async () => {
+        const choice = availableModels.find((item) => modelKey(item) === selectedModel);
+        if (!choice || modelSaving) return;
+        setModelSaving(true);
+        setModelError("");
+        setModelSaved(false);
         try {
-          const result2 = await call("settings.update", { expected_revision: preferences.revision, notifications: preferences.notifications, quiet_hours: preferences.quiet_hours, notification_batch_seconds: preferences.notification_batch_seconds ?? 0 });
-          setPreferences(result2.settings);
+          const result2 = await call("model.update", { provider: choice.provider, model: choice.model });
+          setModel(result2);
+          setSelectedModel(modelKey(result2));
+          setModelSaved(true);
         } catch (cause) {
-          setError(String(cause));
+          const message = String(cause);
+          setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
         } finally {
-          setSaving(false);
+          setModelSaving(false);
         }
       };
-      return h("section", { className: "mosaic-settings", "data-personal-preferences": true }, error && h("p", { role: "alert" }, error), !preferences ? h(LoadingState, { label: "twin" }) : h(
-        React.Fragment,
-        null,
-        h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: (event) => setPreferences({ ...preferences, notifications: event.target.checked }) }),
-        h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: (event) => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
-        h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-        h("div", { className: "mosaic-actions" }, h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }), h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
-        h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: (event) => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) }),
-        h(Button, { "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")),
-        h("p", null, t("memoryHint"))
-      ), h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
+      const currentAvailable = availableModels.some((item) => modelKey(item) === selectedModel);
+      return h(
+        "section",
+        { className: "mosaic-settings", "data-personal-preferences": true },
+        h("section", { className: "mosaic-settings-group" }, h("h3", null, t("modelTitle")), h("p", null, t("modelHelp")), modelError && h("p", { role: "alert" }, modelError), !model ? !modelError && h(LoadingState, { label: t("modelTitle") }) : h(
+          React.Fragment,
+          null,
+          h(
+            Select,
+            { label: t("modelChoice"), value: selectedModel, disabled: modelSaving || !availableModels.length, onChange: (event) => {
+              setSelectedModel(event.target.value);
+              setModelSaved(false);
+            } },
+            !currentAvailable && h("option", { value: selectedModel }, `${model.provider} \xB7 ${model.model} (${t("modelCurrentUnavailable")})`),
+            ...availableModels.map((item) => h("option", { key: modelKey(item), value: modelKey(item) }, `${item.provider} \xB7 ${item.label}`))
+          ),
+          h("p", { className: "mosaic-model-full" }, (() => {
+            const selected = availableModels.find((item) => modelKey(item) === selectedModel) ?? model;
+            return `${selected.provider} \xB7 ${selected.label || selected.model}`;
+          })()),
+          !availableModels.length && h("p", null, t("modelUnavailable")),
+          h(Button, { disabled: modelSaving || !currentAvailable || selectedModel === modelKey(model), onClick: () => void saveModel() }, t("save")),
+          modelSaved && h("span", { role: "status" }, t("modelSaved"))
+        )),
+        h(settingsPanels.Connections),
+        h(settingsPanels.Review, { locale })
+      );
     }
     let identityAgent;
     const identityListeners = /* @__PURE__ */ new Set();

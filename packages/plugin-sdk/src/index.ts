@@ -152,6 +152,7 @@ export interface SettingsAvailableModelV1 {
   readonly model: string;
   readonly label: string;
   readonly variants: readonly string[];
+  readonly supportsTools?: boolean;
 }
 
 export interface SettingsValueMapV1 {
@@ -803,6 +804,7 @@ export const HOST_SERVICE_METHODS = [
   "host.session.inspect",
   "host.session.context",
   "host.session.control",
+  "host.session.model",
   "host.session.attachment.read",
   "host.session.history.read",
   "host.session.history.search",
@@ -846,6 +848,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.inspect": "host.session.inspect",
   "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
@@ -1640,6 +1643,10 @@ export interface HostServiceContracts {
   "host.session.control": {
     params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; state?: "active" | "paused" | "released"; revision?: number };
     result: { session_id: string; manager_id?: string; state?: string; revision: number };
+  };
+  "host.session.model": {
+    params: { session_id: string; provider?: string; model?: string };
+    result: { provider: string; model: string };
   };
   "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: { session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string } };
   "host.session.inspect": {

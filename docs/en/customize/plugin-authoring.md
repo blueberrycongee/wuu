@@ -366,6 +366,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.settings.get/list` | Declared setting values |
 | `host.credentials.request` | Origin-bound HTTPS requests using a host-held Bearer credential |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
+| `host.session.model` | Read or change a plugin-owned user-space session’s model from a live owner UI |
 | `host.session.history.read/search` | Bounded history access with sequence snapshots and continuation cursors |
 | `host.workspace.status/apply/discard` | Inspect or resolve work from an owned session workspace |
 | `execution.update` | Progress for a live execution |
@@ -376,6 +377,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON. The result describes the completed comparison: `swapped: false` returns the current value, while `swapped: true` returns the replacement value (`null` after deletion).
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
+
+`host.session.model` reads the current provider and model for a session owned by the calling plugin. To change it, supply both `provider` and `model`. The call requires a live owner UI in the same user space, checks session ownership, and rejects a change while the session is busy. An accepted selection is persisted to that session; other sessions and global defaults are unchanged. Previously admitted delegated work retains its own authorization and selection. This service does not configure credentials or select an external engine.
 
 Owned `host.session.list` results and `host.session.inspect` for a session owned by the calling plugin include `creation_request_id` when available. It is the original `host.session.create` request ID, including before the first turn starts, so a plugin can discover an accepted creation whose response was lost. Shared lists and inspection of another owner’s session omit it. This is correlation metadata, not authority to control the session.
 

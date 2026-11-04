@@ -23,9 +23,17 @@ app.whenReady().then(async()=>{
   assert.equal(await evaluate(()=>Boolean(document.querySelector('[data-action="save-notifications"]'))),true);
   await evaluate(()=>document.querySelector('[data-personal-preferences]').scrollIntoView({block:'start'}));
   await capture('settings-light-wide');
+  await until(()=>document.querySelector('[data-personal-preferences] select')?.options.length === 2);
+  await evaluate(()=>{const select=document.querySelector('[data-personal-preferences] select');select.value=Array.from(select.options).find(option=>option.textContent.includes('model-two')).value;select.dispatchEvent(new Event('change',{bubbles:true}));});
+  await evaluate(()=>Array.from(document.querySelectorAll('[data-personal-preferences] button')).find(button=>button.textContent==='保存修改' && !button.disabled).click());
+  await until(()=>Array.from(document.querySelectorAll('[role="status"]')).some(node=>node.textContent.includes('模型已保存')));
+  assert.deepEqual(await evaluate(()=>window.__modelFixture.calls),[{provider:'synthetic-two',model:'model-two'}]);
+  await capture('settings-model-selected');
   await evaluate(()=>document.querySelector('[data-personal-connections]').scrollIntoView({block:'start'}));await capture('settings-connections-light');
   await evaluate(()=>{Array.from(document.querySelectorAll('.mosaic-fixture-label button')).find(el=>el.textContent==='明 / 暗').click();document.documentElement.style.setProperty('--conversation-message-font-size','20px');});
   win.setContentSize(680,900);
+  await evaluate(()=>document.querySelector('[data-personal-preferences]').scrollIntoView({block:'start'}));
+  await capture('settings-model-dark-large-narrow');
   await evaluate(()=>document.querySelector('.personal-review').scrollIntoView({block:'center'}));
   await capture('settings-dark-large-narrow');
   const geometry=await evaluate(()=>{const el=document.querySelector('[data-personal-preferences]');return{width:el.clientWidth,scrollWidth:el.scrollWidth,text:el.textContent,reviewButtons:el.querySelectorAll('[data-review-choice]').length};});
@@ -50,7 +58,7 @@ app.whenReady().then(async()=>{
   await capture('settings-stale-calendar');
   const stale=await evaluate(()=>({alert:document.querySelector('.gcal-view > .gcal-notice')?.textContent,event:document.querySelector('.gcal-event')?.textContent}));
   assert.ok(stale.event.includes('合成日程'));
-  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI; synthetic transport, no Google/account/model',route:'Account menu → Settings → Plugins → twin',cases:['existing account menu entry','exact plugin view','notification fields retained','Calendar unavailable','review unavailable with no approval buttons','light wide','dark 20px narrow','actual CAS error/stale retains old event and alerts','old attempt diagnostic separate from connected Calendar'],geometry,stale},null,2));
+  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI; synthetic transport, no Google/account/model',route:'Account menu → Settings → Plugins → twin',cases:['model selection sends provider and model','existing account menu entry','exact plugin view','notification fields retained','Calendar unavailable','review unavailable with no approval buttons','light wide','dark 20px narrow','actual CAS error/stale retains old event and alerts','old attempt diagnostic separate from connected Calendar'],geometry,stale},null,2));
   clearTimeout(watchdog);app.exit(0);
 }).catch(async error=>{
   fs.writeFileSync(path.join(output,'error.txt'),String(error.stack||error));

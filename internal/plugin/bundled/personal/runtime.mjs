@@ -567,6 +567,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.inspect": "host.session.inspect",
   "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
@@ -2909,7 +2910,7 @@ var routeActions = ["session/route/send", "session/route/inspect", "session/rout
 var existingTargetSchema = { type: "object", additionalProperties: false, properties: { version: { type: "integer", const: 1 }, execution_host: { type: "string" }, session_id: { type: "string" }, storage_host: { type: "string" }, display_host: { type: "string" } }, required: ["version", "execution_host", "session_id"] };
 var string2 = { type: "string" };
 var integer = { type: "integer", minimum: 0 };
-var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "model.get", "model.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 var PersonalPlugin = class {
   concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle", "agent.request.transform"];
   concurrentServices = [service, "automation.trigger", PERSONAL_MEMORY_SERVICE, "agent.prompt", "personal.recovery"];
@@ -2967,7 +2968,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
       needsAuthorization: async (routineID) => (await this.list("task")).some((task) => task.routine_id === routineID && task.authorization_state === "needs_authorization" && !terminalTask(task)),
       preferences: () => this.preferences()
     });
-    const services = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
+    const services = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.model", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3,
       required_services: [{ name: "agent.tools", major_version: 1, required: false }, { name: "session.transport", major_version: 1, required: false }, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
@@ -5063,6 +5064,12 @@ ${t.result?.summary ?? t.worker_result?.text ?? ""}`.toLocaleLowerCase().include
         const params = { ...input, session_id: agent.main_session_id };
         delete params.agent_id;
         return this.host.call("host.service.call", { service: "calendar.personal", method: method.slice(9), params });
+      }
+      case "model.get":
+      case "model.update": {
+        if (!ownerClient || !clientHost) throw new Error("Model selection requires a live owner client");
+        const agent = await this.main();
+        return clientHost.call("host.session.model", { session_id: agent.main_session_id, ...method === "model.update" ? { provider: text3(input, "provider", true), model: text3(input, "model", true) } : {} }, { signal: execution?.signal });
       }
       case "settings.get":
         return { settings: await this.preferences() };

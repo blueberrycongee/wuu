@@ -238,6 +238,8 @@ let offline=false, empty=false;
 let calendarReads=0;
 const calendarFixture=new URLSearchParams(location.search).get("calendar")==="stale";
 let fixtureActivity: "idle" | "thinking" | "responding" = "idle";
+const modelFixture = { selection:{provider:"synthetic",model:"synthetic"}, calls:[] as Array<Record<string,unknown>> };
+Object.assign(window, {__modelFixture:modelFixture});
 let settings={revision:1,quiet_hours:{enabled:true,start:"22:00",end:"08:00",timezone:"Asia/Shanghai"},notifications:true,notification_batch_seconds:0};
 const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({method,input,userInput})=>{
   if(offline)throw new Error("演示：宿主暂时离线。未发送的内容会保留，请连接后重试。");
@@ -368,6 +370,8 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
       if (reviewScenario === "lost-ack")throw new Error("响应丢失；请刷新核对已保存的状态，不要重复提交。");
       return {ok:true,value:reviewValue()};
     }
+    case "model.get":return {...modelFixture.selection};
+    case "model.update":modelFixture.calls.push(structuredClone(data)); modelFixture.selection={provider:data.provider,model:data.model}; return {...modelFixture.selection};
     case "settings.get":return {settings};
     case "settings.update":settings={...settings,...data,revision:settings.revision+1};return {settings};
     default:throw new Error(`Unsupported synthetic operation: ${method}`);

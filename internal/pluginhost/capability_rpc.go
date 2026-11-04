@@ -217,6 +217,7 @@ const (
 	// visibility, provenance, and idempotency remain explicit.
 	HostServiceSessionCreate          HostServiceMethod = "host.session.create"
 	HostServiceSessionControl         HostServiceMethod = "host.session.control"
+	HostServiceSessionModel           HostServiceMethod = "host.session.model"
 	HostServiceSessionSend            HostServiceMethod = "host.session.send"
 	HostServiceSessionList            HostServiceMethod = "host.session.list"
 	HostServiceSessionCancel          HostServiceMethod = "host.session.cancel"
@@ -468,6 +469,18 @@ type SessionCancelResult struct {
 	TurnID    string `json:"turn_id,omitempty"`
 	QueueID   string `json:"queue_id,omitempty"`
 	Cancelled bool   `json:"cancelled"`
+}
+
+// SessionModelParams reads or replaces one owned session's model selection.
+// Provider and Model must both be supplied for a change.
+type SessionModelParams struct {
+	SessionID string `json:"session_id"`
+	Provider  string `json:"provider,omitempty"`
+	Model     string `json:"model,omitempty"`
+}
+type SessionModelResult struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 type SessionInspectParams struct {
