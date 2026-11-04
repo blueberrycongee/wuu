@@ -95,10 +95,10 @@ function EventSessionName({ item, session }: { item: ThreadItem; session: Projec
   const name = session ? baseThreadTitle(session) : item.name?.trim() || t("projects.event.aSession");
   if (!session || !actions) return <span className="project-event-name"><span>{name}</span></span>;
   return (
-    <Tooltip asChild content={t("projects.openSession")}><button aria-description={t("projects.openSession")} type="button" className="project-event-name" onClick={() => actions.openThread(session.id)}>
+    <button aria-description={t("projects.openSession")} type="button" className="project-event-name" onClick={() => actions.openThread(session.id)}>
       <MessagesSquare aria-hidden="true" />
       <span>{name}</span>
-    </button></Tooltip>
+    </button>
   );
 }
 
