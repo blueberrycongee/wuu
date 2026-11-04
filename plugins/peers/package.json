@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=peers"
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=peers",
+    "test": "node --experimental-strip-types --test test/addressing.test.ts"
   },
   "wuu": {
     "dev": {
