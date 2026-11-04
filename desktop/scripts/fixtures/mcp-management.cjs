@@ -315,7 +315,14 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => window.wuu.setThemePreference("dark"));
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
       win.setSize(800, 900);
-      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: "center" }), row);
+      // Configuration publication can replace the row after import. Resolve
+      // and scroll it in the same renderer turn once it is available again.
+      await until(selector => {
+        const node = document.querySelector(selector);
+        if (!node) return false;
+        node.scrollIntoView({ block: "center" });
+        return true;
+      }, row);
       await capture("mcp-dark-narrow-large");
       await click([row, "编辑"]);
       await until(() => document.querySelector(".mcp-editor"));
