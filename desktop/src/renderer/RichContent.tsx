@@ -1237,7 +1237,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
   return (
     <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
       {state.status === "rendered" ? (
-        <Tooltip asChild content={t("rich.enlargeDiagram")}><button
+        <button
           type="button"
           className="rich-mermaid-diagram"
           aria-label={t("rich.enlargeDiagram")}
@@ -1260,7 +1260,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
             });
           }}
           dangerouslySetInnerHTML={{ __html: state.svg }}
-        /></Tooltip>
+        />
       ) : state.status === "error" ? (
         <div className="rich-mermaid-error">
           <span>{state.message}</span>
