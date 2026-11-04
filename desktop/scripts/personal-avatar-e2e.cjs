@@ -183,6 +183,9 @@ async function assertBlink() {
   }
 }
 async function assertHover() {
+  // A prior keyboard interaction can leave the trigger focus-visible, which
+  // applies the same transform as hover and masks the mouse transition.
+  await evaluate(() => document.activeElement?.blur());
   win.webContents.sendInputEvent({ type: 'mouseMove', x: 600, y: 500 });
   await delay(500);
   const read = () => evaluate(() => {
