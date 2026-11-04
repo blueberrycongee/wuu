@@ -131,7 +131,7 @@ interface NegativeFeedback extends Versioned {
 interface FeedbackBarrier extends Versioned { message_seq: number }
 interface ReactionFeed extends Versioned { messages: Array<{ seq: number }> }
 interface Settings extends Versioned { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean; notification_batch_seconds?: number }
-const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "model.get", "model.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle", "agent.request.transform"];
@@ -186,7 +186,7 @@ export class PersonalPlugin implements RuntimePlugin {
       needsAuthorization: async routineID => (await this.list<PersonalTask>("task")).some(task => task.routine_id === routineID && task.authorization_state === "needs_authorization" && !terminalTask(task)),
       preferences: () => this.preferences(),
     });
-    const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
+    const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.model", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3 as const,
       required_services: [{name:"agent.tools",major_version:1,required:false},{name:"session.transport",major_version:1,required:false}, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
@@ -333,7 +333,8 @@ export class PersonalPlugin implements RuntimePlugin {
     const saved = (await this.read<Settings>("settings", "preferences")).value;
     const notification_batch_seconds = saved?.notification_batch_seconds ?? 0;
     if (!Number.isSafeInteger(notification_batch_seconds) || notification_batch_seconds < 0 || notification_batch_seconds > 900) throw new Error("notification_batch_seconds must be an integer from 0 to 900");
-    return { ...(saved ?? { revision: 0, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" }, notifications: true }), notification_batch_seconds };
+    const settings = saved ?? { revision: 0, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" }, notifications: true };
+    return { ...settings, quiet_hours: { ...settings.quiet_hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, notification_batch_seconds };
   }
   private async agent(agentID: string, allowInactive = false): Promise<NamedAgent> {
     const { value } = await this.read<NamedAgent>("agent", agentID);
@@ -2000,6 +2001,11 @@ export class PersonalPlugin implements RuntimePlugin {
         const agent = await this.conversation(input, true);
         const params: Record<string, unknown> = { ...input, session_id: agent.main_session_id }; delete params.agent_id;
         return this.host.call("host.service.call", { service: "calendar.personal", method: method.slice(9), params });
+      }
+      case "model.get": case "model.update": {
+        if (!ownerClient || !clientHost) throw new Error("Model selection requires a live owner client");
+        const agent = await this.main();
+        return clientHost.call("host.session.model", { session_id: agent.main_session_id, ...(method === "model.update" ? {provider:text(input, "provider", true), model:text(input, "model", true)} : {}) }, { signal: execution?.signal });
       }
       case "settings.get": return { settings: await this.preferences() };
       case "settings.update": {

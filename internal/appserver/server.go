@@ -525,6 +525,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 				return s.controlPluginSession(binding, ctx, pluginID, p)
 			},
 		)
+		unbindModel := rt.PluginSessionRouter.BindModel(s.pluginSessionModel)
 		unbindAuthorization := rt.PluginSessionRouter.BindExecutionAuthorization(rt.HandleExecutionAuthorization)
 		unbindSessionAccess := rt.PluginSessionRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, sessionID string, reference *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
 			if strings.HasPrefix(operation, "personal/") {
@@ -554,7 +555,14 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		})
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
 		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient(); unbindAuthorization(); unbindSessionAccess() }
+		s.pluginTurnUnbind = func() {
+			unbindTurns()
+			unbindModel()
+			unbindProcesses()
+			unbindClient()
+			unbindAuthorization()
+			unbindSessionAccess()
+		}
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
