@@ -333,8 +333,8 @@ export class PersonalPlugin implements RuntimePlugin {
     const saved = (await this.read<Settings>("settings", "preferences")).value;
     const notification_batch_seconds = saved?.notification_batch_seconds ?? 0;
     if (!Number.isSafeInteger(notification_batch_seconds) || notification_batch_seconds < 0 || notification_batch_seconds > 900) throw new Error("notification_batch_seconds must be an integer from 0 to 900");
-    const settings = saved ?? { revision: 0, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" }, notifications: true };
-    return { ...settings, quiet_hours: { ...settings.quiet_hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, notification_batch_seconds };
+    const settings = saved ?? { revision: 0, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, notifications: true };
+    return { ...settings, notification_batch_seconds };
   }
   private async agent(agentID: string, allowInactive = false): Promise<NamedAgent> {
     const { value } = await this.read<NamedAgent>("agent", agentID);
