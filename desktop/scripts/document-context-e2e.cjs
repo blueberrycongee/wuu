@@ -647,7 +647,7 @@ async function run() {
   const seededSessions = [
     { session: { id: splitID, created_at: stamp, updated_at: stamp, title: 'Split PDF fixture', cwd: project,
       workspace_id: 'repo', provider: 'fixture', model: 'fixture' }, history: [
-      { role: 'user', content: 'Related PDF context fixture', origin: 'host', presentation_kind: 'session_message',
+      { role: 'user', content: 'Related PDF context fixture', display_content: 'PDF context', origin: 'host',
         related_session_id: relatedID, read_only: true, name: 'Related PDF fixture', at: stamp },
       { role: 'assistant', content: 'Workspace file: [working PDF](guide.pdf).', at: stamp },
     ] },
@@ -664,10 +664,10 @@ async function run() {
   }
   await waitFor(() => [...document.querySelectorAll('.thread-row-title')].some(title => title.textContent === 'Split PDF fixture'));
   await evaluate(() => [...document.querySelectorAll('.thread-row')].find(row => row.querySelector('.thread-row-title')?.textContent === 'Split PDF fixture').querySelector('.thread-row-main').click());
-  await waitFor(id => document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="${id}"] .session-message-source:not(:disabled)`), splitID);
+  await waitFor(id => document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="${id}"] .message-action-button[aria-label="Open related session"]:not(:disabled)`), splitID);
   threadID = splitID;
   if (await evaluate(() => document.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute('aria-expanded') === 'true')) await click('[data-wuu-component="right-sidebar-toggle"]');
-  await click('.session-message-source:not(:disabled)');
+  await click('.message-action-button[aria-label="Open related session"]:not(:disabled)');
   await waitFor(() => document.querySelectorAll('.conversation-split-pane').length === 2);
   assert.deepEqual(await evaluate(() => [...document.querySelectorAll('.conversation-split-pane')].map(pane => pane.dataset.threadId)), [threadID, relatedID]);
   // A mounted split is not yet an editable owner. Native activation and an

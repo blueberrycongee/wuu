@@ -238,7 +238,7 @@ if (rootStress) {
   }
 }
 if (presentationMode) {
-  Object.assign(seeds[0].history.at(-2), { origin: 'host', presentation_kind: 'session_message', related_session_id: 'switch-related', name: 'Related conversation' });
+  Object.assign(seeds[0].history.at(-2), { origin: 'host', display_content: 'Related conversation context', related_session_id: 'switch-related', name: 'Related conversation' });
   seeds.push({ session: { ...seeds[0].session, id: 'switch-related', title: 'Related conversation' },
     history: [{ role: 'user', content: 'Related split question', at: stamp }, { role: 'assistant', content: 'Related split answer', at: stamp }] });
 }
