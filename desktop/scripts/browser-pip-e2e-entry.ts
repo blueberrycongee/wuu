@@ -282,6 +282,10 @@ app.whenReady().then(async () => {
   }
   await request("browser/open_tab", { initial_url: `data:text/html,${encodeURIComponent(page)}` });
   const contents = views[0].webContents;
+  const viewport = (): Promise<{ width: number; height: number }> => contents.executeJavaScript(
+    "({ width: innerWidth, height: innerHeight })",
+  );
+  const originalViewport = await viewport();
   const factory = createObservationPiPFactory({ browserHost: host, isPackaged: false, parent: () => main });
   const coordinator = new ObservationCoordinator(
     { mainWindow: () => main } as unknown as WindowRegistry, undefined,
@@ -335,6 +339,45 @@ app.whenReady().then(async () => {
   assert.equal(await contents.executeJavaScript("window.sessionSwitchProbe"), 42, "The hidden browser remains operational");
   coordinator.setActiveThread(activity.thread_id);
   await waitFor("returning restores preview", () => pip.isVisible());
+
+  // Docking resizes the live page, but closing must restore its background
+  // layout before PiP reads it. Exercise repeated resize/dock/close cycles,
+  // including a close with no visible preview to perform the restoration.
+  const viewportCycles: Array<{ close: string; panel: { width: number; height: number }; restored?: { width: number; height: number } }> = [];
+  try {
+    for (const close of ["panel", "tool", "background"]) {
+      for (const width of [600, 400]) {
+        host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle,
+          { x: 20, y: 42, width, height: 620 }, 1, true);
+        await waitFor("docked page viewport", async () => (await viewport()).width === width);
+      }
+      await waitFor("docked preview hidden", () => !pip.isVisible());
+      const cycle: (typeof viewportCycles)[number] = { close, panel: await viewport() };
+      viewportCycles.push(cycle);
+      if (close === "background") coordinator.setActiveThread("other-thread");
+      if (close === "tool") await request("browser/set_visibility", { visible: false });
+      else host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle, null, 1);
+      // Hidden tabs apply layout when an agent operation wakes the renderer.
+      if (close === "background") await request("browser/screenshot", {
+        dest_path: join(artifacts, "background-after-panel-close.png"),
+      });
+      await waitFor("closing panel restores original page viewport", async () => {
+        cycle.restored = await viewport();
+        return cycle.restored.width === originalViewport.width && cycle.restored.height === originalViewport.height;
+      });
+      if (close === "background") {
+        assert.equal(pip.isVisible(), false);
+        coordinator.setActiveThread(activity.thread_id);
+      }
+      await waitFor("closed panel preview restored", () => pip.isVisible());
+      assert.deepEqual(await viewport(), originalViewport, "PiP preserves the restored layout viewport");
+      assert.equal(await contents.executeJavaScript("window.sessionSwitchProbe"), 42, "Docking retains the live page");
+    }
+    await capture(pip, "pip-after-panel-close.png");
+  } finally {
+    writeFileSync(join(artifacts, "panel-viewport.json"), JSON.stringify({ originalViewport, cycles: viewportCycles }, null, 2));
+  }
+
   const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
   const pointer = (wc: typeof contents) => wc.executeJavaScript(`(() => {
     const el = document.getElementById('__wuu_agent_cursor');
@@ -500,7 +543,7 @@ app.whenReady().then(async () => {
   await coordinator.shutdown();
   host.destroyAll();
   assert.ok(pip.isDestroyed());
-  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion auto-dismiss/reopen/cancellation, PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
+  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking and viewport restoration, completion auto-dismiss/reopen/cancellation, PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
   main.destroy();
   app.exit(0);
 }).catch((error) => { console.error(error); app.exit(1); });
