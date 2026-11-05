@@ -75,9 +75,7 @@ function useCatalog(): ApplicationCatalogV1 {
 
 export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
  const catalog = props.application.catalog.getSnapshot();
- const ownerKey = JSON.stringify([catalog.contextKey, catalog.inventory.filter(item => item.kind === "plugin")
-   .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
- return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey} catalog={props.application.catalog}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={catalog.contextKey} catalog={props.application.catalog}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
 }
 type SkillsCatalogProps = {
  application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};
@@ -208,6 +206,16 @@ function SkillsCatalogView({
     () => extensionInventory.filter((record) => record.kind === "plugin"),
     [extensionInventory],
   );
+  const inventoryKey = JSON.stringify([catalogSnapshot.contextKey, plugins
+    .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
+  const lastInventoryKey = useRef(inventoryKey);
+  useEffect(() => {
+    if (lastInventoryKey.current === inventoryKey) return;
+    lastInventoryKey.current = inventoryKey;
+    // Package changes republish MCP connectors. Refresh in place instead of
+    // keying the provider by inventory, which would tear down the visible rows.
+    void refreshMCP();
+  }, [inventoryKey, refreshMCP]);
 
   const reportedDiagnostics = useRef<{ contextKey: string; messages: Set<string> }>({ contextKey, messages: new Set() });
   useEffect(() => {
@@ -525,6 +533,7 @@ function SkillsCatalogView({
           className="settings-button settings-button-primary catalog-add"
           type="button"
           disabled={Boolean(packageMutation)}
+          data-mutation-blocked={Boolean(packageMutation) || undefined}
           aria-haspopup="menu"
           aria-expanded={Boolean(addMenu)}
           onClick={event => {
@@ -870,7 +879,7 @@ function PluginDetailPage({
         </span>
         <div className="plugin-page-actions">
           {record.runtime_state === "failed" ? (
-            <button type="button" className="settings-button" disabled={reloading || Boolean(packageMutation)} onClick={onReload}>
+            <button type="button" className="settings-button" disabled={reloading || Boolean(packageMutation)} data-mutation-blocked={Boolean(packageMutation) || undefined} onClick={onReload}>
               {t("skills.pluginRetryStart")}
             </button>
           ) : null}
@@ -881,6 +890,7 @@ function PluginDetailPage({
               aria-label={t("skills.pluginMoreActions", { name: record.name })}
               aria-haspopup="menu"
               disabled={Boolean(packageMutation) || !canInstall}
+              data-mutation-blocked={Boolean(packageMutation) || undefined}
               onClick={(event) => onMoreActions(event.currentTarget)}
             >
               <MoreHorizontal className="icon" aria-hidden="true" />
@@ -891,6 +901,7 @@ function PluginDetailPage({
               type="button"
               className="settings-button settings-button-primary"
               disabled={Boolean(packageMutation) || grantUnavailable}
+              data-mutation-blocked={Boolean(packageMutation) || undefined}
               onClick={() => onPrimaryAction(primaryAction)}
             >
               {mutating ? t("skills.pluginUpdating") : extensionPackageActionLabel(record, primaryAction, t)}
@@ -900,6 +911,7 @@ function PluginDetailPage({
               checked={toggle.on}
               aria-label={t(toggle.on ? "skills.pluginDisableNamed" : "skills.pluginEnableNamed", { name: record.name })}
               disabled={Boolean(packageMutation)}
+              data-mutation-blocked={Boolean(packageMutation) || undefined}
               onClick={onToggle}
             />
           )}
@@ -1062,6 +1074,7 @@ function PluginRow({
         aria-haspopup={canEnable ? undefined : "menu"}
         aria-expanded={canEnable ? undefined : Boolean(menu)}
         disabled={toggleDisabled || (canEnable && (toggleUnavailable || !onToggle))}
+        data-mutation-blocked={(toggleDisabled && !toggleUnavailable) || undefined}
         aria-busy={toggleBusy || undefined}
         onClick={event => {
           if (canEnable) { onToggle?.(); return; }

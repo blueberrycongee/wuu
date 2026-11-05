@@ -230,10 +230,10 @@ function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView 
         </div>
         <div className="mcp-service-actions">
           {enabled && server.state !== "disabled" && !(catalogView && server.connected) ? <>
-            {catalogView && !needsAuth ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("mcp.connect")} title={t("mcp.connect")} disabled={!!busy} onClick={() => void act(server.name, "connect", () => controls.connectMCPServer(server.name))}><Plus className="icon" aria-hidden="true" /></button> : needsAuth ? <button type="button" className="settings-button" disabled={!!busy} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
-              : <button type="button" className="settings-button" disabled={!!busy} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
+            {catalogView && !needsAuth ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("mcp.connect")} title={t("mcp.connect")} disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => void act(server.name, "connect", () => controls.connectMCPServer(server.name))}><Plus className="icon" aria-hidden="true" /></button> : needsAuth ? <button type="button" className="settings-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
+              : <button type="button" className="settings-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
           </> : null}
-          {actions.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={!!busy}
+          {actions.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined}
             aria-label={t("provider.moreActions", { name })} aria-haspopup="menu" aria-expanded={menu?.name === server.name}
             onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ name: server.name, x: bounds.right, y: bounds.bottom }); }}>
             <MoreHorizontal className="icon" aria-hidden="true" />
@@ -517,7 +517,8 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
   }
 
   if (!visible.length && !loginAvailable && !preparing) return null;
-  const locked = retained || !!busy || !!login || !!preparing;
+  const operationLocked = !!busy || !!login || !!preparing;
+  const locked = retained || operationLocked;
   function describe(server: MCPServerStatus) {
     const connector = server.connector!;
     const authorization = retained ? undefined : auth[server.name];
@@ -567,11 +568,11 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
             role={view.working ? "status" : undefined} text={view.secondary} /> : null}
         </div>
         <div className="mcp-service-actions">
-          {view.available && !view.connected ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-action="connect" disabled={locked}
+          {view.available && !view.connected ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-action="connect" disabled={locked} data-mutation-blocked={(operationLocked && !retained) || undefined}
               title={t("mcp.connect")} onClick={() => void act(server.name, "connect", () => connect(server))}>
               <Plus className="icon" aria-hidden="true" /><span className="sr-only">{t("mcp.connect")}</span>
             </button> : null}
-          {items.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-menu disabled={locked}
+          {items.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" data-connector-menu disabled={locked} data-mutation-blocked={(operationLocked && !retained) || undefined}
             aria-label={t("provider.moreActions", { name: view.connector.title })} aria-haspopup="menu" aria-expanded={menu?.name === server.name}
             onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ name: server.name, x: bounds.right, y: bounds.bottom }); }}>
             <MoreHorizontal className="icon" aria-hidden="true" />
