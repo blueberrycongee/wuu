@@ -12,6 +12,9 @@
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
   --sidebar-drawer-bg: var(--sidebar-material-fill);
   --sidebar-brand-wordmark-color: var(--ink-strong);
+  /* Share the navigation artwork's optical inset with shell controls. Folder
+   * artwork starts at x=3.8 on the 24-unit grid; allow for font sidebearing. */
+  --sidebar-leading-icon-inset: calc(var(--icon-size) * (3.8 - var(--icon-stroke) / 2) / 24 - var(--font-ui) * 0.05);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
   /* Hover is a tone step; a light inner ring would outline the darker fill
@@ -355,10 +358,6 @@
   /* Keep navigation, workspace labels, and nested conversations on one text
    * axis. The gap follows the UI em and snaps to whole pixels. */
   --sidebar-nav-column-gap: round(nearest, calc(var(--font-ui) * 2 / 3), 1px);
-  /* Folder artwork starts at x=3.8 on the 24-unit SVG grid. Match its visible
-   * stroke to the text's optical edge, allowing 0.05em for the font sidebearing.
-   * Keep row surfaces and label columns fixed. */
-  --sidebar-leading-icon-inset: calc(var(--sidebar-primary-icon-size) * (3.8 - var(--icon-stroke) / 2) / 24 - var(--font-ui) * 0.05);
   --sidebar-tree-toggle-col: 14px;
   --sidebar-tree-column-gap: var(--space-1);
   --sidebar-accessory-gap: var(--space-2);
