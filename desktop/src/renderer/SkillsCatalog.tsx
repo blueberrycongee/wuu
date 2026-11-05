@@ -451,7 +451,10 @@ function SkillsCatalogView({
           </button>
         </nav>
         <SettingsPageHeader title={selectedFamily.name} description={selectedFamily.description} />
-        <SettingsSection title={t("skills.familyComponents")} description={t("skills.familyComponentsHint")}>
+        <SettingsSection title={t("skills.familyComponents")} description={t("skills.familyStatus", {
+          enabled: selectedFamily.members.filter(record => pluginToggle(record).on).length,
+          count: selectedFamily.members.length,
+        })}>
           <div className="plugin-catalog-grid">
             {selectedFamily.members.map(record => (
               <PluginRow key={record.id} record={record} showState
@@ -1014,14 +1017,12 @@ function PluginFamilyRow({ group, attention, onOpen }: {
   const needsAuth = group.members.some(record => pluginToggle(record).on && servers.some(server =>
     server.plugin_id === (record.provenance.plugin_id ?? record.id)
     && ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state)));
-  const enabled = group.members.filter(record => pluginToggle(record).on).length;
   return (
     <div className="catalog-row plugin-row plugin-family-row" data-plugin-family={group.id}>
       <button className="catalog-row-open" type="button" onClick={onOpen}
         aria-label={t("skills.pluginDetailLabel", { name: group.name })}>
         <span className="catalog-row-mark"><PluginBlocksIcon aria-hidden="true" /></span>
         <TruncatedText className="catalog-row-title" text={group.name} />
-        <span className="catalog-row-description">{t("skills.familyStatus", { enabled, count: group.members.length })}</span>
         {attention || needsAuth ? <TruncatedText className="catalog-row-description plugin-attention-reason" data-tone={attention?.tone ?? "warning"} text={attention?.label ?? t("mcp.needsAuth")}>
           <AlertCircle className="icon-sm" aria-hidden="true" />{attention?.label ?? t("mcp.needsAuth")}
         </TruncatedText> : group.description ? <TruncatedText as="span" className="catalog-row-description" text={group.description} /> : null}

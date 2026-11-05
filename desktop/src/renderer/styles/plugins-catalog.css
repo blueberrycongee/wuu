@@ -172,13 +172,12 @@ button.catalog-row,
   align-items: center;
 }
 
-/* Center the mark across all copy when a component state or family summary
- * adds a separate metadata line. */
+/* Center the mark across all copy when a component state adds a metadata line. */
 .plugin-catalog-grid .catalog-row-open:has(> .catalog-row-description + .catalog-row-description) > .catalog-row-mark {
   grid-row: 1 / span 3;
 }
 
-/* Component state and family summaries precede the description. */
+/* Component state precedes the description on the family detail page. */
 .plugin-catalog-grid .catalog-row-description + .catalog-row-description {
   grid-row: 3;
 }

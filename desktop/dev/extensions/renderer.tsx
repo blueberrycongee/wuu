@@ -78,14 +78,26 @@ const record = (
   ...extra,
 });
 
+const automationFamily = {
+  id: "automations", name: "Automations",
+  description: "Schedule prompts and manage recurring agent work.",
+};
+const goalFamily = {
+  id: "goals", name: long ? "Goals with an exceptionally long plugin family name" : "Goals",
+  description: "Set persistent goals and manage their progress.",
+};
+
 const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
   record("account-connectors", "Account Connectors", "", "Connect your tools and accounts."),
   record("current-time", long ? "Current time with an exceptionally long plugin name without a description" : "current-time", "clock", "", { enabled: false, runtime_state: "stopped" }),
   record("automation", "Automation", "clock", "Schedule prompts and recurring Agent work.", {
+    family: automationFamily,
     developer: "Wuu",
     long_description: "Runs saved prompts on a schedule, either as new conversations or by waking an existing one, so recurring checks and reports happen without you.",
     contributions: { navigation: [{ id: "automations", view: "automations", title: "Automations" }] },
   }),
+  record("automation-client", "Automation Client", "clock", "Create and manage schedules from conversations.", { family: automationFamily }),
+  record("automation-worker", "Automation Worker", "clock", "Run scheduled work.", { family: automationFamily }),
   record("ask-user", "Ask User", "message-square", "Offer focused questions without pausing a task.", { developer: "Wuu", enabled: false, runtime_state: "stopped" }),
   record("memory", "Memory", "brain", "Remember durable preferences, feedback, references, and lessons.", {
     developer: "Wuu",
@@ -101,9 +113,11 @@ const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
   record("dream", "Dream", "moon", "Consolidate durable workspace knowledge in the background.", { developer: "Wuu", enabled: false, runtime_state: "stopped" }),
   record("todo", "TODO", "list-todo", "Track a visible task checklist.", { developer: "Wuu" }),
   record("goal", "Goal", "check-circle", "Continue toward a persistent goal.", {
+    family: goalFamily,
     developer: "Wuu",
     contributions: { commands: [{ id: "goal", title: "Set a goal", kind: "prompt_template" }] },
   }),
+  record("goal-worker", "Goal Worker", "check-circle", "Continue goal work in the background.", { family: goalFamily, enabled: false, runtime_state: "stopped" }),
   record("cua-mac", "Computer Use for Mac", "layout-grid", "Observe and operate Mac apps with native mouse and keyboard control.", {
     developer: "Wuu",
     long_description: "Uses macOS Accessibility for semantic control, ScreenCaptureKit for observation, and native input when an app offers no accessible controls.",
