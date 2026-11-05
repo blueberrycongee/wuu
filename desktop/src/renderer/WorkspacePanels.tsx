@@ -1311,8 +1311,9 @@ function SortableWorkspaceViewTab({
       data-wuu-tab-kind={tab.kind}
       data-wuu-state={isDragging ? "dragging" : undefined}
     >
-      {/* Keep the full resource path available when its title is truncated. */}
-      <Tooltip content={tooltip}>
+      {/* Keep the full resource path available when its title is truncated;
+       * a hint that only repeats the visible label adds hover noise. */}
+      <Tooltip content={tooltip} disabled={tooltip === label}>
         <button
           ref={setActivatorNodeRef}
           className="workspace-tool-tab-main"

@@ -1196,6 +1196,24 @@ describe("WorkspaceRightPanel", () => {
     expect(onCloseTab).toHaveBeenCalledWith(diffTab.id);
   });
 
+  it("does not repeat a workspace tab's visible label as its hover hint", async () => {
+    const newTab: WorkspaceViewTab = { kind: "new", id: "new:one" };
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[newTab, filesTab]}
+        activeTabID={newTab.id}
+      />,
+    );
+
+    const tabButtons = container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-tab-main") ?? [];
+    expect(tabButtons).toHaveLength(2);
+    expect(await hoverTooltipText(tabButtons[0])).toBeNull();
+    expect(await hoverTooltipText(tabButtons[1])).toBeNull();
+  });
+
   it("supports several diff tabs open side by side alongside tool tabs", () => {
     const onSelectTab = vi.fn();
     const filesTab = workspaceToolViewTab("files");
