@@ -1186,7 +1186,9 @@ export function Composer({
       submitComposerWith(onQueue, currentPrompt, "queue");
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey && !primaryModifier) {
+    // Cmd/Ctrl+Enter queues a follow-up while a turn runs; otherwise it sends
+    // the draft instead of acting as an inert key combination.
+    if (event.key === "Enter" && !event.shiftKey && (!primaryModifier || !running)) {
       event.preventDefault();
       submitDraft(currentPrompt);
     }
