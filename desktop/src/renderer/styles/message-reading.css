@@ -62,11 +62,10 @@
 }
 
 .rich-image-unavailable {
-  display: grid;
-  place-items: center;
-  padding: var(--space-3);
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
+  width: min(100%, 560px);
+  aspect-ratio: 5 / 2;
+  background: var(--surface-2);
+  cursor: default;
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
