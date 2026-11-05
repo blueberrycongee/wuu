@@ -6,7 +6,6 @@ import { TASK_EXECUTION_ACTIONS, FEEDBACK_ACTIONS, SESSION_DELIVERY_ACTIONS, iss
 import { existingSessionTarget, existingSessionResult } from "./existing-session.js";
 import {controllerReviewDecision, type ControllerReviewDecision} from "./controller-review.js";
 import { assemblePersonalPrompt } from "./prompt.js";
-import { personalConnectorTools, executeConnectorTool } from "./connectors.js";
 import { calendarAgendaTool, executeCalendarAgenda } from "../../personal-calendar/src/connected-calendar.js";
 import { callPersonalHost } from "../../personal-calendar/src/host-bridge.js";
 import { PersonalRecords, PERSONAL_MEMORY_SERVICE, PERSONAL_MEMORY_METHODS, personalMemoryPrompt, personalMemoryTools } from "./personal-records.js";
@@ -88,7 +87,7 @@ interface Execution {
   creation?: Omit<HostServiceContracts["host.session.create"]["params"], "execution_authorization">;
   request_id: string; create_request_id: string; requirements_revision: number;
   status: "pending" | "submitted" | "unknown"; finished_state?: string; cancel_pending?: boolean; cancel_error?: string; session_id?: string; turn_id?: string; queue_id?: string;
-  control_call_ids?: string[]; dispatch_pending?: boolean; connector_used?: boolean;
+  control_call_ids?: string[]; dispatch_pending?: boolean;
 }
 interface TaskLink { task_id: string; requirements_revision: number; execution_session_id?: string; question_request_id?: string }
 interface InputReceipt extends Versioned { fingerprint: string }
@@ -108,7 +107,6 @@ export interface PersonalTask extends Versioned {
   state: "queued" | "running" | "waiting_user" | "waiting_external" | "awaiting_review" | "completed" | "failed" | "stopped";
   execution: Execution; previous_executions: Execution[]; previous_deliveries?: Execution[];
   input_mutations?: Array<{ key: string; fingerprint: string; requirements_revision: number }>;
-  connector_wait?: boolean; connector_resume_pending?: string; connector_resumed?: string[];
   review_wait?: boolean; review_resumed?: string[]; review_resume_pending?: string;
   cancel_requested: boolean; reconciliation_required: boolean; waiting_reason?: "user" | "external"; progress?: string; error?: string;
   worker_result?: {request_id:string; session_id:string; execution_host:string; text:string; received_at:string};
@@ -201,7 +199,7 @@ export class PersonalPlugin implements RuntimePlugin {
       ],
       tools: [
         ...personalMemoryTools(),
-        calendarAgendaTool, ...personalConnectorTools,
+        calendarAgendaTool,
         { id: "react_to_message", description: "Set, replace, or remove your own emoji reaction on an exact persisted original user message in this main Personal conversation. This is expression, not a textual reply or task action. Use null to remove; expected_revision comes from the reaction state (0 if absent). Never impersonate owner feedback or treat reactions as authorization. " + reactionGuidance, input_schema: schema({ message_seq: { type: "integer", minimum: 1 }, emoji: { type: ["string", "null"], maxLength: 32 }, expected_revision: integer, request_id: { type: "string", maxLength: 128 } }, "message_seq", "emoji", "expected_revision", "request_id"), activity: { concurrency_safe: true } },
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence. A Calendar change source requires kind task, cron, and a verified matching Calendar source account/generation with a fixed window at most 31 days; first baseline is silent and no account connection is initiated.", input_schema: schema({ request_id: string, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: schema({ kind: { type: "string", enum: ["calendar"] }, account_id: string, generation: string, calendar_id: string, time_min: string, time_max: string, timezone: string }, "kind", "account_id", "generation", "calendar_id", "time_min", "time_max", "timezone") }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string, expected_revision: integer, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
@@ -914,7 +912,7 @@ export class PersonalPlugin implements RuntimePlugin {
         requirements: [...current.requirements, { revision, goal, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
         previous_executions: [...current.previous_executions, { ...current.execution, cancel_pending: Boolean(current.execution.session_id && !current.execution.finished_state && !(current.execution.existing_session && current.execution.status === "pending" && !current.execution.dispatch_pending)) }], execution: { ...this.execution(taskID, revision), ...(current.existing_session ? {existing_session: current.existing_session, controller_session_id: current.execution.controller_session_id, session_id: current.existing_session.session_id} : {}) }, state: "queued", cancel_requested: false,
         previous_deliveries: [...current.previous_deliveries ?? [], ...(current.delivery && ["pending", "submitted"].includes(current.delivery.status) ? [{ controller_review:current.delivery.kind === "review", authorization:current.delivery.authorization, request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])],
-        connector_wait:undefined,connector_resume_pending:undefined,connector_resumed:undefined,reconciliation_required: false, waiting_reason: undefined, question: undefined, result: undefined, worker_result: undefined, controller_decision: undefined, completion_intent: undefined, delivery: undefined, error: undefined, progress: undefined };
+        reconciliation_required: false, waiting_reason: undefined, question: undefined, result: undefined, worker_result: undefined, controller_decision: undefined, completion_intent: undefined, delivery: undefined, error: undefined, progress: undefined };
     }, number(input, "expected_revision"));
     const authorized = await this.authorizeTask(task, await this.routines.authorizationFor(task));
     const settled = await this.settlePrevious(authorized);
@@ -1006,7 +1004,6 @@ export class PersonalPlugin implements RuntimePlugin {
     if (task.worker_result && task.execution.finished_state === "completed" && !task.cancel_requested) return task;
     if (task.cancel_requested) return this.cancelExecution(task);
     if (!task.execution.session_id || task.existing_session && task.execution.status === "pending" && !task.execution.dispatch_pending) return this.dispatch(task);
-    if (task.connector_wait || task.connector_resume_pending) return this.recoverConnector(task);
     if (task.review_resume_pending) { await this.resumeAction({ session_id: task.execution.session_id, action_id: task.review_resume_pending }); return this.task(task.task_id); }
     try {
       const inspection = await this.inspectExecution(task.execution);
@@ -1191,10 +1188,6 @@ export class PersonalPlugin implements RuntimePlugin {
     let verified: PersonalTask["result"], verificationError: string | undefined;
     const latest = await this.task(found.task_id);
     const reviews = terminal.has(input.state) && !latest.cancel_requested ? await this.actionReviews(input.thread_id) : [];
-    const connectorHistory = terminal.has(input.state) && latest.execution.connector_used && !latest.cancel_requested
-      ? object(await callPersonalHost(this.host, "connectors.read.actions", {}, input.thread_id, undefined, latest.execution.authorization?.reference)) : {actions:[]};
-    if (!Array.isArray(connectorHistory.actions)) throw new Error("Connector ledger unavailable during task recovery");
-    const pendingConnector = connectorHistory.actions.find(raw => raw && typeof raw === "object" && ["awaiting_confirmation","executing","uncertain"].includes(String((raw as {state?:unknown}).state))) as {state:string}|undefined;
     const pendingReview = reviews.find(record => record.action.scope.task_id === latest.task_id && record.action.scope.requirements_revision === latest.requirements_revision && ["proposed", "awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record.status));
     if (input.state === "completed" && latest.completion_intent && latest.execution.request_id === input.request_id && !latest.cancel_requested && !terminalTask(latest)) {
       try { verified = await this.verifyCompletion(latest, input.turn_id); }
@@ -1206,7 +1199,6 @@ export class PersonalPlugin implements RuntimePlugin {
       // An interrupted process is not an owner cancellation. Keep a durable
       // unrevoked action waiting across host shutdown; explicit task/turn cancel
       // either sets cancel_requested or revokes its actions before interrupting.
-      if (pendingConnector && !current.cancel_requested) return {...current,connector_wait:true,execution:{...current.execution,status:"submitted",finished_state:input.state},state:pendingConnector.state==="awaiting_confirmation"?"waiting_user":"waiting_external",waiting_reason:pendingConnector.state==="awaiting_confirmation"?"user":"external",question:undefined,delivery:undefined,result:undefined,completion_intent:undefined,reconciliation_required:pendingConnector.state!=="awaiting_confirmation",progress:"Waiting for the saved connector action; never repeat an unknown effect"};
       if (pendingReview && !current.cancel_requested) return { ...current, execution: { ...current.execution, status: "submitted", finished_state: input.state }, review_wait: true, state: pendingReview.status === "uncertain" || pendingReview.status === "executing" ? "waiting_external" : "waiting_user", waiting_reason: pendingReview.status === "uncertain" || pendingReview.status === "executing" ? "external" : "user", question: undefined, delivery: undefined, result: undefined, completion_intent: undefined, reconciliation_required: pendingReview.status === "uncertain", progress: "Waiting for the exact action review in the main conversation" };
       if (input.state === "discarded" && input.retryable && !current.cancel_requested) {
         if (current.execution.status === "pending" && current.reconciliation_required) return current;
@@ -1320,50 +1312,7 @@ export class PersonalPlugin implements RuntimePlugin {
     });
     if (status === "delivered" && (updated.delivery?.kind ?? "result") === "result" && updated.delivery?.request_id === task.delivery?.request_id) await this.routines.rememberResult(updated);
   }
-  private async recoverConnector(task: PersonalTask): Promise<PersonalTask> {
-    const sessionID=task.execution.session_id;
-    if(!sessionID||task.cancel_requested||terminalTask(task))return task;
-    const snapshot=object(await callPersonalHost(this.host,"connectors.read.actions",{},sessionID,undefined,task.execution.authorization?.reference));
-    if(!Array.isArray(snapshot.actions))throw new Error("Connector recovery ledger unavailable");
-    const receipts=snapshot.actions as Array<{action_id:string;digest:string;state:string;operation?:string;code?:string}>;
-    if(!receipts.length||receipts.some(r=>!r.action_id||!r.digest||!/^[a-f0-9]{64}$/.test(r.digest)))throw new Error("Connector recovery receipt identity unavailable");
-    if(receipts.some(r=>["awaiting_confirmation","executing"].includes(r.state)))return task;
-    const unresolved=receipts.find(r=>r.state!=="completed");
-    if(unresolved){
-      if(!task.connector_resumed?.includes(unresolved.action_id)){
-        const main=await this.main();
-        await this.deliverNotice(task,`personal-connector-outcome-${unresolved.action_id}`,"personal.connector.outcome",`Saved connector outcome: ${JSON.stringify({action_id:unresolved.action_id,state:unresolved.state,operation:unresolved.operation,code:unresolved.code})}. Explain the incomplete or unknown outcome. Do not retry, replace, or claim completion; this is not new authorization.`);
-        return this.change<PersonalTask>("task",task.task_id,current=>{
-          if(!current||current.cancel_requested||terminalTask(current)||current.requirements_revision!==task.requirements_revision||current.execution.session_id!==sessionID)return current!;
-          return {...current,connector_wait:false,connector_resumed:[...current.connector_resumed??[],unresolved.action_id],state:"waiting_external",waiting_reason:"external",reconciliation_required:unresolved.state==="uncertain",progress:`Connector outcome ${unresolved.state}; reconcile the original effect before continuing`};
-        });
-      }
-      return task;
-    }
-    const ids=receipts.map(r=>`${r.action_id}:${r.digest}`).sort(),requestID=`personal-connector-${id(task.task_id,String(task.requirements_revision),...ids)}`;
-    if(receipts.every(r=>task.connector_resumed?.includes(r.action_id)))return task;
-    task=await this.change<PersonalTask>("task",task.task_id,current=>{
-      if(!current||current.cancel_requested||terminalTask(current)||current.requirements_revision!==task.requirements_revision||current.execution.session_id!==sessionID)throw new Error("Connector continuation task changed");
-      return {...current,connector_resume_pending:requestID,connector_wait:true,waiting_reason:undefined,question:undefined,state:"running",delivery:undefined,result:undefined,completion_intent:undefined,execution:{...current.execution,authorization:undefined,request_id:requestID,finished_state:undefined,status:"pending",dispatch_pending:true}};
-    });
-    task=await this.executionAuthorization(task);
-    await this.sendForAgent(task.agent_id,{execution_authorization:task.execution.authorization!.reference,request_id:requestID,session_id:sessionID,cause:"personal.connector.outcome",if_running:"queue",input:{prompt:`The host ledger confirms these exact connector effects completed: ${JSON.stringify(receipts.map(r=>({action_id:r.action_id,digest:r.digest,operation:r.operation,state:r.state})))}. Do not execute those effects again. Continue only the original task. Use personal_connector_actions to read saved results; use action_id as completion evidence. No new authorization is granted by this receipt.`}},task);
-    return this.change<PersonalTask>("task",task.task_id,current=>{
-      if(!current||current.cancel_requested||terminalTask(current)||current.requirements_revision!==task.requirements_revision||current.execution.session_id!==sessionID||current.execution.request_id!==requestID||current.connector_resume_pending!==requestID)return current!;
-      return {...current,connector_wait:false,connector_resume_pending:undefined,connector_resumed:[...new Set([...current.connector_resumed??[],...receipts.map(r=>r.action_id)])],execution:{...current.execution,status:"submitted",dispatch_pending:false}};
-    });
-  }
-  private async assertConnectorCompletion(task: PersonalTask): Promise<void> {
-    if (!task.execution.connector_used || !task.execution.session_id) return;
-    const value = object(await callPersonalHost(this.host, "connectors.read.actions", {}, task.execution.session_id, undefined, task.execution.authorization?.reference));
-    if (!Array.isArray(value.actions)) throw new Error("Connector ledger unavailable; do not mark this task complete");
-    // A successful receipt-read tool is evidence of a read, not of its effect.
-    // Requirement replacement creates a new execution/session, so older rejected
-    // actions remain historical and cannot permanently block the replacement.
-    if (value.actions.some(raw => !raw || typeof raw !== "object" || (raw as {state?:unknown}).state !== "completed")) throw new Error("unresolved connector action: report the incomplete or unknown effect instead of claiming completion");
-  }
   private async verifyCompletion(task: PersonalTask, turnID?: string): Promise<PersonalTask["result"]> {
-    await this.assertConnectorCompletion(task);
     const intent = task.completion_intent;
     if (!intent || intent.execution_request_id !== task.execution.request_id || intent.session_id !== task.execution.session_id || intent.requirements_revision !== task.requirements_revision || (turnID && intent.turn_id && turnID !== intent.turn_id)) throw new Error("stale_completion_intent");
     const records: NonNullable<HostServiceContracts["host.session.history.read"]["result"]["records"]> = [];
@@ -1375,15 +1324,9 @@ export class PersonalPlugin implements RuntimePlugin {
       cursor = page.next_cursor;
     }
     const actions = intent.evidence.some(selector => selector.action_id) ? await this.actionReviews(intent.session_id) : [];
-    const connectorReceipts = task.execution.connector_used && intent.evidence.some(selector=>selector.action_id)
-      ? object(await callPersonalHost(this.host,"connectors.read.actions",{},intent.session_id,undefined,task.execution.authorization?.reference)).actions as Array<{action_id:string;digest:string;state:string}> : [];
     const evidence: Evidence[] = intent.evidence.map(selector => {
       if (selector.action_id) {
         const action = actions.find(record => record.action.id === selector.action_id);
-        if(!action){
-          const connector=connectorReceipts?.find(receipt=>receipt.action_id===selector.action_id);
-          if(connector?.state==="completed"&&/^[a-f0-9]{64}$/.test(connector.digest))return {action_id:connector.action_id,action_digest:connector.digest,session_id:intent.session_id,description:selector.description};
-        }
         if (!action || action.status !== "succeeded" || action.action.scope.session_id !== intent.session_id || action.action.scope.task_id !== task.task_id || action.action.scope.requirements_revision !== task.requirements_revision || !action.result?.tool_result || action.result.tool_result.is_error || !/^[a-f0-9]{64}$/.test(action.action.digest)) throw new Error("unverified_evidence: action receipt is missing, unsuccessful or stale");
         return { action_id: action.action.id, action_digest: action.action.digest, session_id: intent.session_id, description: selector.description };
       }
@@ -1417,7 +1360,6 @@ export class PersonalPlugin implements RuntimePlugin {
       }
       return { task: await this.task(task.task_id) };
     }
-    await this.assertConnectorCompletion(task);
     if ((await this.actionReviews(sessionID)).some(record => record.action.scope.task_id === task.task_id && record.action.scope.requirements_revision === task.requirements_revision && ["proposed", "awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record.status))) throw new Error("Task has an unresolved host action; wait for its action card and receipt");
     if (task.waiting_reason === "user") throw new Error("task is waiting for the user's answer in the main conversation");
     if (!Array.isArray(input.evidence) || input.evidence.length === 0 || input.evidence.length > 20) throw new Error("persisted result evidence is required");
@@ -1463,13 +1405,6 @@ export class PersonalPlugin implements RuntimePlugin {
     if (call.tool_id.startsWith("personal_memory_")) return result(await this.memory.invoke(call.tool_id.slice("personal_memory_".length), input, sessionID, executionHost, execution));
     const { agent, task } = await this.resolve(sessionID);
     if (agent.status !== "active") throw new Error(`agent is ${agent.status}`);
-    if (call.tool_id.startsWith("personal_connector_")) {
-      if (task) await this.change<PersonalTask>("task", task.task_id, current => {
-        if (!current || current.execution.request_id !== task.execution.request_id || current.cancel_requested || terminalTask(current)) throw new Error("stale connector task execution");
-        return {...current,execution:{...current.execution,connector_used:true}};
-      });
-      return executeConnectorTool(executionHost, this.space, call, execution.signal);
-    }
     switch (call.tool_id) {
       case "calendar_agenda": return executeCalendarAgenda(executionHost, this.space, call, execution.signal);
       case "react_to_message": {
@@ -1659,7 +1594,7 @@ export class PersonalPlugin implements RuntimePlugin {
     if (!input || !["exact-run","task-lineage"].includes(input.kind) || !input.task_id || input.session_id !== undefined && typeof input.session_id !== "string" || input.kind === "exact-run" && !input.request_id) throw new Error("invalid lineage request");
     const main=await this.agent(this.mainID(),true);
     const sessionID=input.session_id || (input.kind === "task-lineage" ? main.main_session_id : "");
-    const cleanup=["session/route/cancel","session/route/inspect","user/session/cancel","user/session/inspect","personal/review.execution.status","personal/connectors.read.actions"].includes(input.action ?? "");
+    const cleanup=["session/route/cancel","session/route/inspect","user/session/cancel","user/session/inspect","personal/review.execution.status"].includes(input.action ?? "");
     if (!cleanup && main.status !== "active") throw new Error("main agent no longer authorizes work");
     if (input.task_id.startsWith("personal-feedback-")) {
       const key=input.task_id.slice("personal-feedback-".length);
@@ -1738,7 +1673,7 @@ export class PersonalPlugin implements RuntimePlugin {
   }
   private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost, execution?: RuntimeExecutionContext, ownerClient = false, ownerDeliveryIntent = false): Promise<unknown> {
     this.assertActive();
-    if (method.startsWith("connections.") || method.startsWith("review.") || method.startsWith("connectors.")) {
+    if (method.startsWith("connections.") || method.startsWith("review.")) {
       if (!ownerClient || !clientHost) throw new Error("Owner UI control requires a live desktop admission");
       const operation = method.startsWith("connections.") ? `calendar.${method.slice(12)}` : method;
       await callPersonalHost(clientHost, "owner.check", {}, undefined, execution?.signal);

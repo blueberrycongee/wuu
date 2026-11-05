@@ -31,14 +31,11 @@ type Calendar interface {
 }
 type Options struct {
 	// Accounts routes account operations to the selected generation. When set,
-	// Calendar and Connectors are not consulted.
+	// Calendar is not consulted.
 	Accounts func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Authorize is the selected resource policy. Live owner transport admission
 	// and verified session identity are additional proof, never substitutes.
-	Authorize                     func(context.Context, string, string) error
-	Connectors                    Connectors
-	ConnectorsUnavailableCode     string
-	OpenConnectorAuthorizationURL func(context.Context, string) error
+	Authorize func(context.Context, string, string) error
 	// Review is the host-owned durable action coordinator, never a plugin callback.
 	Review func(context.Context, string, json.RawMessage, string) (json.RawMessage, error)
 	// Memory publishes exact source-bound records through selected durable providers.
@@ -78,9 +75,6 @@ func (h *Host) Close() error {
 	if h.options.Calendar != nil {
 		h.closeErr = h.options.Calendar.Close()
 	}
-	if h.options.Connectors != nil {
-		h.closeErr = errors.Join(h.closeErr, h.options.Connectors.Close())
-	}
 	close(h.closeDone)
 	return h.closeErr
 }
@@ -108,7 +102,7 @@ func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, 
 		return nil, err
 	}
 
-	if h.options.Accounts != nil && (strings.HasPrefix(operation, "calendar.") || strings.HasPrefix(operation, "connectors.")) {
+	if h.options.Accounts != nil && strings.HasPrefix(operation, "calendar.") {
 		h.mu.Lock()
 		if h.closed {
 			h.mu.Unlock()
@@ -146,9 +140,6 @@ func (h *Host) Call(ctx context.Context, operation string, raw json.RawMessage, 
 			return nil, errors.New("memory requires a host-resolved session")
 		}
 		return handler(ctx, operation, raw, verifiedSession)
-	}
-	if strings.HasPrefix(operation, "connectors.") {
-		return h.callConnectors(ctx, operation, raw, verifiedSession)
 	}
 	if strings.HasPrefix(operation, "review.") {
 		h.mu.Lock()

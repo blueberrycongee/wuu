@@ -15,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
@@ -49,9 +48,6 @@ type Options struct {
 	// CompositionProfile explicitly selects a shipped or configured product profile.
 	// Empty preserves the configured profile; identity never selects a product.
 	CompositionProfile string
-	// PersonalConnectors supplies trusted test/embedding dependencies, never RPC credentials.
-	PersonalConnectors                    personalconnectors.Options
-	OpenPersonalConnectorAuthorizationURL func(context.Context, string) error
 	// PersonalCalendar is trusted local-host composition; zero stays unavailable.
 	// The SDK replaces StateDir with its resolved Personal state root.
 	PersonalCalendar                     personalcalendar.DesktopOptions
@@ -211,7 +207,6 @@ func New(opts Options) (*Runtime, error) {
 	bindings.SetPersonalAccountsFactory(func(input runtime.NativeProviderContext) (personalhost.Options, error) {
 		personalOptions := personalhost.Options{}
 		if input.UserBinding.Domain() != "personal" || host.Kind != runtime.HostLocal || opts.SafeMode {
-			personalOptions.ConnectorsUnavailableCode = "local_personal_host_required"
 			return personalOptions, nil
 		}
 		credentials := credentialstore.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
@@ -225,13 +220,6 @@ func New(opts Options) (*Runtime, error) {
 		if pathErr != nil {
 			return personalOptions, pathErr
 		}
-		connectorOptions := opts.PersonalConnectors
-		connectorOptions.StateDir = filepath.Join(input.UserBinding.State(stateHome), "connectors")
-		if connectorOptions.Store == nil {
-			connectorOptions.Store = credentials
-		}
-		personalOptions.Connectors = personalconnectors.New(connectorOptions)
-		personalOptions.OpenConnectorAuthorizationURL = opts.OpenPersonalConnectorAuthorizationURL
 		if opts.PersonalCalendar.ClientID != "" {
 			calendarOptions := opts.PersonalCalendar
 			calendarOptions.StateDir = filepath.Join(input.UserBinding.State(stateHome), "calendar")

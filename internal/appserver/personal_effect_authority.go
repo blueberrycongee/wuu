@@ -7,7 +7,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/persistence"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -114,27 +113,5 @@ func (p *personalActions) withExecutionAuthority(ctx context.Context, scope pers
 			return err
 		}
 		return use(effectCtx, authority)
-	})
-}
-
-func (p *personalActions) withConnectorAuthorization(ctx context.Context, actor personalconnectors.Actor, expected string, use func(context.Context) error) error {
-	if expected == "" {
-		return errors.New("connector execution authority is required")
-	}
-	if err := p.server.authorizePersonalOperation(ctx, "connectors.call", actor.SessionID); err != nil {
-		return err
-	}
-	return p.withTaskInspection(ctx, func(effectCtx context.Context, state *runtime.State, selected pluginpkg.Plugin) error {
-		current, err := p.connectorAuthorityForState(effectCtx, state, selected, actor)
-		if err != nil {
-			return err
-		}
-		if current != expected {
-			return errors.New("Personal connector authority changed")
-		}
-		if err := p.server.AuthorizeResource(effectCtx, "personal/connectors.execute", access.Resource{Kind: "user-space", ID: actor.UserSpaceID}, access.Resource{Kind: "session", ID: actor.SessionID}); err != nil {
-			return err
-		}
-		return use(effectCtx)
 	})
 }

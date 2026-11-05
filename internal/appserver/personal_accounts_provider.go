@@ -9,7 +9,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/personalcalendar"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -36,9 +35,8 @@ func PersonalAccountsDescriptor() pluginhost.ServiceDescriptor {
 // PersonalAccountsResult preserves business failures across native/process
 // providers; transport and admission failures remain service errors.
 type PersonalAccountsResult struct {
-	Value          json.RawMessage             `json:"value,omitempty"`
-	CalendarError  *personalcalendar.Failure   `json:"calendar_error,omitempty"`
-	ConnectorError *personalconnectors.Failure `json:"connector_error,omitempty"`
+	Value         json.RawMessage           `json:"value,omitempty"`
+	CalendarError *personalcalendar.Failure `json:"calendar_error,omitempty"`
 }
 
 type personalAccountsScopeKey struct{}
@@ -121,7 +119,7 @@ func (p *personalAccountsProvider) InvokeService(ctx context.Context, call plugi
 	if err := json.Unmarshal(call.Params, &input); err != nil {
 		return nil, err
 	}
-	if !strings.HasPrefix(input.Operation, "calendar.") && !strings.HasPrefix(input.Operation, "connectors.") {
+	if !strings.HasPrefix(input.Operation, "calendar.") {
 		return nil, errors.New("Personal account operation is unavailable")
 	}
 	server, _ := ctx.Value(personalAccountsScopeKey{}).(*Server)
@@ -164,10 +162,6 @@ func (p *personalAccountsProvider) InvokeService(ctx context.Context, call plugi
 			}
 			return nil
 		}
-		if broker, ok := options.Connectors.(*personalconnectors.Broker); ok {
-			broker.SetAuthorization(server.connectorSnapshot)
-			broker.SetAuthorizationBoundary(server.connectorCommit)
-		}
 		p.host = personalhost.New(p.input.UserBinding, options)
 		p.server = server
 	}
@@ -181,7 +175,7 @@ func (p *personalAccountsProvider) InvokeService(ctx context.Context, call plugi
 	defer p.calls.Done()
 	value, err := host.Call(ctx, input.Operation, input.Input, input.SessionID)
 	result := PersonalAccountsResult{Value: value}
-	if err != nil && !errors.As(err, &result.CalendarError) && !errors.As(err, &result.ConnectorError) {
+	if err != nil && !errors.As(err, &result.CalendarError) {
 		return nil, err
 	}
 	return json.Marshal(result)
@@ -232,9 +226,6 @@ func (s *Server) callPersonalAccounts(ctx context.Context, operation string, raw
 	}
 	if result.CalendarError != nil {
 		return nil, result.CalendarError
-	}
-	if result.ConnectorError != nil {
-		return nil, result.ConnectorError
 	}
 	if len(result.Value) == 0 {
 		return nil, errors.New("Personal account provider returned no value")

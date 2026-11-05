@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
+	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -30,7 +30,7 @@ func TestPersonalAccountGenerationDrainsBeforeClosingOnlyItsResources(t *testing
 	first, second := &accountLifecycleBroker{entered: entered, finish: finish}, &accountLifecycleBroker{}
 	makeProvider := func(b *accountLifecycleBroker) *personalAccountsProvider {
 		p := newPersonalAccountsProvider(runtime.NativeProviderContext{Registry: state.Host.ServiceRegistry(), UserBinding: f.rt.UserBinding()}, func(runtime.NativeProviderContext) (personalhost.Options, error) {
-			return personalhost.Options{Connectors: b}, nil
+			return personalhost.Options{Calendar: b}, nil
 		})
 		if err := p.Activate(context.Background()); err != nil {
 			t.Fatal(err)
@@ -39,7 +39,7 @@ func TestPersonalAccountGenerationDrainsBeforeClosingOnlyItsResources(t *testing
 	}
 	old, next := makeProvider(first), makeProvider(second)
 	ctx := context.WithValue(runtime.WithInvocationState(f.owner, state), personalAccountsScopeKey{}, f.host.server)
-	raw := json.RawMessage(`{"operation":"connectors.list","input":{}}`)
+	raw := json.RawMessage(`{"operation":"calendar.status","input":{}}`)
 	call := pluginhost.ServiceInvokeParams{Service: PersonalAccountsService, Method: "call", Params: raw}
 	result := make(chan error, 1)
 	go func() { _, err := old.InvokeService(ctx, call); result <- err }()
@@ -94,28 +94,17 @@ func TestUncalledPersonalAccountProviderConstructsNoResources(t *testing.T) {
 }
 
 type accountLifecycleBroker struct {
+	personalhost.Calendar
 	closed          atomic.Int64
 	entered, finish chan struct{}
 }
 
-func (b *accountLifecycleBroker) List(context.Context, personalconnectors.Actor) ([]personalconnectors.Connection, error) {
+func (b *accountLifecycleBroker) Status(context.Context, personalcalendar.Actor) (personalcalendar.Connection, error) {
 	if b.entered != nil {
 		close(b.entered)
 		<-b.finish
 	}
-	return nil, nil
-}
-func (*accountLifecycleBroker) Call(context.Context, personalconnectors.Actor, personalconnectors.Request) (personalconnectors.Result, error) {
-	return personalconnectors.Result{}, nil
-}
-func (*accountLifecycleBroker) Actions(context.Context, personalconnectors.Actor) ([]personalconnectors.Result, error) {
-	return nil, nil
-}
-func (*accountLifecycleBroker) Decide(context.Context, personalconnectors.Actor, string, string, bool) (personalconnectors.Result, error) {
-	return personalconnectors.Result{}, nil
-}
-func (*accountLifecycleBroker) Disconnect(context.Context, personalconnectors.Actor, string) error {
-	return nil
+	return personalcalendar.Connection{}, nil
 }
 func (b *accountLifecycleBroker) Close() error { b.closed.Add(1); return nil }
 
@@ -133,7 +122,7 @@ func TestPersonalAccountsCompositionSelectionAndReload(t *testing.T) {
 	bindings.SetPersonalAccountsFactory(func(runtime.NativeProviderContext) (personalhost.Options, error) {
 		b := &accountLifecycleBroker{}
 		brokers = append(brokers, b)
-		return personalhost.Options{Connectors: b}, nil
+		return personalhost.Options{Calendar: b}, nil
 	})
 	const replacement = "fixture.account-replacement"
 	factories := append(bindings.NativeProviders(), runtime.NativeProviderFactory{ID: replacement, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
@@ -160,7 +149,7 @@ func TestPersonalAccountsCompositionSelectionAndReload(t *testing.T) {
 	}
 	call := func(ctx context.Context) json.RawMessage {
 		t.Helper()
-		raw, err := host.personal.Call(ctx, "connectors.list", json.RawMessage(`{}`), "")
+		raw, err := host.personal.Call(ctx, "calendar.status", json.RawMessage(`{}`), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -212,7 +201,7 @@ func TestPersonalAccountsCompositionSelectionAndReload(t *testing.T) {
 	// Remove the now-disabled explicit binding while leaving the consumer alive.
 	cfg.Composition.Patches[len(cfg.Composition.Patches)-2].Services = nil
 	reload()
-	if _, err := host.personal.Call(owner, "connectors.list", json.RawMessage(`{}`), ""); err == nil {
+	if _, err := host.personal.Call(owner, "calendar.status", json.RawMessage(`{}`), ""); err == nil {
 		t.Fatal("disabled service fell back to native accounts")
 	}
 	if len(brokers) != 2 {

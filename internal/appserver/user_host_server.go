@@ -92,7 +92,7 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		h.server.Close()
 		return nil, err
 	}
-	if h.server.personalAccountsRouted && (personalOptions.Calendar != nil || personalOptions.Connectors != nil) {
+	if h.server.personalAccountsRouted && personalOptions.Calendar != nil {
 		h.attentionCancel()
 		h.server.Close()
 		return nil, errors.New("generation-owned Personal accounts require RuntimeBindings.SetPersonalAccountsFactory")

@@ -170,7 +170,7 @@ class Host {
         if(p.cause==='personal.reminder')assert.equal(p.disable_tools,true,'a reminder is bounded delivery, not permission to run tools');
         if(p.disable_tools && p.execution_authorization){const issue=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert(issue.requested_actions.includes('user/session/context'),'disabled-tools delivery still needs scoped pre-step context');assert(issue.requested_actions.includes('user/session/history.read'),'delivery hook reads remain explicitly scoped');}
         if(p.cause==='personal.reaction.feedback'){assert(p.execution_authorization,'bounded feedback recovery needs its own exact grant');const intent=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert.equal(intent.kind,'exact-run');assert(intent.requested_actions.every(a=>['personal/memory.read','user/session/send','user/session/inspect','user/session/context','user/session/history.read'].includes(a)));assert.equal(p.disable_tools,true);}
-        if(['personal.review.outcome','personal.connector.outcome'].includes(p.cause)){const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution && (v.execution.session_id===p.session_id || v.delivery?.request_id===p.request_id));if(task)assert(p.execution_authorization,'task outcome sends must carry persisted exact grant');}
+        if(p.cause === 'personal.review.outcome'){const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution && (v.execution.session_id===p.session_id || v.delivery?.request_id===p.request_id));if(task)assert(p.execution_authorization,'task outcome sends must carry persisted exact grant');}
         assert(this.sessions.has(p.session_id));
         if (p.user_input_request_id) {
           const proof = this.userInputs.get(p.user_input_request_id);
@@ -344,47 +344,6 @@ try {
     ...(status === 'succeeded' ? { result: { receipt: { summary: 'Synthetic local artifact saved' }, tool_result: { content: [{ type: 'text', text: 'Synthetic local artifact saved' }], is_error: false } } } : {}),
   });
   const actionSends = host => host.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.review.outcome');
-  await scenario('connector shipped tool waits for owner receipt and recovers without repeating provider effects', async () => {
-    const h=new Host();let r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');
-    let state='awaiting_confirmation',effects=0,entered;const pending=new Promise(resolve=>{entered=resolve});
-    h.intercept=(service,p)=>{
-      if(service!=='host.personal')return;
-      if(p.operation==='connectors.call'){assert.equal(p.session_id,agent.main_session_id);entered();return {ok:true,value:{state,action_id:'connector-one',digest:'a'.repeat(64)}}}
-      if(p.operation==='connectors.read.actions')return {ok:true,value:{actions:[{state,action_id:'connector-one',digest:'a'.repeat(64)}]}};
-      if(p.operation==='connectors.decide'){assert.deepEqual(p.input,{action_id:'connector-one',digest:'a'.repeat(64),approve:true});if(state==='awaiting_confirmation'){state='completed';effects++}return {ok:true,value:{state,action_id:'connector-one'}}}
-    };
-    assert(r.definition.tools.some(tool=>tool.id==='personal_connector_call'));
-    const intent={connection_id:'synthetic',operation:'gmail.send',arguments:{to:['synthetic@example.invalid'],subject:'Synthetic',body:'Never sent'},request_id:'one'};
-    let finished=false;const tool=r.tool('personal_connector_call',intent,agent.main_session_id).then(value=>{finished=true;return value});await pending;assert.equal(finished,false);
-    await r.client('connectors.decide',{action_id:'connector-one',digest:'a'.repeat(64),approve:true});assert.equal((await tool).state,'completed');assert.equal(effects,1);
-    await r.close();r=await new Runtime(h).start();assert.equal((await r.tool('personal_connector_call',intent,agent.main_session_id)).state,'completed');assert.equal(effects,1);await r.close();
-  });
-  await scenario('connector ledger prevents pending unknown failed or rejected effects from becoming task completion evidence', async () => {
-    const h=new Host(),r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');
-    let status='uncertain';h.intercept=(service,p)=>service==='host.personal'&&p.operation==='connectors.read.actions'?{ok:true,value:{actions:[{state:status,action_id:'connector-blocker'}]}}:undefined;
-    const {task}=await r.tool('create_task',{request_id:'connector-task',title:'Synthetic connector task',goal:'Check a synthetic connector effect'},agent.main_session_id);
-    await r.tool('personal_connector_actions',{},task.execution.session_id);
-    for(const state of ['awaiting_confirmation','executing','uncertain','failed','rejected']){status=state;await assert.rejects(r.tool('complete_task',{task_id:task.task_id,requirements_revision:1,summary:'Pretend completed',evidence:[{tool_call_id:'receipt-read',description:'A read succeeded'}]},task.execution.session_id),/unresolved connector action/)}
-    assert.notEqual((await r.client('tasks.get',{task_id:task.task_id})).task.state,'completed');await r.close();
-  });
-  await scenario('cold connector approval preserves original task and resumes one receipt-bound continuation',async()=>{
-    const h=new Host();let r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');let state='awaiting_confirmation';
-    h.intercept=(service,p)=>service==='host.personal'&&p.operation==='connectors.read.actions'?{ok:true,value:{actions:[{state,action_id:'cold-action',digest:'c'.repeat(64),operation:'gmail.send',data:{id:'provider-receipt'}}]}}:undefined;
-    let {task}=await r.tool('create_task',{request_id:'cold-task',title:'Cold task',goal:'Synthetic receipt task'},agent.main_session_id);
-    await r.tool('personal_connector_actions',{},task.execution.session_id);h.turns.get(task.execution.request_id).state='interrupted';await r.lifecycle(task,'interrupted');
-    task=(await r.client('tasks.get',{task_id:task.task_id})).task;assert.equal(task.state,'waiting_user');assert.equal(task.cancel_requested,false);const session=task.execution.session_id;
-    await r.close();r=await new Runtime(h).start();state='completed';await r.client('tasks.reconcile',{task_id:task.task_id});
-    task=(await r.client('tasks.get',{task_id:task.task_id})).task;assert.equal(task.execution.session_id,session);assert.equal(task.requirements_revision,1);
-    const sends=()=>h.calls.filter(c=>c.service==='host.session.send'&&c.params.cause==='personal.connector.outcome');assert.equal(sends().length,1);
-    await r.close();r=await new Runtime(h).start();await r.client('tasks.reconcile',{task_id:task.task_id});assert.equal(sends().length,1);
-    const completed=await r.tool('complete_task',{task_id:task.task_id,requirements_revision:1,summary:'Verified synthetic connector outcome',evidence:[{action_id:'cold-action',description:'Host verified connector receipt'}]},session);assert.equal(completed.task.result.evidence[0].action_digest,'c'.repeat(64));await r.close();
-  });
-  await scenario('cold unknown connector outcome reports once without starting a tool-enabled worker',async()=>{
-    const h=new Host();let r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');let state='awaiting_confirmation';
-    h.intercept=(service,p)=>service==='host.personal'&&p.operation==='connectors.read.actions'?{ok:true,value:{actions:[{state,action_id:'unknown-action',digest:'d'.repeat(64),operation:'gmail.send'}]}}:undefined;
-    let {task}=await r.tool('create_task',{request_id:'unknown-task',title:'Unknown task',goal:'Synthetic uncertain connector'},agent.main_session_id);await r.tool('personal_connector_actions',{},task.execution.session_id);h.turns.get(task.execution.request_id).state='interrupted';await r.lifecycle(task,'interrupted');await r.close();state='uncertain';r=await new Runtime(h).start();await r.client('tasks.reconcile',{task_id:task.task_id});
-    const sends=h.calls.filter(c=>c.service==='host.session.send'&&c.params.cause==='personal.connector.outcome');assert.equal(sends.length,1);assert.equal(sends[0].params.disable_tools,true);assert.equal(sends[0].params.session_id,agent.main_session_id);assert.equal((await r.client('tasks.get',{task_id:task.task_id})).task.state,'waiting_external');await r.close();
-  });
   await scenario('pending action card waits for its owner without a conversational question or result delivery', async () => {
     const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
     let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-pending', title: 'Save artifact', goal: 'Save the requested local artifact' })).task;
