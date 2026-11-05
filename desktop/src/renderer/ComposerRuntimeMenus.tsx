@@ -1605,6 +1605,7 @@ export function ComposerPlusButton({
           align="left"
           offset={4}
           width={menuWidth}
+          matchAnchorWidth
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
         >
           <div
@@ -1616,37 +1617,39 @@ export function ComposerPlusButton({
             style={{ "--composer-menu-width": `${menuWidth}px` } as CSSProperties}
             onKeyDown={(event) => handleFloatingMenuKeyDown(event, close, pluginMenu?.fromMention ? pluginMenu.inputElement() : buttonRef.current)}
           >
-            {pluginMenu ? <ComposerPluginChoices menu={pluginMenu} /> : null}
-            {mobileAttachments ? (
-              <ComposerMobileAttachmentChoices
-                onTakePhoto={() => {
-                  setOpen(false);
-                  mobileAttachments.onTakePhoto();
-                }}
-                onPickPhotos={() => {
-                  setOpen(false);
-                  mobileAttachments.onPickPhotos();
-                }}
-                onPickFiles={() => {
-                  setOpen(false);
-                  mobileAttachments.onPickFiles();
-                }}
-              />
-            ) : (
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onAddAttachment();
-                }}
-              >
-                <Paperclip className="icon-lg" />
-                <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
-              </button>
-            )}
-            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
-            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            <div className="composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
+              {pluginMenu ? <ComposerPluginChoices menu={pluginMenu} /> : null}
+              {mobileAttachments ? (
+                <ComposerMobileAttachmentChoices
+                  onTakePhoto={() => {
+                    setOpen(false);
+                    mobileAttachments.onTakePhoto();
+                  }}
+                  onPickPhotos={() => {
+                    setOpen(false);
+                    mobileAttachments.onPickPhotos();
+                  }}
+                  onPickFiles={() => {
+                    setOpen(false);
+                    mobileAttachments.onPickFiles();
+                  }}
+                />
+              ) : (
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onAddAttachment();
+                  }}
+                >
+                  <Paperclip className="icon-lg" />
+                  <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
+                </button>
+              )}
+              <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+              <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            </div>
           </div>
         </FloatingMenuPortal>
       ) : null}

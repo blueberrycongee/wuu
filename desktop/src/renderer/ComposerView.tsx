@@ -1412,6 +1412,7 @@ export function Composer({
             align="left"
             offset={variant === "hero" ? 10 : 8}
             width={commandMenuWidth}
+            matchAnchorWidth
           >
             <div
               className="composer-context-menu composer-plus-menu slash-command-menu"
@@ -1421,7 +1422,7 @@ export function Composer({
               style={{ "--composer-menu-width": `${commandMenuWidth}px` } as CSSProperties}
             >
               {visibleSlashCommands.length > 0 ? (
-                <div className="slash-command-list scrollbar-hidden">
+                <div className="slash-command-list composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
                   {visibleSlashCommands.map((command, index) => {
                     const selected = index === selectedSlashIndex;
                     const optionID = `${slashMenuID}-${command.id}`;
