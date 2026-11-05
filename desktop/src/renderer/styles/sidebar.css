@@ -806,9 +806,10 @@
 }
 
 .workspace-right-panel-resizer::before {
-  /* The dock divider is straight, but shares the canvas's vertical insets. */
+  /* Follow the complete dock edge so hover and drag feedback do not leave
+   * light segments above and below the darkened line. */
   position: absolute;
-  inset: var(--conversation-pane-inset) 0;
+  inset: 0;
   left: 50%;
   width: 1px;
   border-radius: var(--radius-pill);
