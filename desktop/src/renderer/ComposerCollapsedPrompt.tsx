@@ -12,7 +12,6 @@ import { clipboardAttachmentFiles } from "./ComposerMessages";
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import type { MessageContentPart } from "../shared/protocol";
 import { translateCurrent as translate, useI18n } from "./i18n";
-import { TruncatedText } from "./TruncatedText";
 import { buildFileSelectionPart } from "./FileSelectionParts";
 
 export type CollapsedComposerPromptBlock = {
@@ -162,7 +161,7 @@ export function CollapsedComposerPromptCard({
     <ComposerDocumentCard
       className="composer-collapsed-prompt-card"
       icon={<FileText className="icon" />}
-      title={<TruncatedText as="strong" className="composer-document-card-title" text={title} />}
+      title={<strong className="composer-document-card-title">{title}</strong>}
       meta={lines > 1
         ? t("composer.pastedTextLines", { count: formatNumber(lines) })
         : t("composer.pastedTextCharacters", { count: formatNumber(text.length) })}

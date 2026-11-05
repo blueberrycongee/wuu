@@ -434,9 +434,8 @@ export function queuedMessagePreview(message: QueuedComposerMessage): string {
 
 /**
  * The untrimmed single-line form of a queued message (text plus image/file
- * annotations). This is the hover-reveal companion to the 48-char inline
- * preview: when the two differ, the queue UI offers the full text via
- * tooltip instead of pretending the preview says everything.
+ * annotations), shown in the expanded queue. The collapsed summary uses
+ * the shorter queuedMessagePreview.
  */
 export function queuedMessageFullPreview(message: QueuedComposerMessage): string {
   const displayText = message.contentParts?.some((part) => part.type === "file_selection")
