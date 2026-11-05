@@ -7,13 +7,6 @@ export type GitChangeGroup = {
   files: GitChangeFile[];
 };
 
-export type GitDiffDisplayLine = {
-  content: string;
-  kind: string;
-  oldLine?: number;
-  newLine?: number;
-};
-
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) {
     return `${formatCurrentNumber(bytes)} B`;
@@ -131,51 +124,6 @@ export function gitChangeStatusText(status: GitChangeFile["status"]): string {
     default:
       return t("gitStatus.changed");
   }
-}
-
-export function gitDiffDisplayLines(patch: string): GitDiffDisplayLine[] {
-  const lines: GitDiffDisplayLine[] = [];
-  let oldLine: number | undefined;
-  let newLine: number | undefined;
-  for (const content of patch.split("\n")) {
-    if (content.startsWith("@@")) {
-      const match = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(content);
-      oldLine = match ? Number(match[1]) : undefined;
-      newLine = match ? Number(match[2]) : undefined;
-      lines.push({ content, kind: "hunk" });
-      continue;
-    }
-    if (content.startsWith("diff --git") || content.startsWith("index ") || content.startsWith("--- ") || content.startsWith("+++ ")) {
-      lines.push({ content, kind: "meta" });
-      continue;
-    }
-    if (content.startsWith("\\ No newline")) {
-      lines.push({ content, kind: "meta" });
-      continue;
-    }
-    if (content.startsWith("+")) {
-      lines.push({ content, kind: "add", newLine });
-      if (newLine !== undefined) {
-        newLine++;
-      }
-      continue;
-    }
-    if (content.startsWith("-")) {
-      lines.push({ content, kind: "delete", oldLine });
-      if (oldLine !== undefined) {
-        oldLine++;
-      }
-      continue;
-    }
-    lines.push({ content, kind: "context", oldLine, newLine });
-    if (oldLine !== undefined) {
-      oldLine++;
-    }
-    if (newLine !== undefined) {
-      newLine++;
-    }
-  }
-  return lines;
 }
 
 export function desktopApiSupportsGitReview(): boolean {
