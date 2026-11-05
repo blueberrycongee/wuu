@@ -117,7 +117,9 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
     const measure = () => {
       const source = anchor.current!.getBoundingClientRect();
       const width = Math.min(window.innerWidth - 16, Math.max(composerMenuWidth(240), matchTriggerWidth ? source.width : 0));
-      const height = Math.min(window.innerHeight - 16, panel.current!.scrollHeight);
+      // The native surface uses this as its exact border-box height. scrollHeight
+      // omits the panel border, leaving a 2px scrollbar gutter in the overlay.
+      const height = Math.min(window.innerHeight - 16, panel.current!.offsetHeight);
       setNativeBounds({ x: Math.max(8, Math.min(window.innerWidth - width - 8, source.x)),
         y: Math.max(8, source.y - height - 6), width, height });
     };
