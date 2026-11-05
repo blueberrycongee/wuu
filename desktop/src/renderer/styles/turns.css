@@ -546,6 +546,19 @@
   overflow-wrap: anywhere;
 }
 
+.user-message-skill-invocation {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 6px;
+}
+
+.user-message-skill-arguments {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .user-message-pasted-text {
   width: 100%;
   min-width: 0;

@@ -9,15 +9,24 @@
   color: var(--ink-muted);
   pointer-events: none;
 }
-.composer-plugin-reference {
+.composer-plugin-reference,
+.composer-skill-reference {
   display: inline-flex;
   max-width: 100%;
   align-items: baseline;
   gap: var(--space-1);
   vertical-align: baseline;
-  color: var(--wuu-color-link, var(--info));
   font-weight: var(--weight-medium);
   user-select: all;
+}
+.composer-plugin-reference {
+  color: var(--wuu-color-link, var(--info));
+}
+.composer-skill-reference {
+  color: var(--ink);
+}
+.composer-skill-reference .composer-reference-mark {
+  color: var(--wuu-accent);
 }
 .composer-reference-mark {
   display: inline-grid;
