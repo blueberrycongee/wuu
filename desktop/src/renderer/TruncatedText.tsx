@@ -14,6 +14,7 @@
  */
 import { type ElementType, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
+import { observeAppearance } from "./AppearancePreferences";
 import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
@@ -59,14 +60,16 @@ export function TruncatedText({
       setTruncated(readTruncation());
     });
     measure();
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
+    // Font changes can alter text overflow without changing the grid cell's box.
+    const stopObservingAppearance = observeAppearance(measure);
+    document.fonts?.addEventListener("loadingdone", measure);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(element);
     return () => {
       settle.cancel();
-      observer.disconnect();
+      observer?.disconnect();
+      stopObservingAppearance();
+      document.fonts?.removeEventListener("loadingdone", measure);
     };
   }, [text]);
 

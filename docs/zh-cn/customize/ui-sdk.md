@@ -158,6 +158,11 @@ JSONL 响应保留 code 与 message，嵌套服务调用同样如此。具有非
 默认桌面界面依赖此服务；Go 服务图通过 `application_surfaces["ui.application"]`
 发布选择结果，发现顺序不决定实际实现。
 
+可选的 `ApplicationSnapshotV1.restartRecovery` 列出上一次意外退出打断、等待用户选择的会话。
+读取快照不会恢复执行。调用 `conversation.resolve-recovery` 并传入 `threadIds`，
+继续所选会话并关闭其余候选项；传入空列表会暂缓全部候选项，保留历史与待处理结果。
+默认实现复用已有的轮次准入与重放保护，失败的候选项保留在列表中供重试。
+
 `ApplicationProviderDefinition.prepare()` 返回 `ApplicationProviderInstanceV1`。
 准备阶段可以验证并分配可清理的资源，但不能启动写入者或后台订阅。生命周期如下：
 

@@ -37,7 +37,8 @@ export function useSendMotion(React, rootRef) {
       body.removeAttribute("data-personal-send-source"); flights.current.delete(flight.requestID); return;
     }
     const destination = body.getBoundingClientRect(), viewRect = flight.view.getBoundingClientRect();
-    const viewport = flight.view.querySelector(".plugin-conversation-scroll").getBoundingClientRect();
+    const scroll = flight.view.querySelector(".plugin-conversation-scroll");
+    const viewport = scroll.getBoundingClientRect();
     if (!destination.width || !body.animate || destination.bottom <= viewport.top || destination.top >= viewport.bottom) {
       body.removeAttribute("data-personal-send-source"); flights.current.delete(flight.requestID); return;
     }
@@ -101,13 +102,13 @@ export function useSendMotion(React, rootRef) {
       cancelAnimationFrame(frame);
       for (const track of tracks) track.cancel();
       overlay.remove(); flight.source?.removeAttribute("data-personal-send-source");
-      for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.removeEventListener(event, stop, true);
+      for (const event of ["wheel", "pointerdown", "keydown"]) scroll.removeEventListener(event, stop, true);
       flights.current.delete(flight.requestID);
     };
     flight.stop = stop;
     const follow = () => {
       if (document.hidden || reduced() || !flight.view.isConnected || flight.view.closest('[hidden],[inert],[aria-hidden="true"]') || Math.abs(flight.view.offsetWidth - viewRect.width / zoom) > 1) { stop(); return; }
-      reconcile(flight);
+      if (!reconcile(flight)) { stop(); return; }
       const delta = place();
       if (delta && Math.hypot(delta.x, delta.y) > .5) {
         // A reply or composer resize may move the destination during the send.
@@ -122,7 +123,7 @@ export function useSendMotion(React, rootRef) {
       }
       frame = requestAnimationFrame(follow);
     };
-    for (const event of ["wheel", "pointerdown", "keydown"]) flight.view.addEventListener(event, stop, true);
+    for (const event of ["wheel", "pointerdown", "keydown"]) scroll.addEventListener(event, stop, true);
     travel.addEventListener("finish", stop, { once: true });
     frame = requestAnimationFrame(follow);
   };
@@ -148,9 +149,6 @@ export function useSendMotion(React, rootRef) {
       const view = [...(rootRef.current?.querySelectorAll(".plugin-conversation") || [])].find(node => node.dataset.conversationId === conversationID);
       const composer = view?.querySelector(".composer-frame");
       if (!composer || view.closest('[hidden],[inert],[aria-hidden="true"]')) return;
-      for (const flight of flights.current.values()) if (flight.view === view) {
-        cancelAnimationFrame(flight.frame); flight.stop?.(); flight.source?.removeAttribute("data-personal-send-source"); flights.current.delete(flight.requestID);
-      }
       flights.current.set(requestID, { requestID, view, origin: composer.getBoundingClientRect() });
     },
   };

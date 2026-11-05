@@ -1,3 +1,4 @@
+import "./ReactDevPerformance";
 import { Tooltip } from "./Tooltip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";

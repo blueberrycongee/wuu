@@ -783,7 +783,7 @@ func TestMigrateLegacySessionMessagesRemainsReadable(t *testing.T) {
 
 	// Migration must keep columns added after a retired column was dropped and
 	// remain idempotent when a later public operation opens the store again.
-	if _, err := SetProjectMembership(dir, "thread-1", "project-session", "project-1", "instructions"); err != nil {
+	if _, err := SetSource(dir, "thread-1", "plugin:fixture"); err != nil {
 		t.Fatal(err)
 	}
 	parts := json.RawMessage(`[{"type":"text","text":"new history"}]`)
@@ -802,7 +802,7 @@ func TestMigrateLegacySessionMessagesRemainsReadable(t *testing.T) {
 		t.Fatalf("history changed after reopening migrated store: %+v", history)
 	}
 	saved, ok, err := Find(dir, "thread-1")
-	if err != nil || !ok || saved.Source != "project-session" || saved.ParentID != "project-1" {
+	if err != nil || !ok || saved.Source != "plugin:fixture" {
 		t.Fatalf("migrated session metadata = %+v, found=%v, err=%v", saved, ok, err)
 	}
 }

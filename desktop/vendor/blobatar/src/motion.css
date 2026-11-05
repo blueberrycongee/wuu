@@ -1070,3 +1070,14 @@
     transition: none;
   }
 }
+
+/* Paused surfaces still accept the latest semantic expression. Settle its
+ * registered-property transition before the controller's one-off contour flush;
+ * otherwise pausing midway would strand the face at an obsolete interpolation. */
+.mo-root[data-mo-paused] {
+  transition: none;
+}
+.mo-root[data-mo-paused],
+.mo-root[data-mo-paused] * {
+  animation-play-state: paused !important;
+}

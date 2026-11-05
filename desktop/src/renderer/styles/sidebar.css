@@ -352,10 +352,13 @@
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
   /* Group labels and heading actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
-  /* One icon and text axis for navigation, plugins, projects, and account
-   * controls. Avatars occupy this same glyph slot. Icon, column, and row
-   * action sizes scale with the UI font in appearance.css. */
-  --sidebar-nav-column-gap: var(--space-2);
+  /* Keep navigation, workspace labels, and nested conversations on one text
+   * axis. The gap follows the UI em and snaps to whole pixels. */
+  --sidebar-nav-column-gap: round(nearest, calc(var(--font-ui) * 2 / 3), 1px);
+  /* Folder artwork starts at x=3.8 on the 24-unit SVG grid. Match its visible
+   * stroke to the text's optical edge, allowing 0.05em for the font sidebearing.
+   * Keep row surfaces and label columns fixed. */
+  --sidebar-leading-icon-inset: calc(var(--sidebar-primary-icon-size) * (3.8 - var(--icon-stroke) / 2) / 24 - var(--font-ui) * 0.05);
   --sidebar-tree-toggle-col: 14px;
   --sidebar-tree-column-gap: var(--space-1);
   --sidebar-accessory-gap: var(--space-2);
@@ -1880,6 +1883,14 @@ html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row 
   transition: color var(--motion-fast) var(--ease-out);
 }
 
+/* Translate the slot so folder open/close transforms remain independent. */
+.project-row-icon,
+.project-row > svg:not(.project-row-chevron),
+.nav-item > svg,
+.project-thread-glyph > svg {
+  translate: calc(-1 * var(--sidebar-leading-icon-inset)) 0;
+}
+
 .project-row-icon {
   display: grid;
   width: var(--sidebar-nav-icon-col);
@@ -2335,39 +2346,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 
 .project-section .thread-list-collapse .thread-row-main {
   padding-left: var(--sidebar-session-indent);
-}
-
-/* A project row carries its glyph in the icon column and starts its title
- * after it, like a folder row, wherever the project is listed. */
-.sidebar-session-row.project-thread-row > .thread-row-main {
-  padding-left: calc(
-    var(--sidebar-session-indent, 0px) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap)
-  );
-}
-
-.project-thread-glyph {
-  position: absolute;
-  top: 50%;
-  left: calc(var(--sidebar-row-pad-x) + var(--sidebar-session-indent, 0px));
-  z-index: 1;
-  display: grid;
-  width: var(--sidebar-nav-icon-col);
-  height: var(--sidebar-nav-icon-col);
-  place-items: center;
-  color: var(--ink-soft);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.project-thread-glyph > svg {
-  width: var(--sidebar-primary-icon-size);
-  height: var(--sidebar-primary-icon-size);
-}
-
-/* Dropping a conversation on a project row adds it to the project. */
-.thread-row.project-thread-row.drop-active {
-  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 42%, transparent);
 }
 
 .thread-row-main > .thread-row-title {

@@ -13,7 +13,7 @@ fs.mkdirSync(output, { recursive: true });
 esbuild.buildSync({ entryPoints: [path.join(__dirname, "e2e/error-feedback-fixture.tsx")],
   outfile: path.join(temp, "fixture.js"), bundle: true, platform: "browser", format: "esm",
   jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "import.meta.env": '{"DEV":false,"MODE":"production"}' },
-  loader: { ".ttf": "file", ".woff": "file", ".woff2": "file", ".svg": "file", ".png": "file" },
+  loader: { ".ttf": "file", ".woff": "file", ".woff2": "file", ".svg": "file", ".png": "file", ".webp": "file" },
 });
 fs.writeFileSync(path.join(temp, "index.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script type="module" src="fixture.js"></script>');
 if (process.argv.includes("--build-only")) {

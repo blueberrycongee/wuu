@@ -36,6 +36,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -231,15 +232,15 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	th.mu.Lock()
-	disabledProject := projectExecutionDisabled(th.Source)
+	retiredSession := retiredSessionSource(th.Source)
 	effects := executionEffects(th.ModelProvider, th.Model, permissions.Mode, string(agentengine.NormalizeEngineID(th.EngineID)))
 	th.mu.Unlock()
 	ctx, err = s.requireRequestAccess(req, MethodTurnStart, effects)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if disabledProject {
-		return s.writeResponse(req.ID, nil, errProjectAgentDisabled)
+	if retiredSession {
+		return s.writeResponse(req.ID, nil, errRetiredSession)
 	}
 	if isManualCompactPrompt(params.Prompt) {
 		if !s.Principal(ctx).IsOwner() {
@@ -378,24 +379,10 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	if metadata, found, err := th.state.Sessions.Find(th.ID); err != nil {
 		return nil, err
 	} else if found {
-		instructions, err := ProjectInstructions(s.projectServiceContext(context.Background(), th.state), threadRuntime.PluginHost, metadata)
-		if err != nil {
-			return nil, err
-		}
 		th.mu.Lock()
 		th.Source = metadata.Source
-		th.ProjectID = projectIDForSession(metadata)
-		th.ProjectRole = projectRoleForSession(metadata)
-		th.Instructions = instructions
+		th.Instructions = metadata.Instructions
 		th.mu.Unlock()
-		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource
-		if threadRuntime.Toolkit != nil {
-			var handler tools.ProjectSessionHandler
-			if isProject {
-				handler = s.projectSessionHandlerForState(th.ID, th.state)
-			}
-			threadRuntime.Toolkit.SetProjectSessions(handler)
-		}
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
 		// Attribution is metadata, not a reason to block the user's turn when a
@@ -489,10 +476,6 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	if running {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q already has a running turn", threadID))
 	}
-	maxParallel, err := s.threadProjectAdmission(ctx, th)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	turnID := session.NewID()
 	turnCtx, cancel := context.WithCancel(ctx)
 	now := time.Now().UTC()
@@ -508,7 +491,7 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 		cancel()
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q already has a running turn", threadID))
 	}
-	acquired, err := s.tryAcquireThreadExecutionLeaseLocked(th, maxParallel)
+	acquired, err := s.tryAcquireThreadExecutionLeaseLocked(th)
 	if err != nil {
 		th.mu.Unlock()
 		cancel()
@@ -1018,7 +1001,6 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
 	th.mu.Unlock()
-	s.noticeProjectUserMessage(th.state, th, steerMsg)
 	if removedQueued {
 		s.notifyPluginTurnDiscarded(binding, params.ThreadID, removedQueuedTurn, "queued turn was converted to steering input")
 		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
@@ -1105,7 +1087,7 @@ func (s *Server) steerAgentCompletion(binding *runtime.State, threadID, resultID
 		// Admission reconciles a saved answer without another model request.
 		return false
 	}
-	if th.completionDeliveryPaused([]string{resultID}, nil) {
+	if s.completionDeliveryPaused(th, []string{resultID}, nil) {
 		return true
 	}
 	th.mu.Lock()
@@ -1470,15 +1452,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		return nil, err
 	}
 	th.mu.Lock()
-	coordinator := th.Source == projectSource || th.Source == projectSessionSource
 	if th.Ephemeral && threadRuntime.StreamRunner != nil {
 		threadRuntime.StreamRunner.DriverBindingStore = &th.ephemeralDriver
 		threadRuntime.StreamRunner.DriverCheckpointStore = &th.ephemeralDriver
 	}
 	th.mu.Unlock()
-	if coordinator && threadRuntime.Toolkit != nil {
-		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandlerForState(th.ID, th.state))
-	}
 	// Stamp the engine the thread is bound to onto the runtime. A cached
 	// runtime keeps its original stamp; threads never silently switch.
 	threadRuntime.EngineID = agentengine.NormalizeEngineID(th.EngineID)
@@ -1538,13 +1516,25 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		th.runtimePluginRevision = s.pluginRuntimeRevision.Load()
 		th.mu.Unlock()
 		if threadRuntime.AgentControl != nil {
-			threadRuntime.AgentControl.StartWorkerTerminalRecovery()
-			// New only restores durable queue metadata. Start restored workers after
-			// this runtime has won installation, configuration is complete,
-			// and subscribeThreadRuntime has attached the model resolver and reliable
-			// terminal finalizer. A zero-latency worker can now safely resolve and
-			// finalize against the installed thread runtime.
-			threadRuntime.AgentControl.StartQueuedWork()
+			// Same-boot runtime replacement can recover workers immediately;
+			// a pre-restart conversation waits for an admitted user choice.
+			allowed := !th.PersistHistory || th.Visibility == pluginhost.SessionVisibilityPlugin || th.ParentID != "" || !th.CreatedAt.Before(s.recoveryBootAt)
+			if !allowed {
+				err := persistence.Update(context.Background(), th.state.Documents, func(tx *persistence.Tx) error {
+					var rec restartRecoveryRecord
+					_, err := tx.Get(restartRecoveryNamespace, th.ID, &rec)
+					allowed = !rec.AllowedAt.Before(s.recoveryBootAt)
+					return err
+				})
+				if err != nil {
+					providers.DebugLogf("restart worker recovery gate for %q: %v", th.ID, err)
+					allowed = false
+				}
+			}
+			if allowed {
+				threadRuntime.AgentControl.StartWorkerTerminalRecovery()
+				threadRuntime.AgentControl.StartQueuedWork()
+			}
 			s.replayPendingAgentCompletions(th.state, th.ID, threadRuntime)
 		}
 		s.replayPendingProcessCompletions(th.state, th.ID, threadRuntime.AgentControl, threadRuntime.ProcessManager)
@@ -2281,8 +2271,7 @@ func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, r
 		return err
 	}
 	if runID != "" {
-		// An accepted Run can be between turns while a schema correction waits
-		// for project capacity, including legacy members with no control fence.
+		// An accepted Run can be between turns while a schema correction starts.
 		s.setExecutionRunInterruptStatus(runID, execution.StatusInterrupted)
 	}
 	turnActive, err := s.interruptThreadExecution(binding, threadID, runID, expectedTurnID, timings...)
@@ -2837,6 +2826,13 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 
 func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) (durabilityErr error) {
 	ctx = runtime.WithInvocationState(ctx, binding)
+	// Reading history may install a runtime. Restored workers and nested result
+	// delivery start only after ordinary work passes turn admission, including
+	// the restart gate. All model resolvers and finalizers are installed by now.
+	if threadRuntime != nil && threadRuntime.AgentControl != nil && turnRuntime.ToolPolicy == nil && !turnRuntime.CompactOnly {
+		threadRuntime.AgentControl.StartWorkerTerminalRecovery()
+		threadRuntime.AgentControl.StartQueuedWork()
+	}
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
@@ -2874,7 +2870,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	sessionInstructions := ""
 	metadata, found, instructionsErr := binding.Sessions.Find(th.ID)
 	if instructionsErr == nil && found {
-		sessionInstructions, instructionsErr = ProjectInstructions(s.projectServiceContext(ctx, binding), binding.Host, metadata)
+		sessionInstructions = metadata.Instructions
 	}
 	var additionalDirectories []string
 	if turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
@@ -3045,12 +3041,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		if th.steerWake == nil {
 			th.steerWake = make(chan struct{})
 		}
-		coordinator := th.Source == projectSource || th.Source == projectSessionSource
 		th.mu.Unlock()
-		if coordinator {
-			// Deferred team input joins the recipient's next turn.
-			s.startBackgroundWithState(binding, func(binding *runtime.State) { s.drainSessionInboxForState(th.ID, binding) })
-		}
 	}
 	if len(frozenTreeContext) > 0 {
 		requestContext = append(append([]agent.ContextSegment(nil), requestContext...), frozenTreeContext...)
@@ -3456,7 +3447,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 						}
 						continue
 					}
-					if th.completionDeliveryPaused([]string{completion.ResultID}, nil) {
+					if s.completionDeliveryPaused(th, []string{completion.ResultID}, nil) {
 						continue
 					}
 					message := control.AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
@@ -3483,7 +3474,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
 						continue
 					}
-					if th.completionDeliveryPaused(nil, []string{p.ID}) {
+					if s.completionDeliveryPaused(th, nil, []string{p.ID}) {
 						continue
 					}
 					// An answer can survive a restart before its delivery acknowledgement.
@@ -3980,7 +3971,6 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		})
 		_ = observer.Close()
 	}
-	s.afterProjectTurnForState(th, turn, turnRuntime.CompactOnly, binding)
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""
@@ -4019,7 +4009,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		return
 	}
 	if executionRetryPrompt != "" {
-		if retryErr := s.startOrDeferExecutionSchemaRetry(context.Background(), th, turnRuntime, executionRetryPrompt); retryErr != nil {
+		if retryErr := s.startExecutionSchemaRetry(context.Background(), th, turnRuntime, executionRetryPrompt); retryErr != nil {
 			s.failExecutionSchemaRetry(binding, turnRuntime.ExecutionRunID, retryErr)
 		}
 		return
@@ -4479,7 +4469,7 @@ func (s *Server) kickQueuedTurnDrain(binding *runtime.State, threadID string) {
 	s.tryDrainQueuedTurns(binding, threadID, false)
 }
 
-func (s *Server) tryDrainQueuedTurns(binding *runtime.State, threadID string, synchronous bool) (capacityFull bool) {
+func (s *Server) tryDrainQueuedTurns(binding *runtime.State, threadID string, synchronous bool) {
 	if s == nil || s.closed.Load() {
 		return
 	}
@@ -4507,7 +4497,8 @@ func (s *Server) tryDrainQueuedTurns(binding *runtime.State, threadID string, sy
 	s.queuedTurnMu.Unlock()
 
 	if synchronous {
-		return s.drainQueuedTurns(binding, threadID)
+		s.drainQueuedTurns(binding, threadID)
+		return
 	}
 	_ = s.startBackgroundWithState(binding, func(binding *runtime.State) {
 		s.drainQueuedTurns(binding, threadID)
@@ -4515,7 +4506,7 @@ func (s *Server) tryDrainQueuedTurns(binding *runtime.State, threadID string, sy
 	return
 }
 
-func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capacityFull bool) {
+func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) {
 	if s == nil {
 		return
 	}
@@ -4572,7 +4563,6 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 	started, err := s.startQueuedTurn(binding, context.Background(), threadID, entry)
 	executionBusy := errors.Is(err, errThreadExecutionBusy)
 	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
-	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
 	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
 	if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
@@ -4629,9 +4619,6 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 	requeued := requeueCandidate && !cancelled
 	s.clearQueuedTurnDrain(threadID)
 	if requeued && (executionBusy || retryableAdmission) {
-		if capacityFull && s.deferProjectCapacityRetry(binding, threadID, "queued") {
-			return
-		}
 		s.scheduleThreadAdmissionRetry(func(binding *runtime.State) {
 			s.kickQueuedTurnDrain(binding, threadID)
 		})
@@ -4709,12 +4696,6 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 		return startedThreadTurn{}, false, err
 	}
-	phaseStarted = timing.now()
-	maxParallel, err := s.threadProjectAdmission(ctx, th)
-	timing.span("admission_project_policy", phaseStarted)
-	if err != nil {
-		return startedThreadTurn{}, false, err
-	}
 	turnID := session.NewID()
 	turnCtx, cancel := context.WithCancel(ctx)
 	now := time.Now().UTC()
@@ -4753,7 +4734,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	phaseStarted = timing.now()
-	acquired, err := s.tryAcquireThreadExecutionLeaseLocked(th, maxParallel)
+	acquired, err := s.tryAcquireThreadExecutionLeaseLocked(th)
 	timing.span("admission_execution_lease", phaseStarted)
 	if err != nil {
 		th.mu.Unlock()
@@ -4816,10 +4797,6 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.releaseThreadExecutionLeaseLocked()
 		th.mu.Unlock()
 		cancel()
-	}
-	if err := s.validateInboxInput(th.state, userMsg); err != nil {
-		abortAdmission()
-		return startedThreadTurn{}, false, err
 	}
 	if snapshot.Control != nil {
 		if err := th.state.Sessions.ValidateControl(*snapshot.Control); err != nil {
@@ -5010,6 +4987,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		userMsgSeq = seq
 		th.historyHeadSeq = max(th.historyHeadSeq, seq)
 	}
+	if snapshot.ToolPolicy == nil && !snapshot.CompactOnly {
+		if err := s.recordRecoveryTurn(th, turnID, "running"); err != nil {
+			th.releaseThreadExecutionLeaseLocked()
+			th.mu.Unlock()
+			cancel()
+			return startedThreadTurn{}, false, err
+		}
+	}
 	userMsg.Seq = userMsgSeq
 	if commitAfterAppend != nil {
 		if err := commitAfterAppend(); err != nil {
@@ -5065,9 +5050,6 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()
-	if !resuming {
-		s.noticeProjectUserMessage(th.state, th, userMsg)
-	}
 	timing.mark("admission_committed")
 
 	return startedThreadTurn{
@@ -5155,7 +5137,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs); err != nil {
 					return err
 				}
-				if admitted.completionDeliveryPaused(snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs) {
+				if s.completionDeliveryPaused(admitted, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs) {
 					return errCompletionDeliveryPaused
 				}
 				return nil
@@ -5431,7 +5413,7 @@ func (s *Server) kickAgentCompletionDrain(binding *runtime.State, threadID strin
 	s.tryDrainAgentCompletionTurns(binding, threadID, false)
 }
 
-func (s *Server) tryDrainAgentCompletionTurns(binding *runtime.State, threadID string, synchronous bool) (capacityFull bool) {
+func (s *Server) tryDrainAgentCompletionTurns(binding *runtime.State, threadID string, synchronous bool) {
 	if s == nil || s.closed.Load() {
 		return
 	}
@@ -5456,7 +5438,8 @@ func (s *Server) tryDrainAgentCompletionTurns(binding *runtime.State, threadID s
 	s.agentCompletionMu.Unlock()
 
 	if synchronous {
-		return s.drainAgentCompletionTurns(binding, threadID)
+		s.drainAgentCompletionTurns(binding, threadID)
+		return
 	}
 	_ = s.startBackgroundWithState(binding, func(binding *runtime.State) {
 		s.drainAgentCompletionTurns(binding, threadID)
@@ -5464,7 +5447,7 @@ func (s *Server) tryDrainAgentCompletionTurns(binding *runtime.State, threadID s
 	return
 }
 
-func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID string) (capacityFull bool) {
+func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID string) {
 	if s == nil {
 		return
 	}
@@ -5532,7 +5515,6 @@ func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID stri
 	started, err := s.startSyntheticTurn(binding, context.Background(), threadID, combineAgentCompletionMessages(current), current)
 	executionBusy := errors.Is(err, errThreadExecutionBusy)
 	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
-	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 	if err != nil && !executionBusy {
 		providers.DebugLogf("start agent completion turn for thread %q: %v", threadID, err)
 	}
@@ -5543,9 +5525,6 @@ func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID stri
 	}
 	s.clearAgentCompletionDrain(threadID)
 	if requeued && (executionBusy || retryableAdmission) {
-		if capacityFull && s.deferProjectCapacityRetry(binding, threadID, "completion") {
-			return
-		}
 		s.scheduleThreadAdmissionRetry(func(binding *runtime.State) {
 			s.kickAgentCompletionDrain(binding, threadID)
 		})
@@ -5608,7 +5587,7 @@ func (s *Server) startSyntheticTurn(binding *runtime.State, ctx context.Context,
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
 					return err
 				}
-				if admitted.completionDeliveryPaused(completionResultIDs, processCompletionIDs) {
+				if s.completionDeliveryPaused(admitted, completionResultIDs, processCompletionIDs) {
 					return errCompletionDeliveryPaused
 				}
 				*admittedMsg = combineAgentCompletionMessages(pending)

@@ -90,7 +90,7 @@ function Titlebar() {
     const active = visibleWorkbenchView(workbench, "primary");
     const view = active?.view;
     const preview = createFixtureApplication({
-      tabs: {...snapshot.tabs, activeTabId:"draft:automation",items:[{id:"draft:automation",kind:"draft",title,workspaceRoot:workspace.root,project:false,draftText:"",hasAttachments:false}]},
+      tabs: {...snapshot.tabs, activeTabId:"draft:automation",items:[{id:"draft:automation",kind:"draft",title,workspaceRoot:workspace.root,draftText:"",hasAttachments:false}]},
       conversationWorkspace: {...snapshot.conversationWorkspace,primaryThreadId:undefined,threads:[]},
       navigationWorkspace: {...snapshot.navigationWorkspace, activeContextKind:"project",selectedWorkspaceId:workspace.id,
         activePluginView:view ? {id:view.id,pluginId:view.pluginId,title:active.definition.title,webPage:workbench.webPageViewIds.includes(view.id),closable:!host.getNavigationEntries().some(entry => entry.pluginId === view.pluginId && entry.view === view.viewTypeId) || workbench.views.filter(item => item.region === "primary" && item.pluginId === view.pluginId && item.viewTypeId === view.viewTypeId).length > 1} : undefined},

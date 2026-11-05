@@ -415,7 +415,7 @@ func TestServerModelCatalogProvidersListsConnectableServices(t *testing.T) {
 	if !suggested {
 		t.Fatalf("suggested %q is not one of the provider's models", one.Providers[0].DefaultModel)
 	}
-	if byID["openai"].DefaultModel != "gpt-6-astra" {
+	if byID["openai"].DefaultModel != "gpt-6.1-terra" {
 		t.Fatalf("openai suggestion = %q; want the base model of the newest release, not a Pro or Fast variant", byID["openai"].DefaultModel)
 	}
 	for id, params := range map[string]string{

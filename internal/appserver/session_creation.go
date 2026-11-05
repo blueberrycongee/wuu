@@ -41,7 +41,7 @@ type hostSessionCreateParams struct {
 	WorkspaceID              string
 	WorkspaceRoot            string
 	ModelAlias               string
-	ProjectRole              string
+	Role                     string
 	Provider                 string
 	Model                    string
 	Variant                  string
@@ -68,14 +68,6 @@ type hostSessionLaunchParams struct {
 
 func (s *Server) createHostSessionThread(binding *runtime.State, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
 	th, err := s.createHostSessionThreadWithStore(binding, binding.Sessions, owner, source, id, params)
-	if err != nil {
-		return nil, err
-	}
-	metadata, _, err := binding.Sessions.Find(th.ID)
-	if err != nil {
-		return nil, err
-	}
-	th.Instructions, err = ProjectInstructions(s.projectServiceContext(context.Background(), binding), binding.Host, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -204,8 +196,8 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		if err != nil {
 			return nil, err
 		}
-		if !found || shared.ParentID != params.ParentSessionID || shared.Source != projectSessionSource || shared.ArchivedAt != nil {
-			return nil, errors.New("shared work session is not a live member of this project")
+		if !found || shared.ParentID != params.ParentSessionID || shared.Owner != owner || shared.ArchivedAt != nil {
+			return nil, errors.New("shared work session is not a live session of this owner")
 		}
 		threadCWD = shared.CWD
 	}
@@ -258,7 +250,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
 		Effort: selection.Effort, Speed: selection.Speed, ModelOptions: selection.ModelOptions, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
-		ProjectRole: params.ProjectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
+		ProjectRole: params.Role, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
 	var artifactServices *runtime.StateServices
@@ -354,10 +346,6 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	th.Owner = owner
 	th.Visibility = params.Visibility
 	th.Instructions = initial.Instructions
-	if source == projectSessionSource {
-		th.ProjectID = params.ParentSessionID
-		th.ProjectRole = projectRoleForSession(initial)
-	}
 	// Session lineage stays in persisted metadata for management and cancellation.
 	// Thread.ParentID identifies internal agent workers, not ordinary sessions
 	// created from another session; keep this consistent with applySessionMetadata.

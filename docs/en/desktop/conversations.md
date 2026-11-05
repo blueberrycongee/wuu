@@ -14,7 +14,7 @@ The normal sidebar includes cross-workspace **Recent**. Opening the window order
 
 New conversations appear at the top of Recent, including while the first message is waiting to start. Existing conversations keep their relative positions when work starts or finishes. You can drag rows to save a preferred order; later arrivals appear above them. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, new entries wait until the interaction ends, except for the conversation you are creating or selecting. Status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
 
-These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
+These conversations remain in their workspace lists too. Pinned and archived conversations are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
 
 ## Dictate a message
 
@@ -33,6 +33,12 @@ A dropped response that already completed an assistant item stops automatic payl
 Automatic recovery is separate: a pending network connection shows **Waiting for the network**, other recoveries show **Retrying the request**, and terminal notices distinguish exhausted recovery from unsafe replay. Stop cancels the current request and its backoff; it does not schedule another turn. Double clicks and stale requests cannot start concurrent continuations.
 
 Automatic retries retain the existing workload and shared workflow limits. A new model round receives its own operation allowance; transport changes, nested recovery, ambiguous billable submissions and waiting still share the workflow budget. Confirmed progress does not reset that shared budget. Explicit Continue starts a new workflow after the preceding turn has settled.
+
+## Choose what continues after restarting
+
+After an unexpected exit interrupts running conversations, a notice shows how many were interrupted during the previous run. You can continue using Wuu while it is visible. Click **Continue all** to continue those conversations from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. Previously completed, failed, or manually stopped turns and old background results are not counted as interrupted conversations.
+
+Dismiss the notice to keep those conversations paused. Opening their history or receiving another completion notification does not restart them. You can continue later from a conversation or send a new instruction. Dismissing the notice preserves saved history and pending results; it does not undo earlier effects or stop separately managed background commands. Archived conversations and plugin-private sessions are excluded.
 
 ## Recover unsent text
 

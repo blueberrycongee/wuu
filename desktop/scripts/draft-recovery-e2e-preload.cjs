@@ -11,7 +11,7 @@ module.exports = (api) => {
         turns: base.turns.map(turn => ({ ...turn, items: turn.items.map(item => ({ ...item })) })) };
       if (id === "resize-thread") {
         const last = thread.turns.at(-1);
-        last.items[0] = { ...last.items[0], origin: "host", presentation_kind: "session_message", related_session_id: "draft-other" };
+        last.items[0] = { ...last.items[0], origin: "host", related_session_id: "draft-other" };
       }
       return thread;
     });

@@ -55,6 +55,16 @@ Gemini 的 OpenAI 兼容 Chat Completions 接口可能随工具调用返回不�
 
 切换服务或模型后，发出的请求会移除原来源的签名。旧版 Wuu 已经丢失的签名无法重建；如果这段历史被拒绝，请新建会话。仅凭通用的 `invalid_request` 错误无法确认缺失签名就是原因。
 
+## 腾讯 HY4 与 MiniMax M3.1
+
+在腾讯 TokenHub（`https://tokenhub.tencentmaas.com/v1`）或 Token Plan（`https://tokenhub.tencentmaas.com/plan/v3`）选择 `hy4`。HY4 支持文本、图片和工具调用，上下文为 1,024,000 token，最大输出为 64,000 token。Wuu 默认使用 `high`；选择 `none` 时发送腾讯要求的 `no_think`。参见官方 [HY4 调用指南](https://cloud.tencent.com/document/product/1823/132252)和[深度思考参数](https://cloud.tencent.com/document/product/1823/131208)。
+
+OpenRouter 提供 `tencent/hy4`，推理选项为 `none`、`low` 和 `high`（默认）。其长度限制和价格以该渠道为准，不能直接套用腾讯直连的参数。
+
+MiniMax 连接包含 `MiniMax-M3.1-Flash`，支持图片、视频输入及 1M 上下文。该模型必须启用推理，可选 `low`、`medium`、`high`、`xhigh` 或 `max`（默认）；已保存的 `none` 会映射为 `low`。已有 M2 选择保留元数据，但不再作为新增模型推荐。参见 [MiniMax 文本生成指南](https://platform.minimax.io/docs/guides/text-generation)。
+
+目录刷新会为已保存、但从内置目录移除的模型保留元数据。保留元数据不代表服务商仍提供该模型，也不代表账号套餐包含访问权限。
+
 ## Kimi K3.1 Pro
 
 Kimi 按量付费 API 使用 `kimi-k3.1-pro` 或 `kimi-k3.1-pro-highspeed`，地址为 `https://api.moonshot.cn/v1` 或 `https://api.moonshot.ai/v1`。Kimi Code 订阅使用 `k3.1-pro` 或 `k3.1-pro-highspeed`，地址为 `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1`。

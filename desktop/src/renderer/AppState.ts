@@ -110,9 +110,6 @@ type SessionTab =
       files: ComposerFile[];
       createdAt: number;
       selections?: ResponseSelection[];
-      // The draft starts a project: its first message names the project and
-      // becomes the coordinator's first instruction.
-      project?: true;
     }
   | {
       id: string;
@@ -702,7 +699,6 @@ function reduceNotification(
           variant: params.variant,
           model_roles: params.model_roles,
           model_aliases: params.model_aliases,
-          project_models: params.project_models,
           providers: params.providers,
         },
       };
@@ -1641,9 +1637,6 @@ function summarizeThreadForSidebar(
     title: thread.title,
     title_revision: thread.title_revision,
     source: thread.source,
-    project_id: thread.project_id,
-    project_exists: thread.project_exists,
-    project_role: thread.project_role,
     model_provider: thread.model_provider,
     model: thread.model,
     engine_id: thread.engine_id,
@@ -1856,10 +1849,6 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
   const turns = mergeListedThreadTurns(existing.turns, listed.turns);
   return {
     ...listed,
-    project_exists: listed.project_exists ?? (
-      listed.source === existing.source && listed.project_id === existing.project_id
-        ? existing.project_exists : undefined
-    ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
     status: reconciledThreadStatus(listed, existing, turns),

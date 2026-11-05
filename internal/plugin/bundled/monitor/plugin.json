@@ -3,7 +3,7 @@
   "id": "monitor",
   "name": "Monitor",
   "description": "Watch scripts and event streams, and wake the conversation when something changes.",
-  "icon": "pulse",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "2026.10.19",

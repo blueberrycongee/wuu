@@ -13,9 +13,6 @@ export interface NavigationThreadV1 {
   readonly parent_id?: string;
   readonly agent_path?: string;
   readonly source?: string;
-  readonly project_id?: string;
-  readonly project_exists?: boolean;
-  readonly project_role?: "side" | "worker";
   readonly model_provider: string;
   readonly model: string;
   readonly engine_id?: string;
@@ -43,6 +40,7 @@ export interface NavigationWorkspaceV1 {
   readonly created_at: string; readonly updated_at: string;
 }
 export interface NavigationPluginDestinationV1 {
+  readonly avatarKey?: string | null;
   readonly id: string; readonly pluginId: string; readonly generation: string; readonly view: string;
   readonly title: string; readonly icon?: NavigationIconV1; readonly instanceId?: string; readonly navigationId?: string;
 }
@@ -61,14 +59,13 @@ export interface ApplicationNavigationViewV1 {
   readonly lastViewedTurnByThreadId: Readonly<Record<string, string>>;
   readonly pendingConversations: readonly { readonly id: string; readonly title: string; readonly context: { readonly kind: "project"; readonly project_id: string; readonly cwd: string } | { readonly kind: "no_project"; readonly cwd: string } }[];
   readonly folders: readonly { readonly id: string; readonly name: string }[];
-  readonly plugins: readonly { readonly id: string; readonly name: string; readonly pluginId: string; readonly fingerprint: string; readonly icon?: NavigationIconV1; readonly enabled: boolean; readonly kind: "plugin" | "skill" }[];
+  readonly plugins: readonly { readonly id: string; readonly name: string; readonly pluginId: string; readonly fingerprint: string; readonly icon?: NavigationIconV1; readonly family?: import("./ui-catalog.js").CatalogExtensionV1["family"]; readonly enabled: boolean; readonly kind: "plugin" | "skill" }[];
   readonly destinations: readonly NavigationPluginDestinationV1[];
   readonly activePluginView?: { readonly layout?: "user-space"; readonly id: string; readonly viewTypeId?: string; readonly context?: Readonly<Record<string, unknown>>; readonly pluginId: string; readonly title: string; readonly webPage: boolean; readonly closable: boolean };
   readonly regionVisibilityRequest?: { readonly id: number; readonly region: ViewPlacementRegion };
   readonly canRevealThread: boolean;
   readonly canCreateWorkspace: boolean;
   readonly canChooseWorkspace: boolean;
-  readonly projectAgentEnabled: boolean;
   readonly accountAvailable: boolean;
   readonly update: NavigationUpdateV1;
   readonly browser?: { readonly tabs: readonly NavigationWebsiteV1[]; readonly activeTabId?: string; readonly canCreate: boolean; readonly canReopenTab: boolean };
@@ -85,7 +82,6 @@ export interface ApplicationNavigationActionMapV1 {
   "navigation.pin-thread": { input: { readonly threadId: string; readonly pinned: boolean }; result: void };
   "navigation.archive-thread": { input: { readonly threadId: string; readonly force?: boolean }; result: { readonly ok: true } | { readonly ok: false; readonly error: string; readonly forceRetryable?: boolean } };
   "navigation.delete-thread": { input: { readonly threadId: string }; result: void };
-  "navigation.adopt-thread": { input: { readonly projectId: string; readonly threadId: string }; result: void };
   "navigation.create-folder": { input: { readonly name: string; readonly threadId?: string }; result: void };
   "navigation.rename-folder": { input: { readonly folderId: string; readonly name: string }; result: void };
   "navigation.delete-folder": { input: { readonly folderId: string }; result: void };

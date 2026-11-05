@@ -790,7 +790,7 @@ func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 		t.Fatalf("expected xiaomi catalog models, got %+v", xiaomi)
 	}
 	xiaomiModel := providerModelByID(t, xiaomi, "mimo-v2.5-pro")
-	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "models.dev" {
+	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "selected" {
 		t.Fatalf("unexpected xiaomi model summary: %+v", xiaomiModel)
 	}
 	if xiaomiModel.Capabilities.ContextWindow != 1048576 || !xiaomiModel.Capabilities.Reasoning {
@@ -2291,7 +2291,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
+	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/advanced/update: %v", err)
 	}
@@ -2314,7 +2314,6 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("unexpected verification model: %+v", role)
 	}
 	if rt.StreamRunner.MaxSteps != 12 ||
-		result.ProjectModels.Side.Model != "side-model" || result.ProjectModels.Worker.Model != "worker-model" ||
 		rt.StreamRunner.Temperature != 0.4 ||
 		rt.StreamRunner.CompactThresholdPct != 0.5 ||
 		rt.StreamRunner.CompactKeepRecentTokens != 20000 ||
@@ -6815,7 +6814,6 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		{name: "unknown workspace", params: ThreadStartParams{Workspace: "elsewhere"}},
 		{name: "start point without worktree", params: ThreadStartParams{BaseRevision: "HEAD"}},
 		{name: "ephemeral worktree", params: ThreadStartParams{Workspace: "worktree", Ephemeral: true}},
-		{name: "project worktree", params: ThreadStartParams{Workspace: "worktree", WorkspaceID: "project", CWD: rt.RootDir, Project: &ThreadProjectParams{Name: "Project"}}},
 		{name: "missing start point", params: ThreadStartParams{Workspace: "worktree", BaseRevision: "no-such-branch"}},
 	}
 	for index, tc := range cases {
@@ -6825,12 +6823,6 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		}
 		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
 			t.Fatalf("%s: thread/start should fail", tc.name)
-		}
-		if tc.params.Project != nil {
-			failure := fmt.Sprint(responseByID(t, parseOutput(t, out.String()), id)["error"])
-			if !strings.Contains(failure, "a project starts in the shared workspace") {
-				t.Fatalf("project worktree request should be rejected explicitly: %s", failure)
-			}
 		}
 	}
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list"}`)); err != nil {
@@ -8472,50 +8464,71 @@ func TestServerFailedTurnPersistsPairedToolHistoryAndReloadsFailure(t *testing.T
 }
 
 func TestServerInterruptedPartialTurnReloadsInterrupted(t *testing.T) {
-	client := newPartialBlockingStreamClient("partial answer")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
-	attachTestModelGeneration(t, rt)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
+	for _, shutdown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shutdown=%t", shutdown), func(t *testing.T) {
+			client := newPartialBlockingStreamClient("partial answer")
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.StreamRunner.Client = client
+			attachTestModelGeneration(t, rt)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
 
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
-		t.Fatalf("thread/start: %v", err)
-	}
-	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
-	startTurn := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
-	if err := srv.handleLine(context.Background(), []byte(startTurn)); err != nil {
-		t.Fatalf("turn/start: %v", err)
-	}
-	<-client.started
-	deltaMessages := waitForMethod(t, out, NotificationAgentMessageDelta)
-	delta := remarshal[AgentMessageDeltaNotification](t, notificationByMethod(t, deltaMessages, NotificationAgentMessageDelta)["params"])
-	if delta.Delta != "partial answer" {
-		t.Fatalf("live partial delta = %q", delta.Delta)
-	}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+				t.Fatalf("thread/start: %v", err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+			startTurn := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
+			if err := srv.handleLine(context.Background(), []byte(startTurn)); err != nil {
+				t.Fatalf("turn/start: %v", err)
+			}
+			<-client.started
+			deltaMessages := waitForMethod(t, out, NotificationAgentMessageDelta)
+			delta := remarshal[AgentMessageDeltaNotification](t, notificationByMethod(t, deltaMessages, NotificationAgentMessageDelta)["params"])
+			if delta.Delta != "partial answer" {
+				t.Fatalf("live partial delta = %q", delta.Delta)
+			}
 
-	interrupt := fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID)
-	if err := srv.handleLine(context.Background(), []byte(interrupt)); err != nil {
-		t.Fatalf("turn/interrupt: %v", err)
-	}
-	waitForMethod(t, out, NotificationTurnError)
+			if shutdown {
+				srv.Close()
+			} else {
+				interrupt := fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID)
+				if err := srv.handleLine(context.Background(), []byte(interrupt)); err != nil {
+					t.Fatalf("turn/interrupt: %v", err)
+				}
+				waitForMethod(t, out, NotificationTurnError)
+				srv.Close()
+			}
 
-	reloadOut := &lockedBuffer{}
-	reloaded := New(rt, reloadOut)
-	resume := fmt.Sprintf(`{"id":"reload","method":"thread/resume","params":{"session_id":%q}}`, threadID)
-	if err := reloaded.handleLine(context.Background(), []byte(resume)); err != nil {
-		t.Fatalf("thread/resume: %v", err)
-	}
-	result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadOut.String()), "reload")["result"])
-	if len(result.Thread.Turns) != 1 {
-		t.Fatalf("reloaded turns = %+v, want one interrupted turn", result.Thread.Turns)
-	}
-	turn := result.Thread.Turns[0]
-	if turn.Status != TurnStatusInterrupted || turn.Error == nil || !strings.Contains(turn.Error.Message, context.Canceled.Error()) || turn.CompletedAt == nil {
-		t.Fatalf("reloaded turn did not restore interruption: %+v", turn)
-	}
-	if len(turn.Items) < 3 || turn.Items[1].Type != ThreadItemAgentMessage || turn.Items[1].Text != "partial answer" || turn.Items[len(turn.Items)-1].Type != ThreadItemError {
-		t.Fatalf("reloaded partial turn items = %+v", turn.Items)
+			reloadOut := &lockedBuffer{}
+			reloaded := New(rt, reloadOut)
+			defer reloaded.Close()
+			dispatchPayload(t, reloaded, "recovery", "thread/recovery/list", struct{}{})
+			recovery := remarshal[struct {
+				Items []RestartRecoveryItem `json:"items"`
+			}](t, waitForResponseByID(t, reloadOut, "recovery")["result"])
+			if shutdown {
+				if len(recovery.Items) != 1 || recovery.Items[0].Thread.ID != threadID || recovery.Items[0].Reason != "interrupted" {
+					t.Fatalf("shutdown recovery = %+v", recovery.Items)
+				}
+			} else if len(recovery.Items) != 0 {
+				t.Fatalf("user stop must not be offered for restart: %+v", recovery.Items)
+			}
+			resume := fmt.Sprintf(`{"id":"reload","method":"thread/resume","params":{"session_id":%q}}`, threadID)
+			if err := reloaded.handleLine(context.Background(), []byte(resume)); err != nil {
+				t.Fatalf("thread/resume: %v", err)
+			}
+			result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadOut.String()), "reload")["result"])
+			if len(result.Thread.Turns) != 1 {
+				t.Fatalf("reloaded turns = %+v, want one interrupted turn", result.Thread.Turns)
+			}
+			turn := result.Thread.Turns[0]
+			if turn.Status != TurnStatusInterrupted || turn.Error == nil || !strings.Contains(turn.Error.Message, context.Canceled.Error()) || turn.CompletedAt == nil {
+				t.Fatalf("reloaded turn did not restore interruption: %+v", turn)
+			}
+			if len(turn.Items) < 3 || turn.Items[1].Type != ThreadItemAgentMessage || turn.Items[1].Text != "partial answer" || turn.Items[len(turn.Items)-1].Type != ThreadItemError {
+				t.Fatalf("reloaded partial turn items = %+v", turn.Items)
+			}
+		})
 	}
 }
 

@@ -169,16 +169,6 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     setCollapsed(current => { const next = new Set(current); if (opening) next.delete(id); else next.add(id); return next; });
     if (opening) run(invoke("navigation.load-workspace", { workspaceId: id }));
   };
-  const createProject = async (workspaceId?: string) => {
-    const targetId = workspaceId ?? defaultDraftWorkspaceID;
-    const workspace = view.workspaces.find(row => row.id === targetId);
-    if (!workspace || workspace.missing) throw new Error(t("projects.needsWorkspace"));
-    const result = await application.invoke("workspace.start-draft", { workspaceId: workspace.id });
-    if (result.activated) {
-      await application.invoke("draft.set-project-mode", { project: true });
-      return result.tabId;
-    }
-  };
   const archiveThread = async (thread: ThreadSummary, force = false) => {
     // The explicit confirmation admits one mutation, even before React has
     // painted the disabled button. A new provider never inherits this consent.
@@ -232,8 +222,6 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onStartNewThreadInWorkspace={workspaceId => startDraft({ workspaceId })}
     onRemoveWorkspace={workspaceId => run((async () => { if (await confirmAction({ title: t("workspace.removeTitle", { name: view.workspaces.find(row => row.id === workspaceId)?.name ?? workspaceId }), message: t("workspace.removeConfirm"), confirmLabel: t("common.remove") })) await application.invoke("workspace.remove", { workspaceId }); })())}
     onRelocateWorkspace={workspaceId => run(application.invoke("workspace.relocate", { workspaceId }))}
-    onCreateProject={view.projectAgentEnabled ? workspaceId => run(focusAfterNavigation(() => createProject(workspaceId))) : undefined}
-    onAdoptIntoProject={view.projectAgentEnabled ? (projectId, threadId) => run(invoke("navigation.adopt-thread", { projectId, threadId })) : undefined}
     onReorderSections={next => { setOrder(next); localStorage.setItem("wuu.desktop.sidebarSectionOrder", JSON.stringify(next)); }}
     onOpenSettings={pageId => run(application.invoke("settings.open", pageId ? { pageId } : {}))}
     onOpenAccount={() => run(invoke("navigation.show-account", { open: true }))}

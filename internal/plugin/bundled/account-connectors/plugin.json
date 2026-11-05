@@ -3,7 +3,7 @@
   "id": "account-connectors",
   "name": "Account Connectors",
   "description": "Connect your accounts through official MCP services that need no extra setup.",
-  "icon": "plug",
+  "icon": { "path": "icon.webp" },
   "version": "0.3.0",
   "defaultEnabled": true,
   "author": { "name": "Wuu" },

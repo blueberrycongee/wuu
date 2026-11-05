@@ -3,7 +3,7 @@
   "id": "side",
   "name": "Side",
   "description": "Ask follow-up questions in an attached conversation.",
-  "icon": "message-square",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "defaultEnabled": true,
   "author": { "name": "Wuu" },

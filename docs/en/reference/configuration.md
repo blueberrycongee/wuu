@@ -30,7 +30,7 @@ Normal startup removes these fields from every project layer, including `setting
 |---|---|
 | `default_provider`, `providers` | Select model services, endpoints, credentials, and connection options |
 | `instructions`, legacy `memory` | Control instruction discovery, including user paths |
-| `agent.model_roles`, `agent.model_aliases`, `agent.project_models` | Route model work |
+| `agent.model_roles`, `agent.model_aliases` | Route model work |
 | `agent.permission_mode` | Set local execution authority |
 | `ptc`, `execution_environments` | Select the user-owned tool runtime and execution adapters |
 
@@ -80,8 +80,7 @@ Edit only the relevant fields in the existing user file; do not replace its othe
 settings. Finish active work, fully quit Wuu, and restart it to apply all these
 changes. Valid model changes can refresh automatically, but saving the file does
 not guarantee every runtime setting is updated immediately. Project layers can
-override allowed agent fields; provider connections, PTC, execution environments
-and Project Agent model defaults must be set in user configuration, not project
+override allowed agent fields; provider connections, PTC, and execution environments must be set in user configuration, not project
 settings. A custom configuration provider may use a different authoritative
 source instead of this file.
 
@@ -112,26 +111,6 @@ can explicitly enable a compatible endpoint in auto mode, or disable native
 discovery with `false` while keeping client discovery. Only enable it when the endpoint implements the model's native
 protocol; accepting unknown fields is not sufficient.
 
-## Project Agent model choices
-
-In builds with Project Agent enabled, the coordinator uses the conversation model. Set
-technical lead and persistent executor defaults independently in the user
-configuration, then fully quit and restart Wuu:
-
-```json
-{ "agent": { "project_models": {
-  "technical_lead": { "provider": "anthropic", "model": "your-lead-model" },
-  "executor": { "provider": "openai", "model": "your-execution-model" }
-} } }
-```
-
-Use configured provider names and model IDs. Omit a role or leave it empty to
-inherit the coordinator model. An unset executor also honors the legacy worker default.
-Legacy side/worker selections remain available for existing team workflows. Each selection also accepts `effort` and `variant` when
-the provider supports them. Defaults apply to newly created members; existing
-sessions retain their saved selection. A creation-time `model_alias` overrides
-the role default. See the [app-server protocol](../automation/app-server.md).
-
 ## Instructions and plugin settings
 
 Put shared project rules in `AGENTS.md`. The core `instructions` object controls filenames, project-root markers, user directories, and optional legacy instruction discovery. The old top-level `memory` name is accepted for instruction-discovery migration; it is not the Memory plugin's settings interface.
@@ -143,16 +122,10 @@ Put shared project rules in `AGENTS.md`. The core `instructions` object controls
 `agent.max_parallel` sets the generic anonymous-worker execution capacity. It defaults to `5`; `0` means use that default, and negative values are invalid.
 
 ```json
-{ "agent": { "max_parallel": 5, "project_max_parallel": 0 } }
+{ "agent": { "max_parallel": 5 } }
 ```
 
 Queued workers and workers waiting for children do not occupy normal execution slots. This is an execution-capacity setting, not a request to delegate every task or a limit on all background processes. [Subagent behavior](../desktop/subagents.md) belongs to the enabled delegation plugin.
-
-`agent.project_max_parallel` separately limits new managed-worker admissions for each Project Agent lead. `0` (the default) inherits the resolved `agent.max_parallel`; negative values are invalid. Lead and persistent side sessions are outside this worker pool. Legacy managed sessions with no explicit role count as workers.
-
-The limit uses shared durable session membership and operating-system execution leases. Prelaunch reservations and short metadata mutations can conservatively occupy capacity. A stopped worker releases capacity only after execution cleanup finishes. Lowering the limit or adopting an already-running conversation does not cancel work; later admissions wait until occupancy falls below the limit.
-
-The effective configuration is read on each new admission. Servers sharing a session store must use the same policy for a common bound; independent stores or machines do not share a global pool. Durable queued project input retries with bounded, coalesced backoff after remote completion or process exit, without model requests while waiting. Worker ordering is best-effort across servers, not global FIFO. Manual turn starts report full capacity before appending user input.
 
 ## Explicit automation configuration
 

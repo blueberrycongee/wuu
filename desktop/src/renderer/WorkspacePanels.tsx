@@ -56,7 +56,6 @@ import {
   Plus,
   ShieldCheck,
   Terminal,
-  Project,
   X,
 } from "./WuuIcons";
 import type { RuntimeContext, Thread } from "../shared/protocol";
@@ -74,7 +73,6 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
-import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
@@ -94,7 +92,6 @@ import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactsProvider } from "./ArtifactsContext";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { TerminalControlsProvider } from "./TerminalControlsContext";
-import { ProjectActionsProvider } from "./ProjectActions";
 import { ApplicationSideThreadPanel, type SideThreadPanelHandle } from "./SideThreadPanel";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
@@ -136,11 +133,9 @@ export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
       <PreviewContentProvider service={application.previewContent} slots={slots}>
         <BrowserControlsProvider service={application.browser}>
           <TerminalControlsProvider controls={application.terminals} appearance={application.settingsControls}>
-            <ProjectActionsProvider application={application}>
               <PreviewIconLoader.Provider value={application.catalog.loadIcon}>
                 <WorkspacePanelContent {...props} />
               </PreviewIconLoader.Provider>
-            </ProjectActionsProvider>
           </TerminalControlsProvider>
         </BrowserControlsProvider>
       </PreviewContentProvider>
@@ -1173,8 +1168,6 @@ function WorkspacePanelContent({
                     environment={application.environment}
                     onOpenFile={onOpenFile}
                   />
-                ) : activeTab.kind === "project" ? (
-                  <ProjectPanel projectID={activeTab.projectID} />
                 ) : activeTab.kind === "plugin" ? (
                   <slots.Slot name="wuu.default-preview/workspace.view"
                     context={{ pluginId: activeTab.pluginId, generation: activeTab.fingerprint,
@@ -1467,7 +1460,7 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
   if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
-  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
+  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
@@ -1475,7 +1468,7 @@ function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
   if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
-  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
+  if (tab.kind === "plugin" || tab.kind === "artifact") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1487,9 +1480,6 @@ function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; class
   if (tab.kind === "side-thread") return <MessageCircle className={className} />;
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
-  }
-  if (tab.kind === "project") {
-    return <Project className={className} />;
   }
   if (tab.kind === "file" || tab.kind === "artifact") {
     return <FileText className={className} />;

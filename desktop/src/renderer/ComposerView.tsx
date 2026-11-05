@@ -269,7 +269,7 @@ export function Composer({
   topAccessory?: ReactNode;
   statusAccessory?: ReactNode;
   inlineSelection?: ReactNode;
-  // The conversation's permission mode cannot change, as for a project coordinator.
+  // The conversation's permission mode cannot change.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
   runtimeControlsTarget?: HTMLElement | null;
@@ -1394,6 +1394,7 @@ export function Composer({
     <div
       className="composer-stack"
       data-wuu-component="composer"
+      data-composer-owner-tab-id={services?.ownerTabId}
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >

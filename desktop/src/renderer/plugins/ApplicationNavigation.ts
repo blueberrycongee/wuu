@@ -17,7 +17,7 @@ import { visibleWorkbenchView } from "./Workbench";
 import type { ThreadMutationActions } from "../ThreadMutationActions";
 
 const actions = new Set<keyof Actions>([
-  "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread", "navigation.adopt-thread",
+  "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread",
   "navigation.create-folder", "navigation.rename-folder", "navigation.delete-folder", "navigation.reorder-folders", "navigation.move-to-folder",
   "navigation.close-plugin", "navigation.reveal-region", "navigation.open-plugin", "navigation.show-native", "navigation.show-search", "navigation.show-account", "navigation.focus-workspace", "navigation.focus-composer",
   "navigation.reveal-thread", "navigation.open-external", "navigation.load-icon", "navigation.account-status", "navigation.account-logout", "navigation.install-update",
@@ -103,7 +103,7 @@ export class ApplicationNavigation {
       pendingConversations: this.host.getPendingDraftTabIds().flatMap(id => { const tab = state.sessionTabs.find(tab => tab.id === id); return tab && tab.kind !== "skills" ? [{ id, title: tab.prompt, context: tab.context }] : []; }),
       lastViewedTurnByThreadId: state.lastViewedTurnByThreadID, folders: this.folders,
       plugins: (state.initialized?.extension_inventory ?? []).filter(row => row.kind === "plugin" || row.kind === "skill").map(row => ({
-        id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",
+        id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, family: row.family, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",
       })),
       destinations: primaryViewNavigation(this.host.getContributions().getNavigationEntries(), workbench),
       regionVisibilityRequest: this.regionVisibilityRequest,
@@ -111,7 +111,7 @@ export class ApplicationNavigation {
         || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, viewTypeId: active.view.viewTypeId, context: active.view.context, pluginId: active.view.pluginId, title: active.definition.title, layout: active.definition.layout, webPage: workbench.webPageViewIds.includes(active.view.id) },
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
-      projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
+      accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
       update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < this.host.getWebWorkspace().limits.tabs, canReopenTab: Boolean(browser.canReopenTab) },
       activeWebsiteId: this.activeWebsiteId && browser?.tabs?.some(row => row.id === this.activeWebsiteId) ? this.activeWebsiteId : undefined,
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
@@ -277,11 +277,6 @@ export class ApplicationNavigation {
         result = await this.host.mutationActions(signal).archiveThread(this.thread(threadId), { force }); break;
       }
       case "navigation.delete-thread": await this.host.mutationActions().deleteThread(this.thread((input as Actions["navigation.delete-thread"]["input"]).threadId)); break;
-      case "navigation.adopt-thread": {
-        const { threadId, projectId } = input as Actions["navigation.adopt-thread"]["input"];
-        const response = await window.wuu.projectSession!({ action: "adopt", project_id: projectId, session_id: threadId });
-        this.host.sidebarCache.updateCachedSidebarThread(response.thread); break;
-      }
       case "navigation.create-folder": {
         const { name, threadId } = input as Actions["navigation.create-folder"]["input"];
         const { group } = await window.wuu.createSessionFolder(name);

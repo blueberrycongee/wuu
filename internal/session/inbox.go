@@ -5,7 +5,7 @@ import (
 )
 
 // InboxMessage is host-produced input waiting to reach a session, such as a
-// managed session's result for its project coordinator. A message counts as
+// managed session's result for its owner. A message counts as
 // delivered once its client ID appears in the target's persisted history, so
 // delivery can be retried after a restart without duplicating the input.
 type InboxMessage struct {

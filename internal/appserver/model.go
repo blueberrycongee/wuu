@@ -71,8 +71,6 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		SessionControl:       th.SessionControl,
 		ID:                   th.ID,
 		Source:               th.Source,
-		ProjectID:            th.ProjectID,
-		ProjectRole:          th.ProjectRole,
 		ParentID:             th.ParentID,
 		AgentPath:            th.AgentPath,
 		Preview:              firstNonEmpty(th.Title, threadPreview(th.History)),
@@ -97,7 +95,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		TreeInterrupted:      th.workerTreeFrozen,
 		// Plugin-visible sessions remain writable by their owning plugin, but the
 		// user-facing conversation is an inspector and must not expose a composer.
-		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || projectExecutionDisabled(th.Source),
+		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || retiredSessionSource(th.Source),
 		Ephemeral:             th.Ephemeral,
 		Pinned:                th.PinnedAt != nil,
 		FolderID:              th.FolderID,

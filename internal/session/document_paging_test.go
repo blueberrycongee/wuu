@@ -73,7 +73,7 @@ func TestDocumentBoundedPages(t *testing.T) {
 		if _, err := reader.ListPage(SessionListQuery{Limit: 2, Cursor: first.Next}); !errors.Is(err, persistence.ErrConflict) {
 			t.Fatalf("stale cursor: %v", err)
 		}
-		lease, acquired, err := reader.TryAcquireThreadExecutionLeaseWithProjectLimit(t.TempDir(), "s29", 1)
+		lease, acquired, err := reader.TryAcquireThreadExecutionLease(t.TempDir(), "s29")
 		if err != nil || !acquired {
 			t.Fatalf("bounded admission: %v %v", acquired, err)
 		}

@@ -555,7 +555,7 @@
     {
       "name": "unanchored:composer.css",
       "synthetic": true,
-      "rows": 172
+      "rows": 171
     },
     {
       "name": "unanchored:context-chat-capsule.css",
@@ -930,7 +930,6 @@
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":":root[data-host-kind=\"web\"] .composer-camera-viewport video, :root[data-host-kind=\"web\"] .composer-camera-still:not([hidden])","prop":"background","variable":"--surface-2","status":"bridged","tokens":["--wuu-color-surface-muted"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".access-menu .is-danger :is(.permission-mode-icon, .select-menu-item-label)","prop":"color","variable":"--danger","status":"bridged","tokens":["--wuu-color-danger"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".access-menu .permission-mode-icon","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
-    {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".branch-worktree-action","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer textarea","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-accessory-drawer, .composer-attachment-tray","prop":"background","variable":"--conversation-floating-surface-bg","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-surface-elevated","--wuu-color-text"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-accessory-drawer, .composer-attachment-tray","prop":"border","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle","--wuu-color-text"]},

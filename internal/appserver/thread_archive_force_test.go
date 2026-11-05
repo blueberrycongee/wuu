@@ -52,7 +52,7 @@ func TestForceArchiveSettlesRetainedExecutionAfterAuthorityReplacement(t *testin
 			srv.registerExecutionRun(binding, store, run, nil)
 			var cancellations atomic.Int32
 			th.mu.Lock()
-			acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 			if err == nil && acquired {
 				th.startTurnLocked(turnID, providers.ChatMessage{}, time.Now().UTC())
 				th.currentExecutionRunID = run.ID
@@ -262,7 +262,7 @@ func TestForceArchiveDoesNotReleaseUnsettledOrSuccessorRunner(t *testing.T) {
 			var cancelCount atomic.Int32
 			var admissionErr error
 			th.mu.Lock()
-			acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 			th.startTurnLocked("owned-turn", providers.ChatMessage{}, time.Now().UTC())
 			th.turnCompletion = &threadTurnCompletion{turnID: "owned-turn", done: done}
 			th.cancel = func() {
@@ -274,7 +274,7 @@ func TestForceArchiveDoesNotReleaseUnsettledOrSuccessorRunner(t *testing.T) {
 					th.mu.Lock()
 					th.releaseThreadExecutionLeaseLocked()
 					var next bool
-					next, admissionErr = srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+					next, admissionErr = srv.tryAcquireThreadExecutionLeaseLocked(th)
 					if next && admissionErr == nil {
 						th.startTurnLocked("successor-turn", providers.ChatMessage{}, time.Now().UTC())
 						th.turnCompletion = &threadTurnCompletion{turnID: "successor-turn", done: make(chan struct{})}
@@ -476,7 +476,7 @@ func TestForceArchiveRetainsDeadRunnerSettlementFailure(t *testing.T) {
 	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), id)
 	require.NoError(t, err)
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 	th.startTurnLocked("abandoned-turn", providers.ChatMessage{}, time.Now().UTC())
 	th.mu.Unlock()
 	require.NoError(t, err)
@@ -520,7 +520,7 @@ func TestForceArchiveWaitsForOwnedSettlementAndCurrentConsent(t *testing.T) {
 				settle := sync.OnceFunc(func() { close(done) })
 				defer settle()
 				th.mu.Lock()
-				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 				th.startTurnLocked("owned-turn", providers.ChatMessage{}, time.Now().UTC())
 				th.turnCompletion = &threadTurnCompletion{turnID: "owned-turn", done: done}
 				th.cancel = sync.OnceFunc(func() { close(interrupted) })

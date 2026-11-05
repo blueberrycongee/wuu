@@ -29,7 +29,6 @@ export type FloatingMenuOwner =
   | "conversation-workspace"
   | "conversation-status"
   | "conversation-todo"
-  | "conversation-triggers"
   | "composer-handoff"
   | "composer-runtime"
   | "composer-access"

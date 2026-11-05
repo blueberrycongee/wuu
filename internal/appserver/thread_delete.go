@@ -171,25 +171,10 @@ func (s *Server) handleThreadDelete(req Request) error {
 		_ = removed.state.Close()
 	}
 
-	if deleted.Source == projectSource {
-		// Deleting the coordinator does not delete or release its sessions. Send
-		// fresh grouping metadata so open sidebars can expose the surviving rows.
-		members, err := binding.Sessions.List(0)
-		if err != nil {
-			providers.DebugLogf("list surviving project sessions of %q: %v", id, err)
-		}
-		for _, member := range members {
-			if member.Source != projectSessionSource || member.ParentID != id {
-				continue
-			}
-			thread, err := s.threadAfterMetadataUpdate(binding, member)
-			if err == nil {
-				err = s.notifyThreadUpdated(binding, thread)
-			}
-			if err != nil {
-				providers.DebugLogf("refresh surviving project session %q: %v", member.ID, err)
-			}
-		}
+	if err := persistence.Update(context.Background(), binding.Documents, func(tx *persistence.Tx) error {
+		return tx.Delete(restartRecoveryNamespace, id)
+	}); err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restart recovery cleanup: %w", err))
 	}
 
 	// The document commit is irreversible. Surface an incomplete selected

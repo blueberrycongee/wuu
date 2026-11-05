@@ -9,7 +9,6 @@ import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { ThreadItemView } from "./ThreadItemView";
-import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
 import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
@@ -816,15 +815,6 @@ describe("ThreadItemView", () => {
     expect(streamTextStore.has(key)).toBe(true);
   });
 
-  it("groups host events with legacy project history without folding generic host messages", () => {
-    const legacy = { ...makeUserMessage("Old result", "legacy"), origin: "plugin", cause: "project_result" };
-    const current = { ...makeUserMessage("New result", "host"), origin: "host", cause: "project_message" };
-    const generic = { ...makeUserMessage("Host message", "generic"), origin: "host", cause: "unrelated" };
-    expect(groupProjectEvents([legacy, current, generic])).toEqual([[legacy, current], generic]);
-    render({ item: current, turnStatus: "completed", streaming: false });
-    expect(container?.querySelector(".project-event")).not.toBeNull();
-    expect(container?.querySelector(".user-message")).toBeNull();
-  });
 
   it("renders a plugin-generated query as a read-only user message", () => {
     const onEditMessage = vi.fn();
@@ -893,7 +883,7 @@ describe("ThreadItemView", () => {
     await act(async () => actions[0].click());
     expect(copy).toHaveBeenCalledWith(body);
     act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "source-session" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "source-session" });
     expect(onEditMessage).not.toHaveBeenCalled();
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");

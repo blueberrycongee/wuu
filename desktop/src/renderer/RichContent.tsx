@@ -1071,23 +1071,21 @@ function RichImage({
       {t("imagePreview.loadFailed")}
     </span>
   ) : (
-    <Tooltip content={titleText}>
-      <img
-        className="rich-image"
-        ref={register}
-        src={resolvedSource}
-        alt={alt}
-        loading="lazy"
-        role="button"
-        tabIndex={0}
-        aria-label={
-          alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
-        }
-        onClick={event => handleActivate(event.currentTarget)}
-        onKeyDown={handleKeyDown}
-        onError={() => setFailedSource(resolvedSource ?? null)}
-      />
-    </Tooltip>
+    <img
+      className="rich-image"
+      ref={register}
+      src={resolvedSource}
+      alt={alt}
+      loading="lazy"
+      role="button"
+      tabIndex={0}
+      aria-label={
+        alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
+      }
+      onClick={event => handleActivate(event.currentTarget)}
+      onKeyDown={handleKeyDown}
+      onError={() => setFailedSource(resolvedSource ?? null)}
+    />
   );
   if (inline) {
     return <span className="rich-image-block inline">{image}</span>;
@@ -1237,7 +1235,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
   return (
     <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
       {state.status === "rendered" ? (
-        <Tooltip asChild content={t("rich.enlargeDiagram")}><button
+        <button
           type="button"
           className="rich-mermaid-diagram"
           aria-label={t("rich.enlargeDiagram")}
@@ -1260,7 +1258,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
             });
           }}
           dangerouslySetInnerHTML={{ __html: state.svg }}
-        /></Tooltip>
+        />
       ) : state.status === "error" ? (
         <div className="rich-mermaid-error">
           <span>{state.message}</span>

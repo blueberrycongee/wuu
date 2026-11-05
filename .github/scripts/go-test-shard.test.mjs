@@ -19,7 +19,7 @@ if (args.some(arg => arg.startsWith('-list='))) {
 }
 process.exit(Number(process.env.TEST_EXIT || 0));
 `, { mode: 0o755 });
-  const execute = (shard, extra = {}) => spawnSync(process.execPath, [script, './internal/appserver', String(shard), '3', 'project_agent'], {
+  const execute = (shard, extra = {}) => spawnSync(process.execPath, [script, './internal/appserver', String(shard), '3', 'fixture_tag'], {
     encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CALLS: join(dir, 'calls'),
       NAMES: [...names, 'BenchmarkIgnored', 'ok example/appserver 0.1s'].join('\n'),
       WUU_GO_SHARD_EVIDENCE: join(dir, 'manifest.json'), ...extra },
@@ -38,7 +38,7 @@ test('all top-level tests, examples and fuzz seeds run exactly once across shard
     const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n').map(JSON.parse);
     const args = calls.at(-1);
     assert(args.includes('-count=1'));
-    assert(args.includes('-tags=project_agent'));
+    assert(args.includes('-tags=fixture_tag'));
     const pattern = new RegExp(args.find(arg => arg.startsWith('-run=')).slice(5));
     assert.deepEqual(names.filter(name => pattern.test(name)), manifest.tests);
     assert.equal(pattern.test(manifest.tests[0] + 'Extra'), false);

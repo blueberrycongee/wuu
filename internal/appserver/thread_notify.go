@@ -5,21 +5,11 @@ import (
 )
 
 func (s *Server) notifyThreadStarted(binding *runtime.State, thread Thread) error {
-	var err error
-	thread, err = s.withProjectGrouping(binding, thread, nil)
-	if err != nil {
-		return err
-	}
 	thread = s.threadWithPersistedMetadata(binding, thread)
 	return s.writeNotification(NotificationThreadStarted, ThreadStartedNotification{Thread: thread})
 }
 
 func (s *Server) notifyThreadUpdated(binding *runtime.State, thread Thread) error {
-	var err error
-	thread, err = s.withProjectGrouping(binding, thread, nil)
-	if err != nil {
-		return err
-	}
 	thread = s.threadWithPersistedMetadata(binding, thread)
 	return s.writeNotification(NotificationThreadUpdated, ThreadUpdatedNotification{Thread: thread})
 }

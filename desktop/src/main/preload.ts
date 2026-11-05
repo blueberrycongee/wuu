@@ -372,10 +372,6 @@ const api: WuuDesktopApi = {
   cancelPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-cancel", params),
   listSkills: (params) => ipcRenderer.invoke("wuu:skill-list", params),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
-  returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
-  takeOverManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-take", params),
-  projectWork: (params) => ipcRenderer.invoke("wuu:project-work", params),
-  projectSession: (params) => ipcRenderer.invoke("wuu:project-session", params),
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
   getUsageOverview: (params: UsageOverviewParams) =>
     ipcRenderer.invoke("wuu:usage-overview", params),
@@ -498,6 +494,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:message-flow-font-size-set", fontSize),
   listThreads: (cwd?: string) => ipcRenderer.invoke("wuu:thread-list", cwd),
   listAllThreads: () => ipcRenderer.invoke("wuu:thread-list-all"),
+  listRestartRecovery: () => ipcRenderer.invoke("wuu:thread-recovery-list"),
+  dismissRestartRecovery: (threadIDs: string[]) => ipcRenderer.invoke("wuu:thread-recovery-dismiss", threadIDs),
   listArchivedThreads: () =>
     ipcRenderer.invoke("wuu:thread-list-archived"),
   searchThreads: (query: string, limit?: number) =>

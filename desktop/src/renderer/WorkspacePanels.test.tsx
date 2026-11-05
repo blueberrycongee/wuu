@@ -243,7 +243,7 @@ function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
       activeContext: props.activeContext, workspaceContext: props.workspaceContext, threadId: props.terminalThread?.id,
       fileRefreshKey: props.fileRefreshKey, browserActivity: props.browserActivity, browserDockTarget: props.browserDockTarget },
     conversationWorkspace: { threads: props.terminalThread ? [props.terminalThread] : [], activePane: "primary" },
-    navigationWorkspace: { threads: [], projectAgentEnabled: false },
+    navigationWorkspace: { threads: [] },
     sideConversation: { turns: [], commands: [], contextChatPending: [] },
   };
   const selection = { enabled: false, interactionOwnerKey: "draft:one", comments: [] };

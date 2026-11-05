@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -417,6 +418,20 @@ func (c *AgentControl) PendingRootAgentCompletions() ([]PendingRootAgentCompleti
 	return out, nil
 }
 
+// ReadPendingAgentCompletions inspects saved root and nested deliveries without
+// constructing a worker runtime, restoring queued spawns, or claiming a result.
+func ReadPendingAgentCompletions(documents persistence.Documents, sessionID string, store *agentthread.Store, artifactDirs []string) ([]PendingRootAgentCompletion, error) {
+	control := &AgentControl{
+		documents: documents, sessionID: sessionID,
+		threadStore: store, legacyArtifactDirs: artifactDirs,
+		resultDeliveries: make(map[string]agentResultDelivery),
+	}
+	if len(artifactDirs) > 0 {
+		control.historyDir = filepath.Join(artifactDirs[0], "workers")
+	}
+	return control.pendingAgentCompletions()
+}
+
 func (c *AgentControl) pendingAgentCompletions() ([]PendingRootAgentCompletion, error) {
 	if c == nil {
 		return nil, nil
@@ -443,7 +458,7 @@ func (c *AgentControl) pendingAgentCompletions() ([]PendingRootAgentCompletion, 
 				found = true
 			}
 		}
-		if !found && strings.TrimSpace(c.historyDir) != "" {
+		if !found && (c.documents != nil || strings.TrimSpace(c.historyDir) != "") {
 			run, err := c.loadWorkerSnapshot(filepath.Join(c.historyDir, delivery.AgentID+".json"))
 			if err == nil {
 				snap = snapshotFromPersistedRun(run)

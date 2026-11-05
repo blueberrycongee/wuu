@@ -66,7 +66,7 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 			t.Errorf("retirement callback bypassed refresh admission: %v", err)
 		}
 		th.mu.Lock()
-		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 		if acquired {
 			th.releaseThreadExecutionLeaseLocked()
 		}

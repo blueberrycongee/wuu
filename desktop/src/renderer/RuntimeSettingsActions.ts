@@ -313,7 +313,6 @@ export function createRuntimeSettingsActions(
               extension_trust:
                 updated.extension_trust ?? current.initialized.extension_trust,
               providers: updated.providers ?? current.initialized.providers,
-              project_models: updated.project_models ?? current.initialized.project_models,
               model_roles: updated.model_roles ?? current.initialized.model_roles,
               model_aliases: updated.model_aliases ?? current.initialized.model_aliases,
               advanced_settings:
@@ -420,7 +419,6 @@ export function createRuntimeSettingsActions(
               settings.model_aliases ??
               current.initialized.model_aliases,
             model_roles: updated.model_roles ?? current.initialized.model_roles,
-            project_models: updated.project_models ?? current.initialized.project_models,
             providers: updated.providers ?? current.initialized.providers,
           }
         : current.initialized,
@@ -471,7 +469,6 @@ export function createRuntimeSettingsActions(
             model: updated.model ?? current.initialized.model,
             effort: updated.effort ?? (replacedDefault ? "" : current.initialized.effort),
             variant: updated.variant ?? (replacedDefault ? "" : current.initialized.variant),
-            project_models: updated.project_models ?? current.initialized.project_models,
             model_roles: updated.model_roles ?? current.initialized.model_roles,
             model_aliases: updated.model_aliases ?? current.initialized.model_aliases,
             permissions:

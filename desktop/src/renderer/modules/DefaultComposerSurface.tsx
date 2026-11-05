@@ -285,7 +285,6 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       variant={variant} mainConversation containerRef={containerRef} topAccessory={question} statusAccessory={recoveryNotice}
       runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
-      placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
       prompt={draft.text} promptRevision={draft.revision} setPrompt={setText}
       files={files(draft.fileIds)} images={images(draft.imageIds)} selections={structuredClone(draft.selections) as ResponseSelection[]}
       onChangeSelection={selection => run(controls.setSelections(draft.selections.map(row => row.id === selection.id ? selection : row)))}

@@ -23,13 +23,13 @@ func TestMatchProviderByBaseURL(t *testing.T) {
 	ruleName, enriched := EnrichProvider("xiaomi", config.ProviderConfig{
 		Type:    "openai-compatible",
 		BaseURL: "https://token-plan-cn.xiaomimimo.com/v1",
-		Model:   "mimo-v2.5-pro",
-	}, "mimo-v2.5-pro")
+		Model:   "mimo-v2.6-pro",
+	}, "mimo-v2.6-pro")
 	if ruleName != "xiaomi-token-plan-cn" {
 		t.Fatalf("rule provider name = %q", ruleName)
 	}
-	model := enriched.Models["mimo-v2.5-pro"]
-	if model.Name != "MiMo-V2.5-Pro" || model.ReleaseDate != "2026-04-22" {
+	model := enriched.Models["mimo-v2.6-pro"]
+	if model.Name != "MiMo-V2.6-Pro" || model.ReleaseDate != "2026-09-22" {
 		t.Fatalf("unexpected model metadata: %+v", model)
 	}
 	if model.Reasoning == nil || !*model.Reasoning {

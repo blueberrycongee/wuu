@@ -20,7 +20,6 @@ func (t *Toolkit) ConfigureExternalCapabilities() {
 	t.env.ProcessMgr = nil
 	t.env.ExecutionEnvironment = nil
 	t.env.PluginManager = nil
-	t.env.ProjectSessions = nil
 	t.ConfigurePTC(nil, config.PTCConfig{})
 	t.SetToolSearchEnabled(false)
 	t.SetNativeDeferredToolDiscovery(false)
