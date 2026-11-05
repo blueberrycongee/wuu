@@ -485,11 +485,12 @@
 .onboarding-stage-permissions .onboarding-heading { text-align: left; }
 .onboarding-stage-permissions .onboarding-lead { max-width: 34em; }
 
-/* The scroller reaches through the card's right padding so the platform's
- * scrollbar sits outside the content column. Rows then share the footer's
- * right edge even when a short list does not scroll. */
+/* The scroller reaches through the card's padding and 1px border so the
+ * scrollbar sits outside the card. Add the border width to the scroller's
+ * padding too, keeping row content aligned with the footer. */
 .onboarding-workspaces {
-  margin-inline-end: calc((var(--card-padding) + var(--scrollbar-width)) * -1);
+  margin-inline-end: calc((var(--card-padding) + var(--scrollbar-width) + 1px) * -1);
+  padding-inline-end: calc(var(--space-2) + 1px);
   scrollbar-gutter: stable;
 }
 .onboarding-workspaces > .onboarding-status { padding-inline: var(--space-2); }
