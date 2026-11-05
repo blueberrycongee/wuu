@@ -145,7 +145,7 @@ button.catalog-row,
 .plugin-catalog-grid,
 .skill-catalog-grid {
   --catalog-mark-size: calc(var(--icon-size) * 2);
-  --catalog-row-pad: var(--space-4);
+  --catalog-row-pad: var(--space-5);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
