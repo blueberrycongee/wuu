@@ -65,7 +65,7 @@ The composer supports these keyboard actions:
 | Key | Action |
 |---|---|
 | Enter | Send the draft; when the engine supports steering a running task, add it to that task |
-| Command + Enter (Ctrl + Enter on Windows and Linux) | Queue a non-empty draft for after the current turn, when queuing is available |
+| Command + Enter (Ctrl + Enter on Windows and Linux) | Send the draft when no task is running; while one runs, queue a non-empty draft for after the current turn when queuing is available |
 | Shift + Enter | Insert a new line |
 | Escape | Interrupt a running task when the composer can do so |
 

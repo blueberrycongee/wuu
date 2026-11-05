@@ -1683,6 +1683,45 @@ describe("Composer send control", () => {
     expect(onSteer).not.toHaveBeenCalled();
   });
 
+  it("sends with Cmd/Ctrl+Enter when no turn is running", () => {
+    const onSend = vi.fn();
+    renderComposer({ prompt: "send with shortcut", onSend });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+
+    const metaEvent = new KeyboardEvent("keydown", {
+      key: "Enter",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      textarea?.dispatchEvent(metaEvent);
+    });
+
+    expect(metaEvent.defaultPrevented).toBe(true);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenLastCalledWith("send with shortcut");
+
+    act(() => {
+      if (textarea) {
+        setTextareaValue(textarea, "send with ctrl");
+      }
+    });
+    const ctrlEvent = new KeyboardEvent("keydown", {
+      key: "Enter",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      textarea?.dispatchEvent(ctrlEvent);
+    });
+
+    expect(ctrlEvent.defaultPrevented).toBe(true);
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend).toHaveBeenLastCalledWith("send with ctrl");
+  });
+
   it("does not queue with Cmd/Ctrl+Enter when there is no running draft", () => {
     const onQueue = vi.fn();
     renderComposer({ prompt: "", running: true, onQueue });

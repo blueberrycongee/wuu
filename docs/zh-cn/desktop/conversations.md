@@ -65,7 +65,7 @@ Wuu 意外退出打断正在运行的会话后，提示会显示上一次运行�
 | 按键 | 操作 |
 |---|---|
 | Enter | 发送草稿；引擎支持引导运行中的任务时，将消息补充到当前任务 |
-| Command + Enter（Windows 和 Linux 上为 Ctrl + Enter） | 当前支持排队且草稿非空时，留到本轮结束后处理 |
+| Command + Enter（Windows 和 Linux 上为 Ctrl + Enter） | 没有运行中的任务时发送草稿；有任务运行时，若支持排队且草稿非空，则留到本轮结束后处理 |
 | Shift + Enter | 换行 |
 | Escape | 输入框允许中断时，停止运行中的任务 |
 
