@@ -97,7 +97,18 @@ async function openMenu() {
     return { text: element.textContent, bounds: r.toJSON(), hit: element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
   }));
   assert.ok(rows.length >= 2 && rows.every(row => row.hit), `Every menu item is actually hit-testable: ${JSON.stringify(rows)}`);
-  return { view, bounds, rows };
+  const overflow = await evaluate(view.webContents, () => {
+    const panel = document.querySelector(".sidebar-account-menu");
+    const row = panel?.querySelector('[role="menuitem"]');
+    if (!(panel instanceof HTMLElement) || !(row instanceof HTMLElement)) return null;
+    const panelRect = panel.getBoundingClientRect(), style = getComputedStyle(panel);
+    return { scrollHeight: panel.scrollHeight, clientHeight: panel.clientHeight,
+      contentRight: panelRect.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight),
+      rowRight: row.getBoundingClientRect().right };
+  });
+  assert.ok(overflow && overflow.scrollHeight <= overflow.clientHeight && Math.abs(overflow.rowRight - overflow.contentRight) <= 1,
+    `The native menu must fit its panel border box without a scrollbar gutter: ${JSON.stringify(overflow)}`);
+  return { view, bounds, rows, overflow };
 }
 async function capture(name, view) {
   fs.writeFileSync(path.join(output, `${name}-shell.png`), (await win.webContents.capturePage()).toPNG());
