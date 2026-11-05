@@ -555,7 +555,13 @@ export class ApplicationController implements HostApplicationService {
     signal?.throwIfAborted();
     this.restoringNavigationIntentId = intent.id;
     try {
-      await this.navigationActions(signal).threads.selectContextThread(intent.context, intent.threadId);
+      const threads = this.navigationActions(signal).threads;
+      // Initialization has already selected and validated this writer's runtime.
+      // Reuse it for the destination read instead of selecting and initializing
+      // the same project again during every application graph handoff.
+      const selected = this.loaded?.initialized && sameRuntimeContext(this.loaded.activeContext, intent.context)
+        ? this.loaded : undefined;
+      await threads.selectContextThread(intent.context, intent.threadId, selected);
       signal?.throwIfAborted();
     } catch (error) {
       signal?.throwIfAborted();

@@ -1248,13 +1248,7 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 	}, nil
 }
 
-func (s *Server) handleThreadList(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
+func (s *Server) handleThreadList(binding *runtime.State, req Request) error {
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1274,7 +1268,7 @@ func (s *Server) handleThreadList(req Request) error {
 	for i := range sessions {
 		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
-	s.refreshListedSessionMetadata(sessions)
+	s.refreshListedSessionMetadata(binding, sessions)
 	// Agent worker sessions are persisted alongside regular conversations, but
 	// their worker-only parent/path metadata lives in the agent thread store
 	// rather than the session index. Build this set once before constructing
@@ -1283,6 +1277,9 @@ func (s *Server) handleThreadList(req Request) error {
 	agentThreadIDs := make(map[string]struct{})
 	rootIDs, err := s.rootThreadIDsForSessions(binding, sessions)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := agentthread.InitializeDocumentStores(context.Background(), binding.Documents, rootIDs, s.agentThreadLegacyDirs); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	for _, rootID := range rootIDs {
@@ -1364,13 +1361,7 @@ func (s *Server) handleThreadList(req Request) error {
 
 // handleThreadListAll returns active root conversations across every workspace.
 // Global folders must not depend on a project section having been expanded.
-func (s *Server) handleThreadListAll(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
+func (s *Server) handleThreadListAll(binding *runtime.State, req Request) error {
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1385,8 +1376,11 @@ func (s *Server) handleThreadListAll(req Request) error {
 	for i := range sessions {
 		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
-	s.refreshListedSessionMetadata(sessions)
+	s.refreshListedSessionMetadata(binding, sessions)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := agentthread.InitializeDocumentStores(context.Background(), binding.Documents, rootIDs, s.agentThreadLegacyDirs); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	for _, rootID := range rootIDs {
@@ -1459,13 +1453,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 // merge disk-backed sessions with in-memory threads (in-memory wins when
 // both exist, mirroring handleThreadList's policy) and ignore the caller's
 // cwd argument.
-func (s *Server) handleThreadListArchived(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
+func (s *Server) handleThreadListArchived(binding *runtime.State, req Request) error {
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1482,7 +1470,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 	for i := range sessions {
 		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
-	s.refreshListedSessionMetadata(sessions)
+	s.refreshListedSessionMetadata(binding, sessions)
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
@@ -1525,6 +1513,13 @@ func (s *Server) handleThreadListArchived(req Request) error {
 }
 
 func (s *Server) threadListResult(binding *runtime.State, entries map[string]threadListEntry, summaryOnly bool) (ThreadListResult, error) {
+	ids := make([]string, 0, len(entries))
+	for id := range entries {
+		ids = append(ids, id)
+	}
+	if err := agentthread.InitializeDocumentStores(context.Background(), binding.Documents, ids, s.agentThreadLegacyDirs); err != nil {
+		return ThreadListResult{}, err
+	}
 	// Management is shared across app-servers, not owned by the active workspace.
 	// Read it after merging live snapshots so both unloaded sessions and stale
 	// in-memory relationships reflect persisted control (including releases).
@@ -2472,16 +2467,20 @@ func (s *Server) agentThreadStore(binding *runtime.State, threadID string) (*age
 		return nil, nil
 	}
 	return agentthread.NewDocumentStoreWithLegacyResolver(binding.Documents, threadID, func() ([]string, error) {
-		stateDirs, err := s.threadArtifactStateDirs(threadID)
-		if err != nil {
-			return nil, err
-		}
-		dirs := make([]string, 0, len(stateDirs))
-		for _, stateDir := range stateDirs {
-			dirs = append(dirs, filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
-		}
-		return dirs, nil
+		return s.agentThreadLegacyDirs(threadID)
 	}), nil
+}
+
+func (s *Server) agentThreadLegacyDirs(threadID string) ([]string, error) {
+	stateDirs, err := s.threadArtifactStateDirs(threadID)
+	if err != nil {
+		return nil, err
+	}
+	dirs := make([]string, 0, len(stateDirs))
+	for _, stateDir := range stateDirs {
+		dirs = append(dirs, filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "threads"))
+	}
+	return dirs, nil
 }
 
 func (s *Server) workspaceStateDir() (string, error) {
@@ -2653,11 +2652,11 @@ func (s *Server) threadAfterMetadataUpdate(binding *runtime.State, metadata sess
 }
 
 // Shared metadata wins over snapshots cached by another workspace app-server.
-func (s *Server) refreshListedSessionMetadata(sessions []session.Session) {
+func (s *Server) refreshListedSessionMetadata(binding *runtime.State, sessions []session.Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, metadata := range sessions {
-		if th := s.threads[metadata.ID]; th != nil {
+		if th := s.threads[metadata.ID]; th != nil && th.state != nil && th.state.Sessions == binding.Sessions {
 			th.mu.Lock()
 			if metadata.TitleRevision >= th.TitleRevision {
 				th.Title = metadata.Title

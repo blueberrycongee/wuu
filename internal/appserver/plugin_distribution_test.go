@@ -69,7 +69,7 @@ func TestPluginRegistryDownloadDoesNotBlockStdioAndCloses(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, id := range []string{"turn", "read"} {
-				if response := responseByID(t, parseOutput(t, out.String()), id); response["error"] != nil {
+				if response := waitForResponseByID(t, out, id); response["error"] != nil {
 					t.Fatalf("%s failed: %+v", id, response)
 				}
 			}

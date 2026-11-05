@@ -91,6 +91,14 @@ unknown. An error that explicitly reports committed archive metadata with an
 unavailable refreshed view does not mean the mutation failed. A committed change
 is not undone by later cancellation.
 
+## Read conversation catalogs
+
+Over stdio, `thread/list`, `thread/listAll`, and `thread/listArchived` run in the
+background so a large catalog does not hold up conversation reads or Stop.
+Responses can arrive out of order; correlate them by request ID. Each catalog
+retains the state provider selected when its request is admitted. Catalogs are
+refreshable views, not ordering barriers for later conversation mutations.
+
 ## Page conversation history
 
 For a compact conversation view, send `conversation_history: true` with

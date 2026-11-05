@@ -1484,10 +1484,32 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleSideThreadInterrupt(req)
 	case MethodSideThreadReset:
 		return s.handleSideThreadReset(req)
-	case MethodThreadList:
-		return s.handleThreadList(req)
-	case MethodThreadListAll:
-		return s.handleThreadListAll(req)
+	case MethodThreadList, MethodThreadListAll, MethodThreadListArchived:
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer binding.Close()
+		handle := s.handleThreadList
+		if req.Method == MethodThreadListAll {
+			handle = s.handleThreadListAll
+		} else if req.Method == MethodThreadListArchived {
+			handle = s.handleThreadListArchived
+		}
+		if _, ordered := ctx.Value(stdioResumeDispatchKey{}).(bool); !ordered {
+			return handle(binding, req)
+		}
+		// Catalogs may inspect thousands of persisted sessions. Keep ingress
+		// available for foreground reads and Stop while retaining the selected
+		// state until this catalog finishes, including during graph replacement.
+		if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
+			if err := handle(binding, req); err != nil {
+				log.Printf("wuu: %s: %v", req.Method, err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case "thread/recovery/list":
 		if !s.startBackground(func() {
 			if err := s.handleRestartRecoveryList(ctx, req); err != nil {
@@ -1499,8 +1521,6 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return nil
 	case "thread/recovery/dismiss":
 		return s.handleRestartRecoveryDismiss(req)
-	case MethodThreadListArchived:
-		return s.handleThreadListArchived(req)
 	case MethodThreadSearch:
 		return s.handleThreadSearch(req)
 	case MethodThreadPreview:

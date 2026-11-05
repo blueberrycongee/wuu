@@ -43,6 +43,9 @@ export class ApplicationNavigation {
   private composerFocusRequest?: { id: number; tabId: string };
   private snapshot?: ApplicationNavigationViewV1;
   private snapshotKey = "";
+  private threadInputs: readonly unknown[] = [];
+  private threadRows: NavigationReadonly<ThreadSummary[]> = [];
+  private threadRowsKey = "";
   private folderRevision = 0;
   private runningThreadIds: ReadonlySet<string> = new Set();
   private folderQueue: Promise<unknown> = Promise.resolve();
@@ -94,8 +97,21 @@ export class ApplicationNavigation {
     const workbench = this.host.getWorkbench().getSnapshot();
     const active = visibleWorkbenchView(workbench, "primary");
     const browser = this.browser.getSnapshot();
-    const threads = this.threads().filter(row => !row.ephemeral);
-    const rows = summarizeThreadsForSidebar(threads, presentationRunningThreadIDs(threads, this.runningThreadIds));
+    const cache = this.host.sidebarCache.getSnapshot();
+    const inputs = [cache.workspaceThreadsByWorkspaceID, state.threads, state.thread, state.secondaryThread, this.runningThreadIds];
+    if (inputs.some((input, index) => input !== this.threadInputs[index])) {
+      this.threadInputs = inputs;
+      const threads = this.threads().filter(row => !row.ephemeral);
+      const rows = summarizeThreadsForSidebar(threads, presentationRunningThreadIDs(threads, this.runningThreadIds));
+      const key = JSON.stringify(rows);
+      // History deltas and composer changes often leave navigation unchanged.
+      // Retain the frozen projection so every sidebar consumer can reuse it.
+      if (key !== this.threadRowsKey) {
+        this.threadRowsKey = key;
+        this.threadRows = immutable(rows);
+      }
+    }
+    const rows = this.threadRows;
     const view = {
       initialized: Boolean(state.initialized), activeContextKind: state.activeContext?.kind, selectedWorkspaceId: state.activeProjectId,
       workspaces: state.projects, threads: rows,
@@ -116,13 +132,14 @@ export class ApplicationNavigation {
       activeWebsiteId: this.activeWebsiteId && browser?.tabs?.some(row => row.id === this.activeWebsiteId) ? this.activeWebsiteId : undefined,
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
     };
-    const key = JSON.stringify(view);
-    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.activePluginView?.context !== active?.view.context) {
+    const key = JSON.stringify({ ...view, threads: undefined });
+    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.threads !== rows || this.snapshot.activePluginView?.context !== active?.view.context) {
       this.snapshotKey = key;
       // Page-local stores use the workbench's frozen context as their instance key.
       // Copy data rows, but retain that object for the page and its contextual UI.
       this.snapshot = Object.freeze({
-        ...immutable({ ...view, activePluginView: undefined }),
+        ...immutable({ ...view, threads: undefined, activePluginView: undefined }),
+        threads: rows,
         activePluginView: view.activePluginView && Object.freeze(view.activePluginView),
       }) as ApplicationNavigationViewV1;
     }
