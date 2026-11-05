@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import { createPortal } from "react-dom";
 import type { MCPServerStatus } from "../shared/protocol";
 import { draftPluginReferences, pluginReferencePlainText, type DraftPluginReference } from "./ComposerPluginReferences";
+import { draftSkillReference, skillReferenceTitle } from "./ComposerSkillReferences";
 import { ComposerPluginIcon } from "./ComposerPluginIcon";
 import { useComposerServices } from "./ComposerServicesContext";
 import "./ComposerInput.css";
@@ -31,8 +32,14 @@ type Props = Omit<TextareaHTMLAttributes<HTMLElement>, "value" | "onChange" | "d
   onValueChange(value: string): void;
 };
 
+function referenceToken(node: Node): string | undefined {
+  if (!(node instanceof HTMLElement)) return undefined;
+  return node.dataset.pluginToken ?? node.dataset.skillToken;
+}
+
 function nodeValue(node: Node): string {
-  if (node instanceof HTMLElement && node.dataset.pluginToken) return node.dataset.pluginToken;
+  const token = referenceToken(node);
+  if (token) return token;
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
   if (node.nodeName === "BR") return "\n";
   return Array.from(node.childNodes).map(nodeValue).join("");
@@ -44,7 +51,7 @@ function readSelection(root: HTMLElement): [number, number] | undefined {
   const offset = (node: Node, position: number): number => {
     let total = node.nodeType === Node.TEXT_NODE ? position : Array.from(node.childNodes).slice(0, position).reduce((sum, child) => sum + nodeValue(child).length, 0);
     for (let current = node; current !== root && current.parentNode; current = current.parentNode) {
-      if (current instanceof HTMLElement && current.dataset.pluginToken) total = position ? nodeValue(current).length : 0;
+      if (current instanceof HTMLElement && referenceToken(current)) total = position ? nodeValue(current).length : 0;
       for (let sibling = current.previousSibling; sibling; sibling = sibling.previousSibling) total += nodeValue(sibling).length;
     }
     return total;
@@ -77,34 +84,83 @@ function placeSelection(root: HTMLElement, start: number, end: number): void {
   selection?.addRange(range);
 }
 
+type DraftComposerReference =
+  | { kind: "plugin"; start: number; end: number; token: string; text: string; title: string; plugin: DraftPluginReference }
+  | { kind: "skill"; start: number; end: number; token: string; text: string; title: string };
+
+function draftComposerReferences(value: string): DraftComposerReference[] {
+  const skill = draftSkillReference(value);
+  const references: DraftComposerReference[] = [];
+  if (skill) {
+    references.push({
+      kind: "skill",
+      start: skill.start,
+      end: skill.end,
+      token: skill.token,
+      text: `/${skill.name}`,
+      title: skillReferenceTitle(skill),
+    });
+  }
+  for (const plugin of draftPluginReferences(value)) {
+    if (skill && plugin.start < skill.end) continue;
+    references.push({
+      kind: "plugin",
+      start: plugin.start,
+      end: plugin.end,
+      token: plugin.token,
+      text: plugin.text,
+      title: [plugin.plugin.plugin_id, plugin.plugin.mcp_server, plugin.plugin.account_id, plugin.plugin.workspace_id].filter(Boolean).join(" · "),
+      plugin,
+    });
+  }
+  return references.sort((left, right) => left.start - right.start);
+}
+
 type ReferenceNode = { reference: DraftPluginReference; element: HTMLSpanElement };
 
 function renderValue(root: HTMLElement, value: string): ReferenceNode[] {
   const nodes: Node[] = [];
   const references: ReferenceNode[] = [];
   // Keep portal containers alive while typing so brand images do not remount.
-  const existing = Array.from(root.querySelectorAll<HTMLSpanElement>(":scope > .composer-plugin-reference"));
+  const existing = Array.from(root.querySelectorAll<HTMLSpanElement>(":scope > [data-plugin-token]"));
   let offset = 0;
-  for (const ref of draftPluginReferences(value)) {
+  for (const ref of draftComposerReferences(value)) {
     nodes.push(document.createTextNode(value.slice(offset, ref.start)));
-    const index = existing.findIndex(element => element.dataset.pluginToken === ref.token);
-    const chip = index < 0 ? document.createElement("span") : existing.splice(index, 1)[0];
-    chip.contentEditable = "false";
-    chip.className = "composer-plugin-reference";
-    chip.dataset.pluginToken = ref.token;
-    chip.title = [ref.plugin.plugin_id, ref.plugin.mcp_server, ref.plugin.account_id, ref.plugin.workspace_id].filter(Boolean).join(" · ");
-    if (index < 0) {
+    if (ref.kind === "plugin") {
+      const index = existing.findIndex(element => element.dataset.pluginToken === ref.token);
+      const chip = index < 0 ? document.createElement("span") : existing.splice(index, 1)[0];
+      chip.contentEditable = "false";
+      chip.className = "composer-plugin-reference";
+      chip.dataset.pluginToken = ref.token;
+      chip.title = ref.title;
+      if (index < 0) {
+        const mark = document.createElement("span");
+        mark.className = "composer-reference-mark";
+        mark.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.className = "composer-reference-name";
+        label.textContent = ref.text.replace(/^@/, "");
+        // Text and the icon footprint exist before the parent measures draft height.
+        chip.append(mark, label);
+      }
+      references.push({ reference: ref.plugin, element: chip.firstElementChild as HTMLSpanElement });
+      nodes.push(chip);
+    } else {
+      const chip = document.createElement("span");
+      chip.contentEditable = "false";
+      chip.className = "composer-skill-reference";
+      chip.dataset.skillToken = ref.token;
+      chip.title = ref.title;
       const mark = document.createElement("span");
       mark.className = "composer-reference-mark";
       mark.setAttribute("aria-hidden", "true");
+      mark.textContent = "✦";
       const label = document.createElement("span");
       label.className = "composer-reference-name";
-      label.textContent = ref.text.replace(/^@/, "");
-      // Text and the icon footprint exist before the parent measures draft height.
+      label.textContent = ref.text;
       chip.append(mark, label);
+      nodes.push(chip);
     }
-    references.push({ reference: ref, element: chip.firstElementChild as HTMLSpanElement });
-    nodes.push(chip);
     offset = ref.end;
   }
   nodes.push(document.createTextNode(value.slice(offset)));
@@ -114,7 +170,7 @@ function renderValue(root: HTMLElement, value: string): ReferenceNode[] {
 
 /** Native text editing stays in place until the draft contains an atomic reference. */
 export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function ComposerInput({ value, resetKey, onValueChange, ...props }, ref) {
-  const [rich, setRich] = useState(() => draftPluginReferences(value).length > 0);
+  const [rich, setRich] = useState(() => draftComposerReferences(value).length > 0);
   const [referenceNodes, setReferenceNodes] = useState<ReferenceNode[]>([]);
   const [servers, setServers] = useState<MCPServerStatus[]>([]);
   const services = useComposerServices();
@@ -140,7 +196,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
   const redo = useRef<{ value: string; selection: [number, number] }[]>([]);
   const callbacks = useRef({ onValueChange, props });
   callbacks.current = { onValueChange, props };
-  if (!rich && draftPluginReferences(value).length) {
+  if (!rich && draftComposerReferences(value).length) {
     restoreFocus.current = document.activeElement === textarea.current;
     selection.current = [textarea.current?.selectionStart ?? value.length, textarea.current?.selectionEnd ?? value.length];
     setRich(true);
@@ -280,7 +336,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
       if (event.key === "Enter") { event.preventDefault(); replaceSelection("\n"); return; }
       if (event.key !== "Backspace" && event.key !== "Delete") return;
       const [start, end] = currentSelection();
-      const ref = draftPluginReferences(live.current).find(item => start === end && (event.key === "Backspace" ? item.end === start : item.start === start));
+      const ref = draftComposerReferences(live.current).find(item => start === end && (event.key === "Backspace" ? item.end === start : item.start === start));
       if (ref) {
         event.preventDefault();
         publish(live.current.slice(0, ref.start) + live.current.slice(ref.end), [ref.start, ref.start]);

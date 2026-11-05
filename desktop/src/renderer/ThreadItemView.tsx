@@ -1,5 +1,6 @@
 import { ComposerInput, type ComposerInputHandle } from "./ComposerInput";
 import { pluginReferenceDraft, pluginReferenceParts } from "./ComposerPluginReferences";
+import { draftSkillReference, skillReferenceArguments, skillReferenceTitle } from "./ComposerSkillReferences";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
@@ -451,16 +452,18 @@ function UserMessageContent({
   const selectionParts = (contentParts ?? []).filter(part => part.type === "response_selection");
   const textParts = (contentParts ?? []).filter((part) => part.type === "text" || part.type === "plugin_reference");
   const fileParts = (contentParts ?? []).filter((part) => part.type === "file_selection");
+  const skillReference = draftSkillReference(text);
+  const skillArguments = skillReference ? skillReferenceArguments(text, skillReference) : "";
   const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0 || fileParts.length > 0;
-  const hasTextBubble = structured
+  const hasTextBubble = Boolean(skillReference) || (structured
     ? textParts.some((part) => part.text.length > 0)
-    : text.length > 0;
+    : text.length > 0);
   // Threshold + preview logic + state keying all live in
   // `./LongTextCollapse` so the chat bubble can reuse the exact same
   // numbers. The hook's `{text, expanded}` state shape is what makes
   // the toggle survive a parent re-render with a new message body
   // without flashing the previous expansion — see the module doc.
-  const bubbleText = userMessageBodyText(text, contentParts);
+  const bubbleText = skillReference ? skillArguments : userMessageBodyText(text, contentParts);
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
   const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
@@ -501,7 +504,23 @@ function UserMessageContent({
           data-wuu-component="message-bubble"
           data-wuu-variant="user"
         >
-          {collapsed ? (
+          {skillReference ? (
+            <div className="user-message-skill-invocation">
+              <span className="composer-skill-reference" title={skillReferenceTitle(skillReference)}>
+                <span className="composer-reference-mark" aria-hidden="true">✦</span>
+                <span className="composer-reference-name">/{skillReference.name}</span>
+              </span>
+              {skillArguments ? (
+                collapsed ? (
+                  <div className="user-message-raw-query">{displayedText}</div>
+                ) : (
+                  <div className="user-message-skill-arguments">
+                    <RichContent linkPolicy={linkPolicy} text={skillArguments} cwd={cwd} onOpenFile={onOpenFile} />
+                  </div>
+                )
+              ) : null}
+            </div>
+          ) : collapsed ? (
             <div className="user-message-raw-query">{displayedText}</div>
           ) : textParts.some(part => part.type === "plugin_reference") ? (
             <div className="user-message-raw-query">{textParts.map((part, index) => part.type === "plugin_reference"

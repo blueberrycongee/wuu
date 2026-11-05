@@ -15,6 +15,7 @@ import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
+import { composerSkillPrompt } from "./ComposerSlashCommands";
 import type { ResponseSelection } from "../shared/protocol";
 import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
 import { createUIComposition } from "./plugins/ApplicationShell";
@@ -503,6 +504,20 @@ describe("ThreadItemView", () => {
     composition = { Slot: ({ name, context, fallback }) => { if (name.endsWith("/conversation.message")) { received = context; return null; } return fallback; } };
     render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
     expect(received).toEqual({ threadId: undefined, turnId: "turn-1", itemId: "final-1", snapshot: expect.objectContaining({ id: "final-1", kind: "assistant-message" }) });
+  });
+
+  it("renders an explicit skill invocation as a reference chip and its arguments", () => {
+    const prompt = composerSkillPrompt({
+      name: "change-validation",
+      source: "project",
+      project: { root: "/repo", path: ".agents/skills/change-validation/SKILL.md" },
+    }, "Check this change");
+    render({ item: makeUserMessage(prompt), turnStatus: "completed", streaming: false });
+
+    const bubble = container?.querySelector(".message.user-message");
+    expect(bubble?.querySelector(".composer-reference-name")?.textContent).toBe("/change-validation");
+    expect(bubble?.textContent).toContain("Check this change");
+    expect(bubble?.textContent).not.toContain('"source"');
   });
 
   it("shows short user messages in full without a collapse control", () => {
