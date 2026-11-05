@@ -1,4 +1,3 @@
-import { Tooltip } from "./Tooltip";
 import { VideoAttachment } from "./VideoAttachment";
 import {
   AlertCircle,
@@ -107,7 +106,7 @@ export function MessageTime({ timestamp, className = "" }: { timestamp?: string 
 export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Element {
   const { t } = useI18n();
   return (
-    <Tooltip asChild content={t("message.fork")}><button
+    <button
       className="message-action-button"
       type="button"
       aria-label={t("message.fork")}
@@ -115,7 +114,7 @@ export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Elem
       onClick={onFork}
     >
       <Split size={15} />
-    </button></Tooltip>
+    </button>
   );
 }
 
