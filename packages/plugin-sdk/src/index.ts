@@ -660,6 +660,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   setNavigationTitle(id: string, title: string): boolean;
   /** Set an owned navigation Avatar style. null keeps prior artwork (or an empty slot) while loading; undefined restores its declared icon. Generation-scoped. */
   setNavigationAvatar(id: string, avatarKey: string | null | undefined): boolean;
+  /** Set the visible title of one registered View type for this generation only (1–64 characters). */
+  setViewTitle(id: string, title: string): boolean;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;
   registerThemeTokens(tokens: ThemeTokens): Disposable;
