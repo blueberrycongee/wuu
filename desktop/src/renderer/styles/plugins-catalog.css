@@ -32,7 +32,7 @@
 }
 
 /* Plugin and skill rows share the settings row grammar: the mark, the name
- * over a tagline (or the reason a plugin needs a look), a trailing control,
+ * over a tagline, a trailing control,
  * and a chevron. Columns: mark, copy, trailing control, chevron; the
  * chevron column less its tip inset lets every row end on the padding edge.
  * The mark sits on the name's line, so it stays put when a tagline wraps. */
@@ -145,7 +145,7 @@ button.catalog-row,
 .plugin-catalog-grid,
 .skill-catalog-grid {
   --catalog-mark-size: calc(var(--icon-size) * 2);
-  --catalog-row-pad: var(--space-3);
+  --catalog-row-pad: var(--space-4);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
