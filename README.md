@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-icon.png" width="88" height="88" alt="Wuu">
+  <img src="landing/assets/readme/banner.webp" alt="Wuu exploring a workspace of files and tools" width="100%">
 </p>
 
 <h1 align="center">wuu</h1>
@@ -11,8 +11,15 @@
 
 <p align="center">
   <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>Download for Mac</b></a> ·
+  <a href="#get-started">Get started</a> ·
   <a href="https://blueberrycongee.github.io/wuu/en/">Documentation</a> ·
   <a href="README_zh.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><img src="https://img.shields.io/badge/macOS-Apple%20silicon-52647a?style=flat-square&logo=apple&logoColor=white" alt="macOS on Apple silicon"></a>
+  <a href="https://blueberrycongee.github.io/wuu/en/"><img src="https://img.shields.io/badge/docs-read%20the%20guide-52647a?style=flat-square" alt="Read the documentation"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-52647a?style=flat-square" alt="MIT license"></a>
 </p>
 
 <picture>
@@ -22,21 +29,28 @@
 
 Point wuu at a folder, describe the task, and let an agent read the code, run commands and edit files. The conversation shows each step as it happens. Beside it, Review shows the actual diff on disk, so you check the result rather than taking the summary on trust.
 
+## At a glance
+
+| Feature | What you can do |
+| --- | --- |
+| **Your choice of agent** | Connect a model provider or use an existing coding agent as the engine. |
+| **Work you can see** | Follow the conversation and inspect files, the terminal, browser and Git diff alongside it. |
+| **Room to steer** | Redirect a running task, queue a message or fork a conversation into a worktree. |
+| **Tools that fit your workflow** | Extend wuu with plugins, skills, MCP servers and hooks. |
+
+## Get started
+
+The desktop preview runs on Apple silicon Macs.
+
+1. Download wuu from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it.
+2. Connect a model service and add a project folder as a workspace.
+3. Give the agent a small task, then check its changes and test results in Review.
+
+The [quick start](docs/en/getting-started/index.md) walks through an example. The release pipeline requires Apple Developer ID signing and notarization; older previews used ad-hoc signatures. Check the release notes and [installation guide](docs/en/getting-started/installation.md) for your version.
+
 ## See it in action
 
 ![wuu demo](landing/assets/readme/demo-en.webp)
-
-## Agent benchmark
-
-In the 18-task Terminal-Bench 4 subset reported in [PR #630](https://github.com/blueberrycongee/wuu/pull/630), Wuu matched Codex's pass rate at **11.0% lower recorded API cost**, and solved one more task than Pi at **6.6% lower cost**.
-
-| Harness | Passed | Pass rate | Recorded API cost (USD) | Cost per success (USD) |
-| --- | ---: | ---: | ---: | ---: |
-| **Wuu** | **10/18** | **55.6%** | **$32.40** | **$3.24** |
-| Codex (Code Mode) | 10/18 | 55.6% | $36.42 | $3.64 |
-| Pi | 9/18 | 50.0% | $34.68 | $3.85 |
-
-All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 54 runs total, with skills, memory, ask-user and subagents disabled. Codex 0.150.1 and Pi 0.84.4 retained their native prompts. Codex enabled Code Mode (`code_mode=true`, `code_mode_only=true`); Wuu exposed direct tools alongside optional Code Mode composition. Costs include cached input and exclude title generation; cost per success is total recorded API cost divided by passed tasks.
 
 ## What's in the preview
 
@@ -91,13 +105,17 @@ Plugins add tools and features: scheduled automation, persistent goals, task che
   <img src="landing/assets/readme/plugins-en.jpg" width="640" alt="Plugins">
 </p>
 
-## Get started
+## Agent benchmark
 
-The desktop preview runs on Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it.
+In the 18-task Terminal-Bench 4 subset reported in [PR #630](https://github.com/blueberrycongee/wuu/pull/630), Wuu matched Codex's pass rate at **11.0% lower recorded API cost**, and solved one more task than Pi at **6.6% lower cost**.
 
-The release pipeline requires Apple Developer ID signing and notarization. Older previews used ad-hoc signatures; check the release notes and [installation guide](docs/en/getting-started/installation.md) for the downloaded version.
+| Harness | Passed | Pass rate | Recorded API cost (USD) | Cost per success (USD) |
+| --- | ---: | ---: | ---: | ---: |
+| **Wuu** | **10/18** | **55.6%** | **$32.40** | **$3.24** |
+| Codex (Code Mode) | 10/18 | 55.6% | $36.42 | $3.64 |
+| Pi | 9/18 | 50.0% | $34.68 | $3.85 |
 
-On first launch, connect a model service and add a project folder as a workspace. Start with a small task, then check the changes and test results in Review. The [quick start](docs/en/getting-started/index.md) walks through an example.
+All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 54 runs total, with skills, memory, ask-user and subagents disabled. Codex 0.150.1 and Pi 0.84.4 retained their native prompts. Codex enabled Code Mode (`code_mode=true`, `code_mode_only=true`); Wuu exposed direct tools alongside optional Code Mode composition. Costs include cached input and exclude title generation; cost per success is total recorded API cost divided by passed tasks.
 
 ## Command line
 
