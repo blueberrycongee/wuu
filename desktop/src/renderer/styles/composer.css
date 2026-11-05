@@ -1070,6 +1070,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   line-height: var(--conversation-reading-line-height);
 }
 
+/* The Chinese placeholder's glyphs sit high beside the centered controls. */
+:lang(zh) .composer :is(textarea, .composer-rich-input) {
+  padding-block: calc(var(--composer-text-padding-block) + 1px)
+    calc(var(--composer-text-padding-block) - 1px);
+}
+
 /* The Plus button's hit box and one grid gap already separate it from the
  * draft. Dropping the textarea's leading inset keeps the visible icon-to-text
  * gap at one card inset instead of adding a second inset inside the field. */
