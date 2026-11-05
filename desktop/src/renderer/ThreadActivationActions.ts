@@ -67,7 +67,7 @@ export type ThreadActivationActionsDeps = {
 
 export type ThreadActivationActions = {
   selectThread: (threadID: string) => Promise<void>;
-  selectContextThread: (context: RuntimeContext, threadID: string) => Promise<void>;
+  selectContextThread: (context: RuntimeContext, threadID: string, selectedConfiguration?: Partial<AppState>) => Promise<void>;
   selectWorkspaceThread: (workspaceID: string, threadID: string) => Promise<void>;
   activateThread: (threadID: string) => Promise<void>;
   selectChildAgent: (agent: Pick<Agent, "id">) => Promise<void>;
@@ -189,13 +189,16 @@ export function createThreadActivationActions(
   async function selectContextThread(
     targetContext: RuntimeContext,
     threadID: string,
+    selectedConfiguration?: Partial<AppState>,
   ): Promise<void> {
     const currentState = deps.getAppState();
     let outgoingDraft = deps.getComposerDraftSnapshot();
     let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
     const requestID = deps.beginViewSwitch("thread", threadID, true, targetContext);
     try {
-      const workspaceState = await selectRuntimeContext(targetContext);
+      const workspaceState = selectedConfiguration
+        ? { projects: currentState.projects, active_context: selectedConfiguration.activeContext }
+        : await selectRuntimeContext(targetContext);
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
         return;
       }
@@ -209,7 +212,9 @@ export function createThreadActivationActions(
       const sessionContext = targetContext.session_locator
         ? { ...selectedContext, session_locator: targetContext.session_locator }
         : selectedContext;
-      const configuration = loadRuntimeConfiguration(workspaceState);
+      const configuration = selectedConfiguration
+        ? Promise.resolve(selectedConfiguration)
+        : loadRuntimeConfiguration(workspaceState);
       let loadedState: Partial<AppState>;
       let resumed: ThreadResumeResult;
       if (deps.acceptRuntimeConfiguration) {
