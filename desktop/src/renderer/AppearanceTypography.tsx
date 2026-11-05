@@ -6,6 +6,8 @@ import { MessageFlowFontSizeControl } from "./MessageFlowFontSizeSection";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
+import { Switch } from "./ui/Switch";
+import { SegmentedControl } from "./ui/SegmentedControl";
 
 export function AppearanceTypography({ section = "text" }: { section?: "text" | "motion" }): JSX.Element {
   const controls = useSettingsControls();
@@ -50,10 +52,8 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     return <SettingsSection title={t("settings.sectionMotion")} testID="settings-motion">
       <SettingsGroup>
         <SettingsRow title={t("settings.reduceMotion")}>
-          <button className="settings-switch" type="button" role="switch" aria-checked={reduce} aria-label={t("settings.reduceMotion")}
-            onClick={() => update({ motion: reduce ? "system" : "reduce" })}>
-            <span className="settings-switch-thumb" aria-hidden="true" />
-          </button>
+          <Switch checked={reduce} aria-label={t("settings.reduceMotion")}
+            onClick={() => update({ motion: reduce ? "system" : "reduce" })} />
         </SettingsRow>
       </SettingsGroup>
       {saveError}
@@ -81,21 +81,12 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
   >
     <SettingsGroup>
       <SettingsRow title={t("settings.messageStyle")}>
-        <div className="theme-segmented" role="group" aria-label={t("settings.messageStyle")}>
-          {([
-            ["bubble", t("settings.messageStyleBubble")],
-            ["im", t("settings.messageStyleIM")],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={preferences.messageStyle === value}
-              onClick={() => update({ messageStyle: value })}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl label={t("settings.messageStyle")} value={preferences.messageStyle}
+          options={[
+            { value: "bubble", label: t("settings.messageStyleBubble") },
+            { value: "im", label: t("settings.messageStyleIM") },
+          ]}
+          onChange={(messageStyle) => update({ messageStyle })} />
       </SettingsRow>
       <SettingsRow title={t("settings.textInterface")}>
         {fontPicker("uiFont")}
@@ -117,21 +108,12 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       </SettingsRow>
       {controls.capabilities.platform === "darwin" && (
         <SettingsRow title={t("settings.fontSmoothing")}>
-          <div className="theme-segmented" role="group" aria-label={t("settings.fontSmoothing")}>
-            {([
-              ["grayscale", t("settings.fontSmoothingGrayscale")],
-              ["system", t("settings.systemFont")],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={preferences.fontSmoothing === value}
-                onClick={() => update({ fontSmoothing: value })}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl label={t("settings.fontSmoothing")} value={preferences.fontSmoothing}
+            options={[
+              { value: "grayscale", label: t("settings.fontSmoothingGrayscale") },
+              { value: "system", label: t("settings.systemFont") },
+            ]}
+            onChange={(fontSmoothing) => update({ fontSmoothing })} />
         </SettingsRow>
       )}
     </SettingsGroup>

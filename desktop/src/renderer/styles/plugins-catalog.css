@@ -647,13 +647,6 @@ button.catalog-row,
   font-weight: var(--weight-medium);
 }
 
-.plugin-page .plugin-settings-editor-body {
-  border-color: var(--hairline-soft);
-  border-radius: var(--settings-group-radius);
-  background: var(--settings-card);
-  box-shadow: var(--settings-group-shadow);
-}
-
 .plugin-page-about {
   max-width: 65ch;
   margin: 0;

@@ -11,6 +11,7 @@ import { ProviderMark } from "./ProviderMarks";
 import { SelectMenu } from "./SelectMenu";
 import type { SaveProvider } from "./ModelServicesPage";
 import { useI18n } from "./i18n";
+import { Switch } from "./ui/Switch";
 
 export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave, onClose, onConnected, onProvidersChanged, inline = false, renderAuthMethods, workspaceRoot }: {
   providers: readonly ProviderSummary[];
@@ -107,7 +108,7 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
         ariaLabel={t("provider.modelLabel")} dataTestid="settings-provider-connect-model" options={models.map(item => ({ value: item.id, label: item.name || item.id }))} onChange={setModel}
         placeholder={t(loading ? "settings.loading" : "provider.chatgptNoModels")} /></div>
       <label className="model-connect-field"><span>{t("provider.identifier")}</span><input className="settings-input" value={name} disabled={busy} onChange={event => setName(event.currentTarget.value)} /></label>
-      <div className="model-connect-toggle"><span>{t("provider.useAsDefault")}</span><button type="button" className="settings-switch" role="switch" aria-label={t("provider.useAsDefault")} aria-checked={makeDefault} disabled={busy} onClick={() => setMakeDefault(value => !value)}><span className="settings-switch-thumb" /></button></div>
+      <div className="model-connect-toggle"><span>{t("provider.useAsDefault")}</span><Switch aria-label={t("provider.useAsDefault")} checked={makeDefault} disabled={busy} onClick={() => setMakeDefault(value => !value)} /></div>
       {authNotice ? <p className="settings-muted-line" role="status">{authNotice}</p> : null}
       {error ? <SettingsFailure message={t(error.kind === "accounts" ? "settings.accountsLoadFailed" : error.kind === "models" ? "settings.modelsLoadFailed" : "settings.connectionSaveFailed")}
         diagnostic={error.diagnostic} onRetry={error.kind === "save" ? undefined : () => { setError(undefined); setRevision(value => value + 1); }} retrying={loading || busy} /> : null}

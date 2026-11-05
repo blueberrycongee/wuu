@@ -9,6 +9,7 @@ import type {
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
+import { SettingsGroup } from "./SettingsSection";
 import { AlertCircle, AlertTriangle } from "./WuuIcons";
 import type { SettingsControlsConflictV1 as PluginContributionConflict, SettingsControlsDiagnosticV1 as PluginGenerationDiagnostic } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 
@@ -73,7 +74,7 @@ export function PluginSettingsEditor({
       aria-label={title ?? t("skills.pluginSettingsNamed", { name: plugin.name })}
     >
       {title ? <h3 className="plugin-settings-editor-title">{title}</h3> : null}
-      <div className="plugin-settings-editor-body">
+      <SettingsGroup className="plugin-settings-editor-body">
       {conflicts.map((conflict) => (
         <PluginConflictControl key={conflict.key} conflict={conflict} />
       ))}
@@ -105,7 +106,7 @@ export function PluginSettingsEditor({
           workspaceRoot={workspaceRoot}
         />
       ))}
-      </div>
+      </SettingsGroup>
     </section>
   );
 }

@@ -2,7 +2,6 @@ import { useSettingsControls } from "../SettingsControlsContext";
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
-import { SettingsGroup } from "../SettingsSection";
 import { BackgroundSettings } from "./BackgroundSettings";
 import { useBackground } from "./useBackground";
 import { useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
@@ -18,7 +17,7 @@ function SkinChip({ skin, mode, selected, choose, title }: {
     type="button"
     role="radio"
     aria-checked={selected}
-    className={`shell-skin-chip${selected ? " active" : ""}`}
+    className="shell-skin-chip"
     onClick={choose}
     title={skin ? (loaded.error ? t("settings.skinImageFailed") : skin.pluginName) : undefined}
   >
@@ -48,22 +47,22 @@ export function ShellSkinSettings(): JSX.Element {
   };
   const unavailable = !["default", "custom"].includes(selected) && !skins.some(skin => skin.key === selected);
   const hasMultipleSkins = skins.length > 0 || Boolean(preferences) || unavailable;
-  return <SettingsGroup>
+  return <>
     {hasMultipleSkins ? (
       <SettingsRow title={t("settings.shellSkin")}>
-        <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
+        <div className="theme-segmented shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
           <SkinChip mode={mode} selected={selected === "default" || (selected === "custom" && !preferences)} choose={() => choose("default")} title={t("settings.skinDefault")} />
           {skins.map(skin => <SkinChip key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
           {preferences && <SkinChip mode={mode} selected={selected === "custom"} choose={() => choose("custom")} title={t("settings.skinCustom")} />}
         </div>
       </SettingsRow>
     ) : (
-      <div className="shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")} hidden>
+      <div className="theme-segmented shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")} hidden>
         <SkinChip mode={mode} selected={true} choose={() => choose("default")} title={t("settings.skinDefault")} />
       </div>
     )}
     {unavailable && <p className="settings-description" role="status">{t("settings.skinUnavailable")}</p>}
     {error && <p role="alert">{t("settings.saveFailed")}</p>}
     <BackgroundSettings />
-  </SettingsGroup>;
+  </>;
 }

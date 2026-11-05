@@ -322,11 +322,15 @@
   padding: var(--card-padding);
 }
 
+/* Its children are a control and a scrolling list, not divided rows. */
+.settings-group.onboarding-choice-card > :not([hidden]) ~ :not([hidden]) {
+  border-top: 0;
+}
+
 .first-run-onboarding :is(.model-service-catalog, .system-permission-row) {
   border-color: var(--hairline-soft);
-  border-radius: var(--settings-group-radius);
-  background: var(--settings-card);
-  box-shadow: var(--settings-group-shadow);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
 }
 
 .first-run-onboarding .system-permission-row {

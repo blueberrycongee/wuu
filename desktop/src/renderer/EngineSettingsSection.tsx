@@ -22,6 +22,7 @@ import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
+import { Switch } from "./ui/Switch";
 
 const BUILTIN_ENGINE = "wuu";
 
@@ -197,12 +198,10 @@ export function EngineSettingsSection({
     <SettingsSection title={t("settings.engineRuntime")}>
       <SettingsGroup>
         <SettingsRow title={t("settings.engineEnable")}>
-          <button type="button" className="settings-switch" role="switch" aria-checked={enabled(selected)}
+          <Switch checked={enabled(selected)}
             aria-label={`${engineLabel(selected.id, selected)} ${t(enabled(selected) ? "settings.engineDisable" : "settings.engineEnable")}`}
             data-testid={`settings-engine-${selected.id}-enabled`} disabled={busy}
-            onClick={() => void save({ [selected.id]: { enabled: !enabled(selected) } })}>
-            <span className="settings-switch-thumb" aria-hidden="true" />
-          </button>
+            onClick={() => void save({ [selected.id]: { enabled: !enabled(selected) } })} />
         </SettingsRow>
         <SettingsRow title={t("settings.engineBinaryPath")} block>
           <input key={`path-${selected.id}-${selectedSettings?.binary_path ?? ""}`} className="settings-input"
@@ -237,12 +236,10 @@ export function EngineSettingsSection({
         </div>
         {models.map((model, index) => <div key={model.id} className="connection-model-row" role="row" data-model-id={model.id}>
           <span className="connection-model-name" role="cell">{model.label}</span>
-          <span className="connection-model-id" role="cell">{model.id}</span>
-          <span className="connection-model-enabled" role="cell"><button type="button" className="settings-switch" role="switch"
-            aria-label={`${model.label} ${t("settings.engineModelEnabled")}`} aria-checked={!hiddenModels.includes(model.id)} disabled={busy}
-            onClick={() => updateDisplay(() => display.setModelVisible(displayKey, model.id, hiddenModels.includes(model.id)))}>
-            <span className="settings-switch-thumb" aria-hidden="true" />
-          </button></span>
+          <code className="connection-model-id" role="cell">{model.id}</code>
+          <span className="connection-model-enabled" role="cell"><Switch
+            aria-label={`${model.label} ${t("settings.engineModelEnabled")}`} checked={!hiddenModels.includes(model.id)} disabled={busy}
+            onClick={() => updateDisplay(() => display.setModelVisible(displayKey, model.id, hiddenModels.includes(model.id)))} /></span>
           <span className="connection-model-order" role="cell">
             <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={busy || index === 0}
               aria-label={t("settings.engineModelUp", { name: model.label })} onClick={() => updateDisplay(() => display.moveModel(displayKey, models, model.id, -1))}><ArrowUp className="icon" /></button>
@@ -255,14 +252,14 @@ export function EngineSettingsSection({
         onRetry={() => void refresh()} retrying={busy || refreshing} /> : null}
     </SettingsSection>
     <details className="connection-engine-advanced">
-      <summary>{t("settings.engineAdvanced")}</summary>
-      <SettingsRow title={t("settings.engineModelCurrent")}>
+      <summary><ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("settings.engineAdvanced")}</summary>
+      <SettingsGroup><SettingsRow title={t("settings.engineModelCurrent")}>
         {refreshButton}
         {modelSource && models.length ? <SelectMenu triggerClassName="settings-select-trigger"
           ariaLabel={t("settings.engineModelCurrent")} value={modelSource.selectedModel} disabled={busy || !enabled(selected) || !selected.binary_ok}
           options={display.visibleModels(displayKey, models, [modelSource.selectedModel]).map(model => ({ value: model.id, label: model.label }))}
           placeholder={t("settings.subscriptionModelUnset")} onChange={id => { selectSubscriptionModel(controls, modelSource, id); setSelectionRevision(value => value + 1); }} /> : null}
-      </SettingsRow>
+      </SettingsRow></SettingsGroup>
       <SubscriptionDashboard key={`account-${accountKey}-${selected.binary_path ?? ""}-${accountRevision}`} detailOnly
         scope={{ kind: "engine", id: selected.id }} inventory={result}
         initialInventory={snapshot ? { engines: [snapshot] } : undefined}

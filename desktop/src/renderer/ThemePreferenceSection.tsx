@@ -2,7 +2,6 @@ import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useState, type CSSProperties } from "react";
 import type { ExtensionInventoryRecord, ThemePreference } from "../shared/protocol";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsGroup } from "./SettingsSection";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
 
@@ -24,7 +23,7 @@ export function ContentThemeControl({ inventory }: { inventory?: readonly Extens
   if (themes.length === 0) return null;
   const saved = selectedExtensionThemeKey(mode);
   const selected = themes.find(theme => theme.key === saved || theme.legacyKeys.includes(saved));
-  return <SettingsGroup><SettingsRow title={t("settings.contentTheme")}>
+  return <SettingsRow title={t("settings.contentTheme")}>
     <SelectMenu ariaLabel={t("settings.contentTheme")} value={selected?.key ?? ""}
       options={[{
         value: "", label: t("settings.skinDefault"),
@@ -35,7 +34,7 @@ export function ContentThemeControl({ inventory }: { inventory?: readonly Extens
       }))]}
       onChange={key => selectExtensionTheme(mode, key)} triggerClassName="settings-select-trigger settings-palette-trigger"
       panelClassName="settings-palette-menu" minMenuWidthEm={16} flip />
-  </SettingsRow></SettingsGroup>;
+  </SettingsRow>;
 }
 
 function PaletteSwatch({ canvas, ink, accent }: { canvas: string; ink: string; accent: string }): JSX.Element {
@@ -147,10 +146,7 @@ export function ThemePreferenceControl({ inventory }: { inventory?: readonly Ext
               <ThemePreviewWindow theme={option.value} preview={previewFor(option.value)} />
             )}
           </span>
-          <span className="settings-theme-card-label">
-            <span className="settings-theme-card-radio" aria-hidden="true" />
-            {option.label}
-          </span>
+          <span className="settings-theme-card-label">{option.label}</span>
         </button>
       ))}
     </div>
