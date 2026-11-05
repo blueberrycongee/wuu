@@ -5540,6 +5540,25 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   font-size: var(--font-xs);
 }
 
+.turn-artifact-image-preview > .image-placeholder {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--conversation-image-radius);
+  background: var(--surface-2);
+}
+
+.turn-artifact-image-preview .image-placeholder .turn-artifact-unavailable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .turn-edit-summary-card[data-wuu-component="artifact"] {
   width: min(100%, 620px);
   margin-top: 0;

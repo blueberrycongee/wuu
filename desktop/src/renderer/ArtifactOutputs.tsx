@@ -505,6 +505,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
+  const [loadedSource, setLoadedSource] = useState<string>();
   const source = useArtifactPreviewSource(artifact, cwd, undefined, !artifact.remoteRef);
   const register = useImagePreviewRegistration(source && failedSource !== source && artifact.mimeType.startsWith("image/")
     ? { src: source, alt: artifact.name, title: artifact.name } : null);
@@ -518,21 +519,25 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
         onOpen={(src, origin) => openPreview({ src, alt: artifact.name, title: artifact.name }, origin)}
       />
     );
-  } else if (!source || !artifact.mimeType.startsWith("image/")) {
+  } else if (!artifact.mimeType.startsWith("image/")) {
     return <div className="turn-artifact-unavailable">{t("imagePreview.loadFailed")}</div>;
+  } else if (!source) {
+    image = <span className="image-placeholder" role="img" aria-label={t("imagePreview.loading")} />;
   } else {
     image = (
       <button
         type="button"
         ref={register}
+        className={loadedSource !== source || failedSource === source ? "image-placeholder" : undefined}
         onClick={event => openPreview({ src: source, alt: artifact.name, title: artifact.name }, event.currentTarget)}
-        aria-label={t("artifacts.previewNamed", { name: artifact.name })}
+        aria-label={failedSource === source ? t("imagePreview.loadFailed") : t("artifacts.previewNamed", { name: artifact.name })}
+        title={failedSource === source ? t("imagePreview.loadFailed") : undefined}
         disabled={failedSource === source}
       >
         {failedSource === source ? (
           <span className="turn-artifact-unavailable">{t("imagePreview.loadFailed")}</span>
         ) : (
-          <img src={source} alt={artifact.name} loading="lazy" onError={() => setFailedSource(source)} />
+          <img src={source} alt={artifact.name} loading="lazy" onLoad={() => setLoadedSource(source)} onError={() => setFailedSource(source)} />
         )}
       </button>
     );
