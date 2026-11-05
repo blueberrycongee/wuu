@@ -43,6 +43,7 @@ import {
   Trash2,
 } from "./WuuIcons";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
+import { useConnectionQuota } from "./ConnectionQuota";
 import { hasBuiltInSubscriptionControls } from "./SubscriptionSources";
 import { ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { CatalogSearchField } from "./CatalogSearchField";
@@ -319,9 +320,9 @@ export function ModelServicesPage({
   initialized,
   running,
   runningProviderNames,
-  onSave,
+  onSave: saveProvider,
   onRemoveProvider,
-  onProvidersChanged,
+  onProvidersChanged: publishProviders,
   onProviderModelsChanged,
 }: ModelServicesPageProps): JSX.Element {
   const controls = useSettingsControls();
@@ -332,25 +333,29 @@ export function ModelServicesPage({
   const providers = initialized?.providers ?? [];
   const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
-  const [quotaSnapshot, setQuotaSnapshot] = useState<EngineListResult>();
-  const [quotaLoading, setQuotaLoading] = useState(false);
-  const [quotaFailed, setQuotaFailed] = useState(false);
-  const [quotaVersion, setQuotaVersion] = useState(0);
+  const { snapshot: quotaSnapshot, loading: quotaLoading, failed: quotaFailed, refresh: refreshQuota, invalidate: invalidateQuota } = useConnectionQuota(ENABLE_SUBSCRIPTIONS && controls.capabilities.engines);
+  const onProvidersChanged = (updated: ProviderSummary[]) => {
+    publishProviders?.(updated);
+    invalidateQuota();
+    void refreshQuota().catch(() => { /* The shared snapshot exposes refresh failures. */ });
+  };
+  const onSave: SaveProvider = async (...args) => {
+    const signal = lifetime.current.signal;
+    await saveProvider(...args);
+    signal.throwIfAborted();
+    // Identity changes select a new cache; replacing a secret can leave the
+    // public configured flag unchanged. Model-only edits keep the snapshot.
+    if (args[3]?.api_key !== undefined || args[3]?.auth_token !== undefined) {
+      invalidateQuota();
+      void refreshQuota().catch(() => { /* The shared snapshot exposes refresh failures. */ });
+    }
+  };
   const [quotaNow, setQuotaNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setQuotaNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-  useEffect(() => {
-    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) { setQuotaLoading(false); return; }
-    let active = true;
-    setQuotaLoading(true);
-    void controls.listEngines({ include_quota: true, include_activity: false }).then(snapshot => {
-      if (active) { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }
-    }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setQuotaFailed(true); })
-      .finally(() => { if (active) setQuotaLoading(false); });
-    return () => { active = false; };
-  }, [controls, quotaVersion]);
+  useEffect(() => { setQuotaNow(Date.now()); }, [quotaSnapshot]);
   const observedQuota = (quota: SubscriptionQuota | undefined): SubscriptionQuota | undefined =>
     quotaFailed && quota?.status === "available" ? { ...quota, status: "stale" } : quota;
   const overviewProviders = providers.map(provider => {
@@ -460,14 +465,9 @@ export function ModelServicesPage({
           const refreshed = result.providers.find(item => item.name === detailProvider.name
             && item.type === detailProvider.type && item.base_url === detailProvider.base_url);
           if (!refreshed?.api_key_configured) throw new Error("Login is not available to this connection");
-          onProvidersChanged?.([refreshed]);
-          setQuotaSnapshot(current => current ? { ...current,
-            subscription_providers: current.subscription_providers?.filter(item => item.name !== detailProvider.name),
-          } : current);
+          onProvidersChanged([refreshed]);
           setCatalogVersion(value => value + 1);
-          setQuotaVersion(value => value + 1);
         }}
-        onQuotaLoaded={snapshot => { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }}
         onProvidersChanged={onProvidersChanged} onProviderModelsChanged={onProviderModelsChanged}
         label={labels.get(detailProvider.name) ?? detailProvider.name} initialized={initialized} running={running}
         inUse={runningProviderNames.has(detailProvider.name)} onBack={closeService} onSave={onSave}
@@ -652,7 +652,7 @@ function ServicesOverview({
                 const identity = serviceIdentity(provider, t);
                 const label = display.label(`provider:${provider.name}`, identity.label);
                 const isDefault = provider.name === initialized?.provider;
-                const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
+                const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("provider.loginRequired") : undefined);
                 const status = attention ?? t("settings.engineReady");
                 const plan = provider.quota?.plan?.trim();
                 return (
@@ -701,7 +701,6 @@ function ServiceDetail({
   provider: configuredProvider,
   onProvidersChanged,
   onProviderModelsChanged,
-  onQuotaLoaded,
   onRefreshConnection,
   onChooseMethod,
   label,
@@ -715,7 +714,6 @@ function ServiceDetail({
   provider: ProviderSummary;
   onProvidersChanged?: (providers: ProviderSummary[]) => void;
   onProviderModelsChanged?: (name: string, accountId: string, models: ProviderModelSummary[]) => void;
-  onQuotaLoaded: (snapshot: EngineListResult) => void;
   onRefreshConnection: () => Promise<void>;
   onChooseMethod: (method: AccountMethod) => void;
   label: string;
@@ -857,7 +855,7 @@ function ServiceDetail({
       <div className="connection-detail-body">
       {error && !confirmingRemove ? <p className="settings-error" role="alert">{error}</p> : null}
 
-      {ENABLE_SUBSCRIPTIONS && !(isGrokBuildType(provider.type) && attention) && (provider.quota || hasBuiltInSubscriptionControls(provider)) ? <SubscriptionDashboard detailOnly scope={{ kind: "provider", name: provider.name }} providers={[provider]} onProvidersChanged={onProvidersChanged} onInventoryLoaded={onQuotaLoaded} onSelectBuiltinModel={(name, model) => onSave(name, model)} /> : null}
+      {ENABLE_SUBSCRIPTIONS && !(isGrokBuildType(provider.type) && attention) && (provider.quota || hasBuiltInSubscriptionControls(provider)) ? <SubscriptionDashboard detailOnly scope={{ kind: "provider", name: provider.name }} providers={[provider]} onProvidersChanged={onProvidersChanged} onSelectBuiltinModel={(name, model) => onSave(name, model)} /> : null}
 
       <ModelChoices
         provider={provider}

@@ -16,6 +16,7 @@ import { EngineAuthentication } from "./EngineAuthentication";
 import { selectSubscriptionModel, subscriptionSources } from "./SubscriptionSources";
 import { ConnectionPage } from "./ConnectionPage";
 import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
+import { useConnectionQuota } from "./ConnectionQuota";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { engineLabel } from "./EngineDisplay";
 import { useI18n } from "./i18n";
@@ -78,6 +79,7 @@ export function EngineSettingsSection({
   onCloseEngine: () => void;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const { refresh: refreshQuota, invalidate: invalidateQuota } = useConnectionQuota(false);
   const { t } = useI18n();
   const usageID = useId();
   const display = useSettingsConnectionDisplay();
@@ -96,10 +98,14 @@ export function EngineSettingsSection({
   const save = useCallback(async (params: EngineUpdateParams) => {
     setBusy(true);
     setError("");
-    try { await onUpdate(params); }
+    try {
+      await onUpdate(params);
+      invalidateQuota();
+      void refreshQuota().catch(() => { /* The shared snapshot exposes refresh failures. */ });
+    }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
-  }, [onUpdate]);
+  }, [onUpdate, invalidateQuota, refreshQuota]);
 
   const enabled = (engine: EngineInfo) => binarySettings[engine.id]?.enabled
     ?? (binarySettings[engine.id]?.binary_path ? true : engine.enabled);
@@ -128,7 +134,7 @@ export function EngineSettingsSection({
   };
   const status = (engine: EngineInfo) => !enabled(engine) ? t("settings.engineDisabled")
     : !engine.binary_ok ? t("settings.engineNotInstalled")
-      : quotaFor(engine)?.status === "sign_in" ? t("settings.subscriptionSignIn")
+      : quotaFor(engine)?.status === "sign_in" ? t("provider.loginRequired")
       : engine.error || engine.models_error ? t("settings.subscriptionCatalogFailed") : t("settings.engineReady");
   const close = () => { setError(""); onCloseEngine(); };
 
@@ -172,8 +178,9 @@ export function EngineSettingsSection({
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const refreshAccount = async () => {
-    const loaded = await controls.listEngines({ include_quota: true, include_activity: false });
-    const observed = loaded.engines.find(engine => engine.id === selected?.id);
+    invalidateQuota();
+    const loaded = await refreshQuota();
+    const observed = loaded?.engines.find(engine => engine.id === selected?.id);
     if (observed) setAccountSnapshots(current => ({ ...current, [accountKey]: observed }));
     setAccountRevision(value => value + 1);
   };

@@ -53,7 +53,7 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     {settings.open && catalogNotice && <ScopedToast key={catalogNotice.id} message={catalogNotice.message} tone={catalogNotice.isError ? "error" : "info"} />}
     {settings.open && <div className={layout.embedded ? "settings-workbench-layer" : "settings-standalone-layer"}>
       <SettingsShellRenderer {...layout} application={application} initialized={initialized} running={settings.runtimeSwitchPending}
-        runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryError={settings.engineInventoryError}
+        runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryRevision={settings.engineInventoryRevision} engineInventoryError={settings.engineInventoryError}
         page={settings.activePageId as SettingsPage | undefined}
         onPageChange={pageId => { void application.invoke("settings.open", { pageId }).catch(showErrorToast); }}
         onBack={() => { void application.invoke("settings.close", {}).catch(showErrorToast); }}

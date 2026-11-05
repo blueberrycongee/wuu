@@ -3,6 +3,7 @@ import { useSettingsControls } from "./SettingsControlsContext";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
+import { useConnectionQuota } from "./ConnectionQuota";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, RefreshCw } from "./WuuIcons";
 import type { EngineListResult, ProviderSummary } from "../shared/protocol";
@@ -60,13 +61,16 @@ export function SubscriptionDashboard({
   const [pending, setPending] = useState("");
   const [revision, setRevision] = useState(0);
   const [menu, setMenu] = useState<{ sourceKey: string; x: number; y: number } | null>(null);
-  const [loadedInventory, setLoadedInventory] = useState<EngineListResult | undefined>(initialInventory);
+  const quota = useConnectionQuota(canRefresh);
+  const loadedInventory = quota.snapshot ?? initialInventory;
   const snapshotCallback = useRef(onInventoryLoaded);
   snapshotCallback.current = onInventoryLoaded;
-  // Active runtimes load on opening their details; disabled or missing ones
-  // retain any observed account snapshot without probing the runtime.
-  const [refreshing, setRefreshing] = useState(true);
-  const [refreshVersion, setRefreshVersion] = useState(0);
+  // List and detail share observations; disabled runtimes never start a read.
+  const refreshing = canRefresh && quota.loading;
+  const refreshQuota = () => {
+    setError("");
+    void quota.refresh().catch(() => { /* The shared snapshot exposes refresh failures. */ });
+  };
   const [now, setNow] = useState(Date.now);
   const authConfiguration = JSON.stringify(providers?.map(providerAuthConfiguration));
   useEffect(() => {
@@ -83,17 +87,11 @@ export function SubscriptionDashboard({
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    let active = true;
-    if (!canRefresh) { setRefreshing(false); return; }
-    setRefreshing(true);
-    setError("");
-    void controls.listEngines({ include_quota: true, include_activity: false }).then((result) => {
-      if (active) { setLoadedInventory(result); snapshotCallback.current?.(result); setNow(Date.now()); }
-    }, cause => {
-      if (active && !isPluginLifecycleCancellation(cause)) setError("settings.subscriptionRefreshFailed");
-    }).finally(() => { if (active) setRefreshing(false); });
-    return () => { active = false; };
-  }, [controls, refreshVersion, canRefresh]);
+    if (quota.snapshot && canRefresh) { snapshotCallback.current?.(quota.snapshot); setNow(Date.now()); }
+  }, [quota.snapshot, canRefresh]);
+  useEffect(() => {
+    setError(quota.failed ? "settings.subscriptionRefreshFailed" : "");
+  }, [quota.failed]);
   const sources = useMemo(
     () => {
       // Keep live model selections from the parent; refresh owns only the
@@ -137,9 +135,7 @@ export function SubscriptionDashboard({
   }
   const menuSource = sources.find((source) => source.key === menu?.sourceKey);
 
-  // Quota arrives only with this dashboard's own snapshot. Until the first one
-  // lands, reserve its block on runnable engines that advertise an account
-  // allowance; the snapshot omits every other row's quota.
+  // Keep the previous allowance visible while the shared read refreshes.
   const quotaLoading = refreshing && !loadedInventory;
 
   async function choose(source: SubscriptionSource, modelID: string): Promise<void> {
@@ -185,15 +181,15 @@ export function SubscriptionDashboard({
       if (lifetime.active) {
         setPending("");
         if (!retired) {
-          setLoadedInventory(undefined);
-          setRefreshVersion((value) => value + 1);
+          quota.invalidate();
+          refreshQuota();
         }
       }
     }
   }
 
   if (detailOnly) return <SettingsSection testID="settings-subscriptions" ariaBusy={refreshing} title={t("connection.subscriptionQuota")}
-    actions={<Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("settings.subscriptionRefresh")} disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion(value => value + 1)}><RefreshCw className="icon" /></button></Tooltip>}>
+    actions={<Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("settings.subscriptionRefresh")} disabled={refreshing || !canRefresh} onClick={refreshQuota}><RefreshCw className="icon" /></button></Tooltip>}>
     <div className="settings-group connection-detail-quota" aria-busy={refreshing}>
       {error ? <p className="settings-error" role="alert">{t(error)}</p> : null}
       {quotaLoading ? <p role="status">{t("settings.subscriptionRefreshing")}</p> : null}
@@ -213,7 +209,7 @@ export function SubscriptionDashboard({
         title={t(scope ? "provider.accountUsage" : "settings.subscriptions")}
         actions={<>
           {onAddService ? <button type="button" className="settings-button" onClick={onAddService}>{t("provider.connectTitle", { name: "ChatGPT" })}</button> : null}
-          <Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")}>
+          <Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing || !canRefresh} onClick={refreshQuota} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")}>
             <RefreshCw className={refreshing ? "icon settings-spin" : "icon"} aria-hidden="true" />
           </button></Tooltip>
         </>}
@@ -317,8 +313,8 @@ export function SubscriptionDashboard({
                     {(observedLabel && showObservationAge) || showAuthentication ? <div className="settings-subscription-actions">
                       {observedLabel && showObservationAge ? <Tooltip asChild content={observationTitle}><time className="settings-subscription-age" dateTime={observedAt}>{observedLabel}</time></Tooltip> : null}
                       {showAuthentication ? <EngineAuthentication engineID={source.id} protocol={source.engine?.protocol} compact disabled={refreshing}
-                        onAuthenticated={() => setRefreshVersion((value) => value + 1)}
-                        onReuseLocal={() => setRefreshVersion((value) => value + 1)} /> : null}
+                        onAuthenticated={() => { quota.invalidate(); refreshQuota(); }}
+                        onReuseLocal={() => { quota.invalidate(); refreshQuota(); }} /> : null}
                     </div> : null}
                     {checkedProvider === source.id ? <p className="settings-subscription-status" role="status">{t("settings.codexLoginVerified")}</p> : null}
                   </section>;
