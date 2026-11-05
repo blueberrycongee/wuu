@@ -1,4 +1,4 @@
-import { createFixtureApplication, fixtureSlots } from "../preview-services";
+import { createFixtureApplication, FixtureServices, fixtureSlots } from "../preview-services";
 import * as React from "react";
 import { SettingsRow } from "../../src/renderer/SettingsRow";
 import { SelectMenu } from "../../src/renderer/SelectMenu";
@@ -145,8 +145,9 @@ function Preview() {
     : <div className="workspace-panel-body" style={{ minHeight: 0, flex: 1 }}>{content}</div>}</>;
 }
 style.textContent += "#root {display:flex; flex-direction:column;}";
+const providerApplication = createFixtureApplication();
 createRoot(document.getElementById("root")!).render(
   <I18nProvider preferenceStore={{ get: () => params.get("locale") === "en-US" ? "en-US" : "zh-CN", set: async () => {}, subscribe: () => () => {} }}>
-    <WuuUIRoot><Preview /></WuuUIRoot>
+    <WuuUIRoot><FixtureServices application={providerApplication}><Preview /></FixtureServices></WuuUIRoot>
   </I18nProvider>,
 );
