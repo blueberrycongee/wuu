@@ -1119,7 +1119,7 @@ function SkillsList({
   const { t } = useI18n();
 
   return (
-    <SettingsGroup className="skill-catalog-grid">
+    <div className="skill-catalog-grid">
       {skills.map((skill) => {
         const pluginID = pluginSkillID(skill.source);
         return (
@@ -1143,7 +1143,7 @@ function SkillsList({
           />
         );
       })}
-    </SettingsGroup>
+    </div>
   );
 }
 
