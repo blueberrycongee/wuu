@@ -532,7 +532,7 @@ function MCPConnectors({ pluginID, enabled = true, filter = "", catalogView = fa
     // apart connections that share a name.
     const duplicate = visible.some(other => other.name !== server.name && other.connector?.title === connector.title);
     const accountLabel = account ? [`${account.label || account.email || account.id}${account.kind === "bot" ? ` (${t("connector.bot")})` : ""}`, workspace ? workspace.label || workspace.id : ""].filter(Boolean).join(" · ") : "";
-    const secondary = working ? t("mcp.working") : duplicate && accountLabel ? accountLabel : connector.description || "";
+    const secondary = working && !catalogView ? t("mcp.working") : duplicate && accountLabel ? accountLabel : connector.description || "";
     const diagnostic = [server.error, authorization?.error].filter(Boolean).join("\n\n");
     return { connector, authorized, account, available, connected, working, secondary, diagnostic };
   }

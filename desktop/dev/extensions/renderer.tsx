@@ -7,6 +7,7 @@ import type {
   SkillSummary,
 } from "../../src/shared/protocol";
 import { SkillsCatalog } from "../../src/renderer/SkillsCatalog";
+import { ToastViewport } from "../../src/renderer/Toast";
 import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
 import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
@@ -226,4 +227,4 @@ function Fixture(): JSX.Element {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<I18nProvider preferenceStore={{get: () => params.get("lang") === "en" ? "en-US" : "zh-CN", set: async () => {}, subscribe: () => () => {}}}><WuuUIRoot><Fixture /></WuuUIRoot></I18nProvider>);
+createRoot(document.getElementById("root")!).render(<I18nProvider preferenceStore={{get: () => params.get("lang") === "en" ? "en-US" : "zh-CN", set: async () => {}, subscribe: () => () => {}}}><WuuUIRoot><Fixture /><ToastViewport /></WuuUIRoot></I18nProvider>);
