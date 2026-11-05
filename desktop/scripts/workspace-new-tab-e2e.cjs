@@ -268,8 +268,8 @@ app.whenReady().then(async () => {
 
   await click('[data-wuu-tool="review"]');
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="review"]')));
-  await waitFor(() => Boolean(document.querySelector('.workspace-monaco-diff-editor .view-line')));
-  await evaluate(() => { window.workspaceReviewEditor = document.querySelector('.workspace-monaco-diff-editor .monaco-diff-editor'); });
+  await waitFor(() => Boolean(document.querySelector('.workspace-diff diffs-container')?.shadowRoot?.querySelector('[data-line]')));
+  await evaluate(() => { window.workspaceReviewEditor = document.querySelector('.workspace-diff-view'); });
   await click('.workspace-panel-globalize');
   await capture('conversation-tab-review-visible');
   await click('.workspace-conversation-tab [role="tab"]');
@@ -277,8 +277,8 @@ app.whenReady().then(async () => {
     await evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
     await capture(`conversation-tab-review-hidden-${theme}`);
     const visibility = await evaluate(() => {
-      const editor = document.querySelector('.workspace-monaco-diff-editor');
-      const lines = [...editor.querySelectorAll('.view-line')];
+      const editor = document.querySelector('.workspace-diff');
+      const lines = [...(editor.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]') ?? [])];
       return { lineCount: lines.length,
         visibleLines: lines.filter(line => line.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).length,
         interactive: !editor.closest('[inert]'),
@@ -291,8 +291,8 @@ app.whenReady().then(async () => {
   }
   await evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await click('.workspace-tool-tab:not(.workspace-conversation-tab) [role="tab"]');
-  await waitFor(() => document.querySelector('.workspace-monaco-diff-editor .view-line')?.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }));
-  assert.equal(await evaluate(() => window.workspaceReviewEditor === document.querySelector('.workspace-monaco-diff-editor .monaco-diff-editor')), true);
+  await waitFor(() => document.querySelector('.workspace-diff diffs-container')?.shadowRoot?.querySelector('[data-line]')?.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }));
+  assert.equal(await evaluate(() => window.workspaceReviewEditor === document.querySelector('.workspace-diff-view')), true);
   await capture('conversation-tab-review-restored');
   await click('.workspace-panel-globalize');
   await waitFor(() => !document.querySelector('.workspace-conversation-tab'));

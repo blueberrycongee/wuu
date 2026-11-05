@@ -102,6 +102,8 @@ Open **Review** or enter `/diff` to inspect the current Git changes. Check the c
 
 Changed files are grouped by folder and the list refreshes as the workspace changes. A wide panel shows the diff beside the list; in a narrow one, choose a file to open its diff and use the back button to return. In the diff header, the arrows step to the previous or next file, the circle marks the file as viewed, and the pencil opens it in the editor. Viewed marks clear when a file’s status or added/deleted line counts change and are not kept after Wuu restarts. Edits with the same status and line counts do not clear a mark; review the current diff before committing.
 
+The diff uses side-by-side columns when there is room and a unified view in narrow panes. Click or drag over line numbers to select changed lines, and expand collapsed unchanged regions for more context. Code font and size follow your appearance settings.
+
 The diff shown for one turn can differ from the current workspace diff because later work may have changed the same files. Base your final review on the current repository state.
 
 ## Terminal

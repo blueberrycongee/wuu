@@ -124,6 +124,7 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       import { I18nProvider } from "/src/renderer/i18n";
       import { WuuUIRoot } from "/src/renderer/ui/layers/UILayerHost";
       import { WorkspaceReviewPanel } from "/src/renderer/WorkspaceReviewPanels";
+      import { ApplicationEnvironment } from "/src/renderer/plugins/ApplicationEnvironment";
       import { applyMessageFlowFontSize } from "/src/renderer/MessageFlowFontSizeSection";
       import "/src/renderer/styles.css";
       const query = new URLSearchParams(location.search);
@@ -141,9 +142,13 @@ if (process.argv.includes("--pdf-fixtures-only")) {
         readGitFileDiff: async (path) => ({ is_repo: true, path, status: "modified", additions: 1, deletions: 1, patch: "",
           original_text: "export const revision = 1;", modified_text: "export const revision = 2;", truncated: false }),
       } });
+      const environment = new ApplicationEnvironment({
+        getSource: () => ({ contextKey: "preview", root: "/synthetic", status }),
+        publishStatus: () => {}, assertActive: () => {}, reportError: () => {},
+      });
       createRoot(document.getElementById("root")).render(
         <I18nProvider><WuuUIRoot><div style={{width: Number(query.get("width")) || 900, height: "100vh"}}>
-          <WorkspaceReviewPanel workspaceRoot="/synthetic" gitStatus={status} />
+          <WorkspaceReviewPanel environment={environment} />
         </div></WuuUIRoot></I18nProvider>);
     `);
     const pdfRoot = path.join(run, "pdf");
@@ -317,7 +322,7 @@ if (process.argv.includes("--pdf-fixtures-only")) {
     try {
       await primary.listen();
       const base = `http://127.0.0.1:${primary.httpServer.address().port}`;
-      const source = await (await fetch(`${base}/src/renderer/WorkspaceMonacoDiffEditor.tsx`)).text();
+      const source = await (await fetch(`${base}/src/renderer/WorkspaceMonacoEditor.tsx`)).text();
       const dependency = source.match(/from "([^"\n]*monaco-editor[^"\n]*)"/)[1];
       assert.equal((await fetch(new URL(dependency, base))).status, 200);
       competing = await createServer({ configFile: false, root: probeRoot, cacheDir: probeCache, logLevel: "warn", server: { host: "127.0.0.1", port: 0 } });
@@ -416,7 +421,7 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       await window.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
       await waitFor('document.querySelector(".workspace-review-row")');
       // Cancel the real lazy module request, rather than throwing from a mock.
-      session.fromPartition("workspace-preview-e2e").webRequest.onBeforeRequest({ urls: [`${base}/*WorkspaceMonacoDiffEditor*`] }, (_details, callback) => callback({ cancel: true }));
+      session.fromPartition("workspace-preview-e2e").webRequest.onBeforeRequest({ urls: [`${base}/*WorkspaceDiff*`] }, (_details, callback) => callback({ cancel: true }));
       await click(".workspace-review-row");
       await waitFor('document.querySelector("[data-wuu-action=reload-preview]")');
       assert.equal(await evaluate('Boolean(document.querySelector("[data-wuu-action=back]"))'), true);
@@ -430,12 +435,12 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       await reloaded;
       await waitFor('document.querySelector(".workspace-review-row")');
       await click(".workspace-review-row");
-      await waitFor('document.querySelector(".workspace-monaco-diff-editor .monaco-editor .view-line")');
+      await waitFor('document.querySelector(".workspace-diff diffs-container")?.shadowRoot?.querySelector("[data-line]")');
       for (const theme of ["light", "dark"]) {
         for (const size of [14, 20]) {
           await window.loadURL(`${base}${review}?theme=${theme}&size=${size}&width=900`);
-          await waitFor('document.querySelector(".workspace-monaco-diff-editor .monaco-editor .view-line")');
-          measurements.push({ view: "review", theme, size, rendered: await evaluate('document.querySelectorAll(".monaco-editor .view-line").length') });
+          await waitFor('document.querySelector(".workspace-diff diffs-container")?.shadowRoot?.querySelector("[data-line]")');
+          measurements.push({ view: "review", theme, size, rendered: await evaluate('document.querySelector(".workspace-diff diffs-container").shadowRoot.querySelectorAll("[data-line]").length') });
           await window.loadURL(`${base}/dev/three-pane/index.html?theme=${theme}&size=${size}`);
           await waitFor('document.querySelectorAll(".workspace-tool-menu-item").length === 4');
           await settle();
