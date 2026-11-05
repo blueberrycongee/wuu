@@ -44,8 +44,8 @@
   --reasoning-stream-cursor-color: var(--theme-override-color-text-muted, var(--gray-500));
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
-  /* Tool activity and standalone reasoning summaries share the quiet ink
-     used by the composer placeholder, in every running/settled state. */
+  /* Turn headers, tool activity and standalone reasoning summaries share the
+     composer's placeholder ink in every running/settled state. */
   --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--theme-override-color-text-muted, var(--gray-650));
@@ -1944,7 +1944,7 @@
  * collapsed turn says it holds more than its duration. */
 .turn-process-header > .turn-process-chevron {
   align-self: center;
-  color: var(--ink-tertiary);
+  color: var(--process-summary-color);
   transform: rotate(0deg);
   transition:
     color var(--motion-fast) var(--ease-out),
@@ -1973,7 +1973,7 @@
   flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-tertiary);
+  color: var(--process-summary-color);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--conversation-process-font-size);
@@ -2003,7 +2003,7 @@
 
 .turn-process-meta {
   flex: 0 0 auto;
-  color: var(--ink-tertiary);
+  color: var(--process-summary-color);
   font-size: var(--conversation-process-font-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--conversation-process-font-weight);
