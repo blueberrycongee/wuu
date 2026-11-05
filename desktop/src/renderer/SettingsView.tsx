@@ -78,6 +78,7 @@ import { ShellSkinSettings } from "./background/ShellSkinSettings";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
+import { Switch } from "./ui/Switch";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
 import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
@@ -894,20 +895,13 @@ function SettingsGeneralPage({
             hint={t("settings.gitAttributionDescription")}
             error={gitAttributionError}
           >
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={gitAttributionEnabled}
+            <Switch
+              checked={gitAttributionEnabled}
               data-testid="settings-git-attribution"
               disabled={!initialized || gitAttributionBusy}
               onClick={() => void toggleGitAttribution()}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">
-                {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
-              </span>
-            </button>
+              label={gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
+            />
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
@@ -935,16 +929,10 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
       <SettingsPageHeader title={t("settings.appearance")} />
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl inventory={inventory} />
-        {/* Palette and skin groups form one continuous list; section spacing
-            belongs around the list, not between its divided rows. */}
-        <div>
+        <SettingsGroup>
           <ContentThemeControl inventory={inventory} />
-          {isTouchWebShell() ? null : (
-            <div className="settings-inline-section-anchor" data-testid="settings-background">
-              <ShellSkinSettings />
-            </div>
-          )}
-        </div>
+          {isTouchWebShell() ? null : <ShellSkinSettings />}
+        </SettingsGroup>
       </SettingsSection>
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
@@ -1037,18 +1025,13 @@ function CodexPetSection({
           >
             <RefreshCw className="icon" aria-hidden="true" />
           </button></Tooltip>
-          <button
-            className="settings-switch"
-            type="button"
-            role="switch"
-            aria-checked={codexPetEnabled}
+          <Switch
+            checked={codexPetEnabled}
             data-testid="settings-codex-pet-enabled"
             disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
             onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
-          >
-            <span className="settings-switch-thumb" aria-hidden="true" />
-            <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
-          </button>
+            label={codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}
+          />
         </SettingsRow>
       </SettingsGroup>
     </SettingsSection>

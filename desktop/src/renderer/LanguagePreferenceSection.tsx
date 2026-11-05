@@ -4,6 +4,7 @@ import {
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
+import { SegmentedControl } from "./ui/SegmentedControl";
 
 const LANGUAGE_LABEL_KEYS = {
   system: "common.system",
@@ -16,15 +17,10 @@ export function LanguagePreferenceControl(): JSX.Element {
   const options = LANGUAGE_PREFERENCES.map((value) => ({
     value,
     label: t(LANGUAGE_LABEL_KEYS[value]),
+    testID: `settings-language-${value}`,
   }));
   return (
-    <div className="theme-segmented settings-language-options" role="group" aria-label={t("settings.languageGroup")}>
-      {options.map((option) => (
-        <button key={option.value} type="button" aria-pressed={preference === option.value}
-          data-testid={`settings-language-${option.value}`} onClick={() => setPreference(option.value)}>
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl className="settings-language-options" label={t("settings.languageGroup")}
+      value={preference} options={options} onChange={setPreference} />
   );
 }

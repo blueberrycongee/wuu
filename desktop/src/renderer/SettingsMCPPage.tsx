@@ -9,6 +9,7 @@ import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatus
 import { toastErrorMessage } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
+import { Switch } from "./ui/Switch";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -352,18 +353,13 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
                       </div>
                     )
                   ) : null}
-                  <button
-                    className="settings-switch"
-                    type="button"
-                    role="switch"
-                    aria-checked={enabled}
+                  <Switch
+                    checked={enabled}
                     data-testid={`settings-mcp-enabled-${name}`}
                     disabled={running || !initialized || controlsBusy}
                     onClick={() => void toggleMCPServer(name, !enabled)}
-                  >
-                    <span className="settings-switch-thumb" aria-hidden="true" />
-                    <span className="sr-only">{enabled ? t("mcp.disableNamed", { name }) : t("mcp.enableNamed", { name })}</span>
-                  </button>
+                    label={enabled ? t("mcp.disableNamed", { name }) : t("mcp.enableNamed", { name })}
+                  />
                 </SettingsRow>
               );
             })

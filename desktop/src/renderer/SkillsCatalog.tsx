@@ -44,6 +44,7 @@ import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSe
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 import { showErrorToast } from "./Toast";
 import { showExtensionMutationError } from "./extensionMutationError";
+import { Switch } from "./ui/Switch";
 
 type LoadState = {
   loading: boolean;
@@ -915,17 +916,12 @@ function PluginDetailPage({
               {mutating ? t("skills.pluginUpdating") : extensionPackageActionLabel(record, primaryAction, t)}
             </button>
           ) : (
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={toggle.on}
+            <Switch
+              checked={toggle.on}
               aria-label={t(toggle.on ? "skills.pluginDisableNamed" : "skills.pluginEnableNamed", { name: record.name })}
               disabled={Boolean(packageMutation)}
               onClick={onToggle}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-            </button>
+            />
           )}
         </div>
       </div>
