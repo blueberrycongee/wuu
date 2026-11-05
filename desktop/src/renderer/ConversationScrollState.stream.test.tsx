@@ -751,6 +751,32 @@ describe("useConversationScrollState — high-frequency stream", () => {
     expect(layout.scrollTop).toBe(2000 - 600 - 17);
   });
 
+  it("stops following when a chained upward scroll stays inside the bottom band", () => {
+    mount({ scrollHeight: 2000, clientHeight: 600 });
+    if (!layout || !handle || !node) throw new Error("not mounted");
+    flushScheduledScroll();
+    expect(layout.scrollTop).toBe(1400);
+
+    act(() => {
+      // A nested scroller stops wheel propagation when it consumes the
+      // gesture. Once it reaches its boundary, the outer conversation can
+      // still receive a small chained scroll event without any preflight
+      // intent. Eight pixels is inside the bottom band but no longer at the
+      // latest content, so the next stream tick must not pull it back down.
+      layout!.scrollTop = 1392;
+      node!.dispatchEvent(new Event("scroll"));
+    });
+
+    act(() => {
+      layout!.scrollHeight += 120;
+      handle!.scheduleStreamScroll();
+    });
+    flushScheduledScroll();
+
+    expect(layout.scrollTop).toBe(1392);
+    expect(handle.captureConversationScrollPosition()?.autoFollow).toBe(false);
+  });
+
   it("lets an upward wheel take control before the following scroll event", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !handle || !node) throw new Error("not mounted");
