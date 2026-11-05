@@ -5,6 +5,37 @@
   display: contents;
 }
 
+/* The first-run connection page has no rows to read, so it centers the
+ * connection artwork and the one next step. */
+.model-services-empty {
+  display: grid;
+  min-height: 360px;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+
+.model-services-empty .empty-state-illustration {
+  margin-bottom: var(--space-2);
+}
+
+.model-services-empty h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-title);
+  font-weight: var(--weight-medium);
+}
+
+.model-services-empty p {
+  max-width: 32em;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+}
+
 /* Connection targets are already laid out when navigation paints them. */
 .settings-page[data-wuu-page="providers"] {
   animation: none;

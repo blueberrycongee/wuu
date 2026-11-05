@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { EmptyStateIllustration, type EmptyStateIllustrationName } from "./EmptyStateIllustration";
 
 /**
  * The workspace panel's one empty state: what is missing, a line only when
@@ -9,17 +10,20 @@ export function WorkspacePanelEmpty({
   description,
   action,
   className,
+  illustration,
 }: {
   title: string;
   description?: string;
   action?: ReactNode;
   className?: string;
+  illustration?: EmptyStateIllustrationName;
 }): JSX.Element {
   return (
     <div
       className={className ? `workspace-panel-empty ${className}` : "workspace-panel-empty"}
       data-wuu-component="workspace-empty-state"
     >
+      {illustration ? <EmptyStateIllustration name={illustration} /> : null}
       <strong>{title}</strong>
       {description ? <span>{description}</span> : null}
       {action}

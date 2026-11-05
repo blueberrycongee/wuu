@@ -1,0 +1,33 @@
+/* Empty-state artwork is decorative; its nearby title carries the meaning.
+ * The SVGs are drawn on a transparent canvas, so the same component works on
+ * settings pages, workspace panels, and plugin surfaces. */
+.empty-state-illustration {
+  --empty-state-illustration-size: 120px;
+
+  display: inline-grid;
+  width: var(--empty-state-illustration-size);
+  height: var(--empty-state-illustration-size);
+  flex: none;
+  place-items: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.empty-state-illustration img {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.empty-state-illustration-dark {
+  display: none;
+}
+
+:root[data-theme="dark"] .empty-state-illustration-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .empty-state-illustration-dark {
+  display: block;
+}

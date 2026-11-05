@@ -1293,6 +1293,10 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
   text-align: center;
 }
 
+.workspace-panel-empty > .empty-state-illustration {
+  margin-bottom: var(--space-2);
+}
+
 .workspace-panel-empty strong {
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);

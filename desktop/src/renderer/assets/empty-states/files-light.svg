@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="31 29 132 132" fill="none" role="img" aria-labelledby="02-files-title 02-files-desc">
+  <title id="02-files-title">A page waiting to be chosen</title>
+  <desc id="02-files-desc">A lightly fanned stack of blank sheets with an open folded corner. An original illustration for file selection.</desc>
+
+  <g id="rear-page">
+    <path d="M53 59Q81.885 52.442 111 47Q123.625 92.108 137 137Q107.623 144.057 78 150Z" fill="#BAC6AC" fill-opacity=".33"/>
+    <path d="M52 58Q81.386 51.441 111 46C119 71 130 112 138 138Q107.917 144.119 78 151C70 125 60 86 52 58Z" stroke="#77806B" stroke-width="1.765" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M58 62Q64.552 85.359 70 109M81 145Q103.585 140.381 126 135" stroke="#A2AC91" stroke-width="1" stroke-linecap="round" opacity=".7"/>
+  </g>
+  <g id="middle-page">
+    <path d="M63 47Q92.5 46.43 122 47Q123.11 93.513 125 140Q96.01 141.07 67 141Z" fill="#DBBC95" fill-opacity=".36"/>
+    <path d="M63 46C79 46 105 45 123 46Q124.57 93.488 125 141C107 142 85 142 66 141Q64.89 93.488 63 46Z" stroke="#77806B" stroke-width="1.815" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M69 51Q89.5 50.481 110 51M71 136Q81.991 136.691 93 137" stroke="#A2AC91" stroke-width=".9" stroke-linecap="round" opacity=".7"/>
+  </g>
+  <g id="selected-page">
+    <path d="M84 37C98 40 113 42 127 46Q136.266 56.272 145 67C140 90 134 118 130 141C109 136 88 133 67 129Q75.884 83.071 84 37Z" fill="#E4D8C1" fill-opacity=".94"/>
+    <path d="M84 37C98 40 113 42 127 46Q136.266 56.272 145 67C140 90 134 118 130 141C109 136 88 133 67 129Q75.884 83.071 84 37Z" stroke="#77806B" stroke-width="1.915" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M127 46Q125.703 54.038 124 62C131 65 137 67 145 67" fill="#DBBC95" fill-opacity=".39" stroke="#77806B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M128 50L127 60Q133.465 62.113 140 64" stroke="#C88E73" stroke-width=".8" stroke-linecap="round" opacity=".65"/>
+    <path d="M90 70C98 71 104 73 113 74M88 79Q108.101 82.493 128 87M86 88Q102.939 91.795 120 95" stroke="#77806B" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M82 108Q89.538 109.31 97 111M81 114Q90.965 116.173 101 118" stroke="#A2AC91" stroke-width="1.15" stroke-linecap="round"/>
+    <path d="M74 125Q82.038 126.297 90 128M76 117L75 121M135 86L133 97" stroke="#A2AC91" stroke-width=".9" stroke-linecap="round" opacity=".7"/>
+  </g>
+  <g id="paper-movement" stroke="#A2AC91" stroke-width="1.1" stroke-linecap="round">
+    <path d="M48 115L50 124M146 90L144 99"/>
+  </g>
+</svg>

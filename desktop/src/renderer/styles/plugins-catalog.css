@@ -684,3 +684,28 @@ button.plugin-contribution:hover {
 .plugin-permission-row > .catalog-row-title {
   grid-column: 1 / -1;
 }
+
+/* The catalog's first-run state centers one illustration and two lines in the
+ * same settings column; a filtered result stays a row-height notice. */
+.catalog-empty.settings-group-empty {
+  display: grid;
+  min-height: 280px;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-8) 0;
+  text-align: center;
+}
+
+.catalog-empty > strong {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+}
+
+.catalog-empty > span {
+  max-width: 32em;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+}

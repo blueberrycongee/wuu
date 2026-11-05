@@ -236,7 +236,11 @@ export function WorkspaceFileTree({
 
   const rootDirectory = directories[""];
   if (!rootDirectory || rootDirectory.entries.length === 0) {
-    return <WorkspacePanelEmpty title={t("workspace.files.empty")} description={formatWorkspaceRoot(workspaceRoot)} />;
+    return <WorkspacePanelEmpty
+      title={t("workspace.files.empty")}
+      description={formatWorkspaceRoot(workspaceRoot)}
+      illustration="files"
+    />;
   }
 
   return (
@@ -701,7 +705,7 @@ export function WorkspaceFilePreview({
   }
 
   if (!selectedWorkspaceFilePath) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noContent")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noContent")} illustration="files" />;
   }
 
   const fallback = loading ? (
