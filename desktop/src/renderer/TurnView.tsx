@@ -284,6 +284,11 @@ function TurnContent({
     if (turn.status === "in_progress") previousStreamStatus.current = visibleStreamStatus;
   }, [turn.status, visibleStreamStatus]);
   const retryMessage = userItems.at(-1);
+  // An interrupted turn that a later turn has already taken over keeps its
+  // partial work behind the fold instead of filling the stream above the
+  // active reply. A still-latest interruption stays open so the reader can
+  // review what was cut off before deciding how to continue.
+  const interruptedSuperseded = turn.status === "interrupted" && isLatestTurn === false;
   const event = turnEventForTurn(turn);
   // A failed reconnect already carries the cause, so the turn event stays
   // empty for it; either way one failure card explains the turn. A stop the
@@ -378,6 +383,7 @@ function TurnContent({
                 onOpenFile={onOpenFile}
                 onOpenURL={onOpenURL}
                 processLabel={!last && interrupted ? t("turn.steeredInterruption") : undefined}
+                superseded={!last || interruptedSuperseded}
                 actionableAgentMessageID={last ? actionableAgentMessageID : undefined}
                 latestAgentMessageID={last ? latestAgentMessageID : undefined}
                 animateCompletionActions={last && animateCompletionActions}
