@@ -363,6 +363,59 @@ describe("TurnView", () => {
     expect(agentTurnIDs).toEqual(["turn-1", "turn-1"]);
   });
 
+  it("keeps a live comment when a steered turn settles back to one segment", () => {
+    const firstUser: ThreadItem = {
+      id: "turn-1-item-1",
+      type: "user_message",
+      status: "completed",
+      role: "user",
+      text: "first",
+    };
+    const answer: ThreadItem = {
+      id: "turn-1-item-2",
+      type: "agent_message",
+      status: "in_progress",
+      terminal: true,
+      role: "assistant",
+      text: "Live answer tail.",
+    };
+    const steerUser: ThreadItem = {
+      id: "turn-1-item-3",
+      type: "user_message",
+      status: "completed",
+      role: "user",
+      text: "new direction",
+    };
+    const view = render(makeTurn("in_progress", [firstUser, answer, steerUser]), true);
+    view.dataset.threadId = "thread-1";
+    const originalGetClientRects = HTMLElement.prototype.getClientRects;
+    HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
+    const originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
+    const source = view.querySelector<HTMLElement>('[data-response-item-id="turn-1-item-2"] .agent-text')!;
+    const range = document.createRange();
+    range.selectNodeContents(source.querySelector("p")!);
+    act(() => {
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    const input = document.querySelector<HTMLTextAreaElement>(".response-selection-toolbar .selection-action-comment-input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "keep me through completion");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    rerender(makeTurn("completed", [firstUser, { ...answer, status: "completed" }]), false);
+
+    expect(document.querySelector(".response-selection-toolbar .selection-action-comment-input")).toBe(input);
+    expect(input.value).toBe("keep me through completion");
+    HTMLElement.prototype.getClientRects = originalGetClientRects;
+    if (originalRangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", originalRangeRect);
+    else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+  });
+
   it("renders a plugin-generated query through the existing user-message flow", () => {
     const view = render(
       makeTurn("completed", [

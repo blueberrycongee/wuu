@@ -1,6 +1,6 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { Fragment, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import type { ConversationTurnSlotContextV1 } from "../../../packages/plugin-sdk/src/ui";
 import type {
   SessionLocatorV1,
@@ -11,7 +11,7 @@ import type {
   Turn,
 } from "../shared/protocol";
 import { OPTIMISTIC_TURN_ID_PREFIX } from "./ComposerMessages";
-import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
+import { buildAssistantTurnDisplay, type AssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
@@ -109,6 +109,20 @@ function workspaceTurnForPresentation(turn: Turn): Turn {
       item.type !== "user_message" || !isInternalUserNotificationItem(item),
   );
   return items.length === turn.items.length ? turn : { ...turn, items };
+}
+
+type TimelineAssistantShellProps = Omit<ComponentProps<typeof AssistantTurnShell>, "display"> & {
+  display: AssistantTurnDisplay | undefined;
+};
+
+// Keep presentation stabilization per timeline segment. When a completed turn
+// collapses back to one segment, the same segment component keeps its previously
+// presented display, so the assistant article stays mounted and an active text
+// selection or comment survives.
+function TimelineAssistantShell({ turn, display, ...props }: TimelineAssistantShellProps): JSX.Element | null {
+  const presented = useAssistantTurnPresentation(turn.id, display);
+  if (!presented) return null;
+  return <AssistantTurnShell turn={turn} display={presented} {...props} />;
 }
 
 function TurnContent({
@@ -229,7 +243,8 @@ function TurnContent({
   const timelineItems = turn.items.filter(
     (item) => item.type !== "user_message" || !isInternalUserNotificationItem(item),
   );
-  const timelineSegments = buildTurnTimeline(timelineItems).map((segment, index, all) => {
+  const builtTimeline = buildTurnTimeline(timelineItems);
+  const timelineSegments = (builtTimeline.length > 0 ? builtTimeline : [{ userItems: [], assistantItems: [] }]).map((segment, index, all) => {
     const last = index === all.length - 1;
     const singleSegment = all.length === 1;
     const assistantItems = last
@@ -260,9 +275,6 @@ function TurnContent({
       key: segment.userItems[0]?.id ?? assistantItems[0]?.id ?? `${turn.id}-segment-${index}`,
     };
   });
-  const lastSegmentIndex = timelineSegments.length - 1;
-  const lastRawDisplay = lastSegmentIndex >= 0 ? timelineSegments[lastSegmentIndex].display : undefined;
-  const lastDisplay = useAssistantTurnPresentation(turn.id, lastRawDisplay);
   const reconnectItems = turn.items.filter((item) => item.type === "stream_reconnect");
   const visibleStreamStatus = isLatestTurn && turn.status === "in_progress" && reconnectItems.length === 0
     ? streamStatus
@@ -350,16 +362,15 @@ function TurnContent({
       data-latest-turn={isLatestTurn || undefined}
     >
       {timelineSegments.map(({ segment, segmentTurn, display, interrupted, last, key }) => {
-        const segmentDisplay = last ? lastDisplay : display;
         return (
           <Fragment key={key}>
             {segment.userItems.map((item) =>
               renderThreadItem(item, false, undefined, segmentTurn, last),
             )}
-            {segmentDisplay ? (
-              <AssistantTurnShell
+            {display ? (
+              <TimelineAssistantShell
                 turn={last ? turn : segmentTurn}
-                display={segmentDisplay}
+                display={display}
                 cwd={cwd}
                 onOpenFile={onOpenFile}
                 onOpenURL={onOpenURL}
