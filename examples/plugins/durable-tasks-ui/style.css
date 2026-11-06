@@ -1,0 +1,28 @@
+.durable-tasks {
+  color: var(--wuu-color-text, #23252a);
+  background: var(--wuu-color-canvas, #fafafa);
+  font-family: var(--wuu-font-ui, system-ui, sans-serif);
+  font-size: var(--wuu-font-size-ui, 15px);
+  line-height: 1.5;
+  padding: 1.5em;
+  max-width: 72em;
+  margin-inline: auto;
+  overflow-wrap: anywhere;
+}
+.durable-tasks * { box-sizing: border-box; }
+.durable-tasks header { display: flex; align-items: center; flex-wrap: wrap; gap: .75em 1em; }
+.durable-tasks h1 { font-size: 1.5em; font-weight: 600; margin: 0; }
+.durable-tasks h2 { font-size: 1.15em; font-weight: 600; margin: 0 0 .75em; }
+.durable-tasks h3 { font-size: 1em; font-weight: 600; margin: 0; }
+.durable-tasks p { margin: .4em 0 0; }
+.durable-tasks .connection, .durable-tasks .scope, .durable-tasks .empty { color: var(--wuu-color-text-muted, #626772); }
+.durable-tasks header button { margin-inline-start: auto; }
+.durable-tasks section { margin-top: 2em; }
+.durable-tasks article { border-top: 1px solid var(--wuu-color-border-subtle, #d9dce1); padding-block: 1em; }
+.durable-tasks button { font: inherit; color: inherit; background: var(--wuu-color-surface, #fff); border: 1px solid var(--wuu-color-border-subtle, #b8bec7); border-radius: var(--wuu-radius-control, 7px); padding: .5em 1em; min-height: 2.75em; cursor: pointer; }
+.durable-tasks button:hover:not(:disabled) { background: var(--wuu-color-surface-muted, #eceff3); }
+.durable-tasks button:focus-visible { outline: 2px solid var(--wuu-color-accent, #385ed1); outline-offset: 3px; }
+.durable-tasks button:disabled { opacity: .55; cursor: default; }
+.durable-tasks .actions { display: flex; gap: .75em; flex-wrap: wrap; margin-top: .8em; }
+.durable-tasks .load-error { margin-block: 1em; padding: 1em; border: 1px solid var(--wuu-color-border-subtle, #b8bec7); }
+@media (max-width: 480px) { .durable-tasks { padding: 1em; } .durable-tasks header { align-items: flex-start; } .durable-tasks header .connection { width: 100%; } .durable-tasks header button { margin-inline-start: 0; } }

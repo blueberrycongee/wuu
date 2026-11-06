@@ -94,7 +94,7 @@ func TestDurableIngressScopedAttestationAndProjection(t *testing.T) {
 			}
 			return mustJSON(map[string]any{"waits": []any{record}, "has_more": true})
 		}
-		task := map[string]any{"id": "task-a", "session_id": "a", "run_id": "run-a", "kind": "run", "status": "waiting", "prompt": "private task prompt", "tool_arguments": map[string]string{"secret": "credential"}, "checkpoint": map[string]string{"output": "private output"}}
+		task := map[string]any{"id": "task-a", "session_id": "a", "run_id": "run-a", "kind": "run", "status": "waiting", "usage_status": "incomplete", "usage": map[string]int{"input_tokens": 8, "output_tokens": 3}, "prompt": "private task prompt", "tool_arguments": map[string]string{"secret": "credential"}, "checkpoint": map[string]string{"output": "private output"}}
 		if p.Method == "get" {
 			return mustJSON(map[string]any{"version": 1, "task": task, "revision": "rev-1"})
 		}
@@ -117,6 +117,9 @@ func TestDurableIngressScopedAttestationAndProjection(t *testing.T) {
 			t.Fatal("bounded provider response lost its truncation marker")
 		}
 		raw := string(mustJSON(response["result"]))
+		if (entry.method == MethodDurableTasksList || entry.method == MethodDurableTasksGet) && !strings.Contains(raw, `"usage_status":"incomplete"`) {
+			t.Fatalf("partial usage lost its availability marker: %s", raw)
+		}
 		for _, secret := range []string{"private", "credential", "tool_arguments", "checkpoint\""} {
 			if strings.Contains(raw, secret) {
 				t.Fatalf("private content leaked: %s", raw)
@@ -174,6 +177,7 @@ func TestDurableIngressRejectsUntrustedDecisionsAndProviderScope(t *testing.T) {
 		{"task-scope", "durable/tasks/list", `{"version":1,"tasks":[{"id":"t","session_id":"other","run_id":"r"}],"revision":"r"}`, map[string]string{"session_id": "a"}},
 		{"run-scope", "durable/tasks/list", `{"version":1,"tasks":[{"id":"t","session_id":"a","run_id":"other"}],"revision":"r"}`, map[string]string{"session_id": "a", "run_id": "r"}},
 		{"id-scope", "durable/tasks/get", `{"version":1,"task":{"id":"other","session_id":"a","run_id":"r"},"revision":"r"}`, map[string]string{"session_id": "a", "task_id": "t"}},
+		{"usage-status", "durable/tasks/list", `{"version":1,"tasks":[{"id":"t","session_id":"a","run_id":"r","usage_status":"private diagnostic"}],"revision":"r"}`, map[string]string{"session_id": "a"}},
 		{"wait-scope", "durable/waits/list", `{"waits":[{"version":1,"id":"w","owner":{"session_id":"other"}}]}`, map[string]string{"session_id": "a"}},
 	} {
 		f.invoke = func(pluginhost.ServiceInvokeParams) json.RawMessage { return json.RawMessage(entry.response) }

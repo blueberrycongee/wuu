@@ -1,0 +1,51 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remote task view acceptance</title><link rel="stylesheet" href="style.css"><style>body{margin:0;background:var(--wuu-color-canvas,#fafafa)}body.dark{--wuu-color-canvas:#17191e;--wuu-color-surface:#22252c;--wuu-color-surface-muted:#303540;--wuu-color-text:#eceef3;--wuu-color-text-muted:#adb5c4;--wuu-color-border-subtle:#48505e;--wuu-color-accent:#9db3ff}</style><main id="root"></main><pre id="result" hidden></pre><script type="module">
+import {mountDurableTasks} from './view.mjs';
+const params = new URLSearchParams(location.search);
+if (params.get('theme') === 'dark') document.body.className = 'dark';
+document.body.style.setProperty('--wuu-font-size-ui', `${params.get('font') || 15}px`);
+const root = document.querySelector('#root');
+const tasks = [{id:'run-42',session_id:'session-cloud',kind:'run',status:'waiting',phase:'approval',attempt:1,duration_ms:4800,prompt:'PRIVATE_PROMPT'},
+{id:'child-task-with-a-long-identifier-that-must-wrap-without-hiding-its-status',parent_id:'run-42',session_id:'session-cloud',kind:'subagent',status:'completed',phase:'finished',attempt:2,duration_ms:32100},
+{id:'recover-tool',parent_id:'run-42',session_id:'session-cloud',kind:'tool',status:'failed',phase:'execute',attempt:1,error_code:'effect_unknown',error_message:'PRIVATE_ERROR'}];
+let waits = [{id:'approval-42',kind:'approval',owner:{session_id:'session-cloud'},status:'pending',expires_at:'2026-11-07T12:00:00Z',question:'PRIVATE_QUESTION'},
+{id:'approval-41',owner:{session_id:'session-cloud'},status:'approved'},
+{id:'approval-40',owner:{session_id:'session-cloud'},status:'expired'}];
+let hooks, decisions=0, failRead=false, failDecision=false, holdDecision, stopped=false, revision=12;
+const rpc = {isClosed:()=>false, async call(method,input){
+ if (input.session_id !== 'session-cloud') throw Error('scope');
+ if (method === 'durable/tasks/list') {if(failRead) throw Error('PRIVATE_ERROR'); return {version:1,revision,tasks:params.get('state')==='empty'?[]:tasks};}
+ if (method === 'durable/waits/list') return {version:1,waits:params.get('state')==='empty'?[]:waits};
+ if (method === 'durable/waits/decide') {decisions++;if(holdDecision) await holdDecision;if(failDecision) throw Error('uncertain');waits=waits.map(w=>w.id===input.wait_id?{...w,status:input.decision==='approve'?'approved':'denied'}:w);return {};}
+ throw Error('unexpected method');
+}};
+const connectDesktopSession = async options => {hooks=options.hooks;return {rpc:()=>rpc,start:()=>hooks.onAttach({session:'transport-session',resumed:false}),stop:async()=>{stopped=true;},waitAttached:async()=>{}};};
+const flush = async () => {for(let i=0;i<15;i++) await Promise.resolve();};
+const assert = (value,label) => {if(!value)throw Error(label);};
+try {
+ const dispose=await mountDurableTasks(root,{connectDesktopSession,route:{kind:'remote',execution_host:'fixture.invalid',workdir:'/cloud',connector:{kind:'module',path:'fixture'}},sessionId:'session-cloud'});
+ await flush();
+ if(params.get('state')==='disconnected')hooks.onDetach();
+ if(params.get('state')==='error'){failRead=true;root.querySelector('button').click();await flush();}
+ if(params.has('test')){
+  assert(!root.textContent.includes('PRIVATE'),'private fields leaked');
+  assert(root.textContent.includes('expired'),'expired history absent');
+  const decisionsButtons=[...root.querySelectorAll('button')].filter(el=>['Approve','Deny'].includes(el.textContent));
+  assert(decisionsButtons.length===2 && decisionsButtons.every(el=>el.disabled),'opaque approval enabled');
+  decisionsButtons[0].click();assert(decisions===0,'opaque decision sent');
+  hooks.onDetach();assert(root.textContent.includes('Disconnected'),'disconnect absent');
+  revision=13;hooks.onAttach({session:'transport-session',resumed:true});await flush();
+  assert(root.textContent.includes('Host revision 13'),'reconnect did not replace snapshot');
+  waits[0]={...waits[0],kind:'event'};root.querySelector('button').click();await flush();
+  assert(![...root.querySelectorAll('button')].some(el=>el.textContent==='Approve'),'event approval visible');
+  tasks[0].session_id='another-session';root.querySelector('button').click();await flush();
+  assert(root.textContent.includes('Could not load'),'cross session not rejected');
+  await dispose();assert(stopped && !root.childNodes.length,'cleanup failed');
+  let localAccepted=false;try {await mountDurableTasks(root,{connectDesktopSession,route:{kind:'local'},sessionId:'s'});localAccepted=true;}catch{}
+  assert(!localAccepted,'local route accepted');
+ }
+ const overflow=document.documentElement.scrollWidth>innerWidth;
+ assert(!overflow,'horizontal overflow');
+ document.querySelector('#result').textContent=JSON.stringify({passed:true,test:params.has('test'),theme:params.get('theme'),font:params.get('font'),width:innerWidth,overflow});
+ document.body.dataset.acceptance='passed';
+} catch(error){document.querySelector('#result').textContent=JSON.stringify({passed:false,error:error.message});document.body.dataset.acceptance='failed';}
+</script></html>

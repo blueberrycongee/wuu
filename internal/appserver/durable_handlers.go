@@ -38,6 +38,7 @@ type durableTaskView struct {
 	CheckpointRef string `json:"checkpoint_ref,omitempty"`
 	TurnRef       string `json:"turn_ref,omitempty"`
 	DurationMS    *int64 `json:"duration_ms,omitempty"`
+	UsageStatus   string `json:"usage_status,omitempty"`
 	Usage         *struct {
 		InputTokens  int64 `json:"input_tokens"`
 		OutputTokens int64 `json:"output_tokens"`
@@ -176,6 +177,11 @@ func projectDurableResult(method string, raw json.RawMessage, tasks runtime.Dura
 		return nil, invalid
 	}
 	validTask := func(task durableTaskView) bool {
+		switch task.UsageStatus {
+		case "", "available", "unavailable", "incomplete":
+		default:
+			return false
+		}
 		return task.ID != "" && task.SessionID == tasks.SessionID && (tasks.RunID == "" || task.RunID == tasks.RunID) && (tasks.TaskID == "" || task.ID == tasks.TaskID)
 	}
 	switch method {

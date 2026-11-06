@@ -1,0 +1,8 @@
+{
+  "name": "@wuu-example/durable-tasks-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {".": {"types": "./view.d.ts", "import": "./view.mjs"}, "./style.css": "./style.css"},
+  "peerDependencies": {"@wuu/plugin-sdk": "^0.1.0"}
+}
