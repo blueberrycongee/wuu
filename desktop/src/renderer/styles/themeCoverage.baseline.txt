@@ -96,7 +96,6 @@ sidebar.css .thread-row::before background --sidebar-session-status-bg
 sidebar.css .thread-row:hover::before background --sidebar-session-status-bg
 sidebar.css .thread-row.active::before background --sidebar-session-status-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before box-shadow --sidebar-resizer-hover-ring
-theme.css .theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) box-shadow --shadow-color-subtle
 turns.css .artifact-preview-frame, .artifact-preview-body > .workspace-file-pdf-preview background --artifact-preview-frame-bg
 turns.css .artifact-preview-overlay background --artifact-preview-overlay-bg
 turns.css .artifact-preview-shell border --artifact-preview-shell-border
