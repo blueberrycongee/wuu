@@ -992,15 +992,31 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 			}
 		}
 		if t != nil {
+			if len(update.Content) == 0 || string(update.Content) == "null" {
+				detail = t.acpToolDetails[update.ID]
+			} else {
+				if t.acpToolDetails == nil {
+					t.acpToolDetails = make(map[string]*toolresult.Result)
+				}
+				if detail != nil {
+					t.acpToolDetails[update.ID] = detail
+				} else {
+					delete(t.acpToolDetails, update.ID)
+				}
+			}
 			if update.Kind != "" {
 				if t.acpToolKinds == nil {
 					t.acpToolKinds = make(map[string]string)
 				}
 				t.acpToolKinds[update.ID] = update.Kind
 			}
+			if detail != nil && update.Status == "failed" {
+				detail.IsError = true
+			}
 			t.tool(update.ID, update.Title, string(update.Input), update.Status, output, detail)
 			if update.Status == "completed" || update.Status == "failed" {
 				delete(t.acpToolKinds, update.ID)
+				delete(t.acpToolDetails, update.ID)
 			}
 		}
 	case "plan":

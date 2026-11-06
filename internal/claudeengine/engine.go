@@ -925,7 +925,7 @@ func (sub *turnSubscription) handleUser(envelope claudeLine) {
 				}
 			}
 		}
-		sub.finishToolResult(block.ToolUseID, state, claudeToolResultText(block.Content), claudeToolResultDetail(block.Content))
+		sub.finishToolResult(block.ToolUseID, state, claudeToolResultText(block.Content), claudeToolResultDetail(block.Content, block.IsError))
 	}
 }
 
@@ -956,7 +956,7 @@ func claudeToolResultText(raw json.RawMessage) string {
 // claudeToolResultDetail preserves tool_result media blocks (screenshots from
 // Read and MCP image outputs) as Wuu's rich result; text-only results keep the
 // flat string projection.
-func claudeToolResultDetail(raw json.RawMessage) *toolresult.Result {
+func claudeToolResultDetail(raw json.RawMessage, isError bool) *toolresult.Result {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -990,7 +990,7 @@ func claudeToolResultDetail(raw json.RawMessage) *toolresult.Result {
 	if !rich {
 		return nil
 	}
-	mapped, err := mcp.MapCallToolResult(&mcp.CallToolResult{Content: contents})
+	mapped, err := mcp.MapCallToolResult(&mcp.CallToolResult{Content: contents, IsError: isError})
 	if err != nil {
 		return nil
 	}

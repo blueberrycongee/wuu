@@ -96,7 +96,7 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	if len(result.NewMessages) > 0 && len(result.NewMessages[len(result.NewMessages)-1].Images) > 0 {
 		// Images collected during the turn surface live through the same
 		// item.Images path the persisted history projection uses.
-		message := result.NewMessages[len(result.NewMessages)-1]
+		message := providers.ChatMessage{Role: "assistant", Content: t.messageText.String(), Images: result.NewMessages[len(result.NewMessages)-1].Images}
 		t.emit(providers.StreamEvent{Type: providers.EventMessage, Message: &message})
 	}
 	if err != nil {
@@ -160,6 +160,7 @@ type turn struct {
 	engine         string
 	sink           agentengine.EventSink
 	text, thinking strings.Builder
+	messageText    strings.Builder
 	diagBuf        strings.Builder
 	reconnecting   bool
 	retryCount     int
@@ -167,6 +168,7 @@ type turn struct {
 	terminatedErr  string
 	tools          map[string]*providers.ToolCall
 	acpToolKinds   map[string]string
+	acpToolDetails map[string]*toolresult.Result
 	completed      map[string]bool
 	images         []providers.InputImage
 	usage          providers.TokenUsage
@@ -192,6 +194,7 @@ func (t *turn) content(text string, thinking bool) {
 		kind = providers.EventThinkingDelta
 	} else {
 		t.text.WriteString(text)
+		t.messageText.WriteString(text)
 	}
 	t.emit(providers.StreamEvent{Type: kind, Content: text})
 }
@@ -283,6 +286,7 @@ func (t *turn) tool(id, name, args, status, output string, detail *toolresult.Re
 	kind := providers.EventToolUseDelta
 	if !exists {
 		kind = providers.EventToolUseStart
+		t.messageText.Reset()
 	}
 	t.emit(providers.StreamEvent{Type: kind, ToolCall: &copy})
 	if status == "completed" || status == "failed" {
