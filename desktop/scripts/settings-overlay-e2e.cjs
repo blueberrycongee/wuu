@@ -132,13 +132,21 @@ async function closed() {
 }
 // The floating Settings panel is modal: its scrim swallows workbench clicks,
 // so leave through its own dismissal affordances instead of a ribbon item.
+// Probe the gaps around the panel rather than a corner: window chrome such as
+// the macOS drag strip stays above the overlay inside its own app-shell
+// stacking context.
 async function dismissSettingsViaScrim() {
   const point = await until(() => evaluate(win.webContents, () => {
     const scrim = document.querySelector(".settings-overlay-layer");
-    if (!scrim) return null;
-    const rect = scrim.getBoundingClientRect();
-    const x = rect.x + 8, y = rect.y + 8;
-    return document.elementFromPoint(x, y) === scrim ? { x, y } : null;
+    const panel = document.querySelector(".settings-shell");
+    if (!scrim || !panel) return null;
+    const bounds = panel.getBoundingClientRect();
+    return [
+      { x: bounds.left / 2, y: innerHeight / 2 },
+      { x: bounds.right + (innerWidth - bounds.right) / 2, y: innerHeight / 2 },
+      { x: innerWidth / 2, y: bounds.bottom + (innerHeight - bounds.bottom) / 2 },
+      { x: innerWidth / 2, y: bounds.top / 2 },
+    ].find(candidate => document.elementFromPoint(candidate.x, candidate.y) === scrim) ?? null;
   }), "scrim is the topmost surface outside the panel");
   const zoom = win.webContents.getZoomFactor();
   const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
