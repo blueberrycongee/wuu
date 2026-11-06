@@ -67,7 +67,7 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 		}
 	}
 	for _, message := range admitted {
-		if message.Role == "user" && message.Seq > 0 && message.ClientID != "" && !message.Hidden && !message.ReadOnly {
+		if admittedWaitEvent(message) && message.ClientID != "" {
 			if g.latestAdmittedEvent == nil || message.Seq > g.latestAdmittedEvent.Seq {
 				g.latestAdmittedEvent = &providers.MessageRef{SessionID: loopdriver.ExecutionContextFromContext(g.ctx).SessionID, Seq: message.Seq}
 			}

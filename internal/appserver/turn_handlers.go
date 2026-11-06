@@ -4565,7 +4565,19 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) {
 	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
 	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
 	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
-	if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
+	if errors.Is(err, errSessionInputApplied) {
+		// Another admission already owns this exact generated input. Retire
+		// only the duplicate queue capture; its failure must not replace the
+		// original turn's durable lifecycle or schedule another execution.
+		if reference := entry.snapshot.PluginTurn; reference != nil && reference.Origin != nil {
+			defer reference.Origin.Close()
+		}
+		err = nil
+		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
+			ThreadID: threadID,
+			QueueID:  entry.id,
+		})
+	} else if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
 		err = errQueuedTurnCancelled
 		executionBusy = false
 		retryableAdmission = false

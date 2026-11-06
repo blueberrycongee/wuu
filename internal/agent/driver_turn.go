@@ -776,7 +776,7 @@ func (g *streamTurnGateway) WaitInput(ctx context.Context, kind string) (loopdri
 	execution.SourceMessage = nil
 	if source != nil && source.SessionID == execution.SessionID {
 		for _, message := range g.input.Messages {
-			if message.Seq == source.Seq && message.Role == "user" && !message.Hidden && !message.ReadOnly && (kind == "event" || message.Origin == "" || message.Origin == "user") {
+			if message.Seq == source.Seq && ((kind == "event" && admittedWaitEvent(message)) || (kind == "input" && message.Role == "user" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user"))) {
 				ref := *source
 				execution.SourceMessage = &ref
 				break
@@ -784,4 +784,10 @@ func (g *streamTurnGateway) WaitInput(ctx context.Context, kind string) (loopdri
 		}
 	}
 	return execution, nil
+}
+
+// ReadOnly describes plugin-event presentation, not whether the host admitted
+// input. Only an actual input source/receipt may call this provenance predicate.
+func admittedWaitEvent(message providers.ChatMessage) bool {
+	return message.Role == "user" && message.Seq > 0 && !message.Hidden && (!message.ReadOnly || (message.Origin == "plugin" && message.OriginID != "" && message.ClientID != ""))
 }

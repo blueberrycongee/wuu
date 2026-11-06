@@ -780,3 +780,60 @@ func TestDriverWaitInputUsesAdmittedProvenance(t *testing.T) {
 		t.Fatalf("admitted event: %+v %v", actual, err)
 	}
 }
+
+// Plugin event messages are read-only presentation, but their host-issued input
+// address remains an admission receipt. Read-only context without that origin
+// and client receipt must not become an event, nor may events answer human input.
+func TestDriverWaitReadOnlyEventAdmission(t *testing.T) {
+	for _, path := range []string{"source", "steering"} {
+		t.Run(path, func(t *testing.T) {
+			event := providers.ChatMessage{Role: "user", Seq: 7, ClientID: "event-request", Origin: "plugin", OriginID: "external-events", ReadOnly: true, Content: "accepted event"}
+			source := &providers.MessageRef{SessionID: "session", Seq: 7}
+			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", SourceMessage: source})
+			runner := &StreamRunner{}
+			input := loopdriver.PersistedInput{Messages: []providers.ChatMessage{event}}
+			if path == "steering" {
+				ctx = loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn"})
+				input.Messages = nil
+				runner.BeforeStep = func() []providers.ChatMessage { return []providers.ChatMessage{event} }
+			}
+			gateway := newStreamTurnGateway(ctx, runner, input, nil)
+			defer gateway.close()
+			if path == "steering" {
+				if _, err := gateway.AdmitInput(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			actual, err := gateway.WaitInput(ctx, "event")
+			if err != nil || actual.SourceMessage == nil || actual.SourceMessage.Seq != 7 {
+				t.Fatalf("admitted event lost: %+v %v", actual, err)
+			}
+			actual, err = gateway.WaitInput(ctx, "input")
+			if err != nil || actual.SourceMessage != nil {
+				t.Fatalf("event answered human input: %+v %v", actual, err)
+			}
+		})
+	}
+	for _, missing := range []string{"origin", "client", "plugin", "hidden"} {
+		t.Run(missing, func(t *testing.T) {
+			event := providers.ChatMessage{Role: "user", Seq: 7, ClientID: "event-request", Origin: "plugin", OriginID: "external-events", ReadOnly: true}
+			switch missing {
+			case "origin":
+				event.Origin = ""
+			case "client":
+				event.ClientID = ""
+			case "plugin":
+				event.OriginID = ""
+			case "hidden":
+				event.Hidden = true
+			}
+			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", SourceMessage: &providers.MessageRef{SessionID: "session", Seq: 7}})
+			gateway := newStreamTurnGateway(ctx, &StreamRunner{}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{event}}, nil)
+			defer gateway.close()
+			actual, err := gateway.WaitInput(ctx, "event")
+			if err != nil || actual.SourceMessage != nil {
+				t.Fatalf("context minted event: %+v %v", actual, err)
+			}
+		})
+	}
+}
