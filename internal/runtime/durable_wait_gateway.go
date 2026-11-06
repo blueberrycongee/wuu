@@ -66,7 +66,10 @@ func (k *kernelHostServices) registerDurableWait(ctx context.Context, caller str
 		execution := gate.WaitExecution()
 		if request.Kind == "input" || request.Kind == "event" {
 			var err error
-			execution, err = gate.WaitInput(ctx, request.Kind)
+			// Registration captures a position, not an answer. A plugin event can
+			// establish the boundary of a new human-input wait, but only the
+			// kind-specific source check in resolveDurableWait can resolve it.
+			execution, err = gate.WaitInput(ctx, "event")
 			if err != nil {
 				return nil, err
 			}

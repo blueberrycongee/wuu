@@ -773,6 +773,9 @@ func (g *streamTurnGateway) WaitInput(ctx context.Context, kind string) (loopdri
 		return execution, nil
 	}
 	source := execution.SourceMessage
+	if kind == "event" && execution.EventSourceMessage != nil {
+		source = execution.EventSourceMessage
+	}
 	execution.SourceMessage = nil
 	if source != nil && source.SessionID == execution.SessionID {
 		for _, message := range g.input.Messages {

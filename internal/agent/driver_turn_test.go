@@ -789,7 +789,7 @@ func TestDriverWaitReadOnlyEventAdmission(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			event := providers.ChatMessage{Role: "user", Seq: 7, ClientID: "event-request", Origin: "plugin", OriginID: "external-events", ReadOnly: true, Content: "accepted event"}
 			source := &providers.MessageRef{SessionID: "session", Seq: 7}
-			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", SourceMessage: source})
+			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", EventSourceMessage: source})
 			runner := &StreamRunner{}
 			input := loopdriver.PersistedInput{Messages: []providers.ChatMessage{event}}
 			if path == "steering" {
@@ -812,6 +812,10 @@ func TestDriverWaitReadOnlyEventAdmission(t *testing.T) {
 			if err != nil || actual.SourceMessage != nil {
 				t.Fatalf("event answered human input: %+v %v", actual, err)
 			}
+			if loopdriver.ExecutionContextFromContext(ctx).SourceMessage != nil {
+				t.Fatal("event became ambient human source authority")
+			}
+
 		})
 	}
 	for _, missing := range []string{"origin", "client", "plugin", "hidden"} {
@@ -827,7 +831,7 @@ func TestDriverWaitReadOnlyEventAdmission(t *testing.T) {
 			case "hidden":
 				event.Hidden = true
 			}
-			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", SourceMessage: &providers.MessageRef{SessionID: "session", Seq: 7}})
+			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", EventSourceMessage: &providers.MessageRef{SessionID: "session", Seq: 7}})
 			gateway := newStreamTurnGateway(ctx, &StreamRunner{}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{event}}, nil)
 			defer gateway.close()
 			actual, err := gateway.WaitInput(ctx, "event")

@@ -128,11 +128,12 @@ type turnRuntimeSnapshot struct {
 	AdmissionDelegation    *access.Delegation                     `json:"-"`
 	AdmissionAuthorization *runtime.ExecutionAuthorizationBinding `json:"-"`
 
-	ToolPolicy        *pluginhost.SessionTurnToolPolicy `json:",omitempty"`
-	DisableTools      bool
-	SourceMessage     *providers.MessageRef
-	MessageRelation   *providers.MessageRelation
-	ResumeAfterTurnID string
+	ToolPolicy         *pluginhost.SessionTurnToolPolicy `json:",omitempty"`
+	DisableTools       bool
+	SourceMessage      *providers.MessageRef
+	EventSourceMessage *providers.MessageRef `json:"-"`
+	MessageRelation    *providers.MessageRelation
+	ResumeAfterTurnID  string
 	// CWD and permissions are captured at admission. Later metadata changes
 	// must not retarget an already-admitted external-engine turn.
 	CWD                string
@@ -2836,7 +2837,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
-	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID, SourceMessage: turnRuntime.SourceMessage, MessageRelation: providers.CloneMessageRelation(turnRuntime.MessageRelation)})
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID, SourceMessage: turnRuntime.SourceMessage, EventSourceMessage: turnRuntime.EventSourceMessage, MessageRelation: providers.CloneMessageRelation(turnRuntime.MessageRelation)})
 	turnKit := s.rt.Toolkit
 	if threadRuntime != nil {
 		turnKit = threadRuntime.Toolkit
@@ -5037,6 +5038,13 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	if isHumanUserMessage(userMsg) && userMsg.Seq > 0 {
 		turnRuntime.SourceMessage = &providers.MessageRef{SessionID: th.ID, Seq: userMsg.Seq}
 	}
+	// Keep plugin-event receipts separate from the human source consumed by
+	// personal actions and user-input authorization. This is the exact input
+	// persisted at admission, never a caller-provided history reference.
+	if userMsg.Role == "user" && userMsg.Seq > 0 && userMsg.Origin == pluginhost.SessionInputPlugin && userMsg.OriginID != "" && userMsg.ClientID != "" && !userMsg.Hidden {
+		turnRuntime.EventSourceMessage = &providers.MessageRef{SessionID: th.ID, Seq: userMsg.Seq}
+	}
+
 	turnRuntime.AdmissionPrincipal = snapshot.AdmissionPrincipal
 	turnRuntime.AdmissionDelegation = snapshot.AdmissionDelegation
 	turnRuntime.AdmissionAuthorization = snapshot.AdmissionAuthorization
