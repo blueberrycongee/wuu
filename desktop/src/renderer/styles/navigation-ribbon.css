@@ -169,11 +169,13 @@
   --conversation-pane-left-radius: var(--conversation-canvas-radius);
 }
 
+/* The title row shares the workbench canvas, but it still needs its closing
+ * edge: it separates the title controls from the reading surface and meets
+ * the navigation divider, so the two columns read as one framed workbench. */
 .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar {
   padding-top: 0;
   padding-right: var(--control-toolbar-inset);
   padding-left: calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
-  box-shadow: none;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel {
@@ -184,7 +186,6 @@
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-tabbar {
   padding: 0 var(--control-toolbar-inset) 0 var(--workspace-row-inset);
-  box-shadow: none;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-sidebar-hit-hole {
