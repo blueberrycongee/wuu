@@ -618,6 +618,13 @@ func (s *Session) RestoreExecutionCreation(ctx context.Context, pluginID string,
 	selection := session.Session{Provider: params.Provider, Model: params.Model, PermissionMode: params.PermissionMode}
 	// Omission consumes the exact choice persisted at grant admission, never
 	// whichever global default happens to be selected when dispatch resumes.
+	if selection.Provider == "" && params.ContextSource == "fork" && params.ForkSeq != nil {
+		historical, err := state.Sessions.LoadHistoricalState(root.SessionID, *params.ForkSeq)
+		if err != nil {
+			return ctx, params, err
+		}
+		selection.Provider, selection.Model = historical.Agent.Provider, historical.Agent.Model
+	}
 	if selection.Provider == "" {
 		if len(parent.Scope.Bounds.ModelProviders) != 1 || len(parent.Scope.Bounds.Models) != 1 {
 			return ctx, params, errors.New("delegated creation requires an exact admitted model selection")

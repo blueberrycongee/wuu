@@ -98,9 +98,12 @@ type DriverTurnArchiveResult struct {
 }
 
 type DriverTurnModelParams struct {
+	RequestID string `json:"request_id,omitempty"`
 	DriverTurnScope
 	Request DriverTurnReadResult `json:"request"`
 	BatchID string               `json:"batch_id,omitempty"`
+	// Recovery can only reduce host retries. Operation IDs remain host-owned.
+	Recovery string `json:"recovery,omitempty"`
 }
 
 // DriverFailure describes a failed operation or terminal driver result. It does
@@ -130,6 +133,7 @@ type DriverModelRecovery struct {
 }
 
 type DriverTurnModelResult struct {
+	OperationID       string             `json:"operation_id,omitempty"`
 	CompletedMessages []DriverMessageV1  `json:"completed_messages,omitempty"`
 	Messages          []DriverMessageV1  `json:"messages"`
 	Usage             *ModelRequestUsage `json:"usage,omitempty"`
@@ -139,10 +143,19 @@ type DriverTurnModelResult struct {
 }
 
 type DriverTurnToolsParams struct {
+	ApprovalWaitID string `json:"approval_wait_id,omitempty"`
 	DriverTurnScope
 	BatchID  string            `json:"batch_id"`
 	Messages []DriverMessageV1 `json:"messages"`
 	Calls    []ModelToolCallV1 `json:"calls"`
+}
+
+// DriverTurnRecoverToolsParams names an existing host admission, never supplies policy or receipts.
+type DriverTurnRecoverToolsParams struct {
+	DriverTurnScope
+	OriginalExecutionID string            `json:"original_execution_id"`
+	BatchID             string            `json:"batch_id"`
+	Calls               []ModelToolCallV1 `json:"calls"`
 }
 
 type DriverTurnToolsResult struct {

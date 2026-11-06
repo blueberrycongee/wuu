@@ -6,6 +6,7 @@ package pluginprotocol
 type DriverTurnSettings struct {
 	HasPolicy               bool                  `json:"has_policy"`
 	ResumeSampling          bool                  `json:"resume_sampling,omitempty"`
+	ModelSingleAttempt      bool                  `json:"model_single_attempt,omitempty"`
 	MaxSteps                int                   `json:"max_steps"`
 	StreamingTools          bool                  `json:"streaming_tools"`
 	ProviderObservationKey  string                `json:"provider_observation_key"`
@@ -66,6 +67,7 @@ type DriverTurnStateParams struct {
 // DriverCompactBudget carries the driver's recovery observation explicitly;
 // context-local Go values never form part of the process contract.
 type DriverCompactBudget struct {
+	Instructions         string               `json:"instructions,omitempty"`
 	Reason               string               `json:"reason"`
 	LastSuccessfulTokens int                  `json:"last_successful_tokens"`
 	FailedRequestTokens  int                  `json:"failed_request_tokens"`

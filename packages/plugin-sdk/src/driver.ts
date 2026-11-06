@@ -72,6 +72,7 @@ export interface DriverContextSegment {
   readonly visible_in_ui: boolean;
 }
 export interface DriverModelRound {
+  readonly operation_id?: string;
   /** Protocol-complete items retained when a stream fails; partial output remains in messages. */
   readonly completed_messages?: readonly DriverMessage[];
   /** The assistant response. Input admission is a separate operation. */
@@ -92,7 +93,7 @@ export interface DriverModelRound {
 
 export interface DriverFailure {
   readonly message: string;
-  readonly code?: "empty_answer" | "summary_output_limit";
+  readonly code?: "empty_answer" | "summary_output_limit" | "uncertain_tool_effect";
   readonly stop_reason?: string;
   readonly origin: string;
   readonly category: string;
@@ -154,6 +155,8 @@ export interface DriverSystemSection {
   readonly hash?: string;
 }
 export interface DriverTurnSettings {
+  /** Host can reduce each model operation to one attempt for a durable retry owner. */
+  readonly model_single_attempt?: boolean;
   readonly has_policy?: boolean;
   /** Explicit continuation from saved history without a new user message. */
   readonly resume_sampling?: boolean;
@@ -191,12 +194,21 @@ export interface DriverContextState {
   };
 }
 export interface DriverCompactBudget {
+  readonly instructions?: string;
   readonly reason: string;
   readonly last_successful_tokens: number;
   readonly failed_request_tokens: number;
   readonly target_total_tokens: number;
   /** Request a fresh-context proposal from the selected policy. */
   readonly window?: DriverContextWindow;
+}
+export interface DriverCompactionResult {
+  readonly id: string;
+  readonly status: "missing" | "running" | "completed" | "applied" | "unchanged" | "stale" | "failed" | "canceled";
+  readonly attempt: number;
+  readonly source_head: number;
+  readonly context_revision?: number;
+  readonly failure?: DriverFailure;
 }
 export interface DriverContextWindow {
   readonly history_head: number;
@@ -291,7 +303,8 @@ export function driverServiceDescriptor(profile: string): ServiceDescriptor {
  * Model events stream through the session; the reply contains the completed
  * round. model() does not execute tools; modelWithTools() explicitly opts into
  * overlapping safe tools. The driver chooses the next action. Calls are
- * serialized; cancellation or completion rejects further operations.
+ * serialized except detached compaction inference; cancellation or completion
+ * rejects further operations and drains accepted proposals.
  */
 export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
   const scope = { execution_id: execution.execution_id };
@@ -300,8 +313,8 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
       service: DRIVER_TURN_SERVICE, method, params: { ...scope, ...params },
     }) as T;
   }
-  async function callModel(method: string, request: DriverTurnInput, batch_id?: string): Promise<DriverModelRound> {
-    const result = await call<DriverModelRound & { readonly failure?: DriverFailure }>(method, { request, batch_id });
+  async function callModel(method: string, request: DriverTurnInput, batch_id?: string, options?: { readonly recovery?: "single_attempt"; readonly request_id?: string }): Promise<DriverModelRound> {
+    const result = await call<DriverModelRound & { readonly failure?: DriverFailure }>(method, { request, batch_id, ...options });
     if (result.failure) throw new DriverModelError(result.failure, result);
     return result;
   }
@@ -329,6 +342,22 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
       if (result.failure) throw new DriverOperationError(result.failure);
       return result.messages;
     },
+    /** Commit a host-owned proposal intent and start summarization without
+     * blocking model/input operations. Reusing its ID recovers the same intent.
+     * Proposals are canceled and drained when the execution closes. */
+    startCompaction: (id: string, revision: number, budget: DriverCompactBudget) =>
+      call<DriverCompactionResult>("start_compaction", { id, revision, budget }),
+    /** Resume an interrupted proposal using its original host-owned inputs. */
+    resumeCompaction: (id: string) => call<DriverCompactionResult>("start_compaction", { id, resume: true }),
+    /** Read a committed proposal result by reference. Waiting releases the turn
+     * gate. No transcript payload belongs in the driver's checkpoint. */
+    readCompaction: (id: string, wait = false) =>
+      call<DriverCompactionResult>("read_compaction", { id, wait }),
+    /** Apply a finished proposal at a safe boundary, preserving appended input
+     * and results. A reset, earlier cut or model change makes it stale. */
+    applyCompaction: (id: string) => call<DriverCompactionResult>("apply_compaction", { id }),
+    /** Cancel and drain an owned proposal without aborting the model run. */
+    cancelCompaction: (id: string) => call<DriverCompactionResult>("cancel_compaction", { id }),
     /** Archive accepted history and return durable addresses without replacing
      * active context. An interrupted reply cannot undo committed history. */
     archiveContext: () => call<DriverTurnArchive>("archive_context", {}),
@@ -361,15 +390,18 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      * operation, preserving its partial result. Transport and authorization
      * failures remain host errors.
      */
-    model: (request: DriverTurnInput) => callModel("model", request),
+    /** Read authoritative usage by persisted boundary ID. This never authorizes replay.
+     * Missing/expired correlation is unavailable, not zero usage. */
+    modelReceipts: (request_id: string) => call<DriverModelReceipts>("model_receipts", { request_id }),
+    model: (request: DriverTurnInput, options?: { readonly recovery?: "single_attempt"; readonly request_id?: string }) => callModel("model", request, undefined, options),
     /** Reserve a unique batch before dispatch and allow safe
      * tools to start while the model streams. Checkpoint intent first. Join a
      * successful tool_batch_id through tools() using exactly the returned calls.
      * Failed operations cancel and drain their tools; never reuse their batch
      * ID. Partial output and tool_work_started survive in the error.
      */
-    modelWithTools: (request: DriverTurnInput, batch_id: string) =>
-      callModel("model_with_tools", request, batch_id),
+    modelWithTools: (request: DriverTurnInput, batch_id: string, options?: { readonly recovery?: "single_attempt"; readonly request_id?: string }) =>
+      callModel("model_with_tools", request, batch_id, options),
     /** ID is unique within this execution, including failed calls. Persist
      * intent before submitting effects. An interrupted batch needs explicit
      * reconciliation; cancellation cannot undo its external effects. Call IDs
@@ -380,8 +412,14 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      * batch, preserving call order, identities, and arguments. Already started
      * work is awaited once. The reply contains only tool result messages.
      */
-    tools: (batch_id: string, messages: readonly DriverMessage[], calls: readonly ModelToolCallV1[]) =>
-      call<{ readonly messages: readonly DriverMessage[] }>("tools", { batch_id, messages, calls }),
+    tools: (batch_id: string, messages: readonly DriverMessage[], calls: readonly ModelToolCallV1[], options?: { readonly approval_wait_id?: string }) =>
+      call<{ readonly messages: readonly DriverMessage[] }>("tools", { batch_id, messages, calls, ...options }),
+    /** Resume an exact previously admitted batch. The host reuses settled receipts
+     * and retries an interrupted call only when both saved and current definitions
+     * explicitly permit it. Missing admission, changed intent, unsafe effects or
+     * unavailable support reject; callers must never fall back to tools(). */
+    recoverTools: (original_execution_id: string, batch_id: string, calls: readonly ModelToolCallV1[]) =>
+      call<{ readonly messages: readonly DriverMessage[] }>("recover_tools", { original_execution_id, batch_id, calls }),
     /** Model/tool messages are already recorded. Pass only additional authored
      * messages here. Completion cannot erase accepted history or tool effects.
      */
@@ -442,4 +480,17 @@ export interface DriverResponseSelectionSourceV1 {
  readonly start_offset: number;
  readonly end_offset: number;
  readonly range_text?: string;
+}
+
+export interface DriverModelReceipts {
+ readonly status: "complete" | "incomplete" | "unavailable";
+ readonly receipts: readonly {
+  readonly operation_id: string;
+  readonly submission_id: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly outcome: string;
+  readonly cost_state: string;
+  readonly usage?: DriverModelRound["usage"];
+ }[];
 }

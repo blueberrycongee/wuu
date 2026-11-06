@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -486,4 +488,35 @@ func TestNativeServiceRejectsScopeOnlyExecutionBeforeBackend(t *testing.T) {
 	if err == nil || factories.Load() != 0 {
 		t.Fatalf("scope-only invocation reached backend: factories=%d err=%v", factories.Load(), err)
 	}
+}
+
+func TestNativeReplayDeclarationServiceRoundTrip(t *testing.T) {
+	service := NewService()
+	client := nativeServiceTestClient(t, service)
+	if err := service.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	codeService := codemode.NewService(codemode.ServiceConfig{})
+	t.Cleanup(func() { _ = codeService.Close() })
+	kit.ConfigurePTC(codeService, config.PTCConfig{Enabled: true})
+	ctx := WithScope(context.Background(), NewScope(func(context.Context) (Backend, error) { return Backend{Executor: kit, Toolkit: kit}, nil }))
+	view, err := client.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range view.Tools {
+		want := definition.Name == "read_file" || definition.Name == "list_files" || definition.Name == "run_code"
+		if definition.ReplaySafe != want || definition.ProviderDefinition().ReplaySafe != want {
+			t.Fatalf("definition replay declaration: %+v", definition)
+		}
+		resolved, err := client.Resolve(ctx, providers.ToolCall{Name: definition.Name, Arguments: `{}`})
+		if err != nil || !resolved.Found || resolved.Metadata == nil || resolved.Metadata.AgentMetadata().ReplaySafe != want {
+			t.Fatalf("resolve %s: %+v, %v", definition.Name, resolved, err)
+		}
+	}
+
 }

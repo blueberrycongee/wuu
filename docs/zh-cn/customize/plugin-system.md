@@ -239,6 +239,9 @@ wuu state migrate --dir "$STORE_DIR" --from sqlite --to jsonl
 
 所选文档存储保留驱动身份和 checkpoint。旧数据转换保留原 `session_driver_bindings` 记录，并将历史原生会话绑定到已知默认实现。没有记录 profile/提供者的旧外部 checkpoint 会返回迁移诊断；宿主不能安全推断缺失绑定。备份必须一起保留绑定、checkpoint 和历史。忽略这些身份的旧版本不能安全恢复替代驱动。
 
+驱动可声明 `historical_fork`，在所选文档存储中保留与历史条目绑定的 agent 配置和代码模式状态。默认流式驱动不启用这份状态。宿主在接纳首条输入前绑定能力；同一驱动增加该能力不会使已有恢复身份失效，也不会改写旧条目。显式 `fork_seq` 创建必须有持久化快照，并在事务内核验活动历史前缀，随后以历史配置与当前权限检查启动新会话。代码状态只有在对应工具结果投影到历史后才可见，分叉只复制值，不复制执行所有权。宿主通过 `session.historical-state.v1` 声明此语义；旧证据缺失和作用域限制见[会话创建合同](plugin-authoring.md)。
+
+
 Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDriver` 或 `AcquireLoopDriver`；worker manager 缺少 `AcquireLoopDriver` 时，在生命周期钩子、模型请求和工具执行之前失败。`loopdriver.AcquireLocal(driver)` 绑定由调用方持有的进程内驱动，每次获取时检查其持久化身份。
 
 后台 worker 同样使用所选驱动。在产生效果前，会保存服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。后续回合和重启恢复保留该绑定；提供者缺失或不兼容时明确失败。驱动选择功能引入前的记录保留原生默认驱动身份。worker 执行持有 generation 租约，直到终态持久化和清理完成，并使用与父执行不同的回调 ID。待恢复的 checkpoint 与其执行输入单独保存，不覆盖最近已提交的终态结果，避免崩溃恢复抹去尚待投递的结果；终态快照提交对应的执行 ID。worker checkpoint 属于恢复数据，须与历史一同保留；忽略驱动绑定的旧版本不能安全恢复使用替代驱动的 worker。
@@ -252,19 +255,40 @@ Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDr
 | `contextState()` / `saveContextState(state)` | 读取或保存绑定到当前身份的请求插入段和上下文估算。模型请求前应保存插入段；缺少 `retained` 会清空插入段，缺少 `usage` 则保留原估算。估算不能覆盖权威推理用量。 |
 | `observe(observation)` | 报告请求结构和压缩决策；`before_compact`、`after_compact` 调用已配置的钩子；提案失败时，`after_compact` 通过 `compact.failure` 携带分类原因。 |
 | `compact(messages, budget)` | 向所选压缩提供者提交明确的恢复观测并取得提案，由驱动另行验证、提交；分类失败抛出 `DriverOperationError`。 |
+| `startCompaction(id, revision, budget)` / `resumeCompaction(id)` | 启动宿主持有的持久摘要提案，不占住模型和输入操作的锁。通过 ID 恢复原始来源与预算；`budget.instructions` 仅用于摘要。 |
+| `readCompaction(id, wait?)` | 读取已持久化的提案状态；可选等待不占住回合锁。checkpoint 仅保留 ID，不复制历史或摘要正文。 |
+| `applyCompaction(id)` | 在安全边界应用已完成提案，保留其来源之后追加的消息。来源上下文或模型选择已变更时，将提案结算为 stale。 |
+| `cancelCompaction(id)` | 取消并等待提案工作退出，不中止模型运行。已取消提案不可再应用。 |
 | `archiveContext()` | 归档已接纳的原始历史并返回持久化地址，不替换活动上下文。 |
 | `admitInput()` | 在驱动选定的边界消费排队输入，返回新增贡献与活动上下文；引导输入先归档，再返回其持久化地址。 |
 | `requestContext()` | 读取仅供请求使用的上下文段，包括类型化块及其模型消息投影。驱动决定组装和保留方式，读取不会将它们追加到历史。 |
 | `transformRequest(request)` | 对请求的独立副本执行已配置的请求变换，不接纳输入或调用模型；强制选择的工具须存在于结果工具集中。 |
 | `context()` | 返回模型活动历史、执行内 revision、持久化归档位置，以及是否支持持久化替换。 |
 | `replaceContext(revision, messages)` | 先归档已接纳的原始消息，再原子提交驱动的替换内容及并发持久化的尾部消息；过期 revision 在写入前被拒绝。 |
-| `model(request)` | 通过所选模型管线执行一次流式请求，返回助手回复；不会接纳输入、追加请求上下文、执行请求变换或调用工具。操作失败时抛出 `DriverModelError`，保留 `round.messages`、已报告的 `round.usage` 及结构化 `failure` 证据。 |
-| `modelWithTools(request, batchID)` | 显式允许安全的前缀工具在模型流式输出期间启动，并在请求前占用唯一批次 ID。成功返回的非空 `tool_batch_id` 须通过 `tools()` 按原顺序提交全部返回调用以等待结果，之后才能接纳输入、提交其他效果、替换上下文或完成回合。 |
+| `model(request, options?)` | 通过所选模型管线执行一次流式请求，返回助手回复；不会接纳输入、追加请求上下文、执行请求变换或调用工具。操作失败时抛出 `DriverModelError`，保留 `round.messages`、已报告的 `round.usage` 及结构化 `failure` 证据。 |
+| `modelReceipts(requestID)` | 通过当前会话及驱动绑定，按精确的调用方关联 ID 读取权威推理回执的元数据；不会发送模型请求，也不授予重放权限。 |
+| `modelWithTools(request, batchID, options?)` | 显式允许安全的前缀工具在模型流式输出期间启动，并在请求前占用唯一批次 ID。成功返回的非空 `tool_batch_id` 须通过 `tools()` 按原顺序提交全部返回调用以等待结果，之后才能接纳输入、提交其他效果、替换上下文或完成回合。 |
 | `tools(batchID, messages, calls)` | 通过所选执行器和持久化工具账本执行明确的批次；批次 ID 在同一执行内唯一，调用 ID 在同一模型轮次内唯一；前面批次结算后，新的模型操作可以重用提供者的调用 ID。驱动可直接选取工具，执行前会补齐缺失的助手调用声明。待执行调用可以分批提交；返回值仅包含工具结果消息。 |
+| `recoverTools(originalExecutionID, batchID, calls)` | 在恢复的持久化执行中重新关联宿主已接纳的精确批次，复用已结算回执，仅重试明确声明可安全重放的中断调用。消息或调用方提交的回执不能制造执行授权。 |
 | `complete(content, messages?, completion?)` | 返回终态回执，保留完成原因、停止原因和截断元数据。模型与工具消息已被记录；可选消息用于追加驱动自行生成的内容。 |
 | `checkpoint(checkpoint)` | 保存与该驱动身份及 checkpoint 契约精确匹配的状态；外部效果开始前应先保存执行意图。 |
 
-操作归属于当前执行及提供者 generation，按顺序执行，取消或完成后拒绝新的效果调用。模型事件进入会话事件流，工具完成清理后才释放其执行资源。用户引导输入持久化失败时，不会将该输入送往模型。取消不会撤销外部效果；恢复中断的工具批次前，必须先通过持久化回执确认结果。
+操作归属于当前执行及提供者 generation，对活动上下文的修改按顺序执行，取消或完成后拒绝新的效果调用。模型事件进入会话事件流，工具完成清理后才释放其执行资源。用户引导输入持久化失败时，不会将该输入送往模型。取消不会撤销外部效果；恢复中断的工具批次前，必须先通过持久化回执确认结果。
+
+当 `settings().model_single_attempt` 为 true 时，`model()` 与 `modelWithTools()` 接受 `{ recovery: "single_attempt" }`，将宿主操作限制为一次尝试，由持久驱动保存自己的重试期限与预算。此选项不接受调用方伪造的操作身份，不绕过策略，也不授权在工具效果之后重放。省略时保留所选宿主恢复策略，桌面默认驱动也不改变。显式选择此能力可避免内存重试与外层持久重试叠乘。该限制作用于宿主推理尝试预算，不保证模型请求恰好送达一次，也不授予重试结果未知提交的权限。
+
+
+需要恢复用量时，应先持久化模型边界 ID，再通过 `model()` 或 `modelWithTools()` 的 `options.request_id` 传入（最多 256 字节）。它只是调用方关联标记，不是调用方指定的操作身份，也不是幂等键。宿主生成 `round.operation_id`；配置模型输入回执存储时，会在发送前将关联标记与所选会话、驱动及执行身份一起提交。关联记录仍保留时，同一会话及驱动不能用相同标记创建另一操作。另行获得授权的重试应使用新的边界 ID。
+
+`modelReceipts(requestID)` 返回 `{ status, receipts }`，其中 `status` 为 `complete`、`incomplete` 或 `unavailable`。每条回执仅包含 `operation_id`、`submission_id`、提供者/模型、结果、成本状态及提供者报告的输入、输出和缓存计数，不暴露提示词、原始请求、估算用量或金额估算。失败或中止的提交只要已有已知用量，也应保留计数；按 `submission_id` 去重，不能只计算成功回复。未知可计费用量或未知缓存创建量会使结果保持不完整。所选会话提供者通过增量操作 `session.domain@1.ReadModelUsageReceipts(sessionID, driverID, requestID)` 实现读取；读取方不能回退到其他提供者或私有存储。
+
+可选回执存储没有此读取能力时，返回 `unavailable`；所选提供者返回的错误仍是错误。内置模型输入回执保留策略每个会话最多保存 128 条模型输入回执，维护操作也可能使其过期。缺失或过期证据表示不可用，不能当作零用量，也不授予重新发送权限。这些回执是既有权威推理日志的投影，不另建用量账本。持久驱动示例保留已计入的用量，按每轮旧值到新值的差额更新根任务总量，并保留提供者/模型与缓存汇总。根任务的完整性标记保持保守：恢复已知计数不等于确认全部历史提交都已完整。
+
+中断物理回合的自主恢复属于独立的显式选择合同。驱动在描述中声明 `durable-recovery` 能力，插件在其他所需宿主能力之外声明 `required_host_features: ["session.driver-recovery.v1"]`。所选驱动调用 `host.session.inspect`，可能得到 `recovery: { turn_id, source_turn_id, checkpoint_token, control_revision? }`。申请接纳时，调用 `host.session.send`，传入新的 `request_id`、`recover_after_turn_id: recovery.turn_id`、`recovery_checkpoint_token: recovery.checkpoint_token`、存在时原样传回的 `control_revision`，以及 `input: { prompt: "" }`。不要附带输入、排队选项、回复/续接字段或工具/展示覆盖设置。`source_turn_id` 在多次恢复接纳之间保留最初中断的回合，不能代替最新的 `turn_id`。
+
+证明只是条件接纳栅栏，不是执行授权。宿主在接纳时重新校验所选驱动所有权、执行租约、最新回合、checkpoint、控制权及调用 generation；发生变化或已过期的证明会被拒绝。恢复不会排队，不设置 `resume_sampling`，也不追加用户消息。重复使用旧证明不能再次接纳续接。只有宿主写入的显式选择接纳证据才支持 `shutdown` 或 `process_lost` 恢复，包括进程丢失而没有终态记录的情况；没有此证据的旧历史仍被阻塞，普通错误和明确取消也不能走此恢复路径。宿主将恢复 checkpoint 指纹与接纳一起写入同一条续接历史记录，因此接纳后、驱动启动前再次崩溃时，可以重新检查，而不必制造新输入。默认循环没有选择此能力，也不写入这些 `turn_execution` 接纳记录。
+
+`driver.turn` 4.2 增加持久化并发压缩提案。宿主通过所选文档提供者保存提案的来源、模型选择、预算和结果，完成持久化后才确认结果。摘要保留捕获的 provider generation，模型和输入操作可继续运行。关闭执行会先取消并等待提案退出，再释放资源。中断的提案只有在驱动身份相同且活动上下文兼容时才能由后续执行恢复；已有持久结果直接复用，不重新请求摘要。提案存储不会赋予外部副作用可重放能力。
 
 原生驱动模块也可使用相同的独立回合操作。回调依赖须显式声明，调用通过服务注册表并携带提供者的执行身份；原生模块调用未声明的回调同样会被拒绝。模型请求与上下文操作保留客户端消息 ID、历史序号、引导输入标记及工具调用 ID；这些字段用于关联记录，不授予调用权限。
 
@@ -291,6 +315,14 @@ Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDr
 替换活动上下文会保留原始历史。归档成功但 checkpoint 提交失败时，归档保持持久化，原活动上下文仍有效；重试前应重新读取 revision。提交后的取消不会撤销已提交上下文。缺少归档或原子 checkpoint 服务时，持久化替换不可用。嵌入调用方仅可在未配置持久化上下文写入者时显式传入 `{ volatile: true }`；该模式替换执行内存，有归档能力时仍可保留原始历史，但不承诺上下文 checkpoint。资源服务不会隐式选择此模式。
 
 [取证工作流示例](../../../examples/plugins/workflow-loop/runtime.ts) 仅依赖公开 SDK：先规划一个工具批次，提交仅包含当前任务和证据的活动上下文，再禁用工具进行综合回答。此示例要求支持持久化上下文替换。checkpoint 记录当前阶段；恢复使用已结算的工具回执，不会重放效果。在检出目录运行 `node scripts/workflow-driver-e2e.mjs`，可在独立目录安装打包后的 SDK，并验证真实文件证据、原始历史保留、更改默认 profile 后的已提交上下文恢复、规划历史尚未写入时的中断、驱动自主处理上下文溢出，以及移除提供者。该检查还会运行独立 SDK 驱动，在模型流结束前读取真实文件，并仅等待一次对应的持久化结果。同一验证会排除原生默认模块，让工作流接管 `driver.default`；将示例的运行时环境变量设为 `WUU_WORKFLOW_PROFILE=default` 即可声明该服务。可重复核对的日志和安装包保留在 `.tmp/e2e/workflow-driver/`。
+
+[持久云端参考组合](../../../examples/compositions/durable/README.md) 单独选择 `example.durable-driver`、`wuu.durable-wait` 和 `wuu.durable-client`，桌面默认组合不启用它们。公开的 `durable.tasks@1` 契约通过已认证的 app-server 读取提供有界的 session/run 元数据。`host.durable-wait@1` 是基于已选文档权威的可替换可选服务。`durableWait(host, executionId).register()` 经由活动的 `driver.turn.register_wait` 边界，为本轮模型产生、尚未流式执行的批次建立宿主证明的执行前预约。批次 ID 在逻辑会话内保持稳定，替换审批必须有此前持久化的 fence。过期或断连不能证明效果未开始；已批准批次仍需通过普通权限检查。可能发送之后的 worker 传输丢失保留为 `uncertain_tool_effect`，不会伪造已提交失败回执。恢复必须通过下述精确宿主接纳与重放安全检查。独立远程元数据视图在没有可信动作/范围审阅表面时明确禁止盲批。已验证项目和剩余边界以示例的验收报告为准。
+
+精确工具恢复在 `driver.turn` 4.2 内显式启用。驱动必须声明 `tool_recovery` capability；仅有 checkpoint store 不会启用恢复接纳或代码 journal。工具注册及所选工具服务定义可以声明 `replay_safe: true`，省略时为 false。只读、并发安全、安装信任或编排标记都不隐含此声明；保存时与当前所选定义必须同时允许重放。匹配的执行 hook 会关闭有效声明。原生 `read_file`、`list_files` 与具备 journal 的 `run_code` 显式启用，替换实现必须自行声明。
+
+发送可恢复的非流式批次之前，宿主原子保存完整且不可变的调用意图。恢复的驱动将原执行 ID、批次 ID 和完全相同的调用交给 `recoverTools()`；宿主保留已结算的同批结果和稳定 invocation ID，拒绝旧 attempt 的迟到结算，并让重试重新通过当前权限、沙箱与审批检查。缺少接纳证据代表不确定，不能证明尚未执行。结果未知且不安全的调用、缺少接纳记录的旧回执及一次性审批等待批次仍被阻止。新模型调用与新批次不能绕过未解决效果；工具启动后仍禁止整段模型流重放。
+
+持久化 `run_code` 使用原有隔离解释器与宿主作用域 journal，不保留常驻 JavaScript 进程。它固定源码、工具目录、解释器/runtime、工作目录及输出设置，保存初始状态、随机种子、时钟与原始绝对截止时间，在执行前确认每轮已发出调用的完整前缀，并在交付 VM 前记录结果顺序。恢复先验证历史前缀，再启动尚未完成的子调用意图。子调用 key 始终绑定原 parent invocation，已完成效果复用；结果未知且不安全的子效果会停止恢复，guest 捕获异常也不能绕过。成功状态与最终结果原子提交。远端 worker 必须声明 `run_code.journal.v1`，旧 worker 会在执行前拒绝持久化请求。普通桌面代码模式保持轻量、仅内存的行为，除非所选持久化驱动明确接纳该调用。
 
 默认 `agent.DefaultDriver` 拥有多轮调用、压缩、溢出恢复和终止策略；模型、工具、上下文、观测和 checkpoint 效果均通过相同的公共资源执行。原有整段循环网关及宿主持有的循环入口已删除，嵌入调用方须显式选择提供者。工作流示例会继续保存的任务上下文，不会将新的用户任务合并到中断的工作流中。目前驱动 profile 通过 debug app-server 的 `--driver` 选项选择，桌面尚无相应选择控件。
 

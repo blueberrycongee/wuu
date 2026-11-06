@@ -13,6 +13,7 @@ const ModelInputReceiptContractVersion = 1
 // ModelInputReceipt is the provider-neutral, durable reconstruction record for
 // one final request shape after context assembly and plugin transforms.
 type ModelInputReceipt struct {
+	RequestID              string                     `json:"request_id,omitempty"`
 	ModelSelectionRevision uint64                     `json:"model_selection_revision,omitempty"`
 	ContractVersion        int                        `json:"contract_version"`
 	OperationID            string                     `json:"operation_id"`

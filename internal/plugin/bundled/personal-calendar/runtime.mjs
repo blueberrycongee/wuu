@@ -521,10 +521,12 @@ var sessionDomainArity = {
   "LoadActiveHistoryRecords": [2, 1],
   "LoadCompactionNote": [2, 2],
   "LoadContextSeed": [1, 2],
+  "LoadHistoricalState": [2, 1],
   "LoadDriverBinding": [1, 2],
   "LoadDriverCheckpoint": [1, 2],
   "LoadHeldUserWork": [1, 1],
   "LoadHistoryRecords": [2, 1],
+  "ReadModelUsageReceipts": [3, 1],
   "LoadModelInputReceipts": [1, 1],
   "LoadProviderHistorySnapshot": [1, 1],
   "LoadRequestContextCheckpoint": [1, 1],
@@ -696,6 +698,13 @@ var RuntimeHostServiceError = class extends Error {
     super(error.message);
     this.name = "RuntimeHostServiceError";
     this.code = error.code;
+  }
+};
+var RuntimeExecutionCancellation = class extends Error {
+  constructor(kind) {
+    super(kind === "shutdown" ? "host execution shutdown" : "execution canceled");
+    this.kind = kind;
+    this.name = "RuntimeExecutionCancellation";
   }
 };
 async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHost, execution = idleRuntimeExecution, lifecycle = idleRuntimeExecution) {
@@ -945,8 +954,9 @@ async function runJSONLRuntime(plugin, streams) {
     }
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
-      for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
-      callerScopes.get(parsed.params.execution_id)?.abort();
+      const reason = new RuntimeExecutionCancellation(parsed.params.reason === "shutdown" ? "shutdown" : "canceled");
+      for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort(reason);
+      callerScopes.get(parsed.params.execution_id)?.abort(reason);
       callerScopes.delete(parsed.params.execution_id);
       return;
     }

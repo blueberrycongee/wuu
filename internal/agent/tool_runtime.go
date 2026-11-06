@@ -35,6 +35,7 @@ type toolRun struct {
 	streamAdmissionChecked bool
 	streamAdmitted         bool
 	invocationID           string
+	invocationAttempt      uint64
 	parent                 *toolRun
 	depth                  int
 
@@ -84,7 +85,9 @@ type ToolRuntimeConfig struct {
 	Executor    ToolExecutor
 	Ledger      *toolledger.Ledger
 	OperationID string
-	StepIndex   int
+	// PreparedInvocations are host-admitted immutable receipts, never plugin input.
+	PreparedInvocations []toolledger.Invocation
+	StepIndex           int
 	// RunContext is the turn-scoped base context for tool execution. Streaming
 	// observation happens under the stream attempt's context, which is canceled
 	// as soon as the stream closes — even on success — while a stream-started
@@ -118,6 +121,16 @@ func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 	if runtime.gate == nil {
 		// Parallel capacity must be explicitly admitted by the caller.
 		runtime.gate = NewToolExecutionGate(1)
+	}
+	for _, invocation := range config.PreparedInvocations {
+		call := providers.ToolCall{ID: invocation.ProviderCallID, Name: invocation.ToolName, Kind: invocation.ToolKind, Arguments: invocation.Arguments, ThoughtSignature: invocation.ThoughtSignature, ProviderItemProvider: invocation.ProviderItemProvider, ProviderItemModel: invocation.ProviderItemModel}
+		run := &toolRun{call: call, invocationID: invocation.ID, invocationAttempt: invocation.Attempt, done: make(chan struct{})}
+		if invocation.State == toolledger.InvocationSucceeded || invocation.State == toolledger.InvocationFailed {
+			run.complete(invocation.Result.Clone(), nil)
+		}
+		runtime.byID[call.ID] = run
+		runtime.runs = append(runtime.runs, run)
+		runtime.batchID = invocation.BatchID
 	}
 	runtime.SetStepIndex(config.StepIndex)
 	return runtime
@@ -364,7 +377,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		return
 	}
 	if r.ledger != nil {
-		if err := r.ledger.Start(ctx, run.invocationID); err != nil {
+		if err := r.ledger.StartAttempt(ctx, run.invocationID, run.invocationAttempt); err != nil {
 			r.ledgerErr = err
 			run.state = toolRunRunning
 			run.mu.Unlock()
@@ -402,12 +415,24 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		}()
 		finish := func(result toolresult.Result, executionErr error) {
 			defer cancel()
+			if toolerrors.Kind(executionErr) == toolerrors.UncertainEffect {
+				r.mu.Lock()
+				if r.ledger != nil {
+					if markErr := r.ledger.MarkUnknownAttempt(context.WithoutCancel(runCtx), run.invocationID, run.invocationAttempt); markErr != nil {
+						executionErr = errors.Join(executionErr, fmt.Errorf("mark unknown tool invocation: %w", markErr))
+					}
+				}
+				r.ledgerErr = errors.Join(executionErr, r.ledgerErr)
+				r.mu.Unlock()
+				run.complete(toolresult.Result{}, executionErr)
+				return
+			}
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
 			}
 			result = run.finalize(r.executor, call, result)
 			if r.ledger != nil {
-				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
+				if settleErr := r.ledger.SettleAttempt(context.WithoutCancel(runCtx), run.invocationID, run.invocationAttempt, result); settleErr != nil {
 					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
 					return
 				}
@@ -424,7 +449,12 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			runCtx = toolctx.WithNestedCall(runCtx)
 		}
 		if orchestrator {
-			runCtx = toolctx.WithNestedExecutor(runCtx, &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)})
+			scope := &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)}
+			var nested toolctx.NestedExecutor = scope
+			if run.invocationAttempt > 0 {
+				nested = &durableNestedToolScope{scope}
+			}
+			runCtx = toolctx.WithNestedExecutor(runCtx, nested)
 		} else {
 			runCtx = toolctx.WithNestedExecutor(runCtx, nil)
 			queuedAt := time.Now()
@@ -467,7 +497,7 @@ func (r *TurnToolRuntime) prepareRunLocked(ctx context.Context, run *toolRun) er
 		if err != nil {
 			return err
 		}
-		invocation, err := r.ledger.PrepareNested(ctx, batchID, run.parent.invocationID, run.call, toolledger.ReplayAtMostOnce)
+		invocation, err := r.ledger.PrepareNested(ctx, batchID, run.parent.invocationID, run.call, toolReplayPolicy(r.executor, run.call))
 		if err != nil {
 			return err
 		}
@@ -482,7 +512,7 @@ func (r *TurnToolRuntime) prepareRunLocked(ctx context.Context, run *toolRun) er
 		}
 		r.batchID = batchID
 	}
-	invocation, err := r.ledger.Prepare(ctx, r.batchID, run.call, toolledger.ReplayAtMostOnce)
+	invocation, err := r.ledger.Prepare(ctx, r.batchID, run.call, toolReplayPolicy(r.executor, run.call))
 	if err != nil {
 		r.ledgerErr = err
 		return err
@@ -687,6 +717,11 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 
 func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []providers.ToolCall) error {
 	r.mu.Lock()
+	if r.ledgerErr != nil {
+		err := r.ledgerErr
+		r.mu.Unlock()
+		return err
+	}
 	if r.byID == nil {
 		r.byID = map[string]*toolRun{}
 	}
@@ -760,6 +795,12 @@ func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []provid
 
 	if r.ledger != nil && batchID != "" {
 		if err := r.ledger.FinalizeBatch(ctx, batchID); err != nil {
+			r.mu.Lock()
+			terminalErr := r.ledgerErr
+			r.mu.Unlock()
+			if terminalErr != nil {
+				return terminalErr
+			}
 			return err
 		}
 	}
@@ -920,6 +961,9 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 		text, err = executor.Execute(ctx, call)
 		result = toolresult.FromText(text)
 	}
+	if toolerrors.Kind(err) == toolerrors.UncertainEffect {
+		return toolresult.Result{}, err
+	}
 	if err != nil {
 		result.IsError = true
 	}
@@ -978,4 +1022,15 @@ func toolCanStartDuringStreaming(executor ToolExecutor, call providers.ToolCall)
 	}
 	meta, found := mp.ToolMetadata(call)
 	return found && meta.ReadOnly && meta.ConcurrencySafe
+}
+
+// Only the selected definition opts in. Scheduling hints and orchestrator status
+// cannot prove replay safety; nested orchestration needs its own durable journal.
+func toolReplayPolicy(executor ToolExecutor, call providers.ToolCall) toolledger.ReplayPolicy {
+	if provider, ok := executor.(ToolMetadataProvider); ok {
+		if metadata, found := provider.ToolMetadata(call); found && metadata.ReplaySafe {
+			return toolledger.ReplayRepeatable
+		}
+	}
+	return toolledger.ReplayAtMostOnce
 }

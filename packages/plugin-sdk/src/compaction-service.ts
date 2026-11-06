@@ -38,6 +38,7 @@ export interface CompactionPolicy {
   readonly guidance: readonly PolicyMessage[];
 }
 export interface CompactionBudget {
+  readonly Instructions?: string;
   readonly MediaInput?: PolicyMediaInput;
   readonly ContextTokens?: number;
   readonly InputTokens?: number;

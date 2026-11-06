@@ -1,3 +1,4 @@
+import type { DriverModelReceipts } from "./driver.js";
 import type { StateInspectionTopology, StateInspection, StateInspectionList, StateInspectionResolution, StateInspectionStatus } from "./persistence.js";
 import type { ModelStepUsageV1 } from "./engine.js";
 import type { ClientInputReceipt, MessageRelation, RuntimeHost, ServiceDescriptor, ServiceInvokeParams, ServiceRequirement } from "./index.js";
@@ -81,6 +82,7 @@ export interface SessionDomainControl {
 }
 
 export interface SessionDomainDriverBinding {
+  readonly "history_state"?: boolean;
   readonly "contract_version": number;
   readonly "driver_id": string;
   readonly "driver_version": string;
@@ -151,7 +153,34 @@ export interface SessionDomainHistoryReadQuery {
   readonly "StartSeq": number;
 }
 
+export interface SessionDomainHistoricalState {
+  readonly version: 1;
+  readonly agent: {
+    readonly cwd: string;
+    readonly workspace_id?: string;
+    readonly provider: string;
+    readonly model: string;
+    readonly variant?: string;
+    readonly effort?: string;
+    readonly speed?: string;
+    readonly model_options?: Readonly<Record<string, string>>;
+    readonly instructions?: string;
+    readonly tool_policy_json?: string;
+    readonly project_role?: string;
+  };
+  readonly composition?: unknown;
+  readonly driver: SessionDomainDriverBinding;
+  readonly stores: Readonly<Record<string, {
+    readonly owner: string;
+    readonly scope: string;
+    readonly invocation: string;
+    readonly revision: number;
+  }>>;
+}
+
 export interface SessionDomainHistoryRecord {
+  /** Host-captured projection state. Append ignores caller-supplied snapshots. */
+  readonly historical_state?: SessionDomainHistoricalState;
   readonly relation?: MessageRelation;
   /** Admission-only wire fences; never persist either field into history. */
   readonly accepted_client_input?: SessionDomainAcceptedClientInput;
@@ -521,6 +550,8 @@ export interface SessionDomainSession {
   readonly "entries": number;
   readonly "folder_id"?: string;
   readonly "forked_from_id"?: string;
+  readonly "forked_from_seq"?: number;
+  readonly "fork_history_digest"?: string;
   readonly "forked_from_item_id"?: string;
   readonly "forked_from_turn_id"?: string;
   readonly "id": string;
@@ -765,10 +796,12 @@ export interface SessionDomainMethods {
   "LoadActiveHistoryRecords": { args: readonly [id: string, includeMeta: boolean]; values: readonly [ReadonlyArray<SessionDomainHistoryRecord> | null]; };
   "LoadCompactionNote": { args: readonly [sessionID: string, providerKey: string]; values: readonly [SessionDomainCompactionNote, boolean]; };
   "LoadContextSeed": { args: readonly [id: string]; values: readonly [SessionDomainContextSeed, boolean]; };
+  "LoadHistoricalState": { args: readonly [id: string, seq: number]; values: readonly [SessionDomainHistoricalState]; };
   "LoadDriverBinding": { args: readonly [sessionID: string]; values: readonly [SessionDomainDriverBinding, boolean]; };
   "LoadDriverCheckpoint": { args: readonly [sessionID: string]; values: readonly [SessionDomainDriverCheckpointRecord, boolean]; };
   "LoadHeldUserWork": { args: readonly [sessionID: string]; values: readonly [ReadonlyArray<SessionDomainHeldUserWork> | null]; };
   "LoadHistoryRecords": { args: readonly [id: string, includeMeta: boolean]; values: readonly [ReadonlyArray<SessionDomainHistoryRecord> | null]; };
+  "ReadModelUsageReceipts": { args: readonly [sessionID: string, driverID: string, requestID: string]; values: readonly [DriverModelReceipts]; };
   "LoadModelInputReceipts": { args: readonly [sessionID: string]; values: readonly [ReadonlyArray<SessionDomainModelInputReceiptRecord> | null]; };
   "LoadProviderHistorySnapshot": { args: readonly [id: string]; values: readonly [SessionDomainProviderHistorySnapshot]; };
   "LoadRequestContextCheckpoint": { args: readonly [sessionID: string]; values: readonly [unknown]; };
@@ -921,10 +954,12 @@ const sessionDomainArity = {
   "LoadActiveHistoryRecords": [2, 1],
   "LoadCompactionNote": [2, 2],
   "LoadContextSeed": [1, 2],
+  "LoadHistoricalState": [2, 1],
   "LoadDriverBinding": [1, 2],
   "LoadDriverCheckpoint": [1, 2],
   "LoadHeldUserWork": [1, 1],
   "LoadHistoryRecords": [2, 1],
+  "ReadModelUsageReceipts": [3, 1],
   "LoadModelInputReceipts": [1, 1],
   "LoadProviderHistorySnapshot": [1, 1],
   "LoadRequestContextCheckpoint": [1, 1],

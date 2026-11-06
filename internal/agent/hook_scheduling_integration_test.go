@@ -110,3 +110,38 @@ func TestToolHooksDoNotAttributeLegacySharedContextToCalls(t *testing.T) {
 		t.Fatalf("legacy serial access changed: context=%q reads=%d", got, inner.reads.Load())
 	}
 }
+
+type replayDeclaredHookTools struct {
+	rewriteAwareTools
+	safe bool
+}
+
+func (t replayDeclaredHookTools) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
+	metadata, found := t.rewriteAwareTools.ToolMetadata(call)
+	metadata.ReplaySafe = t.safe
+	return metadata, found
+}
+
+func TestToolHooksDoNotInheritInnerReplayPermission(t *testing.T) {
+	for _, event := range []hooks.Event{hooks.PreToolUse, hooks.PostToolUse, hooks.PostToolUseFailure} {
+		for _, matcher := range []string{"BASH", "read_file", ""} {
+			for _, safe := range []bool{false, true} {
+				dispatcher := hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+					event: {{Matcher: matcher, Command: `printf '%s' '{"updated_input":{"command":"write"}}'`}},
+				}))
+				executor := hooks.NewHookedExecutor(replayDeclaredHookTools{safe: safe}, dispatcher, "session", t.TempDir())
+				metadata, found := executor.ToolMetadata(providers.ToolCall{Name: "bash", Arguments: `{"command":"read"}`})
+				want := safe && matcher == "read_file"
+				if !found || metadata.ReplaySafe != want {
+					t.Fatalf("event=%s matcher=%q inner_safe=%v: metadata=%+v found=%v, want replay_safe=%v", event, matcher, safe, metadata, found, want)
+				}
+			}
+		}
+	}
+	for _, dispatcher := range []*hooks.Dispatcher{nil, hooks.NewDispatcher(hooks.NewRegistry(nil))} {
+		executor := hooks.NewHookedExecutor(replayDeclaredHookTools{safe: true}, dispatcher, "session", t.TempDir())
+		if metadata, found := executor.ToolMetadata(providers.ToolCall{Name: "bash"}); !found || !metadata.ReplaySafe {
+			t.Fatalf("no-hook declaration lost: %+v, %v", metadata, found)
+		}
+	}
+}

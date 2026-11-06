@@ -91,6 +91,10 @@ type ToolSupportProvider interface {
 
 // ToolMetadata describes a tool's scheduling and policy characteristics.
 type ToolMetadata struct {
+	// ReplaySafe explicitly permits retry after an interrupted execution.
+	// It defaults to false and is independent of read-only or concurrency hints.
+	ReplaySafe bool
+
 	// Orchestrator tools coordinate child calls but perform no leaf operations
 	// themselves. Their children, not the parent, consume execution slots.
 	Orchestrator    bool

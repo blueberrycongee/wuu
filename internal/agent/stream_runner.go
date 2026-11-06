@@ -80,6 +80,7 @@ type StreamRunner struct {
 	SelectedCompaction  *compactionservice.Client
 	CompactionRegistry  *CompactionRegistry
 	CompactionNoteStore CompactionNoteStore
+	DriverCompactions   *DriverCompactionStore
 	// ArchiveHistory commits in-run messages before accepted steering is
 	// dispatched or a fresh context releases them. App-server installs this per turn for persisted sessions.
 	ArchiveHistory     HistoryArchiveFunc
@@ -216,11 +217,15 @@ type StreamRunner struct {
 	// for provider, tool-ledger, history, and streaming invariants. Callers
 	// must select a driver explicitly or supply AcquireLoopDriver. Durable
 	// conversations pair the resolver with a DriverBindingStore.
-	LoopDriver             loopdriver.Driver
-	AcquireLoopDriver      loopdriver.AcquireFunc
-	DriverBindingStore     loopdriver.BindingStore
-	DriverCheckpointStore  loopdriver.CheckpointStore
-	ModelInputReceiptStore ModelInputReceiptStore
+	LoopDriver        loopdriver.Driver
+	AcquireLoopDriver loopdriver.AcquireFunc
+	// OnDriverAdmitted records opt-in host recovery facts before execution effects.
+	OnDriverAdmitted      func(context.Context, loopdriver.Binding, loopdriver.Descriptor) error
+	DriverBindingStore    loopdriver.BindingStore
+	DriverCheckpointStore loopdriver.CheckpointStore
+	// Only explicitly correlated requests need recovery snapshots in production.
+	ModelReceiptRequestOnly bool
+	ModelInputReceiptStore  ModelInputReceiptStore
 	// OnModelContext observes the assembled driver request before downstream model adapters.
 	OnModelContext      func(context.Context, []providers.ChatMessage)
 	RequestContextStore RequestContextStore
@@ -365,6 +370,11 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 			return LoopResult{}, fmt.Errorf("bind loop driver: %w", err)
 		}
 	}
+	if r.OnDriverAdmitted != nil {
+		if err := r.OnDriverAdmitted(ctx, binding, descriptor); err != nil {
+			return LoopResult{}, err
+		}
+	}
 	ctx, finishReceipts, err := BeginModelReceipts(ctx, r.BeginModelReceipts)
 	if err != nil {
 		return LoopResult{}, err
@@ -412,6 +422,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		streamTurnGateway: newStreamTurnGateway(ctx, r, input, onEvent),
 	}
 	gateway.streamTurnGateway.descriptor = descriptor
+	gateway.streamTurnGateway.resumed = resume != nil
 	defer gateway.close()
 	done := make(chan struct{})
 	go func() {

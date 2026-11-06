@@ -48,6 +48,10 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 		return loopdriver.TurnContext{}, err
 	}
 	defer leave()
+	return g.replaceContextLocked(ctx, replacement)
+}
+
+func (g *streamTurnGateway) replaceContextLocked(ctx context.Context, replacement loopdriver.ContextReplacement) (loopdriver.TurnContext, error) {
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.TurnContext{}, err
 	}
@@ -91,6 +95,7 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 	}
 	committed, head := messages, g.archiveHead
 	if !replacement.Volatile {
+		var err error
 		committed, head, err = g.runner.CommitFreshContext(ctx, messages, g.archiveHead, key, CompactionNote{})
 		if err != nil {
 			return loopdriver.TurnContext{}, err

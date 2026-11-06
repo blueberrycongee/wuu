@@ -73,17 +73,19 @@ type Session struct {
 	// of a workspace with an id are listed by that id, so they follow the
 	// project across moves/renames even though CWD still records the old path.
 	// Empty for location-anchored scratch threads, which are matched by cwd.
-	WorkspaceID      string     `json:"workspace_id,omitempty"`
-	ForkedFromID     string     `json:"forked_from_id,omitempty"`
-	ForkedFromTurnID string     `json:"forked_from_turn_id,omitempty"`
-	ForkedFromItemID string     `json:"forked_from_item_id,omitempty"`
-	PinnedAt         *time.Time `json:"pinned_at,omitempty"`
-	FolderID         string     `json:"folder_id,omitempty"`
-	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
-	ArchiveReason    string     `json:"archive_reason,omitempty"`
-	WorktreePath     string     `json:"worktree_path,omitempty"`
-	WorktreeBaseHEAD string     `json:"worktree_base_head,omitempty"`
-	WorktreeBaseRepo string     `json:"worktree_base_repo,omitempty"`
+	WorkspaceID       string     `json:"workspace_id,omitempty"`
+	ForkedFromID      string     `json:"forked_from_id,omitempty"`
+	ForkedFromSeq     int        `json:"forked_from_seq,omitempty"`
+	ForkHistoryDigest string     `json:"fork_history_digest,omitempty"`
+	ForkedFromTurnID  string     `json:"forked_from_turn_id,omitempty"`
+	ForkedFromItemID  string     `json:"forked_from_item_id,omitempty"`
+	PinnedAt          *time.Time `json:"pinned_at,omitempty"`
+	FolderID          string     `json:"folder_id,omitempty"`
+	ArchivedAt        *time.Time `json:"archived_at,omitempty"`
+	ArchiveReason     string     `json:"archive_reason,omitempty"`
+	WorktreePath      string     `json:"worktree_path,omitempty"`
+	WorktreeBaseHEAD  string     `json:"worktree_base_head,omitempty"`
+	WorktreeBaseRepo  string     `json:"worktree_base_repo,omitempty"`
 }
 
 type ForkMetadata struct {
@@ -109,6 +111,7 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
+	HistoricalState      *HistoricalState                  `json:"historical_state,omitempty"`
 	AcceptedClientInput  *AcceptedClientInput              `json:"-"`
 	AcceptedClientTurnID string                            `json:"-"`
 	Relation             *providers.MessageRelation        `json:"relation,omitempty"`

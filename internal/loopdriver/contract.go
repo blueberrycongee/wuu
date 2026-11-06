@@ -30,10 +30,13 @@ type AcquireFunc func(ctx context.Context, expected *Binding) (driver Driver, bi
 
 type ExecutionContext struct {
 	// SourceMessage is captured when the human input is admitted, not inferred from history.
-	SourceMessage   *providers.MessageRef
-	MessageRelation *providers.MessageRelation
-	SessionID       string
-	ExecutionID     string
+	SourceMessage *providers.MessageRef
+	// EventSourceMessage is an admitted plugin-event receipt, never human authority.
+	// It is host-only and is not included in remote driver/tool request JSON.
+	EventSourceMessage *providers.MessageRef `json:"-"`
+	MessageRelation    *providers.MessageRelation
+	SessionID          string
+	ExecutionID        string
 }
 
 type PersistedInput struct {

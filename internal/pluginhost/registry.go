@@ -616,6 +616,9 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	if execution != nil {
 		if execution.ctx.Err() != nil {
 			r.mu.Unlock()
+			if errors.Is(context.Cause(execution.ctx), ErrExecutionShutdown) || IsUserQuestionErrorCode(context.Cause(execution.ctx), "generation_closed") {
+				return nil, "", nil, &HostServiceError{Code: "execution_shutdown", Message: "host execution is shutting down"}
+			}
 			return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
 		}
 		execution.refs++
@@ -624,8 +627,15 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		r.mu.Unlock()
 		// A callback's transport can disappear while its shared root remains live.
 		// Cancel this invocation without revoking the other chain participants.
-		callContext, cancel := context.WithCancel(execution.ctx)
-		stopCaller := context.AfterFunc(callerContext, cancel)
+		callContext, cancelCause := context.WithCancelCause(execution.ctx)
+		cancel := func() { cancelCause(context.Canceled) }
+		stopCaller := context.AfterFunc(callerContext, func() {
+			cause := context.Cause(execution.ctx)
+			if cause == nil {
+				cause = context.Cause(callerContext)
+			}
+			cancelCause(cause)
+		})
 		release := r.releaseExecution(id, provider)
 		return callContext, id, func() error { stopCaller(); cancel(); return release() }, nil
 	}
@@ -640,6 +650,9 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	}
 	if err := ctx.Err(); err != nil {
 		r.mu.Unlock()
+		if errors.Is(context.Cause(ctx), ErrExecutionShutdown) || IsUserQuestionErrorCode(context.Cause(ctx), "generation_closed") {
+			return nil, "", nil, &HostServiceError{Code: "execution_shutdown", Message: "host execution is shutting down"}
+		}
 		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
 	}
 	if cleanup {
@@ -668,8 +681,15 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 			parentContext = rootContext
 		}
 	}
-	execCtx, cancelRoot := context.WithCancel(retainServiceCompletion(parentContext))
-	stopCaller := context.AfterFunc(callerContext, cancelRoot)
+	execCtx, cancelCause := context.WithCancelCause(retainServiceCompletion(parentContext))
+	cancelRoot := func() { cancelCause(context.Canceled) }
+	stopCaller := context.AfterFunc(callerContext, func() {
+		cause := context.Cause(parentContext)
+		if cause == nil {
+			cause = context.Cause(callerContext)
+		}
+		cancelCause(cause)
+	})
 	cancel := func() { stopCaller(); cancelRoot() }
 	r.executions[id] = &serviceExecution{
 		retained: ctx.Value(retainedServiceScopeAdmissionKey{}) == true, ctx: execCtx, cancel: cancel, refs: 1,
@@ -1087,10 +1107,16 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 		Params:      params.Params,
 		ExecutionID: executionID,
 	}, toolScope)
+	// Cancellation can finish a host callback before its asynchronous cancel
+	// frame reaches the plugin. Preserve trusted shutdown provenance on this
+	// response as well, so durable consumers never turn teardown into an abort.
+	if errors.Is(context.Cause(execCtx), ErrExecutionShutdown) || IsUserQuestionErrorCode(context.Cause(execCtx), "generation_closed") {
+		return nil, &HostServiceError{Code: "execution_shutdown", Message: "host execution is shutting down"}
+	}
 	if err != nil {
 		var hostErr *HostServiceError
 		if errors.As(err, &hostErr) && hostErr.Code != "" {
-			if hostErr.Code == "service_optional_absent" || hostErr.Code == "WUU_PLUGIN_SCOPE_RETIRED" {
+			if hostErr.Code == "service_optional_absent" || hostErr.Code == "WUU_PLUGIN_SCOPE_RETIRED" || hostErr.Code == "execution_shutdown" {
 				// Absence and retirement are host facts, not provider error claims.
 				return nil, &HostServiceError{Code: "service_unavailable", Message: hostErr.Message}
 			}
@@ -1099,7 +1125,7 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 		var remoteErr *remoteCallError
 		if errors.As(err, &remoteErr) && remoteErr.code != "" {
 			code := remoteErr.code
-			if code == "service_optional_absent" || code == "WUU_PLUGIN_SCOPE_RETIRED" {
+			if code == "service_optional_absent" || code == "WUU_PLUGIN_SCOPE_RETIRED" || code == "execution_shutdown" {
 				code = "service_unavailable"
 			}
 			return nil, &HostServiceError{Code: code, Message: remoteErr.message}

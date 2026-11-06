@@ -144,6 +144,7 @@ func cloneRunnerModelConfiguration(r *StreamRunner) *StreamRunner {
 		SelectedCompaction:          r.SelectedCompaction,
 		CompactionRegistry:          r.CompactionRegistry,
 		CompactionNoteStore:         r.CompactionNoteStore,
+		DriverCompactions:           r.DriverCompactions,
 		ArchiveHistory:              r.ArchiveHistory,
 		CommitFreshContext:          r.CommitFreshContext,
 		MaxSteps:                    r.MaxSteps,
@@ -190,6 +191,7 @@ func cloneRunnerModelConfiguration(r *StreamRunner) *StreamRunner {
 		DriverBindingStore:          r.DriverBindingStore,
 		DriverCheckpointStore:       r.DriverCheckpointStore,
 		ModelInputReceiptStore:      r.ModelInputReceiptStore,
+		ModelReceiptRequestOnly:     r.ModelReceiptRequestOnly,
 		OnModelContext:              r.OnModelContext,
 		RequestContextStore:         r.RequestContextStore,
 	}

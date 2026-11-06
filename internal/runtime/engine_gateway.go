@@ -142,9 +142,9 @@ func (t *engineGatewayTable) InvokeService(ctx context.Context, p pluginhost.Ser
 		g.loopRunning = true
 		g.mu.Unlock()
 		defer func() { g.mu.Lock(); g.loopRunning = false; g.mu.Unlock() }()
-		callCtx, cancel := context.WithCancel(runCtx)
-		defer cancel()
-		stop := context.AfterFunc(ctx, cancel)
+		callCtx, cancel := context.WithCancelCause(runCtx)
+		defer cancel(context.Canceled)
+		stop := context.AfterFunc(ctx, func() { cancel(context.Cause(ctx)) })
 		defer stop()
 		result, err := g.runtime.StreamRunner.RunWithCallback(callCtx, modelwire.DriverMessagesFromWire(in.Messages), agent.StreamCallback(sink))
 		return json.Marshal(pluginprotocol.EngineRunResult{Result: engineResultToWire(result), Failure: loopdriver.FailureToWire(err)})

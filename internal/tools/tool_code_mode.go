@@ -42,6 +42,7 @@ func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
+		ReplaySafe:  true,
 		Freeform:    true,
 		Description: codeModeDescription,
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"input"}, "properties": map[string]any{

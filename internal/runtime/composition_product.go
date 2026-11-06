@@ -82,7 +82,7 @@ type productCompositionBinding struct {
 	scope   *compositionScope
 }
 
-const productCompositionNamespace = "wuu.session_compositions.v1"
+const productCompositionNamespace = session.SessionCompositionNamespace
 
 type productCompositionRecord struct {
 	ID          string                      `json:"id"`

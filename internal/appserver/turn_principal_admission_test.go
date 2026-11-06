@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestTurnAdmissionRechecksCapturedPrincipal(t *testing.T) {
-	for _, name := range []string{"already_revoked", "revoked_after_lease", "still_live"} {
+	for _, name := range []string{"already_revoked", "revoked_after_lease", "revoked_during_history_preparation", "still_live"} {
 		t.Run(name, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			s := New(rt, &lockedBuffer{})
@@ -31,6 +33,7 @@ func TestTurnAdmissionRechecksCapturedPrincipal(t *testing.T) {
 				t.Fatal(err)
 			}
 			var revoked atomic.Bool
+			var prepared atomic.Bool
 			caller, err := principal.AuthenticatedWithValidity(principal.Identity{Kind: "agent", Issuer: "test", Tenant: "local", Subject: "queued-source"}, func() bool { return !revoked.Load() })
 			if err != nil {
 				t.Fatal(err)
@@ -39,6 +42,17 @@ func TestTurnAdmissionRechecksCapturedPrincipal(t *testing.T) {
 			baselineHistory, baselineTurns := len(th.History), len(th.Turns)
 			th.mu.Unlock()
 			revoked.Store(name == "already_revoked")
+			if name == "revoked_during_history_preparation" {
+				th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{
+					DriverBindingStore: historyAdmissionBindingStore{},
+					AcquireLoopDriver: func(context.Context, *loopdriver.Binding) (loopdriver.Driver, loopdriver.Binding, func(), error) {
+						prepared.Store(true)
+						revoked.Store(true)
+						return agent.DefaultDriver{}, loopdriver.Binding{}, func() {}, nil
+					},
+				}}
+			}
+
 			appended := false
 			started, ok, err := s.startThreadUserTurnWithAdmission(context.Background(), th, providers.ChatMessage{Role: "user", Content: "must not execute"}, turnRuntimeSnapshot{AdmissionPrincipal: caller}, false, turnReadOnlyFail, turnAdmissionHooks{
 				afterLease: func(*threadState, *providers.ChatMessage) error {
@@ -52,6 +66,9 @@ func TestTurnAdmissionRechecksCapturedPrincipal(t *testing.T) {
 				th.mu.Lock()
 				th.completeTurnLocked(started.turnID, TurnStatusCompleted, nil, time.Now().UTC(), "", "", false)
 				th.mu.Unlock()
+			}
+			if name == "revoked_during_history_preparation" && !prepared.Load() {
+				t.Fatalf("history preparation not reached: %v", err)
 			}
 			if name == "still_live" {
 				if err != nil || !ok || !appended {
@@ -140,3 +157,10 @@ func TestQueuedAdmissionUsesRetainedOriginWithoutReplacingSuppliedCapture(t *tes
 		})
 	}
 }
+
+type historyAdmissionBindingStore struct{}
+
+func (historyAdmissionBindingStore) LoadBinding(context.Context) (loopdriver.Binding, bool, error) {
+	return loopdriver.Binding{}, false, nil
+}
+func (historyAdmissionBindingStore) Bind(context.Context, loopdriver.Binding) error { return nil }

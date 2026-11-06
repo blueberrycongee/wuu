@@ -8,8 +8,63 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
+
+// A managed-session pass loses its connection when registration closes. Give
+// active turns the host shutdown cause before that ordinary cancellation can
+// win, without changing an earlier explicit user stop.
+func TestServerClosePreservesTurnCancellationBeforeRegistration(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "shutdown", true: "already-stopped"}[stopped], func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			registration := srv.managedSessionRegistration
+			if registration == nil {
+				if _, err := newManagedSessionBridge().Bind(srv); err != nil {
+					t.Fatal(err)
+				}
+				registration = srv.managedSessionRegistration
+			}
+			borrowed, cancelBorrowed := context.WithCancel(context.Background())
+			defer cancelBorrowed()
+			propagated := make(chan struct{})
+			stop := context.AfterFunc(registration.ctx, func() {
+				cancelBorrowed()
+				close(propagated)
+			})
+			defer stop()
+			closeRegistration := registration.cancel
+			registration.cancel = func() {
+				closeRegistration()
+				<-propagated // deterministically finish the real pass cancellation
+			}
+			turnCtx, cancelTurn := context.WithCancelCause(borrowed)
+			defer cancelTurn(context.Canceled)
+			th := newThreadState("close-cause", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+			th.state = testRuntimeState(t, rt)
+			th.running = true
+			th.cancel = func() { cancelTurn(context.Canceled) }
+			th.shutdownCancel = func() { cancelTurn(pluginhost.ErrExecutionShutdown) }
+			srv.mu.Lock()
+			srv.threads[th.ID] = th
+			srv.mu.Unlock()
+			if stopped {
+				th.cancel()
+			}
+			srv.Close()
+			want := pluginhost.ErrExecutionShutdown
+			if stopped {
+				want = context.Canceled
+			}
+			if got := context.Cause(turnCtx); !errors.Is(got, want) {
+				t.Fatalf("turn cause = %v, want %v", got, want)
+			}
+		})
+	}
+}
 
 func TestServerCloseReleasesConnectionOwnedResources(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})

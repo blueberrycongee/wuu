@@ -452,6 +452,7 @@ func (h *Host) ToolDefinitions() []providers.ToolDefinition {
 		definitions = append(definitions, providers.ToolDefinition{
 			Name:        name,
 			DirectOnly:  tool.Registration.DirectOnly,
+			ReplaySafe:  tool.Registration.ReplaySafe,
 			Description: tool.Registration.Description,
 			InputSchema: cloneSchema(tool.Registration.InputSchema),
 		})

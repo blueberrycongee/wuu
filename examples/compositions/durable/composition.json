@@ -1,0 +1,21 @@
+{
+  "version": 5,
+  "profile": "headless",
+  "patches": [
+    {
+      "modules": {
+        "wuu.default-loop": false,
+        "example.durable-driver": true,
+        "wuu.durable-wait": true,
+        "wuu.durable-client": true
+      },
+      "services": [
+        {
+          "service": "driver.default",
+          "major": 2,
+          "provider": "example.durable-driver"
+        }
+      ]
+    }
+  ]
+}

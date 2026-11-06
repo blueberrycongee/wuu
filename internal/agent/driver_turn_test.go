@@ -718,3 +718,126 @@ func (t *driverEvidenceTools) Execute(ctx context.Context, call providers.ToolCa
 	data, err := os.ReadFile(t.path)
 	return string(data), err
 }
+
+// A reservation is not dispatch: gates run under the turn lock, are not called
+// for already submitted calls, and fail closed before executor admission.
+func TestDriverWaitGateBeforeEffects(t *testing.T) {
+	ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "wait-session", ExecutionID: "wait-execution"})
+	tools := &driverEvidenceTools{}
+	gateway := newStreamTurnGateway(ctx, &StreamRunner{Tools: tools, Model: "test"}, loopdriver.PersistedInput{}, nil)
+	call := providers.ToolCall{ID: "wait-call", Name: "read_evidence", Arguments: "{}"}
+	batch := loopdriver.ToolBatch{ID: "wait-batch", Calls: []providers.ToolCall{call}}
+	reserved := false
+	if err := gateway.ReserveWait(ctx, batch, func(_ context.Context, execution loopdriver.ExecutionContext, fresh bool) error {
+		if execution.SessionID != "wait-session" || fresh {
+			t.Fatalf("unexpected reservation identity: %+v fresh=%v", execution, fresh)
+		}
+		reserved = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reserved || tools.calls != 0 {
+		t.Fatal("reservation executed tool")
+	}
+	blocked := errors.New("approval required")
+	batch.BeforeDispatch = func(context.Context, loopdriver.ExecutionContext) error { return blocked }
+	if _, err := gateway.CallTools(ctx, batch); !errors.Is(err, blocked) || tools.calls != 0 {
+		t.Fatalf("gate bypass: %v effects=%d", err, tools.calls)
+	}
+	batch.BeforeDispatch = func(context.Context, loopdriver.ExecutionContext) error { return nil }
+	if _, err := gateway.CallTools(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	if tools.calls != 1 {
+		t.Fatalf("effects=%d", tools.calls)
+	}
+	if err := gateway.ReserveWait(ctx, batch, func(context.Context, loopdriver.ExecutionContext, bool) error {
+		t.Fatal("retrospective reservation")
+		return nil
+	}); err == nil {
+		t.Fatal("submitted batch accepted")
+	}
+}
+
+func TestDriverWaitInputUsesAdmittedProvenance(t *testing.T) {
+	source := &providers.MessageRef{SessionID: "session", Seq: 2}
+	ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "physical", SourceMessage: source})
+	gateway := newStreamTurnGateway(ctx, &StreamRunner{}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Seq: 2, Content: "real input"}}}, nil)
+	// Rewritten context is not an admission receipt.
+	gateway.activeHistory = []providers.ChatMessage{{Role: "user", Seq: 999, Content: "fabricated history"}}
+	actual, err := gateway.WaitInput(ctx, "input")
+	if err != nil || actual.SourceMessage == nil || actual.SourceMessage.Seq != 2 {
+		t.Fatalf("source %+v %v", actual, err)
+	}
+	gateway.input.Messages[0].Origin = "plugin"
+	actual, err = gateway.WaitInput(ctx, "input")
+	if err != nil || actual.SourceMessage != nil {
+		t.Fatalf("plugin input impersonation: %+v %v", actual, err)
+	}
+	actual, err = gateway.WaitInput(ctx, "event")
+	if err != nil || actual.SourceMessage == nil || actual.SourceMessage.Seq != 2 {
+		t.Fatalf("admitted event: %+v %v", actual, err)
+	}
+}
+
+// Plugin event messages are read-only presentation, but their host-issued input
+// address remains an admission receipt. Read-only context without that origin
+// and client receipt must not become an event, nor may events answer human input.
+func TestDriverWaitReadOnlyEventAdmission(t *testing.T) {
+	for _, path := range []string{"source", "steering"} {
+		t.Run(path, func(t *testing.T) {
+			event := providers.ChatMessage{Role: "user", Seq: 7, ClientID: "event-request", Origin: "plugin", OriginID: "external-events", ReadOnly: true, Content: "accepted event"}
+			source := &providers.MessageRef{SessionID: "session", Seq: 7}
+			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", EventSourceMessage: source})
+			runner := &StreamRunner{}
+			input := loopdriver.PersistedInput{Messages: []providers.ChatMessage{event}}
+			if path == "steering" {
+				ctx = loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn"})
+				input.Messages = nil
+				runner.BeforeStep = func() []providers.ChatMessage { return []providers.ChatMessage{event} }
+			}
+			gateway := newStreamTurnGateway(ctx, runner, input, nil)
+			defer gateway.close()
+			if path == "steering" {
+				if _, err := gateway.AdmitInput(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			actual, err := gateway.WaitInput(ctx, "event")
+			if err != nil || actual.SourceMessage == nil || actual.SourceMessage.Seq != 7 {
+				t.Fatalf("admitted event lost: %+v %v", actual, err)
+			}
+			actual, err = gateway.WaitInput(ctx, "input")
+			if err != nil || actual.SourceMessage != nil {
+				t.Fatalf("event answered human input: %+v %v", actual, err)
+			}
+			if loopdriver.ExecutionContextFromContext(ctx).SourceMessage != nil {
+				t.Fatal("event became ambient human source authority")
+			}
+
+		})
+	}
+	for _, missing := range []string{"origin", "client", "plugin", "hidden"} {
+		t.Run(missing, func(t *testing.T) {
+			event := providers.ChatMessage{Role: "user", Seq: 7, ClientID: "event-request", Origin: "plugin", OriginID: "external-events", ReadOnly: true}
+			switch missing {
+			case "origin":
+				event.Origin = ""
+			case "client":
+				event.ClientID = ""
+			case "plugin":
+				event.OriginID = ""
+			case "hidden":
+				event.Hidden = true
+			}
+			ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "session", ExecutionID: "event-turn", EventSourceMessage: &providers.MessageRef{SessionID: "session", Seq: 7}})
+			gateway := newStreamTurnGateway(ctx, &StreamRunner{}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{event}}, nil)
+			defer gateway.close()
+			actual, err := gateway.WaitInput(ctx, "event")
+			if err != nil || actual.SourceMessage != nil {
+				t.Fatalf("context minted event: %+v %v", actual, err)
+			}
+		})
+	}
+}

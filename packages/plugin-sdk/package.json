@@ -38,6 +38,8 @@
     "dist/execution-backend.d.ts",
     "dist/settings.js",
     "dist/settings.d.ts",
+    "dist/durable-wait.js",
+    "dist/durable-wait.d.ts",
     "dist/driver.js",
     "dist/driver.d.ts",
     "dist/composition.js",

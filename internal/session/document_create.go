@@ -83,7 +83,13 @@ func (s *documentStore) createInitialized(sess Session, records []HistoryRecord,
 		if err := putSessionDocument(tx, current); err != nil {
 			return err
 		}
-		if current.ForkedFromID != "" {
+		if current.ForkedFromSeq != 0 {
+			var err error
+			initial, err = initializeHistoricalFork(tx, current, initial)
+			if err != nil {
+				return err
+			}
+		} else if current.ForkedFromID != "" {
 			var binding json.RawMessage
 			found, err := tx.Get(documentNamespace("session_driver_bindings"), current.ForkedFromID, &binding)
 			if err != nil {
@@ -111,7 +117,7 @@ func (s *documentStore) createInitialized(sess Session, records []HistoryRecord,
 			}
 		}
 		for index, record := range initial {
-			if err := insertHistoryDocument(tx, current.ID, index+1, record, now); err != nil {
+			if err := insertHistoryDocumentWithState(tx, current.ID, index+1, record, now, current.ForkedFromSeq == 0); err != nil {
 				return err
 			}
 		}

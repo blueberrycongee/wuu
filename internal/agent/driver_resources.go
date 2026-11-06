@@ -25,8 +25,9 @@ func (g *streamTurnGateway) ReadSettings(ctx context.Context) (pluginprotocol.Dr
 	r := g.modelRunner()
 	_, observationKey := r.providerConnectionSnapshot()
 	settings := pluginprotocol.DriverTurnSettings{
-		HasPolicy: r.SelectedPolicy != nil,
-		MaxSteps:  r.MaxSteps, StreamingTools: r.StreamingToolExecution && !g.serialTools && toolbatch.SupportsStreaming(r.SelectedToolBatch), ResumeSampling: r.ResumeSampling,
+		ModelSingleAttempt: true,
+		HasPolicy:          r.SelectedPolicy != nil,
+		MaxSteps:           r.MaxSteps, StreamingTools: r.StreamingToolExecution && !g.serialTools && toolbatch.SupportsStreaming(r.SelectedToolBatch), ResumeSampling: r.ResumeSampling,
 		ProviderObservationKey: observationKey, ModelVariant: r.Variant,
 		ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens,
 		OutputReserveTokens: r.OutputReserveTokens, CompactThresholdTokens: r.CompactThresholdTokens,
@@ -139,6 +140,11 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 	if err := validateDriverMessages(messages); err != nil {
 		return nil, err
 	}
+	return g.proposeContext(ctx, messages, hint)
+}
+
+// proposeContext runs only on an immutable resource snapshot when detached.
+func (g *streamTurnGateway) proposeContext(ctx context.Context, messages []providers.ChatMessage, hint pluginprotocol.DriverCompactBudget) ([]providers.ChatMessage, error) {
 	r := g.modelRunner()
 	model := strings.TrimSpace(r.APIModel)
 	if model == "" {
@@ -176,7 +182,7 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 		if err != nil {
 			return nil, err
 		}
-		request := compactionservice.Request{Model: model, Messages: providers.CloneChatMessages(messages), Budget: compact.Budget{MediaInput: media, ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens, OutputReserveTokens: r.OutputReserveTokens, KeepRecentTokens: r.CompactKeepRecentTokens}, Options: compact.NativeOptions{Provider: r.ProviderName, Tools: definitions, Temperature: r.Temperature, ProviderOptions: r.ProviderOptions, MediaInput: media, NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions)}, Hint: compactionservice.BudgetHint{Reason: hint.Reason, LastSuccessfulTokens: hint.LastSuccessfulTokens, FailedRequestTokens: hint.FailedRequestTokens, TargetTotalTokens: hint.TargetTotalTokens}}
+		request := compactionservice.Request{Model: model, Messages: providers.CloneChatMessages(messages), Budget: compact.Budget{Instructions: hint.Instructions, MediaInput: media, ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens, OutputReserveTokens: r.OutputReserveTokens, KeepRecentTokens: r.CompactKeepRecentTokens}, Options: compact.NativeOptions{Provider: r.ProviderName, Tools: definitions, Temperature: r.Temperature, ProviderOptions: r.ProviderOptions, MediaInput: media, NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions)}, Hint: compactionservice.BudgetHint{Reason: hint.Reason, LastSuccessfulTokens: hint.LastSuccessfulTokens, FailedRequestTokens: hint.FailedRequestTokens, TargetTotalTokens: hint.TargetTotalTokens}}
 		replacement, err := compactSelected(compactionservice.WithModelClient(ctx, g.client), r.SelectedCompaction, *g.policy, request, cfg)
 		g.proposedContextParentID, g.proposedContextHash = "", ""
 		if err == nil && compactChanged(messages, replacement) {
@@ -187,7 +193,7 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 	}
 	if g.client != nil {
 		cfg.Compact = func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
-			budget, err := applyAdaptiveCompactBudget(ctx, messages, compact.Budget{MediaInput: media, ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens, OutputReserveTokens: r.OutputReserveTokens, KeepRecentTokens: r.CompactKeepRecentTokens})
+			budget, err := applyAdaptiveCompactBudget(ctx, messages, compact.Budget{Instructions: hint.Instructions, MediaInput: media, ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens, OutputReserveTokens: r.OutputReserveTokens, KeepRecentTokens: r.CompactKeepRecentTokens})
 			if err != nil {
 				return nil, err
 			}

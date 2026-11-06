@@ -128,11 +128,15 @@ type turnRuntimeSnapshot struct {
 	AdmissionDelegation    *access.Delegation                     `json:"-"`
 	AdmissionAuthorization *runtime.ExecutionAuthorizationBinding `json:"-"`
 
-	ToolPolicy        *pluginhost.SessionTurnToolPolicy `json:",omitempty"`
-	DisableTools      bool
-	SourceMessage     *providers.MessageRef
-	MessageRelation   *providers.MessageRelation
-	ResumeAfterTurnID string
+	ToolPolicy           *pluginhost.SessionTurnToolPolicy `json:",omitempty"`
+	DisableTools         bool
+	SourceMessage        *providers.MessageRef
+	EventSourceMessage   *providers.MessageRef `json:"-"`
+	MessageRelation      *providers.MessageRelation
+	ResumeAfterTurnID    string
+	DriverRecoveryToken  string
+	DriverRecoveryCaller string
+	DriverRecoveryRecord string
 	// CWD and permissions are captured at admission. Later metadata changes
 	// must not retarget an already-admitted external-engine turn.
 	CWD                string
@@ -477,7 +481,8 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q already has a running turn", threadID))
 	}
 	turnID := session.NewID()
-	turnCtx, cancel := context.WithCancel(ctx)
+	turnCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
 	now := time.Now().UTC()
 	th.mu.Lock()
 	if th.ReadOnly {
@@ -551,6 +556,7 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	}
 	history := cloneHistory(th.History)
 	th.cancel = cancel
+	th.shutdownCancel = func() { cancelCause(pluginhost.ErrExecutionShutdown) }
 	turn := th.startCompactTurnLocked(turnID, displayMsg, now)
 	turnRuntime := turnRuntimeSnapshotLocked(th)
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
@@ -2353,6 +2359,10 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 		}
 		return false, nil
 	}
+	if err := recordDriverRecoveryCancellationLocked(th, turnID); err != nil {
+		th.mu.Unlock()
+		return false, err
+	}
 	s.pruneRevokedSteersLocked(th)
 	var humanSteers, pluginSteers []providers.ChatMessage
 	for _, msg := range th.pendingSteers {
@@ -2836,7 +2846,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
-	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID, SourceMessage: turnRuntime.SourceMessage, MessageRelation: providers.CloneMessageRelation(turnRuntime.MessageRelation)})
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID, SourceMessage: turnRuntime.SourceMessage, EventSourceMessage: turnRuntime.EventSourceMessage, MessageRelation: providers.CloneMessageRelation(turnRuntime.MessageRelation)})
 	turnKit := s.rt.Toolkit
 	if threadRuntime != nil {
 		turnKit = threadRuntime.Toolkit
@@ -3066,6 +3076,21 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	var baseCommitFreshContext agent.FreshContextCommitFunc
 	restoreRunner := func() {}
 	if runner != nil {
+		baseDriverAdmission := runner.OnDriverAdmitted
+		runner.OnDriverAdmitted = func(admissionCtx context.Context, selected loopdriver.Binding, descriptor loopdriver.Descriptor) error {
+			if baseDriverAdmission != nil {
+				if err := baseDriverAdmission(admissionCtx, selected, descriptor); err != nil {
+					return err
+				}
+			}
+			if turnRuntime.DriverRecoveryToken != "" {
+				if !slices.Contains(descriptor.Capabilities, durableRecoveryCapability) {
+					return errors.New("selected driver no longer permits recovery")
+				}
+				return nil
+			}
+			return recordDriverRecoveryAdmission(admissionCtx, th, turnID, selected, descriptor)
+		}
 		baseTurnTools = runner.Tools
 		if turnRuntime.ToolPolicy != nil {
 			policy := pluginhost.SessionToolPolicy(*turnRuntime.ToolPolicy)
@@ -3093,6 +3118,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		var restoreRunnerOnce sync.Once
 		restoreRunner = func() {
 			restoreRunnerOnce.Do(func() {
+				runner.OnDriverAdmitted = baseDriverAdmission
 				runner.Tools = baseTurnTools
 				runner.ForceInitialCompact = baseForceInitialCompact
 				runner.ResumeSampling = baseResumeSampling
@@ -3206,7 +3232,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// for the turns that follow it.
 	if runner != nil {
 		runner.ForceInitialCompact = turnRuntime.ForceCompact
-		runner.ResumeSampling = turnRuntime.ResumeAfterTurnID != ""
+		runner.ResumeSampling = turnRuntime.ResumeAfterTurnID != "" && turnRuntime.DriverRecoveryToken == ""
 		runner.CompactOnly = turnRuntime.CompactOnly
 	}
 	reviewIntent := &nativeReviewIntent{}
@@ -3724,6 +3750,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	var structured *TurnError
 	if err != nil {
 		value := BuildTurnError(err, turnRuntime.ProviderName)
+		if errors.Is(context.Cause(ctx), pluginhost.ErrExecutionShutdown) {
+			value.Interruption = "shutdown"
+		}
 		structured = &value
 	}
 	var terminalErr error
@@ -3767,6 +3796,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// preserving the raw Error string inside the structured payload.
 	if err != nil {
 		value := BuildTurnError(err, turnRuntime.ProviderName)
+		if errors.Is(context.Cause(ctx), pluginhost.ErrExecutionShutdown) {
+			value.Interruption = "shutdown"
+		}
 		structured = &value
 		turn.Error = structured
 	}
@@ -4565,7 +4597,19 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) {
 	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
 	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
 	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
-	if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
+	if errors.Is(err, errSessionInputApplied) {
+		// Another admission already owns this exact generated input. Retire
+		// only the duplicate queue capture; its failure must not replace the
+		// original turn's durable lifecycle or schedule another execution.
+		if reference := entry.snapshot.PluginTurn; reference != nil && reference.Origin != nil {
+			defer reference.Origin.Close()
+		}
+		err = nil
+		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
+			ThreadID: threadID,
+			QueueID:  entry.id,
+		})
+	} else if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
 		err = errQueuedTurnCancelled
 		executionBusy = false
 		retryableAdmission = false
@@ -4697,7 +4741,8 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		return startedThreadTurn{}, false, err
 	}
 	turnID := session.NewID()
-	turnCtx, cancel := context.WithCancel(ctx)
+	turnCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
 	now := time.Now().UTC()
 
 	phaseStarted = timing.now()
@@ -4782,6 +4827,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			resumeErr = errors.New("no history to continue")
 		case th.Turns[len(th.Turns)-1].ID != snapshot.ResumeAfterTurnID:
 			resumeErr = errors.New("continue source turn is stale; refresh the thread")
+		}
+		if resumeErr == nil && snapshot.DriverRecoveryToken != "" {
+			candidate, candidateErr := s.driverRecoveryCandidate(th.state, snapshot.DriverRecoveryCaller, th.ID, snapshot.ResumeAfterTurnID, true)
+			if candidateErr != nil {
+				resumeErr = candidateErr
+			} else if candidate == nil || candidate.CheckpointToken != snapshot.DriverRecoveryToken {
+				resumeErr = errors.New("driver recovery proof changed before admission")
+			}
 		}
 		if resumeErr != nil {
 			th.releaseThreadExecutionLeaseLocked()
@@ -4927,6 +4980,32 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, err
 		}
 	}
+	// Select snapshot semantics under the existing admission lease before the
+	// first input becomes history. Do not backfill it later from newer metadata.
+	if th.PersistHistory && th.execRuntime != nil && th.execRuntime.StreamRunner != nil {
+		runner := th.execRuntime.StreamRunner
+		provider, model, permission, engine := th.ModelProvider, th.Model, th.PermissionMode, th.EngineID
+		th.mu.Unlock()
+		prepareErr := runner.PrepareHistoricalState(ctx)
+		if prepareErr == nil {
+			if caller, ok := principal.FromContext(ctx); ok {
+				prepareErr = caller.Check(ctx)
+			}
+		}
+		th.mu.Lock()
+		if prepareErr == nil && s.closed.Load() {
+			prepareErr = errServerClosed
+		}
+		if prepareErr == nil && (th.ModelProvider != provider || th.Model != model || th.PermissionMode != permission || th.EngineID != engine) {
+			prepareErr = errors.New("execution effects changed during history preparation")
+		}
+		if prepareErr != nil {
+			th.releaseThreadExecutionLeaseLocked()
+			th.mu.Unlock()
+			cancel()
+			return startedThreadTurn{}, false, prepareErr
+		}
+	}
 	var commitAfterAppend func() error
 	if hooks.beforeUserAppendLocked != nil {
 		var err error
@@ -4956,9 +5035,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	}
 	if th.PersistHistory && resuming {
 		turnID = fmt.Sprintf("%s-turn-%04d", th.ID, len(th.Turns)+1)
-		seq, err := th.state.Sessions.AppendHistoryRecordReturningSeq(th.ID, session.HistoryRecord{
-			Role: "meta", Content: turnContinueHistoryRecord, ClientID: turnID, At: now,
-		})
+		record := session.HistoryRecord{Role: "meta", Content: turnContinueHistoryRecord, ClientID: turnID, At: now, Cause: snapshot.DriverRecoveryRecord}
+		var seq int
+		var err error
+		if snapshot.DriverRecoveryToken != "" {
+			seq, err = th.state.Sessions.AppendContinuationHistoryRecord(th.ID, record, snapshot.Control, *snapshot.ExecutionControlBaseline)
+		} else {
+			seq, err = th.state.Sessions.AppendHistoryRecordReturningSeq(th.ID, record)
+		}
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()
@@ -5010,6 +5094,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	}
 	th.History = history
 	th.cancel = cancel
+	th.shutdownCancel = func() { cancelCause(pluginhost.ErrExecutionShutdown) }
 	var turn Turn
 	resumed := false
 	if userAlreadyPersisted {
@@ -5020,15 +5105,28 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	} else {
 		turnID = turn.ID
 	}
+	if snapshot.DriverRecoveryToken != "" {
+		th.driverRecoveryTurn = turnID
+	}
 	turnRuntime := turnRuntimeSnapshotLocked(th).withPermissions(permissions)
 	turnRuntime.MessageRelation = providers.CloneMessageRelation(userMsg.Relation)
 	if isHumanUserMessage(userMsg) && userMsg.Seq > 0 {
 		turnRuntime.SourceMessage = &providers.MessageRef{SessionID: th.ID, Seq: userMsg.Seq}
 	}
+	// Keep plugin-event receipts separate from the human source consumed by
+	// personal actions and user-input authorization. This is the exact input
+	// persisted at admission, never a caller-provided history reference.
+	if userMsg.Role == "user" && userMsg.Seq > 0 && userMsg.Origin == pluginhost.SessionInputPlugin && userMsg.OriginID != "" && userMsg.ClientID != "" && !userMsg.Hidden {
+		turnRuntime.EventSourceMessage = &providers.MessageRef{SessionID: th.ID, Seq: userMsg.Seq}
+	}
+
 	turnRuntime.AdmissionPrincipal = snapshot.AdmissionPrincipal
 	turnRuntime.AdmissionDelegation = snapshot.AdmissionDelegation
 	turnRuntime.AdmissionAuthorization = snapshot.AdmissionAuthorization
 	turnRuntime.ResumeAfterTurnID = snapshot.ResumeAfterTurnID
+	turnRuntime.DriverRecoveryToken = snapshot.DriverRecoveryToken
+	turnRuntime.DriverRecoveryCaller = snapshot.DriverRecoveryCaller
+	turnRuntime.DriverRecoveryRecord = snapshot.DriverRecoveryRecord
 	turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
 	turnRuntime.ForceCompact = snapshot.ForceCompact
 	turnRuntime.CompactOnly = snapshot.CompactOnly

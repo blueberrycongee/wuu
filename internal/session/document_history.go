@@ -46,6 +46,10 @@ func historyHeadDocument(tx *persistence.Tx, id string) (int, error) {
 }
 
 func insertHistoryDocument(tx *persistence.Tx, id string, seq int, record HistoryRecord, now time.Time) error {
+	return insertHistoryDocumentWithState(tx, id, seq, record, now, true)
+}
+
+func insertHistoryDocumentWithState(tx *persistence.Tx, id string, seq int, record HistoryRecord, now time.Time, capture bool) error {
 	record = compactHistoryRecordForStorage(record)
 	record.Seq = seq
 	record.Role = strings.ToLower(strings.TrimSpace(record.Role))
@@ -54,6 +58,11 @@ func insertHistoryDocument(tx *persistence.Tx, id string, seq int, record Histor
 	}
 	if invocationID := strings.TrimSpace(record.ToolInvocationID); invocationID != "" {
 		if err := toolstate.Project(tx, id, invocationID, now.UnixMilli()); err != nil {
+			return err
+		}
+	}
+	if capture {
+		if err := captureHistoricalState(tx, id, seq, &record); err != nil {
 			return err
 		}
 	}

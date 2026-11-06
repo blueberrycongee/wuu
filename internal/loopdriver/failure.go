@@ -9,6 +9,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 )
 
 // EmptyAnswerError records a completed turn without text or tool calls. An empty
@@ -57,6 +58,9 @@ func (e *FailureError) Unwrap() error {
 			cause = context.DeadlineExceeded
 		}
 	}
+	if e.Failure.Code == toolerrors.UncertainEffect {
+		cause = toolerrors.Unknown(cause)
+	}
 	if recovery := e.Failure.Recovery; recovery != nil {
 		return &providers.StreamRecoveryError{Cause: cause, Recovery: providers.StreamRecoveryInfo{OperationID: recovery.OperationID, AttemptCount: recovery.AttemptCount, RetryCount: recovery.RetryCount, MaxAttempts: recovery.MaxAttempts, SubmissionCount: recovery.SubmissionCount, StopReason: recovery.StopReason, BudgetDimension: recovery.BudgetDimension, FailureCategory: providers.FailureCategory(e.Failure.Category)}}
 	}
@@ -89,6 +93,8 @@ func FailureToWire(err error) *pluginprotocol.DriverFailure {
 	}
 	var empty *EmptyAnswerError
 	switch {
+	case toolerrors.Kind(err) == toolerrors.UncertainEffect:
+		result.Code = toolerrors.UncertainEffect
 	case errors.As(err, &empty):
 		result.Code, result.StopReason = "empty_answer", empty.StopReason
 	case compact.IsSummaryOutputLimit(err):

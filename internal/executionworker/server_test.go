@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -486,5 +487,26 @@ func TestWorkerRejectsReboundEnvironmentIdentity(t *testing.T) {
 	data, _ = json.Marshal(config)
 	if _, err := server.Handle(context.Background(), "initialize", data); err == nil {
 		t.Fatal("worker accepted a different binding identity")
+	}
+}
+
+// An interpreter may catch a callback rejection; it cannot settle an unknown effect.
+func TestWorkerTransportUnknownCallbackCannotBeCaught(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_EXECUTION_TEST_WORKER", "1")
+	client := executionenv.NewClient([]string{os.Args[0], "-test.run=^TestWorkerTransportProcess$"}, os.Environ())
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := client.Call(ctx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: t.TempDir(), Session: "unknown-callback"}); err != nil {
+		t.Fatal(err)
+	}
+	request := executionenv.CodeRequest{Actor: "a", PermissionMode: "unconfined", Program: codemode.RunRequest{Tools: []codemode.ToolDefinition{{Name: "write"}}, Code: `try { await tools.write({}); } catch (_) {} return "caught";`}}
+	_, err := client.CallWithHandler(ctx, "run_code", request, func(context.Context, json.RawMessage) (json.RawMessage, error) {
+		return nil, toolerrors.Unknown(errors.New("lost external receipt"))
+	})
+	if toolerrors.Kind(err) != toolerrors.UncertainEffect {
+		t.Fatalf("callback uncertainty laundered: %v", err)
 	}
 }

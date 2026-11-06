@@ -208,6 +208,7 @@ func TestValidateCapabilityNegotiationHostFeatures(t *testing.T) {
 	}{
 		{name: "legacy"},
 		{name: "authority", required: []string{HostFeatureDocumentAuthority}},
+		{name: "historical-fork", required: []string{HostFeatureSessionForkSequence}},
 		{name: "unknown", required: []string{"unknown.feature.v1"}, reject: true},
 		{name: "wrong-version", required: []string{"state.documents.authority.v2"}, reject: true},
 		{name: "empty", required: []string{""}, reject: true},

@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -19,6 +20,8 @@ import (
 // gate also makes close wait for accepted calls before releasing their tools.
 type streamTurnGateway struct {
 	ctx                     context.Context
+	latestAdmittedInput     *providers.MessageRef
+	latestAdmittedEvent     *providers.MessageRef
 	cancel                  context.CancelFunc
 	gate                    chan struct{}
 	modelSteps              []providers.ModelStepUsage
@@ -36,8 +39,10 @@ type streamTurnGateway struct {
 	policy                  *compactionservice.Policy
 	toolGate                *ToolExecutionGate
 	serialTools             bool
+	resumed                 bool
 	ready                   bool
 	closed                  bool
+	closeDone               chan struct{}
 	complete                bool
 	frozen                  ToolSurfaceFreezer
 	step                    int
@@ -56,6 +61,8 @@ type streamTurnGateway struct {
 	proposedContextHash     string
 	nextModelParentID       string
 	postToolContext         []ContextSegment
+	compactions             map[string]chan struct{}
+	compactionCancels       map[string]context.CancelFunc
 	completed               LoopResult
 }
 
@@ -95,9 +102,9 @@ func (g *streamTurnGateway) acquire(ctx context.Context) (context.Context, func(
 		return nil, nil, err
 	}
 	// Preserve caller cancellation and the execution's identity/context values.
-	callCtx, cancel := context.WithCancel(g.ctx)
-	stop := context.AfterFunc(ctx, cancel)
-	return callCtx, func() { stop(); cancel(); g.gate <- struct{}{} }, nil
+	callCtx, cancel := context.WithCancelCause(g.ctx)
+	stop := context.AfterFunc(ctx, func() { cancel(context.Cause(ctx)) })
+	return callCtx, func() { stop(); cancel(context.Canceled); g.gate <- struct{}{} }, nil
 }
 
 func (g *streamTurnGateway) prepare(ctx context.Context) error {
@@ -195,6 +202,10 @@ func (g *streamTurnGateway) CallModelWithTools(ctx context.Context, request prov
 }
 
 func (g *streamTurnGateway) callModel(ctx context.Context, request providers.ChatRequest, batchID string) (loopdriver.ModelRound, error) {
+	// enter retains host execution authority rather than arbitrary caller values.
+	// Capture this validated budget reduction before it replaces the context.
+	singleAttempt := loopdriver.ModelSingleAttempt(ctx)
+	requestID := loopdriver.ModelRequestID(ctx)
 	ctx, leave, err := g.enter(ctx)
 	if err != nil {
 		return loopdriver.ModelRound{}, err
@@ -210,6 +221,9 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if len(g.streamedBatches) != 0 {
 		return loopdriver.ModelRound{}, errors.New("join the pending streaming tool batch before calling another model")
 	}
+	if err := g.runner.ToolLedger.RequireSettled(ctx); err != nil {
+		return loopdriver.ModelRound{}, err
+	}
 	if g.client == nil {
 		return loopdriver.ModelRound{}, errors.New("model client is unavailable")
 	}
@@ -220,6 +234,11 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		return loopdriver.ModelRound{}, err
 	}
 	request = cloneDriverRequest(request)
+	if singleAttempt {
+		// cloneDriverRequest discarded caller operation metadata. This limit is
+		// a host-approved reduction; identity is created below by the host.
+		request.Operation.AttemptLimit = 1
+	}
 	request.StepIndex = g.step
 	round := loopdriver.ModelRound{}
 	if err := validateTransformedRequest(request); err != nil {
@@ -246,9 +265,11 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if err != nil {
 		return round, err
 	}
-	if g.runner.ModelInputReceiptStore != nil {
+	round.OperationID = request.Operation.ID
+	if g.runner.ModelInputReceiptStore != nil && (!g.runner.ModelReceiptRequestOnly || requestID != "") {
 		_, sections := g.modelRunner().systemPromptSnapshot()
 		receipt := modelInputReceipt(request, loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
+		receipt.RequestID = requestID
 		if err := g.runner.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
 			return round, fmt.Errorf("persist model input receipt: %w", err)
 		}
@@ -472,6 +493,11 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		}
 		batch.Calls = streamed.calls
 	}
+	if !joining {
+		if err := g.runner.ToolLedger.RequireSettled(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if g.runner.Tools == nil {
 		return nil, errors.New("tool executor is unavailable")
 	}
@@ -490,6 +516,14 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	declared, err := pendingToolCallDeclaration(transcript, batch.Calls)
 	if err != nil {
 		return nil, err
+	}
+	if batch.BeforeDispatch != nil {
+		if joining {
+			return nil, errors.New("streamed tool effects cannot acquire retrospective approval")
+		}
+		if err := batch.BeforeDispatch(ctx, loopdriver.ExecutionContextFromContext(g.ctx)); err != nil {
+			return nil, err
+		}
 	}
 	g.batches[batch.ID] = true
 	delete(g.streamedBatches, batch.ID)
@@ -515,12 +549,23 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		}
 	}
 	execution := loopdriver.ExecutionContextFromContext(g.ctx)
+	var admitted []toolledger.Invocation
+	if g.runner.ToolLedger != nil && g.runner.DriverCheckpointStore != nil && g.toolRecoveryScope() != "" && !joining && !batch.RecoveryBlocked {
+		policies := make([]toolledger.ReplayPolicy, len(batch.Calls))
+		for i, call := range batch.Calls {
+			policies[i] = toolReplayPolicy(g.runner.Tools, call)
+		}
+		admitted, err = g.runner.ToolLedger.AdmitBatch(ctx, execution.ExecutionID+"/"+batch.ID, g.toolRecoveryScope(), g.step, batch.Calls, policies)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if g.runner.SelectedToolBatch != nil {
 		if streamed.runtime != nil {
 			defer g.releaseToolRuntimes([]*TurnToolRuntime{streamed.runtime})
 		}
 		capacity := g.toolGate.capacity
-		messages, segments, runErr := executeSelectedToolBatch(ctx, g.runner.SelectedToolBatch, toolbatch.Request{ID: batch.ID, Calls: batch.Calls, Serial: g.serialTools, MaxParallel: capacity}, ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx}, onResult, streamed.runtime)
+		messages, segments, runErr := executeSelectedToolBatch(ctx, g.runner.SelectedToolBatch, toolbatch.Request{ID: batch.ID, Calls: batch.Calls, Serial: g.serialTools, MaxParallel: capacity}, ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, PreparedInvocations: admitted, StepIndex: g.step, RunContext: ctx}, onResult, streamed.runtime)
 		g.postToolContext = append(g.postToolContext, segments...)
 		g.appendMessages(messages...)
 		g.contextTokens += estimateMessages(messages)
@@ -528,7 +573,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	}
 	runtime := streamed.runtime
 	if runtime == nil {
-		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
+		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, PreparedInvocations: admitted, StepIndex: g.step, RunContext: ctx})
 	}
 	defer g.releaseToolRuntimes([]*TurnToolRuntime{runtime})
 	runtime.SetResultCallback(onResult)
@@ -549,6 +594,9 @@ func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.
 	}
 	defer leave()
 	if err := g.prepare(ctx); err != nil {
+		return loopdriver.TurnReceipt{}, err
+	}
+	if err := g.runner.ToolLedger.RequireSettled(ctx); err != nil {
 		return loopdriver.TurnReceipt{}, err
 	}
 	if len(g.streamedBatches) != 0 {
@@ -632,9 +680,27 @@ func (g *streamTurnGateway) result(id string) (LoopResult, bool) {
 func (g *streamTurnGateway) close() {
 	g.cancel()
 	<-g.gate
+	if g.closed {
+		done := g.closeDone
+		g.gate <- struct{}{}
+		<-done
+		return
+	}
+	g.closed = true
+	g.closeDone = make(chan struct{})
+	defer close(g.closeDone)
+	var proposals []chan struct{}
+	for _, done := range g.compactions {
+		proposals = append(proposals, done)
+	}
+	g.gate <- struct{}{}
+	// Proposals retain the model/provider resources but never the turn gate.
+	for _, done := range proposals {
+		<-done
+	}
+	<-g.gate
 	defer func() { g.gate <- struct{}{} }()
-	if !g.closed {
-		g.closed = true
+	{
 		for runtime := range g.toolRuntimes {
 			runtime.Cancel()
 		}
@@ -704,4 +770,83 @@ func assistantMessageFromStep(result StepResult) providers.ChatMessage {
 		finish = providers.NormalizeFinishReason(result.StopReason, result.Truncated, len(result.ToolCalls) > 0)
 	}
 	return providers.ChatMessage{Role: "assistant", Content: result.Content, Images: result.Images, ProviderItems: result.ProviderItems, Phase: result.Phase, ProviderItemID: result.ProviderItemID, ProviderItemProvider: result.ProviderItemProvider, ProviderItemModel: result.ProviderItemModel, ReasoningContent: result.ReasoningContent, ReasoningBlocks: cloneReasoningBlocks(result.ReasoningBlocks), ToolCalls: result.ToolCalls, FinishReason: finish, StopReason: result.StopReason, Truncated: result.Truncated}
+}
+
+func (g *streamTurnGateway) WaitExecution() loopdriver.ExecutionContext {
+	return loopdriver.ExecutionContextFromContext(g.ctx)
+}
+
+func (g *streamTurnGateway) ReserveWait(ctx context.Context, batch loopdriver.ToolBatch, reserve func(context.Context, loopdriver.ExecutionContext, bool) error) error {
+	ctx, leave, err := g.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
+	if err := g.prepare(ctx); err != nil {
+		return err
+	}
+	if batch.ID == "" || len(batch.Calls) == 0 {
+		return errors.New("wait requires a nonempty tool batch")
+	}
+	if g.batches[batch.ID] || len(g.streamedBatches) != 0 {
+		return errors.New("batch may already have started")
+	}
+	if err := providers.ValidateAssistantToolCalls(batch.Calls); err != nil {
+		return err
+	}
+	for _, call := range batch.Calls {
+		if g.toolCalls[call.ID] {
+			return errors.New("tool call may already have started")
+		}
+	}
+	if _, err := pendingToolCallDeclaration(append(providers.CloneChatMessages(g.baseHistory), g.produced...), batch.Calls); err != nil {
+		return err
+	}
+	fresh, err := pendingToolCallDeclaration(g.produced, batch.Calls)
+	if err != nil {
+		return err
+	}
+	return reserve(ctx, loopdriver.ExecutionContextFromContext(g.ctx), fresh)
+}
+
+// WaitInput derives references from admitted host input, never driver JSON or
+// rewritten context. Input waits exclude plugin-generated user-role messages.
+func (g *streamTurnGateway) WaitInput(ctx context.Context, kind string) (loopdriver.ExecutionContext, error) {
+	ctx, leave, err := g.enter(ctx)
+	if err != nil {
+		return loopdriver.ExecutionContext{}, err
+	}
+	defer leave()
+	execution := loopdriver.ExecutionContextFromContext(g.ctx)
+	if kind == "event" && g.latestAdmittedEvent != nil {
+		ref := *g.latestAdmittedEvent
+		execution.SourceMessage = &ref
+		return execution, nil
+	}
+	if kind == "input" && g.latestAdmittedInput != nil {
+		ref := *g.latestAdmittedInput
+		execution.SourceMessage = &ref
+		return execution, nil
+	}
+	source := execution.SourceMessage
+	if kind == "event" && execution.EventSourceMessage != nil {
+		source = execution.EventSourceMessage
+	}
+	execution.SourceMessage = nil
+	if source != nil && source.SessionID == execution.SessionID {
+		for _, message := range g.input.Messages {
+			if message.Seq == source.Seq && ((kind == "event" && admittedWaitEvent(message)) || (kind == "input" && message.Role == "user" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user"))) {
+				ref := *source
+				execution.SourceMessage = &ref
+				break
+			}
+		}
+	}
+	return execution, nil
+}
+
+// ReadOnly describes plugin-event presentation, not whether the host admitted
+// input. Only an actual input source/receipt may call this provenance predicate.
+func admittedWaitEvent(message providers.ChatMessage) bool {
+	return message.Role == "user" && message.Seq > 0 && !message.Hidden && (!message.ReadOnly || (message.Origin == "plugin" && message.OriginID != "" && message.ClientID != ""))
 }

@@ -61,7 +61,7 @@ func (r *StreamRunner) compactionDescription() compactionservice.DescribeRequest
 
 func compactSelected(ctx context.Context, client *compactionservice.Client, policy compactionservice.Policy, request compactionservice.Request, cfg LoopConfig) (result []providers.ChatMessage, resultErr error) {
 	request.PolicyKey = policy.Key
-	if !policy.NotesEnabled {
+	if !policy.NotesEnabled || request.Budget.Instructions != "" {
 		out, err := client.Compact(ctx, request)
 		return out.Messages, err
 	}

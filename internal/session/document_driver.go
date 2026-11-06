@@ -40,7 +40,7 @@ func (s *documentStore) BindDriver(sessionID string, binding pluginprotocol.Driv
 		if err != nil {
 			return err
 		}
-		if found && prior != binding {
+		if found && !prior.CanUpgradeTo(binding) {
 			return fmt.Errorf("loop driver binding requires %+v; requested %+v", prior, binding)
 		}
 		var checkpoint DriverCheckpointRecord
@@ -51,7 +51,7 @@ func (s *documentStore) BindDriver(sessionID string, binding pluginprotocol.Driv
 		if checkpointFound && (checkpoint.ContractVersion != binding.ContractVersion || checkpoint.DriverID != binding.DriverID || checkpoint.DriverVersion != binding.DriverVersion) {
 			return fmt.Errorf("loop driver checkpoint requires %s@%s contract %d; requested binding %+v", checkpoint.DriverID, checkpoint.DriverVersion, checkpoint.ContractVersion, binding)
 		}
-		if found {
+		if found && prior == binding {
 			return nil
 		}
 		return tx.Put(documentNamespace("session_driver_bindings"), sessionID, binding)
@@ -167,6 +167,32 @@ func (s *documentStore) SaveModelInputReceipt(sessionID string, record ModelInpu
 				return fmt.Errorf("model input receipt %q changed after persistence", record.OperationID)
 			}
 		} else {
+			var input struct {
+				RequestID string `json:"request_id"`
+			}
+			if err := json.Unmarshal(record.Payload, &input); err != nil {
+				return err
+			}
+			if input.RequestID != "" {
+				rows, err := readModelReceiptDocuments(tx, sessionID)
+				if err != nil {
+					return err
+				}
+				for _, row := range rows {
+					if row.DriverID != record.DriverID {
+						continue
+					}
+					var priorInput struct {
+						RequestID string `json:"request_id"`
+					}
+					if err := json.Unmarshal(row.Payload, &priorInput); err != nil {
+						return err
+					}
+					if priorInput.RequestID == input.RequestID {
+						return errors.New("model request id already belongs to another operation; receipt lookup does not authorize replay")
+					}
+				}
+			}
 			stored := modelReceiptDocument{record.OperationID, record.ContractVersion, record.DriverID, record.DriverVersion, record.Payload, record.CreatedAt}
 			if err := tx.Put(documentNamespace("session_model_input_receipts"), key, stored); err != nil {
 				return err

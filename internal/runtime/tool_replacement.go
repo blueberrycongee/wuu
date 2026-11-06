@@ -288,7 +288,7 @@ func validateToolReplacements(root string, host *pluginhost.Host, bindings map[s
 		if tool.Registration.Activity != nil && tool.Registration.Activity.Orchestrator {
 			return fmt.Errorf("replacement for %q cannot be an orchestrator", name)
 		}
-		d := providers.ToolDefinition{Name: name, Description: tool.Registration.Description, InputSchema: tool.Registration.InputSchema, DirectOnly: tool.Registration.DirectOnly}
+		d := providers.ToolDefinition{Name: name, Description: tool.Registration.Description, InputSchema: tool.Registration.InputSchema, DirectOnly: tool.Registration.DirectOnly, ReplaySafe: tool.Registration.ReplaySafe}
 		replacements[name] = func(original tools.Tool) tools.Tool { return &replacementTool{original: original, definition: d} }
 	}
 	return kit.SetNativeToolReplacements(replacements)

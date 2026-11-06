@@ -110,9 +110,9 @@ func (b *batchResources) claimSettlement(run *toolRun, result toolresult.Result,
 	if b.runtime.ledger != nil {
 		// Rejection is an invocation outcome, not a tool effect. Enter the
 		// ledger lifecycle before settling, just like argument-validation errors.
-		err = b.runtime.ledger.Start(ctx, run.invocationID)
+		err = b.runtime.ledger.StartAttempt(ctx, run.invocationID, run.invocationAttempt)
 		if err == nil {
-			err = b.runtime.ledger.Settle(ctx, run.invocationID, result)
+			err = b.runtime.ledger.SettleAttempt(ctx, run.invocationID, run.invocationAttempt, result)
 		}
 	}
 	run.complete(result, err)

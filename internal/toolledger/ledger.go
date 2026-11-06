@@ -82,6 +82,7 @@ func (e *ReplayBlockedError) ReplayReasonCode() string {
 }
 
 type Invocation struct {
+	Attempt              uint64
 	ParentInvocationID   string
 	ID                   string
 	BatchID              string

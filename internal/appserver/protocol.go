@@ -2632,7 +2632,9 @@ func (turn Turn) MarshalJSON() ([]byte, error) {
 }
 
 type TurnError struct {
-	Message string `json:"message"`
+	// Interruption is set only by the host, never copied from a provider failure.
+	Interruption string `json:"interruption,omitempty"`
+	Message      string `json:"message"`
 	// Structured error fields, filled in by BuildTurnError from the typed
 	// error (HTTPError, StreamError) and the agentcontrol.ClassifyError
 	// classifier. The front-end prefers these over the raw `message` for

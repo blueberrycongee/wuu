@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -81,7 +82,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.CodeJournalCapability}})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -101,7 +102,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 			}
 		}
 		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability}})
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "capabilities": []string{executionenv.ProcessStartCapability, executionenv.CodeJournalCapability}})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -293,27 +294,60 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 		go func(req executionenv.Request) {
 			defer running.Done()
 			defer stop()
-			bridge := callbackExecutor{invoke: func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+			var callbackMu sync.Mutex
+			var callbackUnknown error
+			invoke := func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				id := rand.Text()
 				reply := make(chan executionenv.Response, 1)
 				mu.Lock()
 				replies[id] = reply
 				mu.Unlock()
 				defer func() { mu.Lock(); delete(replies, id); mu.Unlock() }()
-				data, _ := json.Marshal(call)
 				encode(executionenv.Response{ID: id, ParentID: req.ID, Method: "tool", Data: data})
 				select {
 				case response := <-reply:
 					if response.Error != "" {
-						return toolresult.Result{}, errors.New(response.Error)
+						err := errors.New(response.Error)
+						if response.ErrorKind != "" {
+							typed := toolerrors.New(response.ErrorKind, response.Error)
+							if response.ErrorKind == toolerrors.UncertainEffect {
+								callbackMu.Lock()
+								callbackUnknown = typed
+								callbackMu.Unlock()
+							}
+							return nil, typed
+						}
+						return nil, err
 					}
-					var result toolresult.Result
-					err := json.Unmarshal(response.Data, &result)
-					return result, err
+					return response.Data, nil
 				case <-ctx.Done():
-					return toolresult.Result{}, ctx.Err()
+					return nil, ctx.Err()
 				}
+			}
+			var bridge toolctx.NestedExecutor = callbackExecutor{invoke: func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+				data, err := json.Marshal(call)
+				if err != nil {
+					return toolresult.Result{}, err
+				}
+				raw, err := invoke(ctx, data)
+				if err != nil {
+					return toolresult.Result{}, err
+				}
+				var result toolresult.Result
+				err = json.Unmarshal(raw, &result)
+				return result, err
 			}}
+			if req.Method == "run_code" {
+				var request struct {
+					CodeJournal bool `json:"code_journal"`
+				}
+				if json.Unmarshal(req.Data, &request) == nil && request.CodeJournal {
+					bridge = callbackJournalExecutor{NestedExecutor: bridge, invoke: invoke}
+				}
+			}
 			data, err := server.Handle(toolctx.WithNestedExecutor(callCtx, bridge), req.Method, req.Data)
 			if req.Method == "initialize" && err == nil {
 				subscribe.Do(func() {
@@ -336,9 +370,18 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 					}()
 				})
 			}
+			// Guest code can catch callback exceptions, but cannot turn a lost
+			// external receipt into an authoritative successful result.
+			callbackMu.Lock()
+			if callbackUnknown != nil {
+				err = callbackUnknown
+				data = nil
+			}
+			callbackMu.Unlock()
 			response := executionenv.Response{ID: req.ID, Data: data}
 			if err != nil {
 				response.Error = err.Error()
+				response.ErrorKind = toolerrors.Kind(err)
 			}
 			mu.Lock()
 			delete(pending, req.ID)
@@ -357,4 +400,28 @@ type callbackExecutor struct {
 
 func (e callbackExecutor) Invoke(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	return e.invoke(ctx, call)
+}
+
+// Only an advertised, host-bound parent scope receives the journal capability.
+// Ordinary programs keep the tool-only bridge and cannot opt in from JavaScript.
+type callbackJournalExecutor struct {
+	toolctx.NestedExecutor
+	invoke func(context.Context, json.RawMessage) (json.RawMessage, error)
+}
+
+func (e callbackJournalExecutor) CodeJournal(ctx context.Context, request toolctx.CodeJournalRequest) (toolctx.CodeJournalResponse, error) {
+	data, err := json.Marshal(executionenv.CodeJournalCallback{Kind: "code_journal", Request: request})
+	if err != nil {
+		return toolctx.CodeJournalResponse{}, err
+	}
+	raw, err := e.invoke(ctx, data)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			err = toolerrors.Unknown(err)
+		}
+		return toolctx.CodeJournalResponse{}, err
+	}
+	var response toolctx.CodeJournalResponse
+	err = json.Unmarshal(raw, &response)
+	return response, toolerrors.Unknown(err)
 }

@@ -298,7 +298,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		definitions := executor.Definitions()
 		view := ListResult{Tools: make([]Definition, 0, len(definitions)), Catalog: []tools.DeferredToolCatalogEntry{}}
 		for _, d := range definitions {
-			view.Tools = append(view.Tools, Definition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable})
+			view.Tools = append(view.Tools, Definition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, ReplaySafe: d.ReplaySafe, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable})
 		}
 		if kit := backend.Toolkit; kit != nil {
 			view.Catalog = kit.DeferredToolCatalogEntries()
@@ -319,7 +319,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 			m, found := provider.ToolMetadata(input.Call)
 			resolved.Found = found
 			if found {
-				resolved.Metadata = &Metadata{Orchestrator: m.Orchestrator, ReadOnly: m.ReadOnly, ConcurrencySafe: m.ConcurrencySafe, Destructive: m.Destructive, Risk: m.Risk, Reason: m.Reason}
+				resolved.Metadata = &Metadata{ReplaySafe: m.ReplaySafe, Orchestrator: m.Orchestrator, ReadOnly: m.ReadOnly, ConcurrencySafe: m.ConcurrencySafe, Destructive: m.Destructive, Risk: m.Risk, Reason: m.Reason}
 			}
 		}
 		if provider, ok := executor.(agent.ToolSupportProvider); ok {

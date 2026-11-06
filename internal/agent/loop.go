@@ -879,7 +879,7 @@ func RunToolLoop(
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("persist request context: %w", err)
 			}
 		}
-		if cfg.ModelInputReceiptStore != nil {
+		if cfg.ModelInputReceiptStore != nil && !cfg.ModelReceiptRequestOnly {
 			receipt := modelInputReceipt(req,
 				loopdriver.ExecutionContext{SessionID: cfg.SessionID, ExecutionID: cfg.ExecutionID},
 				loopdriver.Descriptor{ID: cfg.DriverID, Version: cfg.DriverVersion}, cfg.SystemPromptSections, historyRewritten)

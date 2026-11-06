@@ -19,6 +19,8 @@ const (
 )
 
 type Batch struct {
+	// RecoveryScope identifies the driver binding that admitted the complete immutable batch.
+	RecoveryScope string `json:",omitempty"`
 	ID            string
 	OwnerID       string
 	OperationID   string
@@ -31,6 +33,8 @@ type Batch struct {
 }
 
 type Invocation struct {
+	// Attempt fences finalizers from an executor replaced during exact recovery.
+	Attempt              uint64 `json:",omitempty"`
 	ID                   string
 	BatchID              string
 	ParentInvocationID   string
