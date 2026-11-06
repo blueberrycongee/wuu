@@ -6202,13 +6202,15 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	rows := scan.TokenRows
 
 	metrics, days := aggregateUsageRows(rows, loc)
+	engineBreakdowns, outsideRows := s.buildEngineBreakdowns(binding.Sessions, rows)
+	days = mergeOutsideUsageDays(days, outsideRows, loc)
 
 	response := SettingsUsageResponse{
 		TotalSessions:    countUsageSessions(rows),
 		GeneratedAt:      now.Format(time.RFC3339Nano),
 		Metrics:          metrics,
 		ModelBreakdowns:  buildUsageModelBreakdowns(rows),
-		EngineBreakdowns: s.buildEngineBreakdowns(binding.Sessions, rows),
+		EngineBreakdowns: engineBreakdowns,
 		SkillUsage:       scan.Skills,
 		Days:             days,
 	}
@@ -6272,7 +6274,10 @@ const engineUsageScanTimeout = 30 * time.Second
 // engines like the ACP family whose turns report no token usage — so a bound
 // but unreported engine still surfaces with zero tokens. A ledger that fails
 // to scan leaves Outside nil rather than reporting partial data as complete.
-func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) []SettingsEngineUsage {
+// buildEngineBreakdowns also returns the outside-Wuu ledger rows that survived
+// exclusion and engine failure filtering, so the daily series can color the
+// same days the breakdown counts.
+func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) ([]SettingsEngineUsage, []engineusage.Row) {
 	sessions, err := store.List(0)
 	if err != nil {
 		providers.DebugLogf("usage engine breakdown: list sessions: %v", err)
@@ -6328,10 +6333,12 @@ func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.Toke
 		providers.DebugLogf("usage engine breakdown: scan %s ledger: %v", engine, scanErr)
 	}
 	outsideSessions := make(map[string]map[string]struct{})
+	var outsideRows []engineusage.Row
 	for _, r := range scanned.Rows {
 		if _, failed := scanned.Failed[r.Engine]; failed {
 			continue
 		}
+		outsideRows = append(outsideRows, r)
 		b := get(r.Engine)
 		if b.Outside == nil {
 			b.Outside = &EngineUsageSum{}
@@ -6377,7 +6384,59 @@ func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.Toke
 		}
 		return out[i].Engine < out[j].Engine
 	})
-	return out
+	return out, outsideRows
+}
+
+// mergeOutsideUsageDays folds outside-Wuu ledger rows into the daily series so
+// the trend and heatmap color every day the page counts. Outside totals land
+// on their own field — the in-Wuu token fields, hit rate, turns, and agents
+// stay exactly what aggregateUsageRows computed.
+func mergeOutsideUsageDays(days []SettingsUsageDay, rows []engineusage.Row, loc *time.Location) []SettingsUsageDay {
+	type outsideBucket struct {
+		sum      EngineUsageSum
+		sessions map[string]struct{}
+	}
+	byDate := make(map[string]*outsideBucket)
+	for _, r := range rows {
+		if r.At.IsZero() {
+			continue
+		}
+		date := r.At.In(loc).Format("2006-01-02")
+		bucket := byDate[date]
+		if bucket == nil {
+			bucket = &outsideBucket{}
+			byDate[date] = bucket
+		}
+		bucket.sum.InputTokens += r.InputTokens
+		bucket.sum.OutputTokens += r.OutputTokens
+		bucket.sum.CacheCreationTokens += r.CacheCreationTokens
+		bucket.sum.CacheReadTokens += r.CacheReadTokens
+		if r.SessionID != "" {
+			if bucket.sessions == nil {
+				bucket.sessions = map[string]struct{}{}
+			}
+			bucket.sessions[r.SessionID] = struct{}{}
+		}
+	}
+	if len(byDate) == 0 {
+		return days
+	}
+
+	index := make(map[string]int, len(days))
+	for i, day := range days {
+		index[day.Date] = i
+	}
+	for date, bucket := range byDate {
+		bucket.sum.Sessions = len(bucket.sessions)
+		sum := bucket.sum
+		if i, ok := index[date]; ok {
+			days[i].Outside = &sum
+		} else {
+			days = append(days, SettingsUsageDay{Date: date, Outside: &sum})
+		}
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
+	return days
 }
 
 func engineUsageDisplayName(id string) string {

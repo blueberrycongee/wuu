@@ -2958,7 +2958,10 @@ export type SettingsUsageMetrics = {
 // SettingsUsageDay is one calendar day of token activity, bucketed by
 // the token_usage row's At timestamp. Days are emitted in ascending
 // date order; the desktop fills in the heatmap gaps locally so the
-// backend only ships days that actually saw activity.
+// backend only ships days that actually saw activity. The token fields
+// and turns/agents cover Wuu's own trail only; outside holds the same
+// day's usage the engine ledgers recorded outside Wuu, so a chart can
+// color every day the page counts without mixing the two ledgers' fields.
 export type SettingsUsageDay = {
   date: string;
   input_tokens: number;
@@ -2968,6 +2971,7 @@ export type SettingsUsageDay = {
   cache_hit_rate: number;
   turns: number;
   agents: number;
+  outside?: EngineUsageSum;
 };
 
 export type SkillUsage = {

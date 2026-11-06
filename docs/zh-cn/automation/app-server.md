@@ -261,7 +261,7 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 
 ## 查询用量概览
 
-`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。桌面「用量」页使用的完整快照 `settings/usage` 接受同样的可选 `timezone`；桌面端会带上自己的时区，让每天的柱子落在日历对应的那一天。其中的 `engine_breakdowns` 把同一份 Wuu 内用量按会话绑定的 Agent 引擎归桶，并为每个引擎增加 `outside` 一侧——从引擎自己的本地账本（`~/.claude` 转录、`~/.codex` rollout、OpenCode 数据库）读出的 token 合计，减去 Wuu 已认领的原生会话，两列不会重复计数。没有可读本地账本或扫描失败的引擎不返回 `outside`。
+`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。桌面「用量」页使用的完整快照 `settings/usage` 接受同样的可选 `timezone`；桌面端会带上自己的时区，让每天的柱子落在日历对应的那一天。其中的 `engine_breakdowns` 把同一份 Wuu 内用量按会话绑定的 Agent 引擎归桶，并为每个引擎增加 `outside` 一侧——从引擎自己的本地账本（`~/.claude` 转录、`~/.codex` rollout、OpenCode 数据库）读出的 token 合计，减去 Wuu 已认领的原生会话，两列不会重复计数。没有可读本地账本或扫描失败的引擎不返回 `outside`。同样的外部合计也会落到 `days[].outside`，趋势图和热力图因此能给页面统计到的每一天着色；每天的 Wuu 内 token 字段、命中率、轮次和 agents 保持不变。
 
 ## 探查协议
 

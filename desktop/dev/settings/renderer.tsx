@@ -213,7 +213,10 @@ function isoDay(back: number): string {
 function sampleUsage(): SettingsUsageResponse {
   const days: SettingsUsageDay[] = Array.from({ length: 300 }, (_, back) => {
     const tokens = back % 7 === 5 || back % 11 === 3 ? 0 : ((back * 37) % 23 + 1) * 9_000;
-    return { date: isoDay(back), input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0 };
+    const outside = back % 5 === 4 && tokens > 0
+      ? { input_tokens: Math.round(tokens * 1.8), output_tokens: Math.round(tokens * 0.45), cache_creation_tokens: 0, cache_read_tokens: Math.round(tokens * 5.4), sessions: 2 }
+      : undefined;
+    return { date: isoDay(back), input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0, outside };
   }).filter((day) => day.turns > 0).reverse();
   const sum = (key: "input_tokens" | "output_tokens" | "cache_read_tokens") => days.reduce((total, day) => total + day[key], 0);
   const input = sum("input_tokens"), output = sum("output_tokens"), cacheRead = sum("cache_read_tokens");

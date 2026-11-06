@@ -847,6 +847,7 @@ export const enUS = {
   "settings.pastYear": "Past year",
   "settings.usageSince": "Since {date}",
   "settings.usageTrendOnDate": "{date}\nTotal {total} · Input and cache {input} · Output {output}",
+  "settings.usageDayWithOutside": "{date}\nTotal {total} · In Wuu {inWuu} · Outside Wuu {outside}",
   "settings.skillCalls": "Skill calls",
   "settings.noSkillUsage": "No skill calls yet",
   "settings.less": "Less",

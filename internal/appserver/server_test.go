@@ -10686,11 +10686,12 @@ func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testin
 
 	// A fake claude ledger: the bound session file must be excluded from
 	// "outside" because the in-Wuu row above already counts it; the free
-	// session file becomes outside usage.
+	// session file becomes outside usage on its own day.
 	claudeDir := filepath.Join(t.TempDir(), "projects")
-	claudeLine := func(sessionID string, input, output int) string {
+	outsideDay := now.Add(-48 * time.Hour)
+	claudeLine := func(sessionID string, at time.Time, input, output int) string {
 		line, err := json.Marshal(map[string]any{
-			"type": "assistant", "timestamp": now.Format(time.RFC3339Nano), "sessionId": sessionID,
+			"type": "assistant", "timestamp": at.Format(time.RFC3339Nano), "sessionId": sessionID,
 			"message": map[string]any{"model": "claude-sonnet-4-5", "usage": map[string]any{
 				"input_tokens": input, "output_tokens": output,
 			}},
@@ -10701,8 +10702,8 @@ func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testin
 		return string(line)
 	}
 	for name, lines := range map[string][]string{
-		"sess-bound.jsonl": {claudeLine("sess-bound", 999, 999)},
-		"sess-free.jsonl":  {claudeLine("sess-free", 300, 120)},
+		"sess-bound.jsonl": {claudeLine("sess-bound", outsideDay, 999, 999)},
+		"sess-free.jsonl":  {claudeLine("sess-free", outsideDay, 300, 120)},
 	} {
 		path := filepath.Join(claudeDir, "-tmp", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -10748,6 +10749,34 @@ func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testin
 	}
 	if claude.Outside == nil || claude.Outside.TotalTokens() != 420 || claude.Outside.Sessions != 1 {
 		t.Fatalf("claude outside should hold only the unbound session: %+v", claude.Outside)
+	}
+
+	// The same outside rows land on the daily series: the bound session's
+	// tokens stay excluded, and the outside-only day keeps in-Wuu fields at
+	// zero rather than inventing activity.
+	daysByDate := make(map[string]SettingsUsageDay, len(result.Days))
+	for _, day := range result.Days {
+		daysByDate[day.Date] = day
+	}
+	outsideDate := outsideDay.Format("2006-01-02")
+	day, ok := daysByDate[outsideDate]
+	if !ok || day.Outside == nil {
+		t.Fatalf("outside day %s missing from daily series: %+v", outsideDate, result.Days)
+	}
+	if day.Outside.TotalTokens() != 420 || day.Outside.Sessions != 1 {
+		t.Fatalf("outside day should hold only the unbound session: %+v", day.Outside)
+	}
+	if day.InputTokens != 0 || day.OutputTokens != 0 || day.Turns != 0 {
+		t.Fatalf("outside-only day must keep in-Wuu fields at zero: %+v", day)
+	}
+	inWuuDate := now.Add(-time.Hour).Format("2006-01-02")
+	if day, ok := daysByDate[inWuuDate]; !ok || day.Outside != nil || day.InputTokens+day.OutputTokens != 220 {
+		t.Fatalf("in-Wuu day %s must keep its own trail untouched: %+v", inWuuDate, day)
+	}
+	for i := 1; i < len(result.Days); i++ {
+		if result.Days[i].Date < result.Days[i-1].Date {
+			t.Fatalf("days must stay date-ascending after merge: %+v", result.Days)
+		}
 	}
 }
 

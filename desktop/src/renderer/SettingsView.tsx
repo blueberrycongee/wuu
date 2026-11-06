@@ -1777,12 +1777,34 @@ function formatUsageDayTitle(
   if (!hasUsageDayData(day)) {
     return t("settings.noUsageOnDate", { date: day.date });
   }
+  const outsideTotal = outsideDayTotal(day);
+  if (outsideTotal !== undefined) {
+    return t("settings.usageDayWithOutside", {
+      date: day.date,
+      total: formatNumber(usageTokenTotal(day)),
+      inWuu: formatNumber(inWuuDayTotal(day)),
+      outside: formatNumber(outsideTotal),
+    });
+  }
   return t("settings.usageTrendOnDate", {
     date: day.date,
     total: formatNumber(usageTokenTotal(day)),
     input: formatNumber(day.input_tokens + day.cache_read_tokens + day.cache_creation_tokens),
     output: formatNumber(day.output_tokens),
   });
+}
+
+function inWuuDayTotal(day: SettingsUsageDay): number {
+  return day.input_tokens + day.output_tokens + day.cache_creation_tokens + day.cache_read_tokens;
+}
+
+function outsideDayTotal(day: SettingsUsageDay): number | undefined {
+  const outside = day.outside;
+  if (!outside) {
+    return undefined;
+  }
+  const total = outside.input_tokens + outside.output_tokens + outside.cache_creation_tokens + outside.cache_read_tokens;
+  return total > 0 || outside.sessions > 0 ? total : undefined;
 }
 
 function hasUsageDayData(day: SettingsUsageDay): boolean {
@@ -1792,7 +1814,8 @@ function hasUsageDayData(day: SettingsUsageDay): boolean {
     day.cache_creation_tokens > 0 ||
     day.cache_read_tokens > 0 ||
     day.turns > 0 ||
-    day.agents > 0
+    day.agents > 0 ||
+    outsideDayTotal(day) !== undefined
   );
 }
 
@@ -1803,6 +1826,15 @@ function formatHeatmapTitle(
 ): string {
   if (!hasUsageDayData(day)) {
     return t("settings.noUsageOnDate", { date: day.date });
+  }
+  const outsideTotal = outsideDayTotal(day);
+  if (outsideTotal !== undefined) {
+    return t("settings.usageDayWithOutside", {
+      date: day.date,
+      total: formatNumber(usageTokenTotal(day)),
+      inWuu: formatNumber(inWuuDayTotal(day)),
+      outside: formatNumber(outsideTotal),
+    });
   }
   return t("settings.usageOnDate", {
     date: day.date,

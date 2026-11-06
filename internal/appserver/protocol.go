@@ -2898,16 +2898,20 @@ type SettingsUsageMetrics struct {
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
 // token_usage row's At timestamp in the requested zone (UTC when the request
 // names none). Days are emitted in ascending date order; gaps in the visible
-// window are filled in by the desktop.
+// window are filled in by the desktop. The token fields and Turns/Agents
+// cover Wuu's own trail only; Outside holds the same day's usage the engine
+// ledgers recorded outside Wuu, so a chart can color every day the page
+// counts without mixing the two ledgers' fields.
 type SettingsUsageDay struct {
-	Date                string  `json:"date"`
-	InputTokens         int     `json:"input_tokens"`
-	OutputTokens        int     `json:"output_tokens"`
-	CacheCreationTokens int     `json:"cache_creation_tokens"`
-	CacheReadTokens     int     `json:"cache_read_tokens"`
-	CacheHitRate        float64 `json:"cache_hit_rate"`
-	Turns               int     `json:"turns"`
-	Agents              int     `json:"agents"`
+	Date                string          `json:"date"`
+	InputTokens         int             `json:"input_tokens"`
+	OutputTokens        int             `json:"output_tokens"`
+	CacheCreationTokens int             `json:"cache_creation_tokens"`
+	CacheReadTokens     int             `json:"cache_read_tokens"`
+	CacheHitRate        float64         `json:"cache_hit_rate"`
+	Turns               int             `json:"turns"`
+	Agents              int             `json:"agents"`
+	Outside             *EngineUsageSum `json:"outside,omitempty"`
 }
 
 // EngineUsageSum is one side of an engine's token totals. On the InWuu side

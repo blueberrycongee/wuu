@@ -844,6 +844,7 @@ export const zhCN = {
   "settings.pastYear": "过去一年",
   "settings.usageSince": "自 {date} 起",
   "settings.usageTrendOnDate": "{date}\n总计 {total} · 输入与缓存 {input} · 输出 {output}",
+  "settings.usageDayWithOutside": "{date}\n总计 {total} · Wuu 内 {inWuu} · Wuu 之外 {outside}",
   "settings.skillCalls": "技能调用",
   "settings.noSkillUsage": "暂无技能调用",
   "settings.less": "少",
