@@ -1098,7 +1098,9 @@
  * The wrapper itself has no border or padding — it's a positioning
  * context for the X button. That way the static bubble keeps its
  * current pixel-perfect layout while the editor gains a delete
- * affordance without any layout shift.
+ * affordance without any layout shift. The image X sits inside the
+ * frame: the grid gap is narrower than its overhang, so an outside
+ * badge would cross into the neighbouring preview.
  */
 .message-image-frame,
 .message-file-frame {
@@ -1113,8 +1115,6 @@
 .message-image-remove,
 .message-file-remove {
   position: absolute;
-  top: -7px;
-  right: -7px;
   display: grid;
   width: 22px;
   height: 22px;
@@ -1126,6 +1126,17 @@
   box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.message-image-remove {
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 1;
+}
+
+.message-file-remove {
+  top: -7px;
+  right: -7px;
 }
 
 .message-image-remove:hover,
