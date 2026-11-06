@@ -326,6 +326,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
     />
   ));
   const latestTurn = threadTurns[threadTurns.length - 1];
+  const canEdit = canEditThreadMessage(thread);
   const latestTurnStreamStatus = latestTurn
     ? turnStreamStatus[latestTurn.id]
     : undefined;
@@ -389,7 +390,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                   onStreamFrame={onStreamFrame}
                   onCollapseComplete={onCollapseComplete}
                   onForkMessage={handleForkMessage}
-                  canEdit={canEditThreadMessage(thread)}
+                  canEdit={canEdit}
                   onEditMessage={handleEditMessage}
                   editingMessage={historyMessageEdit}
                   onCancelEditMessage={onCancelEditMessage}
