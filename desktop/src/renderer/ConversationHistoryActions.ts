@@ -240,7 +240,9 @@ export function createConversationHistoryActions(
       deps.setComposerImages([]);
       deps.setComposerFiles([]);
       deps.setComposerSelections([]);
-      deps.setSplitComposerDrafts(initialSplitComposerDrafts());
+      if (currentSplitConversation) {
+        deps.setSplitComposerDrafts(initialSplitComposerDrafts());
+      }
       deps.setAppState((current) =>
         openForkThreadAsPrimary(current, {
           sourceThread,

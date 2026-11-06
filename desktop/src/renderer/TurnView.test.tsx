@@ -938,6 +938,30 @@ it("keeps the retrying card's node when automatic recovery gives up", () => {
   expect(card!.getAttribute("role")).toBe("alert");
 });
 
+it("retires the latest failure card when a new turn takes over but keeps restored history", () => {
+  vi.useFakeTimers();
+  const turn = makeTurn("failed", [
+    { id: "reconnect-1", type: "stream_reconnect", status: "failed", text: "connection reset by peer", reason: "network" },
+  ], "network down");
+
+  const live = render(turn, true);
+  act(() => { vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS); });
+  expect(live.querySelector(".turn-failure-presence")).not.toBeNull();
+  expect(live.querySelector(".turn-failure-presence.is-leaving")).toBeNull();
+
+  rerender(turn, false);
+  expect(live.querySelector(".turn-failure-presence.is-leaving")?.getAttribute("aria-hidden")).toBe("true");
+  act(() => { vi.advanceTimersByTime(1_000); });
+  expect(live.querySelector(".turn-failure-presence")).toBeNull();
+
+  act(() => { root?.unmount(); });
+  container?.remove();
+  const restored = render(turn, false);
+  act(() => { vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS); });
+  expect(restored.querySelector(".turn-failure-presence")).not.toBeNull();
+  expect(restored.querySelector(".turn-failure-presence.is-leaving")).toBeNull();
+});
+
 // Automatic recovery that gives up settles the turn as interrupted, not
 // failed; its card explains the same failure and needs the same retry.
 it.each(["failed", "interrupted"] as const)("routes the retry of a turn that ended %s through the existing history retry action", async (status) => {
