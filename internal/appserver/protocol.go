@@ -2898,16 +2898,48 @@ type SettingsUsageMetrics struct {
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
 // token_usage row's At timestamp in the requested zone (UTC when the request
 // names none). Days are emitted in ascending date order; gaps in the visible
-// window are filled in by the desktop.
+// window are filled in by the desktop. The token fields and Turns/Agents
+// cover Wuu's own trail only; Outside holds the same day's usage the engine
+// ledgers recorded outside Wuu, so a chart can color every day the page
+// counts without mixing the two ledgers' fields.
 type SettingsUsageDay struct {
-	Date                string  `json:"date"`
-	InputTokens         int     `json:"input_tokens"`
-	OutputTokens        int     `json:"output_tokens"`
-	CacheCreationTokens int     `json:"cache_creation_tokens"`
-	CacheReadTokens     int     `json:"cache_read_tokens"`
-	CacheHitRate        float64 `json:"cache_hit_rate"`
-	Turns               int     `json:"turns"`
-	Agents              int     `json:"agents"`
+	Date                string          `json:"date"`
+	InputTokens         int             `json:"input_tokens"`
+	OutputTokens        int             `json:"output_tokens"`
+	CacheCreationTokens int             `json:"cache_creation_tokens"`
+	CacheReadTokens     int             `json:"cache_read_tokens"`
+	CacheHitRate        float64         `json:"cache_hit_rate"`
+	Turns               int             `json:"turns"`
+	Agents              int             `json:"agents"`
+	Outside             *EngineUsageSum `json:"outside,omitempty"`
+}
+
+// EngineUsageSum is one side of an engine's token totals. On the InWuu side
+// Sessions counts threads bound to the engine; on the Outside side it counts
+// distinct native sessions observed in the engine's local ledger.
+type EngineUsageSum struct {
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheCreationTokens int `json:"cache_creation_tokens"`
+	CacheReadTokens     int `json:"cache_read_tokens"`
+	Sessions            int `json:"sessions"`
+}
+
+// TotalTokens is the context-weighted sum used for sorting and display.
+func (e EngineUsageSum) TotalTokens() int {
+	return e.InputTokens + e.OutputTokens + e.CacheCreationTokens + e.CacheReadTokens
+}
+
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
+// token_usage trail by each thread's bound engine. Outside reads the engine's
+// own on-disk ledger minus native sessions Wuu already claims, so the two
+// columns never count the same work twice. Outside is nil for engines without
+// a readable local ledger or whose ledger failed to scan.
+type SettingsEngineUsage struct {
+	Engine  string          `json:"engine"`
+	Name    string          `json:"name"`
+	InWuu   EngineUsageSum  `json:"in_wuu"`
+	Outside *EngineUsageSum `json:"outside,omitempty"`
 }
 
 // SettingsUsageResponse is the single source of truth for the desktop
@@ -2915,14 +2947,17 @@ type SettingsUsageDay struct {
 // the per-model table sorted by total context tokens descending (legacy
 // rows with empty provider+model are surfaced as "(unknown)"), and Days
 // is the calendar-day series for the heatmap (gaps filled by the
-// desktop).
+// desktop). EngineBreakdowns attributes the same in-Wuu totals per agent
+// engine and adds the usage each engine recorded outside Wuu in its own
+// local ledger.
 type SettingsUsageResponse struct {
-	TotalSessions   int                  `json:"total_sessions"`
-	GeneratedAt     string               `json:"generated_at"`
-	Metrics         SettingsUsageMetrics `json:"metrics"`
-	ModelBreakdowns []insight.ModelUsage `json:"model_breakdowns"`
-	SkillUsage      []insight.SkillUsage `json:"skill_usage"`
-	Days            []SettingsUsageDay   `json:"days"`
+	TotalSessions    int                   `json:"total_sessions"`
+	GeneratedAt      string                `json:"generated_at"`
+	Metrics          SettingsUsageMetrics  `json:"metrics"`
+	ModelBreakdowns  []insight.ModelUsage  `json:"model_breakdowns"`
+	EngineBreakdowns []SettingsEngineUsage `json:"engine_breakdowns"`
+	SkillUsage       []insight.SkillUsage  `json:"skill_usage"`
+	Days             []SettingsUsageDay    `json:"days"`
 }
 
 // UsageOverviewParams selects the IANA time zone, such as

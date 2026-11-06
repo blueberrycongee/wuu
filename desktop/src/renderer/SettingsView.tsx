@@ -1362,6 +1362,8 @@ function SettingsUsagePage({
   const modelTotal = (model: SettingsUsageResponse["model_breakdowns"][number]): number =>
     model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens;
   const allModelTotal = (usage?.model_breakdowns ?? []).reduce((total, model) => total + modelTotal(model), 0);
+  const engineSumTotal = (sum?: { input_tokens: number; output_tokens: number; cache_creation_tokens: number; cache_read_tokens: number }): number =>
+    (sum?.input_tokens ?? 0) + (sum?.output_tokens ?? 0) + (sum?.cache_creation_tokens ?? 0) + (sum?.cache_read_tokens ?? 0);
   const heatmapCols = heatmap.length > 0 ? Math.ceil(heatmap.length / 7) : 12;
 
   // Keep grid height = 7 × cell-size so cells stay square as panel resizes
@@ -1612,6 +1614,72 @@ function SettingsUsagePage({
         )}
       </section>
 
+      <section className="settings-section" aria-labelledby="settings-engine-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-engine-usage-title" className="settings-section-title">{t("settings.usageByEngine")}</h2>
+          <p className="settings-section-description">{t("settings.usageEngineOutsideHint")}</p>
+        </header>
+        {(usage.engine_breakdowns ?? []).length > 0 ? (
+          <div className="settings-group settings-usage-table-wrap">
+            <table className="settings-usage-table settings-engine-usage-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("settings.engine")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageInWuu")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageOutsideWuu")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageSessions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(usage.engine_breakdowns ?? []).map((b) => {
+                  const inWuuTotal = engineSumTotal(b.in_wuu);
+                  const outsideTotal = b.outside ? engineSumTotal(b.outside) : undefined;
+                  return (
+                    <tr key={b.engine}>
+                      <td>
+                        <div className="settings-usage-model">
+                          <strong>{b.name || b.engine}</strong>
+                          <small>{b.engine}</small>
+                        </div>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageInWuu")}>
+                        <Tooltip content={formatUsageValue(inWuuTotal)}>
+                          <span className="settings-usage-number">
+                            {formatCompactUsageNumber(inWuuTotal, locale)}
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageOutsideWuu")}>
+                        {outsideTotal === undefined ? (
+                          <Tooltip content={t("settings.usageNoLedger")}>
+                            <span className="settings-usage-number">—</span>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip content={formatUsageValue(outsideTotal)}>
+                            <span className="settings-usage-number">
+                              {formatCompactUsageNumber(outsideTotal, locale)}
+                            </span>
+                          </Tooltip>
+                        )}
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageSessions")}>
+                        <span className="settings-usage-number">
+                          {formatCompactUsageNumber((b.in_wuu.sessions ?? 0) + (b.outside?.sessions ?? 0), locale)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="settings-group">
+            <p className="settings-group-empty">{t("settings.noUsage")}</p>
+          </div>
+        )}
+      </section>
+
       <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
         <header className="settings-section-header">
           <h2 id="settings-skill-usage-title" className="settings-section-title">
@@ -1797,12 +1865,34 @@ function formatUsageDayTitle(
   if (!hasUsageDayData(day)) {
     return t("settings.noUsageOnDate", { date: day.date });
   }
+  const outsideTotal = outsideDayTotal(day);
+  if (outsideTotal !== undefined) {
+    return t("settings.usageDayWithOutside", {
+      date: day.date,
+      total: formatNumber(usageTokenTotal(day)),
+      inWuu: formatNumber(inWuuDayTotal(day)),
+      outside: formatNumber(outsideTotal),
+    });
+  }
   return t("settings.usageTrendOnDate", {
     date: day.date,
     total: formatNumber(usageTokenTotal(day)),
     input: formatNumber(day.input_tokens + day.cache_read_tokens + day.cache_creation_tokens),
     output: formatNumber(day.output_tokens),
   });
+}
+
+function inWuuDayTotal(day: SettingsUsageDay): number {
+  return day.input_tokens + day.output_tokens + day.cache_creation_tokens + day.cache_read_tokens;
+}
+
+function outsideDayTotal(day: SettingsUsageDay): number | undefined {
+  const outside = day.outside;
+  if (!outside) {
+    return undefined;
+  }
+  const total = outside.input_tokens + outside.output_tokens + outside.cache_creation_tokens + outside.cache_read_tokens;
+  return total > 0 || outside.sessions > 0 ? total : undefined;
 }
 
 function hasUsageDayData(day: SettingsUsageDay): boolean {
@@ -1812,7 +1902,8 @@ function hasUsageDayData(day: SettingsUsageDay): boolean {
     day.cache_creation_tokens > 0 ||
     day.cache_read_tokens > 0 ||
     day.turns > 0 ||
-    day.agents > 0
+    day.agents > 0 ||
+    outsideDayTotal(day) !== undefined
   );
 }
 
@@ -1823,6 +1914,15 @@ function formatHeatmapTitle(
 ): string {
   if (!hasUsageDayData(day)) {
     return t("settings.noUsageOnDate", { date: day.date });
+  }
+  const outsideTotal = outsideDayTotal(day);
+  if (outsideTotal !== undefined) {
+    return t("settings.usageDayWithOutside", {
+      date: day.date,
+      total: formatNumber(usageTokenTotal(day)),
+      inWuu: formatNumber(inWuuDayTotal(day)),
+      outside: formatNumber(outsideTotal),
+    });
   }
   return t("settings.usageOnDate", {
     date: day.date,
