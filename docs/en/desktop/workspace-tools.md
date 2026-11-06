@@ -102,8 +102,6 @@ Open **Review** or enter `/diff` to inspect the current Git changes. Check the c
 
 Changed files are grouped by folder and the list refreshes as the workspace changes. A wide panel shows the diff beside the list; in a narrow one, choose a file to open its diff and use the back button to return. In the diff header, the arrows step to the previous or next file, the circle marks the file as viewed, and the pencil opens it in the editor. Viewed marks clear when a file’s status or added/deleted line counts change and are not kept after Wuu restarts. Edits with the same status and line counts do not clear a mark; review the current diff before committing.
 
-The diff uses side-by-side columns when there is room and a unified view in narrow panes. Click or drag over line numbers to select changed lines, and expand collapsed unchanged regions for more context. Code font and size follow your appearance settings.
-
 The diff shown for one turn can differ from the current workspace diff because later work may have changed the same files. Base your final review on the current repository state.
 
 ## Terminal
@@ -192,12 +190,13 @@ A conversation can retain separate watch-only previews for each browser tab and 
 
 Local activity opens its preview automatically; there is no auto-show preference. Showing a preview does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. There is no title-bar control for manually reopening a hidden preview.
 
-Previews appear while their Wuu window is visible, without activating it or taking keyboard focus from another app. Hiding or minimizing Wuu hides the stack too. Restoring Wuu shows only eligible cards that were not explicitly hidden. Foreground image viewers and dialogs temporarily hide the whole stack. Drag the front card to place the stack in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. Browser pages keep their layout size and scale to fit. Previews follow the app’s appearance and text settings and respect reduced motion.
+Previews appear while their Wuu window is visible, without activating it or taking keyboard focus from another app. Hiding or minimizing Wuu hides the stack too, except for native app previews you have floated on the desktop. Restoring Wuu shows only eligible cards that were not explicitly hidden. Foreground image viewers and dialogs temporarily hide the whole stack. Drag the front card to place the stack in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. Browser pages keep their layout size and scale to fit. Previews follow the app’s appearance and text settings and respect reduced motion.
 
-The preview has two display controls for browser pages, and only Hide for native apps:
+Browser previews provide Hide and Open in side panel controls; native app previews provide Hide and a desktop toggle:
 
 - **Hide preview** hides the card and leaves the task running.
 - **Open in side panel** opens a browser page at full size.
+- **Float on the desktop** detaches a native app preview from the Wuu window and parks it at a corner of the current display. The card then floats above other applications and remains visible while Wuu is hidden. Drag it to another screen corner, or use **Return to the conversation** to dock it back into the column.
 
 Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. This does not bring retained native apps to the foreground. Send another instruction in the conversation to continue with fresh control authority.
 

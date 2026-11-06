@@ -103,6 +103,9 @@ export type ActivityPiPSurfaceDeps = {
   cursorPosition?: () => PipPoint;
   reducedMotion?: () => boolean;
   parent?: () => BrowserPiPHostWindow | null | undefined;
+  // The display work area used while the card floats on the desktop. Injection
+  // keeps window-geometry tests independent of Electron's screen module.
+  desktopFrame?: (bounds: Rectangle) => PipRect | null | undefined;
 };
 
 export class ActivityPiPSurface implements ObservationPiPHandle {
@@ -137,6 +140,10 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private screenLayout: BrowserPiPScreenLayout | null | undefined = undefined;
   private hostParent: BrowserPiPHostWindow | null = null;
   private detachHostParent: (() => void) | undefined;
+  // A detached card is a top-level window anchored to a display corner, not a
+  // child of the Wuu window. It keeps floating while Wuu is hidden.
+  private desktopDocked = false;
+  private desktopFrame: PipRect | undefined;
   private dragging = false;
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
@@ -200,6 +207,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
           return;
         }
         if (rawURL === "wuu-pip://close") this.deps.sink.onEvent({ event: "user_close" });
+        if (rawURL === "wuu-pip://desktop") this.setDesktopDock(!this.desktopDocked);
         if (rawURL === "wuu-pip://expand") this.deps.sink.onEvent({ event: "expand" });
         if (rawURL === "wuu-pip://retry") this.deps.sink.onEvent({ event: "retry" });
       }
@@ -220,6 +228,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.content?.refresh?.();
         this.setAppearance(this.dark);
         this.pushCompletion();
+        this.pushDesktopDock();
         this.hoverPoint = undefined;
         this.syncHover();
         this.applyVisibility();
@@ -274,11 +283,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     if (!win || win.isDestroyed() || this.stopped || this.awaitingVisibility) return;
     // Unknown layout (no report yet) still shows, so a card can appear before
     // the first measurement. An explicit empty layout means the column is gone.
-    const columnGone = this.screenLayout === null;
+    const columnGone = this.screenLayout === null && !this.desktopDocked;
     const parent = this.hostParent;
     // Showing a native child window can reveal its hidden parent on macOS.
     // Restore the preview from host visibility events, never by showing Wuu.
-    const parentHidden = parent && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized());
+    // A desktop-docked card has no host dependency and outlives that state.
+    const parentHidden = Boolean(!this.desktopDocked && parent
+      && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized()));
     const shown = win.isVisible() && !this.preparing && this.transition?.direction !== "out";
     if (this.visible && !this.completionDismissed && !columnGone && !parentHidden) {
       // The nonactivating panel can start while CUA owns the foreground.
@@ -391,7 +402,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.screenLayout = layout;
-    if (!this.dragging && !this.resizing) this.placeCommitted();
+    // While detached, the Wuu column moves without moving the card.
+    if (!this.desktopDocked && !this.dragging && !this.resizing) this.placeCommitted();
     this.applyVisibility();
   }
 
@@ -401,8 +413,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.detachHostParent?.();
     this.detachHostParent = undefined;
     this.hostParent = parent;
-    if (win.isVisible()) win.hide();
-    win.setParentWindow?.(parent && !parent.isDestroyed() ? parent : null);
+    // Keep the host binding for a later reattach, but do not take native
+    // ownership from a card the user moved to the desktop.
+    if (!this.desktopDocked) {
+      if (win.isVisible()) win.hide();
+      win.setParentWindow?.(parent && !parent.isDestroyed() ? parent : null);
+    }
     if (parent && !parent.isDestroyed()) {
       const events = ["show", "hide", "minimize", "restore", "focus"] as const;
       const syncVisibility = (): void => this.applyVisibility();
@@ -412,6 +428,41 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       };
     }
     this.applyVisibility();
+  }
+
+  // Move a native-app preview between the conversation column and a display
+  // corner. Detaching releases the Wuu child-window relationship so the card
+  // can float above other apps; reattaching restores the host binding.
+  setDesktopDock(enabled: boolean): void {
+    if (this.stopped || this.activity.kind !== "cua" || this.desktopDocked === enabled) return;
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    this.desktopDocked = enabled;
+    this.cancelSnap();
+    // The next coordinator placement must treat this card as newly placed.
+    this.stackIndex = -1;
+    if (enabled) {
+      const reference = this.hostParent && !this.hostParent.isDestroyed()
+        ? this.hostParent.getContentBounds()
+        : win.getBounds();
+      this.refreshDesktopFrame(reference);
+      win.setParentWindow(null);
+      win.setAlwaysOnTop(true, "floating");
+    } else {
+      win.setAlwaysOnTop(false);
+      this.desktopFrame = undefined;
+      const parent = this.hostParent && !this.hostParent.isDestroyed() ? this.hostParent : null;
+      if (win.isVisible()) win.hide();
+      win.setParentWindow(parent);
+    }
+    this.pushDesktopDock();
+    this.placeCommitted();
+    this.deps.sink.onEvent({ event: "desktop_dock", desktop: enabled });
+    this.applyVisibility();
+  }
+
+  isDesktopDocked(): boolean {
+    return this.desktopDocked;
   }
 
   updateActivity(activity: ActivitySession, restoreTarget = false): void {
@@ -637,8 +688,37 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     return pipContainRect(viewport.width, viewport.height, bounds.width, bounds.height);
   }
 
+  private placementLayout(): BrowserPiPScreenLayout | null {
+    if (!this.desktopDocked) return this.screenLayout ?? null;
+    if (!this.desktopFrame) {
+      const bounds = this.win && !this.win.isDestroyed() ? this.win.getBounds() : this.deps.bounds;
+      this.refreshDesktopFrame(bounds);
+    }
+    const frame = this.desktopFrame;
+    if (!frame) return null;
+    return { host: frame, obstacles: [], visibleFrame: frame };
+  }
+
+  private refreshDesktopFrame(reference: Rectangle): void {
+    const frame = this.desktopFrameFor(reference);
+    if (frame) this.desktopFrame = frame;
+  }
+
+  private desktopFrameFor(reference: Rectangle): PipRect | null {
+    if (this.deps.desktopFrame) return this.deps.desktopFrame(reference) ?? null;
+    try {
+      return screen.getDisplayMatching(reference).workArea;
+    } catch {
+      return null;
+    }
+  }
+
+  private pushDesktopDock(): void {
+    this.execute(`window.wuuPipDesktop?.(${JSON.stringify(this.desktopDocked)})`);
+  }
+
   private placeCommitted(): void {
-    const layout = this.screenLayout;
+    const layout = this.placementLayout();
     const win = this.win;
     // A trailing card rests relative to its lead, never at a corner of its own.
     if (!layout || !win || win.isDestroyed() || this.stackIndex > 0) return;
@@ -668,11 +748,16 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     if (!this.dragging) return;
-    const dragged = this.screenLayout
+    // Follow the pointer onto another display by moving the corner set with it.
+    if (this.desktopDocked && command.phase !== "end") {
+      this.refreshDesktopFrame({ x: command.x, y: command.y, width: 1, height: 1 });
+    }
+    const dragLayout = this.placementLayout();
+    const dragged = dragLayout
       ? browserPiPClampOrigin(
         { x: command.x - this.grab.x, y: command.y - this.grab.y },
         bounds,
-        this.screenLayout.visibleFrame,
+        dragLayout.visibleFrame,
       )
       : { x: command.x - this.grab.x, y: command.y - this.grab.y };
     if (command.phase === "move") {
@@ -684,7 +769,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.dragging = false;
     this.userSize = { width: bounds.width, height: bounds.height };
     this.applyBounds({ x: dragged.x, y: dragged.y, width: bounds.width, height: bounds.height });
-    const layout = this.screenLayout;
+    if (this.desktopDocked) this.refreshDesktopFrame(win.getBounds());
+    const layout = this.placementLayout();
     if (!layout) return;
     const settled = win.getBounds();
     const card = { width: settled.width, height: settled.height };
@@ -734,7 +820,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const settled = win.getBounds();
     this.userSize = { width: settled.width, height: settled.height };
     this.stackMaxEdge = undefined;
-    const layout = this.screenLayout;
+    if (this.desktopDocked) this.refreshDesktopFrame(settled);
+    const layout = this.placementLayout();
     if (!layout) return;
     const nearest = browserPiPNearestAnchor(
       browserPiPAnchors(layout.host, layout.obstacles, this.userSize),
@@ -747,7 +834,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   // The card may occupy the column inside the same margin the corners use.
   private resizeFrame(): PipRect | undefined {
-    const layout = this.screenLayout;
+    const layout = this.placementLayout();
     if (!layout) return undefined;
     const innerW = Math.max(1, layout.host.width - PIP_ANCHOR_MARGIN * 2);
     const innerH = Math.max(1, layout.host.height - PIP_ANCHOR_MARGIN * 2);
@@ -789,7 +876,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   private showInactive(win: BrowserPiPWindowHandle): boolean {
-    const parent = this.hostParent;
+    const parent = this.desktopDocked ? null : this.hostParent;
     if (process.platform !== "darwin" || !parent) {
       win.showInactive();
       return true;
@@ -1064,8 +1151,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       const settled = Math.hypot(motion.origin.x - point.x, motion.origin.y - point.y) <= 0.5
         && Math.hypot(speed.x, speed.y) <= 2;
       const next = settled ? motion.origin : point;
-      const confined = this.screenLayout
-        ? browserPiPClampOrigin(next, motion.card, this.screenLayout.visibleFrame) : next;
+      const layout = this.placementLayout();
+      const confined = layout
+        ? browserPiPClampOrigin(next, motion.card, layout.visibleFrame) : next;
       this.applyBounds({ ...confined, width: motion.card.width, height: motion.card.height });
       if (settled) this.motion = undefined;
       else this.scheduleSnap(frame);
@@ -1081,14 +1169,20 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // A new lead takes over the corner of the card it replaces: the committed
   // corner of the column, or without a measured column that card's frame.
   setStackPosition(index: number, lead?: PiPStackLead): void {
-    const wasLead = this.stackIndex === 0;
-    this.stackIndex = index;
     const win = this.win;
     if (!win || win.isDestroyed() || this.dragging) return;
+    // Detached cards own their screen corner and never join the column stack.
+    if (this.desktopDocked) {
+      this.stackIndex = 0;
+      return;
+    }
+    const wasLead = this.stackIndex === 0;
+    this.stackIndex = index;
     if (lead) this.stackMaxEdge = Math.max(lead.frame.width, lead.frame.height);
     const sharedSize = lead && browserPiPSizeForAspect(this.initialAspect ?? 4 / 3, this.stackMaxEdge);
+    const layout = this.placementLayout();
     const card = sharedSize
-      ? this.screenLayout ? browserPiPCardSize(this.screenLayout.host, sharedSize) : sharedSize
+      ? layout ? browserPiPCardSize(layout.host, sharedSize) : sharedSize
       : win.getBounds();
     if (index === 0 && !lead?.dragging) {
       if (wasLead) return;
@@ -1096,7 +1190,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.alignment = lead.alignment;
         this.userSize = { width: card.width, height: card.height };
       }
-      if (this.screenLayout || !lead) {
+      if (layout || !lead) {
         this.placeCommitted();
         return;
       }
@@ -1119,7 +1213,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       y: bottom ? lead.frame.y + lead.frame.height - card.height - STACK_OFFSET.y * distance
         : lead.frame.y + STACK_OFFSET.y * distance,
     };
-    const frame = lead.dragging ? this.screenLayout?.visibleFrame : this.resizeFrame();
+    const frame = lead.dragging ? layout?.visibleFrame : this.resizeFrame();
     const origin = frame ? browserPiPClampOrigin(desired, card, frame) : desired;
     if (!win.isVisible() || this.transition) {
       this.applyBounds({ ...origin, ...card });

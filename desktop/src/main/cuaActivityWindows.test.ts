@@ -134,6 +134,61 @@ describe("CUA native picture-in-picture", () => {
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b", "app-c"]);
   });
 
+  it("keeps a desktop-docked card out of the column stack", () => {
+    type Card = {
+      target: string;
+      docked: boolean;
+      sink?: ObservationPiPEventSink;
+      setStackPosition: ReturnType<typeof vi.fn>;
+      stackLead: () => { frame: { x: number; y: number; width: number; height: number }; alignment: "bottom-right"; dragging: boolean };
+    };
+    const cards: Card[] = [];
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      (next, _key, sink) => {
+        const card: Card = {
+          target: next.target ?? "",
+          docked: false,
+          sink,
+          setStackPosition: vi.fn(),
+          stackLead: () => ({
+            frame: { x: 700, y: 500, width: 260, height: 170 },
+            alignment: "bottom-right",
+            dragging: false,
+          }),
+        };
+        cards.push(card);
+        return {
+          start: vi.fn(),
+          setVisible: vi.fn(),
+          animateInteraction: vi.fn(),
+          setStackPosition: card.setStackPosition,
+          stackLead: card.stackLead,
+          isDesktopDocked: () => card.docked,
+          stop: (onStopped?: () => void) => onStopped?.(),
+        };
+      },
+    );
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(activity({ target: "app-a" }));
+    coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
+    coordinator.update(activity({ target: "app-a", updated_at: "2026-07-10T10:00:03Z" }));
+
+    // App A leads the column stack; detaching it hands the lead to app B.
+    expect(cards[0].setStackPosition).toHaveBeenCalledWith(0, expect.anything());
+    cards[0].docked = true;
+    cards[0].sink?.onEvent({ event: "desktop_dock", desktop: true });
+    expect(cards[1].setStackPosition).toHaveBeenLastCalledWith(0, expect.anything());
+
+    // Returning it to the conversation promotes it back to the lead.
+    cards[0].docked = false;
+    cards[0].sink?.onEvent({ event: "desktop_dock", desktop: false });
+    expect(cards[0].setStackPosition).toHaveBeenLastCalledWith(0, expect.anything());
+    expect(cards[1].setStackPosition).toHaveBeenLastCalledWith(1, expect.anything());
+    void coordinator.shutdown();
+  });
+
   it("keeps a user-closed preview hidden across activity updates until explicitly reopened", () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-07-10T10:00:01.500Z");
