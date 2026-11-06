@@ -21,6 +21,24 @@ function fixture() {
   return { host, helper, life, service, listeners, get: () => state, set: (value: AppState) => { state = value; for (const listener of listeners) listener(); } };
 }
 
+function withThreadTab(f: ReturnType<typeof fixture>, thread: Thread) {
+  const state = f.get();
+  if (!state.sessionTabs.some(tab => tab.id === "thread-tab")) {
+    f.set({ ...state, thread, threads: [thread],
+      sessionTabs: [...state.sessionTabs, { id: "thread-tab", kind: "thread", threadID: thread.id, context: { kind: "no_project", cwd: "/one" }, title: "Thread", prompt: "", images: [], files: [] }] });
+  } else {
+    f.set({ ...state, thread, threads: [thread] });
+  }
+}
+
+function threadWith(turns: Thread["turns"]): Thread {
+  return { id: "t1", cwd: "/one", model: "model", model_provider: "api", preview: "", status: "idle", created_at: "", updated_at: "", turns };
+}
+
+function userTurn(id: string, text: string): Thread["turns"][number] {
+  return { id, status: "completed", items_view: "full", items: [{ id: `${id}:user`, type: "user_message", status: "completed", text }] };
+}
+
 describe("composer presentation host boundary", () => {
   it("retains the canonical runtime picker across scopes and rejects retired writers", () => {
     const f = fixture();
@@ -57,6 +75,48 @@ describe("composer presentation host boundary", () => {
     f.set({ ...f.get(), status: "ready" }); const second = f.service.getSnapshot("draft");
     expect(f.service.getSnapshot("draft")).toBe(second);
     f.set({ ...f.get(), threads: [...f.get().threads] }); expect(f.service.getSnapshot("draft")).toBe(second);
+    f.helper.dispose();
+  });
+  it("shares immutable views across scopes of the same owner", () => {
+    const f = fixture();
+    const second = f.helper.createScope(new AbortController().signal);
+    const first = f.service.getSnapshot("draft");
+    expect(second.getSnapshot("draft")).toBe(first);
+    f.set({ ...f.get(), threads: [...f.get().threads] });
+    expect(f.service.getSnapshot("draft")).toBe(first);
+    expect(second.getSnapshot("draft")).toBe(first);
+    f.helper.dispose();
+  });
+  it("memoizes query history by turn identity and freezes the result", () => {
+    const f = fixture();
+    withThreadTab(f, threadWith([userTurn("u1", "one"), userTurn("u2", "two")]));
+    const first = f.service.getSnapshot("thread-tab");
+    expect(first.queryHistory).toEqual(["one", "two"]);
+    expect(Object.isFrozen(first.queryHistory)).toBe(true);
+    const state = f.get();
+    const thread = state.thread!;
+    f.set({ ...state, status: "changed" });
+    expect(f.service.getSnapshot("thread-tab").queryHistory).toBe(first.queryHistory);
+    const grown = { ...thread, turns: [...thread.turns, userTurn("u3", "three")] };
+    f.set({ ...f.get(), thread: grown, threads: [grown] });
+    expect(f.service.getSnapshot("thread-tab").queryHistory).toEqual(["one", "two", "three"]);
+    f.helper.dispose();
+  });
+  it("resolves the newest requested handoff intent across memoized turns", () => {
+    const f = fixture();
+    const handoffTurn = { id: "h1", status: "completed" as const, items_view: "full" as const,
+      items: [{ id: "h1:call", type: "tool_call" as const, status: "completed" as const, name: "request_handoff",
+        result: JSON.stringify({ awaiting_user_configuration: true, intent: "ship it" }) }] };
+    const thread = threadWith([handoffTurn]);
+    withThreadTab(f, thread);
+    expect(f.service.getSnapshot("thread-tab").requestedHandoffIntent).toBe("ship it");
+    const grown = { ...thread, turns: [...thread.turns, userTurn("u9", "later")] };
+    f.set({ ...f.get(), thread: grown, threads: [grown] });
+    expect(f.service.getSnapshot("thread-tab").requestedHandoffIntent).toBe("ship it");
+    const cleared = { ...handoffTurn, items: [{ ...handoffTurn.items[0], result: "{}" }] };
+    const reset = { ...thread, turns: [cleared] };
+    f.set({ ...f.get(), thread: reset, threads: [reset] });
+    expect(f.service.getSnapshot("thread-tab").requestedHandoffIntent).toBeUndefined();
     f.helper.dispose();
   });
   it("captures command source and rejects removed providers without exposing executions", async () => {

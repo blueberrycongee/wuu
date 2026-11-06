@@ -2628,20 +2628,63 @@ function threadForPane(
   return pane === "secondary" ? state.secondaryThread : state.thread;
 }
 
-function queryTextsForThread(thread: Thread | undefined): string[] {
+const EMPTY_QUERY_TEXTS: readonly string[] = Object.freeze([]);
+// Turn objects are structurally shared across AppState updates, so per-turn
+// and per-turns-array results stay valid until the runtime replaces them.
+const queryTextsForTurnCache = new WeakMap<Turn, readonly string[]>();
+const queryTextsForThreadCache = new WeakMap<readonly Turn[], readonly string[]>();
+
+function queryTextsForThread(thread: Thread | undefined): readonly string[] {
   if (!thread) {
-    return [];
+    return EMPTY_QUERY_TEXTS;
+  }
+  const cached = queryTextsForThreadCache.get(thread.turns);
+  if (cached) {
+    return cached;
   }
   const queries: string[] = [];
   for (const turn of thread.turns) {
-    for (const item of turn.items) {
-      const text = queryTextForUserItem(item);
-      if (text) {
-        queries.push(text);
+    let turnTexts = queryTextsForTurnCache.get(turn);
+    if (!turnTexts) {
+      const texts: string[] = [];
+      for (const item of turn.items) {
+        const text = queryTextForUserItem(item);
+        if (text) {
+          texts.push(text);
+        }
       }
+      turnTexts = Object.freeze(texts);
+      queryTextsForTurnCache.set(turn, turnTexts);
+    }
+    queries.push(...turnTexts);
+  }
+  const frozen = Object.freeze(queries);
+  queryTextsForThreadCache.set(thread.turns, frozen);
+  return frozen;
+}
+
+const handoffIntentForTurnCache = new WeakMap<Turn, string | null>();
+
+function requestedHandoffIntentForTurn(turn: Turn): string | null {
+  const cached = handoffIntentForTurnCache.get(turn);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const items = turn.items;
+  for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = items[itemIndex];
+    if (item.type !== "tool_call" || item.status !== "completed") {
+      continue;
+    }
+    const payload = item.result ?? item.text ?? "";
+    const intent = parseRequestedHandoffIntent(payload);
+    if (intent !== null) {
+      handoffIntentForTurnCache.set(turn, intent);
+      return intent;
     }
   }
-  return queries;
+  handoffIntentForTurnCache.set(turn, null);
+  return null;
 }
 
 function requestedHandoffIntentForThread(thread: Thread | undefined): string | undefined {
@@ -2649,17 +2692,9 @@ function requestedHandoffIntentForThread(thread: Thread | undefined): string | u
     return undefined;
   }
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
-    const items = thread.turns[turnIndex]?.items ?? [];
-    for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = items[itemIndex];
-      if (item.type !== "tool_call" || item.status !== "completed") {
-        continue;
-      }
-      const payload = item.result ?? item.text ?? "";
-      const intent = parseRequestedHandoffIntent(payload);
-      if (intent !== null) {
-        return intent;
-      }
+    const intent = requestedHandoffIntentForTurn(thread.turns[turnIndex]);
+    if (intent !== null) {
+      return intent;
     }
   }
   return undefined;
