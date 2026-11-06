@@ -66,6 +66,18 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 			break
 		}
 	}
+	for _, message := range admitted {
+		if message.Role == "user" && message.Seq > 0 && message.ClientID != "" && !message.Hidden && !message.ReadOnly {
+			if g.latestAdmittedEvent == nil || message.Seq > g.latestAdmittedEvent.Seq {
+				g.latestAdmittedEvent = &providers.MessageRef{SessionID: loopdriver.ExecutionContextFromContext(g.ctx).SessionID, Seq: message.Seq}
+			}
+		}
+		if message.Role == "user" && message.Seq > 0 && message.Steered && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user") {
+			if g.latestAdmittedInput == nil || message.Seq > g.latestAdmittedInput.Seq {
+				g.latestAdmittedInput = &providers.MessageRef{SessionID: loopdriver.ExecutionContextFromContext(g.ctx).SessionID, Seq: message.Seq}
+			}
+		}
+	}
 	var decision loopdriver.StepDecision
 	if admissionErr == nil && g.modelRunner().StepPolicy != nil {
 		decision, admissionErr = g.modelRunner().StepPolicy(ctx, g.step, providers.CloneChatMessages(g.activeHistory))

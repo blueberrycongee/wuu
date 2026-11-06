@@ -1310,6 +1310,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleSessionFederation(ctx, req)
 	case MethodStateInspectionsList, MethodStateInspectionsReconcile:
 		return s.handleStateInspections(ctx, req)
+	case MethodDurableTasksList, MethodDurableTasksGet, MethodDurableWaitsList, MethodDurableWaitsDecide:
+		return s.handleDurableIngress(ctx, req)
 	case MethodInitialize:
 		return s.handleInitialize(req)
 	case MethodConfigRead:

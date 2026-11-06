@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/durablewait"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -568,6 +569,7 @@ func (k *kernelHostServices) InvokeService(ctx context.Context, params pluginhos
 }
 func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement {
 	return []pluginhost.ServiceRequirement{
+		{Name: durablewait.ServiceName, MajorVersion: 1},
 		// These adapters are lazy. Selected dependencies still participate in
 		// lifecycle ordering; invoking an omitted service fails at the router.
 		{Name: credentialstore.ServiceName, MajorVersion: 1},

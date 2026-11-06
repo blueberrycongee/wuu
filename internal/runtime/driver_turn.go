@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/blueberrycongee/wuu/internal/durablewait"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 )
 
 type driverTurnInvoker struct{ parent *kernelHostServices }
@@ -30,6 +32,10 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		return nil, serviceError("service_unavailable", "execution does not expose independent turn operations")
 	}
 	switch params.Method {
+	case "resolve_wait":
+		return i.parent.resolveDurableWait(ctx, params.Caller, gateway, params.Params)
+	case "register_wait":
+		return i.parent.registerDurableWait(ctx, params.Caller, gateway, params.Params)
 	case "evaluate_policy":
 		var input pluginprotocol.DriverTurnPolicyParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
@@ -166,6 +172,9 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		var round loopdriver.ModelRound
 		var runErr error
 		if params.Method == "model_with_tools" {
+			if _, selected := i.parent.registry.ServiceDescriptorFor(i.parent.ID(), durablewait.ServiceName, 1); selected {
+				return nil, serviceError("invalid_request", "durable waits require model followed by gated tools, not streaming dispatch")
+			}
 			round, runErr = turn.CallModelWithTools(ctx, request, input.BatchID)
 		} else {
 			round, runErr = turn.CallModel(ctx, request)
@@ -186,8 +195,21 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		for _, call := range input.Calls {
 			batch.Calls = append(batch.Calls, modelwire.ToolCallFromWire(call))
 		}
+		_, waitsSelected := i.parent.registry.ServiceDescriptorFor(i.parent.ID(), durablewait.ServiceName, 1)
+		if input.ApprovalWaitID != "" && !waitsSelected {
+			return nil, serviceError("service_unavailable", "durable wait provider is not selected")
+		}
+		if waitsSelected {
+			batch.BeforeDispatch = func(ctx context.Context, execution loopdriver.ExecutionContext) error {
+				_, err := i.parent.callDurableWait(ctx, "dispatch", durablewait.Request{Owner: durablewait.Owner{PluginID: params.Caller, SessionID: execution.SessionID, ExecutionID: execution.ExecutionID, CallID: input.BatchID}, Intent: durablewait.Intent{BatchID: input.BatchID, CallsDigest: waitCallsDigest(input.Calls)}, WaitID: input.ApprovalWaitID})
+				return err
+			}
+		}
 		messages, err := turn.CallTools(ctx, batch)
 		if err != nil {
+			if toolerrors.Kind(err) == toolerrors.UncertainEffect {
+				return nil, serviceError(toolerrors.UncertainEffect, err.Error())
+			}
 			return nil, err
 		}
 		return marshalServiceResult(pluginprotocol.DriverTurnToolsResult{Messages: modelwire.DriverMessagesToWire(messages)})

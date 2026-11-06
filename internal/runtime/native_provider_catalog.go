@@ -6,11 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"context"
+	"encoding/json"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/defaultpolicy"
+	"github.com/blueberrycongee/wuu/internal/durablewait"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/permissionpolicy"
 	"github.com/blueberrycongee/wuu/internal/persistence"
@@ -37,6 +40,17 @@ func providerDataRoot(input NativeProviderContext) string {
 
 func defaultNativeProviderCatalog() []NativeProviderFactory {
 	catalog := []NativeProviderFactory{
+		{ID: durablewait.Module, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+			documents := persistence.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+				result, err := input.Registry.Call(ctx, durablewait.Module, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: raw})
+				if err != nil {
+					return nil, err
+				}
+				return result, nil
+			})
+			return durablewait.NewService(documents), nil
+		}},
+		durableIngressFactory(),
 		{ID: loopdriver.DefaultDriverID, DefaultEnabled: true, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 			return loopdriver.NewService(loopdriver.DefaultDriverID, DriverServicePrefix+"default", agent.DefaultDriver{}, input.Registry, []pluginhost.ServiceRequirement{
 				{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},

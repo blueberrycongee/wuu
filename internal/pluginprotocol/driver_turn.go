@@ -139,6 +139,7 @@ type DriverTurnModelResult struct {
 }
 
 type DriverTurnToolsParams struct {
+	ApprovalWaitID string `json:"approval_wait_id,omitempty"`
 	DriverTurnScope
 	BatchID  string            `json:"batch_id"`
 	Messages []DriverMessageV1 `json:"messages"`

@@ -107,6 +107,8 @@ type ToolBatch struct {
 	ID       string
 	Messages []providers.ChatMessage
 	Calls    []providers.ToolCall
+	// BeforeDispatch is a host-only gate, invoked under the turn lock after validation.
+	BeforeDispatch func(context.Context, ExecutionContext) error
 }
 
 // TurnResult contains the driver's final output and optional additional messages.
@@ -119,4 +121,12 @@ type TurnResult struct {
 	FinishReason providers.FinishReason
 	StopReason   string
 	Truncated    bool
+}
+
+// WaitGateway reserves a never-submitted batch under the same lock as dispatch.
+// The callback must durably register the host gate before returning success.
+type WaitGateway interface {
+	ReserveWait(context.Context, ToolBatch, func(context.Context, ExecutionContext, bool) error) error
+	WaitExecution() ExecutionContext
+	WaitInput(context.Context, string) (ExecutionContext, error)
 }

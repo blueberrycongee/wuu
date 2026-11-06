@@ -4,8 +4,10 @@ import "github.com/blueberrycongee/wuu/internal/pluginprotocol"
 
 func DriverTurnDescriptor() ServiceDescriptor {
 	return ServiceDescriptor{
-		Name: pluginprotocol.DriverTurnService, Version: "4.0.0",
+		Name: pluginprotocol.DriverTurnService, Version: "4.1.0",
 		Methods: []ServiceMethodDescriptor{
+			{Name: "resolve_wait", InputSchema: "driver.turn.resolve-wait.input.v1", OutputSchema: "host.durable-wait.resolve.output.v1"},
+			{Name: "register_wait", InputSchema: "driver.turn.register-wait.input.v1", OutputSchema: "host.durable-wait.register.output.v1"},
 			{Name: "read", InputSchema: "driver.turn.scope.v1", OutputSchema: "host.model.request.v1"},
 			{Name: "evaluate_policy", InputSchema: "driver.turn.policy.input.v1", OutputSchema: "agent.policy.decision.v1"},
 			{Name: "settings", InputSchema: "driver.turn.scope.v1", OutputSchema: "driver.turn.settings.v1"},

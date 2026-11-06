@@ -3184,3 +3184,5 @@ export * from "./execution-authorization.js";
 
 export * from "./personal-memory.js";
 export * from "./personal-authority.js";
+
+export * from "./durable-wait.js";

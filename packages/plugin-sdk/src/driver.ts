@@ -92,7 +92,7 @@ export interface DriverModelRound {
 
 export interface DriverFailure {
   readonly message: string;
-  readonly code?: "empty_answer" | "summary_output_limit";
+  readonly code?: "empty_answer" | "summary_output_limit" | "uncertain_tool_effect";
   readonly stop_reason?: string;
   readonly origin: string;
   readonly category: string;
@@ -380,8 +380,8 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      * batch, preserving call order, identities, and arguments. Already started
      * work is awaited once. The reply contains only tool result messages.
      */
-    tools: (batch_id: string, messages: readonly DriverMessage[], calls: readonly ModelToolCallV1[]) =>
-      call<{ readonly messages: readonly DriverMessage[] }>("tools", { batch_id, messages, calls }),
+    tools: (batch_id: string, messages: readonly DriverMessage[], calls: readonly ModelToolCallV1[], options?: { readonly approval_wait_id?: string }) =>
+      call<{ readonly messages: readonly DriverMessage[] }>("tools", { batch_id, messages, calls, ...options }),
     /** Model/tool messages are already recorded. Pass only additional authored
      * messages here. Completion cannot erase accepted history or tool effects.
      */

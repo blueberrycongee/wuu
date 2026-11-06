@@ -19,6 +19,8 @@ import (
 // gate also makes close wait for accepted calls before releasing their tools.
 type streamTurnGateway struct {
 	ctx                     context.Context
+	latestAdmittedInput     *providers.MessageRef
+	latestAdmittedEvent     *providers.MessageRef
 	cancel                  context.CancelFunc
 	gate                    chan struct{}
 	modelSteps              []providers.ModelStepUsage
@@ -491,6 +493,14 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	if err != nil {
 		return nil, err
 	}
+	if batch.BeforeDispatch != nil {
+		if joining {
+			return nil, errors.New("streamed tool effects cannot acquire retrospective approval")
+		}
+		if err := batch.BeforeDispatch(ctx, loopdriver.ExecutionContextFromContext(g.ctx)); err != nil {
+			return nil, err
+		}
+	}
 	g.batches[batch.ID] = true
 	delete(g.streamedBatches, batch.ID)
 	for _, call := range batch.Calls {
@@ -704,4 +714,74 @@ func assistantMessageFromStep(result StepResult) providers.ChatMessage {
 		finish = providers.NormalizeFinishReason(result.StopReason, result.Truncated, len(result.ToolCalls) > 0)
 	}
 	return providers.ChatMessage{Role: "assistant", Content: result.Content, Images: result.Images, ProviderItems: result.ProviderItems, Phase: result.Phase, ProviderItemID: result.ProviderItemID, ProviderItemProvider: result.ProviderItemProvider, ProviderItemModel: result.ProviderItemModel, ReasoningContent: result.ReasoningContent, ReasoningBlocks: cloneReasoningBlocks(result.ReasoningBlocks), ToolCalls: result.ToolCalls, FinishReason: finish, StopReason: result.StopReason, Truncated: result.Truncated}
+}
+
+func (g *streamTurnGateway) WaitExecution() loopdriver.ExecutionContext {
+	return loopdriver.ExecutionContextFromContext(g.ctx)
+}
+
+func (g *streamTurnGateway) ReserveWait(ctx context.Context, batch loopdriver.ToolBatch, reserve func(context.Context, loopdriver.ExecutionContext, bool) error) error {
+	ctx, leave, err := g.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
+	if err := g.prepare(ctx); err != nil {
+		return err
+	}
+	if batch.ID == "" || len(batch.Calls) == 0 {
+		return errors.New("wait requires a nonempty tool batch")
+	}
+	if g.batches[batch.ID] || len(g.streamedBatches) != 0 {
+		return errors.New("batch may already have started")
+	}
+	if err := providers.ValidateAssistantToolCalls(batch.Calls); err != nil {
+		return err
+	}
+	for _, call := range batch.Calls {
+		if g.toolCalls[call.ID] {
+			return errors.New("tool call may already have started")
+		}
+	}
+	if _, err := pendingToolCallDeclaration(append(providers.CloneChatMessages(g.baseHistory), g.produced...), batch.Calls); err != nil {
+		return err
+	}
+	fresh, err := pendingToolCallDeclaration(g.produced, batch.Calls)
+	if err != nil {
+		return err
+	}
+	return reserve(ctx, loopdriver.ExecutionContextFromContext(g.ctx), fresh)
+}
+
+// WaitInput derives references from admitted host input, never driver JSON or
+// rewritten context. Input waits exclude plugin-generated user-role messages.
+func (g *streamTurnGateway) WaitInput(ctx context.Context, kind string) (loopdriver.ExecutionContext, error) {
+	ctx, leave, err := g.enter(ctx)
+	if err != nil {
+		return loopdriver.ExecutionContext{}, err
+	}
+	defer leave()
+	execution := loopdriver.ExecutionContextFromContext(g.ctx)
+	if kind == "event" && g.latestAdmittedEvent != nil {
+		ref := *g.latestAdmittedEvent
+		execution.SourceMessage = &ref
+		return execution, nil
+	}
+	if kind == "input" && g.latestAdmittedInput != nil {
+		ref := *g.latestAdmittedInput
+		execution.SourceMessage = &ref
+		return execution, nil
+	}
+	source := execution.SourceMessage
+	execution.SourceMessage = nil
+	if source != nil && source.SessionID == execution.SessionID {
+		for _, message := range g.input.Messages {
+			if message.Seq == source.Seq && message.Role == "user" && !message.Hidden && !message.ReadOnly && (kind == "event" || message.Origin == "" || message.Origin == "user") {
+				ref := *source
+				execution.SourceMessage = &ref
+				break
+			}
+		}
+	}
+	return execution, nil
 }
