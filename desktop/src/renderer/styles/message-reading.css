@@ -93,11 +93,46 @@
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :is(
+    .rich-heading--h1,
+    .streaming-markdown-block:has(> .rich-heading--h1:first-child)
+  ) {
+  margin-block-start: var(--conversation-prose-heading-before-h1, calc(var(--section-gap) + var(--space-2)));
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :is(
+    .rich-heading--h2,
+    .streaming-markdown-block:has(> .rich-heading--h2:first-child)
+  ) {
+  margin-block-start: var(--conversation-prose-heading-before, var(--section-gap));
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :is(
+    .rich-heading--h3,
+    .streaming-markdown-block:has(> .rich-heading--h3:first-child)
+  ) {
+  margin-block-start: var(--conversation-prose-heading-before-h3, var(--space-6));
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :is(
+    .rich-heading--h4,
+    .rich-heading--h5,
+    .rich-heading--h6,
+    .streaming-markdown-block:has(> :is(.rich-heading--h4, .rich-heading--h5, .rich-heading--h6):first-child)
+  ) {
+  margin-block-start: var(--conversation-prose-heading-before-minor, var(--space-4));
+}
+
+/* A list introduced by prose is a new group, not a second list item. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
   :is(.rich-content, .streaming-markdown-block) > :is(
     .rich-paragraph,
     .streaming-markdown-block:has(> .rich-paragraph:last-child)
   ) + :is(ul, ol, .streaming-markdown-block:has(> :is(ul, ol):first-child)) {
-  margin-block-start: var(--conversation-prose-heading-after, 0.5em);
+  margin-block-start: var(--conversation-prose-list-before, 0.5em);
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
@@ -106,6 +141,24 @@
     .streaming-markdown-block:has(> .rich-heading:last-child)
   ) + :not(.stream-cursor-block-tail) {
   margin-block-start: var(--conversation-prose-heading-after, 0.5em);
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > :is(
+    .rich-heading--h1,
+    .streaming-markdown-block:has(> .rich-heading--h1:last-child)
+  ) + :not(.stream-cursor-block-tail) {
+  margin-block-start: var(--conversation-prose-heading-after-h1, var(--space-3));
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > :is(
+    .rich-heading--h4,
+    .rich-heading--h5,
+    .rich-heading--h6,
+    .streaming-markdown-block:has(> :is(.rich-heading--h4, .rich-heading--h5, .rich-heading--h6):last-child)
+  ) + :not(.stream-cursor-block-tail) {
+  margin-block-start: var(--conversation-prose-heading-after-minor, var(--space-1));
 }
 
 /* Prose shares the message/composer boundary; typography must not introduce
@@ -261,11 +314,13 @@
   text-wrap: balance;
 }
 
-/* Each level is a visible step above the next (23/19/17 over 15px body) and
- * lands on a whole pixel, so hierarchy does not rest on weight alone. */
+/* Each level is a visible step above the next (23/19/17/16 over 15px body)
+ * and lands on a whole pixel, so hierarchy does not rest on weight alone.
+ * h5/h6 stay at body size and rely on the minor spacing tier. */
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h1 { font-size: round(nearest, 1.5em, 1px); }
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h2 { font-size: round(nearest, 1.25em, 1px); }
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h3 { font-size: round(nearest, 1.1em, 1px); }
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h4 { font-size: round(nearest, 1.05em, 1px); }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content :is(ul, ol) {
   display: block;
