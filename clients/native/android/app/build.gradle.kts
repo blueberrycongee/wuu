@@ -12,8 +12,8 @@ android {
         applicationId = "ai.wuu.nativeapp"
         minSdk = 28
         targetSdk = 36
-        versionCode = 261100699
-        versionName = "2026.11.6"
+        versionCode = 261100701
+        versionName = "2026.11.7-nightly.1"
         for (key in listOf("APP_ID", "API_KEY", "PROJECT_ID", "SENDER_ID")) {
             val name = "WUU_FIREBASE_$key"
             val value = providers.gradleProperty(name).orElse(providers.environmentVariable(name)).getOrElse("")

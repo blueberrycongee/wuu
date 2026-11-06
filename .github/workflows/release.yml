@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag to build and publish (empty means validation only)
+        description: Existing release tag to build and publish (empty means validation only; -nightly.N tags may point to a branch commit)
         type: string
         default: ""
       checkpoint_run:
@@ -35,6 +35,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Fetch release branches
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*'
       - id: source
         env:
           REQUESTED_TAG: ${{ inputs.release_tag }}
@@ -42,9 +44,17 @@ jobs:
           tag="$REQUESTED_TAG"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="$GITHUB_REF_NAME"; fi
           if [[ -n "$tag" ]]; then
-            [[ "$tag" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(-rc\.[0-9]+)?$ ]] || exit 1
+            [[ "$tag" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(-rc\.[0-9]+|-nightly\.[0-9]+)?$ ]] || exit 1
             source=$(git rev-parse "refs/tags/$tag^{commit}")
-            git merge-base --is-ancestor "$source" origin/main
+            if [[ "$tag" == *-nightly.* ]]; then
+              branches=$(git for-each-ref --contains "$source" --format='%(refname)' refs/remotes/origin)
+              if [[ -z "$branches" ]]; then
+                echo "nightly tag $tag must point to a commit on an origin branch" >&2
+                exit 1
+              fi
+            else
+              git merge-base --is-ancestor "$source" origin/main
+            fi
           else
             source="$GITHUB_SHA"
           fi

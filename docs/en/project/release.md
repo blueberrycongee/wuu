@@ -46,11 +46,30 @@ The API generates candidate text without publishing a release. Review the includ
 
 `CHANGELOG.md` is frozen. Its existing `[Unreleased]` entries remain available as transition material for the next release; they are not proof that a feature ships. Historical dated sections stay intact. New releases use only their per-version notes file. The current `2026.10.19` notes have been copied to the new location so current-version checks continue to work; older tags retain their original scripts and changelog.
 
-Run `node scripts/release-version.mjs notes <version>` to inspect the exact version heading and reviewed body consumed by publication. `make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching notes file. A successful local build does not bypass these checks.
+Run `node scripts/release-version.mjs notes <version>` to inspect the exact version heading and reviewed body consumed by publication. `make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires final and `-rc.N` tag commits to be ancestors of `origin/main`, nightly tag commits to be on an `origin` branch, all generated product versions to match the tag, and a nonempty matching notes file. A successful local build does not bypass these checks.
+
+### Nightly prereleases
+
+Nightly builds exercise the latest `main` before the next daily release. They use
+`YYYY.M.D-nightly.N`, are always GitHub prereleases, and are never offered to
+stable automatic-update clients. A nightly tag must point to a commit that is
+already on an `origin` branch; final and `-rc.N` releases still must be ancestors
+of `origin/main`.
+
+Create a short-lived release branch from the current `origin/main`, then:
+
+1. Write `docs/releases/<version>.md` with the nightly's source commit and reviewed highlights.
+2. Run `make release-prepare RELEASE_VERSION=<version>`. This updates `VERSION`, the desktop manifest and lockfile, and native metadata without touching the frozen changelog.
+3. Commit the release files and run `make tag-release`. Push the release branch, then the tag. Pushing only the tag fails because the nightly source must already be reachable from an `origin` branch. Keep the release branch until the workflow finishes so a failed run can be retried.
+4. Watch the Release workflow. A successful run publishes a prerelease with signed, notarized, stapled macOS artifacts.
+
+Increment `N` for another nightly on the same UTC date. Do not reuse a nightly
+version or move its tag. Nightly tags carry the same signing authority as release
+tags, so restrict tag creation to maintainers.
 
 ## Product versions and compatibility
 
-Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
+Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1` or `2026.10.21-nightly.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
 
 Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. When promoting a prerelease, copy its reviewed notes to the final version's file and incorporate changes since the candidate before running `release-prepare`. The command never creates, merges, or rewrites notes automatically; it requires the exact target version's file.
 
