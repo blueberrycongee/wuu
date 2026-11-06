@@ -231,12 +231,15 @@ function TurnContent({
   );
   const timelineSegments = buildTurnTimeline(timelineItems).map((segment, index, all) => {
     const last = index === all.length - 1;
+    const singleSegment = all.length === 1;
     const assistantItems = last
       ? segment.assistantItems
       : displayItemsForSettledSegment(segment.assistantItems);
-    const segmentTurn: Turn = last
-      ? { ...turn, items: assistantItems }
-      : { ...turn, id: `${turn.id}-segment-${index}`, items: assistantItems, status: "completed" };
+    const segmentTurn: Turn = last && singleSegment
+      ? turn
+      : last
+        ? { ...turn, items: assistantItems }
+        : { ...turn, items: assistantItems, status: "completed" };
     const interrupted = assistantItems.some(
       (item) => item.type === "agent_message" && item.cause === "steered_stream_fragment",
     );
@@ -355,7 +358,7 @@ function TurnContent({
             )}
             {segmentDisplay ? (
               <AssistantTurnShell
-                turn={segmentTurn}
+                turn={last ? turn : segmentTurn}
                 display={segmentDisplay}
                 cwd={cwd}
                 onOpenFile={onOpenFile}

@@ -357,6 +357,10 @@ describe("TurnView", () => {
     expect(messages[1]).toContain("agent:partial answer");
     expect(messages[2]).toContain("user:new direction");
     expect(messages[3]).toContain("agent:final answer");
+    const agentTurnIDs = Array.from(
+      view.querySelectorAll<HTMLElement>('[data-wuu-variant="agent"]'),
+    ).map((element) => element.dataset.responseTurnId);
+    expect(agentTurnIDs).toEqual(["turn-1", "turn-1"]);
   });
 
   it("renders a plugin-generated query through the existing user-message flow", () => {
