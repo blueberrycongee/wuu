@@ -394,6 +394,7 @@ export const enUS = {
   "settings.messageFontSize": "Message font size",
   "settings.backToApp": "Back to app",
   "settings.navigation": "Settings",
+  "settings.close": "Close settings",
   "settings.searchSettings": "Search settings",
   "settings.searchEmpty": "No matching settings",
   "settings.navPreferences": "Preferences",

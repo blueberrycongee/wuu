@@ -2793,141 +2793,215 @@ button.settings-engine-expand:hover {
   }
 }
 
-/* Settings shares the native workbench frame and drawer controller. The
-   existing settings presentation still owns its navigation and form pages. */
+/* Settings is a modal surface over the live workbench. The app remains
+   visible behind a scrim so the user keeps their place; the panel owns its
+   navigation, page scroll and focus. */
 .app-shell.navigation-ribbon-layout[data-settings-open] .sidebar {
   pointer-events: none;
 }
 
-.app-shell.navigation-ribbon-layout[data-settings-open] .sidebar > .sidebar-content,
-.app-shell.navigation-ribbon-layout[data-settings-open] > :is(
-  .conversation-pane,
-  .workspace-right-panel,
-  .workspace-right-panel-resizer,
-  .shell-right-sidebar-toggle
-) {
-  visibility: hidden;
+.app-shell.navigation-ribbon-layout[data-settings-open] .sidebar > .sidebar-content {
   pointer-events: none;
 }
 
-.settings-standalone-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 119;
-  min-width: 0;
-  min-height: 0;
-}
-
-.app-shell:has(> .settings-standalone-layer) > .sidebar {
-  visibility: hidden;
-}
-
-.app-shell:has(> .settings-standalone-layer) > :is(
-  .sidebar-resizer,
-  .sidebar-hover-zone,
-  .globalized-sidebar-toggle-region,
-  .section-sidebar-toggle
-) {
-  display: none;
-}
-
+.settings-overlay-layer,
+.settings-standalone-layer,
 .settings-workbench-layer {
-  position: absolute;
-  inset: var(--workbench-top, var(--window-titlebar-height)) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--sidebar-ribbon-width);
-  z-index: 119;
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
   min-width: 0;
   min-height: 0;
-  border-radius: var(--conversation-canvas-radius);
-  background: var(--workbench-canvas-bg);
+  border-radius: 0;
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: blur(6px) saturate(0.94);
+  -webkit-backdrop-filter: blur(6px) saturate(0.94);
+  padding: clamp(20px, 4.5vh, 56px) clamp(20px, 4.5vw, 64px);
+  animation: wuu-fade-in var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
-/* Lazy settings load inside their existing pane so window chrome stays usable. */
-.settings-workbench-layer > .view-switch-loading-inline,
-.settings-standalone-layer > .view-switch-loading-inline {
-  height: 100%;
+/* The lazy chunk sits inside the scrim. Give its waiting state the same
+   footprint as the panel so loading never flashes a full-window surface. */
+.settings-overlay-layer > .view-switch-loading-inline {
+  width: min(1120px, 100%);
+  height: min(820px, 100%);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-lg);
+  background: var(--settings-canvas);
+  box-shadow: var(--shadow-modal);
 }
 
-.app-shell .settings-shell.settings-embedded {
-  --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
-  grid-template-columns: max(0px, calc(var(--sidebar-width) - var(--sidebar-ribbon-compact-width, 52px))) minmax(0, 1fr);
-  height: 100%;
+/* --- Floating panel ------------------------------------------------------ */
+
+.settings-shell.settings-floating {
+  --canvas-titlebar-height: 52px;
+  display: grid;
+  width: min(1120px, 100%);
+  height: min(820px, 100%);
+  max-height: 100%;
+  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   padding: 0;
-  border-radius: inherit;
-  background: transparent;
+  overflow: hidden;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-lg);
+  background: var(--settings-canvas);
+  box-shadow: var(--shadow-modal);
+  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+  --enter-y: 8px;
+  --enter-scale: 0.992;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar {
+.settings-floating .settings-sidebar {
   grid-column: 1;
+  grid-row: 1;
   min-width: 0;
+  overflow: hidden;
   border: 0;
   border-right: 1px solid var(--hairline-soft);
   border-radius: 0;
-  background: color-mix(in srgb, var(--surface-1) 60%, var(--paper));
+  background: var(--theme-override-color-surface, var(--sidebar-material-fill));
   box-shadow: none;
 }
 
-:root[data-theme="dark"] .app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar {
-  background: var(--workbench-canvas-bg);
-}
-
-.app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar .sidebar-content {
-  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
-  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+.settings-floating .settings-sidebar .sidebar-content {
+  width: 100%;
+  min-width: 0;
   height: 100%;
+  /* The workbench rail offsets its content past the ribbon and titlebar.
+     The floating panel already starts there, so that offset is not local. */
   margin: 0;
+  padding-top: var(--space-2);
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded .settings-main {
+.settings-floating .settings-navigation-title {
+  margin: 0 0 var(--space-1);
+  padding: var(--space-3) var(--sidebar-row-pad-x) 0;
+  color: var(--ink-strong);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-floating .settings-main {
+  grid-column: 2;
+  grid-row: 1;
   margin: 0;
   border-radius: 0;
   background: var(--settings-canvas);
 }
 
-.app-shell .settings-embedded .settings-main::before {
+.settings-floating .settings-main::before {
   content: none;
 }
 
-.app-shell .settings-embedded .settings-titlebar {
-  padding: 0 var(--window-titlebar-padding-inline);
+.settings-floating .settings-titlebar {
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  -webkit-app-region: no-drag;
 }
 
-.app-shell .settings-embedded .settings-navigation-title {
-  margin: 0 0 2px;
-  padding-block: 0;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+.settings-floating .settings-titlebar-slot {
+  flex: 1 1 auto;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed .settings-sidebar,
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-drawer-docking .settings-sidebar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
-  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
-  transform: none;
+.settings-close-button {
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .settings-sidebar {
-  visibility: hidden;
-  pointer-events: none;
+/* --- Narrow windows -------------------------------------------------------
+ * The panel becomes the whole sheet, and the rail turns into a horizontal
+ * destination strip so the content keeps a readable width. */
+@media (max-width: 760px) {
+  .settings-overlay-layer,
+  .settings-standalone-layer,
+  .settings-workbench-layer {
+    padding: 0;
+  }
+
+  .settings-shell.settings-floating,
+  .settings-overlay-layer > .view-switch-loading-inline {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .settings-shell.settings-floating {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-floating .settings-sidebar {
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+
+  .settings-floating .settings-sidebar .sidebar-content {
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .settings-floating .settings-navigation-title {
+    display: none;
+  }
+
+  .settings-floating .settings-search {
+    width: clamp(120px, 26vw, 180px);
+    flex: 0 0 auto;
+    margin: 0;
+  }
+
+  .settings-floating .settings-nav {
+    flex: 1 1 auto;
+    flex-direction: row;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0 0 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .settings-floating .settings-nav-group {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+  }
+
+  .settings-floating .settings-nav-group-label {
+    display: none;
+  }
+
+  .settings-floating .settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 0 var(--space-3);
+  }
+
+  .settings-floating .settings-main {
+    grid-column: 1;
+    grid-row: 2;
+  }
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing) .settings-sidebar {
-  box-shadow: var(--shadow-drawer-right);
-}
-
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-drawer-closing .settings-sidebar .sidebar-content {
-  opacity: 0;
-  transform: translate3d(-18px, 0, 0);
-  pointer-events: none;
-}
-
-.app-shell.navigation-ribbon-layout[data-settings-open] > .sidebar-resizer,
-.app-shell.navigation-ribbon-layout[data-settings-open] > .sidebar-hover-zone {
-  z-index: 121;
+@container style(--motion-reduced: 1) {
+  .settings-overlay-layer,
+  .settings-standalone-layer,
+  .settings-workbench-layer,
+  .settings-shell.settings-floating {
+    animation: none;
+  }
 }
 
 /* Blocking settings feedback stays in the section that owns recovery. */
