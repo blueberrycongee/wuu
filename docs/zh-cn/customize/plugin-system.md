@@ -292,6 +292,8 @@ Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDr
 
 [取证工作流示例](../../../examples/plugins/workflow-loop/runtime.ts) 仅依赖公开 SDK：先规划一个工具批次，提交仅包含当前任务和证据的活动上下文，再禁用工具进行综合回答。此示例要求支持持久化上下文替换。checkpoint 记录当前阶段；恢复使用已结算的工具回执，不会重放效果。在检出目录运行 `node scripts/workflow-driver-e2e.mjs`，可在独立目录安装打包后的 SDK，并验证真实文件证据、原始历史保留、更改默认 profile 后的已提交上下文恢复、规划历史尚未写入时的中断、驱动自主处理上下文溢出，以及移除提供者。该检查还会运行独立 SDK 驱动，在模型流结束前读取真实文件，并仅等待一次对应的持久化结果。同一验证会排除原生默认模块，让工作流接管 `driver.default`；将示例的运行时环境变量设为 `WUU_WORKFLOW_PROFILE=default` 即可声明该服务。可重复核对的日志和安装包保留在 `.tmp/e2e/workflow-driver/`。
 
+[持久云端参考组合](../../../examples/compositions/durable/README.md) 单独选择 `example.durable-driver`、`wuu.durable-wait` 和 `wuu.durable-client`，桌面默认组合不启用它们。公开的 `durable.tasks@1` 契约通过已认证的 app-server 读取提供有界的 session/run 元数据。`host.durable-wait@1` 是基于已选文档权威的可替换可选服务。`durableWait(host, executionId).register()` 经由活动的 `driver.turn.register_wait` 边界，为本轮模型产生、尚未流式执行的批次建立宿主证明的执行前预约。批次 ID 在逻辑会话内保持稳定，替换审批必须有此前持久化的 fence。过期或断连不能证明效果未开始；已批准批次仍需通过普通权限检查。可能发送之后的 worker 传输丢失保留为 `uncertain_tool_effect`，不会伪造已提交失败回执，驱动不得重放。独立远程元数据视图在没有可信动作/范围审阅表面时明确禁止盲批。已验证项目和剩余边界以示例的验收报告为准。
+
 默认 `agent.DefaultDriver` 拥有多轮调用、压缩、溢出恢复和终止策略；模型、工具、上下文、观测和 checkpoint 效果均通过相同的公共资源执行。原有整段循环网关及宿主持有的循环入口已删除，嵌入调用方须显式选择提供者。工作流示例会继续保存的任务上下文，不会将新的用户任务合并到中断的工作流中。目前驱动 profile 通过 debug app-server 的 `--driver` 选项选择，桌面尚无相应选择控件。
 
 核心服务覆盖存储、设置、会话、历史、工作区、产物和执行操作。功能服务也使用相同的路由机制。服务方法的 schema 标识描述其契约，不授予直接调用其他插件私有进程或读取私有存储的权限。

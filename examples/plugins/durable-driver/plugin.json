@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "example.durable-driver",
+  "name": "Durable Cloud Driver",
+  "version": "1.0.0",
+  "description": "Opt-in durable headless agent execution and read-only task graph.",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": ["dist/runtime.js"]
+  }
+}
