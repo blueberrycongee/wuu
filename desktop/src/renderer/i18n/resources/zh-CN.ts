@@ -391,6 +391,7 @@ export const zhCN = {
   "settings.messageFontSize": "消息流字号",
   "settings.backToApp": "返回应用",
   "settings.navigation": "设置",
+  "settings.close": "关闭设置",
   "settings.searchSettings": "搜索设置",
   "settings.searchEmpty": "没有匹配的设置",
   "settings.navPreferences": "偏好设置",

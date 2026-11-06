@@ -197,6 +197,7 @@ const COPY_RESET_MS = 1500;
 function SettingsViewContent({
   browserSettingsAllowed = true,
   embedded = false,
+  floating = false,
   embeddedDrawerPhase,
   onSidebarPointerEnter,
   onSidebarPointerLeave,
@@ -248,6 +249,7 @@ function SettingsViewContent({
 }: {
   browserSettingsAllowed?: boolean;
   embedded?: boolean;
+  floating?: boolean;
   embeddedDrawerPhase?: SidebarDrawerPhase;
   onSidebarPointerEnter?: () => void;
   onSidebarPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -433,14 +435,6 @@ function SettingsViewContent({
     }
   }
 
-  const shellStyle = {
-    // Same variables as the main app shell (`--sidebar-width` collapses to 0,
-    // `--sidebar-open-width` remembers the open width for the hover drawer)
-    // so sidebar.css and settings.css read one vocabulary for both shells.
-    "--sidebar-width": `${sidebarCollapsed ? 0 : sidebarWidth}px`,
-    "--sidebar-open-width": `${sidebarWidth}px`
-  } as CSSProperties;
-
   // Mirror the main view's sidebar collapse/hover logic so the settings shell
   // behaves the same way: a persistent `sidebarCollapsed` flag hides the rail
   // and only the left-edge hover zone can reopen it as a drawer overlay.
@@ -458,26 +452,36 @@ function SettingsViewContent({
     scheduleSidebarDrawerCloseFromPointerLeave
   } = useSidebarDrawerState({
     appShellRef: effectiveShellRef,
-    sidebarCollapsed: !embedded && sidebarCollapsed,
+    // A floating settings panel always keeps its own navigation visible; the
+    // outer window's rail state must not turn the panel rail into a drawer.
+    sidebarCollapsed: !embedded && !floating && sidebarCollapsed,
     resizingSidebar,
     motionMs: sidebarDrawerExitMs,
     dockingMotionMs: sidebarMotionMs,
     closeOnWindowResize: true
   });
-  const sidebarDrawerPhase = embedded ? embeddedDrawerPhase : standaloneDrawerPhase;
-  const shellClassName = `settings-shell${embedded ? " settings-embedded" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
-    sidebarCollapsed ? " sidebar-collapsed" : ""
+  const sidebarDrawerPhase = floating ? "closed" : embedded ? embeddedDrawerPhase : standaloneDrawerPhase;
+  const railCollapsed = floating ? false : sidebarCollapsed;
+  const shellStyle = {
+    // Same variables as the main app shell (`--sidebar-width` collapses to 0,
+    // `--sidebar-open-width` remembers the open width for the hover drawer)
+    // so sidebar.css and settings.css read one vocabulary for both shells.
+    "--sidebar-width": `${floating ? 248 : railCollapsed ? 0 : sidebarWidth}px`,
+    "--sidebar-open-width": `${floating ? 248 : sidebarWidth}px`
+  } as CSSProperties;
+  const shellClassName = `settings-shell${embedded ? " settings-embedded" : ""}${floating ? " settings-floating" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
+    railCollapsed ? " sidebar-collapsed" : ""
   }${
-    sidebarCollapsed && sidebarDrawerPhase === "open" ? " sidebar-drawer-open" : ""
+    railCollapsed && sidebarDrawerPhase === "open" ? " sidebar-drawer-open" : ""
   }${
-    sidebarCollapsed && sidebarDrawerPhase === "closing"
+    railCollapsed && sidebarDrawerPhase === "closing"
       ? " sidebar-drawer-closing"
       : ""
   }${
-    !sidebarCollapsed && sidebarDrawerPhase === "docking"
+    !railCollapsed && sidebarDrawerPhase === "docking"
       ? " sidebar-drawer-docking"
       : ""
-  }${sidebarAnimating ? " sidebar-animating" : ""}`;
+  }${sidebarAnimating && !floating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
   const nativeGroups = nativeSettingsGroups(browserSettingsAllowed, controls.capabilities);
@@ -535,6 +539,67 @@ function SettingsViewContent({
     onPageChange?.(next);
   }
 
+  // The floating panel is a modal surface. Capture the opener, move focus into
+  // the active destination, and return focus when the panel leaves. This also
+  // keeps keyboard users inside the panel while its scrim covers the app.
+  const floatingOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!floating) return;
+    const shell = effectiveShellRef.current;
+    if (!shell) return;
+    const opener = document.activeElement;
+    floatingOpenerRef.current = opener instanceof HTMLElement ? opener : null;
+    const focusTarget = shell.querySelector<HTMLElement>(".settings-nav-item.active") ?? shell;
+    const frame = window.requestAnimationFrame(() => focusTarget.focus({ preventScroll: true }));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const previous = floatingOpenerRef.current;
+      floatingOpenerRef.current = null;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [floating]);
+
+  function handleFloatingKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (!floating) return;
+    if (event.key === "Escape") {
+      if (event.defaultPrevented) return;
+      const shell = effectiveShellRef.current;
+      if (!shell) return;
+      // Let menus and nested dialogs consume Escape first. Their state is
+      // rendered in the same panel or in the shared overlay portal.
+      if (shell.querySelector('[role="dialog"], .select-menu-panel, [data-floating-menu-owner]')) return;
+      if ([...document.querySelectorAll('[aria-modal="true"]')].some(
+        (element) => element !== shell && !shell.contains(element),
+      )) return;
+      event.preventDefault();
+      onBack();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const shell = effectiveShellRef.current;
+    if (!shell) return;
+    if ([...document.querySelectorAll('[aria-modal="true"]')].some(
+      (element) => element !== shell && !shell.contains(element),
+    )) return;
+    const focusable = [...shell.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => element.getAttribute("aria-hidden") !== "true" && !element.closest("[inert]"));
+    if (focusable.length === 0) {
+      event.preventDefault();
+      shell.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === shell)) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+
   const sidebarToggle = (
     <button
       type="button"
@@ -552,8 +617,21 @@ function SettingsViewContent({
   );
 
   const nativeSettings = (
-    <div ref={effectiveShellRef} className={shellClassName} style={shellStyle} data-wuu-component="settings-shell">
-      {!embedded ? <div
+    <div
+      ref={effectiveShellRef}
+      className={shellClassName}
+      style={shellStyle}
+      data-wuu-component="settings-shell"
+      {...(floating ? {
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": t("settings.navigation"),
+        "data-settings-floating": "",
+        tabIndex: -1,
+        onKeyDown: handleFloatingKeyDown,
+      } : {})}
+    >
+      {!embedded && !floating ? <div
         ref={sidebarHoverZoneRef}
         className="sidebar-hover-zone"
         aria-hidden="true"
@@ -563,9 +641,9 @@ function SettingsViewContent({
       <aside
         className="settings-sidebar"
         data-wuu-component="settings-sidebar"
-        inert={embedded && sidebarCollapsed && sidebarDrawerPhase !== "open"}
-        onPointerEnter={embedded ? onSidebarPointerEnter : openSidebarDrawer}
-        onPointerLeave={embedded ? onSidebarPointerLeave : (event) =>
+        inert={embedded && !floating && sidebarCollapsed && sidebarDrawerPhase !== "open"}
+        onPointerEnter={floating ? undefined : embedded ? onSidebarPointerEnter : openSidebarDrawer}
+        onPointerLeave={floating ? undefined : embedded ? onSidebarPointerLeave : (event) =>
           scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
         }
       >
@@ -575,9 +653,9 @@ function SettingsViewContent({
           * 淡出/位移也复用 sidebar.css 里同一组规则。
           */}
         <div className="sidebar-content">
-          {!embedded ? <div className="traffic-spacer">{!sidebarCollapsed ? sidebarToggle : null}</div> : null}
-          {embedded ? <h2 className="sidebar-section-title settings-navigation-title">{t("settings.navigation")}</h2> : null}
-          {!embedded ? <button className="settings-back-button" type="button" onClick={onBack}>
+          {!embedded && !floating ? <div className="traffic-spacer">{!railCollapsed ? sidebarToggle : null}</div> : null}
+          {embedded || floating ? <h2 className="sidebar-section-title settings-navigation-title">{t("settings.navigation")}</h2> : null}
+          {!embedded && !floating ? <button className="settings-back-button" type="button" onClick={onBack}>
             <ArrowLeft className="icon" />
             <span>{t("settings.backToApp")}</span>
           </button> : null}
@@ -663,7 +741,7 @@ function SettingsViewContent({
           </nav>
         </div>
       </aside>
-      {sidebarCollapsed || embedded ? null : (
+      {railCollapsed || embedded || floating ? null : (
         <div
           className="sidebar-resizer"
           role="separator"
@@ -683,11 +761,21 @@ function SettingsViewContent({
       <main className="settings-main" data-wuu-component="settings-content">
         <SettingsTitlebarSlot.Provider value={titlebarSlot}>
           <div className="settings-titlebar">
-            {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
+            {isTouchWebShell() && !floating && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
             {/* Match the main shell's docked/collapsed slots. Keep the collapsed
              * toggle inside the drag strip so native hit testing honors no-drag. */}
-            {sidebarCollapsed && !embedded ? sidebarToggle : null}
+            {railCollapsed && !embedded && !floating ? sidebarToggle : null}
             <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
+            {floating ? (
+              <button
+                type="button"
+                className="icon-button settings-close-button"
+                aria-label={t("settings.close")}
+                onClick={onBack}
+              >
+                <X className="icon-lg" />
+              </button>
+            ) : null}
           </div>
           <div ref={settingsScrollRef} className="settings-scroll">
             <div

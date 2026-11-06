@@ -739,7 +739,7 @@ export function App({ application, slots, shellPluginId }: {
   // A visible agent browser view is a main-owned WebContentsView that floats
   // above the DOM; any full-window overlay would occlude it, so we tell main to
   // hide the view while one is open. This covers the common full-window
-  // surfaces: settings (which replaces the whole app), the commit / PR
+  // surfaces: settings (a modal panel over the workbench), the commit / PR
   // dialogs, the fork dialog, and the conversation search overlay. TODO: other
   // ad-hoc modals/portals (e.g. participant panels) are not yet
   // enumerated here; extend this predicate as more full-window overlays land.

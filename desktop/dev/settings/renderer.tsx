@@ -670,10 +670,12 @@ function Fixture(): JSX.Element {
       };
     });
   };
-  return (
-    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
+  const floating = params.has("overlay");
+  const [overlayOpen, setOverlayOpen] = useState(true);
+  const settingsView = (
       <SettingsView
         application={application}
+        floating={floating}
         initialized={state}
         initialPage={(params.get("page") as SettingsPage | null) ?? undefined}
         running={false}
@@ -687,7 +689,7 @@ function Fixture(): JSX.Element {
         sidebarMaxWidth={420}
         resizingSidebar={false}
         shellRef={shellRef}
-        onBack={() => undefined}
+        onBack={() => { if (floating) setOverlayOpen(false); }}
         onSave={save}
         onRemoveProvider={async (name) => setState((current) => ({ ...current, providers: current.providers?.filter((item) => item.name !== name) }))}
         onProvidersChanged={updated => setState(current => ({ ...current,
@@ -711,6 +713,13 @@ function Fixture(): JSX.Element {
         sidebarAnimating={false}
         onToggleSidebar={() => setCollapsed((value) => !value)}
       />
+  );
+  return (
+    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
+      {floating ? overlayOpen ? <div
+        className="settings-overlay-layer"
+        onPointerDown={event => { if (event.target === event.currentTarget) setOverlayOpen(false); }}
+      >{settingsView}</div> : null : settingsView}
     </div>
   );
 }
