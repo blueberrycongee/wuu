@@ -35,6 +35,7 @@ func (t *ReadFileTool) IsConcurrencySafe() bool { return true }
 func (t *ReadFileTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "read_file",
+		ReplaySafe:  true,
 		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range: the first displayed line and every absolute line divisible by 10 use NUMBER|CONTENT; other lines use |CONTENT. The optional number and first | are display metadata; copy only CONTENT when editing, preserving its indentation. For Code Mode, structured_content.text contains the selected source without line markers, preserving line endings; it remains available on unchanged rereads. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1082,6 +1083,7 @@ func (t *ListFilesTool) IsConcurrencySafe() bool { return true }
 func (t *ListFilesTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "list_files",
+		ReplaySafe:  true,
 		Description: "List directory entries. Defaults to workspace root and returns workspace_revision, name, path, is_dir, size, and page.next for stable non-overlapping continuation.",
 		InputSchema: map[string]any{
 			"type": "object",

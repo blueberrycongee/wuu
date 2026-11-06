@@ -307,6 +307,7 @@ type SessionCreateParams struct {
 	Visibility             string                           `json:"visibility"`
 	ParentSessionID        string                           `json:"parent_session_id,omitempty"`
 	ContextSource          string                           `json:"context_source"`
+	ForkSeq                *int                             `json:"fork_seq,omitempty"` // Inclusive persisted cutoff; fork context only.
 	Workspace              string                           `json:"workspace,omitempty"`
 	WorkspaceID            string                           `json:"workspace_id,omitempty"`
 	WorkspaceRoot          string                           `json:"workspace_root,omitempty"`
@@ -395,9 +396,12 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
-	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
-	ResumeReceiptID        string                           `json:"resume_receipt_id,omitempty"`
-	ResumeAccepted         bool                             `json:"resume_accepted,omitempty"`
+	// Conditional no-input resumption by the selected opt-in driver.
+	RecoverAfterTurnID      string                           `json:"recover_after_turn_id,omitempty"`
+	RecoveryCheckpointToken string                           `json:"recovery_checkpoint_token,omitempty"`
+	ExecutionAuthorization  *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
+	ResumeReceiptID         string                           `json:"resume_receipt_id,omitempty"`
+	ResumeAccepted          bool                             `json:"resume_accepted,omitempty"`
 	// ToolPolicy attenuates this turn only and isolates it from steering input.
 	// An explicit empty allow list disables every tool. Unsupported with steer or external engines.
 	ToolPolicy *SessionTurnToolPolicy `json:"tool_policy,omitempty"`
@@ -519,8 +523,16 @@ type SessionAcceptedInput struct {
 	Attachments []SessionInputAttachment     `json:"attachments,omitempty"`
 }
 
+type SessionDriverRecovery struct {
+	SourceTurnID    string `json:"source_turn_id"`
+	ControlRevision int64  `json:"control_revision,omitempty"`
+	TurnID          string `json:"turn_id"`
+	CheckpointToken string `json:"checkpoint_token"`
+}
+
 type SessionInspectResult struct {
-	AcceptedInput *SessionAcceptedInput `json:"accepted_input,omitempty"`
+	Recovery      *SessionDriverRecovery `json:"recovery,omitempty"`
+	AcceptedInput *SessionAcceptedInput  `json:"accepted_input,omitempty"`
 
 	Receipt       *providers.ClientInputReceipt `json:"receipt,omitempty"`
 	PendingInputs []SessionAcceptedInput        `json:"pending_inputs,omitempty"`
@@ -1150,12 +1162,19 @@ const HostFeatureDocumentAuthority = "state.documents.authority.v1"
 
 const HostFeatureSessionProgress = "session.progress.v1"
 
+// HostFeatureSessionForkSequence recognizes an exact persisted active-branch cutoff.
+const HostFeatureSessionForkSequence = "session.fork-sequence.v1"
+
+// HostFeatureSessionHistoricalState preserves proven entry-bound configuration and stores.
+const HostFeatureSessionHistoricalState = "session.historical-state.v1"
+const HostFeatureSessionDriverRecovery = "session.driver-recovery.v1"
+
 // HostFeatureServiceContinuation recognizes single-use selected invocation forwarding.
 const HostFeatureServiceContinuation = "service.continuation.v1"
 
 // SupportedHostFeatures returns only semantics actually implemented by this host.
 func SupportedHostFeatures() []string {
-	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation}
+	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation, HostFeatureSessionForkSequence, HostFeatureSessionHistoricalState, HostFeatureSessionDriverRecovery}
 }
 
 func hostFeaturesForServices(supported []HostServiceMethod) []string {

@@ -1681,6 +1681,7 @@ func (t *Toolkit) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, boo
 		orchestrator = marker.IsOrchestrator(call.Arguments)
 	}
 	return agent.ToolMetadata{
+		ReplaySafe:      tool.Definition().ReplaySafe,
 		Orchestrator:    orchestrator,
 		ReadOnly:        info.ReadOnly,
 		ConcurrencySafe: info.ConcurrencySafe,

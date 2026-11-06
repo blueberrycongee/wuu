@@ -143,6 +143,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, fmt.Errorf("execution worker protocol mismatch: expected version %d, received %d; update the environment worker", ProtocolVersion, hello.Version)
 	}
 	client.processStart = slices.Contains(hello.Capabilities, ProcessStartCapability)
+	client.codeJournal = slices.Contains(hello.Capabilities, CodeJournalCapability)
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -380,16 +381,38 @@ func (e *Environment) Download(ctx context.Context, token string, size int64, ou
 }
 
 func (e *Environment) RunCode(ctx context.Context, request CodeRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
+	journal, durable := executor.(toolctx.CodeJournal)
+	request.CodeJournal = durable
 	client, err := e.connect(ctx)
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
+	if durable && !client.codeJournal {
+		return codemode.RunResult{}, errors.New("execution worker does not support durable code journals; update the environment worker")
+	}
 	data, err := client.CallWithHandler(ctx, "run_code", request, func(callCtx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-		var call providers.ToolCall
-		if err := json.Unmarshal(raw, &call); err != nil {
+		var callback struct {
+			providers.ToolCall
+			CodeJournalCallback
+		}
+		if err := json.Unmarshal(raw, &callback); err != nil {
 			return nil, err
 		}
-		result, err := executor.Invoke(callCtx, call)
+		if callback.CodeJournalCallback.Kind != "" {
+			if callback.CodeJournalCallback.Kind != "code_journal" {
+				return nil, errors.New("unknown execution callback kind")
+			}
+			if !durable {
+				return nil, errors.New("parent execution scope has no code journal capability")
+			}
+			result, err := journal.CodeJournal(callCtx, callback.Request)
+			if err != nil {
+				return nil, err
+			}
+			data, err := json.Marshal(result)
+			return data, toolerrors.Unknown(err)
+		}
+		result, err := executor.Invoke(callCtx, callback.ToolCall)
 		if err != nil {
 			return nil, err
 		}

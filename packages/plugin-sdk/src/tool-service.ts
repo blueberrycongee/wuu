@@ -14,6 +14,8 @@ export const TOOL_SERVICE_DESCRIPTOR: ServiceDescriptor = {
 };
 
 export interface ToolServiceDefinition {
+  /** Explicit retry permission after interruption; omitted means false, independent of read-only or concurrency hints. */
+  replay_safe?: boolean;
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
@@ -82,6 +84,8 @@ export interface ToolServicePrepareRequest { history: readonly ModelMessageV1[] 
 export interface ToolServicePrepareResult { messages: ModelMessageV1[] }
 export interface ToolServiceCallRequest { call: ToolServiceCall }
 export interface ToolServiceMetadata {
+  /** Explicit retry permission after interruption; omitted means false, independent of read-only or concurrency hints. */
+  replay_safe?: boolean;
   orchestrator: boolean;
   read_only: boolean;
   concurrency_safe: boolean;

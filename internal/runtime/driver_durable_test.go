@@ -61,6 +61,13 @@ func TestDurableDriverProcess(t *testing.T) {
 			}
 			barrier := &durableCheckpointRecorder{CheckpointStore: store, directory: h.evidence, killPhase: scenario.crashPhase}
 			runner := &agent.StreamRunner{Client: model, Model: "controlled-durable", Tools: tools, ToolLedger: ledger, DriverBindingStore: store, DriverCheckpointStore: barrier}
+			journal, err := store.sessions.NewInferenceJournalRuntime("durable-usage-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer journal.Close()
+			runner.InferenceJournal = journal.ForOwner(h.sessionID)
+			runner.ModelInputReceiptStore = sessionModelInputReceiptStore{sessions: store.sessions, sessionID: h.sessionID}
 			attachWorkflowHistory(t, runner, h.sessions, h.sessionID, initial)
 			archive := runner.ArchiveHistory
 			runner.ArchiveHistory = func(ctx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
@@ -139,6 +146,58 @@ func TestDurableDriverProcess(t *testing.T) {
 			saved, _, err := store.Load(ctx)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if scenario.name == "killed-after-model-archive" {
+				var cp struct {
+					RunID string `json:"run_id"`
+				}
+				if err := json.Unmarshal(saved.State, &cp); err != nil {
+					t.Fatal(err)
+				}
+				recovered, err := store.sessions.ReadModelUsageReceipts(h.sessionID, "example.durable-driver", cp.RunID+":model:1")
+				if err != nil || recovered.Status != "complete" || len(recovered.Receipts) != 1 || recovered.Receipts[0].Usage == nil || recovered.Receipts[0].Usage.InputTokens != 13 {
+					t.Fatalf("lost-reply authoritative usage: %+v %v", recovered, err)
+				}
+				repeated, err := store.sessions.ReadModelUsageReceipts(h.sessionID, "example.durable-driver", cp.RunID+":model:1")
+				if err != nil || len(repeated.Receipts) != 1 || repeated.Receipts[0].SubmissionID != recovered.Receipts[0].SubmissionID || model.calls != 2 {
+					t.Fatalf("usage recovery duplicated inference/receipt: %+v calls=%d err=%v", repeated, model.calls, err)
+				}
+				documents, err := persistence.Open(ctx, filepath.Join(h.home, "sessions", "documents"), "sqlite")
+				if err != nil {
+					t.Fatal(err)
+				}
+				page, err := documents.Read(ctx, persistence.Query{Namespace: "example.durable-driver.sessions", Keys: []string{h.sessionID}, Limit: 1})
+				documents.Close()
+				if err != nil || len(page.Documents) != 1 {
+					t.Fatalf("usage task projection: %+v %v", page, err)
+				}
+				var projection struct {
+					Tasks []struct {
+						ID    string `json:"id"`
+						Usage struct {
+							Input  int `json:"input_tokens"`
+							Output int `json:"output_tokens"`
+							Cache  int `json:"cache_read_tokens"`
+						} `json:"usage"`
+					} `json:"tasks"`
+				}
+				if err := json.Unmarshal(page.Documents[0].Value, &projection); err != nil {
+					t.Fatal(err)
+				}
+				rootFound := false
+				for _, task := range projection.Tasks {
+					if task.ID == cp.RunID {
+						rootFound = true
+						if task.Usage.Input != 26 || task.Usage.Output != 14 || task.Usage.Cache != 8 {
+							t.Fatalf("root usage duplicated or lost recovery: %+v", task)
+						}
+					}
+				}
+				if !rootFound {
+					t.Fatal("root usage projection absent")
+				}
+				h.write(t, "recovered-usage-projection.json", projection)
+				h.write(t, "recovered-model-usage.json", recovered)
 			}
 			h.write(t, "checkpoint-after.json", saved)
 			t.Logf("scenario=%s effect_count=%d process_killed=%v final=%q", scenario.name, count, barrier.killed, result.Content)
@@ -399,6 +458,13 @@ func (m *durableControlledModel) StreamChat(ctx context.Context, request provide
 		return nil, err
 	}
 	m.calls++
+	if request.Attempt.Valid() {
+		submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "controlled", Protocol: "test", Transport: "memory", Mode: "stream"})
+		if err != nil {
+			return nil, err
+		}
+		submission.CompleteSuccess(&providers.TokenUsage{InputTokens: 13, OutputTokens: 7, CacheReadTokens: 4})
+	}
 	stream := make(chan providers.StreamEvent, 3)
 	found := false
 	for _, message := range request.Messages {

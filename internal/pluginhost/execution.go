@@ -3,6 +3,7 @@ package pluginhost
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,9 +37,14 @@ type ExecutionUpdateParams struct {
 	Detail      json.RawMessage `json:"detail,omitempty"`
 }
 
+// ErrExecutionShutdown marks host teardown rather than a business cancellation.
+// It is set by trusted host lifecycle code and is never accepted from plugin JSON.
+var ErrExecutionShutdown = errors.New("host execution shutdown")
+
 // ExecutionCancelParams is the wire body of an execution.cancel frame.
 type ExecutionCancelParams struct {
 	ExecutionID string `json:"execution_id"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // ExecutionSnapshot is the host's recorded view of one live execution.

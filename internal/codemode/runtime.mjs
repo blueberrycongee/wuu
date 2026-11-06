@@ -29,7 +29,8 @@ function send(value) {
   header.writeUInt32LE(body.length);
   channel.write(Buffer.concat([header, body]));
 }
-send({ secret: boot.secret });
+send({ secret: boot.secret, runtime: [process.versions.node, process.platform, process.arch, new Date().getTimezoneOffset()].join("/") });
+let issued = 0;
 let finished = false;
 function formatError(name, message, stack) {
   const heading = (name ? name + ": " : "") + (message || "Program failed");
@@ -44,8 +45,30 @@ function fail(error) {
   send({ type: "done", error: formatError(String(error?.name ?? ""), String(error?.message ?? error), String(error?.stack ?? "")) });
 }
 // This function is serialized into the guest. Its closures never contain a host object.
-function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, maxStateKeys) {
+function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, maxStateKeys, journalJSON) {
   const stringify = JSON.stringify, parse = JSON.parse, string = String;
+  const journal = parse(journalJSON);
+  let clock = journal?.Now ?? 0;
+  if (journal) {
+    const NativeDate = Date;
+    function ReplayDate(...args) {
+      if (!new.target) return new NativeDate(clock).toString();
+      return args.length ? new NativeDate(...args) : new NativeDate(clock);
+    }
+    ReplayDate.prototype = NativeDate.prototype;
+    Object.defineProperty(NativeDate.prototype, "constructor", {value: ReplayDate});
+    Object.defineProperty(ReplayDate, "parse", {value: NativeDate.parse});
+    Object.defineProperty(ReplayDate, "UTC", {value: NativeDate.UTC});
+    Object.defineProperty(ReplayDate, "now", {value: () => clock});
+    Object.defineProperty(globalThis, "Date", {value: ReplayDate});
+    let seed = journal.Seed >>> 0;
+    Object.defineProperty(Math, "random", {value: () => {
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let value = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      value ^= value + Math.imul(value ^ (value >>> 7), 61 | value);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    }});
+  }
   const uncurry = fn => Function.prototype.call.bind(fn);
   const setHas = uncurry(Set.prototype.has), setAdd = uncurry(Set.prototype.add), setDelete = uncurry(Set.prototype.delete);
   const mapGet = uncurry(Map.prototype.get), mapSet = uncurry(Map.prototype.set), mapDelete = uncurry(Map.prototype.delete);
@@ -204,6 +227,7 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
     },
     settle(encoded) {
       const reply = parse(encoded), call = mapGet(pending, reply.id);
+      if (journal) clock = reply.clock;
       if (!call) throw new NativeError("Unknown PTC reply");
       mapDelete(pending, reply.id);
       if (call.type === "call" && hasOwn(reply, "value")) weakSet(outputViews, reply.value, reply.display);
@@ -225,18 +249,21 @@ const bridge = vm.newFunction("bridge", encoded => {
     printedBytes += Buffer.byteLength(JSON.stringify(frame.text)) + 1;
     if (printedBytes > boot.maxOutputBytes) { fail(new Error("PTC output exceeded the byte limit")); return vm.undefined; }
   }
+  if (frame.type === "call" || frame.type === "search" || frame.type === "describe") issued = frame.id;
   send(frame);
   if (frame.type === "done") finished = true;
   return vm.undefined;
 });
-const api = vm.withScope(scope => scope.escape(vm.callFunction(vm.evalCode("(" + guestSetup.toString() + ")"), vm.undefined, bridge, vm.newString(JSON.stringify(boot.tools ?? [])), vm.newString(JSON.stringify(boot.state ?? {})), boot.stateEnabled ? vm.true : vm.false, vm.newNumber(boot.maxStateBytes), vm.newNumber(boot.maxStateKeys))));
+const api = vm.withScope(scope => scope.escape(vm.callFunction(vm.evalCode("(" + guestSetup.toString() + ")"), vm.undefined, bridge, vm.newString(JSON.stringify(boot.tools ?? [])), vm.newString(JSON.stringify(boot.state ?? {})), boot.stateEnabled ? vm.true : vm.false, vm.newNumber(boot.maxStateBytes), vm.newNumber(boot.maxStateKeys), vm.newString(JSON.stringify(boot.journal ?? null)))));
 const settle = api.getProp("settle"), run = api.getProp("run"), hasPendingCalls = api.getProp("hasPendingCalls");
+function idle() { if (boot.journal) send({type: "idle", issued}); }
 function drain() {
   vm.executePendingJobs();
   // Without timers or I/O, only a pending host call can resume an idle guest.
   if (!finished && !vm.withScope(() => vm.callFunction(hasPendingCalls, api).toBoolean())) {
     fail(new Error("The program is waiting on a promise that can never settle: no host call is pending and timers are unavailable."));
   }
+  idle();
 }
 let buffer = Buffer.alloc(0);
 channel.on("data", chunk => {
@@ -252,14 +279,14 @@ channel.on("data", chunk => {
       vm.withScope(() => vm.callFunction(settle, api, vm.newString(encoded)));
       drain();
     }
-  } catch (error) { fail(error); }
+  } catch (error) { fail(error); idle(); }
 });
 channel.on("error", () => process.exit(1));
 try {
   const source = nodeModule.stripTypeScriptTypes("(async function(tools, console, ToolCallError, searchTools, describeTool, store, load, remove) {\n" + boot.code + "\n})", { sourceUrl: "program.ts" });
   vm.withScope(() => vm.callFunction(run, api, vm.evalCode(source, "program.ts")));
   drain();
-} catch (error) { fail(error); }
+} catch (error) { fail(error); idle(); }
 // The Go owner can close the channel before its stop signal arrives. Settle the
 // host wait on close so normal teardown cannot emit an unsettled-await diagnostic.
 await new Promise(resolve => channel.once("close", resolve));

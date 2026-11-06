@@ -14,6 +14,9 @@ import (
 
 // ToolDefinition describes a callable tool exposed to the model.
 type ToolDefinition struct {
+	// ReplaySafe explicitly permits retry after an interrupted execution.
+	// It defaults to false and is independent of read-only or concurrency hints.
+	ReplaySafe  bool
 	Name        string
 	Description string
 	InputSchema map[string]any

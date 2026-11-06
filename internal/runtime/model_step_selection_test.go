@@ -77,6 +77,7 @@ func TestSelectedModelProviderNextStepAndRestore(t *testing.T) {
 	if err := thread.PrepareNextStepModel(ctx, session.RuntimeSelection{Provider: "second", Model: "two", PermissionMode: rt.Permissions.Mode}); err != nil {
 		t.Fatalf("capable replacement engine rejected next-step intent: %v", err)
 	}
+	thread.StreamRunner.ModelReceiptRequestOnly = false
 	thread.StreamRunner.ModelInputReceiptStore = sessionModelInputReceiptStore{sessions: rt.Sessions, sessionID: "selection"}
 	var modelEvents []providers.ModelStepSummary
 	result, err := thread.StreamRunner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "system", Content: thread.StreamRunner.SystemPrompt}, {Role: "user", Content: "continue with selected model"}}, func(event providers.StreamEvent) {

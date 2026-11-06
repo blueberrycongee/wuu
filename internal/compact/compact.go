@@ -157,6 +157,8 @@ func CompactWithContextWindow(ctx context.Context, messages []providers.ChatMess
 }
 
 type Budget struct {
+	// Instructions applies only to summarization and never becomes retained history.
+	Instructions string
 	// MediaInput is the resolved request policy, used only for budget projection.
 	// Retained history keeps its original attachments for recovery/model changes.
 	MediaInput          providers.MediaInputPolicy
@@ -241,7 +243,7 @@ func CompactWithBudgetAndOptions(ctx context.Context, messages []providers.ChatM
 // and quota failures are returned without another provider request.
 func CompactWithNativeOrSummary(ctx context.Context, messages []providers.ChatMessage, client providers.Client, model string, budget Budget, options NativeOptions) ([]providers.ChatMessage, error) {
 	native, ok := client.(providers.NativeCompactor)
-	if !ok || !native.NativeCompactionAvailable() {
+	if !ok || !native.NativeCompactionAvailable() || budget.Instructions != "" {
 		return CompactWithBudgetAndOptions(ctx, messages, client, model, budget, options.ProviderOptions)
 	}
 	req := providers.ChatRequest{
@@ -469,6 +471,9 @@ func summarizeCompactChunkWithInputBudget(ctx context.Context, client providers.
 	outputLimitCount := 0
 	for overflowAttempt := 0; ; overflowAttempt++ {
 		prompt := buildSummaryPromptForBudget(toSummarize, previousSummary, inputBudget)
+		if budget.Instructions != "" {
+			prompt += "\n\nAdditional summarization instructions:\n" + budget.Instructions
+		}
 		for {
 			attemptPrompt := prompt
 			if outputLimitCount > 0 {

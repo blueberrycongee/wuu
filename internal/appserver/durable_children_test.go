@@ -17,7 +17,9 @@ import (
 )
 
 // Escaped boundaries: cancellation must reach an active owned child, must not
-// reach an independent child, and canceled parent outboxes must not revive work.
+// cross a background boundary unless explicitly included, and canceled parent
+// outboxes must not revive work. The legacy independent flag does not override
+// background ownership, including an explicit false value.
 // The model gate holds real inference open without wall-clock sleeps or seeded tasks.
 type durableChildGate struct {
 	mu       sync.Mutex
@@ -36,10 +38,17 @@ func (m *durableChildGate) Chat(context.Context, providers.ChatRequest) (provide
 }
 func (m *durableChildGate) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
 	prompt := ""
+	childInput := false
 	for _, message := range req.Messages {
 		if message.Role == "user" && !strings.HasPrefix(message.Content, "<system-reminder>") {
 			prompt = message.Content
+			if message.Content == "child-private-prompt-marker" {
+				childInput = true
+			}
 		}
+	}
+	if childInput {
+		prompt = "child-private-prompt-marker"
 	}
 	m.mu.Lock()
 	m.prompts = append(m.prompts, prompt)
@@ -79,10 +88,19 @@ func (m *durableChildGate) StreamChat(ctx context.Context, req providers.ChatReq
 	return ch, nil
 }
 func TestDurableCloudChildCancellation(t *testing.T) {
-	for _, independent := range []bool{false, true} {
-		t.Run(strconv.FormatBool(independent), func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		background bool
+		inclusive  bool
+	}{
+		{"foreground", false, false},
+		{"background-default", true, false},
+		{"background-inclusive", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			survives := tc.background && !tc.inclusive
 			model := &durableChildGate{calls: map[string]*providers.ToolCall{}, entered: make(chan struct{}), release: make(chan struct{}), canceled: make(chan struct{})}
-			j := newDurableControlJourney(t, "cancel-child-"+strconv.FormatBool(independent), model)
+			j := newDurableControlJourney(t, "cancel-child-"+tc.name, model)
 			t.Cleanup(func() { model.released.Do(func() { close(model.release) }) })
 			enqueue := func(prompt, tool string, args any) {
 				raw, err := json.Marshal(args)
@@ -93,7 +111,7 @@ func TestDurableCloudChildCancellation(t *testing.T) {
 				model.calls[prompt] = &providers.ToolCall{ID: prompt, Name: j.names[tool], Arguments: string(raw)}
 				model.mu.Unlock()
 			}
-			enqueue("launch-child", "durable_subagent", map[string]any{"prompt": "child-private-prompt-marker", "background": true, "independent": independent})
+			enqueue("launch-child", "durable_subagent", map[string]any{"prompt": "child-private-prompt-marker", "background": tc.background, "independent": false})
 			j.start(t, "", nil, "launch-child")
 			select {
 			case <-model.entered:
@@ -133,10 +151,12 @@ func TestDurableCloudChildCancellation(t *testing.T) {
 			if inputs != 1 {
 				t.Fatalf("child input delivered %d times: %+v", inputs, records)
 			}
-			enqueue("cancel-child", "durable_cancel", map[string]any{"run_id": child["run_id"]})
+			enqueue("cancel-child", "durable_cancel", map[string]any{"run_id": child["run_id"], "include_background": tc.inclusive})
 			j.start(t, "", nil, "cancel-child")
-			j.completed(t, 2)
-			if !independent {
+			if tc.background {
+				j.completed(t, 2)
+			}
+			if !survives {
 				select {
 				case <-model.canceled:
 				case <-j.ctx.Done():
@@ -145,7 +165,7 @@ func TestDurableCloudChildCancellation(t *testing.T) {
 			} else {
 				select {
 				case <-model.canceled:
-					t.Fatal("independent child canceled with parent")
+					t.Fatal("background child canceled with parent")
 				default:
 				}
 				model.released.Do(func() { close(model.release) })
@@ -158,18 +178,18 @@ func TestDurableCloudChildCancellation(t *testing.T) {
 						child = task
 					}
 				}
-				if (!independent && child["status"] == "aborted" && child["cancel_done"] == true) || (independent && child["status"] == "completed" && child["delivered"] == true) {
+				if (!survives && child["status"] == "aborted" && child["cancel_done"] == true) || (survives && child["status"] == "completed" && child["delivered"] == true) {
 					break
 				}
 				time.Sleep(25 * time.Millisecond)
 			}
-			if !independent && (child["status"] != "aborted" || child["delivered"] == true || child["cancel_done"] != true) {
+			if !survives && (child["status"] != "aborted" || child["delivered"] == true || child["cancel_done"] != true) {
 				t.Fatalf("canceled child outbox not settled: %v", child)
 			}
-			if independent && (child["status"] != "completed" || child["delivered"] != true) {
-				t.Fatalf("independent child did not complete: %v", child)
+			if survives && (child["status"] != "completed" || child["delivered"] != true) {
+				t.Fatalf("background child did not complete: %v", child)
 			}
-			if independent {
+			if survives {
 				j.completed(t, 3)
 				parentHistory, err := j.rt.Sessions.LoadHistoryRecords(j.id, true)
 				if err != nil {
@@ -197,11 +217,11 @@ func TestDurableCloudChildCancellation(t *testing.T) {
 				t.Fatalf("task metadata duplicated transcript: %s", raw)
 			}
 			if dir := os.Getenv("WUU_DURABLE_EVIDENCE"); dir != "" {
-				evidence, _ := json.MarshalIndent(map[string]any{"independent": independent, "creation_receipt": managed, "input_count": inputs, "tasks": json.RawMessage(raw), "events": j.out.String()}, "", "  ")
+				evidence, _ := json.MarshalIndent(map[string]any{"background": tc.background, "include_background": tc.inclusive, "legacy_independent": false, "survived": survives, "creation_receipt": managed, "input_count": inputs, "tasks": json.RawMessage(raw), "events": j.out.String()}, "", "  ")
 				if err := os.MkdirAll(dir, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, "cloud-child-cancel-"+strconv.FormatBool(independent)+".json"), evidence, 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "cloud-child-cancel-"+tc.name+".json"), evidence, 0600); err != nil {
 					t.Fatal(err)
 				}
 			}

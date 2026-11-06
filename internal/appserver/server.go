@@ -136,6 +136,8 @@ type threadState struct {
 	stepModelSelection    bool
 	runningModel          string
 	cancel                context.CancelFunc
+	shutdownCancel        context.CancelFunc
+	driverRecoveryTurn    string
 	// The captured runner's immutable outcome is published by closing done.
 	turnCompletion *threadTurnCompletion
 
@@ -720,9 +722,20 @@ func (s *Server) persistRecoveredTurnTerminals(binding *runtime.State, recoverie
 			continue
 		}
 		message := "execution interrupted because the previous app server exited"
+		structuredCause := ""
+		selected, found, bindingErr := binding.Sessions.LoadDriverBinding(ownerID)
+		if bindingErr == nil && found {
+			// The journal detected an orphan, but only an opted-in driver's
+			// exact checkpoint and released execution lease permit resumption.
+			proof, proofErr := s.driverRecoveryCandidate(binding, selected.ProviderID, ownerID, turn.ID, false)
+			if proofErr == nil && proof != nil {
+				raw, _ := json.Marshal(TurnError{Message: message, Interruption: "process_lost"})
+				structuredCause = string(raw)
+			}
+		}
 		if err := binding.Sessions.AppendHistoryRecord(ownerID, session.HistoryRecord{
 			Role: "meta", Content: turnTerminalHistoryRecord, DisplayContent: message,
-			ClientID: turn.ID, StopReason: string(TurnStatusInterrupted), At: now,
+			ClientID: turn.ID, StopReason: string(TurnStatusInterrupted), At: now, Cause: structuredCause,
 		}); err != nil {
 			providers.DebugLogf("settleOnBoot persist interrupted turn %q: %v", ownerID, err)
 		}
@@ -848,6 +861,24 @@ func (s *Server) Close() {
 	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		// Revoke active turns with the host shutdown cause before closing their
+		// registration/transport parents, whose ordinary cancellation could win.
+		s.mu.Lock()
+		var shutdownTurns []context.CancelFunc
+		for _, thread := range s.threads {
+			if thread == nil {
+				continue
+			}
+			thread.mu.Lock()
+			if thread.shutdownCancel != nil {
+				shutdownTurns = append(shutdownTurns, thread.shutdownCancel)
+			}
+			thread.mu.Unlock()
+		}
+		s.mu.Unlock()
+		for _, cancel := range shutdownTurns {
+			cancel()
+		}
 		if s.desktopSessionTransport != nil {
 			s.desktopSessionTransport.unbind(s)
 		}
@@ -915,7 +946,10 @@ func (s *Server) Close() {
 		// of serializing shutdown behind one provider.
 		for _, th := range threads {
 			th.mu.Lock()
-			cancel := th.cancel
+			cancel := th.shutdownCancel
+			if cancel == nil {
+				cancel = th.cancel
+			}
 			th.mu.Unlock()
 			if cancel != nil {
 				cancel()

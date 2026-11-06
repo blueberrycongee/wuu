@@ -134,12 +134,17 @@ func (g serviceGateway) CallModelWithTools(ctx context.Context, request provider
 
 func (g serviceGateway) callModel(ctx context.Context, method string, request providers.ChatRequest, batchID string) (ModelRound, error) {
 	var result pluginprotocol.DriverTurnModelResult
+	recovery := ""
+	if ModelSingleAttempt(ctx) {
+		recovery = "single_attempt"
+	}
 	if err := g.callTurn(ctx, method, pluginprotocol.DriverTurnModelParams{
 		DriverTurnScope: pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, Request: modelwire.DriverRequestToWire(request), BatchID: batchID,
+		Recovery: recovery, RequestID: ModelRequestID(ctx),
 	}, &result); err != nil {
 		return ModelRound{}, err
 	}
-	round := ModelRound{CompletedMessages: modelwire.DriverMessagesFromWire(result.CompletedMessages), Messages: modelwire.DriverMessagesFromWire(result.Messages), ToolBatchID: result.ToolBatchID, ToolWorkStarted: result.ToolWorkStarted}
+	round := ModelRound{OperationID: result.OperationID, CompletedMessages: modelwire.DriverMessagesFromWire(result.CompletedMessages), Messages: modelwire.DriverMessagesFromWire(result.Messages), ToolBatchID: result.ToolBatchID, ToolWorkStarted: result.ToolWorkStarted}
 	if result.Usage != nil {
 		usage := modelwire.TokenUsageFromWire(*result.Usage)
 		round.Usage = &usage
@@ -160,6 +165,18 @@ func (g serviceGateway) CallTools(ctx context.Context, batch ToolBatch) ([]provi
 	}
 	var result pluginprotocol.DriverTurnToolsResult
 	if err := g.callTurn(ctx, "tools", input, &result); err != nil {
+		return nil, err
+	}
+	return modelwire.DriverMessagesFromWire(result.Messages), nil
+}
+
+func (g serviceGateway) RecoverTools(ctx context.Context, recovery ToolRecovery) ([]providers.ChatMessage, error) {
+	input := pluginprotocol.DriverTurnRecoverToolsParams{DriverTurnScope: pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, OriginalExecutionID: recovery.OriginalExecutionID, BatchID: recovery.BatchID}
+	for _, call := range recovery.Calls {
+		input.Calls = append(input.Calls, modelwire.ToolCallToWire(call))
+	}
+	var result pluginprotocol.DriverTurnToolsResult
+	if err := g.callTurn(ctx, "recover_tools", input, &result); err != nil {
 		return nil, err
 	}
 	return modelwire.DriverMessagesFromWire(result.Messages), nil

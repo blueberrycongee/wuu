@@ -207,8 +207,10 @@ type LoopConfig struct {
 	ExecutionID              string
 	DriverID                 string
 	DriverVersion            string
-	ModelInputReceiptStore   ModelInputReceiptStore
-	RequestContextStore      RequestContextStore
+	// Only explicitly correlated requests need recovery snapshots in production.
+	ModelReceiptRequestOnly bool
+	ModelInputReceiptStore  ModelInputReceiptStore
+	RequestContextStore     RequestContextStore
 	// Temperature is the sampling temperature; 0 means provider default.
 	Temperature float64
 	// MediaInput is the admission policy for user-supplied media on every

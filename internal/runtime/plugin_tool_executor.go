@@ -314,10 +314,11 @@ func (e *pluginToolExecutor) pluginToolAllowed(name string) bool {
 func (e *pluginToolExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
 	if tool, ok := e.host.Tool(call.Name); ok {
 		if tool.Registration.Activity == nil {
-			return agent.ToolMetadata{}, false
+			return agent.ToolMetadata{ReplaySafe: tool.Registration.ReplaySafe}, tool.Registration.ReplaySafe
 		}
 		activity := tool.Registration.Activity
 		return agent.ToolMetadata{
+			ReplaySafe:      tool.Registration.ReplaySafe,
 			Orchestrator:    activity.Orchestrator,
 			ReadOnly:        activity.ReadOnly,
 			ConcurrencySafe: activity.ConcurrencySafe,

@@ -6,6 +6,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -43,11 +44,25 @@ func WorkspaceTool(name string) bool {
 }
 
 type CodeRequest struct {
+	// CodeJournal is set by the host from the current scoped executor, never
+	// accepted as authority from the program's input.
+	CodeJournal           bool                `json:"code_journal,omitempty"`
 	GitAttributionEnabled bool                `json:"git_attribution_enabled,omitempty"`
 	Program               codemode.RunRequest `json:"program"`
 	TimeoutMS             int                 `json:"timeout_ms"`
 	PermissionMode        string              `json:"permission_mode"`
 	Actor                 string              `json:"actor"`
+}
+
+// CodeJournalCapability promises journal callbacks and deterministic replay in
+// the worker. Older workers remain usable for ordinary, non-durable programs.
+const CodeJournalCapability = "run_code.journal.v1"
+
+// CodeJournalCallback extends the nested callback channel without changing the
+// existing ToolCall representation (whose kind field has a different meaning).
+type CodeJournalCallback struct {
+	Kind    string                     `json:"callback_kind"`
+	Request toolctx.CodeJournalRequest `json:"request"`
 }
 
 // ProcessStartCapability promises operation IDs in start results and durable

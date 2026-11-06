@@ -46,6 +46,8 @@ type InitializeResult struct {
 
 // ToolRegistration is one model-visible tool owned by a plugin process.
 type ToolRegistration struct {
+	// ReplaySafe explicitly permits retry after interruption; omitted means false.
+	ReplaySafe bool `json:"replay_safe,omitempty"`
 	// DirectOnly exposes control tools directly and rejects nested invocation.
 	DirectOnly      bool                       `json:"direct_only,omitempty"`
 	ID              string                     `json:"id"`

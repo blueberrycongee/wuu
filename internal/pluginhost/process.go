@@ -439,7 +439,7 @@ func (c *ProcessClient) watchExecution(ctx context.Context, executionID string) 
 	finished := make(chan struct{})
 	notifyCancel := func() {
 		if cancelSent.CompareAndSwap(false, true) {
-			c.notifyExecutionCancel(executionID)
+			c.notifyExecutionCancel(executionID, context.Cause(ctx))
 		}
 	}
 	go func() {
@@ -462,11 +462,15 @@ func (c *ProcessClient) watchExecution(ctx context.Context, executionID string) 
 
 // notifyExecutionCancel writes the execution.cancel frame without registering
 // a pending response; whatever the plugin writes back for it is discarded.
-func (c *ProcessClient) notifyExecutionCancel(executionID string) {
+func (c *ProcessClient) notifyExecutionCancel(executionID string, cause error) {
+	reason := "canceled"
+	if errors.Is(cause, ErrExecutionShutdown) || IsUserQuestionErrorCode(cause, "generation_closed") {
+		reason = "shutdown"
+	}
 	payload, err := json.Marshal(rpcRequest{
 		ID:     fmt.Sprintf("%d", c.seq.Add(1)),
 		Method: ExecutionCancelMethod,
-		Params: ExecutionCancelParams{ExecutionID: executionID},
+		Params: ExecutionCancelParams{ExecutionID: executionID, Reason: reason},
 	})
 	if err != nil {
 		return
@@ -697,7 +701,7 @@ func (c *ProcessClient) writeScopedInvocation(ctx context.Context, payload []byt
 		defer c.callerScopeMu.Unlock()
 		delete(c.callerScopes, scope.ID)
 		if c.processCtx.Err() == nil {
-			c.notifyExecutionCancel(scope.ID)
+			c.notifyExecutionCancel(scope.ID, context.Cause(scope.Context))
 		}
 	}()
 	return nil

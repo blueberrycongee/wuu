@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -21,8 +22,8 @@ func AcquireLocal(driver Driver) AcquireFunc {
 		if err != nil {
 			return nil, Binding{}, nil, fmt.Errorf("resolve loop driver: %w", err)
 		}
-		binding := Binding{Profile: "default", ProviderID: descriptor.ID, ContractVersion: ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
-		if expected != nil && *expected != binding {
+		binding := Binding{HistoryState: slices.Contains(descriptor.Capabilities, "historical_fork"), Profile: "default", ProviderID: descriptor.ID, ContractVersion: ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
+		if expected != nil && !expected.CanUpgradeTo(binding) {
 			return nil, binding, nil, fmt.Errorf("loop driver binding requires %+v; selected binding is %+v", *expected, binding)
 		}
 		return driver, binding, func() {}, nil

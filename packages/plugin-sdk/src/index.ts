@@ -833,6 +833,9 @@ export const FILE_LOCK_SERVICE = "host.file-lock" as const;
 export const MODEL_REQUEST_SERVICE = "host.model.request" as const;
 /** Opt-in, bounded live session progress; not event replay or an input receipt. */
 export const SESSION_PROGRESS_HOST_FEATURE = "session.progress.v1" as const;
+export const SESSION_FORK_SEQUENCE_HOST_FEATURE = "session.fork-sequence.v1" as const;
+/** Entry-bound agent/store snapshots; missing historical proof fails closed. */
+export const SESSION_HISTORICAL_STATE_HOST_FEATURE = "session.historical-state.v1" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -1219,6 +1222,8 @@ export interface ToolDisplayMetadata {
 }
 
 export interface ToolRegistration {
+  /** Explicit retry permission after interruption; omitted means false, independent of read-only or concurrency hints. */
+  replay_safe?: boolean;
   /** Keep interaction/lifecycle controls directly visible; reject nested invocation. */
   direct_only?: boolean;
   id: string;
@@ -1566,6 +1571,8 @@ export interface HostServiceContracts {
       visibility: "user" | "plugin";
       parent_session_id?: string;
       context_source: "fresh" | "fork" | "seed";
+      /** Inclusive durable history boundary; requires context_source fork and an entry-bound historical state snapshot. */
+      fork_seq?: number;
       workspace?: "shared" | "worktree";
       workspace_id?: string;
       workspace_root?: string;
@@ -1593,6 +1600,9 @@ export interface HostServiceContracts {
   };
   "host.session.send": {
     params: {
+      /** Requires session.driver-recovery.v1; no input or overrides allowed. */
+      recover_after_turn_id?: string;
+      recovery_checkpoint_token?: string;
       /** Opaque unattended grant. The host derives current scope from selected
        * task/session authorities and validates it at admission; JSON cannot
        * supply a principal, owner claim, or substitute task scope. */
@@ -1669,6 +1679,7 @@ export interface HostServiceContracts {
       include_progress?: boolean;
     };
     result: {
+      recovery?: { turn_id: string; source_turn_id: string; checkpoint_token: string; control_revision?: number };
       receipt?: ClientInputReceipt;
       accepted_input?: AcceptedClientInputView;
       pending_inputs?: AcceptedClientInputView[];
@@ -2144,10 +2155,18 @@ export interface RuntimeShutdownRequest {
   params?: undefined;
 }
 
+/** Host-authored cancellation provenance. Shutdown preserves durable intent;
+ * ordinary cancellation ends business work. Legacy hosts omit the reason. */
+export class RuntimeExecutionCancellation extends Error {
+  constructor(readonly kind: "shutdown" | "canceled") {
+    super(kind === "shutdown" ? "host execution shutdown" : "execution canceled");
+    this.name = "RuntimeExecutionCancellation";
+  }
+}
 export interface RuntimeExecutionCancelRequest {
   id: string;
   method: "execution.cancel";
-  params: { execution_id: string };
+  params: { execution_id: string; reason?: "shutdown" | "canceled" };
 }
 
 export type RuntimeRequest =
@@ -2452,8 +2471,9 @@ export async function runJSONLRuntime(
     }
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
-      for (const controller of executions.get(parsed.params.execution_id) ?? []) controller.abort();
-      callerScopes.get(parsed.params.execution_id)?.abort();
+      const reason = new RuntimeExecutionCancellation(parsed.params.reason === "shutdown" ? "shutdown" : "canceled");
+      for (const controller of executions.get(parsed.params.execution_id) ?? []) controller.abort(reason);
+      callerScopes.get(parsed.params.execution_id)?.abort(reason);
       callerScopes.delete(parsed.params.execution_id);
       return;
     }
@@ -3186,3 +3206,5 @@ export * from "./personal-memory.js";
 export * from "./personal-authority.js";
 
 export * from "./durable-wait.js";
+
+export const SESSION_DRIVER_RECOVERY_HOST_FEATURE = "session.driver-recovery.v1";

@@ -100,7 +100,7 @@ func batchInvocations(tx *persistence.Tx, batch toolstate.Batch) ([]toolstate.In
 }
 
 func publicInvocation(stored toolstate.Invocation) Invocation {
-	out := Invocation{ParentInvocationID: stored.ParentInvocationID, ID: stored.ID, BatchID: stored.BatchID, ProviderCallID: stored.ProviderCallID,
+	out := Invocation{Attempt: stored.Attempt, ParentInvocationID: stored.ParentInvocationID, ID: stored.ID, BatchID: stored.BatchID, ProviderCallID: stored.ProviderCallID,
 		ThoughtSignature: stored.ThoughtSignature, ProviderItemProvider: stored.ProviderItemProvider, ProviderItemModel: stored.ProviderItemModel,
 		ToolName: stored.ToolName, ToolKind: stored.ToolKind, Arguments: stored.Arguments, ReplayPolicy: ReplayPolicy(stored.ReplayPolicy),
 		State: InvocationState(stored.State), Projected: stored.ProjectedAt > 0}
@@ -211,6 +211,10 @@ func (l *Ledger) prepare(ctx context.Context, batchID, parentID string, call pro
 }
 
 func (l *Ledger) Start(ctx context.Context, invocationID string) error {
+	return l.StartAttempt(ctx, invocationID, 0)
+}
+
+func (l *Ledger) StartAttempt(ctx context.Context, invocationID string, attempt uint64) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {
 		return errors.New("tool invocation is required")
@@ -220,6 +224,9 @@ func (l *Ledger) Start(ctx context.Context, invocationID string) error {
 		invocation, err := l.invocation(tx, invocationID)
 		if err != nil {
 			return err
+		}
+		if invocation.Attempt != attempt {
+			return fmt.Errorf("tool invocation %q attempt %d is fenced by attempt %d", invocationID, attempt, invocation.Attempt)
 		}
 		if invocation.State == string(InvocationRunning) {
 			return nil
@@ -235,11 +242,18 @@ func (l *Ledger) Start(ctx context.Context, invocationID string) error {
 // MarkUnknown fences an invocation whose executor lost its authoritative result.
 // It never projects a fabricated failed result or authorizes replay.
 func (l *Ledger) MarkUnknown(ctx context.Context, invocationID string) error {
+	return l.MarkUnknownAttempt(ctx, invocationID, 0)
+}
+
+func (l *Ledger) MarkUnknownAttempt(ctx context.Context, invocationID string, attempt uint64) error {
 	now := time.Now().UTC().UnixMilli()
 	return l.write(ctx, func(tx *persistence.Tx) error {
 		invocation, err := l.invocation(tx, invocationID)
 		if err != nil {
 			return err
+		}
+		if invocation.Attempt != attempt {
+			return fmt.Errorf("tool invocation %q attempt %d is fenced by attempt %d", invocationID, attempt, invocation.Attempt)
 		}
 		if invocation.State == string(InvocationInterruptedUnknown) {
 			return nil
@@ -261,6 +275,10 @@ func (l *Ledger) MarkUnknown(ctx context.Context, invocationID string) error {
 }
 
 func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolresult.Result) error {
+	return l.SettleAttempt(ctx, invocationID, 0, result)
+}
+
+func (l *Ledger) SettleAttempt(ctx context.Context, invocationID string, attempt uint64, result toolresult.Result) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {
 		return errors.New("tool invocation is required")
@@ -281,6 +299,9 @@ func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolres
 		invocation, err := l.invocation(tx, invocationID)
 		if err != nil {
 			return err
+		}
+		if invocation.Attempt != attempt {
+			return fmt.Errorf("tool invocation %q attempt %d is fenced by attempt %d", invocationID, attempt, invocation.Attempt)
 		}
 		existing, err := json.Marshal(invocation.Result)
 		if err != nil {
@@ -393,9 +414,6 @@ func (l *Ledger) DecideReplay(ctx context.Context, batchID string) (ReplayDecisi
 		}
 		priority := 0
 		for _, invocation := range invocations {
-			if invocation.ReplayPolicy != string(ReplayAtMostOnce) {
-				continue
-			}
 			switch InvocationState(invocation.State) {
 			case InvocationPrepared:
 				if priority < 1 {
@@ -455,7 +473,8 @@ func (l *Ledger) SupersedePreparedBatch(ctx context.Context, batchID string) err
 }
 
 // ValidateContinuation requires the execution lease and reconciled receipts.
-// Fresh sampling cannot make an unconfirmed at-most-once effect safe to repeat.
+// Only explicitly repeatable effects with a complete host admission can enter a
+// resumed driver. RequireSettled still fences fresh sampling and new tool work.
 func (l *Ledger) ValidateContinuation(ctx context.Context) error {
 	if l == nil {
 		return nil
@@ -471,8 +490,8 @@ func (l *Ledger) ValidateContinuation(ctx context.Context) error {
 				return err
 			}
 			for _, invocation := range invocations {
-				if invocation.ReplayPolicy == string(ReplayAtMostOnce) &&
-					(invocation.State == string(InvocationRunning) || invocation.State == string(InvocationInterruptedUnknown)) {
+				if (invocation.State == string(InvocationRunning) || invocation.State == string(InvocationInterruptedUnknown)) &&
+					(invocation.ReplayPolicy != string(ReplayRepeatable) || batch.RecoveryScope == "") {
 					return &ReplayBlockedError{Decision: ReplayDecision{Action: ReplayBlock, Reason: ReplayReasonInvocationUnknown, BlockingInvocationIDs: []string{invocation.ID}}}
 				}
 			}

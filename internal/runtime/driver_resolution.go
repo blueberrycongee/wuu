@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -100,8 +101,8 @@ func (s *Session) driverResolver(parent *PluginGeneration) loopdriver.AcquireFun
 		if generation == nil || generation.driverGateways == nil {
 			providerID = descriptor.ID
 		}
-		binding = loopdriver.Binding{Profile: profile, ProviderID: providerID, ContractVersion: loopdriver.ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
-		if expected != nil && *expected != binding {
+		binding = loopdriver.Binding{HistoryState: slices.Contains(descriptor.Capabilities, "historical_fork"), Profile: profile, ProviderID: providerID, ContractVersion: loopdriver.ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
+		if expected != nil && !expected.CanUpgradeTo(binding) {
 			return nil, binding, release, fmt.Errorf("loop driver binding requires %+v; selected binding is %+v", *expected, binding)
 		}
 		return driver, binding, release, nil

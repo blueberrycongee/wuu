@@ -1772,6 +1772,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.BeginModelReceipts = beginModelReceipts
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
+	runner.DriverCompactions = &agent.DriverCompactionStore{Documents: s.Documents, SessionID: id}
+	if generation != nil && generation.state != nil {
+		runner.DriverCompactions.Documents = generation.state.documents
+	}
 	binding := s.UserBinding()
 	receiptHost, receiptSessions := s.PluginHost, s.Sessions
 	if generation != nil {
@@ -1810,9 +1814,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 		kit.SetContextWindowToolsEnabled(available)
 	}
-	// Exact model-input receipts have no production consumer and duplicate the
-	// cumulative conversation on every step. Keep the optional runner contract
-	// available for explicit diagnostics, but do not persist receipts by default.
+	// Durable drivers explicitly correlate model calls for authoritative usage
+	// recovery. Ordinary calls do not capture cumulative prompt snapshots. Bind
+	// both writes and reads to this execution's retained session provider.
+	runner.ModelInputReceiptStore = sessionModelInputReceiptStore{sessions: receiptSessions, sessionID: id}
+	runner.ModelReceiptRequestOnly = true
 	runner.BeforeRequestContext = RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(kit))
 	pluginHost := s.PluginHost
 	if generation != nil {
@@ -2082,6 +2088,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		DriverBindingStore:          base.DriverBindingStore,
 		DriverCheckpointStore:       base.DriverCheckpointStore,
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
+		ModelReceiptRequestOnly:     base.ModelReceiptRequestOnly,
 		OnModelContext:              base.OnModelContext,
 		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
@@ -2089,6 +2096,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		SelectedToolBatch:           base.SelectedToolBatch,
 		SelectedCompaction:          base.SelectedCompaction,
 		CompactionNoteStore:         base.CompactionNoteStore,
+		DriverCompactions:           base.DriverCompactions,
 		ArchiveHistory:              base.ArchiveHistory,
 	}
 }

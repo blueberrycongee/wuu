@@ -37,6 +37,7 @@ type hostSessionCreateParams struct {
 	Visibility               string
 	ParentSessionID          string
 	ContextSource            string
+	ForkSeq                  *int
 	Workspace                string
 	WorkspaceID              string
 	WorkspaceRoot            string
@@ -108,6 +109,9 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	var createdWorktreePath string
 	cleanupWorktree := false
 	fork := session.ForkMetadata{}
+	toolPolicyJSON := ""
+	var historical *session.HistoricalState
+	forkHistoryDigest := ""
 	if params.ContextSource == sessionContextFork {
 		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(binding, store, params.ParentSessionID)
 		if loadErr != nil {
@@ -117,7 +121,42 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 			return nil, errors.New("managed context forks cannot copy native engine history; use thread/fork with a completed native turn")
 		}
 		threadCWD = firstNonEmpty(parent.metadata.CWD, threadCWD)
-		history = cloneForkHistory(parent.history)
+		if params.ForkSeq == nil {
+			history = cloneForkHistory(parent.history)
+		} else {
+			// Sequence identities belong to the persisted active branch, not
+			// positions in a compacted provider window or an in-memory turn.
+			active, err := store.LoadActiveHistoryRecords(params.ParentSessionID, true)
+			if err != nil {
+				return nil, err
+			}
+			prefix := make([]persistedMessage, 0, len(active))
+			for _, record := range active {
+				if record.Seq > *params.ForkSeq {
+					continue
+				}
+				if record.Seq == *params.ForkSeq {
+					historical = record.HistoricalState
+				}
+				persisted, err := persistedMessageFromHistoryRecord(record)
+				if err != nil {
+					return nil, err
+				}
+				prefix = append(prefix, persisted)
+			}
+			if historical == nil || historical.Version != 1 {
+				return nil, errors.New("historical fork state snapshot is unavailable for this entry")
+			}
+			forkHistoryDigest = session.HistoricalPrefixDigest(active, *params.ForkSeq)
+			history = cloneForkHistory(chatMessagesFromPersistedMessages(prefix))
+		}
+		if params.Instructions == "" {
+			params.Instructions = parent.metadata.Instructions
+			if historical != nil {
+				params.Instructions = historical.Agent.Instructions
+			}
+		}
+		toolPolicyJSON = parent.metadata.ToolPolicyJSON
 		fork = session.ForkMetadata{ForkedFromID: params.ParentSessionID}
 	}
 	if params.ContextSource == sessionContextSeed && params.ParentSessionID != "" {
@@ -138,6 +177,21 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		}
 		selection = runtimeSelectionFromSession(parent)
 		threadCWD = firstNonEmpty(parent.CWD, threadCWD)
+	}
+	if historical != nil {
+		cfg := historical.Agent
+		selection.Provider, selection.Model, selection.Variant, selection.Effort = cfg.Provider, cfg.Model, cfg.Variant, cfg.Effort
+		selection.Speed, selection.ModelOptions = cfg.Speed, cfg.ModelOptions
+		threadCWD = cfg.CWD
+		if params.Role == "" {
+			params.Role = cfg.ProjectRole
+		}
+		// Historical tool selection remains bounded by the parent's current policy.
+		policy, err := intersectHistoricalToolPolicy(cfg.ToolPolicyJSON, toolPolicyJSON, params.ToolPolicy)
+		if err != nil {
+			return nil, err
+		}
+		params.ToolPolicy = policy
 	}
 	if params.Provider != "" || params.Model != "" {
 		selection.Provider = params.Provider
@@ -184,6 +238,9 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		selection.ModelOptions = params.ModelOptions
 	}
 	workspaceID := strings.TrimSpace(s.rt.WorkspaceID)
+	if historical != nil {
+		workspaceID = historical.Agent.WorkspaceID
+	}
 	if params.WorkspaceID != "" || params.WorkspaceRoot != "" {
 		root, resolvedID, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot)
 		if err != nil {
@@ -210,7 +267,6 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 			history = append(history, providers.ChatMessage{Role: "system", Content: sessionSystemPrompt(prompt, params.Instructions)})
 		}
 	}
-	toolPolicyJSON := ""
 	if params.ToolPolicy != nil {
 		encoded, err := json.Marshal(params.ToolPolicy)
 		if err != nil {
@@ -251,6 +307,10 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
 		Effort: selection.Effort, Speed: selection.Speed, ModelOptions: selection.ModelOptions, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
 		ProjectRole: params.Role, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
+	}
+	if historical != nil {
+		initial.ForkedFromSeq = *params.ForkSeq
+		initial.ForkHistoryDigest = forkHistoryDigest
 	}
 	var records []session.HistoryRecord
 	var artifactServices *runtime.StateServices
@@ -304,7 +364,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	// Commit inheritance before publishing the session. A failed session create
 	// can leave an unreachable selection record, but can never expose a child
 	// that silently executes under defaults after a partial creation or retry.
-	if params.ParentSessionID != "" {
+	if params.ParentSessionID != "" && historical == nil {
 		s.mu.Lock()
 		parent := s.threads[params.ParentSessionID]
 		s.mu.Unlock()

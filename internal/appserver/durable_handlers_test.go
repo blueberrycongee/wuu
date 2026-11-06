@@ -94,7 +94,14 @@ func TestDurableIngressScopedAttestationAndProjection(t *testing.T) {
 			}
 			return mustJSON(map[string]any{"waits": []any{record}, "has_more": true})
 		}
-		task := map[string]any{"id": "task-a", "session_id": "a", "run_id": "run-a", "kind": "run", "status": "waiting", "usage_status": "incomplete", "usage": map[string]int{"input_tokens": 8, "output_tokens": 3}, "prompt": "private task prompt", "tool_arguments": map[string]string{"secret": "credential"}, "checkpoint": map[string]string{"output": "private output"}}
+		task := map[string]any{"id": "task-a", "session_id": "a", "run_id": "run-a", "kind": "run", "status": "waiting", "usage_status": "incomplete", "usage": map[string]int{"input_tokens": 8, "output_tokens": 3}, "prompt": "private task prompt", "tool_arguments": map[string]string{"secret": "credential"}, "checkpoint": map[string]string{"output": "private output"},
+			"outcome":        map[string]string{"status": "unanswered", "reason": "reset", "note": "private handoff note"},
+			"compaction":     map[string]any{"trigger": "manual", "status": "applied", "source_head": 7, "summary": "private summary"},
+			"completion":     map[string]any{"status": "aborted", "include_background": true, "error_message": "private cleanup error"},
+			"blocked_reason": "missing_task",
+			"usage_by_model": []any{map[string]any{"provider": "fixture", "model": "selected-model", "input_tokens": 8, "output_tokens": 3, "cache_creation_tokens": 2, "cache_read_tokens": 4, "request": "private model request"}},
+			"usage_receipts": []any{map[string]string{"request": "private receipt body"}},
+		}
 		if p.Method == "get" {
 			return mustJSON(map[string]any{"version": 1, "task": task, "revision": "rev-1"})
 		}
@@ -119,6 +126,23 @@ func TestDurableIngressScopedAttestationAndProjection(t *testing.T) {
 		raw := string(mustJSON(response["result"]))
 		if (entry.method == MethodDurableTasksList || entry.method == MethodDurableTasksGet) && !strings.Contains(raw, `"usage_status":"incomplete"`) {
 			t.Fatalf("partial usage lost its availability marker: %s", raw)
+		}
+		if entry.method == MethodDurableTasksList || entry.method == MethodDurableTasksGet {
+			result := response["result"].(map[string]any)
+			projected, _ := result["task"].(map[string]any)
+			if entry.method == MethodDurableTasksList {
+				projected = result["tasks"].([]any)[0].(map[string]any)
+			}
+			outcome, _ := projected["outcome"].(map[string]any)
+			compaction, _ := projected["compaction"].(map[string]any)
+			completion, _ := projected["completion"].(map[string]any)
+			buckets, _ := projected["usage_by_model"].([]any)
+			if len(buckets) != 1 || buckets[0].(map[string]any)["cache_read_tokens"] != float64(4) {
+				t.Fatalf("authoritative model usage projection was lost: %s", raw)
+			}
+			if outcome["status"] != "unanswered" || outcome["reason"] != "reset" || compaction["source_head"] != float64(7) || completion["include_background"] != true || projected["blocked_reason"] != "missing_task" {
+				t.Fatalf("lifecycle metadata was lost: %s", raw)
+			}
 		}
 		for _, secret := range []string{"private", "credential", "tool_arguments", "checkpoint\""} {
 			if strings.Contains(raw, secret) {

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -86,7 +87,7 @@ func TestDurableCloudInbox(t *testing.T) {
 	select {
 	case <-m.entered:
 	case <-j.ctx.Done():
-		t.Fatal("model admission barrier not reached")
+		t.Fatalf("model admission barrier not reached: %s", j.out.String())
 	}
 	secondOut := &lockedBuffer{}
 	second := New(j.rt, secondOut)
@@ -105,6 +106,9 @@ func TestDurableCloudInbox(t *testing.T) {
 	}
 	release()
 	waitUntil(t, 15*time.Second, func() bool { return len(m.snapshots()) >= 2 })
+	// Model admission is not completion; wait for the observable host terminal
+	// before using the short lease-release probe.
+	j.completed(t, 1)
 	waitForThreadLeaseRelease(t, j.rt.Sessions, j.rt.SessionDir, j.id)
 	requests := m.snapshots()
 	if len(requests) != 2 {
@@ -136,10 +140,37 @@ func TestDurableCloudInbox(t *testing.T) {
 		t.Fatal(response)
 	}
 	waitUntil(t, 15*time.Second, func() bool { return len(m.snapshots()) >= 3 })
+	j.completed(t, 2)
 	waitForThreadLeaseRelease(t, j.rt.Sessions, j.rt.SessionDir, j.id)
 	if len(m.snapshots()) != 3 {
 		t.Fatal("followup duplicated inference")
 	}
+	// The direct adapter already owns physical submission accounting. Preserve
+	// that route while verifying that the public projection can find its usage.
+	journal, err := j.rt.Documents.Read(j.ctx, persistence.Query{Namespace: "wuu.inference_submissions.v1", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	known, reportedInput, reportedOutput := 0, 0, 0
+	for _, document := range journal.Documents {
+		var submission providers.InferenceSubmissionJournalRecord
+		if err := json.Unmarshal(document.Value, &submission); err != nil {
+			t.Fatal(err)
+		}
+		if submission.Provider == "fixture" && submission.ReportedUsage != nil {
+			known++
+			reportedInput += submission.ReportedUsage.InputTokens
+			reportedOutput += submission.ReportedUsage.OutputTokens
+		}
+	}
+	if known != 3 || reportedInput != 21 || reportedOutput != 9 {
+		t.Fatalf("direct adapter authoritative usage: known=%d tokens=%d/%d", known, reportedInput, reportedOutput)
+	}
+	correlations, err := j.rt.Sessions.LoadModelInputReceipts(j.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("direct adapter committed %d known submissions (%d/%d tokens), input correlations=%d", known, reportedInput, reportedOutput, len(correlations))
 	completedRuns, rounds, inputTokens, outputTokens, runInputs, runOutputs := 0, 0, 0, 0, 0, 0
 	for _, value := range j.tasks(t) {
 		task := value.(map[string]any)
@@ -181,11 +212,20 @@ func TestDurableCloudAbortContinue(t *testing.T) {
 	select {
 	case <-m.entered:
 	case <-j.ctx.Done():
-		t.Fatal("model admission barrier not reached")
+		t.Fatalf("model admission barrier not reached: %s", j.out.String())
 	}
 	if response := durableIngressCall(t, j.server, j.out, j.ctx, "stop", "turn/interrupt", map[string]string{"thread_id": j.id}); response["error"] != nil {
 		t.Fatal(response)
 	}
+	waitUntil(t, 15*time.Second, func() bool {
+		for _, value := range j.tasks(t) {
+			task := value.(map[string]any)
+			if task["kind"] == "run" && task["status"] == "aborted" {
+				return true
+			}
+		}
+		return false
+	})
 	waitForThreadLeaseRelease(t, j.rt.Sessions, j.rt.SessionDir, j.id)
 	if len(m.snapshots()) != 1 {
 		t.Fatal("abort auto restarted inference")
@@ -193,8 +233,8 @@ func TestDurableCloudAbortContinue(t *testing.T) {
 	if response := durableIngressCall(t, j.server, j.out, j.ctx, "continue", "turn/start", map[string]string{"thread_id": j.id, "resume_after_turn_id": source}); response["error"] != nil {
 		t.Fatal(response)
 	}
-	waitForThreadLeaseRelease(t, j.rt.Sessions, j.rt.SessionDir, j.id)
 	j.completed(t, 1)
+	waitForThreadLeaseRelease(t, j.rt.Sessions, j.rt.SessionDir, j.id)
 	if len(m.snapshots()) != 2 {
 		t.Fatalf("explicit continue model count=%d; events=%s", len(m.snapshots()), j.out.String())
 	}

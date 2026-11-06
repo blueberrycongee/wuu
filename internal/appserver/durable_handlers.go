@@ -35,14 +35,25 @@ type durableTaskView struct {
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 	ErrorCode     string `json:"error_code,omitempty"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
 	CheckpointRef string `json:"checkpoint_ref,omitempty"`
 	TurnRef       string `json:"turn_ref,omitempty"`
 	DurationMS    *int64 `json:"duration_ms,omitempty"`
 	UsageStatus   string `json:"usage_status,omitempty"`
 	Usage         *struct {
-		InputTokens  int64 `json:"input_tokens"`
-		OutputTokens int64 `json:"output_tokens"`
+		InputTokens         int64 `json:"input_tokens"`
+		OutputTokens        int64 `json:"output_tokens"`
+		CacheCreationTokens int64 `json:"cache_creation_tokens,omitempty"`
+		CacheReadTokens     int64 `json:"cache_read_tokens,omitempty"`
 	} `json:"usage,omitempty"`
+	UsageByModel []struct {
+		Provider            string `json:"provider"`
+		Model               string `json:"model"`
+		InputTokens         int64  `json:"input_tokens"`
+		OutputTokens        int64  `json:"output_tokens"`
+		CacheCreationTokens int64  `json:"cache_creation_tokens"`
+		CacheReadTokens     int64  `json:"cache_read_tokens"`
+	} `json:"usage_by_model,omitempty"`
 	Wait *struct {
 		RequestID string `json:"request_id"`
 		Kind      string `json:"kind"`
@@ -62,6 +73,19 @@ type durableTaskView struct {
 	Delivered      bool   `json:"delivered,omitempty"`
 	Canceled       bool   `json:"canceled,omitempty"`
 	ReceiptID      string `json:"receipt_id,omitempty"`
+	Outcome        *struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	} `json:"outcome,omitempty"`
+	Compaction *struct {
+		Trigger    string `json:"trigger"`
+		Status     string `json:"status"`
+		SourceHead int64  `json:"source_head"`
+	} `json:"compaction,omitempty"`
+	Completion *struct {
+		Status            string `json:"status"`
+		IncludeBackground bool   `json:"include_background,omitempty"`
+	} `json:"completion,omitempty"`
 }
 
 type durableWaitView struct {
@@ -177,6 +201,47 @@ func projectDurableResult(method string, raw json.RawMessage, tasks runtime.Dura
 		return nil, invalid
 	}
 	validTask := func(task durableTaskView) bool {
+		if task.Usage != nil && (task.Usage.InputTokens < 0 || task.Usage.OutputTokens < 0 || task.Usage.CacheCreationTokens < 0 || task.Usage.CacheReadTokens < 0) {
+			return false
+		}
+		if len(task.UsageByModel) > 128 {
+			return false
+		}
+		for _, usage := range task.UsageByModel {
+			if len(usage.Provider) > 256 || len(usage.Model) > 512 || usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.CacheCreationTokens < 0 || usage.CacheReadTokens < 0 {
+				return false
+			}
+		}
+		switch task.BlockedReason {
+		case "", "missing_task", "task_too_old", "migration_failed", "invalid_task_state":
+		default:
+			return false
+		}
+		if task.Outcome != nil && (task.Outcome.Status != "unanswered" || task.Outcome.Reason != "reset") {
+			return false
+		}
+		if task.Compaction != nil {
+			if task.Compaction.SourceHead < 0 {
+				return false
+			}
+			switch task.Compaction.Trigger {
+			case "manual", "threshold", "background", "overflow", "reset", "handoff":
+			default:
+				return false
+			}
+			switch task.Compaction.Status {
+			case "running", "applied", "unchanged", "stale", "failed", "canceled":
+			default:
+				return false
+			}
+		}
+		if task.Completion != nil {
+			switch task.Completion.Status {
+			case "completed", "failed", "aborted":
+			default:
+				return false
+			}
+		}
 		switch task.UsageStatus {
 		case "", "available", "unavailable", "incomplete":
 		default:

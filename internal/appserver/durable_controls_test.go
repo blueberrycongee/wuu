@@ -79,10 +79,51 @@ type durableControlJourney struct {
 }
 
 func newDurableControlJourney(t *testing.T, id string, clients ...providers.StreamClient) *durableControlJourney {
+	return newConfiguredDurableControlJourney(t, id, nil, clients...)
+}
+
+func newConfiguredDurableControlJourney(t *testing.T, id string, configure func(*config.Config), clients ...providers.StreamClient) *durableControlJourney {
 	t.Helper()
 	fixture := os.Getenv("WUU_DURABLE_FIXTURE")
 	if fixture == "" {
 		t.Skip("run node scripts/durable-cloud-e2e.mjs")
+	}
+	// Process plugins deliberately do not inherit ambient application settings.
+	// Exercise the supported explicit runtime environment, not a test-only host
+	// exception to that boundary. Edit a private install before loading its trust
+	// identity: the generation snapshots and re-reads the installed manifest.
+	env := make(map[string]string)
+	for _, key := range []string{"WUU_DURABLE_MODEL_RETRIES", "WUU_DURABLE_RETRY_BASE_MS", "WUU_DURABLE_RETRY_MAX_MS", "WUU_DURABLE_COMPACTION_BACKGROUND_TOKENS"} {
+		if value, set := os.LookupEnv(key); set {
+			env[key] = value
+		}
+	}
+	if len(env) > 0 {
+		configured := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(configured, "dist"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"plugin.json", "package.json", "dist/runtime.js"} {
+			raw, err := os.ReadFile(filepath.Join(fixture, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "plugin.json" {
+				var manifest map[string]any
+				if err = json.Unmarshal(raw, &manifest); err != nil {
+					t.Fatal(err)
+				}
+				manifest["runtime"].(map[string]any)["env"] = env
+				raw, err = json.Marshal(manifest)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = os.WriteFile(filepath.Join(configured, name), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fixture = configured
 	}
 	p, err := pluginpkg.LoadManifest(filepath.Join(fixture, "plugin.json"), "user")
 	if err != nil {
@@ -95,6 +136,9 @@ func newDurableControlJourney(t *testing.T, id string, clients ...providers.Stre
 	cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: p.SubjectID, Fingerprint: p.Fingerprint, Scope: extensions.GrantScopeUser, Permissions: p.EffectivePermissions, ApprovedAt: time.Now().UTC()})
 	cfg.DefaultProvider = "fixture"
 	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "https://example.invalid/v1", APIKey: "fixture", Model: "fixture"}}
+	if configure != nil {
+		configure(&cfg)
+	}
 	cfg.Composition = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{p.ID: true, "wuu.durable-wait": true, "wuu.durable-client": true, "fixture.model-configuration": true, "wuu.default-loop": false}, Services: []composition.Binding{{Service: "driver.default", Major: 2, Provider: p.ID}, {Service: "model.adapter", Major: 1, Provider: "fixture.model-configuration"}}}}}
 	model := &durableControlModel{}
 	var client providers.StreamClient = model
@@ -286,13 +330,17 @@ func TestDurableCloudContextReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			j.start(t, "durable_context", map[string]string{"action": action}, "Change active context safely")
+			args := map[string]string{"action": action}
+			if action == "handoff" {
+				args["note"] = "Continue from this handoff note."
+			}
+			j.start(t, "durable_context", args, "Change active context safely")
 			j.completed(t, 2)
 			checkpoint, ok, err := j.rt.Sessions.LatestHistoryCheckpoint(j.id)
 			if err != nil || !ok {
 				t.Fatalf("public context replacement did not create checkpoint: %+v %v events=%s", checkpoint, err, j.out.String())
 			}
-			if checkpoint.Version < 1 || checkpoint.ThroughSeq < 1 || len(checkpoint.Replacement) == 0 {
+			if checkpoint.Version < 1 || checkpoint.ThroughSeq < 1 || (action != "reset" && len(checkpoint.Replacement) == 0) {
 				t.Fatalf("empty replacement checkpoint: %+v", checkpoint)
 			}
 			if action != "compact" {

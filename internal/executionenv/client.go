@@ -41,6 +41,7 @@ type Response struct {
 // Client multiplexes a private stdio connection. A transport failure is terminal:
 // tools with unknown outcomes must never be replayed automatically.
 type Client struct {
+	codeJournal  bool
 	processStart bool
 	closeGrace   time.Duration
 	event        func(json.RawMessage)

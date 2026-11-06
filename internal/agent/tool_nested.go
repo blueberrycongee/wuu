@@ -8,6 +8,9 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
+	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -71,7 +74,26 @@ func (s *nestedToolScope) Invoke(ctx context.Context, call providers.ToolCall) (
 		localID := call.ID
 		// Never trust a child's local key as a global/provider call identity.
 		call = providers.ToolCall{ID: "nested-" + rand.Text(), Name: call.Name, Arguments: call.Arguments, Kind: call.Kind}
+		var receipt *toolledger.Invocation
+		if s.parent.invocationAttempt > 0 {
+			local := call
+			local.ID = localID
+			admitted, err := r.ledger.PrepareScopedChild(childCtx, s.parent.invocationID, s.parent.invocationAttempt, local, toolReplayPolicy(r.executor, local))
+			if err != nil {
+				r.mu.Unlock()
+				s.mu.Unlock()
+				return toolresult.Result{}, toolerrors.Unknown(err)
+			}
+			call.ID = admitted.ProviderCallID
+			receipt = &admitted
+		}
 		run = r.runForCallLocked(call)
+		if receipt != nil {
+			run.invocationID, run.invocationAttempt = receipt.ID, receipt.Attempt
+			if receipt.State == toolledger.InvocationSucceeded || receipt.State == toolledger.InvocationFailed {
+				run.complete(receipt.Result.Clone(), nil)
+			}
+		}
 		run.parent, run.depth = s.parent, s.parent.depth+1
 		s.calls[localID] = run
 		r.startRunLocked(childCtx, run, false)
@@ -79,4 +101,15 @@ func (s *nestedToolScope) Invoke(ctx context.Context, call providers.ToolCall) (
 	r.mu.Unlock()
 	s.mu.Unlock()
 	return r.awaitRunResult(childCtx, run)
+}
+
+// Only durably admitted parents receive this capability. Keeping it off the
+// ordinary nested scope leaves the desktop's lightweight execution unchanged.
+type durableNestedToolScope struct{ *nestedToolScope }
+
+func (s *durableNestedToolScope) CodeJournal(ctx context.Context, request toolctx.CodeJournalRequest) (toolctx.CodeJournalResponse, error) {
+	if err := s.ctx.Err(); err != nil {
+		return toolctx.CodeJournalResponse{}, err
+	}
+	return s.runtime.ledger.CodeJournal(ctx, s.parent.invocationID, s.parent.invocationAttempt, request)
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -159,8 +160,9 @@ type RunResult struct {
 
 // Service owns running programs and bounded JSON state, not a persistent
 // JavaScript kernel. Every Run creates a fresh Node process and interpreter;
-// failed or interrupted programs are never replayed. State is memory-only and
-// isolated by service and caller-supplied scope. Close cancels runs and clears it.
+// ordinary failed programs are never replayed and their state is memory-only.
+// A host-bound CodeJournal adds exact replay for explicitly durable invocations.
+// Close cancels runs and clears only this service's in-memory state.
 type Service struct {
 	config     ServiceConfig
 	mu         sync.Mutex
@@ -267,8 +269,22 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	if timeout < 0 || int64(timeout) > MaxTimeoutMS {
 		return result, fmt.Errorf("PTC timeout_ms must be between 0 and %d (0 adds no deadline)", MaxTimeoutMS)
 	}
+	journal, journalErr := openCodeJournal(parent, request, opts)
+	if journalErr != nil {
+		return result, journalErr
+	}
+	if journal != nil && len(journal.outcome) > 0 {
+		if err := json.Unmarshal(journal.outcome, &result); err != nil {
+			return result, toolerrors.Unknown(err)
+		}
+		return result, nil
+	}
 	lifetime := parent
-	if timeout > 0 {
+	if journal != nil && journal.start.Deadline > 0 {
+		var cancelDeadline context.CancelFunc
+		lifetime, cancelDeadline = context.WithDeadline(parent, time.UnixMilli(journal.start.Deadline))
+		defer cancelDeadline()
+	} else if timeout > 0 {
 		var cancelDeadline context.CancelFunc
 		lifetime, cancelDeadline = context.WithTimeout(parent, time.Duration(timeout)*time.Millisecond)
 		defer cancelDeadline()
@@ -353,37 +369,57 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 		s.mu.Unlock()
 		break
 	}
+	if journal != nil {
+		committed = journal.initial
+	}
 	defer func() {
 		s.mu.Lock()
-		if scope != nil {
-			if completed && err == nil && result.Error == "" {
-				switch {
-				case ownerContext.Err() != nil:
-					result.Error = ownerContext.Err().Error()
-				case s.closed:
-					result.Error = context.Canceled.Error()
-				default:
-					size, stateErr := validateState(staged)
-					if stateErr != nil {
-						result.Error = stateErr.Error()
-					} else if s.stateBytes-scope.bytes+size > MaxServiceStateBytes {
-						result.Error = fmt.Sprintf("PTC session state exceeds the byte limit (%d)", MaxServiceStateBytes)
-					} else {
-						s.stateBytes += size - scope.bytes
-						scope.values, scope.bytes = staged, size
-					}
+		defer s.mu.Unlock()
+		if completed && err == nil {
+			size := 0
+			if ownerContext.Err() != nil {
+				result.Error = ownerContext.Err().Error()
+			} else if s.closed {
+				result.Error = context.Canceled.Error()
+			}
+			if result.Error == "" && scope != nil {
+				var stateErr error
+				size, stateErr = validateState(staged)
+				if stateErr != nil {
+					result.Error = stateErr.Error()
+				} else if s.stateBytes-scope.bytes+size > MaxServiceStateBytes {
+					result.Error = fmt.Sprintf("PTC session state exceeds the byte limit (%d)", MaxServiceStateBytes)
+				}
+			}
+			if result.Error != "" {
+				result.Value = nil
+			}
+			if journal != nil && ownerContext.Err() == nil && !s.closed {
+				var state map[string]string
+				if result.Error == "" && scope != nil {
+					state = staged
 				}
 				if result.Error != "" {
+					result.CallSummary = history.summary()
+				}
+				if commitErr := journal.complete(ownerContext, result, state); commitErr != nil {
+					err = toolerrors.Unknown(fmt.Errorf("complete code journal: %w", commitErr))
+					result.Error = err.Error()
 					result.Value = nil
 				}
 			}
+			if err == nil && result.Error == "" && scope != nil {
+				s.stateBytes += size - scope.bytes
+				scope.values, scope.bytes = staged, size
+			}
+		}
+		if scope != nil {
 			if !s.closed && len(scope.values) == 0 {
 				delete(s.scopes, opts.StateScope)
 			}
 			close(scope.done)
 			scope.ctx, scope.done = nil, nil
 		}
-		s.mu.Unlock()
 	}()
 	node := s.config.NodeExecutable
 	if node == "" {
@@ -422,7 +458,11 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	if readErr != nil {
 		return result, readErr
 	}
-	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.BindingNames(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm,
+	var journalBoot *journalStart
+	if journal != nil {
+		journalBoot = &journal.start
+	}
+	boot, err := json.Marshal(map[string]any{"journal": journalBoot, "address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.BindingNames(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm,
 		"state": committed, "stateEnabled": scope != nil, "maxStateBytes": MaxStateBytes, "maxStateKeys": MaxStateKeys})
 	if err != nil {
 		return result, err
@@ -472,7 +512,8 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	stopIO := context.AfterFunc(ctx, func() { _ = conn.Close(); _ = handle.Stop(250 * time.Millisecond) })
 	defer stopIO()
 	var hello struct {
-		Secret string `json:"secret"`
+		Secret  string `json:"secret"`
+		Runtime string `json:"runtime"`
 	}
 	if err = readFrame(conn, &hello); err != nil || hello.Secret != secret {
 		return result, errors.New("Node PTC control authentication failed")
@@ -508,7 +549,7 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 		result.Logs = output.snapshot()
 		result.Media = media
 		// Once tools may have run, preserve recovery diagnostics on transport failures too.
-		if err != nil {
+		if err != nil && toolerrors.Kind(err) != toolerrors.UncertainEffect {
 			result.Error, err = err.Error(), nil
 		}
 		if output.overflowed() {
@@ -521,18 +562,110 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 			result.Value = nil
 		}
 	}()
+	invoke := func(callCtx context.Context, frame codeFrame) (map[string]any, error) {
+		if frame.Type == "search" || frame.Type == "describe" {
+			var value any
+			var lookupErr error
+			if frame.Type == "describe" {
+				value, lookupErr = catalog.Describe(frame.Name)
+			} else {
+				var query struct {
+					Query  string `json:"query"`
+					Limit  int    `json:"limit"`
+					Offset int    `json:"offset"`
+				}
+				lookupErr = json.Unmarshal(frame.Args, &query)
+				if lookupErr == nil {
+					value, lookupErr = catalog.Search(callCtx, query.Query, query.Limit, query.Offset)
+				}
+			}
+			message := ""
+			if lookupErr != nil {
+				message = lookupErr.Error()
+			}
+			return map[string]any{"id": frame.ID, "value": value, "error": message}, nil
+		}
+		if opts.Executor == nil {
+			return nil, errors.New("PTC nested executor is unavailable")
+		}
+		id, name, args := frame.ID, frame.Name, frame.Args
+		outcome := history.begin(id, name)
+		value, callErr := opts.Executor.Invoke(callCtx, providers.ToolCall{ID: strconv.Itoa(id), Name: name, Arguments: string(args), Kind: providers.ToolCallKindFunction})
+		failed := callErr != nil || value.IsError
+		history.finish(outcome, failed, failed && (toolerrors.Kind(callErr) == toolerrors.UncertainEffect || callCtx.Err() != nil || errors.Is(callErr, context.Canceled) || errors.Is(callErr, context.DeadlineExceeded)))
+		if toolerrors.Kind(callErr) == toolerrors.UncertainEffect {
+			return nil, callErr
+		}
+		message := ""
+		if callErr != nil {
+			message = callErr.Error()
+		} else if value.IsError {
+			message = value.TextProjection()
+			if message == "" {
+				message = "tool call failed"
+			}
+		}
+		if message == "" {
+			mediaMu.Lock()
+			for _, part := range value.Content {
+				if part.Type == toolresult.ContentTypeImage || part.Type == toolresult.ContentTypeAudio {
+					if !output.admitMedia(part) {
+						message = "PTC media output limit exceeded; use fewer or smaller images/audio"
+						break
+					}
+					media = append(media, part)
+				}
+			}
+			mediaMu.Unlock()
+		}
+		reply := map[string]any{"id": id, "error": message}
+		if callErr == nil {
+			reply["value"] = value
+			// Ordinary emission uses producer data before the program output budget.
+			// Keep explicit compact views for replaying previously recorded programs.
+			display := value
+			if request.ResultView != ResultViewCompact {
+				display.ModelText = nil
+				if len(display.StructuredContent) > 0 {
+					display.Content = nil
+				}
+			}
+			reply["display"] = display.TextProjection()
+		}
+		return reply, nil
+	}
+	if journal != nil {
+		replayMedia := func(encoded json.RawMessage) {
+			var reply struct {
+				Value toolresult.Result `json:"value"`
+				Error string            `json:"error"`
+			}
+			if json.Unmarshal(encoded, &reply) != nil || reply.Error != "" {
+				return
+			}
+			for _, part := range reply.Value.Content {
+				if part.Type == toolresult.ContentTypeImage || part.Type == toolresult.ContentTypeAudio {
+					if output.admitMedia(part) {
+						media = append(media, part)
+					}
+				}
+			}
+		}
+		frame, runErr := journal.run(ctx, conn, hello.Runtime, allowed, invoke, replayMedia, output)
+		if runErr != nil {
+			return result, runErr
+		}
+		if !output.admitValue(frame.Value, frame.Error) {
+			result.Error = "PTC output exceeded the byte limit"
+		} else {
+			result.Value, result.Error = frame.Value, frame.Error
+		}
+		completed, staged = true, frame.State
+		return result, nil
+	}
 	nextID := 1
 	for {
-		var frame struct {
-			Type  string            `json:"type"`
-			ID    int               `json:"id"`
-			Name  string            `json:"name"`
-			Args  json.RawMessage   `json:"args"`
-			Value json.RawMessage   `json:"value"`
-			Error string            `json:"error"`
-			Text  string            `json:"text"`
-			State map[string]string `json:"state"`
-		}
+		var frame codeFrame
 		if readErr := readFrame(conn, &frame); readErr != nil {
 			if ctx.Err() != nil {
 				result.Error = ctx.Err().Error()
@@ -594,52 +727,17 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 			default:
 				return result, errors.New("PTC pending tool call limit exceeded")
 			}
-			outcome := history.begin(frame.ID, frame.Name)
 			calls.Add(1)
-			go func(id int, name string, args json.RawMessage) {
+			go func(frame codeFrame) {
 				defer calls.Done()
 				defer func() { <-slots }()
-				value, callErr := opts.Executor.Invoke(ctx, providers.ToolCall{ID: strconv.Itoa(id), Name: name, Arguments: string(args), Kind: providers.ToolCallKindFunction})
-				failed := callErr != nil || value.IsError
-				history.finish(outcome, failed, failed && (ctx.Err() != nil || errors.Is(callErr, context.Canceled) || errors.Is(callErr, context.DeadlineExceeded)))
-				message := ""
+				reply, callErr := invoke(ctx, frame)
 				if callErr != nil {
-					message = callErr.Error()
-				} else if value.IsError {
-					message = value.TextProjection()
-					if message == "" {
-						message = "tool call failed"
-					}
-				}
-				if message == "" {
-					mediaMu.Lock()
-					for _, part := range value.Content {
-						if part.Type == toolresult.ContentTypeImage || part.Type == toolresult.ContentTypeAudio {
-							if !output.admitMedia(part) {
-								message = "PTC media output limit exceeded; use fewer or smaller images/audio"
-								break
-							}
-							media = append(media, part)
-						}
-					}
-					mediaMu.Unlock()
-				}
-				reply := map[string]any{"id": id, "error": message}
-				if callErr == nil {
-					reply["value"] = value
-					// Ordinary emission uses producer data before the program output budget.
-					// Keep explicit compact views for replaying previously recorded programs.
-					display := value
-					if request.ResultView != ResultViewCompact {
-						display.ModelText = nil
-						if len(display.StructuredContent) > 0 {
-							display.Content = nil
-						}
-					}
-					reply["display"] = display.TextProjection()
+					cancel()
+					return
 				}
 				send(reply)
-			}(frame.ID, frame.Name, frame.Args)
+			}(frame)
 		default:
 			return result, errors.New("unknown PTC control message")
 		}

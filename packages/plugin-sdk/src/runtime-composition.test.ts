@@ -1,4 +1,4 @@
-import { runJSONLRuntime, type RuntimeInitializeResult, type RuntimePlugin } from "./index.js";
+import { RuntimeExecutionCancellation, runJSONLRuntime, type RuntimeInitializeResult, type RuntimePlugin } from "./index.js";
 
 type Frame = { id: string; method?: string; params?: any; result?: any; error?: { code?: string; message: string } };
 function deferred<T>() {
@@ -169,7 +169,7 @@ async function reentrantServices(): Promise<void> {
   await Promise.all([a.close(), b.close()]);
 }
 
-async function sharedExecutionCancellation(): Promise<void> {
+async function sharedExecutionCancellation(reason?: "shutdown" | "canceled"): Promise<void> {
   const started = [deferred<void>(), deferred<void>()];
   const signals: AbortSignal[] = [];
   const peer = new Peer({
@@ -206,9 +206,10 @@ async function sharedExecutionCancellation(): Promise<void> {
   await started[0]!.promise;
   const second = peer.request("service.invoke", { service: "wait.service", method: "call", caller: "test", execution_id: "shared", params: { index: 1 } });
   await started[1]!.promise;
-  peer.send({ id: "cancel", method: "execution.cancel", params: { execution_id: "shared" } });
+  peer.send({ id: "cancel", method: "execution.cancel", params: { execution_id: "shared", reason } });
   const responses = await Promise.all([first, second]);
   assert(signals.every((signal) => signal.aborted), "cancellation did not reach every handler in the execution");
+  assert(signals.every(signal => signal.reason instanceof RuntimeExecutionCancellation && signal.reason.kind === (reason ?? "canceled")), "host cancellation provenance was lost");
   assert(responses.every((response) => response.result?.cancelled), "cancelled handlers failed to settle");
   for (const frame of peer.frames.filter((frame) => frame.method)) peer.send({ id: frame.id, result: {} });
   await peer.request("service.changed", { service: "remote.service" });
@@ -429,6 +430,7 @@ try {
   await callerScopeLifetime();
   await reentrantServices();
   await sharedExecutionCancellation();
+  await sharedExecutionCancellation("shutdown");
   await lifecycleBarriers();
   await transportClose(false);
   await transportClose(true);

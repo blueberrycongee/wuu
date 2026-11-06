@@ -24,6 +24,7 @@ func Descriptor() pluginhost.ServiceDescriptor {
 
 // Definition is the stable service encoding, independent of model transports.
 type Definition struct {
+	ReplaySafe   bool           `json:"replay_safe,omitempty"`
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
 	InputSchema  map[string]any `json:"input_schema"`
@@ -34,7 +35,7 @@ type Definition struct {
 }
 
 func (d Definition) ProviderDefinition() providers.ToolDefinition {
-	return providers.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable}
+	return providers.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, ReplaySafe: d.ReplaySafe, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable}
 }
 
 type ListResult struct {
@@ -49,6 +50,7 @@ type CallRequest struct {
 	Call providers.ToolCall `json:"call"`
 }
 type Metadata struct {
+	ReplaySafe      bool   `json:"replay_safe,omitempty"`
 	Orchestrator    bool   `json:"orchestrator"`
 	ReadOnly        bool   `json:"read_only"`
 	ConcurrencySafe bool   `json:"concurrency_safe"`
@@ -58,7 +60,7 @@ type Metadata struct {
 }
 
 func (m Metadata) AgentMetadata() agent.ToolMetadata {
-	return agent.ToolMetadata{Orchestrator: m.Orchestrator, ReadOnly: m.ReadOnly, ConcurrencySafe: m.ConcurrencySafe, Destructive: m.Destructive, Risk: m.Risk, Reason: m.Reason}
+	return agent.ToolMetadata{ReplaySafe: m.ReplaySafe, Orchestrator: m.Orchestrator, ReadOnly: m.ReadOnly, ConcurrencySafe: m.ConcurrencySafe, Destructive: m.Destructive, Risk: m.Risk, Reason: m.Reason}
 }
 
 type ResolveResult struct {

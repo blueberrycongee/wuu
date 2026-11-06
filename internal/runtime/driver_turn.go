@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/durablewait"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -32,6 +33,8 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		return nil, serviceError("service_unavailable", "execution does not expose independent turn operations")
 	}
 	switch params.Method {
+	case "start_compaction", "read_compaction", "apply_compaction", "cancel_compaction":
+		return invokeDriverCompaction(ctx, turn, params.Method, params.Params)
 	case "resolve_wait":
 		return i.parent.resolveDurableWait(ctx, params.Caller, gateway, params.Params)
 	case "register_wait":
@@ -160,10 +163,41 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			return nil, err
 		}
 		return marshalServiceResult(driverContextToWire(current))
+	case "model_receipts":
+		var input struct {
+			pluginprotocol.DriverTurnScope
+			RequestID string `json:"request_id"`
+		}
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(input.RequestID) == "" || len(input.RequestID) > 256 {
+			return nil, serviceError("invalid_request", "bounded model request id is required")
+		}
+		reader, ok := gateway.(loopdriver.ModelReceiptReader)
+		if !ok {
+			return nil, serviceError("service_unavailable", "model receipt recovery is unavailable")
+		}
+		result, err := reader.ReadModelReceipts(ctx, input.RequestID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case "model", "model_with_tools":
 		var input pluginprotocol.DriverTurnModelParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
+		}
+		if len(input.RequestID) > 256 || input.RequestID != "" && strings.TrimSpace(input.RequestID) == "" {
+			return nil, serviceError("invalid_request", "invalid model request id")
+		}
+		ctx = loopdriver.WithModelRequestID(ctx, input.RequestID)
+		switch input.Recovery {
+		case "":
+		case "single_attempt":
+			ctx = loopdriver.WithModelSingleAttempt(ctx)
+		default:
+			return nil, serviceError("invalid_request", "unsupported model recovery policy")
 		}
 		request, err := modelwire.ApplyDriverRequest(input.Request)
 		if err != nil {
@@ -179,7 +213,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		} else {
 			round, runErr = turn.CallModel(ctx, request)
 		}
-		result := pluginprotocol.DriverTurnModelResult{CompletedMessages: modelwire.DriverMessagesToWire(round.CompletedMessages), Messages: modelwire.DriverMessagesToWire(round.Messages), ToolBatchID: round.ToolBatchID, ToolWorkStarted: round.ToolWorkStarted}
+		result := pluginprotocol.DriverTurnModelResult{OperationID: round.OperationID, CompletedMessages: modelwire.DriverMessagesToWire(round.CompletedMessages), Messages: modelwire.DriverMessagesToWire(round.Messages), ToolBatchID: round.ToolBatchID, ToolWorkStarted: round.ToolWorkStarted}
 		result.Failure = loopdriver.FailureToWire(runErr)
 		if round.Usage != nil {
 			usage := modelwire.TokenUsageToWire(*round.Usage)
@@ -191,7 +225,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		batch := loopdriver.ToolBatch{ID: input.BatchID, Messages: modelwire.DriverMessagesFromWire(input.Messages)}
+		batch := loopdriver.ToolBatch{ID: input.BatchID, Messages: modelwire.DriverMessagesFromWire(input.Messages), RecoveryBlocked: input.ApprovalWaitID != ""}
 		for _, call := range input.Calls {
 			batch.Calls = append(batch.Calls, modelwire.ToolCallFromWire(call))
 		}
@@ -206,6 +240,27 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			}
 		}
 		messages, err := turn.CallTools(ctx, batch)
+		if err != nil {
+			if toolerrors.Kind(err) == toolerrors.UncertainEffect {
+				return nil, serviceError(toolerrors.UncertainEffect, err.Error())
+			}
+			return nil, err
+		}
+		return marshalServiceResult(pluginprotocol.DriverTurnToolsResult{Messages: modelwire.DriverMessagesToWire(messages)})
+	case "recover_tools":
+		var input pluginprotocol.DriverTurnRecoverToolsParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		recoverer, ok := gateway.(loopdriver.ToolRecoveryGateway)
+		if !ok {
+			return nil, serviceError("service_unavailable", "execution does not expose exact tool recovery")
+		}
+		recovery := loopdriver.ToolRecovery{OriginalExecutionID: input.OriginalExecutionID, BatchID: input.BatchID}
+		for _, call := range input.Calls {
+			recovery.Calls = append(recovery.Calls, modelwire.ToolCallFromWire(call))
+		}
+		messages, err := recoverer.RecoverTools(ctx, recovery)
 		if err != nil {
 			if toolerrors.Kind(err) == toolerrors.UncertainEffect {
 				return nil, serviceError(toolerrors.UncertainEffect, err.Error())

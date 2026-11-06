@@ -7,10 +7,25 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+type modelSingleAttemptKey struct{}
+
+// WithModelSingleAttempt lets a durable loop own retry deadlines while the host
+// still owns each operation's identity, authorization and usage accounting.
+// It only reduces local retries; omitted, the selected workload policy applies.
+func WithModelSingleAttempt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, modelSingleAttemptKey{}, true)
+}
+
+func ModelSingleAttempt(ctx context.Context) bool {
+	value, _ := ctx.Value(modelSingleAttemptKey{}).(bool)
+	return value
+}
+
 // TurnGateway exposes individual operations to a driver that owns its control
 // flow. CallModel never executes tools. CallModelWithTools explicitly opts into
 // safe streaming tool execution; neither operation decides whether to continue.
-// Operations are serialized within a turn and reject calls after completion or
+// Active-context operations are serialized within a turn; detached compaction
+// inference may run concurrently. Operations reject calls after completion or
 // cancellation. Model and tool events use the turn's existing event stream.
 type TurnGateway interface {
 	EvaluatePolicy(context.Context, pluginprotocol.AgentPolicyInput) (pluginprotocol.AgentPolicyDecision, error)
@@ -78,6 +93,7 @@ type InputAdmission struct {
 // failure prevents model and streaming-tool execution. A committed receipt does
 // not prove submission, since cancellation may occur immediately afterward.
 type ModelRound struct {
+	OperationID string
 	// CompletedMessages survives a failed stream separately from its partial output.
 	CompletedMessages []providers.ChatMessage
 	Messages          []providers.ChatMessage
@@ -109,6 +125,8 @@ type ToolBatch struct {
 	Calls    []providers.ToolCall
 	// BeforeDispatch is a host-only gate, invoked under the turn lock after validation.
 	BeforeDispatch func(context.Context, ExecutionContext) error
+	// RecoveryBlocked retains an action-time gate that cannot authorize another attempt.
+	RecoveryBlocked bool
 }
 
 // TurnResult contains the driver's final output and optional additional messages.

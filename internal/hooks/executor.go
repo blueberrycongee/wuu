@@ -102,12 +102,20 @@ func (h *HookedExecutor) SupportsTool(name string) bool {
 
 // ToolMetadata forwards inner metadata, but disables speculative and concurrent
 // execution when pre-tool hooks can change the arguments after classification.
+// Matching tool lifecycle hooks also revoke replay permission for the pipeline.
 func (h *HookedExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
 	if mp, ok := h.inner.(agent.ToolMetadataProvider); ok {
 		meta, found := mp.ToolMetadata(call)
-		if found && h.dispatcher != nil && h.dispatcher.hasMatchingHooks(PreToolUse, call.Name) {
-			meta.ReadOnly = false
-			meta.ConcurrencySafe = false
+		if found && h.dispatcher != nil {
+			preHook := h.dispatcher.hasMatchingHooks(PreToolUse, call.Name)
+			if preHook {
+				meta.ReadOnly = false
+				meta.ConcurrencySafe = false
+			}
+			// Inner retry permission does not cover hook effects or rewritten input.
+			if preHook || h.dispatcher.hasMatchingHooks(PostToolUse, call.Name) || h.dispatcher.hasMatchingHooks(PostToolUseFailure, call.Name) {
+				meta.ReplaySafe = false
+			}
 		}
 		return meta, found
 	}

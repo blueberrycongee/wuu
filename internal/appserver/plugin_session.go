@@ -163,6 +163,9 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	if params.ContextSource == pluginhost.SessionContextFork && params.ParentSessionID == "" {
 		return pluginhost.SessionCreateResult{}, errors.New("parent_session_id is required for fork context")
 	}
+	if params.ForkSeq != nil && (params.ContextSource != pluginhost.SessionContextFork || *params.ForkSeq < 1) {
+		return pluginhost.SessionCreateResult{}, errors.New("fork_seq must be a positive persisted sequence with fork context")
+	}
 	if params.ContextSource == pluginhost.SessionContextSourceSeed {
 		if params.Seed == nil {
 			return pluginhost.SessionCreateResult{}, errors.New("seed is required for seed context")
@@ -436,7 +439,7 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 	if err := s.requireUserSessionBinding(metadata); err != nil {
 		return pluginhost.SessionInspectResult{}, false, err
 	}
-	if metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) {
+	if metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) && !selectedRecoveryDriver(binding, pluginID, params.SessionID) {
 		// Shared-session senders may inspect their own correlated request. Goal
 		// continuations and automation heartbeats both need recovery here.
 		control, managed, controlErr := binding.Sessions.ReadControl(params.SessionID)
@@ -473,6 +476,10 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
+	result.Recovery, err = s.driverRecoveryCandidate(binding, pluginID, params.SessionID, params.TurnID, false)
+	if err != nil {
+		return result, false, err
+	}
 	if metadata.Owner == "plugin:"+strings.TrimSpace(pluginID) {
 		result.Session.CreationRequestID = metadata.CreationRequestID
 	}
@@ -919,6 +926,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		params.Input.Prompt = strings.TrimSpace(params.Input.Prompt)
 	}
 	params.IfRunning = strings.TrimSpace(params.IfRunning)
+	if params.RecoverAfterTurnID != "" || params.RecoveryCheckpointToken != "" {
+		return s.recoverPluginSession(ctx, binding, pluginID, params)
+	}
 	if scope, delegated, scopeErr := executionRunScope(ctx, pluginID, params.SessionID); scopeErr != nil {
 		return pluginhost.SessionSendResult{}, scopeErr
 	} else if delegated {
@@ -1260,7 +1270,7 @@ func hostSessionCreateParamsFromPlugin(params pluginhost.SessionCreateParams) ho
 	converted := hostSessionCreateParams{
 		UserSpaceID: params.UserSpaceID, ProductDomain: params.ProductDomain, AgentID: params.AgentID,
 		Speed: params.Speed, RequestID: params.RequestID, Name: params.Name,
-		Visibility: params.Visibility, ParentSessionID: params.ParentSessionID, ContextSource: params.ContextSource,
+		Visibility: params.Visibility, ParentSessionID: params.ParentSessionID, ContextSource: params.ContextSource, ForkSeq: params.ForkSeq,
 		Workspace: params.Workspace, WorkspaceID: params.WorkspaceID, WorkspaceRoot: params.WorkspaceRoot,
 		ModelAlias: params.ModelAlias, Provider: params.Provider, Model: params.Model,
 		Variant: params.Variant, Effort: params.Effort, PermissionMode: params.PermissionMode,
