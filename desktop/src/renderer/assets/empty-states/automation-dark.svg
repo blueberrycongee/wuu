@@ -1,32 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="24 24 144 144" fill="none" role="img" aria-labelledby="01-automation-title 01-automation-desc">
-  <title id="01-automation-title">A gentle cycle</title>
-  <desc id="01-automation-desc">Two loose paper cards travel through an open cycle. An original empty-state illustration for automations.</desc>
-
-  <g id="cycle-wash">
-    <path d="M44 97C33 77 40 53 60 42C77 32 104 32 123 44C101 36 79 36 63 46C45 57 41 78 47 92Z" fill="#BAC6AC" fill-opacity=".20"/>
-    <path d="M144 93C158 110 150 137 132 148C116 157 94 159 77 153C95 156 116 150 130 141C146 130 150 108 144 93Z" fill="#DBBC95" fill-opacity=".24"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" fill="none">
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#D0D1D4" stroke-width="4">
+      <path d="M70 62V44M122 62V44"/>
+    </g>
+    <rect x="44" y="52" width="104" height="100" rx="14" fill="#2A2B2E" stroke="#D0D1D4" stroke-width="3.2"/>
+    <path d="M44 76h104" stroke="#D0D1D4" stroke-width="3" opacity=".55"/>
+    <g fill="#8A8B90">
+      <circle cx="69" cy="96" r="5"/>
+      <circle cx="96" cy="96" r="5"/>
+      <circle cx="123" cy="96" r="5"/>
+      <circle cx="69" cy="118" r="5"/>
+      <circle cx="96" cy="118" r="5"/>
+    </g>
+    <circle cx="140" cy="140" r="23" fill="#2A2B2E" stroke="#D0D1D4" stroke-width="3.2"/>
+    <path d="M133 131l17 9-17 9Z" fill="#C98E72" stroke="#C98E72" stroke-width="3"/>
   </g>
-  <g id="cycle" stroke="#BEC7AA" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M40 83C34 65 43 48 59 41C78 32 101 35 117 43"/>
-    <path d="M109 34Q113.627 38.886 118 44Q111.491 44.387 105 45"/>
-    <path d="M151 111C157 130 145 146 128 153C111 160 91 156 77 149"/>
-    <path d="M84 159Q79.373 154.114 75 149Q81.517 148.113 88 147"/>
-  </g>
-  <g id="back-card">
-    <path d="M72 53Q93.076 55.468 114 59Q110.697 76.448 108 94Q86.437 92.045 65 89Z" fill="#BAC6AC" fill-opacity=".38"/>
-    <path d="M73 51C85 53 104 56 116 58Q113.481 77.076 110 96C97 95 79 91 64 89C66 78 70 62 73 51Z" stroke="#BEC7AA" stroke-width="1.815" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M73 56Q91.563 58.031 110 61Q107.257 74.957 105 89Q86.949 87.456 69 85" stroke="#96A586" stroke-width="1" stroke-linecap="round" opacity=".65"/>
-    <path d="M83 67Q92.538 68.259 102 70M81 74Q87.483 75.113 94 76" stroke="#BEC7AA" stroke-width="1.55" stroke-linecap="round"/>
-    <path d="M106 85L106 88M110 73L109 81" stroke="#96A586" stroke-width=".85" stroke-linecap="round"/>
-  </g>
-  <g id="front-card">
-    <path d="M87 96Q106.848 89.493 127 84Q134.13 106.623 142 129Q121.152 135.532 100 141Z" fill="#DBBC95" fill-opacity=".40"/>
-    <path d="M88 94C101 90 115 86 127 83C133 96 137 113 142 130C128 135 115 138 100 142Q93.447 118.138 88 94Z" stroke="#BEC7AA" stroke-width="1.83" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M92 98Q107.873 92.595 124 88Q130.662 107.621 138 127Q120.627 132.443 103 137" stroke="#C99D80" stroke-width=".9" stroke-linecap="round" opacity=".55"/>
-    <path d="M103 107Q112.437 104.259 122 102M106 115Q112.526 113.613 119 112" stroke="#BEC7AA" stroke-width="1.55" stroke-linecap="round"/>
-    <path d="M123 123C125 120 129 121 129 124C129 127 125 128 123 125" stroke="#96A586" stroke-width="1.1" stroke-linecap="round"/>
-  </g>
-  <g id="motion" stroke="#96A586" stroke-width="1.1" stroke-linecap="round">
-    <path d="M47 104L51 112M44 112L47 118M140 70L144 77"/>
+  <g stroke="#8A8B90" stroke-width="2.6" stroke-linecap="round">
+    <path d="M36 58l-7-7M158 44l7-7"/>
   </g>
 </svg>

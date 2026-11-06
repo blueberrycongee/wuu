@@ -3,6 +3,10 @@
 Four original SVGs, each with a separately drawn dark-theme variant. The
 renderer picks the variant from `data-theme` in `EmptyStateIllustration.tsx`.
 
+They share a 192 px canvas, one 3.2 px ink outline, flat paper and surface
+fills, and a single clay accent. Light and dark variants use separate palettes
+instead of filters so each theme keeps its intended contrast.
+
 - `files` — an empty workspace file tree, or no file selected.
 - `automation` — no scheduled automations.
 - `plugins` — no plugins or skills.

@@ -1,28 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="27 22 140 140" fill="none" role="img" aria-labelledby="03-plugins-title 03-plugins-desc">
-  <title id="03-plugins-title">Room for another piece</title>
-  <desc id="03-plugins-desc">Two hand-shaped interlocking modules hover close to a fit. An original empty-state illustration for plugins and skills.</desc>
-
-  <g id="lower-module-side">
-    <path d="M43 90L45 98Q64.687 125.232 85 152Q107.696 137.018 131 123L132 114Q110.282 126.996 88 139Z" fill="#9EAF93" fill-opacity=".30"/>
-    <path d="M44 92L45 99Q64.687 126.232 85 153Q107.689 137.523 131 123L132 115M85 143L85 153" stroke="#77806B" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" fill="none">
+  <g stroke="#353637" stroke-width="3.2" stroke-linejoin="round">
+    <rect x="32" y="32" width="58" height="58" rx="14" fill="#FFFFFF"/>
+    <rect x="102" y="32" width="58" height="58" rx="14" fill="#F0F0F0"/>
+    <rect x="32" y="102" width="58" height="58" rx="14" fill="#F0F0F0"/>
+    <rect x="102" y="102" width="58" height="58" rx="14" stroke="#B0B0B0" stroke-width="2.6" stroke-dasharray="7 8"/>
   </g>
-  <g id="lower-module">
-    <path d="M43 90C51 84 60 78 68 73Q73.677 79.861 79 87C73 91 70 96 74 101C79 107 86 105 91 101Q97.361 109.113 104 117Q112.848 110.772 122 105Q126.913 110.087 132 115C117 125 100 135 85 144Q63.55 117.35 43 90Z" fill="#BAC6AC" fill-opacity=".56"/>
-    <path d="M43 90C51 84 60 78 68 73Q73.677 79.861 79 87C73 91 70 96 74 101C79 107 86 105 91 101Q97.361 109.113 104 117Q112.848 110.772 122 105Q126.913 110.087 132 115C117 125 100 135 85 144Q63.55 117.35 43 90Z" stroke="#77806B" stroke-width="1.83" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M49 92Q67.445 114.144 85 137Q104.199 125.829 123 114" stroke="#A2AC91" stroke-width="1" stroke-linecap="round" opacity=".75"/>
-    <path d="M57 94L61 99M63 102L68 109M76 124L80 129" stroke="#A2AC91" stroke-width=".8" stroke-linecap="round" opacity=".75"/>
+  <g stroke="#B0B0B0" stroke-width="2.8" stroke-linecap="round">
+    <path d="M48 52h24M48 62h24M48 72h15"/>
+    <circle cx="131" cy="61" r="9"/>
+    <path d="M48 127h8M48 139h8M62 127h8M62 139h8"/>
   </g>
-  <g id="upper-module-side">
-    <path d="M79 54L80 62Q86.361 70.113 93 78Q98.899 73.848 105 70Q108.913 75.069 113 80C109 85 109 89 113 93C117 97 123 94 127 91Q133.715 99.335 140 108Q145.561 104.595 151 101L151 92Q144.439 95.387 138 99Q131.285 90.665 125 82C121 86 115 87 112 83C108 79 110 74 114 71Q109.587 65.922 105 61Q99.101 65.152 93 69Z" fill="#C88E73" fill-opacity=".25"/>
-    <path d="M79 54L80 62Q86.361 70.113 93 78Q98.899 73.848 105 70Q108.413 75.061 112 80M139 99L140 108Q145.561 104.595 151 101L151 92M93 69L93 78M113 80C109 85 109 89 113 93C117 97 123 94 127 91L140 108" stroke="#77806B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <g stroke="#D99C82" stroke-width="4" stroke-linecap="round">
+    <path d="M131 121v20M121 131h20"/>
   </g>
-  <g id="upper-module">
-    <path d="M79 54C92 46 105 38 119 31Q135.457 52.16 151 74Q150.835 83.5 151 93Q144.589 96.665 138 100Q131.647 91.387 125 83C120 87 115 87 112 83C108 79 110 74 114 71Q109.373 66.114 105 61Q98.931 64.896 93 69Q85.81 61.677 79 54Z" fill="#DBBC95" fill-opacity=".51"/>
-    <path d="M79 54C92 46 105 38 119 31Q135.457 52.16 151 74Q150.835 83.5 151 93Q144.589 96.665 138 100Q131.647 91.387 125 83C120 87 115 87 112 83C108 79 110 74 114 71Q109.373 66.114 105 61Q98.931 64.896 93 69Q85.81 61.677 79 54Z" stroke="#77806B" stroke-width="1.83" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M85 54Q101.272 44.582 118 36Q131.686 55.231 146 74Q146.215 82.5 146 91" stroke="#C88E73" stroke-width=".9" stroke-linecap="round" opacity=".55"/>
-    <path d="M110 42L118 38M131 52L135 57M139 62L143 67" stroke="#C88E73" stroke-width=".8" stroke-linecap="round" opacity=".55"/>
-  </g>
-  <g id="fit-guides" stroke="#A2AC91" stroke-width="1.15" stroke-linecap="round">
-    <path d="M72 58L67 59M61 63L58 66M140 121L144 118"/>
+  <g stroke="#B0B0B0" stroke-width="2.6" stroke-linecap="round">
+    <path d="M166 50l6-6M166 148l6 6"/>
   </g>
 </svg>
