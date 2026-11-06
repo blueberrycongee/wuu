@@ -685,9 +685,10 @@ button.plugin-contribution:hover {
   grid-column: 1 / -1;
 }
 
-/* The catalog's first-run state centers one illustration and two lines in the
- * same settings column; a filtered result stays a row-height notice. */
+/* The catalog's first-run state centers the illustration; its status copy
+ * stays screen-reader only. A filtered result stays a row-height notice. */
 .catalog-empty.settings-group-empty {
+  position: relative;
   display: grid;
   flex: 1 0 auto;
   min-height: 280px;
@@ -696,22 +697,4 @@ button.plugin-contribution:hover {
   gap: var(--space-2);
   padding: var(--space-8) 0;
   text-align: center;
-}
-
-.catalog-empty > .empty-state-illustration {
-  margin-bottom: var(--space-2);
-}
-
-.catalog-empty > strong {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-}
-
-.catalog-empty > span {
-  max-width: 32em;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: var(--line-body);
 }

@@ -630,8 +630,9 @@ function SkillsCatalogView({
         ) : (
           <div className="catalog-empty settings-group-empty" data-wuu-component="catalog-empty">
             <EmptyStateIllustration name="plugins" />
-            <strong>{activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")}</strong>
-            <span>{t("skills.catalogEmptyDescription")}</span>
+            <span className="sr-only" role="status">
+              {activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")} {t("skills.catalogEmptyDescription")}
+            </span>
           </div>
         )
       ) : null}

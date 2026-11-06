@@ -12,7 +12,8 @@ instead of filters so each theme keeps its intended contrast.
 - `plugins` — no plugins or skills.
 - `connection` — no model service or external engine connected.
 
-Display them at 120 × 120 px in the current empty states. Use 96 × 96 px or
-64 × 64 px when a particularly narrow surface needs a more compact treatment.
-They are decorative, so the surrounding title or description carries the
-meaning. Do not use them as 16–24 px toolbar icons.
+Display them at 160 × 160 px when the illustration is the only visible
+empty-state content. Use 120 × 120 px or 96 × 96 px when a narrow surface
+needs a more compact treatment. They are decorative, so the surrounding title
+or description carries the meaning and may stay available to assistive
+technology only. Do not use them as 16–24 px toolbar icons.

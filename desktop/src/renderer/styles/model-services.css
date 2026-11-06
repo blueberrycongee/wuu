@@ -6,8 +6,9 @@
 }
 
 /* The first-run connection page has no rows to read, so it centers the
- * connection artwork and the one next step. */
+ * connection artwork. */
 .model-services-empty {
+  position: relative;
   display: grid;
   flex: 1 0 auto;
   min-height: 360px;
@@ -18,24 +19,9 @@
   text-align: center;
 }
 
-.model-services-empty .empty-state-illustration {
-  margin-bottom: var(--space-2);
-}
-
-.model-services-empty h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-}
-
+.model-services-empty h2,
 .model-services-empty p {
-  max-width: 32em;
   margin: 0;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: var(--line-body);
 }
 
 /* Connection targets are already laid out when navigation paints them. */

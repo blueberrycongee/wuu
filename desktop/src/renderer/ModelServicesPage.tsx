@@ -434,8 +434,8 @@ export function ModelServicesPage({
       {noConnections && !adding && !detailProvider && !selectedEngine ? (
         <div className="model-services-empty" data-wuu-component="model-services-empty">
           <EmptyStateIllustration name="connection" />
-          <h2>{t("provider.connectionsEmptyTitle")}</h2>
-          <p>{t("provider.connectionsEmptyDescription")}</p>
+          <h2 className="sr-only">{t("provider.connectionsEmptyTitle")}</h2>
+          <p className="sr-only">{t("provider.connectionsEmptyDescription")}</p>
         </div>
       ) : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
