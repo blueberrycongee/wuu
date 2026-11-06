@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import type { MCPServerStatus, PluginReference } from "../shared/protocol";
 import { composerInputElement, type ComposerInputHandle } from "./ComposerInput";
 import { draftPluginReferences, pluginReferenceToken } from "./ComposerPluginReferences";
@@ -9,6 +10,24 @@ import { ComposerPluginIcon } from "./ComposerPluginIcon";
 import { showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
+// The plus menu mounts on every open. Keep the connector status beside the
+// composer so reopening it never swaps a loading row for the real list.
+const pluginServers = new WeakMap<ApplicationSettingsControlsV1, MCPServerStatus[]>();
+const pluginServerRequests = new WeakMap<ApplicationSettingsControlsV1, Promise<MCPServerStatus[]>>();
+
+function loadPluginServers(controls: ApplicationSettingsControlsV1): Promise<MCPServerStatus[]> {
+  const pending = pluginServerRequests.get(controls);
+  if (pending) return pending;
+  const request = controls.listMCPServers().then(result => {
+    pluginServers.set(controls, result.servers);
+    return result.servers;
+  }).finally(() => {
+    if (pluginServerRequests.get(controls) === request) pluginServerRequests.delete(controls);
+  });
+  pluginServerRequests.set(controls, request);
+  return request;
+}
+
 export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | null>, onChange: (value: string) => void, owner?: string, disabled = false) {
   const services = useComposerServices();
   const [open, setOpen] = useState(false);
@@ -16,7 +35,13 @@ export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | 
   const [fromMention, setFromMention] = useState(false);
   const range = useRef<[number, number] | undefined>(undefined);
   const id = useId();
+  const settingsControls = services?.settingsControls;
   useEffect(() => { setOpen(false); range.current = undefined; }, [owner, disabled]);
+  useEffect(() => {
+    if (!settingsControls || pluginServers.has(settingsControls)) return;
+    // Fetch before the first open so the menu paints its rows together.
+    void loadPluginServers(settingsControls).catch(() => undefined);
+  }, [settingsControls]);
   function observe(value: string): void {
     if (!services || disabled) return;
     const input = inputRef.current;
@@ -73,19 +98,29 @@ export type ComposerPluginMenu = ReturnType<typeof useComposerPluginMenu>;
 export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): JSX.Element | null {
   const services = useComposerServices();
   const { t } = useI18n();
-  const [servers, setServers] = useState<MCPServerStatus[]>([]);
-  const [loading, setLoading] = useState(true);
+  const settingsControls = services?.settingsControls;
+  const cachedServers = settingsControls ? pluginServers.get(settingsControls) : undefined;
+  const [servers, setServers] = useState<MCPServerStatus[]>(cachedServers ?? []);
+  const [loading, setLoading] = useState(!cachedServers);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   useEffect(() => {
-    if (!services) return;
+    if (!settingsControls) return;
     let active = true;
-    setLoading(true); setError(""); setServers([]);
-    void services.settingsControls.listMCPServers().then(result => {
-      if (active) { setServers(result.servers); setLoading(false); }
-    }, failure => { if (active) { setError(String(failure)); setLoading(false); } });
+    const cached = pluginServers.get(settingsControls);
+    if (cached) { setServers(cached); setLoading(false); }
+    else setLoading(true);
+    setError("");
+    // Refresh in the background; a cached list stays visible while it does.
+    void loadPluginServers(settingsControls).then(result => {
+      if (active) { setServers(result); setLoading(false); }
+    }, failure => {
+      if (!active) return;
+      if (!pluginServers.has(settingsControls)) setError(String(failure));
+      setLoading(false);
+    });
     return () => { active = false; };
-  }, [services?.settingsControls, revision]);
+  }, [settingsControls, revision]);
   if (!services) return null;
   const inventory = services.catalog.getSnapshot().inventory;
   const supported = services.conversationPluginsSupported === true;
