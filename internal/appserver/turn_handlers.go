@@ -996,6 +996,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	removedQueuedTurn, removedQueued := s.removeQueuedUserTurn(params.ThreadID, clientID)
 	th.pendingSteers = append(th.pendingSteers, steerMsg)
 	th.signalSteerWakeLocked()
+	// Only explicit human steering closes the visible model stream. Generated
+	// completions and plugin mailbox input keep their next-boundary behavior.
+	th.signalModelPreemptLocked()
 	th.steerDocumentOverrides = append(th.steerDocumentOverrides, activeDocumentOverride{
 		steerID: clientID, document: cloneActiveDocument(steerDocument),
 	})
@@ -1066,6 +1069,32 @@ func (th *threadState) steerWaitInterrupt() <-chan struct{} {
 		th.steerWake = make(chan struct{})
 	}
 	return th.steerWake
+}
+
+func (th *threadState) signalModelPreemptLocked() {
+	if th.modelPreemptWake == nil {
+		th.modelPreemptWake = make(chan struct{})
+	}
+	if !th.modelPreemptClosed {
+		close(th.modelPreemptWake)
+		th.modelPreemptClosed = true
+	}
+}
+
+func (th *threadState) resetModelPreemptLocked() {
+	if th.modelPreemptWake == nil || th.modelPreemptClosed {
+		th.modelPreemptWake = make(chan struct{})
+		th.modelPreemptClosed = false
+	}
+}
+
+func (th *threadState) modelPreemptInterrupt() <-chan struct{} {
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	if th.modelPreemptWake == nil {
+		th.modelPreemptWake = make(chan struct{})
+	}
+	return th.modelPreemptWake
 }
 
 func (s *Server) steerAgentCompletion(binding *runtime.State, threadID, resultID string, msg providers.ChatMessage) bool {
@@ -3055,6 +3084,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	var baseResumeSampling bool
 	var baseCompactOnly bool
 	var baseToolWaitInterrupt func() <-chan struct{}
+	var baseModelInterrupt func() <-chan struct{}
 	var baseBeforeStep func() []providers.ChatMessage
 	var baseBeforeRequestContext func() []agent.ContextSegment
 	var baseOnRequestContext func(agent.RequestContextInfo)
@@ -3081,6 +3111,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		baseResumeSampling = runner.ResumeSampling
 		baseCompactOnly = runner.CompactOnly
 		baseToolWaitInterrupt = runner.ToolWaitInterrupt
+		baseModelInterrupt = runner.ModelInterrupt
 		baseBeforeStep = runner.BeforeStep
 		baseBeforeRequestContext = runner.BeforeRequestContext
 		baseOnRequestContext = runner.OnRequestContext
@@ -3098,6 +3129,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 				runner.ResumeSampling = baseResumeSampling
 				runner.CompactOnly = baseCompactOnly
 				runner.ToolWaitInterrupt = baseToolWaitInterrupt
+				runner.ModelInterrupt = baseModelInterrupt
 				runner.BeforeStep = baseBeforeStep
 				runner.BeforeRequestContext = baseBeforeRequestContext
 				runner.OnRequestContext = baseOnRequestContext
@@ -3111,8 +3143,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		}
 		if th != nil {
 			runner.ToolWaitInterrupt = th.steerWaitInterrupt
+			runner.ModelInterrupt = th.modelPreemptInterrupt
 		} else {
 			runner.ToolWaitInterrupt = nil
+			runner.ModelInterrupt = nil
 		}
 		runner.CommitFreshContext = func(commitCtx context.Context, messages []providers.ChatMessage, head int, key string, note agent.CompactionNote) ([]providers.ChatMessage, int, error) {
 			if err := commitCtx.Err(); err != nil {
@@ -3411,6 +3445,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
 			th.pendingSteers = append(th.pendingSteers, nativePending...)
 			th.resetSteerWakeLocked()
+			th.resetModelPreemptLocked()
+			// This admission starts a fresh model stream; late events from the
+			// preempted transport are no longer accepted.
+			th.preemptingAgentTurnID = ""
 			for _, msg := range steers {
 				delete(th.pendingSteerControls, msg.ClientID)
 			}
@@ -3573,11 +3611,13 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			providerStates = append(providerStates, providerStateRecord(ev.ProviderState))
 		}
 		notifyBatch(batch)
-		notify(NotificationTurnEvent, TurnEventNotification{
-			ThreadID: th.ID,
-			TurnID:   turnID,
-			Event:    sanitizeStreamEvent(ev),
-		})
+		if ev.Type != providers.EventModelPreempted {
+			notify(NotificationTurnEvent, TurnEventNotification{
+				ThreadID: th.ID,
+				TurnID:   turnID,
+				Event:    sanitizeStreamEvent(ev),
+			})
+		}
 	})
 	joinNativeSteering()
 	closeEngine()

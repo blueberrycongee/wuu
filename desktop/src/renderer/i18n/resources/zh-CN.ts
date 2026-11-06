@@ -2351,6 +2351,7 @@ export const zhCN = {
   "composer.attachment.preparing": "正在准备附件…",
   "composer.attachment.addFailed": "附件添加失败",
   "turn.orchestrationPaused": "已暂停回答",
+  "turn.steeredInterruption": "已打断",
   "common.select": "请选择",
   "common.noOptions": "没有可选项",
   "thread.untitled": "未命名对话",

@@ -311,6 +311,54 @@ describe("TurnView", () => {
     expect(view.querySelectorAll(".user-message-block")).toHaveLength(1);
   });
 
+  it("renders a steered user bubble after the interrupted assistant text", () => {
+    const view = render(
+      makeTurn("completed", [
+        {
+          id: "turn-1-item-1",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          text: "first",
+        },
+        {
+          id: "turn-1-item-2",
+          type: "agent_message",
+          status: "completed",
+          role: "assistant",
+          terminal: false,
+          cause: "steered_stream_fragment",
+          text: "partial answer",
+        },
+        {
+          id: "turn-1-item-3",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          source_id: "steer-1",
+          text: "new direction",
+        },
+        {
+          id: "turn-1-item-4",
+          type: "agent_message",
+          status: "completed",
+          role: "assistant",
+          terminal: true,
+          text: "final answer",
+        },
+      ]),
+    );
+
+    const messages = Array.from(
+      view.querySelectorAll<HTMLElement>('[data-wuu-component="message"]'),
+    ).map((element) => `${element.dataset.wuuVariant ?? ""}:${element.textContent ?? ""}`);
+    expect(messages).toHaveLength(4);
+    expect(messages[0]).toContain("user:first");
+    expect(messages[1]).toContain("agent:partial answer");
+    expect(messages[2]).toContain("user:new direction");
+    expect(messages[3]).toContain("agent:final answer");
+  });
+
   it("renders a plugin-generated query through the existing user-message flow", () => {
     const view = render(
       makeTurn("completed", [

@@ -2354,6 +2354,7 @@ export const enUS = {
   "composer.attachment.preparing": "Preparing attachment…",
   "composer.attachment.addFailed": "Failed to add attachment",
   "turn.orchestrationPaused": "Response paused",
+  "turn.steeredInterruption": "Interrupted",
   "common.select": "Select",
   "common.noOptions": "No options",
   "thread.untitled": "Untitled conversation",

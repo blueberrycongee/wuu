@@ -1,6 +1,6 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { ConversationTurnSlotContextV1 } from "../../../packages/plugin-sdk/src/ui";
 import type {
   SessionLocatorV1,
@@ -28,6 +28,7 @@ import {
 import { turnEventForTurn } from "./TurnEvents";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
+import { buildTurnTimeline, displayItemsForSettledSegment } from "./TurnTimeline";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -185,22 +186,25 @@ function TurnContent({
     item: ThreadItem,
     streaming: boolean,
     pendingCompanionReasoning?: boolean,
+    displayTurn: Turn = turn,
+    isActiveSegment = true,
   ): JSX.Element | null {
     return (
       <ThreadItemView
         key={item.id}
         turnID={turn.id}
-        turnStatus={turn.status}
+        turnStatus={displayTurn.status}
         turnStartedAt={turn.started_at}
-        turnAnswerReadyAt={turn.answer_ready_at ?? turn.completed_at}
+        turnAnswerReadyAt={displayTurn.answer_ready_at ?? displayTurn.completed_at}
         item={item}
         cwd={cwd}
         onOpenFile={onOpenFile}
         streaming={streaming}
         pendingCompanionReasoning={pendingCompanionReasoning}
-        actionableAgentMessageID={actionableAgentMessageID}
-        latestAgentMessageID={latestAgentMessageID}
-        animateCompletionActions={animateCompletionActions}
+        actionableAgentMessageID={isActiveSegment ? actionableAgentMessageID : undefined}
+        latestAgentMessageID={isActiveSegment ? latestAgentMessageID : undefined}
+        animateCompletionActions={isActiveSegment && animateCompletionActions}
+        messageActions={!isActiveSegment && item.type === "agent_message" ? "none" : undefined}
         onStreamFrame={onStreamFrame}
         onForkMessage={onForkMessage}
         onEditMessage={onEditMessage}
@@ -220,15 +224,42 @@ function TurnContent({
   }
 
   const userItems = turn.items.filter((item) => item.type === "user_message");
-  const rawAssistantDisplay = buildAssistantTurnDisplay(
-    turn,
-    actionableAgentMessageID,
-    renderThreadItem,
+  // A turn can contain more than one user message after steering. Keep the
+  // transcript chronological instead of rendering every user bubble first.
+  const timelineItems = turn.items.filter(
+    (item) => item.type !== "user_message" || !isInternalUserNotificationItem(item),
   );
-  const assistantDisplay = useAssistantTurnPresentation(
-    turn.id,
-    rawAssistantDisplay,
-  );
+  const timelineSegments = buildTurnTimeline(timelineItems).map((segment, index, all) => {
+    const last = index === all.length - 1;
+    const assistantItems = last
+      ? segment.assistantItems
+      : displayItemsForSettledSegment(segment.assistantItems);
+    const segmentTurn: Turn = last
+      ? { ...turn, items: assistantItems }
+      : { ...turn, id: `${turn.id}-segment-${index}`, items: assistantItems, status: "completed" };
+    const interrupted = assistantItems.some(
+      (item) => item.type === "agent_message" && item.cause === "steered_stream_fragment",
+    );
+    const display = last || assistantItems.length > 0
+      ? buildAssistantTurnDisplay(
+          segmentTurn,
+          last ? actionableAgentMessageID : undefined,
+          (item, streaming, pendingCompanionReasoning) =>
+            renderThreadItem(item, streaming && last, pendingCompanionReasoning, segmentTurn, last),
+        )
+      : undefined;
+    return {
+      segment,
+      segmentTurn,
+      display,
+      interrupted,
+      last,
+      key: segment.userItems[0]?.id ?? assistantItems[0]?.id ?? `${turn.id}-segment-${index}`,
+    };
+  });
+  const lastSegmentIndex = timelineSegments.length - 1;
+  const lastRawDisplay = lastSegmentIndex >= 0 ? timelineSegments[lastSegmentIndex].display : undefined;
+  const lastDisplay = useAssistantTurnPresentation(turn.id, lastRawDisplay);
   const reconnectItems = turn.items.filter((item) => item.type === "stream_reconnect");
   const visibleStreamStatus = isLatestTurn && turn.status === "in_progress" && reconnectItems.length === 0
     ? streamStatus
@@ -315,29 +346,39 @@ function TurnContent({
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {userItems.map((item) => renderThreadItem(item, false))}
-      {assistantDisplay ? (
-        <AssistantTurnShell
-          turn={turn}
-          display={assistantDisplay}
-          cwd={cwd}
-          onOpenFile={onOpenFile}
-          onOpenURL={onOpenURL}
-          actionableAgentMessageID={actionableAgentMessageID}
-          latestAgentMessageID={latestAgentMessageID}
-          animateCompletionActions={animateCompletionActions}
-          onStreamFrame={onStreamFrame}
-          onForkMessage={onForkMessage}
-          onCollapseComplete={onCollapseComplete}
-          onOpenAgent={onOpenAgent}
-          editSummaryCard={
-            !incomplete && runActionAttachedToMessage ? outputSummary : undefined
-          }
-          trailingContent={
-            !incomplete && !runActionAttachedToMessage ? outputSummary : undefined
-          }
-        />
-      ) : null}
+      {timelineSegments.map(({ segment, segmentTurn, display, interrupted, last, key }) => {
+        const segmentDisplay = last ? lastDisplay : display;
+        return (
+          <Fragment key={key}>
+            {segment.userItems.map((item) =>
+              renderThreadItem(item, false, undefined, segmentTurn, last),
+            )}
+            {segmentDisplay ? (
+              <AssistantTurnShell
+                turn={segmentTurn}
+                display={segmentDisplay}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                onOpenURL={onOpenURL}
+                processLabel={!last && interrupted ? t("turn.steeredInterruption") : undefined}
+                actionableAgentMessageID={last ? actionableAgentMessageID : undefined}
+                latestAgentMessageID={last ? latestAgentMessageID : undefined}
+                animateCompletionActions={last && animateCompletionActions}
+                onStreamFrame={onStreamFrame}
+                onForkMessage={onForkMessage}
+                onCollapseComplete={onCollapseComplete}
+                onOpenAgent={onOpenAgent}
+                editSummaryCard={
+                  last && !incomplete && runActionAttachedToMessage ? outputSummary : undefined
+                }
+                trailingContent={
+                  last && !incomplete && !runActionAttachedToMessage ? outputSummary : undefined
+                }
+              />
+            ) : null}
+          </Fragment>
+        );
+      })}
       {/* One element per reconnect item, so a retrying card that gives up
           keeps its node and unfolds into the failure in place. */}
       {reconnectItems.map((item) => item === failedReconnect || item.status === "in_progress" ? (
