@@ -58,10 +58,7 @@ type PiPTransition = {
 
 export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setAlwaysOnTop(flag: boolean, level?: string): void;
-  setVisibleOnAllWorkspaces(visible: boolean, options?: {
-    visibleOnFullScreen?: boolean;
-    skipTransformProcessType?: boolean;
-  }): void;
+  setVisibleOnAllWorkspaces(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
   showInactive(): void;
   hide(): void;
   isVisible(): boolean;
@@ -454,18 +451,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.refreshDesktopFrame(reference);
       win.setParentWindow(null);
       win.setAlwaysOnTop(true, "floating");
-      // A desktop preview should follow the user across Spaces and full-screen
-      // apps instead of disappearing with the Space where it was created.
-      win.setVisibleOnAllWorkspaces(true, {
-        visibleOnFullScreen: true,
-        skipTransformProcessType: true,
-      });
       this.watchDesktopDisplays();
     } else {
       this.stopWatchingDesktopDisplays?.();
       this.stopWatchingDesktopDisplays = undefined;
       win.setAlwaysOnTop(false);
-      win.setVisibleOnAllWorkspaces(false);
       this.desktopFrame = undefined;
       const parent = this.hostParent && !this.hostParent.isDestroyed() ? this.hostParent : null;
       if (win.isVisible()) win.hide();

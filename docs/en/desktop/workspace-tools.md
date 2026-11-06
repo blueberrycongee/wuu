@@ -198,7 +198,7 @@ Browser previews provide Hide and Open in side panel controls; native app previe
 
 - **Hide preview** hides the card and leaves the task running.
 - **Open in side panel** opens a browser page at full size.
-- **Float on the desktop** detaches a native app preview from the Wuu window and parks it at a free corner of the current display. It floats above other applications, follows macOS Spaces and full-screen apps, and remains visible while Wuu is hidden or you switch conversations. Drag it to another screen corner, or use **Return to the conversation** to dock it back into the column stack at the stack’s shared size.
+- **Float on the desktop** detaches a native app preview from the Wuu window and parks it at a free corner of the current display. It floats above other applications and remains visible while Wuu is hidden or you switch conversations; it stays in the macOS Space where you place it. Drag it to another screen corner, or use **Return to the conversation** to dock it back into the column stack at the stack’s shared size.
 
 Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. This does not bring retained native apps to the foreground. Send another instruction in the conversation to continue with fresh control authority.
 

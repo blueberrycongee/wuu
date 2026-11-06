@@ -67,13 +67,6 @@ class FakePipWindow {
   ignoringMouse = false;
   parent: unknown = null;
   alwaysOnTop: { flag: boolean; level?: string } = { flag: false };
-  workspaceVisibility: Array<{ visible: boolean; options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean } }> = [];
-  setVisibleOnAllWorkspaces(
-    visible: boolean,
-    options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void {
-    this.workspaceVisibility.push({ visible, options });
-  }
   setAlwaysOnTop(flag: boolean, level?: string): void {
     this.alwaysOnTop = { flag, level };
   }
@@ -81,6 +74,7 @@ class FakePipWindow {
     this.parent = parent;
   }
   moveAbove(): void {}
+  setVisibleOnAllWorkspaces(): void {}
   setOpacity(opacity: number): void {
     this.opacity = opacity;
   }
@@ -378,10 +372,6 @@ describe("ActivityPiPSurface desktop docking", () => {
     finishMotion();
     expect(win.parent).toBeNull();
     expect(win.alwaysOnTop).toEqual({ flag: true, level: "floating" });
-    expect(win.workspaceVisibility.at(-1)).toEqual({
-      visible: true,
-      options: { visibleOnFullScreen: true, skipTransformProcessType: true },
-    });
     expect(win.getBounds()).toEqual({ x: 1096, y: 636, width: 320, height: 240 });
     expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: true });
 
@@ -396,7 +386,6 @@ describe("ActivityPiPSurface desktop docking", () => {
     finishMotion();
     expect(win.parent).toBe(parent);
     expect(win.alwaysOnTop.flag).toBe(false);
-    expect(win.workspaceVisibility.at(-1)).toEqual({ visible: false, options: undefined });
     expect(win.getBounds()).toEqual({ x: 656, y: 536, width: 320, height: 240 });
     expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: false });
 
@@ -416,7 +405,6 @@ describe("ActivityPiPSurface desktop docking", () => {
     overlay.navigate("wuu-pip://desktop");
     finishMotion();
     expect(win.alwaysOnTop.flag).toBe(false);
-    expect(win.workspaceVisibility).toEqual([]);
     expect(sink.events).not.toContainEqual({ event: "desktop_dock", desktop: true });
     surface.stop();
   });
