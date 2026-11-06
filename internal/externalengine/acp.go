@@ -14,7 +14,9 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // Bound on prompt-send → first sign of life on the wire. Healthy Grok
@@ -890,6 +892,18 @@ func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMes
 	return cancelled, nil
 }
 
+// acpMediaContent reports whether ACP tool content blocks carry anything
+// beyond plain text. Text-only results stay on the ordinary output string;
+// media blocks upgrade to the shared rich-result detail.
+func acpMediaContent(contents []mcp.ToolContent) bool {
+	for _, content := range contents {
+		if content.Type != "" && content.Type != toolresult.ContentTypeText {
+			return true
+		}
+	}
+	return false
+}
+
 func decodeACPUpdate(ref string, raw json.RawMessage) error {
 	return parseACPUpdate(ref, raw, nil)
 }
@@ -926,36 +940,55 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 	switch update.Type {
 	case "agent_message_chunk", "agent_thought_chunk":
 		var content struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Data     string `json:"data"`
+			MIMEType string `json:"mimeType"`
 		}
 		if err := json.Unmarshal(update.Content, &content); err != nil {
 			return err
 		}
-		if t != nil && content.Type == "text" {
+		if t == nil {
+			break
+		}
+		switch content.Type {
+		case "text":
 			if update.Type == "agent_thought_chunk" {
 				t.content(content.Text, true)
 			} else {
 				t.acpMessageChunk(content.Text)
 			}
+		case "image":
+			if update.Type == "agent_message_chunk" {
+				t.image(providers.InputImage{MediaType: content.MIMEType, Data: content.Data})
+			}
 		}
 	case "tool_call", "tool_call_update":
 		output := string(update.Output)
-		if output == "" || output == "null" {
-			var blocks []struct {
-				Type    string `json:"type"`
-				Content struct {
-					Text string `json:"text"`
-				} `json:"content"`
-			}
-			if json.Unmarshal(update.Content, &blocks) == nil {
-				var text []string
-				for _, block := range blocks {
-					if block.Content.Text != "" {
-						text = append(text, block.Content.Text)
-					}
+		var detail *toolresult.Result
+		var blocks []struct {
+			Type    string          `json:"type"`
+			Content mcp.ToolContent `json:"content"`
+		}
+		if json.Unmarshal(update.Content, &blocks) == nil {
+			var text []string
+			var contents []mcp.ToolContent
+			for _, block := range blocks {
+				if block.Type != "content" {
+					continue
 				}
+				contents = append(contents, block.Content)
+				if block.Content.Text != "" {
+					text = append(text, block.Content.Text)
+				}
+			}
+			if output == "" || output == "null" {
 				output = strings.Join(text, "\n")
+			}
+			if acpMediaContent(contents) {
+				if mapped, err := mcp.MapCallToolResult(&mcp.CallToolResult{Content: contents}); err == nil {
+					detail = &mapped
+				}
 			}
 		}
 		if t != nil {
@@ -965,7 +998,7 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 				}
 				t.acpToolKinds[update.ID] = update.Kind
 			}
-			t.tool(update.ID, update.Title, string(update.Input), update.Status, output)
+			t.tool(update.ID, update.Title, string(update.Input), update.Status, output, detail)
 			if update.Status == "completed" || update.Status == "failed" {
 				delete(t.acpToolKinds, update.ID)
 			}

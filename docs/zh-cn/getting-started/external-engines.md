@@ -67,6 +67,8 @@ Codex 使用其 app-server 模型目录。ACP 引擎使用 `session/new` 返回�
 
 ACP 图片附件会写成本地文件，并把路径写进提示词，让 Agent 用自己的读文件工具查看。Wuu 不发送 ACP 图片内容块，即使 Agent 声明了图片输入也一样。
 
+Agent 产出的媒体内容也会沿内置工具相同的富工具结果通道在对话记录中渲染：ACP `tool_call` content、Codex `mcpToolCall` 结果、Claude `tool_result` 内容块和 OpenCode 文件附件都会保留图片、文件和资源内容块；ACP `agent_message_chunk` 的图片块会像生成图片一样挂到回复上。只给出文件路径或 URL 的结果保留引用，由渲染层解析。Agent 也可以在回复里输出 Markdown 图片语法来内联展示图片。
+
 ## Wuu 浏览器和电脑工具
 
 Codex、Claude Code 和 OpenCode 通过本地 HTTP MCP 端点使用 Wuu 内嵌浏览器和已启用的 CUA 工具。包括 Pi 和 DeepSeek Harness 在内的 ACP 引擎，只有在已安装的适配器声明支持 HTTP MCP 时才会获得这些工具。不支持该能力的适配器仍可使用自身工具继续对话，Wuu 会以临时提示说明浏览器和电脑工具不可用。

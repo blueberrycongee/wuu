@@ -67,6 +67,8 @@ Existing conversations keep their engine identity, but their model and options r
 
 ACP image attachments are written to local files and included as paths in the prompt so the agent can read them with its own tools. Wuu does not send ACP image content blocks, including when the agent advertises image prompt support.
 
+Media produced by the agent renders in the transcript through the same rich tool-result path as built-in tools: ACP `tool_call` content, Codex `mcpToolCall` results, Claude `tool_result` blocks and OpenCode file attachments preserve image, file and resource parts, and ACP `agent_message_chunk` image blocks attach to the reply like generated images. Results that reference a file by path or URL keep the reference for the renderer to resolve. Agents can also emit Markdown image syntax to show a picture inline.
+
 ## Wuu browser and computer tools
 
 Codex, Claude Code and OpenCode receive Wuu's embedded browser and enabled CUA tools through a local HTTP MCP endpoint. ACP engines, including Pi and DeepSeek Harness, receive these tools only when their installed adapter advertises HTTP MCP support. An adapter without that capability continues the conversation with its native tools and shows a temporary notice that Wuu browser and computer tools are unavailable.

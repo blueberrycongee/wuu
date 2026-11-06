@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func testEngine(t *testing.T, scenario string) *Engine {
@@ -89,6 +90,60 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 	result, err = session.RunTurn(ctx, testInput(), nil)
 	if err != nil || result.Result.Content != "Hello world" {
 		t.Fatalf("replay leaked or resume failed: %+v %v", result, err)
+	}
+}
+
+func TestACPRichMediaFlowsIntoImagesAndToolResultDetail(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngine(t, "media").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []providers.StreamEvent
+	result, err := session.RunTurn(ctx, testInput(), func(event providers.StreamEvent) { events = append(events, event) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Result.NewMessages) != 1 || len(result.Result.NewMessages[0].Images) != 1 {
+		t.Fatalf("assistant images = %+v", result.Result.NewMessages)
+	}
+	image := result.Result.NewMessages[0].Images[0]
+	if image.MediaType != "image/png" || image.Data != "aW1hZ2U=" {
+		t.Fatalf("assistant image = %+v", image)
+	}
+	var imageEvents, ends int
+	var detail *toolresult.Result
+	for _, event := range events {
+		switch event.Type {
+		case providers.EventImage:
+			imageEvents++
+		case providers.EventToolUseEnd:
+			ends++
+			if event.ToolCall != nil && event.ToolCall.ID == "shot-1" {
+				detail = event.ToolResultDetail
+			}
+		}
+	}
+	if imageEvents != 1 || ends != 1 {
+		t.Fatalf("imageEvents=%d ends=%d", imageEvents, ends)
+	}
+	if detail == nil {
+		t.Fatal("tool result detail missing")
+	}
+	var sawText, sawImage, sawLink bool
+	for _, part := range detail.Content {
+		switch part.Type {
+		case toolresult.ContentTypeText:
+			sawText = part.Text == "captured"
+		case toolresult.ContentTypeImage:
+			sawImage = part.Data == "aW1hZ2U=" && part.MIMEType == "image/png"
+		case toolresult.ContentTypeResourceLink:
+			sawLink = part.URI == "file:///tmp/report.pdf" && part.Name == "report.pdf"
+		}
+	}
+	if !sawText || !sawImage || !sawLink {
+		t.Fatalf("detail content = %+v", detail.Content)
 	}
 }
 
@@ -957,6 +1012,18 @@ func TestACPHelper(t *testing.T) {
 			}
 			if scenario == "env" {
 				text(os.Getenv("HOME"))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
+			if scenario == "media" {
+				update("agent_message_chunk", map[string]any{"content": map[string]string{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}})
+				update("tool_call", map[string]any{"toolCallId": "shot-1", "title": "Screenshot", "status": "in_progress"})
+				update("tool_call_update", map[string]any{"toolCallId": "shot-1", "status": "completed", "content": []any{
+					map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": "captured"}},
+					map[string]any{"type": "content", "content": map[string]string{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}},
+					map[string]any{"type": "content", "content": map[string]string{"type": "resource_link", "uri": "file:///tmp/report.pdf", "name": "report.pdf", "mimeType": "application/pdf"}},
+				}})
+				text("done")
 				result = map[string]string{"stopReason": "end_turn"}
 				break
 			}

@@ -14,7 +14,9 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 var codexRetryFractionPattern = regexp.MustCompile(`\b(\d+)/(\d+)\b`)
@@ -1412,9 +1414,10 @@ func (sub *turnSubscription) emitItem(method string, raw json.RawMessage) {
 	}
 	delete(sub.tools, item.ID)
 	sub.emit(providers.StreamEvent{
-		Type:       providers.EventToolUseEnd,
-		ToolCall:   &call,
-		ToolResult: codexToolResult(item),
+		Type:             providers.EventToolUseEnd,
+		ToolCall:         &call,
+		ToolResult:       codexToolResult(item),
+		ToolResultDetail: codexToolResultDetail(item),
 	})
 }
 
@@ -1495,6 +1498,34 @@ func codexToolResult(item codexStreamItem) string {
 		result = "completed"
 	}
 	return result
+}
+
+// codexToolResultDetail preserves the native mcpToolCall payload as Wuu's
+// rich result so image/file/resource content renders like an in-process MCP
+// call. Text-only results keep the flat string projection; a nil detail means
+// nothing richer existed to carry.
+func codexToolResultDetail(item codexStreamItem) *toolresult.Result {
+	if item.Type != "mcpToolCall" || !rawJSONPresent(item.Result) || rawJSONPresent(item.Error) {
+		return nil
+	}
+	var result mcp.CallToolResult
+	if err := json.Unmarshal(item.Result, &result); err != nil {
+		return nil
+	}
+	rich := len(result.StructuredContent) > 0 || len(result.Meta) > 0
+	for _, content := range result.Content {
+		if content.Type != "" && content.Type != toolresult.ContentTypeText {
+			rich = true
+		}
+	}
+	if !rich {
+		return nil
+	}
+	mapped, err := mcp.MapCallToolResult(&result)
+	if err != nil {
+		return nil
+	}
+	return &mapped
 }
 
 func rawJSONValue(raw json.RawMessage) any {
