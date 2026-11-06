@@ -6,7 +6,7 @@ import { useComposerServices } from "./ComposerServicesContext";
 import { useI18n } from "./i18n";
 import { Puzzle } from "./WuuIcons";
 import { ComposerPluginIcon } from "./ComposerPluginIcon";
-import { showActionErrorToast } from "./Toast";
+import { ScopedToast, showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
 export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | null>, onChange: (value: string) => void, owner?: string, disabled = false) {
@@ -117,7 +117,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     void services!.openPlugins?.().catch(showActionErrorToast);
   }
   return <div className="composer-plugin-choices">
-    {!supported ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsEngineUnsupported")}</p> : null}
+    {!supported ? <ScopedToast message={t("composer.pluginsEngineUnsupported")} tone="error" dedupeKey="composer-plugins-engine-unsupported" /> : null}
     {loading ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsLoading")}</p> : null}
     {error ? <div className="composer-plugin-notice" role="alert">{t("composer.pluginsLoadFailed")} <button type="button" onClick={() => setRevision(value => value + 1)}>{t("settings.errorRetry")}</button></div> : null}
     {!loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
