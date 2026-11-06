@@ -54,7 +54,7 @@ func TestDurableCloudFailedOwnerCleanup(t *testing.T) {
 	select {
 	case <-gate.entered:
 	case <-j.ctx.Done():
-		t.Fatalf("child did not start: events=%s tasks=%v",j.out.String(),durableChildStoredTasks(t,j))
+		t.Fatalf("child did not start: events=%s tasks=%v", j.out.String(), durableChildStoredTasks(t, j))
 	}
 	j.completed(t, 1)
 	var child map[string]any
@@ -387,7 +387,7 @@ func TestDurableCloudActiveChildShutdown(t *testing.T) {
 	select {
 	case <-gate.entered:
 	case <-j.ctx.Done():
-		t.Fatalf("child did not start: events=%s tasks=%v",j.out.String(),durableChildStoredTasks(t,j))
+		t.Fatalf("child did not start: events=%s tasks=%v", j.out.String(), durableChildStoredTasks(t, j))
 	}
 	j.completed(t, 1)
 	var child map[string]any
