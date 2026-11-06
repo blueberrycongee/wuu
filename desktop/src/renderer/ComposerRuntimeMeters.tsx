@@ -2,10 +2,6 @@ import { useComposerServices } from "./ComposerServicesContext";
 import { useSyncExternalStore } from "react";
 import type { TurnContextUsage } from "./AppState";
 import { ComposerContextMeter } from "./ComposerContextMeter";
-// Temporarily hidden: the token-speed gauge is removed from the composer
-// toolbar while we evaluate its cost/benefit. Restore by un-commenting this
-// import and the <ComposerTokenGauge> block in the JSX below.
-// import { ComposerTokenGauge } from "./ComposerTokenGauge";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 
 function isExternalEngine(engine?: string): boolean {
@@ -15,21 +11,13 @@ function isExternalEngine(engine?: string): boolean {
 export function ComposerRuntimeMeters({
   inToolRail = false,
   compact = inToolRail,
-  running,
   turnID,
-  fallbackTokensPerSecond = 0,
-  fallbackSampledAt,
-  fallbackSource = "none",
   fallbackContextUsage,
   activeEngine,
 }: {
   inToolRail?: boolean;
   compact?: boolean;
-  running: boolean;
   turnID?: string;
-  fallbackTokensPerSecond?: number;
-  fallbackSampledAt?: number;
-  fallbackSource?: "real" | "estimated" | "none";
   fallbackContextUsage?: TurnContextUsage | null;
   // External engines (Codex/Claude) currently report usage against a
   // mismatched window, so the composer ring is hidden until that path is
@@ -42,7 +30,6 @@ export function ComposerRuntimeMeters({
     () => services ? services.presentation.getTelemetry(turnID) : turnTelemetryStore.getSnapshot(turnID),
     () => services ? services.presentation.getTelemetry(turnID) : turnTelemetryStore.getSnapshot(turnID),
   );
-  const useLiveTelemetry = Boolean(turnID && telemetry.source !== "none");
   const contextUsage = telemetry.contextUsage
     ? {
         ...telemetry.contextUsage,
@@ -57,18 +44,5 @@ export function ComposerRuntimeMeters({
     return null;
   }
 
-  return (
-    <>
-      {/* Temporarily hidden — token-speed gauge, see note at the import.
-          <ComposerTokenGauge
-            running={running}
-            tokensPerSecond={
-              useLiveTelemetry ? telemetry.tokensPerSecond : fallbackTokensPerSecond
-            }
-            sampledAt={useLiveTelemetry ? telemetry.sampledAt : fallbackSampledAt}
-            source={useLiveTelemetry ? telemetry.source : fallbackSource}
-          /> */}
-      <ComposerContextMeter usage={contextUsage} inToolRail={inToolRail} compact={compact} />
-    </>
-  );
+  return <ComposerContextMeter usage={contextUsage} inToolRail={inToolRail} compact={compact} />;
 }

@@ -2,9 +2,9 @@
   /* Component color tokens for composer-context-meter.css.
      Light-theme values; the dark theme overrides these in base.css theme blocks. */
   /* The context ring color is driven inline by the JSX so it can step
-     between the token-speed gauge's idle / mid / high tiers as the fill
-     crosses 0 and the 0.7 high-water mark. The track stays a single
-     neutral gray so the unfilled portion reads as a quiet baseline. */
+     between idle / mid / high tiers as the fill crosses 0 and the 0.7
+     high-water mark. The track stays a single neutral gray so the
+     unfilled portion reads as a quiet baseline. */
   --context-meter-text: var(--ink-strong);
   --context-meter-tooltip-bg: var(--paper);
   --context-meter-tooltip-border: var(--wuu-border-subtle, rgba(15, 17, 21, 0.08));

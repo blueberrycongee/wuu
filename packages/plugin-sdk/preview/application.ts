@@ -74,7 +74,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },
     composerPresentation: { setRuntimeMenu: unavailable, getStatusSnapshot: () => composerStatus, subscribeStatus: () => () => {}, getSnapshot: unavailable, subscribe: () => () => {}, getCommands: () => empty, executeCommand: unavailable,
       getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {},
-      getTelemetry: () => ({ tokensPerSecond: 0, source: "none", inputTokens: 0, outputTokens: 0 }), subscribeTelemetry: () => () => {} },
+      getTelemetry: () => ({}), subscribeTelemetry: () => () => {} },
     desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
     webWorkspace,
     onboarding: { getSnapshot: () => onboarding, subscribe: () => () => {}, checkpoint: unavailable, run: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },

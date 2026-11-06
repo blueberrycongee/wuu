@@ -93,7 +93,6 @@ function Fixture(): JSX.Element {
           guideMessages={[]}
           running={false}
           runtimeControlsDisabled
-          tokensPerSecond={0}
           status=""
           readOnly={false}
           projects={[]}
