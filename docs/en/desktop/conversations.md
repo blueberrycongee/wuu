@@ -36,7 +36,7 @@ Automatic retries retain the existing workload and shared workflow limits. A new
 
 ## Choose what continues after restarting
 
-After an unexpected exit interrupts running conversations, a notice shows how many were interrupted during the previous run. You can continue using Wuu while it is visible. Click **Continue all** to continue those conversations from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. Previously completed, failed, or manually stopped turns and old background results are not counted as interrupted conversations.
+After an unexpected exit or update restart interrupts running conversations, a notice shows how many were interrupted during the previous run. You can continue using Wuu while it is visible. Click **Continue all** to continue those conversations from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. An ordinary quit is excluded, as are previously completed, failed, or manually stopped turns and old background results.
 
 Dismiss the notice to keep those conversations paused. Opening their history or receiving another completion notification does not restart them. You can continue later from a conversation or send a new instruction. Dismissing the notice preserves saved history and pending results; it does not undo earlier effects or stop separately managed background commands. Archived conversations and plugin-private sessions are excluded.
 

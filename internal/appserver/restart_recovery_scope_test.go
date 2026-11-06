@@ -139,6 +139,44 @@ func TestRestartRecoveryExcludesDeliberateShutdown(t *testing.T) {
 	}
 }
 
+func TestRestartRecoveryOffersUpdateRestartInterruption(t *testing.T) {
+	client := newPartialBlockingStreamClient("partial")
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+	request := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
+	if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-client.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn did not start")
+	}
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"shutdown","method":"shutdown","params":{"reason":"update"}}`)); err != errShutdown {
+		t.Fatalf("update shutdown: %v", err)
+	}
+	resumedOut := &lockedBuffer{}
+	resumed := New(rt, resumedOut)
+	t.Cleanup(resumed.Close)
+	if err := resumed.handleLine(context.Background(), []byte(`{"id":"recovery","method":"thread/recovery/list"}`)); err != nil {
+		t.Fatal(err)
+	}
+	response := waitForResponseByID(t, resumedOut, "recovery")
+	result := remarshal[struct {
+		Items []RestartRecoveryItem `json:"items"`
+	}](t, response["result"])
+	if len(result.Items) != 1 || result.Items[0].Thread.ID != threadID || result.Items[0].TurnID == "" || result.Items[0].Reason != "interrupted" {
+		t.Fatalf("update shutdown recovery = %+v", result.Items)
+	}
+}
+
 type blockedRecoveryDocuments struct {
 	persistence.Documents
 	entered, release chan struct{}

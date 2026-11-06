@@ -176,7 +176,7 @@ this service. The Go graph publishes the selected identity in
 `application_surfaces["ui.application"]`; discovery order never selects it.
 
 The optional `ApplicationSnapshotV1.restartRecovery` lists conversations interrupted
-by the previous unexpected exit. Reading the snapshot does not resume work. Invoke
+by the previous unexpected exit or update restart. Reading the snapshot does not resume work. Invoke
 `conversation.resolve-recovery` with `threadIds` to continue those candidates and
 dismiss the others; an empty list defers all candidates while preserving history
 and pending results. The default provider uses the existing turn admission and

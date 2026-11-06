@@ -175,7 +175,7 @@ import type {
   SideThreadSendParams,
   SideThreadSendResult,
 } from "../shared/protocol";
-import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
+import { AppServerClientPool, configurePackagedCUA, type AppServerShutdownOptions } from "./appServerClients";
 import { ChatGPTLoginCoordinator } from "./chatgptLogin";
 import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
@@ -3500,7 +3500,7 @@ app.whenReady().then(async () => {
   appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
-  desktopUpdates = installDesktopUpdates(prepareToQuit, state => broadcastToAll("wuu:desktop-update-changed", state), desktopRecovery.menuItem());
+  desktopUpdates = installDesktopUpdates(() => prepareToQuit({ reason: "update" }), state => broadcastToAll("wuu:desktop-update-changed", state), desktopRecovery.menuItem());
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
@@ -3549,10 +3549,11 @@ async function stopRenderer(window: BrowserWindow): Promise<void> {
   }).finally(() => { if (!window.isDestroyed()) window.destroy(); });
 }
 
-function prepareToQuit(): Promise<void> {
+function prepareToQuit(shutdownOptions: AppServerShutdownOptions = {}): Promise<void> {
   if (quitCleanup) return quitCleanup;
   // Publish the shared promise before destroying windows: closing the hidden
-  // host can synchronously re-enter quit through window-all-closed.
+  // host can synchronously re-enter quit through window-all-closed. The first
+  // caller owns the shutdown reason; a later before-quit reuses this promise.
   quitCleanup = Promise.resolve().then(async () => {
     desktopUpdates?.stop();
     const directoryShutdown = Promise.allSettled([workspaceDirectoryReader.close()]);
@@ -3573,7 +3574,7 @@ function prepareToQuit(): Promise<void> {
     // down so no WebContentsView leaks past quit.
     browserHostCoordinator.destroyAll();
     webWorkspaceHost.destroyAll();
-    const shutdown = await Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+    const shutdown = await Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(shutdownOptions), phoneAccess.shutdown()]);
     return [...await directoryShutdown, ...shutdown];
   })
     .then((results) => {

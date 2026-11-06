@@ -1,9 +1,9 @@
 export const zhCN = {
-  "restartRecovery.description": "{count} 个会话意外中断",
+  "restartRecovery.description": "{count} 个会话因意外退出或更新重启中断",
   "restartRecovery.defer": "暂不继续",
   "restartRecovery.continue": "全部继续",
   "restartRecovery.applying": "正在处理…",
-  "restartRecovery.loadFailed": "未能读取待恢复的任务。请重新打开 Wuu 后重试。",
+  "restartRecovery.loadFailed": "未能读取中断的会话。请重新打开 Wuu 后重试。",
   "restartRecovery.actionFailed": "部分会话未能恢复，请重试。",
   "composer.plugins": "插件",
   "composer.pluginsLoading": "正在加载插件…",

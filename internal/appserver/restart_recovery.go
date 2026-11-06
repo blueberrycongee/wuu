@@ -20,14 +20,17 @@ const restartRecoveryBootNamespace = "wuu.restart_recovery_boot.v1"
 // The boot boundary is shared by workspace app-servers. Opening another
 // workspace or replacing a renderer must not revoke this boot's user choices.
 type restartRecoveryRecord struct {
-	ThreadID       string    `json:"thread_id"`
-	TurnID         string    `json:"turn_id"`
-	State          string    `json:"state"`
-	Reason         string    `json:"reason,omitempty"`
-	Dismissed      bool      `json:"dismissed,omitempty"`
-	UnexpectedExit bool      `json:"unexpected_exit,omitempty"`
-	AllowedAt      time.Time `json:"allowed_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ThreadID  string `json:"thread_id"`
+	TurnID    string `json:"turn_id"`
+	State     string `json:"state"`
+	Reason    string `json:"reason,omitempty"`
+	Dismissed bool   `json:"dismissed,omitempty"`
+	// Recoverable marks a pending interruption that may be offered after boot.
+	// The JSON key remains unexpected_exit for compatibility with records
+	// written before update restarts became recoverable.
+	Recoverable bool      `json:"unexpected_exit,omitempty"`
+	AllowedAt   time.Time `json:"allowed_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type RestartRecoveryItem struct {
@@ -72,13 +75,13 @@ func (s *Server) recordRecoveryTurn(th *threadState, turnID, state string) error
 		rec.UpdatedAt = time.Now().UTC()
 		if state == "running" {
 			rec.Reason, rec.Dismissed = "", false
-			rec.UnexpectedExit = false
+			rec.Recoverable = false
 			rec.AllowedAt = rec.UpdatedAt
 		} else if state == "pending" {
 			rec.Reason = "interrupted"
-			rec.UnexpectedExit = true
+			rec.Recoverable = true
 		} else {
-			rec.UnexpectedExit = false
+			rec.Recoverable = false
 		}
 		return tx.Put(restartRecoveryNamespace, th.ID, rec)
 	})
@@ -135,7 +138,7 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 					return err
 				}
 				if rec.Dismissed || s.previousRecoveryBootAt.IsZero() || rec.AllowedAt.Before(s.previousRecoveryBootAt) || !rec.AllowedAt.Before(s.recoveryBootAt) ||
-					(rec.State != "running" && !(rec.State == "pending" && rec.UnexpectedExit && rec.Reason == "interrupted")) {
+					(rec.State != "running" && !(rec.State == "pending" && rec.Recoverable && rec.Reason == "interrupted")) {
 					continue
 				}
 				candidates = append(candidates, rec)
@@ -208,7 +211,7 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 			return s.writeResponse(req.ID, nil, err)
 		}
 		if current.Dismissed || current.State != rec.State || current.TurnID != rec.TurnID || current.Reason != rec.Reason ||
-			!current.AllowedAt.Equal(rec.AllowedAt) || !current.UpdatedAt.Equal(rec.UpdatedAt) || current.UnexpectedExit != rec.UnexpectedExit {
+			!current.AllowedAt.Equal(rec.AllowedAt) || !current.UpdatedAt.Equal(rec.UpdatedAt) || current.Recoverable != rec.Recoverable {
 			continue
 		}
 		active, err = session.ThreadExecutionActive(s.rt.SessionDir, rec.ThreadID)
