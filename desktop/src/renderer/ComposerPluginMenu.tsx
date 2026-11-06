@@ -18,7 +18,7 @@ const pluginServerRequests = new WeakMap<ApplicationSettingsControlsV1, Promise<
 function loadPluginServers(controls: ApplicationSettingsControlsV1): Promise<MCPServerStatus[]> {
   const pending = pluginServerRequests.get(controls);
   if (pending) return pending;
-  const request = controls.listMCPServers().then(result => {
+  const request = Promise.resolve().then(() => controls.listMCPServers()).then(result => {
     pluginServers.set(controls, result.servers);
     return result.servers;
   }).finally(() => {
