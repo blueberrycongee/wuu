@@ -1274,6 +1274,8 @@ function SettingsUsagePage({
   const modelTotal = (model: SettingsUsageResponse["model_breakdowns"][number]): number =>
     model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens;
   const allModelTotal = (usage?.model_breakdowns ?? []).reduce((total, model) => total + modelTotal(model), 0);
+  const engineSumTotal = (sum?: { input_tokens: number; output_tokens: number; cache_creation_tokens: number; cache_read_tokens: number }): number =>
+    (sum?.input_tokens ?? 0) + (sum?.output_tokens ?? 0) + (sum?.cache_creation_tokens ?? 0) + (sum?.cache_read_tokens ?? 0);
   const heatmapCols = heatmap.length > 0 ? Math.ceil(heatmap.length / 7) : 12;
 
   // Keep grid height = 7 × cell-size so cells stay square as panel resizes
@@ -1510,6 +1512,72 @@ function SettingsUsagePage({
                       </td>
                       <td className="settings-usage-num" data-label={t("settings.hitRate")}>
                         <span className="settings-usage-number">{formatPercent(rate)}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="settings-group">
+            <p className="settings-group-empty">{t("settings.noUsage")}</p>
+          </div>
+        )}
+      </section>
+
+      <section className="settings-section" aria-labelledby="settings-engine-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-engine-usage-title" className="settings-section-title">{t("settings.usageByEngine")}</h2>
+          <p className="settings-section-description">{t("settings.usageEngineOutsideHint")}</p>
+        </header>
+        {(usage.engine_breakdowns ?? []).length > 0 ? (
+          <div className="settings-group settings-usage-table-wrap">
+            <table className="settings-usage-table settings-engine-usage-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("settings.engine")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageInWuu")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageOutsideWuu")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageSessions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(usage.engine_breakdowns ?? []).map((b) => {
+                  const inWuuTotal = engineSumTotal(b.in_wuu);
+                  const outsideTotal = b.outside ? engineSumTotal(b.outside) : undefined;
+                  return (
+                    <tr key={b.engine}>
+                      <td>
+                        <div className="settings-usage-model">
+                          <strong>{b.name || b.engine}</strong>
+                          <small>{b.engine}</small>
+                        </div>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageInWuu")}>
+                        <Tooltip content={formatUsageValue(inWuuTotal)}>
+                          <span className="settings-usage-number">
+                            {formatCompactUsageNumber(inWuuTotal, locale)}
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageOutsideWuu")}>
+                        {outsideTotal === undefined ? (
+                          <Tooltip content={t("settings.usageNoLedger")}>
+                            <span className="settings-usage-number">—</span>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip content={formatUsageValue(outsideTotal)}>
+                            <span className="settings-usage-number">
+                              {formatCompactUsageNumber(outsideTotal, locale)}
+                            </span>
+                          </Tooltip>
+                        )}
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageSessions")}>
+                        <span className="settings-usage-number">
+                          {formatCompactUsageNumber((b.in_wuu.sessions ?? 0) + (b.outside?.sessions ?? 0), locale)}
+                        </span>
                       </td>
                     </tr>
                   );

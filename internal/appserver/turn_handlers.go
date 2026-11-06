@@ -27,6 +27,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	hookspkg "github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/imageproc"
@@ -6202,12 +6204,13 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	metrics, days := aggregateUsageRows(rows, loc)
 
 	response := SettingsUsageResponse{
-		TotalSessions:   countUsageSessions(rows),
-		GeneratedAt:     now.Format(time.RFC3339Nano),
-		Metrics:         metrics,
-		ModelBreakdowns: buildUsageModelBreakdowns(rows),
-		SkillUsage:      scan.Skills,
-		Days:            days,
+		TotalSessions:    countUsageSessions(rows),
+		GeneratedAt:      now.Format(time.RFC3339Nano),
+		Metrics:          metrics,
+		ModelBreakdowns:  buildUsageModelBreakdowns(rows),
+		EngineBreakdowns: s.buildEngineBreakdowns(binding.Sessions, rows),
+		SkillUsage:       scan.Skills,
+		Days:             days,
 	}
 	// Usage analytics is an approximate convenience view, not a live meter.
 	// Keep the full-history scan out of the normal interaction path for two hours.
@@ -6254,6 +6257,137 @@ func countUsageSessions(rows []insight.TokenUsageRow) int {
 		seen[r.SessionID] = struct{}{}
 	}
 	return len(seen)
+}
+
+// engineUsageScanTimeout bounds the local-ledger scan so a large engine log
+// directory cannot stall the settings response; the file cache makes repeat
+// scans incremental.
+const engineUsageScanTimeout = 30 * time.Second
+
+// buildEngineBreakdowns attributes the in-Wuu token_usage trail to each
+// thread's bound engine, then reads the engines' own on-disk ledgers for the
+// usage recorded outside Wuu. Native sessions a Wuu thread already claims are
+// excluded from the outside side, so the two columns never count the same work
+// twice. InWuu.Sessions counts every thread bound to the engine — including
+// engines like the ACP family whose turns report no token usage — so a bound
+// but unreported engine still surfaces with zero tokens. A ledger that fails
+// to scan leaves Outside nil rather than reporting partial data as complete.
+func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) []SettingsEngineUsage {
+	sessions, err := store.List(0)
+	if err != nil {
+		providers.DebugLogf("usage engine breakdown: list sessions: %v", err)
+		sessions = nil
+	}
+	engineBySession := make(map[string]string, len(sessions))
+	boundSessions := make(map[string]int)
+	exclude := engineusage.ExcludeRefs{}
+	for _, sess := range sessions {
+		id := string(agentengine.NormalizeEngineID(sess.EngineID))
+		engineBySession[sess.ID] = id
+		boundSessions[id]++
+		if ref := strings.TrimSpace(sess.EngineRef); ref != "" {
+			if exclude[id] == nil {
+				exclude[id] = map[string]struct{}{}
+			}
+			exclude[id][ref] = struct{}{}
+		}
+	}
+
+	engines := make(map[string]*SettingsEngineUsage)
+	get := func(id string) *SettingsEngineUsage {
+		b, ok := engines[id]
+		if !ok {
+			b = &SettingsEngineUsage{Engine: id, Name: engineUsageDisplayName(id)}
+			engines[id] = b
+		}
+		return b
+	}
+
+	for _, r := range rows {
+		id, ok := engineBySession[r.SessionID]
+		if !ok {
+			id = string(agentengine.EngineWuu)
+		}
+		b := get(id)
+		b.InWuu.InputTokens += r.InputTokens
+		b.InWuu.OutputTokens += r.OutputTokens
+		b.InWuu.CacheCreationTokens += r.CacheCreationTokens
+		b.InWuu.CacheReadTokens += r.CacheReadTokens
+	}
+	for id, bound := range boundSessions {
+		get(id).InWuu.Sessions = bound
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), engineUsageScanTimeout)
+	defer cancel()
+	if s.usageScanner == nil {
+		s.usageScanner = &engineusage.Scanner{}
+	}
+	scanned := s.usageScanner.Scan(ctx, exclude)
+	for engine, scanErr := range scanned.Failed {
+		providers.DebugLogf("usage engine breakdown: scan %s ledger: %v", engine, scanErr)
+	}
+	outsideSessions := make(map[string]map[string]struct{})
+	for _, r := range scanned.Rows {
+		if _, failed := scanned.Failed[r.Engine]; failed {
+			continue
+		}
+		b := get(r.Engine)
+		if b.Outside == nil {
+			b.Outside = &EngineUsageSum{}
+		}
+		b.Outside.InputTokens += r.InputTokens
+		b.Outside.OutputTokens += r.OutputTokens
+		b.Outside.CacheCreationTokens += r.CacheCreationTokens
+		b.Outside.CacheReadTokens += r.CacheReadTokens
+		if r.SessionID != "" {
+			if outsideSessions[r.Engine] == nil {
+				outsideSessions[r.Engine] = map[string]struct{}{}
+			}
+			outsideSessions[r.Engine][r.SessionID] = struct{}{}
+		}
+	}
+	for id, seen := range outsideSessions {
+		if engines[id].Outside != nil {
+			engines[id].Outside.Sessions = len(seen)
+		}
+	}
+
+	out := make([]SettingsEngineUsage, 0, len(engines))
+	for _, b := range engines {
+		outside := EngineUsageSum{}
+		if b.Outside != nil {
+			outside = *b.Outside
+		}
+		if b.InWuu.TotalTokens() == 0 && b.InWuu.Sessions == 0 && outside.TotalTokens() == 0 && outside.Sessions == 0 {
+			continue
+		}
+		out = append(out, *b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti, tj := out[i].InWuu.TotalTokens(), out[j].InWuu.TotalTokens()
+		if out[i].Outside != nil {
+			ti += out[i].Outside.TotalTokens()
+		}
+		if out[j].Outside != nil {
+			tj += out[j].Outside.TotalTokens()
+		}
+		if ti != tj {
+			return ti > tj
+		}
+		return out[i].Engine < out[j].Engine
+	})
+	return out
+}
+
+func engineUsageDisplayName(id string) string {
+	if id == string(agentengine.EngineWuu) {
+		return "Wuu"
+	}
+	if entry, ok := enginecatalog.Lookup(id); ok {
+		return entry.Name
+	}
+	return id
 }
 
 func buildUsageModelBreakdowns(rows []insight.TokenUsageRow) []insight.ModelUsage {

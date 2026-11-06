@@ -599,7 +599,13 @@ without records returns zero totals and an empty `days` list. Like
 `local_usage`, these values exclude unreported and external activity and are
 not billing totals. `settings/usage`, the desktop usage page's full snapshot,
 accepts the same optional `timezone`; the desktop sends its own so each daily
-bar lands on the day its calendar draws.
+bar lands on the day its calendar draws. Its `engine_breakdowns` attribute the
+same in-Wuu trail to each thread's bound agent engine and add an `outside`
+side per engine — token totals read from the engine's own local ledger
+(`~/.claude` transcripts, `~/.codex` rollouts, the OpenCode database) minus
+native sessions Wuu already claims, so the two columns never count the same
+work twice. `outside` is absent for engines without a readable local ledger or
+whose ledger failed to scan.
 
 ## Notifications
 
