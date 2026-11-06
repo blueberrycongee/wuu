@@ -555,7 +555,7 @@
     {
       "name": "unanchored:composer.css",
       "synthetic": true,
-      "rows": 171
+      "rows": 169
     },
     {
       "name": "unanchored:context-chat-capsule.css",
@@ -966,9 +966,7 @@
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-image-attachment","prop":"box-shadow","variable":"--shadow-soft","status":"bridged","tokens":["--wuu-elevation-panel"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-inline-completion-text","prop":"color","variable":"--ink-muted","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-input-header-action","prop":"color","variable":"--ink-muted","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
-    {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-menu-note strong","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
-    {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-menu-note, .composer-menu-empty","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
-    {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-menu-note.warning strong","prop":"color","variable":"--composer-menu-note-warning-strong","status":"bridged","tokens":["--wuu-color-warning"]},
+    {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-menu-empty","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-pending-drawer.expanded .composer-pending-preview","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-pending-drawer.expanded.is-held .composer-pending-preview","prop":"color","variable":"--turn-warning-text","status":"bridged","tokens":["--wuu-color-warning"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":".composer-pending-drawer.expanded.is-held .composer-pending-preview","prop":"color","variable":"--warning","status":"bridged","tokens":["--wuu-color-warning"]},

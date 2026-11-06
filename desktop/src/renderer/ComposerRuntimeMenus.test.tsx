@@ -595,9 +595,25 @@ describe("RuntimePicker", () => {
     expect(toast?.textContent).not.toContain("stderr");
 
     act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")!.click());
-    expect(document.querySelector(".codex-model-menu .composer-menu-note")).toBeNull();
+    expect(document.querySelector(".codex-model-menu")?.textContent).not.toContain("context deadline exceeded");
     expect(Array.from(document.querySelectorAll(".codex-model-item-name")).map(item => item.textContent))
       .toEqual([translateCurrent("runtime.engineDefaultModel"), "Grok 4.5"]);
+  });
+
+  it("reports an unreadable Codex login through the notice queue instead of the model list", () => {
+    const initialized = runtimeWithEffort();
+    initialized.providers![0].type = "openai-codex";
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      state: { provider: "work", loading: false, error: "chatgpt account token expired\nstack detail", models: [] },
+    });
+
+    const toast = document.querySelector(".archive-tip-message");
+    expect(toast?.textContent).toContain(translateCurrent("runtime.codexLoginUnavailable"));
+    expect(toast?.textContent).toContain("chatgpt account token expired");
+    expect(toast?.textContent).not.toContain("stack detail");
+
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")!.click());
+    expect(document.querySelector(".codex-model-menu")?.textContent).not.toContain("chatgpt account token expired");
   });
 
   it("names the engine only when another one can be chosen", () => {

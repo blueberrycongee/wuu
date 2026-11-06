@@ -1105,6 +1105,21 @@ export function RuntimeModelMenu({
       ? visibleModels.length
       : engineOptions.length;
 
+  // An unreadable Codex login still leaves the configured provider models
+  // selectable, so like external catalog failures it reports through the
+  // notice queue rather than a banner inside the list.
+  const codexLoadError = effectiveCodex ? state.error.trim() : "";
+  useEffect(() => {
+    if (!codexLoadError) return;
+    const summary = t("runtime.codexLoginUnavailable");
+    const detail = codexLoadError.split("\n").map(line => line.trim()).find(Boolean);
+    showToast({
+      message: detail ? `${summary}\n${detail}` : summary,
+      tone: "error",
+      dedupeKey: `codex-models:${codexLoadError}`,
+    });
+  }, [codexLoadError, t]);
+
   const selectModel = (provider: string, model: string, variant?: string): void => {
     setOptimistic({ provider, model, variant: variant ?? "" });
     void Promise.resolve(onSelectModel(provider, model, variant)).then((committed) => {
@@ -1239,12 +1254,6 @@ export function RuntimeModelMenu({
             </label>
             <div className="codex-model-groups">
               {effectiveCodex && state.loading ? <div className="composer-menu-empty">{t("runtime.loadingCodexModels")}</div> : null}
-              {effectiveCodex && state.error ? (
-                <div className="composer-menu-note warning">
-                  <strong>{t("runtime.codexLoginUnavailable")}</strong>
-                  <span>{state.error}</span>
-                </div>
-              ) : null}
               {!state.loading && providers.length === 0 ? <div className="composer-menu-empty">{t("runtime.noModels")}</div> : null}
               {filteredGroups.length === 0 ? <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div> : null}
               {filteredGroups.map((group) => (
