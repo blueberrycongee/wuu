@@ -616,7 +616,9 @@ async function advance(
     if (!t) return;
     if (!consumed) return;
     t.delivered = true;
-    t.error_code = outcome === "completed" ? undefined : "child_or_wait_failed";
+    const succeeded = ["completed", "succeeded"].includes(outcome);
+    t.error_code = succeeded ? undefined : "child_or_wait_failed";
+    if (succeeded) t.error_message = undefined;
     t.status = [
       "failed",
       "canceled",
