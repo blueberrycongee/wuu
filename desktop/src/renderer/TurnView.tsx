@@ -263,7 +263,10 @@ function TurnContent({
   const shouldContinue = !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)
     && ((Boolean(threadID) && (!engineID || engineID === "wuu")) || !canRewindHistory || turnLeftPartialWork(turn));
   const continueFailedTurn = recoverable && shouldContinue && threadID
-    ? async () => { await application.invoke("conversation.continue", { threadId: threadID, turnId: turn.id, text: t("turnFailure.continuePrompt") }); }
+    ? async () => {
+        const result = await application.invoke("conversation.continue", { threadId: threadID, turnId: turn.id, text: t("turnFailure.continuePrompt") });
+        return result.accepted;
+      }
     : undefined;
   const retryFailedTurn = recoverable && !shouldContinue && retryMessage
     ? () => onSubmitEditMessage(
@@ -345,6 +348,7 @@ function TurnContent({
           key={item.id}
           reconnect={item}
           arriving={animateCompletionActions}
+          latest={Boolean(isLatestTurn)}
           {...(item === failedReconnect ? failureProps : undefined)}
         />
       ) : null)}
@@ -354,7 +358,7 @@ function TurnContent({
         </div>
       ) : null}
       {event && !failedReconnect ? (failureDisplay
-        ? <TurnFailureNotice {...failureProps} arriving={animateCompletionActions} />
+        ? <TurnFailureNotice {...failureProps} latest={Boolean(isLatestTurn)} arriving={animateCompletionActions} />
         : <TurnEventNotice event={event} />) : null}
       {incomplete ? outputSummary : null}
       {/* Include addons in the native turn bounds used by reading anchors. */}
