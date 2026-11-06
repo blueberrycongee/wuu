@@ -33,14 +33,21 @@ export function buildTurnTimeline(
 
 /**
  * Earlier segments are settled history. Keep a steered partial answer visible
- * as the segment's answer instead of letting the generic process fold hide it.
+ * as the segment's answer instead of letting the generic process fold hide it,
+ * and project in-flight status as completed so turn settlement does not replace
+ * the visible article (and its active text selection) later.
  */
 export function displayItemsForSettledSegment(
   items: readonly ThreadItem[],
 ): ThreadItem[] {
-  return items.map((item) =>
-    item.type === "agent_message" && item.cause === "steered_stream_fragment"
-      ? { ...item, terminal: true }
-      : item,
-  );
+  return items.map((item) => {
+    if (item.type !== "agent_message" && item.type !== "reasoning") return item;
+    return {
+      ...item,
+      status: item.status === "in_progress" ? "completed" : item.status,
+      ...(item.type === "agent_message" && item.cause === "steered_stream_fragment"
+        ? { terminal: true }
+        : {}),
+    };
+  });
 }

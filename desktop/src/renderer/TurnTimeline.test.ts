@@ -42,8 +42,10 @@ describe("turn timeline", () => {
 
   it("promotes a steered partial answer only in settled display projection", () => {
     const partial = item("a1", "agent_message", "partial", "steered_stream_fragment");
+    partial.status = "in_progress";
     const [displayed] = displayItemsForSettledSegment([partial]);
 
+    expect(displayed.status).toBe("completed");
     expect(displayed.terminal).toBe(true);
     expect(partial.terminal).toBeUndefined();
   });
