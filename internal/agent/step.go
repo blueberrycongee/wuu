@@ -61,6 +61,9 @@ type StepResult struct {
 	// was still streaming. The loop uses it to wait for those same runs
 	// instead of issuing duplicate executions.
 	ToolRuntime ToolBatchRuntime
+	// Preempted reports that newly admitted user input stopped this model
+	// round. The loop keeps the visible prefix and continues the same turn.
+	Preempted bool
 }
 
 // ToolBatchRuntime joins the effects owned by a model round. Local execution

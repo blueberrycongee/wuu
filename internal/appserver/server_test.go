@@ -5661,9 +5661,15 @@ func TestServerQueuesUserTurnWhileThreadIsRunning(t *testing.T) {
 }
 
 func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) {
-	client := newBlockingStreamClient("done")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
+	client := &fakeClient{
+		responses: []providers.ChatResponse{
+			{ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "wait_for_steer", Arguments: `{}`}}},
+			{Content: "done"},
+		},
+	}
+	rt := newTestRuntime(t, client)
+	blockingTool := newBlockingToolExecutor()
+	rt.StreamRunner.Tools = blockingTool
 	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -5678,7 +5684,9 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 		t.Fatalf("turn/start: %v", err)
 	}
 	started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
-	<-client.started
+	// Keep the turn inside a running tool so the steer is still pending when
+	// the interrupt freezes input, preserving the original hold order.
+	<-blockingTool.started
 
 	queueReq := fmt.Sprintf(`{"id":"3","method":"turn/queue","params":{"thread_id":%q,"prompt":"queued follow-up","client_id":"queued-1"}}`, threadID)
 	if err := srv.handleLine(context.Background(), []byte(queueReq)); err != nil {
@@ -5755,7 +5763,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	if len(held) != 2 || held[0].id != "guide-1" || held[1].id != "queued-2" {
 		t.Fatalf("releasing queued-1 changed other held messages: %+v", held)
 	}
-	close(client.release)
+	close(blockingTool.release)
 	waitForTurnCompletedCountForThread(t, out, threadID, 1)
 	held, err = srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {

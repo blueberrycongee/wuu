@@ -64,12 +64,14 @@ The composer supports these keyboard actions:
 
 | Key | Action |
 |---|---|
-| Enter | Send the draft; when the engine supports steering a running task, add it to that task |
+| Enter | Send the draft; when the engine supports steering a running task, close the visible response at that point and continue the same turn |
 | Command + Enter (Ctrl + Enter on Windows and Linux) | Send the draft when no task is running; while one runs, queue a non-empty draft for after the current turn when queuing is available |
 | Shift + Enter | Insert a new line |
 | Escape | Interrupt a running task when the composer can do so |
 
 The `/` menu handles Enter and Tab as command selection while it is open. Tab otherwise moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
+
+Steering during a model response closes the visible assistant text at that point. The partial text remains as an interrupted response, the new message appears after it, and the same turn continues with the next model request instead of starting a separate turn. Steering while a tool is running waits for that tool batch to finish; it does not cancel tools that have already started. Queueing with Command + Enter (Ctrl + Enter) still waits for the next turn.
 
 In saved conversations, accepted queued messages and steering input are saved locally before acceptance is confirmed, including their attachments and document context. Edits and removals are saved too. After a core restart, input that had not reached conversation history appears as held work for you to review, edit, remove, or explicitly send. It does not run automatically. Input already admitted to history is not queued again, even if its execution was interrupted. Temporary conversations remain memory-only; this recovery does not save unsent drafts.
 

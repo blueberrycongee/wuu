@@ -161,6 +161,8 @@ type threadState struct {
 	SessionControl                 *ThreadSessionControl
 	steerWake                      chan struct{}
 	steerWakeClosed                bool
+	modelPreemptWake               chan struct{}
+	modelPreemptClosed             bool
 	activeSteerDocument            *ActiveDocument
 	activeSteerContextSet          bool
 	steerDocumentOverrides         []activeDocumentOverride
@@ -173,8 +175,11 @@ type threadState struct {
 	frozenTreeContext   []agent.ContextSegment
 	frozenTreeResultIDs []string
 
-	nextItemIndex         int
-	activeAgentItemID     string
+	nextItemIndex     int
+	activeAgentItemID string
+	// preemptingAgentTurnID suppresses late transport events after a steer
+	// closed the visible assistant item. The next model-step admission clears it.
+	preemptingAgentTurnID string
 	agentStream           *agentMessageStream
 	activeReasoningItemID string
 	toolItems             map[string]string

@@ -608,8 +608,12 @@ const (
 	EventLifecycle         StreamEventType = "lifecycle"
 	EventReconnect         StreamEventType = "reconnect"
 	EventCompact           StreamEventType = "compact"
-	EventDone              StreamEventType = "done"
-	EventError             StreamEventType = "error"
+	// EventModelPreempted closes the visible assistant item at the point where
+	// newly accepted user input stops the active model stream. The turn keeps
+	// running and the next model round consumes that input.
+	EventModelPreempted StreamEventType = "model_preempted"
+	EventDone           StreamEventType = "done"
+	EventError          StreamEventType = "error"
 )
 
 // AgentActivityState is the provider-neutral lifecycle reported for an

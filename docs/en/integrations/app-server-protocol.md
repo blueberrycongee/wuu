@@ -190,6 +190,11 @@ reconstructs an automatic runnable queue. Live input appears only in
 User-history admission atomically settles the recovery record. Human steering
 checkpoints the unpersisted transcript before the next model request, preserving
 message order and preventing a crash from making dispatched input replayable.
+On the built-in host loop, steering during an active model response closes the
+visible assistant item at that point, persists the prefix as a non-terminal
+steered fragment, admits the user item after it, and continues the same turn
+with the next model request. Steering while tools run is admitted at the next
+model step; tools that already started are not cancelled.
 A concurrent edit or cancellation fences stale admission. Permission selection
 is re-resolved at execution; saved input does not restore old permissions.
 These are local process-crash guarantees, not automatic recovery of uncertain
