@@ -24,7 +24,7 @@ func CheckMinimumWuuVersion(minimum, current string) error {
 		normalizedMinimum = "v" + normalizedMinimum
 	}
 	if !semver.IsValid(normalizedMinimum) {
-		return fmt.Errorf("minimum_wuu_version %q is not a valid semantic version", minimum)
+		return fmt.Errorf("minimum_wuu_version %q is not a valid semantic version (expected major.minor.patch)", minimum)
 	}
 
 	current = strings.TrimSpace(current)
@@ -43,7 +43,7 @@ func CheckMinimumWuuVersion(minimum, current string) error {
 		return fmt.Errorf("host version %q is not a valid semantic version", current)
 	}
 	if semver.Compare(base, normalizedMinimum) < 0 {
-		return fmt.Errorf("plugin requires Wuu >= %s, current is %s", minimum, current)
+		return fmt.Errorf("requires Wuu >= %s, current is %s", minimum, current)
 	}
 	return nil
 }
