@@ -409,16 +409,36 @@ describe("ActivityPiPSurface desktop docking", () => {
     surface.stop();
   });
 
-  it("moves a detached card to another requested screen corner", async () => {
-    const { surface, win, overlay } = makeCuaSurface();
+  it("fits an oversized card when it is moved to a smaller display", async () => {
+    const large = { x: 0, y: 0, width: 2000, height: 1200 };
+    const small = { x: -1366, y: 0, width: 1366, height: 768 };
+    const { surface, win, overlay } = makeCuaSurface({
+      desktopFrame: (bounds) => bounds.x < 0 ? small : large,
+    });
     surface.start();
     surface.setVisible(true);
     await settle();
     finishMotion();
     overlay.navigate("wuu-pip://desktop");
     finishMotion();
-    surface.setDesktopAlignment("top-left");
-    expect(win.getBounds()).toEqual({ x: 24, y: 24, width: 320, height: 240 });
+    expect(win.getBounds()).toEqual({ x: 1656, y: 936, width: 320, height: 240 });
+
+    overlay.navigate("wuu-pip://resize?phase=start&edge=se&x=1976&y=1176");
+    overlay.navigate("wuu-pip://resize?phase=end&edge=se&x=3256&y=1936");
+    finishMotion();
+    expect(win.getBounds().width).toBe(1600);
+    expect(win.getBounds().height).toBe(1000);
+
+    overlay.navigate("wuu-pip://drag?phase=start&x=500&y=500&vx=0&vy=0");
+    overlay.navigate("wuu-pip://drag?phase=move&x=-500&y=300&vx=0&vy=0");
+    overlay.navigate("wuu-pip://drag?phase=end&x=-500&y=300&vx=0&vy=0");
+    finishMotion();
+    const bounds = win.getBounds();
+    expect(bounds).toMatchObject({ width: 1318, height: 720 });
+    expect(bounds.x).toBeGreaterThanOrEqual(small.x);
+    expect(bounds.y).toBeGreaterThanOrEqual(small.y);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(small.x + small.width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(small.y + small.height);
     surface.stop();
   });
 });

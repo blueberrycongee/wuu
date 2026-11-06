@@ -702,13 +702,15 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     return pipContainRect(viewport.width, viewport.height, bounds.width, bounds.height);
   }
 
-  private placementLayout(): BrowserPiPScreenLayout | null {
+  private placementLayout(validateFrame = true): BrowserPiPScreenLayout | null {
     if (!this.desktopDocked) return this.screenLayout ?? null;
     const bounds = this.win && !this.win.isDestroyed() ? this.win.getBounds() : this.deps.bounds;
     // A display can disappear or change its work area while the card is
     // floating. Re-resolve instead of trusting a cached frame that no longer
-    // contains the card.
-    if (!this.desktopFrame || !rectContains(this.desktopFrame, bounds)) {
+    // contains the card. During a drag the pointer already selected the frame;
+    // the window has not moved there yet, so do not validate against its old
+    // bounds and snap the drag back to the previous display.
+    if (validateFrame && (!this.desktopFrame || !rectContains(this.desktopFrame, bounds))) {
       this.refreshDesktopFrame(bounds);
     }
     const frame = this.desktopFrame;
@@ -784,11 +786,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     if (!this.dragging) return;
-    // Follow the pointer onto another display by moving the corner set with it.
-    if (this.desktopDocked && command.phase !== "end") {
+    // Follow the pointer onto another display before clamping the card.
+    if (this.desktopDocked) {
       this.refreshDesktopFrame({ x: command.x, y: command.y, width: 1, height: 1 });
     }
-    const dragLayout = this.placementLayout();
+    const dragLayout = this.placementLayout(false);
     const dragged = dragLayout
       ? browserPiPClampOrigin(
         { x: command.x - this.grab.x, y: command.y - this.grab.y },
