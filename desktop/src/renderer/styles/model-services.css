@@ -766,8 +766,6 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-summary-secondary { min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.5; overflow-wrap: anywhere; text-align: end; }
 .connection-summary-secondary > .connection-summary-status { display: block; }
 .connection-summary-status { color: var(--ink-soft); }
-.connection-summary-status[data-ready] { color: var(--success); }
-.connection-summary-status[data-attention] { color: var(--warning); }
 @container settings-page (max-width: 34em) {
   .connection-summary-copy { grid-template-columns: minmax(0, 1fr); }
   .connection-summary-secondary { text-align: start; }
@@ -778,14 +776,13 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-usage-compact-value { grid-column: 3; grid-row: 1; text-align: end; color: var(--ink); }
 .connection-usage-compact-window[data-stale] { grid-template-columns: minmax(0, 1fr) 0 auto; }
 .connection-usage-compact-window[data-stale] .connection-usage-compact-value { color: var(--ink-soft); }
-.connection-usage-compact-value[data-warning="true"] { color: var(--warning); }
 .connection-usage-compact-value[data-exhausted="true"] { color: var(--danger); }
-.connection-usage-inline meter { appearance: none; grid-column: 2; grid-row: 1; min-width: 0; width: 100%; height: 3px; border: 0; background: color-mix(in srgb, var(--info) 12%, var(--surface-1)); }
-.connection-usage-inline meter::-webkit-meter-bar { border: 0; border-radius: 1px; background: color-mix(in srgb, var(--info) 12%, var(--surface-1)); }
-.connection-usage-inline meter::-webkit-meter-optimum-value { background: var(--info); }
+.connection-usage-inline meter { appearance: none; grid-column: 2; grid-row: 1; min-width: 0; width: 100%; height: 3px; border: 0; background: var(--surface-3); }
+.connection-usage-inline meter::-webkit-meter-bar { border: 0; border-radius: 1px; background: var(--surface-3); }
+.connection-usage-inline meter::-webkit-meter-optimum-value { background: var(--ink-soft); }
 .connection-usage-inline meter[data-warning="true"]::-webkit-meter-optimum-value { background: var(--warning); }
 .connection-usage-inline meter[data-exhausted="true"]::-webkit-meter-optimum-value { background: var(--danger); }
-.connection-usage-inline meter::-moz-meter-bar { background: var(--info); }
+.connection-usage-inline meter::-moz-meter-bar { background: var(--ink-soft); }
 .connection-usage-inline meter[data-warning="true"]::-moz-meter-bar { background: var(--warning); }
 .connection-usage-inline meter[data-exhausted="true"]::-moz-meter-bar { background: var(--danger); }
 .connection-usage-inline .connection-usage-balance { display: flex; justify-content: space-between; gap: var(--space-2); }
@@ -855,9 +852,8 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-title-edit .settings-icon-button { color: var(--ink-tertiary); }
 .connection-title-form { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 .connection-title-form input { width: min(20em, 100%); }
-.connection-status-pill { display: inline-flex; align-items: center; gap: var(--space-1); padding: 3px var(--space-2); background: color-mix(in srgb, var(--success, #468365) 10%, transparent); color: var(--success, #468365); border-radius: var(--radius-sm); font-size: var(--font-xs); }
+.connection-status-pill { display: inline-flex; align-items: center; gap: var(--space-1); padding: 3px var(--space-2); background: var(--surface-2); color: var(--ink-soft); border-radius: var(--radius-sm); font-size: var(--font-xs); }
 .connection-status-pill::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.connection-status-pill[data-attention="true"] { color: var(--ink-soft); background: var(--surface-2); }
 .connection-credential-menu { position: relative; font-size: var(--font-ui); }
 .connection-credential-menu > summary { list-style: none; cursor: pointer; white-space: nowrap; }
 .connection-credential-menu > summary::-webkit-details-marker { display: none; }

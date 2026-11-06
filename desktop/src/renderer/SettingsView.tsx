@@ -1,4 +1,5 @@
 import { useSettingsControls, SettingsControlsProvider } from "./SettingsControlsContext";
+import { ConnectionQuotaProvider } from "./ConnectionQuota";
 import { SettingsMCPPage } from "./SettingsMCPPage";
 import { isTouchWebShell } from "./ComposerFocus";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
@@ -260,6 +261,7 @@ function SettingsViewContent({
   usageLoading?: boolean;
   usageError?: string;
   engineInventory?: EngineListResult;
+  engineInventoryRevision?: number;
   engineInventoryError?: string;
   runningProviderNames?: readonly string[];
   codexPets?: CodexPetsSnapshot;
@@ -1777,5 +1779,9 @@ function availableSettingsPage(
 }
 
 export function SettingsView({application,...props}:Parameters<typeof SettingsViewContent>[0] & {application:{readonly settingsControls:import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1}}):JSX.Element {
- return <SettingsControlsProvider controls={application.settingsControls}><SettingsViewContent {...props}/></SettingsControlsProvider>;
+ const cacheKey = JSON.stringify([props.initialized?.workspace_root, props.engineInventoryRevision,
+   props.initialized?.providers?.map(provider => [provider.name, provider.type, provider.base_url, provider.chatgpt_account_id,
+     provider.auth_status, provider.api_key_configured, provider.reuse_codex_credentials, provider.codex_credential_source]),
+ ]);
+ return <SettingsControlsProvider controls={application.settingsControls}><ConnectionQuotaProvider cacheKey={cacheKey}><SettingsViewContent {...props}/></ConnectionQuotaProvider></SettingsControlsProvider>;
 }
