@@ -6,7 +6,6 @@ agent-avatar-feedback.css .agent-avatar-ribbon-fourth stroke --agent-ribbon-four
 agent-avatar-feedback.css .agent-avatar-ribbon-lead stroke --agent-ribbon-lead
 agent-avatar-feedback.css .agent-avatar-ribbon-tail stroke --agent-ribbon-tail
 agent-avatar-feedback.css .agent-avatar-ribbon-third stroke --agent-ribbon-third
-composer-token-gauge.css .composer-token-gauge-track stroke --token-gauge-track
 context-usage-ring.css .context-usage-ring-track stroke --context-meter-track
 conversation-shell.css .linux-window-control-close:active background --linux-caption-close-active
 conversation-shell.css .linux-window-control-close:active color --linux-caption-close-ink
@@ -99,7 +98,7 @@ sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel
 turns.css .artifact-preview-frame, .artifact-preview-body > .workspace-file-pdf-preview background --artifact-preview-frame-bg
 turns.css .artifact-preview-overlay background --artifact-preview-overlay-bg
 turns.css .artifact-preview-shell border --artifact-preview-shell-border
-turns.css .context-compaction-indicator .context-usage-ring color --token-gauge-mid
+turns.css .context-compaction-indicator .context-usage-ring color --context-meter-mid
 turns.css .context-composition-segment.tone-deferred, .context-category-row.tone-deferred .context-category-swatch background --env-tone-deferred
 turns.css .context-composition-segment.tone-dynamic, .context-category-row.tone-dynamic .context-category-swatch background --env-tone-dynamic
 turns.css .context-composition-segment.tone-stable, .context-category-row.tone-stable .context-category-swatch background --env-tone-stable

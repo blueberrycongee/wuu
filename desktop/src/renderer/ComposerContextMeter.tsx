@@ -29,10 +29,8 @@ type ComposerContextMeterProps = {
 
 const TOOLTIP_WIDTH = 212;
 
-// Fill-level thresholds mirror the token-speed gauge's idle/mid/high
-// tiers so the two meters step into "high" at the same fraction of their
-// own scale. The progress stroke inherits currentColor from the SVG; the
-// container keeps --ink-strong so the inline label is unaffected.
+// The progress stroke inherits currentColor from the SVG; the container
+// keeps --ink-strong so the inline label is unaffected.
 const FILL_HIGH_THRESHOLD = 0.7;
 
 type FillLevel = "idle" | "mid" | "high";
@@ -44,9 +42,9 @@ function fillLevel(ratio: number): FillLevel {
 }
 
 function fillColor(level: FillLevel): string {
-  if (level === "idle") return "var(--token-gauge-idle)";
-  if (level === "mid") return "var(--token-gauge-mid)";
-  return "var(--token-gauge-high)";
+  if (level === "idle") return "var(--context-meter-idle)";
+  if (level === "mid") return "var(--context-meter-mid)";
+  return "var(--context-meter-high)";
 }
 
 export function ComposerContextMeter({
@@ -65,10 +63,8 @@ export function ComposerContextMeter({
   const used = Math.max(0, usage.used);
   const ratio = Math.min(1, Math.max(0, used / usage.window));
   const percent = Math.round(ratio * 100);
-  // Color tier mirrors the token-speed gauge so the two meters read as a
-  // coordinated pair: gray when empty, amber while filling, warm red as
-  // the window approaches its limit. The 0.7 cutoff matches the gauge's
-  // 70/100 tps break so both step into "high" at the same fraction.
+  // Gray when empty, amber while filling, warm red as the window
+  // approaches its limit.
   const level = fillLevel(ratio);
   const ringColor = fillColor(level);
   const percentLabel = `${percent}%`;

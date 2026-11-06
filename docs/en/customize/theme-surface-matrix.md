@@ -29,7 +29,7 @@ token, so anything you do not override keeps the built-in appearance:
 
 The contract defines **82 public tokens** (**7**
 legacy compatibility aliases) and **16 syntax-highlighting
-tokens**; **73** have a reference path in host styles.
+tokens**; **72** have a reference path in host styles.
 "Wired" traces CSS variable dependencies from color, typography, and geometry
 properties. It is not a rendering guarantee for every theme or state: saved
 appearance preferences and the CSS cascade can still override a value.
@@ -40,7 +40,7 @@ styles are outside this count.
 
 | token | Description | Host |
 | --- | --- | --- |
-| `--wuu-paper` | Legacy name; use `--wuu-color-canvas` instead | Wired |
+| `--wuu-paper` | Legacy name; use `--wuu-color-canvas` instead | Not wired (reserved) |
 | `--wuu-ink` | Legacy name; use `--wuu-color-text` instead | Not wired (reserved) |
 | `--wuu-ink-soft` | Legacy name; use `--wuu-color-text-muted` instead | Wired |
 | `--wuu-hairline` | Legacy name; use `--wuu-color-border-subtle` instead | Not wired (reserved) |

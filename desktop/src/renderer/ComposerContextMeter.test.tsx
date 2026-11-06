@@ -292,9 +292,9 @@ describe("ComposerContextMeter", () => {
       ".composer-context-meter-svg",
     ) as HTMLElement | null;
     expect(svg?.getAttribute("data-fill")).toBe("idle");
-    expect(svg?.style.color).toBe("var(--token-gauge-idle)");
+    expect(svg?.style.color).toBe("var(--context-meter-idle)");
 
-    // ratio = 0.5 → mid amber (matches the token-speed gauge while running).
+    // ratio = 0.5 → mid amber.
     act(() => {
       root?.unmount();
       root = null;
@@ -304,10 +304,9 @@ describe("ComposerContextMeter", () => {
       ".composer-context-meter-svg",
     ) as HTMLElement | null;
     expect(svg?.getAttribute("data-fill")).toBe("mid");
-    expect(svg?.style.color).toBe("var(--token-gauge-mid)");
+    expect(svg?.style.color).toBe("var(--context-meter-mid)");
 
-    // ratio ≥ 0.7 → high warm (matches the token-speed gauge past its 70%
-    // threshold, so both meters step into "high" at the same fraction).
+    // ratio ≥ 0.7 → high warm.
     act(() => {
       root?.unmount();
       root = null;
@@ -317,6 +316,6 @@ describe("ComposerContextMeter", () => {
       ".composer-context-meter-svg",
     ) as HTMLElement | null;
     expect(svg?.getAttribute("data-fill")).toBe("high");
-    expect(svg?.style.color).toBe("var(--token-gauge-high)");
+    expect(svg?.style.color).toBe("var(--context-meter-high)");
   });
 });

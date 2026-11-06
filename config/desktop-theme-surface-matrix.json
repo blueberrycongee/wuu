@@ -558,11 +558,6 @@
       "rows": 6
     },
     {
-      "name": "unanchored:composer-token-gauge.css",
-      "synthetic": true,
-      "rows": 6
-    },
-    {
       "name": "unanchored:composer.css",
       "synthetic": true,
       "rows": 171
@@ -807,7 +802,6 @@
     "--wuu-message-user-shadow",
     "--wuu-nav-item-hover-background",
     "--wuu-nav-item-hover-ring",
-    "--wuu-paper",
     "--wuu-syntax-comment",
     "--wuu-syntax-function",
     "--wuu-syntax-keyword",
@@ -902,12 +896,6 @@
     {"anchor":"unanchored:composer-dictation.css","state":"default","file":"composer-dictation.css","selector":".composer-dictation-status","prop":"color","variable":"--ink-muted","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:composer-dictation.css","state":"default","file":"composer-dictation.css","selector":".composer-dictation-wave > span","prop":"background","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:composer-dictation.css","state":"hover","file":"composer-dictation.css","selector":".composer-action-button.composer-dictation-button:hover:not(:disabled)::before, .composer-dictation-recording .composer-action-button:hover:not(:disabled)::before","prop":"background","variable":"--surface-4","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-surface-elevated","--wuu-color-text"]},
-    {"anchor":"unanchored:composer-token-gauge.css","state":"default","file":"composer-token-gauge.css","selector":".composer-token-gauge-hub","prop":"fill","variable":"--wuu-paper","status":"bridged","tokens":["--wuu-color-canvas","--wuu-paper"]},
-    {"anchor":"unanchored:composer-token-gauge.css","state":"default","file":"composer-token-gauge.css","selector":".composer-token-gauge-tooltip","prop":"background","variable":"--token-gauge-tooltip-bg","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-surface-elevated","--wuu-color-text"]},
-    {"anchor":"unanchored:composer-token-gauge.css","state":"default","file":"composer-token-gauge.css","selector":".composer-token-gauge-tooltip","prop":"border","variable":"--token-gauge-tooltip-border","status":"bridged","tokens":["--wuu-border-subtle","--wuu-color-border-strong"]},
-    {"anchor":"unanchored:composer-token-gauge.css","state":"default","file":"composer-token-gauge.css","selector":".composer-token-gauge-tooltip","prop":"box-shadow","variable":"--token-gauge-tooltip-shadow","status":"bridged","tokens":["--wuu-elevation-panel"]},
-    {"anchor":"unanchored:composer-token-gauge.css","state":"default","file":"composer-token-gauge.css","selector":".composer-token-gauge-tooltip","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
-    {"anchor":"unanchored:composer-token-gauge.css","state":"default","file":"composer-token-gauge.css","selector":".composer-token-gauge-track","prop":"stroke","variable":"--token-gauge-track","status":"unbridged","tokens":[]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":":is(.composer-tool-button, .permission-chip, .codex-runtime-trigger, .hero-project-pill)[aria-expanded=\"true\"]::before","prop":"background","variable":"--surface-3","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-surface-elevated","--wuu-color-text"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":":root[data-host-kind=\"web\"] .composer-camera","prop":"background","variable":"--surface-2","status":"bridged","tokens":["--wuu-color-surface-muted"]},
     {"anchor":"unanchored:composer.css","state":"default","file":"composer.css","selector":":root[data-host-kind=\"web\"] .composer-camera","prop":"box-shadow","variable":"--composer-frame-shadow","status":"bridged","tokens":["--wuu-elevation-panel"]},
@@ -2081,7 +2069,7 @@
     {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-category-tokens","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-compaction-arrow","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-compaction-indicator","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
-    {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-compaction-indicator .context-usage-ring","prop":"color","variable":"--token-gauge-mid","status":"unbridged","tokens":[]},
+    {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-compaction-indicator .context-usage-ring","prop":"color","variable":"--context-meter-mid","status":"unbridged","tokens":[]},
     {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-compaction-indicator:focus-visible","prop":"outline","variable":"--focus-ring","status":"bridged","tokens":["--wuu-color-accent","--wuu-color-focus","--wuu-color-info"]},
     {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-compaction-indicator.is-failed","prop":"color","variable":"--danger","status":"bridged","tokens":["--wuu-color-danger"]},
     {"anchor":"unanchored:turns.css","state":"default","file":"turns.css","selector":".context-composition-bar","prop":"background","variable":"--ink-overlay-6","status":"bridged","tokens":["--wuu-color-text"]},
