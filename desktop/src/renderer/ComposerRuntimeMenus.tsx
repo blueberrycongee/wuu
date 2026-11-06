@@ -85,6 +85,7 @@ import {
   variantLabel
 } from "./RuntimeHelpers";
 import { translateCurrent as translate, useI18n } from "./i18n";
+import { showToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import { ComposerMobileAttachmentChoices } from "./ComposerCamera";
@@ -802,6 +803,27 @@ function EngineRuntimeMenu({
   const effectiveModel = models.find((model) => effectiveModelID ? model.id === effectiveModelID : model.is_default);
   const supportedEfforts = effectiveModel?.supported_efforts ?? [];
   const effortOptions = supportedEfforts.length ? orderedEffortOptions(["", ...supportedEfforts]) : [];
+  // A degraded catalog still leaves its usable rows selectable, so discovery
+  // failures surface as a notice rather than a banner inside the list. The
+  // engine settings page keeps the full diagnostic; the notice quotes only
+  // its first line.
+  const modelsError = engine?.models_error?.trim();
+  const modelCount = models.length;
+  const modelsStatus = engine?.models_status;
+  const engineID = engine?.id;
+  useEffect(() => {
+    if (!modelsError) return;
+    const summary = t(
+      modelsStatus === "partial" ? "runtime.modelsPartial"
+        : modelCount > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed",
+    );
+    const detail = modelsError.split("\n").map(line => line.trim()).find(Boolean);
+    showToast({
+      message: detail ? `${summary}\n${detail}` : summary,
+      tone: "error",
+      dedupeKey: `engine-models:${engineID}:${modelsError}`,
+    });
+  }, [engineID, modelsStatus, modelsError, modelCount, t]);
   const changeSelection = async (save: () => void | Promise<boolean>): Promise<boolean> => {
     if (saving || disabled) return false;
     setSaving(true);
@@ -919,13 +941,7 @@ function EngineRuntimeMenu({
                 <span className="codex-model-item-name">{t("runtime.engineDefaultModel")}</span>
                 {!selectedModel ? <Check className="icon-lg" /> : null}
               </button>
-              {engine?.models_error ? (
-                <div className="composer-menu-note warning">
-                  <strong>{t(engine.models_status === "partial" ? "runtime.modelsPartial" : models.length > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed")}</strong>
-                  <span>{engine.models_error}</span>
-                </div>
-              ) : null}
-              {models.length === 0 && !engine?.models_error ? (
+              {models.length === 0 ? (
                 <div className="composer-menu-empty">
                   {t(engine?.models_status === "empty" ? "runtime.modelsEmpty" : "runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
                 </div>

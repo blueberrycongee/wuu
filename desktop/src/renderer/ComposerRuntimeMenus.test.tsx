@@ -8,6 +8,7 @@ import { permissionModeOption, RuntimePicker } from "./ComposerRuntimeMenus";
 import type { CodexRuntimeMenu } from "./ComposerTypes";
 import { setActiveLocale, translateCurrent } from "./i18n";
 import { variantLabel } from "./RuntimeHelpers";
+import { clearToasts, ToastViewport } from "./Toast";
 
 describe("RuntimePicker", () => {
   let container: HTMLDivElement;
@@ -29,6 +30,7 @@ describe("RuntimePicker", () => {
       .forEach((element) => element.remove());
     container.remove();
     vi.unstubAllGlobals();
+    act(() => clearToasts());
   });
 
   function renderPicker(
@@ -56,17 +58,20 @@ describe("RuntimePicker", () => {
     act(() => {
       root ??= createRoot(container);
       root.render(
-        <RuntimePicker
-          initialized={initialized}
-          state={{ loading: false, error: "", models: [] }}
-          openMenu={openMenu}
-          anchorRef={anchorRef}
-          running={false}
-          onToggleMenu={onToggleMenu}
-          onSelectModel={onSelectModel}
-          onSelectEffort={onSelectEffort}
-          {...engineProps}
-        />
+        <>
+          <RuntimePicker
+            initialized={initialized}
+            state={{ loading: false, error: "", models: [] }}
+            openMenu={openMenu}
+            anchorRef={anchorRef}
+            running={false}
+            onToggleMenu={onToggleMenu}
+            onSelectModel={onSelectModel}
+            onSelectEffort={onSelectEffort}
+            {...engineProps}
+          />
+          <ToastViewport />
+        </>
       );
     });
   }
@@ -568,6 +573,31 @@ describe("RuntimePicker", () => {
       item.querySelector(".codex-model-item-name")?.textContent
     );
     expect(items).toEqual([translateCurrent("runtime.engineDefaultModel"), "Grok 4.6", "Grok 4.5"]);
+  });
+
+  it("reports a failed engine catalog through the notice queue instead of the model list", () => {
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      activeEngine: "grok",
+      engineModel: "grok-4.5",
+      engines: [{
+        id: "grok",
+        enabled: true,
+        binary_ok: true,
+        models_status: "partial",
+        models_error: 'discover model "grok-4.6": context deadline exceeded\n[WARNING] repeated agent stderr',
+        models: [{ id: "grok-4.5", display_name: "Grok 4.5" }],
+      }],
+    });
+
+    const toast = document.querySelector(".archive-tip-message");
+    expect(toast?.textContent).toContain(translateCurrent("runtime.modelsPartial"));
+    expect(toast?.textContent).toContain('discover model "grok-4.6": context deadline exceeded');
+    expect(toast?.textContent).not.toContain("stderr");
+
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")!.click());
+    expect(document.querySelector(".codex-model-menu .composer-menu-note")).toBeNull();
+    expect(Array.from(document.querySelectorAll(".codex-model-item-name")).map(item => item.textContent))
+      .toEqual([translateCurrent("runtime.engineDefaultModel"), "Grok 4.5"]);
   });
 
   it("names the engine only when another one can be chosen", () => {
