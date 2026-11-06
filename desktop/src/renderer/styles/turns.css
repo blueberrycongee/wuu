@@ -1119,6 +1119,9 @@
   width: 22px;
   height: 22px;
   place-items: center;
+  /* The shared button icon sizing can exceed the UA-padded content box, which
+   * leaves the glyph off-center. The circle owns the inset. */
+  padding: 0;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-pill);
   background: var(--paper);
