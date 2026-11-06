@@ -2,9 +2,11 @@ import { screen, type Rectangle } from "electron";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import {
   browserPiPScreenRect,
+  PIP_ALIGNMENTS,
   PIP_ANCHOR_MARGIN,
   PIP_CARD_SIZE,
   type BrowserPiPScreenLayout,
+  type PipAlignment,
   type PipRect,
 } from "./browserPiPPlacement";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
@@ -81,6 +83,7 @@ export type ObservationPiPHandle = {
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: BrowserPiPHostWindow | null): void;
   setDesktopDock?(enabled: boolean): void;
+  setDesktopAlignment?(alignment: PipAlignment): void;
   isDesktopDocked?(): boolean;
   // Stack placement: index 0 leads at its corner; others rest behind the lead.
   setStackPosition?(index: number, lead?: PiPStackLead): void;
@@ -203,11 +206,12 @@ export class ObservationCoordinator {
           // Stopping a browser activity is not evidence that its task succeeded.
           const succeeded = turn?.turn?.status === "completed" && !turn.awaiting_auto_continuation && !turn.truncated;
           const visible = this.visibleStack();
+          const hasDesktopDocked = entries.some((entry) => entry.pip.isDesktopDocked?.());
           for (const entry of entries) {
             if (!succeeded || visible.includes(entry)) entry.pip.setTurnCompleted?.(succeeded);
             else this.completedCards.add(entry.key);
           }
-          if ((succeeded && this.activeThreadID !== threadID)
+          if ((succeeded && this.activeThreadID !== threadID && !hasDesktopDocked)
             || turn?.turn?.status === "interrupted" || turn?.turn?.status === "failed") {
             // A task that finishes offscreen must not return as a running preview.
             this.endedThreads.add(threadID);
@@ -259,9 +263,21 @@ export class ObservationCoordinator {
 
   private pipVisibility(activity: ActivitySession): boolean {
     const key = observationKey(activity);
-    return activity.thread_id === this.activeThreadID && this.wantsCard(activity.thread_id)
+    // A desktop-docked card is no longer part of the conversation column.
+    // Keep it visible while the user works in another conversation.
+    const desktopDocked = this.entries.get(key)?.pip.isDesktopDocked?.() ?? false;
+    return (desktopDocked || activity.thread_id === this.activeThreadID) && this.wantsCard(activity.thread_id)
       && !this.dismissedCards.has(key) && !this.completedCards.has(key) && !this.observationIsGone(activity)
       && pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
+  }
+
+  // Closing the Wuu window must not leave a detached top-level preview alive
+  // with no application window to manage or reopen it. Other previews remain
+  // owned by their host window and follow its normal teardown.
+  closeDesktopDocked(): void {
+    for (const entry of [...this.entries.values()]) {
+      if (entry.pip.isDesktopDocked?.()) this.stopEntry(entry);
+    }
   }
 
   // Session selection changes presentation only, never task execution.
@@ -545,6 +561,7 @@ export class ObservationCoordinator {
         this.promote(entry.key);
         if (this.stackLeadEntry === entry) this.stackLeadEntry = undefined;
         this.restack();
+        if (event.desktop) this.avoidDesktopOverlap(entry);
         return;
       case "drag_start":
         this.layoutStack();
@@ -587,6 +604,22 @@ export class ObservationCoordinator {
       case "capture_status":
         return;
     }
+  }
+
+  private avoidDesktopOverlap(entry: PiPEntry): void {
+    const frame = entry.pip.stackLead?.()?.frame;
+    if (!frame) return;
+    const others = this.visibleStack().filter(
+      (other) => other !== entry && other.pip.isDesktopDocked?.(),
+    );
+    const overlapping = others.some((other) => {
+      const otherFrame = other.pip.stackLead?.()?.frame;
+      return otherFrame !== undefined && rectanglesOverlap(frame, otherFrame);
+    });
+    if (!overlapping) return;
+    const used = new Set(others.map((other) => other.pip.stackLead?.()?.alignment));
+    const free = PIP_ALIGNMENTS.find((alignment) => !used.has(alignment));
+    if (free) entry.pip.setDesktopAlignment?.(free);
   }
 
   private handlePiPFailure(entry: PiPEntry, message: string): void {
@@ -764,6 +797,11 @@ export class ObservationCoordinator {
       : screen.getDisplayNearestPoint(cursor).workArea;
     return browserPiPInitialBounds(mainBounds, workArea);
   }
+}
+
+function rectanglesOverlap(a: PipRect, b: PipRect): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width
+    && a.y < b.y + b.height && b.y < a.y + a.height;
 }
 
 export function observationKey(activity: ActivitySession): string {

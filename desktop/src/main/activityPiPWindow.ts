@@ -58,7 +58,10 @@ type PiPTransition = {
 
 export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setAlwaysOnTop(flag: boolean, level?: string): void;
-  setVisibleOnAllWorkspaces(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
+  setVisibleOnAllWorkspaces(visible: boolean, options?: {
+    visibleOnFullScreen?: boolean;
+    skipTransformProcessType?: boolean;
+  }): void;
   showInactive(): void;
   hide(): void;
   isVisible(): boolean;
@@ -144,6 +147,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // child of the Wuu window. It keeps floating while Wuu is hidden.
   private desktopDocked = false;
   private desktopFrame: PipRect | undefined;
+  private stopWatchingDesktopDisplays: (() => void) | undefined;
   private dragging = false;
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
@@ -260,6 +264,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     win.on("closed", () => {
       if (this.win !== win) return;
       this.stopHoverTracking();
+      this.stopWatchingDesktopDisplays?.();
+      this.stopWatchingDesktopDisplays = undefined;
       this.setTurnCompleted(false);
       this.detachHostParent?.();
       this.detachHostParent = undefined;
@@ -448,8 +454,18 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.refreshDesktopFrame(reference);
       win.setParentWindow(null);
       win.setAlwaysOnTop(true, "floating");
+      // A desktop preview should follow the user across Spaces and full-screen
+      // apps instead of disappearing with the Space where it was created.
+      win.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true,
+      });
+      this.watchDesktopDisplays();
     } else {
+      this.stopWatchingDesktopDisplays?.();
+      this.stopWatchingDesktopDisplays = undefined;
       win.setAlwaysOnTop(false);
+      win.setVisibleOnAllWorkspaces(false);
       this.desktopFrame = undefined;
       const parent = this.hostParent && !this.hostParent.isDestroyed() ? this.hostParent : null;
       if (win.isVisible()) win.hide();
@@ -459,6 +475,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.placeCommitted();
     this.deps.sink.onEvent({ event: "desktop_dock", desktop: enabled });
     this.applyVisibility();
+  }
+
+  setDesktopAlignment(alignment: PipAlignment): void {
+    if (!this.desktopDocked || this.alignment === alignment) return;
+    this.alignment = alignment;
+    this.placeCommitted();
   }
 
   isDesktopDocked(): boolean {
@@ -570,6 +592,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.completionTimer = undefined;
     this.pendingRetarget = false;
     this.stopHoverTracking();
+    this.stopWatchingDesktopDisplays?.();
+    this.stopWatchingDesktopDisplays = undefined;
     this.detachHostParent?.();
     this.detachHostParent = undefined;
     this.cancelSnap();
@@ -690,13 +714,35 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   private placementLayout(): BrowserPiPScreenLayout | null {
     if (!this.desktopDocked) return this.screenLayout ?? null;
-    if (!this.desktopFrame) {
-      const bounds = this.win && !this.win.isDestroyed() ? this.win.getBounds() : this.deps.bounds;
+    const bounds = this.win && !this.win.isDestroyed() ? this.win.getBounds() : this.deps.bounds;
+    // A display can disappear or change its work area while the card is
+    // floating. Re-resolve instead of trusting a cached frame that no longer
+    // contains the card.
+    if (!this.desktopFrame || !rectContains(this.desktopFrame, bounds)) {
       this.refreshDesktopFrame(bounds);
     }
     const frame = this.desktopFrame;
     if (!frame) return null;
     return { host: frame, obstacles: [], visibleFrame: frame };
+  }
+
+  private watchDesktopDisplays(): void {
+    if (this.stopWatchingDesktopDisplays) return;
+    if (typeof screen?.on !== "function") return;
+    const refresh = (): void => {
+      if (!this.desktopDocked) return;
+      const bounds = this.win && !this.win.isDestroyed() ? this.win.getBounds() : this.deps.bounds;
+      this.refreshDesktopFrame(bounds);
+      this.placeCommitted();
+    };
+    screen.on("display-added", refresh);
+    screen.on("display-removed", refresh);
+    screen.on("display-metrics-changed", refresh);
+    this.stopWatchingDesktopDisplays = () => {
+      screen.removeListener("display-added", refresh);
+      screen.removeListener("display-removed", refresh);
+      screen.removeListener("display-metrics-changed", refresh);
+    };
   }
 
   private refreshDesktopFrame(reference: Rectangle): void {
@@ -773,7 +819,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const layout = this.placementLayout();
     if (!layout) return;
     const settled = win.getBounds();
-    const card = { width: settled.width, height: settled.height };
+    // A card resized on a large display must shrink when it is released on a
+    // smaller one; clamping the origin alone can leave most of it off-screen.
+    const fitted = browserPiPFitCard(layout.host, { width: settled.width, height: settled.height });
+    const card = { width: fitted.width, height: fitted.height };
+    if (card.width !== settled.width || card.height !== settled.height) this.userSize = card;
     const origin = { x: settled.x, y: settled.y };
     const nearest = browserPiPNearestAnchor(
       browserPiPAnchors(layout.host, layout.obstacles, card),
@@ -1388,4 +1438,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     view.setBackgroundColor("#00000000");
     return view as unknown as BrowserPiPOverlayHandle;
   }
+}
+
+// The card's center decides which display it belongs to. A detached frame is
+// refreshed when a display disappears or its work area moves away from it.
+function rectContains(frame: PipRect, bounds: Rectangle): boolean {
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  return x >= frame.x && x <= frame.x + frame.width
+    && y >= frame.y && y <= frame.y + frame.height;
 }

@@ -134,6 +134,103 @@ describe("CUA native picture-in-picture", () => {
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b", "app-c"]);
   });
 
+  type DockTestCard = {
+    target: string;
+    docked: boolean;
+    alignment: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+    sink?: ObservationPiPEventSink;
+    setVisible: ReturnType<typeof vi.fn>;
+    setStackPosition: ReturnType<typeof vi.fn>;
+    setDesktopAlignment: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
+    stackLead: () => {
+      frame: { x: number; y: number; width: number; height: number };
+      alignment: DockTestCard["alignment"];
+      dragging: false;
+    };
+  };
+
+  function dockFrame(alignment: DockTestCard["alignment"]): { x: number; y: number; width: number; height: number } {
+    const right = alignment.endsWith("right");
+    const bottom = alignment.startsWith("bottom");
+    return {
+      x: right ? 1156 : 24,
+      y: bottom ? 706 : 24,
+      width: 260,
+      height: 170,
+    };
+  }
+
+  function makeDockCoordinator(): { coordinator: ObservationCoordinator; cards: DockTestCard[] } {
+    const cards: DockTestCard[] = [];
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      (next, _key, sink) => {
+        const card: DockTestCard = {
+          target: next.target ?? "",
+          docked: false,
+          alignment: "bottom-right",
+          sink,
+          setVisible: vi.fn(),
+          setStackPosition: vi.fn(),
+          setDesktopAlignment: vi.fn(),
+          stop: vi.fn(),
+          stackLead: () => ({ frame: dockFrame(card.alignment), alignment: card.alignment, dragging: false }),
+        };
+        card.setDesktopAlignment.mockImplementation((alignment: DockTestCard["alignment"]) => {
+          card.alignment = alignment;
+        });
+        card.stop.mockImplementation((onStopped?: () => void) => onStopped?.());
+        cards.push(card);
+        return {
+          start: vi.fn(),
+          setVisible: card.setVisible,
+          animateInteraction: vi.fn(),
+          setStackPosition: card.setStackPosition,
+          stackLead: card.stackLead,
+          isDesktopDocked: () => card.docked,
+          setDesktopAlignment: card.setDesktopAlignment,
+          stop: card.stop,
+        };
+      },
+    );
+    return { coordinator, cards };
+  }
+
+  it("keeps a floated preview visible across conversations and stops it with the host window", () => {
+    const { coordinator, cards } = makeDockCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(activity({ target: "app-a" }));
+    coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
+    cards[0].docked = true;
+    cards[0].sink?.onEvent({ event: "desktop_dock", desktop: true });
+
+    coordinator.setActiveThread("thread-2");
+    expect(cards[0].setVisible).toHaveBeenLastCalledWith(true);
+
+    coordinator.closeDesktopDocked();
+    expect(cards[0].stop).toHaveBeenCalledTimes(1);
+    expect(cards[0].setVisible).toHaveBeenLastCalledWith(false, true);
+    expect(cards[1].stop).not.toHaveBeenCalled();
+    void coordinator.shutdown();
+  });
+
+  it("places a second floated preview in a free screen corner", () => {
+    const { coordinator, cards } = makeDockCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(activity({ target: "app-a" }));
+    cards[0].docked = true;
+    cards[0].sink?.onEvent({ event: "desktop_dock", desktop: true });
+
+    coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
+    cards[1].docked = true;
+    cards[1].sink?.onEvent({ event: "desktop_dock", desktop: true });
+
+    expect(cards[1].setDesktopAlignment).toHaveBeenCalledWith("top-left");
+    void coordinator.shutdown();
+  });
+
   it("keeps a desktop-docked card out of the column stack", () => {
     type Card = {
       target: string;

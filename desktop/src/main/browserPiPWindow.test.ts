@@ -67,6 +67,13 @@ class FakePipWindow {
   ignoringMouse = false;
   parent: unknown = null;
   alwaysOnTop: { flag: boolean; level?: string } = { flag: false };
+  workspaceVisibility: Array<{ visible: boolean; options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean } }> = [];
+  setVisibleOnAllWorkspaces(
+    visible: boolean,
+    options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
+  ): void {
+    this.workspaceVisibility.push({ visible, options });
+  }
   setAlwaysOnTop(flag: boolean, level?: string): void {
     this.alwaysOnTop = { flag, level };
   }
@@ -74,7 +81,6 @@ class FakePipWindow {
     this.parent = parent;
   }
   moveAbove(): void {}
-  setVisibleOnAllWorkspaces(): void {}
   setOpacity(opacity: number): void {
     this.opacity = opacity;
   }
@@ -268,7 +274,8 @@ function makeSink(): ObservationPiPEventSink & {
 }
 
 function makeCuaSurface(opts?: {
-  bounds?: Rectangle; desktopFrame?: Rectangle;
+  bounds?: Rectangle;
+  desktopFrame?: Rectangle | ((bounds: Rectangle) => Rectangle);
 }): {
   surface: ActivityPiPSurface;
   win: FakePipWindow;
@@ -291,7 +298,9 @@ function makeCuaSurface(opts?: {
     createOverlay: () => overlay.asHandle(),
     reducedMotion: () => true,
     cursorPosition: () => ({ x: -1000, y: -1000 }),
-    desktopFrame: () => opts?.desktopFrame ?? { x: 0, y: 0, width: 1440, height: 900 },
+    desktopFrame: (bounds) => typeof opts?.desktopFrame === "function"
+      ? opts.desktopFrame(bounds)
+      : opts?.desktopFrame ?? { x: 0, y: 0, width: 1440, height: 900 },
     createContent: (_activity, context) => {
       context.setViewport({ width: 800, height: 600 });
       context.setMounted(true);
@@ -369,6 +378,10 @@ describe("ActivityPiPSurface desktop docking", () => {
     finishMotion();
     expect(win.parent).toBeNull();
     expect(win.alwaysOnTop).toEqual({ flag: true, level: "floating" });
+    expect(win.workspaceVisibility.at(-1)).toEqual({
+      visible: true,
+      options: { visibleOnFullScreen: true, skipTransformProcessType: true },
+    });
     expect(win.getBounds()).toEqual({ x: 1096, y: 636, width: 320, height: 240 });
     expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: true });
 
@@ -383,6 +396,7 @@ describe("ActivityPiPSurface desktop docking", () => {
     finishMotion();
     expect(win.parent).toBe(parent);
     expect(win.alwaysOnTop.flag).toBe(false);
+    expect(win.workspaceVisibility.at(-1)).toEqual({ visible: false, options: undefined });
     expect(win.getBounds()).toEqual({ x: 656, y: 536, width: 320, height: 240 });
     expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: false });
 
@@ -391,6 +405,33 @@ describe("ActivityPiPSurface desktop docking", () => {
     expect(win.isVisible()).toBe(false);
     surface.stop();
     expect(parent.eventNames()).toEqual([]);
+  });
+
+  it("does not detach a browser preview", async () => {
+    const { surface, win, overlay, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.alwaysOnTop.flag).toBe(false);
+    expect(win.workspaceVisibility).toEqual([]);
+    expect(sink.events).not.toContainEqual({ event: "desktop_dock", desktop: true });
+    surface.stop();
+  });
+
+  it("moves a detached card to another requested screen corner", async () => {
+    const { surface, win, overlay } = makeCuaSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    surface.setDesktopAlignment("top-left");
+    expect(win.getBounds()).toEqual({ x: 24, y: 24, width: 320, height: 240 });
+    surface.stop();
   });
 });
 
