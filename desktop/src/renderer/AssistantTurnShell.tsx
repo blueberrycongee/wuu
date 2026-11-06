@@ -102,6 +102,7 @@ export function AssistantTurnShell({
   messagePresentation,
   processLabel,
   processContent,
+  superseded,
 }: {
   turn: Turn;
   display: AssistantTurnDisplay;
@@ -134,6 +135,13 @@ export function AssistantTurnShell({
   processLabel?: string;
   /** Transport-owned records rendered inside the existing process fold. */
   processContent?: ReactNode;
+  /**
+   * Newer conversation content has taken over this shell's work — a steering
+   * message split the turn after this prefix, or the whole turn settled as
+   * interrupted behind a later turn. The process records still render for
+   * history, but the fold defaults to collapsed like a completed handoff.
+   */
+  superseded?: boolean;
 }): JSX.Element {
   const answerEntries = display.entries.filter(
     (entry) => entry.position === "answer",
@@ -168,7 +176,7 @@ export function AssistantTurnShell({
     turn.status === "interrupted" ||
     turn.status === "failed" ||
     hasAnswer;
-  const processCollapseRequested = answerHandoffRequested;
+  const processCollapseRequested = answerHandoffRequested || superseded === true;
   const className = [
     "assistant-turn-shell",
     hasProcess ? "has-process" : "",

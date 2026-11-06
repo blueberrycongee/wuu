@@ -363,6 +363,62 @@ describe("TurnView", () => {
     expect(agentTurnIDs).toEqual(["turn-1", "turn-1"]);
   });
 
+  it("folds an interrupted tool-phase prefix once steering supersedes it", () => {
+    const view = render(
+      makeTurn("in_progress", [
+        {
+          id: "turn-1-item-1",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          text: "first",
+        },
+        {
+          id: "turn-1-item-2",
+          type: "tool_call",
+          status: "completed",
+          name: "lookup",
+        },
+        {
+          id: "turn-1-item-3",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          source_id: "steer-1",
+          text: "new direction",
+        },
+        {
+          id: "turn-1-item-4",
+          type: "tool_call",
+          status: "in_progress",
+          name: "search",
+        },
+      ]),
+      true,
+    );
+
+    const toggles = Array.from(
+      view.querySelectorAll<HTMLElement>(".turn-process-toggle"),
+    );
+    expect(toggles).toHaveLength(2);
+    // The superseded prefix folds; the live continuation stays open.
+    expect(toggles[0].getAttribute("aria-expanded")).toBe("false");
+    expect(toggles[1].getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("collapses an interrupted turn's process work when a later turn takes over", () => {
+    const items: ThreadItem[] = [makeCommentary("partial work")];
+    const view = render(makeTurn("interrupted", items), true);
+    const toggle = view.querySelector<HTMLElement>(".turn-process-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+
+    rerender(makeTurn("interrupted", items), false);
+
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("keeps a live comment when a steered turn settles back to one segment", () => {
     const firstUser: ThreadItem = {
       id: "turn-1-item-1",
@@ -859,6 +915,7 @@ describe("TurnView", () => {
         makeCommentary("partial progress"),
         makeError("context canceled"),
       ]),
+      true,
     );
 
     expect(view.textContent).toContain("partial progress");
@@ -898,6 +955,7 @@ describe("TurnView", () => {
         [makeCommentary("partial progress"), makeError(error)],
         error,
       ),
+      true,
     );
 
     expect(view.textContent).toContain("partial progress");
