@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 )
 
 // Version 4 requires per-program result views in the isolated interpreter.
@@ -27,11 +29,13 @@ type Request struct {
 }
 
 type Response struct {
-	Method   string          `json:"method,omitempty"`
-	ParentID string          `json:"parent_id,omitempty"`
-	ID       string          `json:"id"`
-	Data     json.RawMessage `json:"data,omitempty"`
-	Error    string          `json:"error,omitempty"`
+	transportErr error           // Local transport failure, never a worker-returned tool error.
+	Method       string          `json:"method,omitempty"`
+	ParentID     string          `json:"parent_id,omitempty"`
+	ID           string          `json:"id"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	ErrorKind    string          `json:"error_kind,omitempty"`
+	Error        string          `json:"error,omitempty"`
 }
 
 // Client multiplexes a private stdio connection. A transport failure is terminal:
@@ -120,6 +124,7 @@ func (c *Client) startLocked() error {
 						reply.Data, err = handler(callCtx, callback.Data)
 						if err != nil {
 							reply.Error = err.Error()
+							reply.ErrorKind = toolerrors.Kind(err)
 						}
 					}
 					data, _ := json.Marshal(reply)
@@ -181,7 +186,7 @@ func (c *Client) fail(err error) {
 		delete(c.retiring, id)
 	}
 	for id, ch := range c.pending {
-		ch <- Response{ID: id, Error: c.failed.Error()}
+		ch <- Response{ID: id, transportErr: toolerrors.Unknown(c.failed)}
 		delete(c.pending, id)
 	}
 }
@@ -198,14 +203,14 @@ func (c *Client) write(request Request) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	_, err = c.stdin.Write(append(data, '\n'))
-	return err
+	return toolerrors.Unknown(err)
 }
 
 func (c *Client) Call(ctx context.Context, method string, data any) (json.RawMessage, error) {
 	return c.CallWithHandler(ctx, method, data, nil)
 }
 
-func (c *Client) CallWithHandler(ctx context.Context, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
+func (c *Client) CallWithHandler(ctx context.Context, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (returnedData json.RawMessage, returnedErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -214,6 +219,30 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
+	}
+	// Retain host evidence even if an older worker omits error_kind or guest
+	// code catches the callback exception and returns apparent success.
+	if handler != nil {
+		invoke := handler
+		var callbackMu sync.Mutex
+		var callbackUnknown error
+		handler = func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
+			result, err := invoke(ctx, data)
+			if toolerrors.Kind(err) == toolerrors.UncertainEffect {
+				callbackMu.Lock()
+				callbackUnknown = err
+				callbackMu.Unlock()
+			}
+			return result, err
+		}
+		defer func() {
+			callbackMu.Lock()
+			defer callbackMu.Unlock()
+			if callbackUnknown != nil {
+				returnedData = nil
+				returnedErr = errors.Join(callbackUnknown, returnedErr)
+			}
+		}()
 	}
 	// A cancelled caller returns promptly, but reuse must wait for the worker's
 	// terminal acknowledgement before another program reuses actor state.
@@ -260,7 +289,7 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	case err = <-written:
 	case <-ctx.Done():
 		_ = c.stdin.Close()
-		err = ctx.Err()
+		err = toolerrors.Unknown(ctx.Err())
 	}
 	if err != nil {
 		c.fail(err)
@@ -268,7 +297,13 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	}
 	select {
 	case response := <-ch:
+		if response.transportErr != nil {
+			return nil, response.transportErr
+		}
 		if response.Error != "" {
+			if response.ErrorKind != "" {
+				return nil, toolerrors.New(response.ErrorKind, response.Error)
+			}
 			return nil, errors.New(response.Error)
 		}
 		return response.Data, nil
@@ -294,7 +329,13 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 			defer timer.Stop()
 			select {
 			case response := <-ch:
+				if response.transportErr != nil {
+					return response.Data, errors.Join(response.transportErr, ctx.Err())
+				}
 				if response.Error != "" {
+					if response.ErrorKind != "" {
+						return response.Data, errors.Join(toolerrors.New(response.ErrorKind, response.Error), ctx.Err())
+					}
 					return response.Data, errors.Join(ctx.Err(), errors.New(response.Error))
 				}
 				return response.Data, ctx.Err()
@@ -302,10 +343,10 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 				c.mu.Lock()
 				delete(c.pending, id)
 				c.mu.Unlock()
-				return nil, fmt.Errorf("process start cancellation was not acknowledged; outcome unknown: %w", ctx.Err())
+				return nil, toolerrors.Unknown(fmt.Errorf("process start cancellation was not acknowledged; outcome unknown: %w", ctx.Err()))
 			}
 		}
-		return nil, ctx.Err()
+		return nil, toolerrors.Unknown(ctx.Err())
 	}
 }
 

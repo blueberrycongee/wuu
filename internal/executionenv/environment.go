@@ -25,6 +25,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -57,7 +58,7 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 	}
 	var result toolresult.Result
 	if err = json.Unmarshal(data, &result); err != nil {
-		return result, fmt.Errorf("decode execution result: %w", err)
+		return result, toolerrors.Unknown(fmt.Errorf("decode execution result: %w", err))
 	}
 	return result, nil
 }
@@ -399,7 +400,7 @@ func (e *Environment) RunCode(ctx context.Context, request CodeRequest, executor
 	}
 	var result codemode.RunResult
 	err = json.Unmarshal(data, &result)
-	return result, err
+	return result, toolerrors.Unknown(err)
 }
 
 func (e *Environment) ProcessManager() *process.Manager {
@@ -428,7 +429,7 @@ func (e *Environment) Request(ctx context.Context, method string, params, result
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, result)
+	return toolerrors.Unknown(json.Unmarshal(data, result))
 }
 
 // StartProcess submits once to the captured environment. A failed transport can
@@ -448,7 +449,7 @@ func (e *Environment) StartProcess(ctx context.Context, request ProcessRequest) 
 	}
 	var started process.Process
 	if err = json.Unmarshal(data, &started); err != nil || started.ID == "" || started.OperationID != request.OperationID || started.RootThreadID != e.session || started.OwnerID != request.Actor {
-		return nil, fmt.Errorf("remote process operation %s in environment %s returned an invalid receipt; outcome unknown", request.OperationID, e.identity)
+		return nil, toolerrors.Unknown(fmt.Errorf("remote process operation %s in environment %s returned an invalid receipt; outcome unknown", request.OperationID, e.identity))
 	}
 	if err = errors.Join(callErr, ctx.Err()); err != nil {
 		// A cancelled call can race the worker's success response. Retain that

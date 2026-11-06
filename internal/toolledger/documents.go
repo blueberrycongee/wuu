@@ -232,6 +232,34 @@ func (l *Ledger) Start(ctx context.Context, invocationID string) error {
 	})
 }
 
+// MarkUnknown fences an invocation whose executor lost its authoritative result.
+// It never projects a fabricated failed result or authorizes replay.
+func (l *Ledger) MarkUnknown(ctx context.Context, invocationID string) error {
+	now := time.Now().UTC().UnixMilli()
+	return l.write(ctx, func(tx *persistence.Tx) error {
+		invocation, err := l.invocation(tx, invocationID)
+		if err != nil {
+			return err
+		}
+		if invocation.State == string(InvocationInterruptedUnknown) {
+			return nil
+		}
+		if invocation.State != string(InvocationRunning) {
+			return fmt.Errorf("tool invocation %q cannot become unknown from %s", invocationID, invocation.State)
+		}
+		invocation.State, invocation.Result, invocation.SettledAt = string(InvocationInterruptedUnknown), nil, now
+		if err := tx.Put(toolstate.Invocations, invocationID, invocation); err != nil {
+			return err
+		}
+		batch, err := l.batch(tx, invocation.BatchID)
+		if err != nil {
+			return err
+		}
+		batch.Status, batch.UpdatedAt, batch.TerminalAt = string(BatchInterrupted), now, max(batch.TerminalAt, now)
+		return toolstate.PutBatch(tx, batch)
+	})
+}
+
 func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolresult.Result) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {

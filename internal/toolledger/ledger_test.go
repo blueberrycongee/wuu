@@ -2,6 +2,7 @@ package toolledger
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -117,55 +118,64 @@ func TestLedgerReconcileBlocksUnknownRunningInvocation(t *testing.T) {
 }
 
 func TestLedgerLateSettlementAfterReconcileDoesNotOverrideUnknownInvocation(t *testing.T) {
-	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		owner, err := New(documents, "thread-late-settlement")
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx := context.Background()
-		batchID, err := owner.BeginBatch(ctx, "operation-late-settlement", 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		invocation, err := owner.Prepare(ctx, batchID, providers.ToolCall{
-			ID: "call-late", Name: "write_file", Arguments: `{"path":"important.go"}`,
-		}, ReplayAtMostOnce)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := owner.FinalizeBatch(ctx, batchID); err != nil {
-			t.Fatal(err)
-		}
-		if err := owner.Start(ctx, invocation.ID); err != nil {
-			t.Fatal(err)
-		}
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit_unknown=%v", explicit), func(t *testing.T) {
+			forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
+				owner, err := New(documents, "thread-late-settlement")
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := context.Background()
+				batchID, err := owner.BeginBatch(ctx, "operation-late-settlement", 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				invocation, err := owner.Prepare(ctx, batchID, providers.ToolCall{
+					ID: "call-late", Name: "write_file", Arguments: `{"path":"important.go"}`,
+				}, ReplayAtMostOnce)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := owner.FinalizeBatch(ctx, batchID); err != nil {
+					t.Fatal(err)
+				}
+				if err := owner.Start(ctx, invocation.ID); err != nil {
+					t.Fatal(err)
+				}
 
-		restartLedgerStore(t, documents)
-		recovered, err := New(documents, "thread-late-settlement")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := recovered.Reconcile(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if err := owner.Settle(ctx, invocation.ID, toolresult.FromText("written")); err != nil {
-			t.Fatalf("late settlement after ownership recovery: %v", err)
-		}
-		decision, err := recovered.DecideReplay(ctx, batchID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if decision.Action != ReplayBlock || decision.Reason != ReplayReasonInvocationUnknown {
-			t.Fatalf("late settlement weakened replay fence: %+v", decision)
-		}
+				restartLedgerStore(t, documents)
+				recovered, err := New(documents, "thread-late-settlement")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if explicit {
+					err = recovered.MarkUnknown(ctx, invocation.ID)
+				} else {
+					err = recovered.Reconcile(ctx)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := owner.Settle(ctx, invocation.ID, toolresult.FromText("written")); err != nil {
+					t.Fatalf("late settlement after ownership recovery: %v", err)
+				}
+				decision, err := recovered.DecideReplay(ctx, batchID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if decision.Action != ReplayBlock || decision.Reason != ReplayReasonInvocationUnknown {
+					t.Fatalf("late settlement weakened replay fence: %+v", decision)
+				}
 
-		var invocationState, batchState string
-		invocationState = readLedgerDocument[toolstate.Invocation](t, documents, toolstate.Invocations, invocation.ID).State
-		batchState = readLedgerDocument[toolstate.Batch](t, documents, toolstate.Batches, batchID).Status
-		if invocationState != string(InvocationInterruptedUnknown) || batchState != string(BatchInterrupted) {
-			t.Fatalf("late settlement changed recovered states = %q/%q", invocationState, batchState)
-		}
-	})
+				var invocationState, batchState string
+				invocationState = readLedgerDocument[toolstate.Invocation](t, documents, toolstate.Invocations, invocation.ID).State
+				batchState = readLedgerDocument[toolstate.Batch](t, documents, toolstate.Batches, batchID).Status
+				if invocationState != string(InvocationInterruptedUnknown) || batchState != string(BatchInterrupted) {
+					t.Fatalf("late settlement changed recovered states = %q/%q", invocationState, batchState)
+				}
+			})
+		})
+	}
 }
 
 func TestLedgerOpenDoesNotReconcileLiveInvocation(t *testing.T) {

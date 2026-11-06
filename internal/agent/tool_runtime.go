@@ -402,6 +402,18 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		}()
 		finish := func(result toolresult.Result, executionErr error) {
 			defer cancel()
+			if toolerrors.Kind(executionErr) == toolerrors.UncertainEffect {
+				r.mu.Lock()
+				if r.ledger != nil {
+					if markErr := r.ledger.MarkUnknown(context.WithoutCancel(runCtx), run.invocationID); markErr != nil {
+						executionErr = errors.Join(executionErr, fmt.Errorf("mark unknown tool invocation: %w", markErr))
+					}
+				}
+				r.ledgerErr = errors.Join(executionErr, r.ledgerErr)
+				r.mu.Unlock()
+				run.complete(toolresult.Result{}, executionErr)
+				return
+			}
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
 			}
@@ -687,6 +699,11 @@ func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
 
 func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []providers.ToolCall) error {
 	r.mu.Lock()
+	if r.ledgerErr != nil {
+		err := r.ledgerErr
+		r.mu.Unlock()
+		return err
+	}
 	if r.byID == nil {
 		r.byID = map[string]*toolRun{}
 	}
@@ -760,6 +777,12 @@ func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []provid
 
 	if r.ledger != nil && batchID != "" {
 		if err := r.ledger.FinalizeBatch(ctx, batchID); err != nil {
+			r.mu.Lock()
+			terminalErr := r.ledgerErr
+			r.mu.Unlock()
+			if terminalErr != nil {
+				return terminalErr
+			}
 			return err
 		}
 	}
@@ -919,6 +942,9 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 		var text string
 		text, err = executor.Execute(ctx, call)
 		result = toolresult.FromText(text)
+	}
+	if toolerrors.Kind(err) == toolerrors.UncertainEffect {
+		return toolresult.Result{}, err
 	}
 	if err != nil {
 		result.IsError = true

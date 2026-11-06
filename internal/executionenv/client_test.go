@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -173,8 +174,8 @@ func TestTransportCancellationAndNoReplay(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.Call(ctx, "wait", nil); err == nil {
-		t.Fatal("cancelled call succeeded")
+	if _, err := c.Call(ctx, "wait", nil); !errors.Is(err, context.Canceled) || toolerrors.Kind(err) != "" {
+		t.Fatalf("pre-dispatch cancellation: %v", err)
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -225,8 +226,8 @@ func TestProgramRetirementKeepsProcessControlAvailable(t *testing.T) {
 		t.Fatal("program never started")
 	}
 	cancel()
-	if err := <-first; err == nil {
-		t.Fatal("cancelled program reported success")
+	if err := <-first; !errors.Is(err, context.Canceled) || toolerrors.Kind(err) != toolerrors.UncertainEffect {
+		t.Fatalf("dispatched cancellation lost uncertainty: %v", err)
 	}
 	nextCtx, nextCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer nextCancel()

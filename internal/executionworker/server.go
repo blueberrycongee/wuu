@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -293,6 +294,8 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 		go func(req executionenv.Request) {
 			defer running.Done()
 			defer stop()
+			var callbackMu sync.Mutex
+			var callbackUnknown error
 			bridge := callbackExecutor{invoke: func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 				id := rand.Text()
 				reply := make(chan executionenv.Response, 1)
@@ -305,7 +308,17 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 				select {
 				case response := <-reply:
 					if response.Error != "" {
-						return toolresult.Result{}, errors.New(response.Error)
+						err := errors.New(response.Error)
+						if response.ErrorKind != "" {
+							typed := toolerrors.New(response.ErrorKind, response.Error)
+							if response.ErrorKind == toolerrors.UncertainEffect {
+								callbackMu.Lock()
+								callbackUnknown = typed
+								callbackMu.Unlock()
+							}
+							return toolresult.Result{}, typed
+						}
+						return toolresult.Result{}, err
 					}
 					var result toolresult.Result
 					err := json.Unmarshal(response.Data, &result)
@@ -336,9 +349,18 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 					}()
 				})
 			}
+			// Guest code can catch callback exceptions, but cannot turn a lost
+			// external receipt into an authoritative successful result.
+			callbackMu.Lock()
+			if callbackUnknown != nil {
+				err = callbackUnknown
+				data = nil
+			}
+			callbackMu.Unlock()
 			response := executionenv.Response{ID: req.ID, Data: data}
 			if err != nil {
 				response.Error = err.Error()
+				response.ErrorKind = toolerrors.Kind(err)
 			}
 			mu.Lock()
 			delete(pending, req.ID)
