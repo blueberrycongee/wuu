@@ -2870,6 +2870,9 @@ button.settings-engine-expand:hover {
   width: 100%;
   min-width: 0;
   height: 100%;
+  /* The workbench rail offsets its content past the ribbon and titlebar.
+     The floating panel already starts there, so that offset is not local. */
+  margin: 0;
   padding-top: var(--space-2);
   border: 0;
   border-radius: 0;

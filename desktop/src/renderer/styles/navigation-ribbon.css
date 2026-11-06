@@ -60,7 +60,7 @@
   padding-right: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px));
 }
 
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar .sidebar-section-title {
   padding-left: calc(var(--control-size-toolbar) + var(--space-2) + var(--ribbon-restore-space));
 }
 
@@ -98,7 +98,7 @@
   box-shadow: none;
 }
 
-.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-content {
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar > .sidebar-content {
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: var(--space-2);
   width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
