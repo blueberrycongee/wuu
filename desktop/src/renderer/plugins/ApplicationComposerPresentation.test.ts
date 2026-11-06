@@ -44,7 +44,7 @@ describe("composer presentation host boundary", () => {
   });
   it("publishes immutable telemetry without mutating the canonical store", () => {
     const f = fixture();
-    turnTelemetryStore.ingest({ kind: "notification", workdir: "/one", message: { method: "turn/usage", params: { turn_id: "one", output_tokens: 4 } } });
+    turnTelemetryStore.ingest({ kind: "notification", workdir: "/one", message: { method: "turn/usage", params: { turn_id: "one", context_tokens: 500, context_window_tokens: 200_000 } } });
     const snapshot = f.service.getTelemetry("one");
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(snapshot).not.toBe(turnTelemetryStore.getSnapshot("one"));

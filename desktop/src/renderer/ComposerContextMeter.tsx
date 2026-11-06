@@ -1,16 +1,13 @@
 // Composer-toolbar retained-history meter.
 //
-// Sits next to the live token-speed gauge and shows retained conversation
-// history against the active provider/model input ceiling. The current
-// in-flight request can be larger than this when the user attaches large
-// files or images; /context is the surface for inspecting that full request.
+// Shows retained conversation history against the active provider/model
+// input ceiling. The current in-flight request can be larger than this when
+// the user attaches large files or images; /context is the surface for
+// inspecting that full request.
 //
-// The progress stroke reuses the token-speed gauge's color palette so the
-// two meters read as a coordinated pair: idle gray when the window is empty,
+// The progress stroke uses three tiers: idle gray when the window is empty,
 // warm amber while context is filling, accent-warm red once usage crosses
-// the high-water mark. The 0.7 threshold mirrors the token-speed gauge's
-// 70/100 tps break, so both meters shift into "high" at the same fraction
-// of their scale.
+// the high-water mark at 0.7 of the window.
 
 import type { TurnContextUsage } from "./AppState";
 import { useId, useRef, useState } from "react";

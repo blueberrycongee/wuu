@@ -279,7 +279,7 @@ describe("ComposerContextMeter", () => {
   });
 
   it("drives the SVG data-fill and inline color from the gauge color tiers", () => {
-    // ratio = 0 → idle gray (matches the token-speed gauge when stopped).
+    // ratio = 0 → idle gray.
     renderMeter(
       usageWith({
         used: 0,
