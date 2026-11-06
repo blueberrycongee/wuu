@@ -31,9 +31,12 @@ the built `examples/plugins/durable-driver/package` directory using the host's n
 plugin installation path, and configure a model provider in the same config.
 Keep credentials in the host's normal credential store, not in checkpoints.
 The package is a self-contained bundle; do not register the source tree or its
-development `node_modules`. The reference disables PTC and uses direct,
-non-streaming tool batches so the host can reserve the exact proposed approval
-batch before effects begin. Nested calls cannot self-approve a wait.
+development `node_modules`. The reference disables PTC to demonstrate direct,
+non-streaming tool approval. PTC can be enabled explicitly: the host reserves the
+outer program call and its source in the proposed batch, while dynamic nested
+calls still pass their own ordinary permissions. Durable controls remain
+direct-only; a nested call cannot self-approve a wait. Approval-gated batches
+never receive automatic recovery permission.
 
 `configure.mjs` binds the existing command execution backend to
 `wuu execution-worker`. The worker is a separate JSONL process with a shared
@@ -81,8 +84,15 @@ Rendered browser acceptance and external production infrastructure require their
 own evidence. This example does not provision networking, authentication secrets,
 remote machines, routing, or production high availability.
 
-Children use fresh host-managed context. Their fork/source sequence records
-lineage, not a copy of the parent's checkpoint or uncommitted effects. Task token
-totals use reported host model usage; lost replies are marked unavailable or
-incomplete. Tool receipts remain authoritative, but the task projection does not
-invent per-tool cost or reconstruct billing after a lost model reply.
+Children use fresh host-managed context by default. An explicit `fork_seq` copies
+the active historical prefix through that exact persisted sequence, with a fresh
+session/provider continuation identity and no execution checkpoint. It inherits
+the selected entry's recorded agent configuration and projected code-mode store
+state, while current permissions and tool restrictions remain authoritative.
+Missing legacy snapshots fail explicitly; code state currently maps only ordinary
+conversation scopes in the same working directory. The default desktop loop does
+not enable these snapshots.
+Task token totals can recover reported model usage through host request receipts,
+including after a lost reply. Missing or expired receipts remain unavailable or
+incomplete. Tool receipts remain authoritative; the task projection does not
+invent per-tool cost or reconstruct unreported billing.

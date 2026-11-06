@@ -9,6 +9,12 @@ import {
   requireKernelService,
   runJSONLRuntime,
   DriverOperationError,
+  DriverModelError,
+  RuntimeExecutionCancellation,
+  SESSION_FORK_SEQUENCE_HOST_FEATURE,
+  SESSION_HISTORICAL_STATE_HOST_FEATURE,
+  SESSION_DRIVER_RECOVERY_HOST_FEATURE,
+  type DriverModelRound,
   type RuntimePlugin,
   type DriverExecution,
   type DriverCheckpoint,
@@ -23,6 +29,7 @@ import {
   type ModelToolCallV1,
 } from "@wuu/plugin-sdk";
 import {
+  phases,
   DRIVER_ID,
   DRIVER_VERSION,
   checkpoint,
@@ -37,22 +44,135 @@ import {
   log,
   type State,
   type Phase,
+  type SessionDocument,
 } from "./state.js";
 import {
   controlTool,
   startScheduler,
   cancelTasks,
   requestCancellation,
+  requestCompletion,
+  finishTask,
+  holdOwned,
+  settleCompletions,
+  generationClosing,
   schedulerTick,
 } from "./orchestration.js";
+import {
+  changeContext,
+  readContextControl,
+  shouldCompact,
+  shouldBackgroundCompact,
+  backgroundContext,
+  cancelBackgroundContext,
+} from "./context.js";
+import { readModelUsage, applyModelUsage } from "./usage.js";
+import { TaskDefinitions, type Json } from "./task-definitions.js";
 interface Instance {
   execution: DriverExecution;
   checkpoint: DriverCheckpoint<State>;
   running: boolean;
   resumed: boolean;
 }
+interface RunTaskContext {
+  instance: Instance;
+  host: RuntimeHost;
+  execution: RuntimeExecutionContext;
+  error_code?: string;
+}
+const taskDefinitions = new TaskDefinitions<
+  RunTaskContext,
+  DriverRunResult<State>
+>();
+taskDefinitions.register({
+  name: "durable.run",
+  version: 1,
+  initial(input: Json) {
+    if (
+      !input ||
+      Array.isArray(input) ||
+      typeof input !== "object" ||
+      typeof input.session_id !== "string" ||
+      typeof input.turn_id !== "string" ||
+      Object.keys(input).some((key) => !["session_id", "turn_id"].includes(key))
+    )
+      throw fault("invalid_task_input");
+    return {
+      schema_version: 1,
+      session_id: input.session_id,
+      turn_id: input.turn_id,
+      run_id: randomUUID(),
+      phase: "ready",
+      round: 0,
+      attempt: 1,
+      restart_count: 0,
+    };
+  },
+  phases: Object.fromEntries(
+    phases.map((phase) => [
+      phase,
+      ({ instance, host, execution }: RunTaskContext) =>
+        run(instance, host, execution),
+    ]),
+  ),
+  async abort({ instance, error_code }) {
+    const state = instance.checkpoint.state;
+    await requestCompletion(
+      state.session_id,
+      state.run_id,
+      "aborted",
+      error_code ?? "task_canceled",
+    );
+    return { status: "canceled", checkpoint: instance.checkpoint };
+  },
+});
+function initialRun(state: State): State {
+  return {
+    ...taskDefinitions.initial("durable.run", {
+      session_id: state.session_id,
+      turn_id: state.turn_id,
+    }),
+    ...state,
+  };
+}
 const instances = new Map<string, Instance>();
 let restartLimit = 5;
+let modelRetries = 3;
+let retryBaseMs = 2000;
+let retryMaxMs = 60000;
+function retrySetting(name: string, fallback: number, maximum: number): number {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed > maximum)
+    throw fault("invalid_retry_policy");
+  return parsed;
+}
+function retryableModelError(error: unknown): error is DriverModelError {
+  if (
+    !(error instanceof DriverModelError) ||
+    error.round.tool_work_started ||
+    error.round.tool_batch_id ||
+    error.failure.context_overflow
+  )
+    return false;
+  const failure = error.failure;
+  if (
+    [
+      "workflow_budget_exceeded",
+      "workflow_cost_indeterminate",
+      "replay_unsafe",
+    ].includes(failure.recovery?.stop_reason ?? "")
+  )
+    return false;
+  return [
+    "network",
+    "server",
+    "overloaded",
+    "rate_limit",
+    "incomplete_stream",
+  ].includes(failure.category);
+}
 let stopScheduler: (() => Promise<void>) | undefined;
 const controls = [
   {
@@ -78,18 +198,22 @@ const controls = [
   {
     id: "durable_subagent",
     description:
-      "Launch a child session. Foreground waits suspend this turn; background results arrive as a deduplicated follow-up.",
+      "Launch a child session, optionally forked at a historical fork_seq. Foreground waits suspend this turn; background results arrive as a deduplicated follow-up.",
     properties: {
       prompt: { type: "string" },
       background: { type: "boolean" },
       independent: { type: "boolean" },
+      fork_seq: { type: "integer", minimum: 1 },
     },
     required: ["prompt"],
   },
   {
     id: "durable_cancel",
     description: "Cancel a logical task and non-independent descendants.",
-    properties: { run_id: { type: "string" } },
+    properties: {
+      run_id: { type: "string" },
+      include_background: { type: "boolean" },
+    },
     required: [],
   },
   {
@@ -98,6 +222,7 @@ const controls = [
       "Archive-preserving active context compaction, reset, or handoff at the next safe boundary.",
     properties: {
       action: { type: "string", enum: ["compact", "reset", "handoff"] },
+      note: { type: "string" },
     },
     required: ["action"],
   },
@@ -117,9 +242,18 @@ export const plugin: RuntimePlugin = {
         throw fault("invalid_restart_limit");
       restartLimit = parsed;
     }
+    modelRetries = retrySetting("WUU_DURABLE_MODEL_RETRIES", 3, 100);
+    retryBaseMs = retrySetting("WUU_DURABLE_RETRY_BASE_MS", 2000, 60000);
+    retryMaxMs = retrySetting("WUU_DURABLE_RETRY_MAX_MS", 60000, 3600000);
+    if (retryBaseMs > retryMaxMs) throw fault("invalid_retry_policy");
     return {
       protocol_version: 3,
       lifecycle_version: 2,
+      required_host_features: [
+        SESSION_FORK_SEQUENCE_HOST_FEATURE,
+        SESSION_HISTORICAL_STATE_HOST_FEATURE,
+        SESSION_DRIVER_RECOVERY_HOST_FEATURE,
+      ],
       provided_services: [
         driverServiceDescriptor("default"),
         {
@@ -236,12 +370,37 @@ export const plugin: RuntimePlugin = {
     if (service === "durable.scheduler") {
       if (caller !== DRIVER_ID) throw fault("scheduler_scope_required");
       if (method === "tick") {
-        await schedulerTick(host, execution.signal);
+        await schedulerTick(host, execution.signal, (cp) =>
+          taskDefinitions.prepare(host, cp),
+        );
         return {};
       }
       if (method === "cancel") {
-        const input = params as { session_id: string; run_id: string };
-        await cancelTasks(host, input.session_id, input.run_id);
+        const input = params as {
+          session_id: string;
+          run_id: string;
+          outcome?: "completed" | "failed" | "aborted";
+          error_code?: string;
+          include_background?: boolean;
+        };
+        if (input.outcome)
+          await finishTask(
+            host,
+            input.session_id,
+            input.run_id,
+            input.outcome,
+            input.error_code,
+            input.include_background,
+            (cp) => taskDefinitions.prepare(host, cp),
+          );
+        else
+          await cancelTasks(
+            host,
+            input.session_id,
+            input.run_id,
+            input.include_background,
+            (cp) => taskDefinitions.prepare(host, cp),
+          );
         return {};
       }
       throw fault("unknown_scheduler_method");
@@ -265,11 +424,25 @@ export const plugin: RuntimePlugin = {
           JSON.stringify(params);
       if (!scoped && !admitted) throw fault("session_scope_required");
       const { doc, revision } = await readSession(host, input.session_id);
+      const blocked = new Map<string, string | undefined>();
+      const tasks = doc.tasks.map((task) => {
+        if (["completed", "failed", "aborted"].includes(task.status))
+          return task;
+        if (!blocked.has(task.run_id)) {
+          const cp = doc.checkpoints[task.run_id];
+          blocked.set(
+            task.run_id,
+            cp ? taskDefinitions.blockedReason(cp) : undefined,
+          );
+        }
+        const reason = blocked.get(task.run_id);
+        return reason ? { ...task, blocked_reason: reason } : task;
+      });
       if (method === "list")
         return {
           version: 1,
           revision: String(revision),
-          tasks: doc.tasks.filter(
+          tasks: tasks.filter(
             (t) => !input.run_id || t.run_id === input.run_id,
           ),
         };
@@ -278,7 +451,7 @@ export const plugin: RuntimePlugin = {
           version: 1,
           revision: String(revision),
           task:
-            doc.tasks.find(
+            tasks.find(
               (t) =>
                 t.id === input.task_id &&
                 (!input.run_id || t.run_id === input.run_id),
@@ -292,6 +465,9 @@ export const plugin: RuntimePlugin = {
         version: DRIVER_VERSION,
         capabilities: [
           "durable",
+          "durable-recovery",
+          "historical_fork",
+          "tool_recovery",
           "tool_use",
           "checkpoint",
           "sleep",
@@ -306,7 +482,21 @@ export const plugin: RuntimePlugin = {
       const session = input.execution.session_id;
       let cp: DriverCheckpoint<State>;
       if (method === "resume") {
-        cp = validate((input as DriverResumeParams<State>).checkpoint, session);
+        cp = await taskDefinitions.prepare(
+          host,
+          validate((input as DriverResumeParams<State>).checkpoint, session),
+        );
+        // Cleanup commits through lifecycle admission after a canceled physical
+        // turn may outlive that turn's host checkpoint write. Never resurrect it.
+        const canonical = (await readSession(host, session)).doc.checkpoints[
+          cp.state.run_id
+        ];
+        if (
+          canonical &&
+          ["completing", "failed", "aborted"].includes(canonical.state.phase) &&
+          !["complete", "failed", "aborted"].includes(cp.state.phase)
+        )
+          cp = validate(canonical, session);
         if (cp.state.phase === "complete") {
           const doc = (await readSession(host, session)).doc;
           const wake = Object.values(doc.checkpoints).find(
@@ -331,16 +521,18 @@ export const plugin: RuntimePlugin = {
                 turn_id: input.execution.execution_id,
                 phase: wake.state.wait_id ? "waiting" : "ready",
               })
-            : checkpoint({
-                schema_version: 1,
-                session_id: session,
-                run_id: randomUUID(),
-                turn_id: input.execution.execution_id,
-                phase: "ready",
-                attempt: 1,
-                restart_count: 0,
-                round: 0,
-              });
+            : checkpoint(
+                initialRun({
+                  schema_version: 1,
+                  session_id: session,
+                  run_id: randomUUID(),
+                  turn_id: input.execution.execution_id,
+                  phase: "ready",
+                  attempt: 1,
+                  restart_count: 0,
+                  round: 0,
+                }),
+              );
         } else {
           const suspended = cp.state.suspended === true;
           cp = checkpoint({
@@ -375,7 +567,7 @@ export const plugin: RuntimePlugin = {
                   ? pending.state.batch_id
                   : undefined,
               }
-            : {
+            : initialRun({
                 schema_version: 1,
                 session_id: session,
                 run_id: randomUUID(),
@@ -384,7 +576,7 @@ export const plugin: RuntimePlugin = {
                 attempt: 1,
                 restart_count: 0,
                 round: 0,
-              },
+              }),
         );
       }
       const instance_id = randomUUID();
@@ -407,9 +599,17 @@ export const plugin: RuntimePlugin = {
     if (method === "checkpoint") return instance.checkpoint;
     if (method !== "run") throw fault("unknown_driver_method");
     if (instance.running) throw fault("run_already_active");
+    instance.checkpoint = await taskDefinitions.prepare(
+      host,
+      instance.checkpoint,
+    );
     instance.running = true;
     try {
-      return await run(instance, host, execution);
+      return await taskDefinitions.dispatch(instance.checkpoint.state, {
+        instance,
+        host,
+        execution,
+      });
     } finally {
       instance.running = false;
     }
@@ -422,16 +622,53 @@ async function run(
 ): Promise<DriverRunResult<State>> {
   const turn = driverTurn(host, instance.execution);
   let state = instance.checkpoint.state;
-  const save = async (phase: Phase, patch: Partial<State> = {}) => {
+  const hasNewInput = (message: DriverMessage | undefined) =>
+    Boolean(
+      message &&
+      digest(message) !== state.input?.digest &&
+      // A reset note seeds future context; it is not a newly submitted request.
+      !(
+        state.context_operation?.trigger === "reset" &&
+        message.client_id ===
+          `${state.context_operation.id}:${state.context_call_id}`
+      ),
+    );
+  const save = async (
+    phase: Phase,
+    patch: Partial<State> = {},
+    edit?: (doc: SessionDocument, next: State) => void,
+  ) => {
     const next = { ...state, ...patch, phase, suspended: undefined },
       cp = checkpoint(next);
+    // Only durable semantic progress resets the consecutive crash budget.
+    // Execution IDs, attempts, and repeated checkpoints are not progress.
+    if (
+      phase !== state.phase ||
+      [
+        "round",
+        "model_digest",
+        "call_digest",
+        "receipt_ids",
+        "wait_id",
+        "retry_at",
+        "context_revision",
+      ].some(
+        (key) =>
+          digest(next[key as keyof State] ?? null) !==
+          digest(state[key as keyof State] ?? null),
+      )
+    )
+      next.restart_count = 0;
     await mutate(host, state.session_id, (doc) => {
       const intent = doc.checkpoints[state.run_id]?.state.context_intent;
       if (
         intent &&
         !Object.prototype.hasOwnProperty.call(patch, "context_intent")
-      )
+      ) {
         next.context_intent = intent;
+        next.context_call_id =
+          doc.checkpoints[state.run_id]?.state.context_call_id;
+      }
       doc.checkpoints[state.run_id] = cp;
       const task =
         doc.tasks.find((t) => t.id === state.run_id) ??
@@ -478,6 +715,7 @@ async function run(
         }
       }
       upsert(doc, task);
+      edit?.(doc, next);
     });
     await turn.checkpoint(cp);
     state = next;
@@ -543,8 +781,121 @@ async function run(
     instance.checkpoint = checkpoint(state);
     return receipt;
   };
+  const scheduleRetry = async (code: string, error?: DriverModelError) => {
+    const attempt = state.model_attempt ?? 1;
+    if (attempt > modelRetries) return false;
+    const hinted = error?.failure.retry_after_ms ?? 0;
+    const delay = Math.max(
+      Math.min(retryMaxMs, retryBaseMs * 2 ** Math.min(attempt - 1, 20)),
+      hinted,
+    );
+    if (!Number.isFinite(delay) || delay > 3600000) return false;
+    const retry_at = new Date(Date.now() + delay).toISOString();
+    const usage = await readModelUsage(turn, state);
+    await save("sleeping", { retry_at, retry_code: code }, (doc, next) => {
+      recordModelFailure(doc, state, code);
+      applyModelUsage(doc, state, usage);
+      const timer = newTask(
+        next,
+        "sleep",
+        `${state.run_id}:retry:${state.round}`,
+      );
+      timer.status = "waiting";
+      timer.phase = "sleeping";
+      timer.wake_at = retry_at;
+      timer.request_id = `${timer.id}:wake`;
+      timer.wait = {
+        request_id: timer.request_id,
+        kind: "sleep",
+        started_at: timer.created_at,
+        status: "pending",
+      };
+      if (!doc.tasks.some((t) => t.id === timer.id)) upsert(doc, timer);
+    });
+    return true;
+  };
+  const prepareRetry = async () => {
+    // Failed assistant fragments remain archived, but cannot become a successful
+    // answer or tool proposal on a later attempt. Keep newly admitted user input.
+    await turn.archiveContext();
+    const context = await turn.context();
+    // The scheduler's persisted timer and host-authenticated plugin provenance
+    // identify this control event. Its text is never an identity or authority.
+    const timerID = `${state.run_id}:retry:${state.round}`;
+    const timer = (await readSession(host, state.session_id)).doc.tasks.find(
+      (task) =>
+        task.id === timerID &&
+        task.run_id === state.run_id &&
+        task.owner === DRIVER_ID &&
+        task.kind === "sleep",
+    );
+    const sentRetryWake = Boolean(
+      state.retry_at &&
+      timer &&
+      (timer.dispatching || timer.delivery_accepted || timer.delivered),
+    );
+    const messages = context.messages.filter((message, index) => {
+      if (
+        sentRetryWake &&
+        message.origin === "plugin" &&
+        message.origin_id === DRIVER_ID &&
+        message.cause === `durable.sleep:${timerID}` &&
+        message.client_id &&
+        message.seq &&
+        message.seq > 0
+      )
+        return false;
+      return (
+        index < (state.model_boundary ?? 0) || message.role !== "assistant"
+      );
+    });
+    if (messages.length !== context.messages.length) {
+      if (!context.can_replace) throw fault("context_replacement_unavailable");
+      await turn.replaceContext(context.revision, messages);
+    }
+  };
   try {
-    const settings = await turn.settings();
+    let settings = await turn.settings();
+    if (!settings.model_single_attempt)
+      throw fault("single_attempt_model_required");
+    if (state.phase === "completing") {
+      await settleCompletions(host, state.session_id, (cp) =>
+        taskDefinitions.prepare(host, cp),
+      );
+      const restored = (await readSession(host, state.session_id)).doc
+        .checkpoints[state.run_id];
+      if (!restored) throw fault("checkpoint_missing");
+      state = restored.state;
+      instance.checkpoint = restored;
+      const incoming = await turn.read();
+      const latest = incoming.messages.findLast(
+        (m) => m.role === "user" && !m.hidden,
+      );
+      if (hasNewInput(latest)) {
+        state = initialRun({
+          schema_version: 1,
+          session_id: state.session_id,
+          run_id: randomUUID(),
+          redirected_run_id: state.run_id,
+          turn_id: instance.execution.execution_id,
+          phase: "ready",
+          attempt: 1,
+          restart_count: 0,
+          round: 0,
+        });
+        instance.checkpoint = checkpoint(state);
+        await save("ready");
+      } else {
+        if (state.phase === "aborted")
+          return { status: "canceled", checkpoint: restored };
+        if (state.phase === "failed")
+          throw fault(state.error_code ?? "owner_failed");
+        const receipt = await turn.complete("", [], {
+          stop_reason: "durable_completion",
+        });
+        return { status: "succeeded", ...receipt, checkpoint: restored };
+      }
+    }
     if (state.restart_count > restartLimit) throw fault("restart_limit");
     let current = await turn.read();
     const retryMessage = current.messages.findLast(
@@ -626,7 +977,7 @@ async function run(
           settings.resume_sampling) &&
         state.error_code !== "uncertain_tool_effect"
       ) {
-        state = {
+        state = initialRun({
           schema_version: 1,
           session_id: state.session_id,
           run_id: randomUUID(),
@@ -635,7 +986,7 @@ async function run(
           attempt: 1,
           restart_count: 0,
           round: 0,
-        };
+        });
         instance.checkpoint = checkpoint(state);
         await save("ready");
       } else throw fault(state.error_code ?? "terminal_checkpoint");
@@ -646,6 +997,65 @@ async function run(
         receipt_id: state.receipt_id,
         checkpoint: instance.checkpoint,
       };
+    if (state.retry_at) {
+      const previousInput = state.input?.digest;
+      current = await boundary();
+      await prepareRetry();
+      if (
+        previousInput !== state.input?.digest &&
+        current.messages.findLast((m) => m.role === "user" && !m.hidden)
+          ?.origin !== "plugin"
+      ) {
+        state = initialRun({
+          schema_version: 1,
+          session_id: state.session_id,
+          run_id: randomUUID(),
+          redirected_run_id: state.run_id,
+          turn_id: instance.execution.execution_id,
+          phase: "ready",
+          attempt: 1,
+          restart_count: 0,
+          round: 0,
+          input: state.input,
+        });
+        instance.checkpoint = checkpoint(state);
+        await save("ready");
+      } else {
+        if (Date.now() < Date.parse(state.retry_at)) {
+          const receipt = await suspend({ stop_reason: "durable_model_retry" });
+          return {
+            status: "succeeded",
+            ...receipt,
+            checkpoint: instance.checkpoint,
+          };
+        }
+        await save(
+          "ready",
+          {
+            retry_at: undefined,
+            retry_code: undefined,
+            model_attempt: (state.model_attempt ?? 1) + 1,
+            call_ids: undefined,
+            receipt_ids: undefined,
+            batch_id: undefined,
+          },
+          (doc) => {
+            const timer = doc.tasks.find(
+              (t) => t.id === `${state.run_id}:retry:${state.round}`,
+            );
+            if (timer && !timer.dispatching) {
+              timer.delivered = true;
+              timer.status = "completed";
+              timer.phase = "complete";
+              timer.updated_at = new Date().toISOString();
+              timer.duration_ms =
+                Date.parse(timer.updated_at) - Date.parse(timer.created_at);
+              if (timer.wait) timer.wait.status = "decided";
+            }
+          },
+        );
+      }
+    }
     if (["sleeping", "waiting"].includes(state.phase) && !state.wait_id) {
       const previousInput = state.input?.digest;
       current = await boundary();
@@ -680,7 +1090,7 @@ async function run(
           ?.origin !== "plugin"
       ) {
         const previousRun = state.run_id;
-        state = {
+        state = initialRun({
           schema_version: 1,
           session_id: state.session_id,
           run_id: randomUUID(),
@@ -691,7 +1101,7 @@ async function run(
           restart_count: 0,
           round: 0,
           input: state.input,
-        };
+        });
         instance.checkpoint = checkpoint(state);
         await save("ready");
       } else if (record.status === "pending") {
@@ -723,9 +1133,30 @@ async function run(
       } else throw fault(`wait_${record.status}`);
     }
     if (instance.resumed && state.phase === "tools_running") {
-      const results = receipts(current.messages, state);
-      if (results.length !== (state.call_ids?.length ?? 0))
-        throw fault("uncertain_tool_effect");
+      let results = receipts(current.messages, state);
+      if (results.length !== (state.call_ids?.length ?? 0)) {
+        if (
+          !state.tools_execution_id ||
+          !state.batch_id ||
+          state.wait_kind === "approval"
+        )
+          throw fault("uncertain_tool_effect");
+        const calls = findCalls(current.messages, state);
+        if (
+          calls.length !== state.call_ids?.length ||
+          digest(calls) !== state.call_digest
+        )
+          throw fault("uncertain_tool_effect");
+        const recovered = await turn.recoverTools(
+          state.tools_execution_id,
+          state.batch_id,
+          calls,
+        );
+        results = receipts([...current.messages, ...recovered.messages], state);
+        if (results.length !== state.call_ids.length)
+          throw fault("uncertain_tool_effect");
+        await turn.archiveContext();
+      }
       await settleToolTasks(host, state, results);
       await save("tools_settled", {
         receipt_ids: results.map((m) => m.tool_invocation_id!),
@@ -736,25 +1167,30 @@ async function run(
     if (instance.resumed && state.phase === "model_pending") {
       const committed = current.messages
         .slice(state.model_boundary ?? current.messages.length)
-        .filter((m) => m.role === "assistant");
+        .filter(
+          (m) =>
+            m.role === "assistant" && m.cause !== "incomplete_stream_fragment",
+        );
       if (!committed.length && settings.resume_sampling) {
         // Explicit host continue may abandon an interrupted model-only request.
         // This driver never overlaps model() with tools, so there is no effect
-        // intent to replay. Lost inference usage stays explicitly unavailable.
+        // intent to replay. Read host receipts before abandoning this attempt.
+        const usage = await readModelUsage(turn, state);
         await mutate(host, state.session_id, (doc) => {
+          recordModelFailure(doc, state, "model_interrupted");
           for (const task of doc.tasks.filter(
             (t) => t.run_id === state.run_id && t.status === "running",
           )) {
             task.status = "aborted";
             task.phase = "aborted";
             task.error_code = "model_sampling_interrupted";
-            task.usage_status = task.usage ? "incomplete" : "unavailable";
             task.updated_at = new Date().toISOString();
             task.duration_ms =
               Date.parse(task.updated_at) - Date.parse(task.created_at);
           }
+          applyModelUsage(doc, state, usage);
         });
-        state = {
+        state = initialRun({
           schema_version: 1,
           session_id: state.session_id,
           run_id: randomUUID(),
@@ -763,12 +1199,26 @@ async function run(
           attempt: 1,
           restart_count: 0,
           round: 0,
-        };
+        });
         instance.checkpoint = checkpoint(state);
         await save("ready");
       } else {
-        if (!committed.length) throw fault("uncertain_model_result");
+        if (!committed.length) {
+          if (await scheduleRetry("model_interrupted")) {
+            await prepareRetry();
+            const receipt = await suspend({
+              stop_reason: "durable_model_retry",
+            });
+            return {
+              status: "succeeded",
+              ...receipt,
+              checkpoint: instance.checkpoint,
+            };
+          }
+          throw fault("model_retry_limit");
+        }
         const calls = committed.flatMap((m) => m.tool_calls ?? []);
+        const usage = await readModelUsage(turn, state);
         await mutate(host, state.session_id, (doc) => {
           const task = doc.tasks.find(
             (t) => t.id === `${state.run_id}:model:${state.round}`,
@@ -778,13 +1228,12 @@ async function run(
             task.updated_at = new Date().toISOString();
             task.duration_ms =
               Date.parse(task.updated_at) - Date.parse(task.created_at);
-            task.usage_status = "unavailable";
-            const root = doc.tasks.find((t) => t.id === state.run_id);
-            if (root)
-              root.usage_status = root.usage ? "incomplete" : "unavailable";
           }
+          applyModelUsage(doc, state, usage);
         });
         await save(calls.length ? "tools_pending" : "finalizing", {
+          model_attempt: 1,
+          overflow_compacted: undefined,
           call_ids: calls.map((c) => c.id!),
           model_digest: digest(committed),
           call_digest: digest(calls),
@@ -891,6 +1340,7 @@ async function run(
             throw fault("uncertain_tool_effect");
         }
         await save("tools_running", {
+          tools_execution_id: instance.execution.execution_id,
           batch_id: state.batch_id ?? `${state.run_id}:${state.round}`,
         });
         await mutate(host, state.session_id, (doc) => {
@@ -941,7 +1391,10 @@ async function run(
                 t.kind === "approval" ||
                 (t.kind === "subagent" && !t.background)),
           );
-        if (pending) {
+        if (
+          pending &&
+          doc.checkpoints[state.run_id]?.state.context_intent !== "reset"
+        ) {
           await boundary();
           await save(pending.kind === "sleep" ? "sleeping" : "waiting");
           const receipt = await suspend({
@@ -956,33 +1409,89 @@ async function run(
         }
         const intent = doc.checkpoints[state.run_id]?.state.context_intent;
         if (intent) {
-          await boundary();
-          await save("tools_settled", { context_intent: intent });
-          const context = await turn.context();
-          if (!context.can_replace)
-            throw fault("context_replacement_unavailable");
-          const last = context.messages.findLastIndex(
-            (m) => m.role === "user" && !m.hidden,
+          await save("tools_settled", {
+            context_intent: intent,
+            context_call_id:
+              doc.checkpoints[state.run_id]?.state.context_call_id,
+          });
+          const control = await readContextControl(host, state);
+          await save("tools_settled", {
+            context_intent: control.action,
+            context_call_id: control.call_id,
+          });
+          if (state.background_compaction && control.action !== "compact")
+            await cancelBackgroundContext(host, turn, state, save);
+          const changed = await changeContext(
+            host,
+            turn,
+            state,
+            settings,
+            control.action === "compact" ? "manual" : control.action,
+            save,
+            control,
           );
-          const messages =
-            intent === "compact"
-              ? await turn.compact(context.messages, {
-                  reason: "durable",
-                  last_successful_tokens: 0,
-                  failed_request_tokens: 0,
-                  target_total_tokens: settings.compact_keep_recent_tokens,
-                })
-              : [
-                  ...context.messages.filter((m) => m.role === "system"),
-                  ...context.messages.slice(Math.max(0, last)),
-                ];
-          const replaced = await turn.replaceContext(
-            context.revision,
-            messages,
-          );
+          if (control.action === "reset") {
+            const incoming = (await turn.read()).messages.findLast(
+              (message) => message.role === "user" && !message.hidden,
+            );
+            const continueNewInput = hasNewInput(incoming);
+            // The logical completion intent must survive a lost host receipt.
+            // This CAS only marks ownership; cleanup effects run after complete.
+            await save(
+              "completing",
+              { terminal_outcome: "completed" },
+              (document) => {
+                const root = document.tasks.find((t) => t.id === state.run_id);
+                if (root)
+                  root.outcome = { status: "unanswered", reason: "reset" };
+                holdOwned(document, state.run_id, "completed", "reset");
+              },
+            );
+            if (continueNewInput) {
+              await requestCompletion(
+                state.session_id,
+                state.run_id,
+                "completed",
+                "reset",
+              );
+              state = initialRun({
+                schema_version: 1,
+                session_id: state.session_id,
+                run_id: randomUUID(),
+                redirected_run_id: state.run_id,
+                turn_id: instance.execution.execution_id,
+                phase: "ready",
+                attempt: 1,
+                restart_count: 0,
+                round: 0,
+              });
+              instance.checkpoint = checkpoint(state);
+              await save("ready");
+              continue;
+            }
+            const receipt = await turn.complete("", [], {
+              stop_reason: "reset",
+            });
+            await requestCompletion(
+              state.session_id,
+              state.run_id,
+              "completed",
+              "reset",
+            );
+            instance.checkpoint = (
+              await readSession(host, state.session_id)
+            ).doc.checkpoints[state.run_id];
+            return {
+              status: "succeeded",
+              ...receipt,
+              checkpoint: instance.checkpoint,
+            };
+          }
           await save("ready", {
             context_intent: undefined,
-            context_revision: replaced.revision,
+            context_call_id: undefined,
+            context_operation: undefined,
+            context_revision: changed.revision,
             call_ids: undefined,
             receipt_ids: undefined,
             batch_id: undefined,
@@ -996,6 +1505,21 @@ async function run(
       }
       if (state.phase === "finalizing") {
         const answeredInput = state.input?.digest;
+        if (state.background_compaction) {
+          try {
+            await backgroundContext(
+              host,
+              turn,
+              state,
+              await turn.settings(),
+              save,
+              true,
+            );
+          } catch (error) {
+            execution.signal.throwIfAborted();
+            log(state, codeOf(error));
+          }
+        }
         current = await boundary();
         if (answeredInput !== state.input?.digest) {
           await save("ready");
@@ -1004,20 +1528,31 @@ async function run(
         await save("finalizing");
         const answer =
           current.messages.findLast(
-            (m) => m.role === "assistant" && !m.tool_calls?.length,
+            (m) =>
+              m.role === "assistant" &&
+              m.cause !== "incomplete_stream_fragment" &&
+              !m.tool_calls?.length,
           )?.content ?? "";
         if (!answer.trim()) throw fault("empty_answer");
         const receipt = await turn.complete(answer);
-        state = { ...state, phase: "complete", receipt_id: receipt.receipt_id };
+        state = { ...state, receipt_id: receipt.receipt_id };
         instance.checkpoint = checkpoint(state);
         await mutate(host, state.session_id, (doc) => {
           doc.checkpoints[state.run_id] = instance.checkpoint;
-          const t = doc.tasks.find((t) => t.id === state.run_id)!;
-          t.phase = "complete";
-          t.status = "completed";
-          t.updated_at = new Date().toISOString();
-          t.duration_ms = Date.parse(t.updated_at) - Date.parse(t.created_at);
         });
+        await finishTask(
+          host,
+          state.session_id,
+          state.run_id,
+          "completed",
+          undefined,
+          false,
+          (cp) => taskDefinitions.prepare(host, cp),
+        );
+        instance.checkpoint = (
+          await readSession(host, state.session_id)
+        ).doc.checkpoints[state.run_id];
+        state = instance.checkpoint.state;
         return {
           status: "succeeded",
           ...receipt,
@@ -1026,18 +1561,77 @@ async function run(
       }
       current = await boundary();
       await save("ready");
-      const context = await turn.requestContext();
-      const request = await turn.transformRequest({
-        ...current,
-        messages: [
-          ...current.messages,
-          ...context
-            .filter((s) => !s.durable && s.lifecycle === "request_only")
-            .flatMap((s) => s.messages),
-        ],
-      });
+      settings = await turn.settings();
+      const buildRequest = async () => {
+        current = await boundary();
+        const context = await turn.requestContext();
+        return turn.transformRequest({
+          ...current,
+          messages: [
+            ...current.messages,
+            ...context
+              .filter((s) => !s.durable && s.lifecycle === "request_only")
+              .flatMap((s) => s.messages),
+          ],
+        });
+      };
+      let request = await buildRequest();
+      if (state.background_compaction) {
+        const blocking = shouldCompact(settings, request);
+        try {
+          const proposal = await backgroundContext(
+            host,
+            turn,
+            state,
+            settings,
+            save,
+            blocking,
+          );
+          if (proposal.status !== "running") {
+            if (blocking && proposal.status !== "stale")
+              await save("ready", { compaction_checked_round: state.round });
+            request = await buildRequest();
+          }
+        } catch (error) {
+          execution.signal.throwIfAborted();
+          if (blocking) throw error;
+          log(state, codeOf(error));
+        }
+      }
+      if (
+        state.compaction_checked_round !== state.round &&
+        shouldCompact(settings, request)
+      ) {
+        await changeContext(host, turn, state, settings, "threshold", save);
+        await save("ready", {
+          compaction_checked_round: state.round,
+          context_operation: undefined,
+        });
+        request = await buildRequest();
+      } else if (
+        !state.background_compaction &&
+        state.background_checked_round !== state.round &&
+        shouldBackgroundCompact(settings, request)
+      ) {
+        await save("ready", { background_checked_round: state.round });
+        try {
+          const proposal = await backgroundContext(
+            host,
+            turn,
+            state,
+            settings,
+            save,
+          );
+          if (proposal.status !== "running") request = await buildRequest();
+        } catch (error) {
+          execution.signal.throwIfAborted();
+          log(state, codeOf(error));
+        }
+      }
       await save("model_pending", {
         round: state.round + 1,
+        tools_execution_id: undefined,
+        model_attempt: state.model_attempt ?? 1,
         model_boundary: current.messages.length,
         batch_id: undefined,
       });
@@ -1046,34 +1640,77 @@ async function run(
         "model_round",
         `${state.run_id}:model:${state.round}`,
       );
+      modelTask.attempt = state.model_attempt ?? 1;
       await mutate(host, state.session_id, (doc) => upsert(doc, modelTask));
-      const round = await turn.model(request);
-      const archived = await turn.archiveContext();
-      await mutate(host, state.session_id, (doc) => {
-        modelTask.status = "completed";
-        modelTask.phase = "tools_pending";
-        modelTask.usage = round.usage;
-        modelTask.usage_status = round.usage ? "available" : "unavailable";
-        const root = doc.tasks.find((t) => t.id === state.run_id);
-        if (root && !round.usage)
-          root.usage_status = root.usage ? "incomplete" : "unavailable";
-        if (root && round.usage) {
-          root.usage_status =
-            root.usage_status === "incomplete" ||
-            root.usage_status === "unavailable"
-              ? "incomplete"
-              : "available";
-          root.usage = {
-            input_tokens:
-              (root.usage?.input_tokens ?? 0) + round.usage.input_tokens,
-            output_tokens:
-              (root.usage?.output_tokens ?? 0) + round.usage.output_tokens,
+      let round: DriverModelRound;
+      try {
+        round = await turn.model(request, {
+          recovery: "single_attempt",
+          request_id: `${state.run_id}:model:${state.round}`,
+        });
+      } catch (error) {
+        execution.signal.throwIfAborted();
+        if (error instanceof DriverModelError) {
+          const usage = await readModelUsage(turn, state);
+          await mutate(host, state.session_id, (doc) => {
+            recordModelFailure(doc, state, error.failure.category);
+            applyModelUsage(doc, state, usage);
+          });
+        }
+        if (
+          error instanceof DriverModelError &&
+          error.failure.context_overflow &&
+          !error.round.tool_work_started &&
+          !error.round.tool_batch_id &&
+          settings.can_compact &&
+          !settings.disable_auto_compact &&
+          !state.overflow_compacted
+        ) {
+          await prepareRetry();
+          const compacted = await changeContext(
+            host,
+            turn,
+            state,
+            settings,
+            "overflow",
+            save,
+          );
+          await save("ready", {
+            overflow_compacted: true,
+            context_operation: undefined,
+          });
+          if (compacted.status === "applied") continue;
+        }
+        if (
+          retryableModelError(error) &&
+          (await scheduleRetry(error.failure.category, error))
+        ) {
+          await prepareRetry();
+          const receipt = await suspend({ stop_reason: "durable_model_retry" });
+          return {
+            status: "succeeded",
+            ...receipt,
+            checkpoint: instance.checkpoint,
           };
         }
+        throw error;
+      }
+      const archived = await turn.archiveContext();
+      const usage = await readModelUsage(turn, state);
+      await mutate(host, state.session_id, (doc) => {
+        // Each CAS attempt must project from its newly read canonical task.
+        // Reusing the outer object would retain usage from a rejected commit.
+        const modelTask = doc.tasks.find(
+          (task) => task.id === `${state.run_id}:model:${state.round}`,
+        );
+        if (!modelTask) throw fault("model_task_missing");
+        modelTask.status = "completed";
+        modelTask.phase = "tools_pending";
         modelTask.updated_at = new Date().toISOString();
         modelTask.duration_ms =
           Date.parse(modelTask.updated_at) - Date.parse(modelTask.created_at);
         upsert(doc, modelTask);
+        applyModelUsage(doc, state, usage);
       });
       const calls = round.messages.flatMap((m) => m.tool_calls ?? []);
       if (
@@ -1083,6 +1720,8 @@ async function run(
       )
         throw fault("invalid_tool_batch");
       await save(calls.length ? "tools_pending" : "finalizing", {
+        model_attempt: 1,
+        overflow_compacted: undefined,
         call_ids: calls.map((c) => c.id!),
         model_digest: digest(round.messages),
         call_digest: digest(calls),
@@ -1092,7 +1731,20 @@ async function run(
     }
     throw fault("step_limit");
   } catch (error) {
-    const code = codeOf(error),
+    if (
+      generationClosing() ||
+      codeOf(error) === "execution_shutdown" ||
+      (execution.signal.reason instanceof RuntimeExecutionCancellation &&
+        execution.signal.reason.kind === "shutdown")
+    ) {
+      // Teardown is not user cancellation. Return the last durable checkpoint,
+      // never a terminal replacement that could erase retry/child intent.
+      return { status: "canceled", checkpoint: instance.checkpoint };
+    }
+    const code =
+        error instanceof DriverOperationError
+          ? (error.failure.code ?? error.failure.category)
+          : codeOf(error),
       canceled = execution.signal.aborted || code === "task_canceled";
     state = {
       ...state,
@@ -1101,15 +1753,28 @@ async function run(
     };
     instance.checkpoint = checkpoint(state);
     log(state, code);
-    if (canceled) {
+    if (!generationClosing()) {
       try {
-        await requestCancellation(state.session_id, state.run_id);
+        if (canceled)
+          await taskDefinitions.abort(state, {
+            instance,
+            host,
+            execution,
+            error_code: code,
+          });
+        else
+          await requestCompletion(
+            state.session_id,
+            state.run_id,
+            "failed",
+            code,
+          );
+        const persisted = (await readSession(host, state.session_id)).doc
+          .checkpoints[state.run_id];
+        if (persisted) instance.checkpoint = persisted;
       } catch (cleanupError) {
         log(state, codeOf(cleanupError));
       }
-    }
-    if (!execution.signal.aborted) {
-      await save(state.phase, { error_code: code });
     }
     return canceled
       ? { status: "canceled", checkpoint: instance.checkpoint }
@@ -1132,6 +1797,21 @@ async function run(
         };
   }
 }
+function recordModelFailure(doc: SessionDocument, state: State, code: string) {
+  const model =
+    doc.tasks.find((t) => t.id === `${state.run_id}:model:${state.round}`) ??
+    newTask(state, "model_round", `${state.run_id}:model:${state.round}`);
+  model.attempt = state.model_attempt ?? 1;
+  if (model && model.status !== "failed" && model.status !== "aborted") {
+    model.status = code === "model_interrupted" ? "aborted" : "failed";
+    model.phase = model.status;
+    model.error_code = code;
+    model.updated_at = new Date().toISOString();
+    model.duration_ms =
+      Date.parse(model.updated_at) - Date.parse(model.created_at);
+  }
+  upsert(doc, model);
+}
 async function settleToolTasks(
   host: RuntimeHost,
   state: State,
@@ -1143,7 +1823,6 @@ async function settleToolTasks(
         (t) => t.id === `${state.batch_id}:${message.tool_call_id}`,
       );
       if (!task) continue;
-      task.status = message.tool_result?.is_error ? "failed" : "completed";
       task.error_code = message.tool_result?.is_error
         ? "tool_result_error"
         : undefined;
@@ -1154,6 +1833,16 @@ async function settleToolTasks(
       task.receipt_id = message.tool_invocation_id;
     }
   });
+  for (const message of messages)
+    await finishTask(
+      host,
+      state.session_id,
+      `${state.batch_id}:${message.tool_call_id}`,
+      message.tool_result?.is_error ? "failed" : "completed",
+      message.tool_result?.is_error ? "tool_result_error" : undefined,
+      false,
+      (cp) => taskDefinitions.prepare(host, cp),
+    );
 }
 function findCalls(
   messages: readonly DriverMessage[],

@@ -1,8 +1,11 @@
+import type { Json } from "./task-definitions.js";
+import type { ContextOperation, ContextTrigger } from "./context.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   documentStore,
   RuntimeHostServiceError,
   type DriverCheckpoint,
+  type DriverModelReceipts,
   type RuntimeHost,
 } from "@wuu/plugin-sdk";
 export const DRIVER_ID = "example.durable-driver";
@@ -17,15 +20,29 @@ export const phases = [
   "waiting",
   "sleeping",
   "finalizing",
+  "completing",
   "complete",
   "failed",
   "aborted",
 ] as const;
 export type Phase = (typeof phases)[number];
 export type TaskKind =
-  "run" | "model_round" | "tool" | "subagent" | "sleep" | "approval" | "wait";
+  | "run"
+  | "model_round"
+  | "tool"
+  | "subagent"
+  | "sleep"
+  | "approval"
+  | "wait"
+  | "compaction";
 export type TaskStatus =
-  "pending" | "running" | "waiting" | "completed" | "failed" | "aborted";
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completing"
+  | "completed"
+  | "failed"
+  | "aborted";
 export interface WaitMetadata {
   request_id: string;
   kind: "approval" | "input" | "event" | "sleep" | "subagent";
@@ -51,7 +68,22 @@ export interface Task {
   turn_ref: string;
   duration_ms?: number;
   usage_status?: "available" | "unavailable" | "incomplete";
-  usage?: { input_tokens: number; output_tokens: number };
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_tokens?: number;
+    cache_read_tokens?: number;
+  };
+  usage_by_model?: Array<{
+    provider: string;
+    model: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_tokens: number;
+    cache_read_tokens: number;
+  }>;
+  usage_receipts?: DriverModelReceipts["receipts"];
+  usage_receipt_status?: DriverModelReceipts["status"];
   wait?: WaitMetadata;
   requester?: { session_id: string; seq: number };
   intent_seq?: number;
@@ -65,6 +97,7 @@ export interface Task {
   independent?: boolean;
   depth?: number;
   fork_point?: number;
+  context_source?: "fresh" | "fork";
   dispatching?: boolean;
   cancel_done?: boolean;
   wake_at?: string;
@@ -72,6 +105,18 @@ export interface Task {
   delivered?: boolean;
   canceled?: boolean;
   receipt_id?: string;
+  compaction?: {
+    trigger: ContextTrigger;
+    status:
+      "running" | "applied" | "unchanged" | "stale" | "failed" | "canceled";
+    source_head: number;
+  };
+  outcome?: { status: "unanswered"; reason: "reset" };
+  completion?: {
+    status: "completed" | "failed" | "aborted";
+    error_code?: string;
+    include_background?: boolean;
+  };
 }
 export interface Identity {
   seq?: number;
@@ -80,6 +125,9 @@ export interface Identity {
 }
 export interface State {
   schema_version: 1;
+  task_name?: string;
+  task_version?: number;
+  task_input?: Json;
   suspended?: boolean;
   session_id: string;
   run_id: string;
@@ -89,6 +137,9 @@ export interface State {
   attempt: number;
   restart_count: number;
   round: number;
+  model_attempt?: number;
+  retry_at?: string;
+  retry_code?: string;
   input?: Identity;
   model_boundary?: number;
   model_seq?: number;
@@ -102,6 +153,14 @@ export interface State {
   error_code?: string;
   context_revision?: number;
   context_intent?: "compact" | "reset" | "handoff";
+  context_call_id?: string;
+  context_operation?: ContextOperation;
+  background_compaction?: ContextOperation;
+  compaction_checked_round?: number;
+  background_checked_round?: number;
+  overflow_compacted?: boolean;
+  tools_execution_id?: string;
+  terminal_outcome?: "completed" | "failed" | "aborted";
   receipt_id?: string;
 }
 export interface SessionDocument {
@@ -160,6 +219,9 @@ export function validate(
   const s = value.state;
   const allowed = new Set([
     "schema_version",
+    "task_name",
+    "task_version",
+    "task_input",
     "suspended",
     "session_id",
     "run_id",
@@ -169,6 +231,9 @@ export function validate(
     "attempt",
     "restart_count",
     "round",
+    "model_attempt",
+    "retry_at",
+    "retry_code",
     "input",
     "model_boundary",
     "model_seq",
@@ -182,10 +247,28 @@ export function validate(
     "error_code",
     "context_revision",
     "context_intent",
+    "context_call_id",
+    "context_operation",
+    "background_compaction",
+    "compaction_checked_round",
+    "background_checked_round",
+    "overflow_compacted",
+    "tools_execution_id",
+    "terminal_outcome",
     "receipt_id",
   ]);
   if (Object.keys(s).some((key) => !allowed.has(key)))
     throw fault("incompatible_checkpoint");
+  const taskMetadata = [s.task_name, s.task_version, s.task_input];
+  if (
+    taskMetadata.some((value) => value !== undefined) &&
+    (taskMetadata.some((value) => value === undefined) ||
+      typeof s.task_name !== "string" ||
+      !/^[a-z][a-z0-9._-]{0,127}$/.test(s.task_name) ||
+      !Number.isSafeInteger(s.task_version) ||
+      s.task_version! < 1)
+  )
+    throw fault("invalid_task_state");
   for (const ids of [s.call_ids, s.receipt_ids])
     if (ids?.some((value) => typeof value !== "string" || value.length > 512))
       throw fault("invalid_checkpoint");
@@ -202,6 +285,55 @@ export function validate(
     s.attempt < 1
   )
     throw fault("invalid_checkpoint");
+  if (
+    (s.model_attempt !== undefined &&
+      (!Number.isSafeInteger(s.model_attempt) ||
+        s.model_attempt < 1 ||
+        s.model_attempt > 101)) ||
+    (s.retry_at !== undefined && !Number.isFinite(Date.parse(s.retry_at))) ||
+    (s.retry_code !== undefined && !/^[a-z_]{1,80}$/.test(s.retry_code))
+  )
+    throw fault("invalid_checkpoint");
+  for (const reference of [s.context_call_id, s.tools_execution_id])
+    if (
+      reference !== undefined &&
+      (typeof reference !== "string" || reference.length > 512)
+    )
+      throw fault("invalid_checkpoint");
+  if (
+    s.terminal_outcome !== undefined &&
+    !["completed", "failed", "aborted"].includes(s.terminal_outcome)
+  )
+    throw fault("invalid_checkpoint");
+  for (const operation of [s.context_operation, s.background_compaction]) {
+    if (!operation) continue;
+    if (
+      Object.keys(operation).some(
+        (key) =>
+          ![
+            "id",
+            "trigger",
+            "source_head",
+            "source_digest",
+            "attempt",
+            "status",
+          ].includes(key),
+      ) ||
+      typeof operation.id !== "string" ||
+      operation.id.length > 512 ||
+      !["manual", "threshold", "overflow", "reset", "handoff"].includes(
+        operation.trigger,
+      ) ||
+      !Number.isSafeInteger(operation.source_head) ||
+      operation.source_head < 0 ||
+      !/^[0-9a-f]{64}$/.test(operation.source_digest) ||
+      !Number.isSafeInteger(operation.attempt) ||
+      operation.attempt < 1 ||
+      (operation.status !== undefined &&
+        !["applied", "unchanged", "stale"].includes(operation.status))
+    )
+      throw fault("invalid_checkpoint");
+  }
   if ((s.call_ids?.length ?? 0) > 128 || (s.receipt_ids?.length ?? 0) > 128)
     throw fault("checkpoint_too_large");
   return checkpoint(s);
@@ -237,11 +369,27 @@ export function upsert(doc: SessionDocument, task: Task): void {
     (t) => !["completed", "failed", "aborted"].includes(t.status),
   );
   if (live.length > 256) throw fault("task_limit");
+  // Completed ancestors are still ownership edges for live background work.
+  // Keep those edges until descendants settle, even beyond recent history.
+  const retainedTasks = new Set(live.map((t) => t.id));
+  const byId = new Map(doc.tasks.map((t) => [t.id, t]));
+  for (const task of live) {
+    let parent = task.parent_id;
+    const visited = new Set<string>();
+    while (parent && !visited.has(parent)) {
+      visited.add(parent);
+      retainedTasks.add(parent);
+      parent = byId.get(parent)?.parent_id;
+    }
+  }
   const terminal = doc.tasks
-    .filter((t) => !live.includes(t))
+    .filter((t) => !retainedTasks.has(t.id))
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     .slice(0, 128);
-  doc.tasks = [...live, ...terminal];
+  doc.tasks = [
+    ...doc.tasks.filter((t) => retainedTasks.has(t.id)),
+    ...terminal,
+  ];
   const retained = new Set(doc.tasks.map((t) => t.run_id));
   for (const key of Object.keys(doc.checkpoints))
     if (!retained.has(key)) delete doc.checkpoints[key];

@@ -11,7 +11,7 @@ const composition = JSON.parse(readFileSync(fileURLToPath(new URL('./composition
 console.log(JSON.stringify({
   composition,
   skills: { enabled: false },
-  // Approval reserves a complete, non-streaming declared tool batch.
+  // This reference demonstrates direct tools; journal-backed PTC is opt-in.
   ptc: { enabled: false },
   execution_environments: {
     default: 'durable-reference',
