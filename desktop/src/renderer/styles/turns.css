@@ -2813,6 +2813,39 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
+/* Continuing starts a new turn while the failed turn stays in history. The
+ * presence wrapper lets the old card collapse out instead of leaving a red
+ * row above the live turn. It shares the grid-row exit used by turn output
+ * summaries: the card keeps its internal layout, and the negative margin
+ * releases the parent's flex gap so unmounting cannot jump the turn below. */
+.turn-failure-presence {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-width: 0;
+  opacity: 1;
+  margin-bottom: 0;
+  transition:
+    grid-template-rows var(--motion-slow) var(--ease-out),
+    margin-top var(--motion-slow) var(--ease-out),
+    margin-bottom var(--motion-slow) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.turn-failure-presence-body {
+  min-height: 0;
+}
+
+.turn-failure-presence.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  margin-bottom: calc(-1 * var(--conversation-turn-item-gap));
+}
+
+.turn-failure-presence.is-leaving .turn-failure-presence-body {
+  overflow: hidden;
+}
+
 /* The turn's answer did not arrive. One row, read left to right: the symbol,
  * what happened, then the recovery slot on the trailing edge. The slot holds
  * the retry countdown while the core retries and the action once it gives
@@ -3058,7 +3091,7 @@
  * gets after prose. Add the remainder; the parent gap already supplies the
  * rest.
  */
-.turn > .turn-failure {
+.turn > .turn-failure-presence {
   margin-top: calc(
     var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
   );
@@ -3067,11 +3100,16 @@
 /* A failure with no reply before it stands where the reply would: it keeps
  * the query → reply gap, which already clears the query's hover actions
  * hanging below the bubble. */
-.turn > .user-message-block + .turn-failure {
+.turn > .user-message-block + .turn-failure-presence {
   margin-top: calc(
     var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
       var(--conversation-user-message-trailing-gap)
   );
+}
+
+.turn > .turn-failure-presence.is-leaving,
+.turn > .user-message-block + .turn-failure-presence.is-leaving {
+  margin-top: 0;
 }
 
 /* A failure that happens in front of the reader resolves out of the pending
