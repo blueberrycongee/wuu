@@ -130,6 +130,22 @@ async function capture(name, view) {
 async function closed() {
   await until(async () => !menuView()?.getVisible() && await evaluate(win.webContents, () => document.querySelector(".sidebar-account-trigger")?.getAttribute("aria-expanded") === "false"), "menu dismissed in native and renderer state");
 }
+// The floating Settings panel is modal: its scrim swallows workbench clicks,
+// so leave through its own dismissal affordances instead of a ribbon item.
+async function dismissSettingsViaScrim() {
+  const point = await until(() => evaluate(win.webContents, () => {
+    const scrim = document.querySelector(".settings-overlay-layer");
+    if (!scrim) return null;
+    const rect = scrim.getBoundingClientRect();
+    const x = rect.x + 8, y = rect.y + 8;
+    return document.elementFromPoint(x, y) === scrim ? { x, y } : null;
+  }), "scrim is the topmost surface outside the panel");
+  const zoom = win.webContents.getZoomFactor();
+  const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  win.webContents.sendInputEvent({ type: "mouseMove", ...position });
+  win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...position });
+  win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...position });
+}
 async function run() {
   await app.whenReady();
   host = new ChromeOverlayHost((owner, event) => {
@@ -188,7 +204,7 @@ async function run() {
   win = new BrowserWindow({ width: 1180, height: 820, show: true,
     webPreferences: { preload: path.join(fixture, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   for (const event of ["focus", "blur"]) win.on(event, () => trace({ kind: "window", event }));
-  for (const { width, font, theme } of [{ width: 1180, font: 15, theme: "light" }, { width: 760, font: 20, theme: "dark" }]) {
+  for (const [index, { width, font, theme }] of [{ width: 1180, font: 15, theme: "light" }, { width: 760, font: 20, theme: "dark" }].entries()) {
     win.setContentSize(1180, 820);
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     win.show(); win.focus();
@@ -240,10 +256,11 @@ async function run() {
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
     }), "Settings page is visible and above the conversation");
     await capture(`${name}-settings`);
-    await click(win.webContents, '[data-ribbon-id="conversations"]');
+    if (index === 0) key(win.webContents, "Escape");
+    else await dismissSettingsViaScrim();
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");
     assert.ok(await evaluate(win.webContents, () => Boolean(document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="resize-thread"] [data-turn-status="in_progress"]'))), "Running conversation remains active after Settings");
-    scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings navigation and exact draft preservation");
+    scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings dismissal (Escape, scrim) preserves draft and active turn");
     scenario.status = "passed"; save();
   }
   for (const cancel of ["escape", "outside"]) {
