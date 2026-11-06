@@ -88,6 +88,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   transition:background .12s ease-in-out}
 #actions button:is(:hover,.hovered){background:rgba(255,255,255,.17)}
 #actions button:active{background:rgba(255,255,255,.26)}
+#actions button[aria-pressed="true"]{background:rgba(255,255,255,.17)}
+#actions button>span{display:grid;place-items:center}
 #actions button:focus-visible{outline:2px solid #fff;outline-offset:1px}
 :root.reduce-motion #root *, :root.reduce-motion #root *::before{animation:none!important;transition:none!important}
 :root.reduce-motion #completion[data-completed="true"] #completion-check,
@@ -121,6 +123,10 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   <div id="hover-shade"></div>
   <div id="actions">
     <button id="close" type="button">${iconSVG("X", 16)}</button>
+    <button id="desktop" type="button" aria-pressed="false" hidden>
+      <span id="desktop-detach">${iconSVG("Monitor", 16)}</span>
+      <span id="desktop-attach" hidden>${iconSVG("Minimize2", 16)}</span>
+    </button>
     <button id="expand" type="button">${iconSVG("ExternalLink", 16)}</button>
   </div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
@@ -135,7 +141,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   var completion=document.getElementById("completion");
   var label=${label},locale=${language},translations=${strings};
   var activity={kind:"browser",state:"starting",controller:"none"};
-  var mounted=false,capture={status:"idle",message:""};
+  var mounted=false,desktopDocked=false,capture={status:"idle",message:""};
   function text(key){return translations[locale][key];}
   function buttonLabel(id,key){var button=document.getElementById(id);button.title=text(key);button.setAttribute("aria-label",text(key));}
   function render(){
@@ -159,6 +165,13 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     document.getElementById("expand").hidden=activity.kind!=="browser";
     var labels={close:"activityHide",expand:"activityExpand"};
     Object.keys(labels).forEach(function(id){buttonLabel(id,labels[id]);});
+    var desktop=document.getElementById("desktop");
+    desktop.hidden=activity.kind!=="cua";
+    desktop.setAttribute("aria-pressed",desktopDocked?"true":"false");
+    desktop.title=text(desktopDocked?"activityDockConversation":"activityDockDesktop");
+    desktop.setAttribute("aria-label",text("activityDesktopPreview"));
+    document.getElementById("desktop-detach").hidden=desktopDocked;
+    document.getElementById("desktop-attach").hidden=!desktopDocked;
     completion.setAttribute("aria-label",text("activityCompleted"));
   }
   document.addEventListener("keydown",function(e){
@@ -172,6 +185,10 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   document.getElementById("close").addEventListener("click",function(e){
     e.stopPropagation();
     window.location.href="wuu-pip://close";
+  });
+  document.getElementById("desktop").addEventListener("click",function(e){
+    e.stopPropagation();
+    window.location.href="wuu-pip://desktop";
   });
   document.getElementById("expand").addEventListener("click",function(e){
     e.stopPropagation();
@@ -190,6 +207,10 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     ackTimer=setTimeout(function(){window.wuuPipDragAck&&window.wuuPipDragAck();},80);
     window.location.href=url;
   }
+  window.wuuPipDesktop=function(value){
+    desktopDocked=Boolean(value);
+    render();
+  };
   window.wuuPipDragAck=function(){
     dragAck=true;
     clearTimeout(ackTimer);
@@ -262,7 +283,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   window.wuuPipCapture=function(next){capture=next;render();};
   window.wuuPipHover=function(point){
     root.classList.toggle("hovered",!!point);
-    ["close","expand"].forEach(function(id){
+    ["close","desktop","expand"].forEach(function(id){
       var button=document.getElementById(id),r=button.getBoundingClientRect();
       button.classList.toggle("hovered",!!point&&point.x>=r.left&&point.x<r.right&&point.y>=r.top&&point.y<r.bottom);
     });

@@ -1561,6 +1561,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
     }
     windowResizeState = false;
     observationCoordinator.setActiveThread(undefined);
+    observationCoordinator.closeDesktopDocked();
     unregisterWindow(windowID);
     mainWindow = null;
   });
