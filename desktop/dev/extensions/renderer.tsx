@@ -219,7 +219,7 @@ function Fixture(): JSX.Element {
   }, [plugins]);
   return (
     <div className="scroll-region skills-scroll-region" style={{ height: "100vh" }}>
-      <div className="scroll-region-content">
+      <div className="scroll-region-content" style={{ height: "100%" }}>
         <SkillsCatalog
           application={application}
           section={catalogSection}

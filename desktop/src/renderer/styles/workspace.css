@@ -1300,6 +1300,7 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
 .workspace-panel-empty strong {
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .workspace-panel-empty span {

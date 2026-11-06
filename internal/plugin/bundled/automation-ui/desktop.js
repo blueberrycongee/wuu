@@ -150,7 +150,9 @@ export async function activate(api) {
     .plugin-automation-sidebar-item:disabled { cursor:default; opacity:0.52; }
     .plugin-automation-empty, .plugin-automation-state { flex:1 1 auto; min-height:180px; }
     .plugin-automation-empty-wrap { flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--space-2); min-height:280px; padding:var(--space-8) var(--space-4); text-align:center; }
-    .plugin-automation-empty-wrap .plugin-automation-empty { flex:0 0 auto; min-height:0; }
+    .plugin-automation-empty-wrap .plugin-automation-empty { flex:0 0 auto; min-height:0; padding:0; }
+    .plugin-automation-empty-wrap .plugin-automation-empty strong { font-weight:var(--weight-medium); line-height:var(--line-ui); }
+    .plugin-automation-empty-wrap .plugin-automation-empty p { max-width:32em; font-size:var(--font-sm); line-height:var(--line-body); }
     .plugin-automation-empty-art { display:inline-grid; width:120px; height:120px; flex:none; place-items:center; margin-bottom:var(--space-2); pointer-events:none; user-select:none; }
     .plugin-automation-empty-art img { grid-area:1 / 1; width:100%; height:100%; object-fit:contain; }
     .plugin-automation-empty-art img + img { display:none; }

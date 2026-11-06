@@ -689,6 +689,7 @@ button.plugin-contribution:hover {
  * same settings column; a filtered result stays a row-height notice. */
 .catalog-empty.settings-group-empty {
   display: grid;
+  flex: 1 0 auto;
   min-height: 280px;
   align-content: center;
   justify-items: center;
@@ -697,10 +698,15 @@ button.plugin-contribution:hover {
   text-align: center;
 }
 
+.catalog-empty > .empty-state-illustration {
+  margin-bottom: var(--space-2);
+}
+
 .catalog-empty > strong {
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .catalog-empty > span {

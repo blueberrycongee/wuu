@@ -9,6 +9,7 @@
  * connection artwork and the one next step. */
 .model-services-empty {
   display: grid;
+  flex: 1 0 auto;
   min-height: 360px;
   align-content: center;
   justify-items: center;
@@ -24,8 +25,9 @@
 .model-services-empty h2 {
   margin: 0;
   color: var(--ink);
-  font-size: var(--font-title);
+  font-size: var(--font-ui);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .model-services-empty p {

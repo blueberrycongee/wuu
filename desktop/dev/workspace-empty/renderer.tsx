@@ -33,7 +33,7 @@ function Fixture(): JSX.Element {
   return (
     <div style={{ display: "grid", height: "100vh", placeItems: "center", background: "var(--canvas)" }}>
       <div className="workspace-right-panel files right-panel-open" data-wuu-view="files"
-        style={{ width: 360, height: 640, gridTemplateRows: "var(--canvas-titlebar-height) minmax(0, 1fr)" }}>
+        style={{ width: 360, height: 640, gridTemplateRows: "var(--canvas-titlebar-height) minmax(0, 1fr)", "--canvas-titlebar-height": "44px" } as React.CSSProperties}>
         <div className="workspace-panel-tabbar">
           <div className="workspace-panel-tabs">
             <div className="workspace-tool-tab active">
