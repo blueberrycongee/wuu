@@ -2672,15 +2672,16 @@ describe("Composer send control", () => {
       '.slash-command-item[data-command-name="slides"]',
     );
 
-    // Without the command name the row cannot be told apart from any other
-    // skill that happens to share a description prefix.
-    expect(skillRow?.querySelector(".slash-command-name")?.textContent).toBe("/slides");
+    // Skills are typed by name, so the name leads the row and the summary
+    // follows as the row's only secondary copy.
+    expect(skillRow?.querySelector(".slash-command-title")?.textContent).toBe("slides");
     expect(skillRow?.querySelector(".slash-command-summary")?.textContent).toBe(
       "Create slide decks",
     );
+    expect(skillRow?.querySelector(".slash-command-command")).toBeNull();
   });
 
-  it("leads every built-in row with the command the user types", () => {
+  it("leads every built-in row with its title and trails the command", () => {
     renderComposer({
       prompt: "/",
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
@@ -2690,10 +2691,10 @@ describe("Composer send control", () => {
       '.slash-command-item[data-command-name="review"]',
     );
 
-    expect(reviewRow?.querySelector(".slash-command-name")?.textContent).toBe("/review");
-    expect(reviewRow?.querySelector(".slash-command-summary")?.textContent).toBe("审查当前更改");
-    expect(reviewRow?.querySelector(".composer-plus-menu-item-title")).not.toBeNull();
-    expect(reviewRow?.querySelector(".composer-plus-menu-item-desc")).not.toBeNull();
+    expect(reviewRow?.querySelector(".slash-command-title")?.textContent).toBe("审查当前更改");
+    expect(reviewRow?.querySelector(".slash-command-command")?.textContent).toBe("/review");
+    expect(reviewRow?.querySelector(".composer-plus-menu-item-title")?.textContent).toBe("审查当前更改");
+    expect(reviewRow?.querySelector(".composer-plus-menu-item-desc")?.textContent).toBe("/review");
   });
 
   it("uses the plus menu row structure for slash commands", () => {
