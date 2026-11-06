@@ -15,7 +15,4 @@
     <circle cx="140" cy="140" r="23" fill="#FFFFFF" stroke="#353637" stroke-width="3.2"/>
     <path d="M133 131l17 9-17 9Z" fill="#D99C82" stroke="#D99C82" stroke-width="3"/>
   </g>
-  <g stroke="#B0B0B0" stroke-width="2.6" stroke-linecap="round">
-    <path d="M36 58l-7-7M158 44l7-7"/>
-  </g>
 </svg>

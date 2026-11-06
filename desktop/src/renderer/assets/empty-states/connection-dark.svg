@@ -11,7 +11,4 @@
   <g stroke="#C98E72" stroke-width="3.2" stroke-linecap="round">
     <path d="M100 84v-7M100 112v7M89 98h-7M111 98h7"/>
   </g>
-  <g stroke="#8A8B90" stroke-width="2.6" stroke-linecap="round">
-    <path d="M38 60l-6-6M160 44l6-6"/>
-  </g>
 </svg>

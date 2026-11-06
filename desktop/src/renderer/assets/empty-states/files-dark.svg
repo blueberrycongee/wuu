@@ -11,7 +11,4 @@
     <path d="M28 104q0-8 8-8h120q8 0 8 8v44q0 8-8 8H36q-8 0-8-8Z" fill="#333438"/>
   </g>
   <rect x="44" y="116" width="32" height="9" rx="4.5" fill="#C98E72"/>
-  <g stroke="#8A8B90" stroke-width="2.6" stroke-linecap="round">
-    <path d="M44 46l-7-7M156 34l7-7"/>
-  </g>
 </svg>
