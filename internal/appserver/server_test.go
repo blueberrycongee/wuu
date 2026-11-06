@@ -28,6 +28,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -10625,6 +10626,107 @@ func TestSettingsUsageAggregatesAcrossSessions(t *testing.T) {
 	}
 	if result.ModelBreakdowns[1].Provider != "anthropic" {
 		t.Fatalf("expected anthropic second, got %q", result.ModelBreakdowns[1].Provider)
+	}
+}
+
+func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	now := time.Now().UTC()
+
+	// A wuu-engine thread and a claude-engine thread, each with one usage row.
+	wuuSess, err := rt.Sessions.CreateWithMetadata("usage-wuu", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecord(wuuSess.ID, session.HistoryRecord{
+		Role: "meta", Content: "token_usage",
+		Provider: "openai", Model: "gpt-4o",
+		At: now.Add(-time.Hour), InputTokens: 100, OutputTokens: 40,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claudeSess, err := rt.Sessions.CreateWithMetadata("usage-claude", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngine(claudeSess.ID, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngineRef(claudeSess.ID, "sess-bound"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecord(claudeSess.ID, session.HistoryRecord{
+		Role: "meta", Content: "token_usage",
+		Provider: "claude", Model: "",
+		At: now.Add(-time.Hour), InputTokens: 60, OutputTokens: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fake claude ledger: the bound session file must be excluded from
+	// "outside" because the in-Wuu row above already counts it; the free
+	// session file becomes outside usage.
+	claudeDir := filepath.Join(t.TempDir(), "projects")
+	claudeLine := func(sessionID string, input, output int) string {
+		line, err := json.Marshal(map[string]any{
+			"type": "assistant", "timestamp": now.Format(time.RFC3339Nano), "sessionId": sessionID,
+			"message": map[string]any{"model": "claude-sonnet-4-5", "usage": map[string]any{
+				"input_tokens": input, "output_tokens": output,
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(line)
+	}
+	for name, lines := range map[string][]string{
+		"sess-bound.jsonl": {claudeLine("sess-bound", 999, 999)},
+		"sess-free.jsonl":  {claudeLine("sess-free", 300, 120)},
+	} {
+		path := filepath.Join(claudeDir, "-tmp", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	srv.usageScanner = &engineusage.Scanner{
+		ClaudeDir:  claudeDir,
+		CodexDirs:  []string{filepath.Join(t.TempDir(), "missing")},
+		OpenCodeDB: filepath.Join(t.TempDir(), "missing.db"),
+	}
+	raw, err := json.Marshal(map[string]any{"id": "1", "method": MethodSettingsUsage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+
+	msgs := parseOutput(t, out.String())
+	result := remarshal[SettingsUsageResponse](t, responseByID(t, msgs, "1")["result"])
+
+	breakdowns := make(map[string]SettingsEngineUsage, len(result.EngineBreakdowns))
+	for _, b := range result.EngineBreakdowns {
+		breakdowns[b.Engine] = b
+	}
+	wuu := breakdowns["wuu"]
+	if wuu.Name != "Wuu" || wuu.InWuu.TotalTokens() != 140 || wuu.InWuu.Sessions != 1 {
+		t.Fatalf("wuu breakdown: %+v", wuu)
+	}
+	if wuu.Outside != nil {
+		t.Fatalf("wuu has no local ledger, outside must be nil: %+v", wuu.Outside)
+	}
+	claude := breakdowns["claude"]
+	if claude.Name != "Claude Code" || claude.InWuu.TotalTokens() != 80 || claude.InWuu.Sessions != 1 {
+		t.Fatalf("claude breakdown: %+v", claude)
+	}
+	if claude.Outside == nil || claude.Outside.TotalTokens() != 420 || claude.Outside.Sessions != 1 {
+		t.Fatalf("claude outside should hold only the unbound session: %+v", claude.Outside)
 	}
 }
 

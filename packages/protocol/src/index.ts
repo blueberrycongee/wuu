@@ -3017,17 +3017,43 @@ export type SkillUsage = {
   count: number;
 };
 
+// EngineUsageSum is one side of an engine's token totals. On the InWuu side
+// Sessions counts threads bound to the engine; on the Outside side it counts
+// distinct native sessions observed in the engine's local ledger.
+export type EngineUsageSum = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  sessions: number;
+};
+
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
+// token_usage trail by each thread's bound engine. Outside reads the engine's
+// own on-disk ledger minus native sessions Wuu already claims, so the two
+// columns never count the same work twice. Outside is absent for engines
+// without a readable local ledger or whose ledger failed to scan.
+export type SettingsEngineUsage = {
+  engine: string;
+  name: string;
+  in_wuu: EngineUsageSum;
+  outside?: EngineUsageSum;
+};
+
 // SettingsUsageResponse is the single source of truth for the desktop
 // usage page. ModelBreakdowns is sorted by total context tokens
 // descending; empty Provider+Model entries are bucketed as "(unknown)"
 // in the UI. Days carries the calendar-day series for the heatmap —
 // both are derived from the same per-row token_usage trail so the
-// views always sum to the same totals.
+// views always sum to the same totals. EngineBreakdowns attributes the
+// same in-Wuu totals per agent engine and adds the usage each engine
+// recorded outside Wuu in its own local ledger.
 export type SettingsUsageResponse = {
   total_sessions: number;
   generated_at: string;
   metrics: SettingsUsageMetrics;
   model_breakdowns: ModelUsage[];
+  engine_breakdowns: SettingsEngineUsage[];
   skill_usage: SkillUsage[];
   days: SettingsUsageDay[];
 };

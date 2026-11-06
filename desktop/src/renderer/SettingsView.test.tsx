@@ -2079,6 +2079,13 @@ describe("SettingsView About section", () => {
           sessions: 1,
         },
       ],
+      engine_breakdowns: [
+        {
+          engine: "wuu",
+          name: "Wuu",
+          in_wuu: { input_tokens: 1000, output_tokens: 200, cache_creation_tokens: 20, cache_read_tokens: 50, sessions: 1 },
+        },
+      ],
       skill_usage: [
         { name: "review", count: 4 },
         { name: "docs", count: 2 },
@@ -2135,7 +2142,9 @@ describe("SettingsView About section", () => {
     expect(
       trend?.querySelector<HTMLElement>(`[aria-label^="${heatmapDates.at(-1)}"]`)?.getAttribute("aria-label"),
     ).toContain("总计 470k");
-    const modelRows = container.querySelectorAll(".settings-usage-table tbody tr");
+    const modelRows = container.querySelectorAll(
+      'section[aria-labelledby="settings-model-usage-title"] .settings-usage-table tbody tr',
+    );
     expect(modelRows).toHaveLength(1);
     expect(modelRows[0]?.textContent).toContain("fake-model");
     // A model's share keeps its token total in a hover tooltip.

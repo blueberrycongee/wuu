@@ -229,6 +229,12 @@ function sampleUsage(): SettingsUsageResponse {
       { provider: "openrouter", model: "deepseek/deepseek-v4", input_tokens: input * 0.3, output_tokens: output * 0.3, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.3, sessions: 36 },
       { provider: "local", model: "qwen3-32b", input_tokens: input * 0.1, output_tokens: output * 0.1, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.1, sessions: 12 },
     ],
+    engine_breakdowns: [
+      { engine: "wuu", name: "Wuu", in_wuu: { input_tokens: input * 0.5, output_tokens: output * 0.5, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.5, sessions: 110 } },
+      { engine: "claude", name: "Claude Code", in_wuu: { input_tokens: input * 0.3, output_tokens: output * 0.3, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.3, sessions: 16 }, outside: { input_tokens: input * 0.4, output_tokens: output * 0.4, cache_creation_tokens: 10_000, cache_read_tokens: cacheRead * 0.4, sessions: 58 } },
+      { engine: "codex", name: "Codex", in_wuu: { input_tokens: input * 0.2, output_tokens: output * 0.2, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.2, sessions: 2 }, outside: { input_tokens: 120_000, output_tokens: 8_000, cache_creation_tokens: 0, cache_read_tokens: 900_000, sessions: 9 } },
+      { engine: "grok", name: "Grok", in_wuu: { input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, sessions: 4 } },
+    ],
     skill_usage: [{ name: "code-review", count: 42 }, { name: "frontend-design", count: 18 }, { name: "release-notes", count: 7 }],
   };
 }
