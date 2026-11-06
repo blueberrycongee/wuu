@@ -264,8 +264,10 @@ async function run() {
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
     }), "Settings page is visible and above the conversation");
     await capture(`${name}-settings`);
-    if (index === 0) key(win.webContents, "Escape");
-    else await dismissSettingsViaScrim();
+    // The narrow pass is a full-sheet layout: the panel covers the whole
+    // window and there is no scrim to click, so dismiss with Escape there.
+    if (index === 0) await dismissSettingsViaScrim();
+    else key(win.webContents, "Escape");
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");
     assert.ok(await evaluate(win.webContents, () => Boolean(document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="resize-thread"] [data-turn-status="in_progress"]'))), "Running conversation remains active after Settings");
     scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings dismissal (Escape, scrim) preserves draft and active turn");
