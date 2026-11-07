@@ -25,7 +25,6 @@ import { COMPOSER_COMMAND_MENU_WIDTH } from "./ComposerTypes";
 import { I18nProvider, translateCurrent } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
-import { ComposerTokenGauge } from "./ComposerTokenGauge";
 import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./ComposerMessages";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
@@ -66,7 +65,7 @@ afterEach(() => {
   container.remove();
   document.body
     .querySelectorAll(
-      "[data-floating-menu-owner=\"composer-access\"], [data-floating-menu-owner=\"composer-attach\"], [data-floating-menu-owner=\"composer-focus\"], [data-floating-menu-owner=\"composer-plus\"], [data-floating-menu-owner=\"composer-slash\"], [data-floating-menu-owner=\"composer-token-gauge\"], [data-floating-menu-owner=\"codex-runtime\"]",
+      "[data-floating-menu-owner=\"composer-access\"], [data-floating-menu-owner=\"composer-attach\"], [data-floating-menu-owner=\"composer-focus\"], [data-floating-menu-owner=\"composer-plus\"], [data-floating-menu-owner=\"composer-slash\"], [data-floating-menu-owner=\"codex-runtime\"]",
     )
     .forEach((element) => element.remove());
 });
@@ -174,9 +173,6 @@ function renderComposer(props: {
   slashCommandsOverride?: ComposerSlashCommand[];
   services?: ComposerServices;
   onSelectPermissionMode?: (mode: PermissionMode, approveForMe?: boolean) => void;
-  tokensPerSecond?: number;
-  tokenSpeedSampledAt?: number;
-  tokenSpeedSource?: "real" | "estimated" | "none";
   activeWorkspace?: DesktopProject;
   projects?: DesktopProject[];
 }): { onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void } {
@@ -269,9 +265,6 @@ function renderComposer(props: {
           onSteer={props.onSteer}
           onQueue={props.onQueue}
           onInterrupt={props.onInterrupt ?? (() => {})}
-          tokensPerSecond={props.tokensPerSecond ?? 0}
-          tokenSpeedSampledAt={props.tokenSpeedSampledAt}
-            tokenSpeedSource={props.tokenSpeedSource}
           />
           </WorkbenchConnectionContext.Provider>
         </Suspense>
@@ -751,7 +744,6 @@ function renderStatefulComposer(props: {
             else props.onSend?.(nextPrompt);
           }}
           onInterrupt={() => {}}
-          tokensPerSecond={0}
           queryHistorySessionID={props.queryHistorySessionID}
           skillThreadID={props.skillThreadID}
         />
@@ -2398,9 +2390,6 @@ describe("Composer send control", () => {
     expect(leftGroup?.querySelector(".composer-project-control")).toBeNull();
     expect(leftGroup?.querySelector(".composer-plus-button")).not.toBeNull();
     expect(container.querySelector(".composer-footer .permission-menu-anchor")).not.toBeNull();
-    // The token-speed gauge is temporarily hidden from the toolbar; flip this
-    // back to not.toBeNull() when it is restored.
-    expect(rightGroup?.querySelector(".composer-token-gauge")).toBeNull();
     expect(container.querySelector(".composer-footer .codex-runtime-anchor")).not.toBeNull();
     expect(container.querySelector(".composer-editor")?.contains(sendButton)).toBe(true);
     expect(rightGroup?.contains(sendButton)).toBe(true);
@@ -3766,149 +3755,6 @@ describe("Composer menu keyboard", () => {
     press("Escape");
     expect(document.body.querySelector(".composer-branch-menu")).toBeNull();
     expect(document.activeElement).toBe(pill);
-  });
-});
-
-describe("ComposerTokenGauge", () => {
-  // The gauge is temporarily hidden from the composer toolbar (see
-  // ComposerRuntimeMeters), so these tests mount the component directly
-  // instead of going through the full composer. They stay valid so the
-  // component behavior is covered until it is restored.
-  function renderTokenGauge(props: {
-    running: boolean;
-    tokensPerSecond: number;
-    tokenSpeedSampledAt?: number;
-    tokenSpeedSource?: "real" | "estimated" | "none";
-  }): void {
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ComposerTokenGauge
-          running={props.running}
-          tokensPerSecond={props.tokensPerSecond}
-          sampledAt={props.tokenSpeedSampledAt}
-          source={props.tokenSpeedSource}
-        />,
-      );
-    });
-  }
-
-  it("does not schedule animation frames while idle at zero", () => {
-    const requestAnimationFrame = vi.spyOn(window, "requestAnimationFrame");
-
-    try {
-      renderTokenGauge({ running: false, tokensPerSecond: 0 });
-
-      expect(requestAnimationFrame).not.toHaveBeenCalled();
-    } finally {
-      requestAnimationFrame.mockRestore();
-    }
-  });
-
-  it("keeps the gauge visible with the speed label inline and a hidden hover tooltip", () => {
-    renderTokenGauge({ running: false, tokensPerSecond: 0 });
-    const gauge = container.querySelector(".composer-token-gauge");
-    expect(gauge).not.toBeNull();
-    expect(gauge?.getAttribute("data-state")).toBe("idle");
-    expect(gauge?.getAttribute("aria-label")).toContain("0 token 每秒");
-
-    // The label is still inline next to the dial when the toolbar is wide
-    // enough, but the same value is also available through a hover tooltip
-    // for narrow widths where the inline label is hidden by the container query.
-    const label = container.querySelector(".composer-token-gauge-label");
-    expect(label).not.toBeNull();
-    expect(label?.textContent).toContain("0 tok/s");
-    expect(label?.textContent).toContain("tok/s");
-    expect(document.body.querySelector(".composer-token-gauge-tooltip")).toBeNull();
-  });
-
-  it("renders a live gauge without scheduling animation frames and shows the speed on hover", () => {
-    const requestAnimationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation(() => 1);
-
-    try {
-      renderTokenGauge({ running: true, tokensPerSecond: 18.4 });
-
-      const gauge = container.querySelector(".composer-token-gauge");
-      expect(gauge).not.toBeNull();
-      expect(gauge?.getAttribute("data-state")).toBe("running");
-      expect(gauge?.getAttribute("title")).toBeNull();
-      expect(requestAnimationFrame).not.toHaveBeenCalled();
-
-      // Label is inline by default; hovering opens the tooltip portal.
-      const label = container.querySelector(".composer-token-gauge-label");
-      expect(label).not.toBeNull();
-      expect(label?.textContent).toContain("18 tok/s");
-      expect(label?.textContent).toContain("tok/s");
-      expect(document.body.querySelector(".composer-token-gauge-tooltip")).toBeNull();
-
-      act(() => {
-        gauge?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-      });
-      const tooltip = document.body.querySelector(".composer-token-gauge-tooltip");
-      expect(tooltip).not.toBeNull();
-      expect(tooltip?.textContent).toContain("18");
-      expect(tooltip?.textContent).toContain("token 每秒");
-
-      // Dial components are still rendered.
-      const svg = container.querySelector(".composer-token-gauge-svg");
-      expect(svg?.getAttribute("width")).toBe("20");
-      expect(svg?.getAttribute("height")).toBe("20");
-      expect(container.querySelector(".composer-token-gauge-progress")).not.toBeNull();
-      expect(container.querySelector(".composer-token-gauge-needle")).not.toBeNull();
-      expect(container.querySelector(".composer-token-gauge-inner-arc")).toBeNull();
-      expect(container.querySelectorAll(".composer-token-gauge-speed-dot")).toHaveLength(0);
-    } finally {
-      requestAnimationFrame.mockRestore();
-    }
-  });
-
-  it("decays a stale token speed without animation frames", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    const requestAnimationFrame = vi.spyOn(window, "requestAnimationFrame");
-
-    try {
-      renderTokenGauge({
-        running: true,
-        tokensPerSecond: 20,
-        tokenSpeedSampledAt: Date.now(),
-      });
-
-      expect(container.querySelector(".composer-token-gauge-label")?.textContent).toContain(
-        "20 tok/s",
-      );
-
-      act(() => {
-        vi.advanceTimersByTime(3_800);
-      });
-      expect(container.querySelector(".composer-token-gauge-label")?.textContent).toContain(
-        "10 tok/s",
-      );
-
-      act(() => {
-        vi.advanceTimersByTime(3_000);
-      });
-      expect(container.querySelector(".composer-token-gauge-label")?.textContent).toContain(
-        "0 tok/s",
-      );
-      expect(requestAnimationFrame).not.toHaveBeenCalled();
-    } finally {
-      requestAnimationFrame.mockRestore();
-      vi.useRealTimers();
-    }
-  });
-
-  it("marks fallback token speed as approximate in the inline label", () => {
-    renderTokenGauge({
-      running: true,
-      tokensPerSecond: 18.4,
-      tokenSpeedSource: "estimated",
-    });
-
-    const label = container.querySelector(".composer-token-gauge-label");
-    expect(label?.textContent).toContain("约 18 tok/s");
   });
 });
 

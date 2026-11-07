@@ -2751,7 +2751,7 @@
 }
 
 .context-compaction-indicator .context-usage-ring {
-  color: var(--token-gauge-mid);
+  color: var(--context-meter-mid);
 }
 
 .context-compaction-indicator.is-failed {

@@ -43,7 +43,7 @@ function setup() {
   let presentationView = Object.freeze({ runtimeMenu: null as "model" | null, ownerTabId: source, threadId: source, available: true, running: false, turnRunning: false, canSteer: false, readOnly: false, status: "Ready",
     configuration: { provider: "fixture", model: "Model", providers: [] }, queryHistory: [], skillRevision: "one", workspaceCapabilities: { create: false, open: false } });
   const empty = Object.freeze([]);
-  const telemetry = Object.freeze({ tokensPerSecond: 0, source: "none" as const, inputTokens: 0, outputTokens: 0 });
+  const telemetry = Object.freeze({});
   const emptyStatus = Object.freeze({ items: empty });
   const presentation: ApplicationComposerPresentationV1 = {
     getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},

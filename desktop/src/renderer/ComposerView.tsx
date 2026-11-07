@@ -245,9 +245,6 @@ export function Composer({
   onQueue,
   onInterrupt,
   telemetryTurnID,
-  tokensPerSecond = 0,
-  tokenSpeedSampledAt,
-  tokenSpeedSource,
   contextUsage,
   queryHistorySessionID,
   skillThreadID,
@@ -373,9 +370,6 @@ export function Composer({
   onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
-  tokensPerSecond?: number;
-  tokenSpeedSampledAt?: number;
-  tokenSpeedSource?: "real" | "estimated" | "none";
   // contextUsage drives the model-adjacent context meter. When the active
   // model has no catalog window yet the AppState selector returns
   // undefined and the meter hides entirely.
@@ -1353,11 +1347,7 @@ export function Composer({
         <ComposerRuntimeMeters
           inToolRail={controlsInRail}
           compact={compactControls}
-          running={running}
           turnID={telemetryTurnID}
-          fallbackTokensPerSecond={tokensPerSecond}
-          fallbackSampledAt={tokenSpeedSampledAt}
-          fallbackSource={tokenSpeedSource}
           fallbackContextUsage={contextUsage}
           activeEngine={activeEngine}
         />
