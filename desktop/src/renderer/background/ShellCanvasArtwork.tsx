@@ -122,11 +122,16 @@ export function ShellCanvasArtwork(): JSX.Element | null {
       schedule();
     });
     try { observer.observe(canvas, { box: "device-pixel-content-box" }); } catch { observer.observe(canvas); }
+    // A docked panel opens by moving into view at its final size, which the
+    // ResizeObserver never reports; the change in visibility does.
+    const visibility = new IntersectionObserver(schedule, { threshold: [0, 0.25, 0.5, 0.75, 1] });
+    visibility.observe(canvas);
     window.addEventListener("resize", schedule);
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      visibility.disconnect();
       window.removeEventListener("resize", schedule);
       picture?.close?.();
     };

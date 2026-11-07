@@ -135,24 +135,24 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
 
 /* Single painter: regions inside a non-opaque pane must not stack a canvas
    fill over the artwork. Elevated surfaces inside them keep their own fills. */
-html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) :is(
+html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) :is(
   .conversation-split-pane,
   .empty-home,
   .project-empty-pane,
   .view-switch-loading-conversation,
   .plugin-workbench-view-primary
 ),
-html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .plugin-workbench-view-primary .plugin-view-content {
+html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .plugin-workbench-view-primary .plugin-view-content {
   background: transparent;
 }
 
 /* The dock cover was the only fill below the composer. Instead of repainting
    it, clip the scrollport's bottom strip so content cannot reach the gap. */
-html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .dock-composer-wrap::before {
+html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .dock-composer-wrap::before {
   content: none;
 }
 
-html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) {
+html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) {
   /* The dock cover's strip, measured from the shared dock tokens, minus the
      part of it the scrollport margin already keeps empty. */
   --canvas-dock-cover: max(0px, calc(
@@ -171,11 +171,27 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
   mask-repeat: no-repeat;
 }
 
-/* Exposure steps down from the frame to the reading surface. The ribbon sits
-   directly on the picture; the docked sidebar is a frosted pane over the same
-   picture, so the two read as one shell; the conversation and workspace keep
-   their paper. The collapsed drawer floats over content and stays opaque. */
+/* The docked sidebar, the conversation and the docked workspace panel are one
+   continuous sheet of the same material, so the picture reads as one image
+   across the window. Floating surfaces (tool rail, composer) carry their own
+   glass. The collapsed drawer and sheet-mode panel float over content and stay
+   opaque. */
 @media screen and (not ((prefers-reduced-transparency: reduce) or (forced-colors: active))) {
+  /* The material is a tone plus a cover. The tone compresses the picture's
+     light range toward the theme canvas (lifting shadows in light, dimming
+     highlights in dark), so a thin cover keeps text readable while the
+     picture's color still shows. Frame skins use the host fill; canvas skins
+     use their own veil on every pane. */
+  .navigation-ribbon-layout:has(.sidebar-ribbon) {
+    --shell-tone: contrast(0.4) brightness(1.5) saturate(1.6);
+    --shell-pane-fill: 44%;
+  }
+
+  :root[data-theme="dark"] .navigation-ribbon-layout:has(.sidebar-ribbon) {
+    --shell-tone: contrast(0.7) brightness(0.75) saturate(1.2);
+    --shell-pane-fill: 58%;
+  }
+
   html[data-shell-placement="frame"] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
     background: transparent;
   }
@@ -184,27 +200,68 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
     background-color: var(--workbench-canvas-bg);
   }
 
-  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
-    background: color-mix(in srgb, var(--workbench-canvas-bg) 64%, transparent);
+  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) {
+    background-color: transparent;
   }
 
-  /* Canvas skins blur the window-aligned artwork under the sidebar: the blur
-     drops the dot screen and the veil keeps rows readable. The bleed keeps the
-     blur's transparent fringe outside the clipped pane. */
+  /* The material sits on a layer: a backdrop filter on the pane itself would
+     trap its fixed descendants inside the pane. */
+  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"])::before {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-pane-fill), transparent);
+    -webkit-backdrop-filter: var(--shell-tone);
+    backdrop-filter: var(--shell-tone);
+    content: "";
+    pointer-events: none;
+  }
+
+  /* The panel paints the material once; its chrome rows stay clear. Documents
+     inside it (code, diffs, terminal, browser) keep their opaque fills. */
+  html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) :is(
+    .workspace-panel-tabbar,
+    .workspace-panel-body,
+    .workspace-files-tree,
+    .workspace-scroll-region
+  ) {
+    background: transparent;
+  }
+
+  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) {
+    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-pane-fill), transparent);
+    -webkit-backdrop-filter: var(--shell-tone);
+    backdrop-filter: var(--shell-tone);
+  }
+
+  html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-tool-rail {
+    background: color-mix(in srgb, var(--workspace-canvas-bg) 68%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    backdrop-filter: blur(24px) saturate(1.3);
+  }
+
+  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
+    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-pane-fill), transparent);
+    -webkit-backdrop-filter: var(--shell-tone);
+    backdrop-filter: var(--shell-tone);
+  }
+
+  /* Canvas skins continue the window-aligned artwork, screen included, under
+     both navigation panes. */
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
-    --sidebar-frost-bleed: 48px;
     background: var(--shell-background);
   }
 
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content > .shell-canvas-artwork {
     position: absolute;
-    inset: calc(-1 * var(--sidebar-frost-bleed));
+    inset: 0;
     z-index: -1;
     display: block;
-    width: calc(100% + 2 * var(--sidebar-frost-bleed));
-    height: calc(100% + 2 * var(--sidebar-frost-bleed));
-    filter: blur(14px) saturate(1.2);
-    clip-path: inset(var(--sidebar-frost-bleed) round var(--conversation-canvas-radius) 0 0 var(--conversation-canvas-radius));
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    filter: var(--shell-tone);
     pointer-events: none;
   }
 
@@ -215,7 +272,32 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
     border-radius: inherit;
     background: var(--paper);
     content: "";
-    opacity: 0.62;
+    opacity: var(--shell-veil, 0.86);
+    pointer-events: none;
+  }
+
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) {
+    background: var(--shell-background);
+  }
+
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) > .shell-canvas-artwork {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    display: block;
+    width: 100%;
+    height: 100%;
+    filter: var(--shell-tone);
+    pointer-events: none;
+  }
+
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet])::after {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--paper);
+    content: "";
+    opacity: var(--shell-veil, 0.86);
     pointer-events: none;
   }
 }
@@ -232,8 +314,12 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
     --canvas-veil: 0;
   }
 
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane[data-canvas="translucent"] > .shell-canvas-artwork {
+    filter: var(--shell-tone);
+  }
+
   /* Floating surfaces on a see-through pane use the host glass recipe. */
-  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) {
+  html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) {
     --canvas-glass-fill: 68%;
     --composer-surface-bg: color-mix(in srgb, var(--surface-raised) var(--canvas-glass-fill), transparent);
     --conversation-floating-surface-bg: color-mix(in srgb, var(--theme-override-color-surface-elevated, var(--paper)) var(--canvas-glass-fill), transparent);
@@ -242,11 +328,11 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
     --plugin-ui-card-bg: color-mix(in srgb, var(--theme-override-color-surface-elevated, var(--surface-3)) var(--canvas-glass-fill), transparent);
   }
 
-  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .empty-home-overview {
+  html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) .empty-home-overview {
     background: color-mix(in srgb, var(--surface-1) var(--canvas-glass-fill), transparent);
   }
 
-  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) :is(
+  html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) :is(
     .composer-editor,
     .composer-cover-accessory,
     .jump-to-latest-pill,
