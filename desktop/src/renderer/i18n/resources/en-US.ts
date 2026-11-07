@@ -862,7 +862,6 @@ export const enUS = {
   "settings.usageInWuu": "In Wuu",
   "settings.usageOutsideWuu": "Outside Wuu",
   "settings.usageSessions": "Sessions",
-  "settings.usageEngineOutsideHint": "Outside Wuu adds up what each engine recorded in its own logs on this machine, excluding sessions already counted in Wuu.",
   "settings.usageNoLedger": "No readable usage log on this machine",
   "settings.unknownProvider": "(Unknown provider)",
   "settings.unknownModel": "(Unknown model)",

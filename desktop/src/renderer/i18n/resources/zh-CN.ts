@@ -859,7 +859,6 @@ export const zhCN = {
   "settings.usageInWuu": "Wuu 内",
   "settings.usageOutsideWuu": "Wuu 之外",
   "settings.usageSessions": "会话",
-  "settings.usageEngineOutsideHint": "Wuu 之外汇总各引擎在本机日志中记录的用量，已排除 Wuu 内统计过的会话。",
   "settings.usageNoLedger": "本机没有可读的用量日志",
   "settings.unknownProvider": "（未知服务）",
   "settings.unknownModel": "（未知模型）",
