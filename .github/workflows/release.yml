@@ -95,6 +95,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: source/.node-version
+          cache: npm
+          cache-dependency-path: |
+            source/desktop/package-lock.json
+            source/plugins/package-lock.json
+            source/packages/plugin-sdk/package-lock.json
+            source/clients/core/package-lock.json
+            source/clients/mobile-web/package-lock.json
       - name: Resolve tool dependencies from product checkout
         run: echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
@@ -196,6 +203,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: source/.node-version
+          cache: npm
+          cache-dependency-path: source/desktop/package-lock.json
       - name: Resolve tool dependencies from product checkout
         run: echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
       - run: npm ci
@@ -284,6 +293,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: source/.node-version
+          cache: npm
+          cache-dependency-path: source/desktop/package-lock.json
       - name: Resolve tool dependencies from product checkout
         run: echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
       - run: npm ci
