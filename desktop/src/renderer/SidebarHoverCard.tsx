@@ -21,11 +21,10 @@ import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { type HoverRevealLayerProps, useRetainHoverOwner } from "./HoverReveal";
 import { useI18n } from "./i18n";
-import { isProjectCoordinator } from "./ProjectSessions";
 import { LiveDuration } from "./TurnProgress";
 import { formatRelativeTime } from "./TurnViewHelpers";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { AlertTriangle, Folder, GitBranch, MessageSquare, Project, Split } from "./WuuIcons";
+import { AlertTriangle, Folder, GitBranch, MessageSquare, Split } from "./WuuIcons";
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
@@ -40,7 +39,6 @@ export type SidebarHoverFacts = {
   // Every loaded, unarchived session per workspace, including pinned and
   // filed ones that the workspace group itself does not list.
   threadsByWorkspaceID: Readonly<Record<string, readonly ThreadSummary[]>>;
-  sessionsByProjectID: ReadonlyMap<string, readonly ThreadSummary[]>;
   activeThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
 };
@@ -225,9 +223,6 @@ export function ThreadHoverCardContent({
     ? Date.parse(latestTurn.started_at)
     : NaN;
   const workspace = facts?.workspaces.find((candidate) => threadBelongsToWorkspace(thread, candidate));
-  const projectSessions = isProjectCoordinator(thread)
-    ? facts?.sessionsByProjectID.get(thread.id) ?? []
-    : undefined;
   const model = [thread.engine_id ? engineLabel(thread.engine_id) : "", thread.model]
     .filter(Boolean)
     .join(" · ");
@@ -313,11 +308,6 @@ export function ThreadHoverCardContent({
         ) : null}
         {thread.forked_from_id ? (
           <HoverCardFact icon={<Split />}>{t("sidebarHoverCard.forked")}</HoverCardFact>
-        ) : null}
-        {projectSessions && facts ? (
-          <HoverCardFact icon={<Project />}>
-            <SessionCounts sessions={projectSessions} facts={facts} />
-          </HoverCardFact>
         ) : null}
         {model ? (
           <HoverCardFact icon={<EngineIcon engine={thread.engine_id || "wuu"} className="icon" />}>

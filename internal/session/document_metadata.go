@@ -81,20 +81,6 @@ func (store *documentStore) SetWorkspaceID(id, workspaceID string) (Session, err
 	})
 }
 
-// SetProjectMembership moves an ordinary session into a project, or a
-// managed session back out: source and parentID carry the relation, and
-// instructions replace the session's create-time instructions.
-func (store *documentStore) SetProjectMembership(id, source, parentID, instructions string) (Session, error) {
-	return store.updateMetadata(id, false, func(s *Session) {
-		s.Source = strings.TrimSpace(source)
-		s.ParentID = strings.TrimSpace(parentID)
-		s.Instructions = instructions
-		if source == "" {
-			s.ProjectRole = ""
-		}
-	})
-}
-
 func (store *documentStore) SetSource(id, source string) (Session, error) {
 	return store.updateMetadata(id, false, func(s *Session) {
 		s.Source = strings.TrimSpace(source)

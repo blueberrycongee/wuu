@@ -16,6 +16,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // doneObservedContext makes the queued-write cancellation deterministic: the
@@ -565,6 +566,42 @@ func TestCompletedAgentMessageRequiresKnownPhaseForEarlyCompletion(t *testing.T)
 	sub.emitItem(NotifyItemCompleted, json.RawMessage(`{"id":"message-2","type":"agentMessage","text":"done","phase":"final_answer"}`))
 	if len(events) != 1 || events[0].Type != providers.EventMessage || events[0].Message == nil {
 		t.Fatalf("final agent message events = %+v, want one message event", events)
+	}
+}
+
+func TestMCPToolCallPreservesImageResultDetail(t *testing.T) {
+	var events []providers.StreamEvent
+	sub := &turnSubscription{
+		tools: map[string]struct{}{},
+		sink:  func(event providers.StreamEvent) { events = append(events, event) },
+	}
+
+	sub.emitItem(NotifyItemStarted, json.RawMessage(`{"id":"shot-1","type":"mcpToolCall","status":"in_progress","server":"wuu_host","tool":"browser_screenshot","arguments":{"url":"http://example.test"}}`))
+	sub.emitItem(NotifyItemCompleted, json.RawMessage(`{"id":"shot-1","type":"mcpToolCall","status":"completed","server":"wuu_host","tool":"browser_screenshot","result":{"content":[{"type":"text","text":"captured"},{"type":"image","data":"aW1hZ2U=","mimeType":"image/png"}],"structuredContent":{"ok":true}}}`))
+
+	var detail *toolresult.Result
+	for _, event := range events {
+		if event.Type == providers.EventToolUseEnd {
+			detail = event.ToolResultDetail
+		}
+	}
+	if detail == nil {
+		t.Fatal("tool result detail missing")
+	}
+	var sawText, sawImage bool
+	for _, part := range detail.Content {
+		switch part.Type {
+		case toolresult.ContentTypeText:
+			sawText = part.Text == "captured"
+		case toolresult.ContentTypeImage:
+			sawImage = part.Data == "aW1hZ2U=" && part.MIMEType == "image/png"
+		}
+	}
+	if !sawText || !sawImage {
+		t.Fatalf("detail content = %+v", detail.Content)
+	}
+	if string(detail.StructuredContent) != `{"ok":true}` {
+		t.Fatalf("structured content = %s", detail.StructuredContent)
 	}
 }
 

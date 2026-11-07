@@ -57,6 +57,16 @@ Gemini's OpenAI-compatible Chat Completions API can return an opaque thought sig
 
 Switching provider or model omits signatures from the previous origin on outgoing requests. Signatures already lost by an older Wuu version cannot be reconstructed; start a new conversation if that history is rejected. A generic `invalid_request` alone does not establish that a missing signature caused it.
 
+## Tencent HY4 and MiniMax M3.1
+
+Select `hy4` on Tencent TokenHub (`https://tokenhub.tencentmaas.com/v1`) or Token Plan (`https://tokenhub.tencentmaas.com/plan/v3`). HY4 accepts text and images, supports tools, and provides a 1,024,000-token context window with up to 64,000 output tokens. Wuu defaults to `high`; `none` sends Tencent's `no_think` value. See the official [HY4 guide](https://cloud.tencent.com/document/product/1823/132252) and [thinking parameters](https://cloud.tencent.com/document/product/1823/131208).
+
+OpenRouter offers `tencent/hy4` with its own limits and reasoning options: `none`, `low`, and `high` (default). Provider-specific limits and prices apply; the direct Tencent settings are not interchangeable with the gateway's settings.
+
+MiniMax connections include `MiniMax-M3.1-Flash`, with image and video input and a 1M context window. Reasoning is required: choose `low`, `medium`, `high`, `xhigh`, or `max` (default). A saved `none` selection becomes `low`. Existing M2 selections retain their metadata but are no longer advertised as new choices. See the [MiniMax text-generation guide](https://platform.minimax.io/docs/guides/text-generation).
+
+Catalog refreshes preserve metadata for saved selections removed from the bundled catalog. Retained metadata does not establish that a retired model is still served or included in your account's plan.
+
 ## Kimi K3.1 Pro
 
 Choose `kimi-k3.1-pro` or `kimi-k3.1-pro-highspeed` on Kimi's pay-as-you-go API (`https://api.moonshot.ai/v1` or `https://api.moonshot.cn/v1`). Kimi Code subscriptions use `k3.1-pro` or `k3.1-pro-highspeed` instead, at `https://api.kimi.com/coding/v1` or `https://api.kimi.ai/coding/v1`.
@@ -283,10 +293,10 @@ image for the model. External agent engines use their own file and image tools.
 The built-in engine enables programmatic tool calling (PTC) by default.
 Basic file and command tools also accept direct calls; `run_code` combines
 tools or processes their results.
-**Settings → Built-in agent → Programmatic tool calling** provides one switch
-for all models. Explicit saved choices are preserved; configurations
-that omit the switch use the default. Changes require idle turns and apply on
-the next turn. External engines keep their own tools.
+Set `ptc.enabled` in [user configuration](../reference/configuration.md#built-in-agent-settings)
+to enable or disable PTC for all models. Explicit saved choices are preserved;
+omitting the field uses the default. Finish active work, then fully quit and
+restart Wuu after editing. External engines keep their own tools.
 
 Interaction, explicit artifact delivery, context replacement, workspace changes,
 and agent/session lifecycle controls remain separate direct tools. Extensions

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,15 +26,6 @@ type runTracker struct {
 	interruptStatus execution.Status
 	control         *session.Control
 	controlBaseline *session.Control
-	schemaRetry     *executionSchemaRetry
-}
-
-type executionSchemaRetry struct {
-	projectID string
-	thread    *threadState
-	snapshot  turnRuntimeSnapshot
-	prompt    string
-	queuedAt  time.Time
 }
 
 func (s *Server) handleRunStart(ctx context.Context, req Request) error {
@@ -607,110 +597,6 @@ func (s *Server) validateExecutionSchemaRetry(binding *runtime.State, snapshot t
 		return errExecutionRunChanged
 	}
 	return nil
-}
-
-func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threadState, snapshot turnRuntimeSnapshot, prompt string) error {
-	err := s.startExecutionSchemaRetry(ctx, th, snapshot, prompt)
-	if !errors.Is(err, session.ErrProjectWorkerCapacity) {
-		return err
-	}
-	metadata, found, readErr := th.state.Sessions.Find(th.ID)
-	if readErr != nil {
-		return readErr
-	}
-	if !found {
-		return session.ErrSessionNotFound
-	}
-	projectID := metadata.ID
-	if metadata.Source == projectSessionSource {
-		projectID = metadata.ParentID
-	}
-	if snapshot.Control == nil {
-		snapshot.Control = s.executionRunControl(snapshot.ExecutionRunID)
-	}
-	if snapshot.ExecutionControlBaseline == nil {
-		snapshot.ExecutionControlBaseline = s.executionRunControlBaseline(snapshot.ExecutionRunID)
-	}
-	if err := s.validateExecutionSchemaRetry(th.state, snapshot); err != nil {
-		return err
-	}
-	s.runMu.Lock()
-	tracker := s.runs[snapshot.ExecutionRunID]
-	if tracker == nil {
-		s.runMu.Unlock()
-		return errExecutionRunChanged
-	}
-	if tracker.control == nil {
-		tracker.control = snapshot.Control
-	}
-	if tracker.schemaRetry == nil {
-		tracker.schemaRetry = &executionSchemaRetry{projectID: projectID, thread: th, snapshot: snapshot, prompt: prompt, queuedAt: time.Now().UTC()}
-	}
-	s.runMu.Unlock()
-	s.kickProjectInboxDrain(th.state, projectID)
-	return nil
-}
-
-// Capacity deferrals remain part of their accepted Run and share the project's
-// bounded timer. Validation still runs when this pass already knows the pool is
-// full, so a stopped or detached run does not retain a useless retry loop.
-func (s *Server) drainExecutionSchemaRetries(binding *runtime.State, projectID string, allowStart bool) (pending, capacityFull bool) {
-	s.runMu.Lock()
-	var retries []*executionSchemaRetry
-	for _, tracker := range s.runs {
-		if tracker.state.Sessions != binding.Sessions {
-			continue
-		}
-		if retry := tracker.schemaRetry; retry != nil && retry.projectID == projectID {
-			retries = append(retries, retry)
-		}
-	}
-	s.runMu.Unlock()
-	sort.Slice(retries, func(i, j int) bool {
-		if retries[i].queuedAt.Equal(retries[j].queuedAt) {
-			return retries[i].snapshot.ExecutionRunID < retries[j].snapshot.ExecutionRunID
-		}
-		return retries[i].queuedAt.Before(retries[j].queuedAt)
-	})
-	for _, retry := range retries {
-		runID := retry.snapshot.ExecutionRunID
-		err := s.validateExecutionSchemaRetry(binding, retry.snapshot)
-		if err == nil && !allowStart {
-			pending = true
-			continue
-		}
-		s.runMu.Lock()
-		tracker := s.runs[runID]
-		if tracker == nil || tracker.schemaRetry != retry {
-			s.runMu.Unlock()
-			continue
-		}
-		// Remove before launch: a fast model may already queue its next schema
-		// correction before startExecutionSchemaRetry returns.
-		tracker.schemaRetry = nil
-		s.runMu.Unlock()
-		if err == nil {
-			err = s.startExecutionSchemaRetry(context.Background(), retry.thread, retry.snapshot, retry.prompt)
-		}
-		if errors.Is(err, session.ErrProjectWorkerCapacity) {
-			capacityFull, allowStart = true, false
-		}
-		if errors.Is(err, errRetryableTurnAdmission) || errors.Is(err, errThreadExecutionBusy) {
-			s.runMu.Lock()
-			if tracker := s.runs[runID]; tracker != nil {
-				if tracker.schemaRetry == nil {
-					tracker.schemaRetry = retry
-				}
-				pending = true
-			}
-			s.runMu.Unlock()
-			continue
-		}
-		if err != nil {
-			s.failExecutionSchemaRetry(binding, runID, err)
-		}
-	}
-	return pending, capacityFull
 }
 
 func (s *Server) failExecutionSchemaRetry(binding *runtime.State, runID string, cause error) {

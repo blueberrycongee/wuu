@@ -71,8 +71,6 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		SessionControl:       th.SessionControl,
 		ID:                   th.ID,
 		Source:               th.Source,
-		ProjectID:            th.ProjectID,
-		ProjectRole:          th.ProjectRole,
 		ParentID:             th.ParentID,
 		AgentPath:            th.AgentPath,
 		Preview:              firstNonEmpty(th.Title, threadPreview(th.History)),
@@ -97,7 +95,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		TreeInterrupted:      th.workerTreeFrozen,
 		// Plugin-visible sessions remain writable by their owning plugin, but the
 		// user-facing conversation is an inspector and must not expose a composer.
-		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || projectExecutionDisabled(th.Source),
+		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || retiredSessionSource(th.Source),
 		Ephemeral:             th.Ephemeral,
 		Pinned:                th.PinnedAt != nil,
 		FolderID:              th.FolderID,
@@ -147,6 +145,9 @@ func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMess
 	th.UpdatedAt = now
 	th.pendingSteers = nil
 	th.nextItemIndex = 0
+	th.preemptingAgentTurnID = ""
+	th.modelPreemptWake = nil
+	th.modelPreemptClosed = false
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
@@ -209,6 +210,9 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 		th.UpdatedAt = now
 		th.pendingSteers = nil
 		th.nextItemIndex = maxTurnItemIndex(turn)
+		th.preemptingAgentTurnID = ""
+		th.modelPreemptWake = nil
+		th.modelPreemptClosed = false
 		th.activeAgentItemID = ""
 		th.agentStream = nil
 		th.activeReasoningItemID = ""
@@ -225,6 +229,9 @@ func (th *threadState) appendUserMessageTurnLocked(turnID string, userMsg provid
 	th.currentTurnResumed = false
 	th.UpdatedAt = now
 	th.nextItemIndex = 0
+	th.preemptingAgentTurnID = ""
+	th.modelPreemptWake = nil
+	th.modelPreemptClosed = false
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
@@ -276,6 +283,9 @@ func (th *threadState) startInternalTurnWithKindLocked(turnID string, kind TurnK
 	th.UpdatedAt = now
 	th.pendingSteers = nil
 	th.nextItemIndex = 0
+	th.preemptingAgentTurnID = ""
+	th.modelPreemptWake = nil
+	th.modelPreemptClosed = false
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
@@ -329,6 +339,9 @@ func (th *threadState) startAgentTurnLocked(now time.Time) (Turn, bool) {
 		th.runningModel = th.Model
 		th.pendingSteers = nil
 		th.nextItemIndex = 0
+		th.preemptingAgentTurnID = ""
+		th.modelPreemptWake = nil
+		th.modelPreemptClosed = false
 		return turn, true
 	}
 
@@ -357,6 +370,9 @@ func (th *threadState) startAgentTurnLocked(now time.Time) (Turn, bool) {
 	th.runningModel = th.Model
 	th.pendingSteers = nil
 	th.nextItemIndex = max(th.nextItemIndex, maxTurnItemIndex(turn))
+	th.preemptingAgentTurnID = ""
+	th.modelPreemptWake = nil
+	th.modelPreemptClosed = false
 	if th.toolItems == nil {
 		th.toolItems = make(map[string]string)
 	}
@@ -469,6 +485,9 @@ func (th *threadState) releaseTurnExecutionLocked(turnID string) {
 	th.completeAfterAnswerReadyCancel = false
 	th.steerWake = nil
 	th.steerWakeClosed = false
+	th.modelPreemptWake = nil
+	th.modelPreemptClosed = false
+	th.preemptingAgentTurnID = ""
 	th.activeSteerDocument = nil
 	th.activeSteerContextSet = false
 	th.steerDocumentOverrides = nil
@@ -664,6 +683,12 @@ func maxTurnItemIndex(turn Turn) int {
 }
 
 func (th *threadState) applyStreamEventLocked(turnID string, ev providers.StreamEvent, now time.Time) []outboundNotification {
+	// A preempted transport can still deliver buffered deltas after the steer
+	// closed its visible item. Keep only accounting/metadata until the next
+	// model-step admission starts a fresh stream.
+	if th.preemptingAgentTurnID == turnID && !preemptedStreamMetadataEvent(ev.Type) {
+		return nil
+	}
 	var out []outboundNotification
 	switch ev.Type {
 	case providers.EventLifecycle:
@@ -834,6 +859,11 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			return nil
 		}
 		out = append(out, th.completeActiveAgentItemLocked(turnID, now, false)...)
+		if itemID := th.toolItems[ev.ToolCall.ID]; itemID != "" {
+			if item, ok := th.itemLocked(turnID, itemID); ok && item.externalArtifact {
+				return out
+			}
+		}
 		item := th.toolItemFromCallLocked(turnID, *ev.ToolCall, now)
 		out = append(out, itemStarted(th.ID, turnID, item, now))
 	case providers.EventToolUseDelta:
@@ -844,7 +874,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if ev.ToolCall != nil && ev.ToolCall.ID != "" {
 			item, ok = th.itemLocked(turnID, th.toolItems[ev.ToolCall.ID])
 		}
-		if !ok || item.Status != ThreadItemStatusInProgress {
+		if !ok || item.Status != ThreadItemStatusInProgress || item.externalArtifact {
 			return nil
 		}
 		item.Arguments = th.appendStreamTextLocked(item.ID, item.Arguments, ev.Content)
@@ -861,6 +891,11 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 	case providers.EventToolUseEnd:
 		if ev.ToolCall == nil {
 			return nil
+		}
+		if itemID := th.toolItems[ev.ToolCall.ID]; itemID != "" {
+			if item, ok := th.itemLocked(turnID, itemID); ok && item.externalArtifact {
+				return nil
+			}
 		}
 		item := th.toolItemFromCallLocked(turnID, *ev.ToolCall, now)
 		if ev.ToolResult != "" || ev.ToolResultDetail != nil {
@@ -922,6 +957,9 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		} else {
 			out = append(out, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
 		}
+	case providers.EventModelPreempted:
+		out = append(out, th.completeSteeredAgentItemsLocked(turnID, now)...)
+		th.preemptingAgentTurnID = turnID
 	case providers.EventError:
 		if th.completeAfterAnswerReadyCancel && !th.interrupting && currentTurnIsAnswerReadyLocked(th) {
 			return nil
@@ -1118,6 +1156,9 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 			return nil
 		}
 		item, ok := th.itemLocked(turnID, th.toolItems[msg.ToolCallID])
+		if ok && item.externalArtifact {
+			return nil
+		}
 		if !ok {
 			item = ThreadItem{
 				ID:     th.nextItemIDLocked(turnID),
@@ -1251,6 +1292,69 @@ func (th *threadState) completeActiveAgentItemLocked(turnID string, now time.Tim
 	item.Status = ThreadItemStatusCompleted
 	th.upsertItemLocked(turnID, item, now)
 	return []outboundNotification{itemCompleted(th.ID, turnID, item, now)}
+}
+
+func preemptedStreamMetadataEvent(eventType providers.StreamEventType) bool {
+	switch eventType {
+	case providers.EventModelPreempted,
+		providers.EventUsage,
+		providers.EventProviderState,
+		providers.EventModelStep,
+		providers.EventRequestContext,
+		providers.EventCompact:
+		return true
+	default:
+		return false
+	}
+}
+
+// completeSteeredAgentItemsLocked closes the visible items of the model stream
+// that newly accepted user input interrupted. Partial tool declarations belong
+// to the cancelled attempt and do not survive into the successor request.
+func (th *threadState) completeSteeredAgentItemsLocked(turnID string, now time.Time) []outboundNotification {
+	var out []outboundNotification
+	if th.activeAgentItemID != "" {
+		if item, ok := th.itemLocked(turnID, th.activeAgentItemID); ok {
+			if strings.TrimSpace(item.Text) != "" || len(item.Images) > 0 {
+				item.Status = ThreadItemStatusCompleted
+				item.Terminal = false
+				item.Cause = providers.SteeredStreamFragment
+				th.upsertItemLocked(turnID, item, now)
+				out = append(out, itemCompleted(th.ID, turnID, item, now))
+			} else if th.removeItemLocked(turnID, item.ID, now) {
+				out = append(out, itemRemoved(th.ID, turnID, item.ID, now))
+			}
+		}
+		th.activeAgentItemID = ""
+	}
+	if th.activeReasoningItemID != "" {
+		if item, ok := th.itemLocked(turnID, th.activeReasoningItemID); ok {
+			item.Status = ThreadItemStatusCompleted
+			th.upsertItemLocked(turnID, item, now)
+			out = append(out, itemCompleted(th.ID, turnID, item, now))
+		}
+		th.activeReasoningItemID = ""
+	}
+	removed := make(map[string]struct{})
+	for sourceID, itemID := range th.toolItems {
+		item, ok := th.itemLocked(turnID, itemID)
+		if !ok {
+			delete(th.toolItems, sourceID)
+			continue
+		}
+		if item.Status != ThreadItemStatusInProgress {
+			continue
+		}
+		delete(th.toolItems, sourceID)
+		if _, seen := removed[item.ID]; seen {
+			continue
+		}
+		if th.removeItemLocked(turnID, item.ID, now) {
+			removed[item.ID] = struct{}{}
+			out = append(out, itemRemoved(th.ID, turnID, item.ID, now))
+		}
+	}
+	return out
 }
 
 func (th *threadState) ensureActiveReasoningItemLocked(turnID string, now time.Time) (ThreadItem, bool) {
@@ -1614,6 +1718,10 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			if current != nil && rec.Content == externalArtifactHistoryRecord && rec.ToolResult != nil {
+				appendItem(externalArtifactItem(nextItemID(current.ID), rec), historyIndex, true)
+				continue
+			}
 			if rec.Content == turnContinueHistoryRecord {
 				itemIndex = 0
 				toolItems = make(map[string]int)
@@ -2039,6 +2147,9 @@ func isToolResultMessage(msg providers.ChatMessage) bool {
 }
 
 func assistantMessageTerminal(msg providers.ChatMessage) bool {
+	if msg.Cause == providers.SteeredStreamFragment {
+		return false
+	}
 	if msg.Phase != "" {
 		return msg.Phase == providers.MessagePhaseFinalAnswer
 	}

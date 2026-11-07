@@ -27,6 +27,14 @@ SDK 包目前仍为 `0.1.0`；这个数字不能独立标识源代码修订或�
 
 当前接受的能力协议版本和生命周期 2 没有标记移除计划。实验契约和已移除的服务主版本，不会因为同属 SDK `0.1.0` 而自动获得兼容承诺。
 
+## Project Agent 移除
+
+Project Agent 及其实验契约 `project.coordination@1`、`project_session` 工具、桌面 `application.projects` API、项目草稿模式、`session.domain@1` 的项目工作方法，以及旧 `thread/control/take` 和 `thread/control/return` RPC 均已移除。已核验这些宿主和仓库 SDK 契约的移除前参考为 main 修订 `e1de6e0ca`（SDK `0.1.0`）。移除边界是 [PR #1167](https://github.com/blueberrycongee/wuu/pull/1167)；在该 PR 合入前的后续修订也可能仍保留这些契约。产品版本和 SDK 包版本号不能单独标识支持范围。
+
+升级前应移除对这些契约的依赖及其组合选择。没有内置替代项目调度器；自行实现协调的扩展可使用 `host.managed-session@1` 和公共会话生命周期。普通工作区项目仍受支持。原生 managed-session 响应保留 `capacity_full: false`，执行准入保留原有四个传输参数，但忽略已移除的容量参数。
+
+已有 Project Agent 对话仍可从普通会话列表阅读，但不能执行，也不会在重启后恢复排队任务。历史工作记录保留在存储中，并作为不透明记录迁移；旧配置键 `project_models` 和 `project_max_parallel` 会被忽略。继续工作需新建普通对话。回退需要旧可执行文件和一致备份；升级不会撤销已发生的外部效果。
+
 ## 安全升级与恢复
 
 1. 保留旧可执行文件、插件产物、组合配置源，以及提供者拥有的历史、设置、绑定和 checkpoint 的一致备份。

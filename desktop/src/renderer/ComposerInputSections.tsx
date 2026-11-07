@@ -754,12 +754,7 @@ export function ComposerQueueStrip({
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip
-          content={hasUnconfirmedMessages ? t("composer.deliveryUnconfirmedDetails") : hasHeldMessages ? t("composer.heldDetails") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
-          disabled={
-            !hasUnconfirmedMessages && !hasHeldMessages && (expanded ||
-            !latestMessage ||
-            queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage))
-          }
+          content={hasUnconfirmedMessages ? t("composer.deliveryUnconfirmedDetails") : hasHeldMessages ? t("composer.heldDetails") : undefined}
         >
           <span
             className="composer-pending-preview"
@@ -846,26 +841,22 @@ function ComposerQueueItem({
       <span className="composer-queue-index" aria-hidden="true">
         {position}
       </span>
-      <Tooltip
-        content={queuedMessageFullPreview(message)}
-        disabled={queuedMessageFullPreview(message) === queuedMessagePreview(message)}
-      >
-        {message.deliveryUnconfirmed ? (
-          <span className="composer-queue-preview" aria-label={queuedMessageFullPreview(message)}>
-            {queuedMessagePreview(message)}
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="composer-queue-preview"
-            aria-label={editContentLabel}
-            onClick={onEdit}
-            disabled={Boolean(message.operationState)}
-          >
-            {queuedMessagePreview(message)}
-          </button>
-        )}
-      </Tooltip>
+      {message.deliveryUnconfirmed ? (
+        <span className="composer-queue-preview">
+          {queuedMessageFullPreview(message)}
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="composer-queue-preview"
+          aria-label={editContentLabel}
+          aria-description={queuedMessageFullPreview(message)}
+          onClick={onEdit}
+          disabled={Boolean(message.operationState)}
+        >
+          {queuedMessageFullPreview(message)}
+        </button>
+      )}
       <div className="composer-queue-actions composer-input-header-actions">
         {message.deliveryUnconfirmed ? (
           <MessageCopyButton

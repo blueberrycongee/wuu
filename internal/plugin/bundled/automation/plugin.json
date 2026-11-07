@@ -3,7 +3,7 @@
   "id": "automation",
   "name": "Automation Scheduler",
   "description": "Default scheduling provider for Agent prompts.",
-  "icon": "clock",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "author": {
     "name": "Wuu"
@@ -18,6 +18,11 @@
     "timeout": 30
   },
   "interface": {
+    "family": {
+      "id": "wuu.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring agent work."
+    },
     "displayName": "Automation Scheduler",
     "shortDescription": "Execute scheduled prompts and recurring Agent work.",
     "developerName": "Wuu",

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, useState, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationForkDialog } from "./ConversationForkDialog";
+import { clearToasts, ToastViewport } from "./Toast";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -47,6 +48,7 @@ afterEach(() => {
   root = null;
   container?.remove();
   container = null;
+  clearToasts();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -188,14 +190,17 @@ describe("ConversationForkDialog", () => {
     });
   });
 
-  it("shows a fork error and restores the dialog actions", async () => {
+  it("shows a fork error toast and restores the dialog actions", async () => {
     const onChoose = vi.fn(() => Promise.reject(new Error("fork failed")));
 
     mount(
-      createElement(ConversationForkDialog, {
-        onCancel: () => undefined,
-        onChoose,
-      }),
+      createElement("div", null,
+        createElement(ToastViewport),
+        createElement(ConversationForkDialog, {
+          onCancel: () => undefined,
+          onChoose,
+        }),
+      ),
     );
 
     await act(async () => {

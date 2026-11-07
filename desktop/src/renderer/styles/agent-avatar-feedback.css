@@ -143,6 +143,7 @@
   100% { stroke-dashoffset: var(--agent-ribbon-offset, 0px); opacity: 0; }
 }
 
+.agent-avatar-mark .mo-root[data-mo-paused] .mo-eyes,
 :root[data-renderer-hidden] .agent-avatar-mark .mo-eyes,
 .cached-conversation-pane[data-active="false"] .agent-avatar-mark .mo-eyes {
   animation-play-state: paused !important;

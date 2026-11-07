@@ -3,11 +3,14 @@ import { TruncatedText } from "./TruncatedText";
 import {
   AlertCircle,
   AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Monitor,
   MoreHorizontal,
   PackagePlus,
+  Plug,
+  Plus,
   PanelLeft,
   PanelRight,
   RefreshCw,
@@ -24,9 +27,10 @@ import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryReco
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 
 import { CatalogSearchField } from "./CatalogSearchField";
-import { CapabilityMark, skillCapability } from "./CapabilityMark";
+import { DefaultExtensionIcon } from "./DefaultExtensionIcon";
 import { confirmAction } from "./ConfirmDialog";
 import { extensionPackageApproval, pluginToggle } from "./extensionPackageState";
+import { groupPluginFamilies, type PluginFamilyGroup } from "./pluginFamilies";
 import { translateCurrent, useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Modal } from "./Modal";
@@ -34,10 +38,13 @@ import { PluginIcon } from "./PublicIcon";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
 import { MCPServices, MCPServicesProvider, useMCPServices } from "./MCPServices";
+import { MCPServerEditor } from "./MCPServerEditor";
 import { RichContent } from "./RichContent";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 import { showErrorToast, showToast, toastErrorMessage } from "./Toast";
+import { showExtensionMutationError } from "./extensionMutationError";
+import { Switch } from "./ui/Switch";
 
 type LoadState = {
   loading: boolean;
@@ -57,23 +64,6 @@ const initialLoadState: LoadState = {
   skills: [],
 };
 
-function showExtensionMutationError(error: unknown, fallback: string): void {
-  // These admission errors currently cross IPC as text, without a typed code.
-  // Keep their translation here, shared by refresh and package actions.
-  const message = toastErrorMessage(error);
-  const busyExecution = /^cannot .+ plugin packages while (?:a turn is running or background work remains on thread .+|another app-server is running a turn or background work)$/.test(message);
-  const busyMutation = /^cannot .+ plugin packages while (?:another plugin change is running|another app-server is changing the plugin catalog)$/.test(message);
-  if (busyExecution || busyMutation) {
-    showToast({
-      message: translateCurrent(busyExecution ? "skills.executionBusy" : "skills.changeBusy"),
-      tone: "info",
-      dedupeKey: busyExecution ? "extensions-execution-busy" : "extensions-change-busy",
-    });
-    return;
-  }
-  showErrorToast(error, fallback);
-}
-
 export type SkillsCatalogSection = "plugins" | "skills";
 
 const CatalogContext = createContext<ApplicationCatalogV1 | null>(null);
@@ -85,9 +75,7 @@ function useCatalog(): ApplicationCatalogV1 {
 
 export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
  const catalog = props.application.catalog.getSnapshot();
- const ownerKey = JSON.stringify([catalog.contextKey, catalog.inventory.filter(item => item.kind === "plugin")
-   .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
- return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={ownerKey}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><MCPServicesProvider key={catalog.contextKey} contextKey={catalog.contextKey} catalog={props.application.catalog}><SkillsCatalogView {...props} /></MCPServicesProvider></CatalogContext.Provider></SettingsControlsProvider>;
 }
 type SkillsCatalogProps = {
  application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};
@@ -111,6 +99,9 @@ function SkillsCatalogView({
   const { locale, t } = useI18n();
   const [state, setState] = useState<LoadState>(initialLoadState);
   const [filter, setFilter] = useState("");
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [addingMCP, setAddingMCP] = useState(false);
+  const { refresh: refreshMCP } = useMCPServices();
   const [previewSkill, setPreviewSkill] = useState<SkillSummary | null>(null);
   const [localSelectedPluginID, setLocalSelectedPluginID] = useState("");
   const selectedPluginID = selectedPluginIDProp ?? localSelectedPluginID;
@@ -141,10 +132,13 @@ function SkillsCatalogView({
     if (active) return;
     setPreviewSkill(null);
     setPackageActionMenu(null);
+    setAddMenu(null);
+    setAddingMCP(false);
   }, [active]);
   const contextKey = catalogSnapshot.contextKey;
   const contextKeyRef = useRef(contextKey);
   contextKeyRef.current = contextKey;
+  useEffect(() => { setAddMenu(null); setAddingMCP(false); }, [contextKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -212,34 +206,62 @@ function SkillsCatalogView({
     () => extensionInventory.filter((record) => record.kind === "plugin"),
     [extensionInventory],
   );
-  // A plugin keeps the group it was listed in until the catalog is entered
-  // again, so its switch turns it on or off without moving the row away
-  // from the pointer.
-  const [listedPlacement, setListedPlacement] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const inventoryKey = JSON.stringify([catalogSnapshot.contextKey, plugins
+    .map(item => [item.id, item.fingerprint, item.provenance, item.package_source, item.enabled])]);
+  const lastInventoryKey = useRef(inventoryKey);
   useEffect(() => {
-    const unlisted = plugins.filter((record) => !listedPlacement.has(record.id));
-    if (unlisted.length === 0) return;
-    setListedPlacement((current) => new Map([
-      ...current,
-      ...unlisted.map((record) => [record.id, pluginToggle(record).on] as const),
-    ]));
-  }, [listedPlacement, plugins]);
+    if (lastInventoryKey.current === inventoryKey) return;
+    lastInventoryKey.current = inventoryKey;
+    // Package changes republish MCP connectors. Refresh in place instead of
+    // keying the provider by inventory, which would tear down the visible rows.
+    void refreshMCP();
+  }, [inventoryKey, refreshMCP]);
 
+  const reportedDiagnostics = useRef<{ contextKey: string; messages: Set<string> }>({ contextKey, messages: new Set() });
+  useEffect(() => {
+    if (!active || packageMutation || state.loading) return;
+    if (reportedDiagnostics.current.contextKey !== contextKey) {
+      reportedDiagnostics.current = { contextKey, messages: new Set() };
+    }
+    const current = new Set<string>();
+    const nameOf = (id: string) => plugins.find(record => (record.provenance.plugin_id ?? record.id) === id)?.name ?? id;
+    for (const record of plugins) {
+      if (!pluginToggle(record).on) continue;
+      const diagnostics = [
+        ...(record.runtime_state === "failed" ? [{ tone: "error" as const, text: toastErrorMessage(record.last_error, t("skills.pluginStatusFailed")) }] : []),
+        ...(record.activation_issues ?? []).map(issue => pluginActivationNotice(issue, t, nameOf)),
+      ];
+      for (const diagnostic of diagnostics) {
+        const key = `${record.id}:${diagnostic.tone}:${diagnostic.text}`;
+        current.add(key);
+        if (reportedDiagnostics.current.messages.has(key)) continue;
+        showToast({
+          message: `${record.name}: ${diagnostic.text}`,
+          tone: diagnostic.tone === "error" ? "error" : "info",
+          // Mutation errors use this same key, so a failed action and its
+          // resulting inventory snapshot do not produce duplicate notices.
+          dedupeKey: `${diagnostic.tone === "error" ? "error" : "info"}:${diagnostic.text}`,
+        });
+      }
+    }
+    reportedDiagnostics.current.messages = current;
+  }, [active, contextKey, plugins, packageMutation, state.loading, t]);
+
+  const pluginGroups = useMemo(() => groupPluginFamilies(plugins, locale), [plugins, locale]);
   const visiblePlugins = useMemo(() => {
     const query = filter.trim().toLowerCase();
-    const items = [...plugins].sort((left, right) =>
-      left.name.localeCompare(right.name, locale),
+    if (!query) return pluginGroups;
+    return pluginGroups.filter(group =>
+      [group.name, group.description, ...group.members.flatMap(record =>
+        [record.name, record.description, ...(record.requested_permissions ?? [])])]
+        .some(value => value?.toLowerCase().includes(query)),
     );
-    if (!query) {
-      return items;
-    }
-    return items.filter((record) =>
-      [record.name, record.description, ...(record.requested_permissions ?? [])]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(query)),
-    );
-  }, [filter, locale, plugins]);
+  }, [filter, pluginGroups]);
   const selectedPlugin = plugins.find((record) => record.id === selectedPluginID);
+  const selectedFamily = pluginGroups.find(group => group.family && group.id === selectedPluginID);
+  const parentFamily = selectedPlugin?.family
+    ? pluginGroups.find(group => group.members.some(record => record.id === selectedPlugin.id))
+    : undefined;
   // Notices and skill rows name related plugins the way their cards do.
   const pluginName = (id: string) =>
     plugins.find((record) => (record.provenance.plugin_id ?? record.id) === id)?.name ?? id;
@@ -305,7 +327,7 @@ function SkillsCatalogView({
   }
 
   // A plugin that asks for permissions shows them before it first runs;
-  // every other switch applies in place.
+  // other enablement actions apply in place.
   function togglePlugin(record: ExtensionInventoryRecord): void {
     const toggle = pluginToggle(record);
     if (toggle.review) {
@@ -406,16 +428,6 @@ function SkillsCatalogView({
     return items;
   }
 
-  const attentionPlugins = visiblePlugins.flatMap((record) => {
-    const attention = pluginAttention(record, t, pluginName);
-    return attention ? [{ record, attention }] : [];
-  });
-  const quietPlugins = visiblePlugins.filter((record) => !attentionPlugins.some((entry) => entry.record === record));
-  const listedOn = (record: ExtensionInventoryRecord) => listedPlacement.get(record.id) ?? pluginToggle(record).on;
-  const pluginGroups = [
-    { key: "enabled", title: t("skills.groupEnabled"), records: quietPlugins.filter(listedOn) },
-    { key: "disabled", title: t("skills.groupDisabled"), records: quietPlugins.filter((record) => !listedOn(record)) },
-  ].filter((group) => group.records.length > 0);
   const activeTab = section ?? (plugins.length === 0 ? "skills" : chosenTab);
   const pluginSkills = (record: ExtensionInventoryRecord) =>
     state.skills.filter((skill) => pluginSkillID(skill.source) === record.provenance.plugin_id);
@@ -426,16 +438,14 @@ function SkillsCatalogView({
         <PluginDetailPage
           record={selectedPlugin}
           skills={pluginSkills(selectedPlugin)}
-          pluginName={pluginName}
           packageMutation={packageMutation}
           reloading={state.loading}
           canUpdate={capabilities.update}
           canRemove={capabilities.remove}
           canInstall={capabilities.install}
+          backLabel={parentFamily?.name}
           onBack={() => {
-            // Coming back is entering the catalog again: rows regroup by state.
-            setListedPlacement(new Map());
-            setSelectedPluginID("");
+            setSelectedPluginID(parentFamily?.id ?? "");
           }}
           onToggle={() => void updateExtensionPackage(selectedPlugin, pluginToggle(selectedPlugin).action)}
           onPrimaryAction={(action) => void updateExtensionPackage(selectedPlugin, action)}
@@ -469,9 +479,35 @@ function SkillsCatalogView({
     );
   }
 
+  if (selectedFamily) {
+    return (
+      <section className="settings-page skills-catalog plugin-page" aria-label={selectedFamily.name} data-wuu-component="plugin-family-detail">
+        <nav className="settings-page-back" aria-label={t("skills.tabPlugins")}>
+          <button type="button" onClick={() => setSelectedPluginID("")}>
+            <ChevronLeft className="icon" aria-hidden="true" />{t("skills.tabPlugins")}
+          </button>
+        </nav>
+        <SettingsPageHeader title={selectedFamily.name} description={selectedFamily.description} />
+        <SettingsSection title={t("skills.familyComponents")} description={t("skills.familyStatus", {
+          enabled: selectedFamily.members.filter(record => pluginToggle(record).on).length,
+          count: selectedFamily.members.length,
+        })}>
+          <div className="plugin-catalog-grid">
+            {selectedFamily.members.map(record => (
+              <PluginRow key={record.id} record={record}
+                toggleDisabled={Boolean(packageMutation)} toggleBusy={packageMutation.startsWith(`${record.id}:`)}
+                onOpen={() => setSelectedPluginID(record.id)}
+                onToggle={capabilities.update ? () => togglePlugin(record) : undefined} />
+            ))}
+          </div>
+        </SettingsSection>
+      </section>
+    );
+  }
+
   return (
     <section
-      className="settings-page skills-catalog"
+      className={`settings-page skills-catalog${activeTab === "plugins" ? " plugin-catalog" : ""}`}
       aria-label={t("skills.catalogLabel")}
       data-wuu-component="skills-catalog"
     >
@@ -479,7 +515,7 @@ function SkillsCatalogView({
       <div className="catalog-toolbar">
         <CatalogSearchField
           value={filter}
-          placeholder={t("skills.searchPlaceholder")}
+          placeholder={t(activeTab === "plugins" ? "skills.searchPlugins" : "skills.searchSkills")}
           onValueChange={setFilter}
         />
         <Tooltip asChild content={t("skills.refresh")}><button
@@ -494,19 +530,25 @@ function SkillsCatalogView({
           <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
         </button></Tooltip>
         <button
-          className="settings-button"
+          className="settings-button settings-button-primary catalog-add"
           type="button"
-          disabled={Boolean(packageMutation) || !capabilities.install}
-          data-mutation-blocked={(Boolean(packageMutation) && capabilities.install) || undefined}
-          onClick={() => void installPluginPackage()}
+          disabled={Boolean(packageMutation)}
+          data-mutation-blocked={Boolean(packageMutation) || undefined}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(addMenu)}
+          onClick={event => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setAddMenu({ x: bounds.right, y: bounds.bottom + 4 });
+          }}
         >
-          <PackagePlus className="icon" aria-hidden="true" />
-          <span>
-            {packageMutation === "install"
-              ? t("skills.pluginInstalling")
-              : t("skills.pluginInstall")}
-          </span>
+          <span>{packageMutation === "install" ? t("skills.pluginInstalling") : t("skills.add")}</span>
+          <ChevronDown className="icon" aria-hidden="true" />
         </button>
+        {addMenu ? <ThreadContextMenu x={addMenu.x} y={addMenu.y} onClose={() => setAddMenu(null)} items={[
+          { label: t("skills.pluginInstall"), icon: <PackagePlus className="icon" />, disabled: !capabilities.install, onSelect: () => void installPluginPackage() },
+          { label: t("skills.addCustomMCP"), icon: <Plug className="icon" />, onSelect: () => setAddingMCP(true) },
+        ]} /> : null}
+        {addingMCP ? <MCPServerEditor name="" onClose={() => setAddingMCP(false)} onSaved={() => { setAddingMCP(false); void refreshMCP(); }} /> : null}
       </div>
 
       <div className="theme-segmented catalog-tabs" role="tablist" aria-label={t("skills.catalogLabel")}>
@@ -540,41 +582,22 @@ function SkillsCatalogView({
         </div>
       ) : null}
 
-      {activeTab === "plugins" ? <MCPServices filter={filter} /> : null}
-
-      {/* A plugin that needs a decision shows the reason instead of its
-       * tagline; the decision is made on its page. */}
-      {activeTab === "plugins" && attentionPlugins.length > 0 ? (
-        <SettingsSection title={t("skills.groupAttention")}>
-          <SettingsGroup>
-            {attentionPlugins.map(({ record, attention }) => (
-              <PluginRow
-                key={record.id}
-                record={record}
-                attention={attention}
-                onOpen={() => setSelectedPluginID(record.id)}
-              />
-            ))}
-          </SettingsGroup>
-        </SettingsSection>
-      ) : null}
-
-      {activeTab === "plugins" ? pluginGroups.map((group) => (
-        <SettingsSection key={group.key} title={group.title}>
-          <SettingsGroup>
-            {group.records.map((record) => (
-              <PluginRow
-                key={record.id}
-                record={record}
-                toggleDisabled={Boolean(packageMutation)}
-                toggleBusy={packageMutation.startsWith(`${record.id}:`)}
-                onOpen={() => setSelectedPluginID(record.id)}
-                onToggle={capabilities.update ? () => togglePlugin(record) : undefined}
-              />
-            ))}
-          </SettingsGroup>
-        </SettingsSection>
-      )) : null}
+      {activeTab === "plugins" ? <div className="plugin-catalog-grid">
+        <MCPServices filter={filter} catalogView />
+        {visiblePlugins.map(group => {
+          if (group.family) return <PluginFamilyRow key={group.id} group={group}
+            onOpen={() => setSelectedPluginID(group.id)} />;
+          const record = group.members[0];
+          return <PluginRow
+            key={record.id}
+            record={record}
+            toggleDisabled={Boolean(packageMutation)}
+            toggleBusy={packageMutation.startsWith(`${record.id}:`)}
+            onOpen={() => setSelectedPluginID(record.id)}
+            onToggle={capabilities.update ? () => togglePlugin(record) : undefined}
+          />;
+        })}
+      </div> : null}
 
       {activeTab === "skills" && officialSkills.length > 0 ? (
         <SettingsSection title={t("skills.sectionOfficial")}>
@@ -652,8 +675,6 @@ function extensionPackageSecondaryAction(record: ExtensionInventoryRecord): Exte
   return undefined;
 }
 
-type PluginAttention = { tone: "warning" | "danger"; label: string };
-
 function pluginActivationNotice(
   issue: NonNullable<ExtensionInventoryRecord["activation_issues"]>[number],
   t: ReturnType<typeof useI18n>["t"],
@@ -671,33 +692,6 @@ function pluginActivationNotice(
     tone: issue.kind === "missing_requirement" || issue.kind === "version_mismatch" ? "error" : "warning",
     text: t(labels[issue.kind], { plugin: pluginName(issue.related_plugin_id) }),
   };
-}
-
-// The one reason a plugin needs a look, most serious first; its page lists
-// every notice with the details.
-function pluginAttention(
-  record: ExtensionInventoryRecord,
-  t: ReturnType<typeof useI18n>["t"],
-  pluginName: (id: string) => string,
-): PluginAttention | undefined {
-  if (record.runtime_state === "failed") {
-    return { tone: "danger", label: t("skills.pluginStatusFailed") };
-  }
-  const blocking = record.activation_issues?.find((issue) => issue.kind === "missing_requirement" || issue.kind === "version_mismatch");
-  if (blocking) {
-    return { tone: "danger", label: pluginActivationNotice(blocking, t, pluginName).text };
-  }
-  if (record.pending_update) {
-    return { tone: "warning", label: t("skills.pluginStatusUpdatePending") };
-  }
-  const approval = extensionPackageApproval(record);
-  if (approval === "changed") return { tone: "warning", label: t("skills.pluginChangedNotice") };
-  if (approval === "pending") return { tone: "warning", label: t("skills.pluginNeedsGrant") };
-  const conflict = record.activation_issues?.find((issue) => issue.kind === "conflict");
-  if (conflict) {
-    return { tone: "warning", label: pluginActivationNotice(conflict, t, pluginName).text };
-  }
-  return undefined;
 }
 
 function approvalNotice(record: ExtensionInventoryRecord, t: ReturnType<typeof useI18n>["t"]): string | undefined {
@@ -804,7 +798,6 @@ function pluginContributions(
 function PluginDetailPage({
   record,
   skills,
-  pluginName,
   packageMutation,
   reloading,
   canUpdate,
@@ -816,10 +809,11 @@ function PluginDetailPage({
   onReload,
   onPreviewSkill,
   onMoreActions,
+  backLabel,
 }: {
+  backLabel?: string;
   record: ExtensionInventoryRecord;
   skills: readonly SkillSummary[];
-  pluginName: (id: string) => string;
   packageMutation: string;
   reloading: boolean;
   canUpdate: boolean;
@@ -853,31 +847,9 @@ function PluginDetailPage({
       .filter((code) => !PLUGIN_PERMISSIONS.some((permission) => permission.code === code))
       .map((code) => ({ code, label: code })),
   ];
-  const notices: { key: string; tone: "warning" | "error"; text: string; detail?: string; action?: ReactNode }[] = [
-    ...(approval ? [{ key: "approval", tone: "warning" as const, text: record.provenance.official ? approval : `${pluginSourceLabel(record, t)} · ${approval}` }] : []),
-    ...(record.pending_update ? [{ key: "update", tone: "warning" as const, text: t("skills.pluginUpdateReady") }] : []),
-    // A start failure says what happened in words, keeps the process's own
-    // message as the detail, and offers the reload that starts it again.
-    ...(record.runtime_state === "failed" ? [{
-      key: "failed",
-      tone: "error" as const,
-      text: t("skills.pluginStatusFailed"),
-      detail: record.last_error,
-      action: (
-        <button
-          type="button"
-          className="settings-button"
-          disabled={reloading || Boolean(packageMutation)}
-          onClick={onReload}
-        >
-          {t("skills.pluginRetryStart")}
-        </button>
-      ),
-    }] : []),
-    ...(record.activation_issues ?? []).map((issue) => ({
-      key: `${issue.kind}:${issue.related_plugin_id}`,
-      ...pluginActivationNotice(issue, t, pluginName),
-    })),
+  const notices = [
+    ...(approval ? [{ key: "approval", text: record.provenance.official ? approval : `${pluginSourceLabel(record, t)} · ${approval}` }] : []),
+    ...(record.pending_update ? [{ key: "update", text: t("skills.pluginUpdateReady") }] : []),
   ];
 
   return (
@@ -885,7 +857,7 @@ function PluginDetailPage({
       <nav className="settings-page-back" aria-label={t("skills.tabPlugins")}>
         <button type="button" onClick={onBack} data-testid="plugin-page-back">
           <ChevronLeft className="icon" aria-hidden="true" />
-          {t("skills.tabPlugins")}
+          {backLabel ?? t("skills.tabPlugins")}
         </button>
       </nav>
 
@@ -906,6 +878,11 @@ function PluginDetailPage({
           {mutating ? t("skills.pluginUpdating") : t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}
         </span>
         <div className="plugin-page-actions">
+          {record.runtime_state === "failed" ? (
+            <button type="button" className="settings-button" disabled={reloading || Boolean(packageMutation)} data-mutation-blocked={Boolean(packageMutation) || undefined} onClick={onReload}>
+              {t("skills.pluginRetryStart")}
+            </button>
+          ) : null}
           {hasMoreActions ? (
             <button
               type="button"
@@ -913,6 +890,7 @@ function PluginDetailPage({
               aria-label={t("skills.pluginMoreActions", { name: record.name })}
               aria-haspopup="menu"
               disabled={Boolean(packageMutation) || !canInstall}
+              data-mutation-blocked={Boolean(packageMutation) || undefined}
               onClick={(event) => onMoreActions(event.currentTarget)}
             >
               <MoreHorizontal className="icon" aria-hidden="true" />
@@ -923,22 +901,19 @@ function PluginDetailPage({
               type="button"
               className="settings-button settings-button-primary"
               disabled={Boolean(packageMutation) || grantUnavailable}
+              data-mutation-blocked={Boolean(packageMutation) || undefined}
               onClick={() => onPrimaryAction(primaryAction)}
             >
               {mutating ? t("skills.pluginUpdating") : extensionPackageActionLabel(record, primaryAction, t)}
             </button>
           ) : (
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={toggle.on}
+            <Switch
+              checked={toggle.on}
               aria-label={t(toggle.on ? "skills.pluginDisableNamed" : "skills.pluginEnableNamed", { name: record.name })}
               disabled={Boolean(packageMutation)}
+              data-mutation-blocked={Boolean(packageMutation) || undefined}
               onClick={onToggle}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-            </button>
+            />
           )}
         </div>
       </div>
@@ -946,11 +921,9 @@ function PluginDetailPage({
       {notices.length > 0 ? (
         <div className="plugin-detail-notices">
           {notices.map((notice) => (
-            <div key={notice.key} className={`plugin-detail-notice is-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>
-              {notice.tone === "error" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
+            <div key={notice.key} className="plugin-detail-notice is-warning" role="status">
+              <AlertTriangle className="icon-sm" aria-hidden="true" />
               <span className="plugin-detail-notice-text">{notice.text}</span>
-              {notice.detail ? <span className="plugin-detail-notice-detail">{notice.detail}</span> : null}
-              {notice.action}
             </div>
           ))}
         </div>
@@ -1021,20 +994,48 @@ function PluginMark({ record, className = "catalog-row-mark" }: {
   );
 }
 
-// One plugin per row: its mark, the name over the tagline or the one reason
-// it needs a look, and a chevron to its page. The whole row opens the page;
-// a trusted plugin's switch sits over it in a column of its own and turns
-// the plugin on or off in place.
+function PluginFamilyRow({ group, onOpen }: {
+  group: PluginFamilyGroup<ExtensionInventoryRecord>;
+  onOpen: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const on = group.members.some(record => pluginToggle(record).on);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  return (
+    <div className="catalog-row plugin-row plugin-family-row" data-plugin-family={group.id}>
+      <button className="catalog-row-open" type="button" onClick={onOpen}
+        aria-label={t("skills.pluginDetailLabel", { name: group.name })}>
+        <span className="catalog-row-mark"><PluginBlocksIcon aria-hidden="true" /></span>
+        <TruncatedText className="catalog-row-title" text={group.name} />
+        {group.description ? <TruncatedText as="span" className="catalog-row-description" text={group.description} /> : null}
+      </button>
+      <button className="settings-button settings-button-ghost settings-icon-button catalog-row-action" type="button"
+        aria-label={t(on ? "provider.moreActions" : "skills.pluginEnableNamed", { name: group.name })}
+        aria-haspopup={on ? "menu" : undefined} aria-expanded={on ? Boolean(menu) : undefined}
+        onClick={event => {
+          if (!on) { onOpen(); return; }
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setMenu({ x: bounds.right, y: bounds.bottom });
+        }}>
+        {on ? <MoreHorizontal className="icon" aria-hidden="true" /> : <Plus className="icon" aria-hidden="true" />}
+      </button>
+      {menu ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
+        { label: t("skills.pluginDetailLabel", { name: group.name }), onSelect: onOpen },
+      ]} /> : null}
+    </div>
+  );
+}
+
+// Keep each entry in place when its state changes. The row opens details;
+// inactive plugins offer enablement and active plugins expose a menu.
 function PluginRow({
   record,
-  attention,
   toggleDisabled = false,
   toggleBusy = false,
   onOpen,
   onToggle,
 }: {
   record: ExtensionInventoryRecord;
-  attention?: PluginAttention;
   toggleDisabled?: boolean;
   toggleBusy?: boolean;
   onOpen: () => void;
@@ -1043,17 +1044,16 @@ function PluginRow({
 }): JSX.Element {
   const { t } = useI18n();
   const toggle = pluginToggle(record);
-  const { servers } = useMCPServices();
-  const needsMCPAuth = toggle.on && servers.some(server => server.plugin_id === (record.provenance.plugin_id ?? record.id) && ["auth_required", "needs_auth", "needs_client_registration"].includes(server.state));
   // A grant or change needs the fingerprint it approves.
   const toggleUnavailable = toggle.action === "grant" && !toggle.review && !record.fingerprint;
-  const showSwitch = !attention && Boolean(onToggle);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const canEnable = !toggle.on;
   return (
     <div
       className="catalog-row plugin-row"
       data-plugin={record.provenance.plugin_id ?? record.id}
       data-on={toggle.on ? "" : undefined}
-      data-switch={showSwitch ? "" : undefined}
+      aria-busy={toggleBusy || undefined}
     >
       <button
         className="catalog-row-open"
@@ -1062,32 +1062,32 @@ function PluginRow({
         onClick={onOpen}
       >
         <PluginMark record={record} />
-        <span className="catalog-row-title">{record.name}</span>
-        {attention ? (
-          <span className="catalog-row-description plugin-attention-reason" data-tone={attention.tone}>
-            {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
-            {attention.label}
-          </span>
-        ) : needsMCPAuth ? <span className="catalog-row-description plugin-attention-reason" data-tone="warning">{t("mcp.needsAuth")}</span> : record.description ? (
+        <TruncatedText className="catalog-row-title" text={record.name} />
+        {record.description ? (
           <TruncatedText as="span" className="catalog-row-description" text={record.description} />
         ) : null}
-        <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
       </button>
-      {showSwitch ? (
-        <button
-          className="settings-switch catalog-row-switch"
-          type="button"
-          role="switch"
-          aria-checked={toggle.on}
-          aria-label={t(toggle.on ? "skills.pluginDisableNamed" : "skills.pluginEnableNamed", { name: record.name })}
-          disabled={toggleDisabled || toggleUnavailable}
-          data-mutation-blocked={(toggleDisabled && !toggleUnavailable) || undefined}
-          aria-busy={toggleBusy || undefined}
-          onClick={onToggle}
-        >
-          <span className="settings-switch-thumb" aria-hidden="true" />
-        </button>
-      ) : null}
+      <button
+        className="settings-button settings-button-ghost settings-icon-button catalog-row-action"
+        type="button"
+        aria-label={t(canEnable ? "skills.pluginEnableNamed" : "provider.moreActions", { name: record.name })}
+        aria-haspopup={canEnable ? undefined : "menu"}
+        aria-expanded={canEnable ? undefined : Boolean(menu)}
+        disabled={toggleDisabled || (canEnable && (toggleUnavailable || !onToggle))}
+        data-mutation-blocked={(toggleDisabled && !toggleUnavailable) || undefined}
+        aria-busy={toggleBusy || undefined}
+        onClick={event => {
+          if (canEnable) { onToggle?.(); return; }
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setMenu({ x: bounds.right, y: bounds.bottom });
+        }}
+      >
+        {canEnable ? <Plus className="icon" aria-hidden="true" /> : <MoreHorizontal className="icon" aria-hidden="true" />}
+      </button>
+      {menu ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
+        { label: t("skills.pluginDetailLabel", { name: record.name }), onSelect: onOpen },
+        ...(onToggle ? [{ label: t(toggle.on ? "skills.pluginDisableNamed" : "skills.pluginEnableNamed", { name: record.name }), disabled: toggleDisabled || toggleUnavailable, onSelect: onToggle }] : []),
+      ]} /> : null}
     </div>
   );
 }
@@ -1112,7 +1112,7 @@ function CatalogRow({
   return (
     <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
       {artwork}
-      <span className="catalog-row-title">{title}</span>
+      <TruncatedText className="catalog-row-title" text={title} />
       {description ? <TruncatedText as="span" className="catalog-row-description" text={description} /> : null}
       {trailing}
       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
@@ -1132,7 +1132,7 @@ function SkillsList({
   const { t } = useI18n();
 
   return (
-    <SettingsGroup>
+    <div className="skill-catalog-grid">
       {skills.map((skill) => {
         const pluginID = pluginSkillID(skill.source);
         return (
@@ -1141,7 +1141,7 @@ function SkillsList({
             label={t("skills.previewSkill", { name: skill.name })}
             artwork={
               <span className="catalog-row-mark" aria-hidden="true">
-                <CapabilityMark motif={skillCapability(skill.name)} />
+                <DefaultExtensionIcon />
               </span>
             }
             title={skill.name}
@@ -1156,7 +1156,7 @@ function SkillsList({
           />
         );
       })}
-    </SettingsGroup>
+    </div>
   );
 }
 
@@ -1215,7 +1215,7 @@ function SkillPreviewDialog({
     // already showed, so the dialog repeats no description.
     <Modal
       ariaLabel={t("skills.previewLabel", { name: skill.name })}
-      icon={<CapabilityMark motif={skillCapability(skill.name)} className="icon" />}
+      icon={<DefaultExtensionIcon className="icon" />}
       title={skill.name}
       panelClassName="model-dialog skill-preview-dialog"
       onClose={onClose}

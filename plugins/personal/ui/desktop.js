@@ -1,8 +1,12 @@
+import { avatarDialogStyles, createIdentityDialog } from "./identity-dialog.js";
 import { createSettingsPanels } from "./settings-panels.js";
 import { sendMotionStyles, useSendMotion } from "./send-motion.js";
+const IDENTITY_AVATAR_SIZE = 56;
+
 export async function activate(api) {
   const React = api.react, h = React.createElement;
   const { Page, Section, Card, Stack, Row, Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+  const IdentityDialog = createIdentityDialog(api);
   const route = { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal" };
   const call = async (method, input) => {
     if (method !== "capture.send") return api.invokeRuntime(method, input, route);
@@ -57,6 +61,7 @@ export async function activate(api) {
       "oversizedAttachment": "This attachment exceeds the 20 MB download limit.",
       "today": "Today",
       "settings": "Settings",
+      "modelTitle": "Model", "modelHelp": "Used for twin replies and new tasks. Existing tasks keep their model.", "modelChoice": "Provider and model", "modelUnavailable": "No configured models are available. Add a connection in External connections.", "modelCurrentUnavailable": "Current selection is unavailable", "modelBusy": "Wait for the current reply to finish before changing the model.", "notificationsTitle": "Notifications",
       "placeholder": "Message",
       "rendererContextLimited": "Only the most recently updated interfaces fit in the next message; older interface values will be omitted.",
       "stopped": "Stopped",
@@ -85,11 +90,10 @@ export async function activate(api) {
       "recent": "Recent results",
       "requirements": "Request version",
       "outcome": "Result",
-      "stopTask": "Stop this task",
       "existingSession": "Existing session", "workerResult": "Worker response · not independently verified", "awaiting_review": "Awaiting controller review", "controllerDecision": "Controller review", "remoteTrace": "Detailed history remains in the original session.",
       "openMainChat": "Open chat",
-      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…", "replyTaskContext": "Task context",
-      "replyMessage": "Reply", "replyTask": "Reply to this task", "replyingMessage": "Replying to message", "replyingTask": "Replying to task", "cancelReply": "Cancel reply",
+      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…",
+      "replyMessage": "Reply", "replyingMessage": "Replying to message", "cancelReply": "Cancel reply",
       "close": "Close",
       "back": "Back",
       "save": "Save changes",
@@ -159,6 +163,7 @@ export async function activate(api) {
       "oversizedAttachment": "附件超过 20 MB 下载上限。",
       "today": "今天",
       "settings": "设置",
+      "modelTitle": "模型", "modelHelp": "用于 twin 回复和新任务。已有任务继续使用原来的模型。", "modelChoice": "服务商与模型", "modelUnavailable": "暂无可选模型。请先在外部连接中配置。", "modelCurrentUnavailable": "当前选择不可用", "modelBusy": "请等待当前回复结束后再切换模型。", "notificationsTitle": "通知",
       "placeholder": "发送消息",
       "rendererContextLimited": "下一条消息只能附带最近更新的部分界面，较早的界面内容不会附带。",
       "stopped": "已停止",
@@ -187,11 +192,10 @@ export async function activate(api) {
       "recent": "最近完成",
       "requirements": "要求版本",
       "outcome": "结果",
-      "stopTask": "停止这件事",
       "existingSession": "已有会话", "workerResult": "工作会话回复 · 未独立核验", "awaiting_review": "等待主助手复核", "controllerDecision": "主助手复核决定", "remoteTrace": "详细记录保留在原会话中。",
       "openMainChat": "打开聊天",
-      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…", "replyTaskContext": "事项上下文",
-      "replyMessage": "引用", "replyTask": "回复这件事", "replyingMessage": "引用消息", "replyingTask": "回复事项", "cancelReply": "取消引用",
+      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…",
+      "replyMessage": "引用", "replyingMessage": "引用消息", "cancelReply": "取消引用",
       "close": "关闭",
       "back": "返回",
       "save": "保存修改",
@@ -223,7 +227,7 @@ export async function activate(api) {
   };
   api.registerStyle({ id: "personal", css: `
     .mosaic { --mosaic-message-accent:#3566f0;--mosaic-message-tail-space:max(var(--conversation-turn-boundary-gap), calc(var(--font-sm) * 1.3 + 4px));position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
-    .mosaic-main { flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
+    .mosaic-main { container:personal-conversation / inline-size;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
     .mosaic-panel-layer { position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden; }
     .mosaic-panel-layer[data-panel-phase="open"] { overflow:visible; }
     .mosaic-sidebar { position:absolute;right:8px;top:60px;width:min(300px, calc(100% - 16px));max-height:calc(100% - 68px);min-height:0;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:16px;background:var(--paper);box-shadow:0 0 0 .5px #00000026,0 3px 7.5px #0000000a,0 0 20px #0000000d;pointer-events:auto;opacity:0;transform:translateX(100%);transition:transform var(--mosaic-profile-motion-duration,300ms) cubic-bezier(.16,1,.3,1),opacity var(--mosaic-profile-motion-duration,300ms) cubic-bezier(.16,1,.3,1); }
@@ -235,15 +239,18 @@ export async function activate(api) {
     .mosaic-profile-copy { min-width:0;flex:1; }
     .mosaic-profile-name { font-size:calc(var(--font-ui) * 1.2);font-weight:600;line-height:1.45; }
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
-    .mosaic-profile-trigger { position:relative;width:40px;height:40px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
-    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--space-1);width:max-content;max-width:100%;z-index:31; }
+    .mosaic-profile-trigger { position:relative;width:${IDENTITY_AVATAR_SIZE}px;height:${IDENTITY_AVATAR_SIZE}px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
+    .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:0;padding-top:4px;width:max-content;max-width:min(240px,100%);z-index:31; }
     .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
-    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:min(240px,100%);box-sizing:border-box;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
-    .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:20px;font-weight:400; }
+    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 12px;border:1px solid color-mix(in srgb,var(--hairline) 50%,transparent);border-radius:999px;background:var(--paper);box-shadow:0 1px 2px #00000008;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
+    .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-ui);line-height:1.4;font-weight:500;color:light-dark(#000,#fff); }
+    .mosaic-identity-label:hover { background:var(--surface-1); }
+    .mosaic-identity-label:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
     .mosaic[data-panel-open="true"] .mosaic-identity { visibility:hidden; }
     .mosaic[data-panel-open="true"] .mosaic-identity-label { visibility:hidden;opacity:0;pointer-events:none; }
     .mosaic-profile-name-button { border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    ${avatarDialogStyles}
     .mosaic-name-backdrop { position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:#00000026;padding:16px; }
     .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;inset:auto 8px 8px;box-sizing:border-box;max-height:min(52%,480px);border:1px solid var(--hairline);border-radius:28px;background:var(--paper);box-shadow:0 12px 28px -8px rgb(0 0 0 / .16);overflow:hidden;-webkit-app-region:no-drag; }
     .mosaic .mosaic-replies .plugin-conversation { display:flex;flex-direction:column;height:auto;min-height:0;flex:1 1 auto;max-height:none;overflow:hidden; }
@@ -268,16 +275,8 @@ export async function activate(api) {
     .mosaic .mosaic-draft-notice > p { display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:0; }
     .mosaic .mosaic-draft-notice > p > span { flex:1 1 240px;min-width:0;overflow-wrap:anywhere; }
     .mosaic .mosaic-replies .mosaic-draft-notice { padding:0;margin:0 0 12px; }
-    .mosaic-reply-task-context { margin:0;overflow-wrap:anywhere; }
-    .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
-    .mosaic-reply-task-context > p { margin:8px 0 0; }
     @media(max-width:720px) { .mosaic-replies { inset-inline:6px;border-radius:24px;max-height:60%; } .mosaic-replies-toolbar { padding-inline:12px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:12px; } }
-    .mosaic-name-dialog { position:relative;width:min(360px,100%);max-height:100%;overflow:auto;min-height:450px;display:flex;flex-direction:column;align-items:center;gap:20px;padding:48px 32px 24px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
-    .mosaic-name-input { width:100%;min-width:0;border:0;border-radius:12px;background:var(--surface-1);color:var(--ink);padding:12px 8px;text-align:center;font-size:32px;font-weight:600; }
-    .mosaic-name-dialog [data-plugin-avatar] { margin:22px 0; }
-    .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
-    .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
     /* Only the identity's halo covers history; its initial clearance scrolls away. */
     .mosaic-main > .plugin-conversation { --conversation-composer-clearance:calc(var(--mosaic-message-tail-space) - var(--conversation-dock-top-space));grid-template-rows:0 minmax(0,1fr); }
@@ -289,12 +288,26 @@ export async function activate(api) {
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { animation-name:none,scroll-fade-bottom; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
-    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%; }
+    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:640px;--session-outer-width:calc(var(--session-composer-width) + var(--session-outer-padding-inline) * 2); }
+    @container personal-conversation (min-width:1024px) { .mosaic-main > .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:768px; } }
+    .mosaic .plugin-conversation-message[data-bubble] { --bubble-time-gutter:max(73px, calc(var(--conversation-message-font-size) * 4.5625)); }
+    .mosaic .plugin-conversation-message[data-bubble][data-role="user"] { --bubble-time-gutter:max(80px, calc(var(--conversation-message-font-size) * 5)); }
+    .mosaic .plugin-conversation-message[data-bubble] .agent-text, .mosaic .plugin-conversation-message[data-bubble] .user-message { text-wrap:pretty;overflow-wrap:anywhere; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
     .mosaic-profile-trigger[aria-expanded="true"] { visibility:hidden; }
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
-    .mosaic-profile-trigger .mosaic-avatar { width:40px;height:40px; }
+    .mosaic-profile-trigger .mosaic-avatar { width:100%;height:100%; }
     .mosaic-profile-head .mosaic-avatar { width:64px;height:64px; }
+    .mosaic-avatar-editable { position:relative;flex:none;border-radius:50%; }
+    .mosaic-avatar-edit { position:absolute;right:-12px;top:-10px;display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ink-muted);cursor:pointer;opacity:0;pointer-events:none; }
+    .mosaic-avatar-edit::before { content:"";position:absolute;inset:4px;border:1px solid var(--hairline);border-radius:50%;background:var(--paper); }
+    .mosaic-avatar-edit svg { position:relative;width:14px;height:14px; }
+    .mosaic-avatar-edit:hover,.mosaic-avatar-edit:focus-visible { color:var(--ink); }
+    .mosaic-avatar-editable:hover .mosaic-avatar-edit,.mosaic-avatar-editable:focus-within .mosaic-avatar-edit { opacity:1;pointer-events:auto; }
+    .mosaic-avatar-edit:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
+    .mosaic[data-panel-open="true"] .mosaic-identity .mosaic-avatar-editable { visibility:hidden; }
+    @media(hover:none) { .mosaic-avatar-edit { opacity:1;pointer-events:auto; } }
+
     .mosaic-sidebar .mosaic-task { align-items:center;min-height:28px;padding:4px 8px;margin:0 -8px;width:calc(100% + 16px);gap:8px;border-radius:8px;font-size:calc(var(--font-ui) * .9333); }
     .mosaic-sidebar .mosaic-task-mark { width:20px;height:20px; }
     .mosaic-sidebar .mosaic-nav-icon { width:16px;height:16px; }
@@ -310,8 +323,6 @@ export async function activate(api) {
     .mosaic-sidebar .mosaic-detail .mosaic-task-meta,.mosaic-sidebar .mosaic-routines .mosaic-task-meta { display:block; }
     .mosaic-sidebar .mosaic-task-state { font-size:12px; }
     .mosaic-sidebar .mosaic-task-state[data-state="running"],.mosaic-sidebar .mosaic-task-state[data-state="queued"] { color:var(--accent); }
-    .mosaic-sidebar .mosaic-detail { min-height:320px; }
-    .mosaic-sidebar .mosaic-detail-content { overflow:auto; }
     .mosaic-section { margin-bottom:var(--space-6); }
     .mosaic-section h2,.mosaic-section h3 { display:flex;align-items:center;gap:var(--space-3);font:inherit;color:var(--ink-muted);margin:0 0 var(--space-3); }
     .mosaic-count { padding:0 var(--space-1);border-radius:var(--radius-xs);background:var(--surface-1);font-size:var(--font-ui-small); }
@@ -334,11 +345,11 @@ export async function activate(api) {
     .mosaic-empty { display:grid;place-items:center;min-height:240px;padding:var(--space-6); }
     .mosaic-empty .plugin-ui-empty-state { max-width:440px; }
     .mosaic-eyebrow { color:var(--ink-muted);margin:0 0 var(--space-3); }
-    .mosaic-panel-scroll:has(> .mosaic-detail) { overflow:hidden; }
-    .mosaic-detail { display:flex;flex-direction:column;height:100%;min-height:0; }
+    .mosaic-panel-scroll:has(> .mosaic-detail) { display:flex;flex-direction:column;overflow:hidden; }
+    .mosaic-detail { display:flex;flex-direction:column;flex:1;min-height:0; }
     .mosaic-detail-head { display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-5);flex:none; }
     .mosaic-detail-title { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit; }
-    .mosaic-detail-content { flex:1;min-height:0;overflow:auto;overflow-wrap:anywhere; }
+    .mosaic-detail-content { flex:1;min-height:0;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain; }
     .mosaic-detail-content > p { overflow-wrap:anywhere; }
     .mosaic-detail-actions { flex:none;display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;padding-top:var(--space-4); }
     .mosaic-detail-content .mosaic-section { margin-top:var(--space-5); }
@@ -421,6 +432,14 @@ export async function activate(api) {
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
     .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
     .mosaic-settings p { color:var(--ink-muted); }
+    .mosaic-settings-group { display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-3); }
+    .mosaic-settings-group h3, .mosaic-settings-group p { margin:0; }
+    .mosaic-settings-group > .plugin-ui-field:has(> .mosaic-model-select) {
+      display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:var(--space-2);width:100%;
+    }
+    .mosaic-model-select { width:100%;min-width:0; }
+    .mosaic-model-full { display:none;overflow-wrap:anywhere; }
+    @media (max-width:850px) { .mosaic-model-full { display:block; } }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -430,7 +449,6 @@ export async function activate(api) {
   ` });
   const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
   const icon = key => h("svg", { className: "mosaic-nav-icon", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: icons[key] }));
-  const aliveTask = task => !["completed", "cancelled", "stopped", "failed", "archived"].includes(task.state);
 
   const fileLimit = 20 * 1024 * 1024, fileCountLimit = 16;
   const safeFilename = name => typeof name === "string" && name.length > 0 && name.length <= 255 && !/[\\/\x00-\x1f\x7f]/.test(name) && ![".", ".."].includes(name);
@@ -719,33 +737,48 @@ export async function activate(api) {
     }
     draftListeners.forEach(listener => listener());
   });
-  function PersonalPreferences({ locale }) {
+  function PersonalPreferences({ locale, host }) {
     const t = key => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
-    const [preferences, setPreferences] = React.useState(null), [error, setError] = React.useState(""), [saving, setSaving] = React.useState(false);
-    React.useEffect(() => { let active = true; call("settings.get").then(result => { if (active) setPreferences(result.settings); }).catch(cause => { if (active) setError(String(cause)); }); return () => { active = false; }; }, []);
-    const save = async () => { if (saving) return; setSaving(true); setError(""); try { const result = await call("settings.update", { expected_revision: preferences.revision, notifications: preferences.notifications, quiet_hours: preferences.quiet_hours, notification_batch_seconds: preferences.notification_batch_seconds ?? 0 }); setPreferences(result.settings); } catch (cause) { setError(String(cause)); } finally { setSaving(false); } };
-    return h(Page, { className: "mosaic-settings", "data-personal-preferences": true }, h(Stack, { gap: "large" },
-      error && h("p", { role: "alert" }, error),
-      !preferences ? h(LoadingState, { label: "twin" }) : h(Section, { title: locale?.startsWith("zh") ? "通知与免打扰" : "Notifications & Quiet Hours" },
-        h(Card, null,
-          h(Checkbox, { label: t("notifyToggle"), checked: preferences.notifications, onChange: event => setPreferences({ ...preferences, notifications: event.target.checked }) }),
-          h(Select, { label: t("notificationGrouping"), description: t("notificationGroupingHint"), "data-notification-batch": true, value: preferences.notification_batch_seconds ?? 0, onChange: event => setPreferences({ ...preferences, notification_batch_seconds: Number(event.target.value) }) }, [[0, "off"], [60, "oneMinute"], [300, "fiveMinutes"], [900, "fifteenMinutes"]].map(([value, label]) => h("option", { key: value, value }, t(label)))),
-          h(Checkbox, { label: t("quietToggle"), checked: preferences.quiet_hours.enabled, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, enabled: event.target.checked } }) }),
-          h("div", { className: "mosaic-actions mosaic-quiet-hours-row" },
-            h(TextInput, { type: "time", label: t("quietFrom"), value: preferences.quiet_hours.start, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, start: event.target.value } }) }),
-            h(TextInput, { type: "time", label: t("quietTo"), value: preferences.quiet_hours.end, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, end: event.target.value } }) })),
-          h(TextInput, { label: t("timezone"), value: preferences.quiet_hours.timezone, onChange: event => setPreferences({ ...preferences, quiet_hours: { ...preferences.quiet_hours, timezone: event.target.value } }) })),
-        h(Row, { className: "mosaic-settings-save-row" },
-          h(Button, { variant: "primary", "data-action": "save-notifications", disabled: saving, onClick: save }, t("save")))),
-      h(settingsPanels.Connections),
-      h(settingsPanels.Review, { locale })));
+    const [model, setModel] = React.useState(null), [selectedModel, setSelectedModel] = React.useState(""), [modelError, setModelError] = React.useState(""), [modelSaving, setModelSaving] = React.useState(false);
+    const availableModels = (host.settings?.listAvailableModels?.() ?? []).filter(item => item.supportsTools !== false);
+    const modelKey = value => JSON.stringify([value.provider, value.model]);
+    React.useEffect(() => { let active = true; call("model.get").then(result => { if (active) { setModel(result); setSelectedModel(modelKey(result)); } }).catch(cause => { if (active) setModelError(String(cause)); }); return () => { active = false; }; }, []);
+    const saveModel = async key => {
+      const choice = availableModels.find(item => modelKey(item) === key);
+      if (!choice || modelSaving || key === modelKey(model)) return;
+      setSelectedModel(key);
+      setModelSaving(true);
+      setModelError("");
+      try {
+        const result = await call("model.update", { provider: choice.provider, model: choice.model });
+        setModel(result);
+        setSelectedModel(modelKey(result));
+      } catch (cause) {
+        setSelectedModel(modelKey(model));
+        const message = String(cause);
+        setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
+      } finally {
+        setModelSaving(false);
+      }
+    };
+    const currentAvailable = availableModels.some(item => modelKey(item) === selectedModel);
+    return h("section", { className: "mosaic-settings", "data-personal-preferences": true },
+      h("section", { className: "mosaic-settings-group" }, h("h3", null, t("modelTitle")), h("p", null, t("modelHelp")), modelError && h("p", {role:"alert"}, modelError), !model ? (!modelError && h(LoadingState, {label:t("modelTitle")})) : h(React.Fragment, null,
+        h(Select, {className:"mosaic-model-select", label:t("modelChoice"), value:selectedModel, disabled:modelSaving || !availableModels.length, onChange:event => void saveModel(event.target.value) },
+          !currentAvailable && h("option", {value:selectedModel}, `${model.provider} · ${model.model} (${t("modelCurrentUnavailable")})`),
+          ...availableModels.map(item => h("option", {key:modelKey(item),value:modelKey(item)}, `${item.provider} · ${item.label}`))),
+        h("p", {className:"mosaic-model-full"}, (() => { const selected = availableModels.find(item => modelKey(item) === selectedModel) ?? model; return `${selected.provider} · ${selected.label || selected.model}`; })()),
+        !availableModels.length && h("p", null, t("modelUnavailable")))),
+      h(settingsPanels.Connections), h(settingsPanels.Review, { locale }));
   }
+
   let identityAgent;
   const identityListeners = new Set();
   const publishIdentity = value => {
     if (!value || (identityAgent && identityAgent.agent_id === value.agent_id && identityAgent.revision > value.revision)) return identityAgent;
     identityAgent = value;
     api.setNavigationTitle?.("personal", Array.from(value.name?.trim() || "twin").slice(0, 64).join(""));
+    api.setNavigationAvatar?.("personal", value.avatar_key);
     identityListeners.forEach(listener => listener(value));
     return value;
   };
@@ -833,23 +866,6 @@ export async function activate(api) {
       view === "edit" && h("footer", { className: "mosaic-routine-footer", "data-view": view }, h(React.Fragment, null, h(Button, { variant: "ghost", "data-action": "cancel-routine-edit", disabled: busy, onClick: back }, label("Cancel", "取消")), h(Button, { variant: "primary", type: "submit", form: "mosaic-routine-editor", "data-action": "save-routine", disabled: busy }, busy ? t("savingName") : t("save"))))));
   }
 
-  function RenameDialog({ agent, t, onSave, onClose }) {
-    const [name, setName] = React.useState(agent.name || "twin"), [saving, setSaving] = React.useState(false), [error, setError] = React.useState("");
-    const input = React.useRef(null), dialog = React.useRef(null), alive = React.useRef(true);
-    const trimmed = name.trim(), valid = trimmed.length > 0 && Array.from(trimmed).length <= 64, changed = trimmed !== (agent.name || "twin").trim();
-    React.useEffect(() => { alive.current = true; input.current?.focus(); input.current?.select(); return () => { alive.current = false; }; }, []);
-    React.useEffect(() => { (saving ? dialog.current : input.current)?.focus(); }, [saving]);
-    const save = async event => {
-      event.preventDefault(); if (saving || !valid || !changed) return;
-      setSaving(true); setError("");
-      try { await onSave(trimmed); }
-      catch (cause) { if (alive.current) { setSaving(false); setError(`${t("nameSaveFailed")} ${cause instanceof Error ? cause.message : String(cause)}`); } }
-    };
-    return h("div", { className: "mosaic-name-backdrop", onPointerDown: event => { if (!saving && event.target === event.currentTarget) onClose(); } }, h("form", { ref: dialog, className: "mosaic-name-dialog", tabIndex: -1, role: "dialog", "aria-modal": true, "aria-label": t("rename"), onSubmit: save, onKeyDown: event => {
-      if (event.key === "Escape") { event.stopPropagation(); event.preventDefault(); if (!saving) onClose(); }
-      if (event.key === "Tab") { const controls = [...dialog.current.querySelectorAll("button:not(:disabled),input:not(:disabled)")]; const first = controls[0], last = controls[controls.length - 1]; if (!controls.length) { event.preventDefault(); dialog.current.focus(); return; } if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }
-    } }, h("button", { type: "button", className: "mosaic-name-close", disabled: saving, "aria-label": t("close"), onClick: onClose }, "×"), h("input", { ref: input, className: "mosaic-name-input", value: name, disabled: saving, "aria-label": t("nameLabel"), "aria-invalid": !valid, onChange: event => { setName(event.target.value); setError(""); } }), h(Avatar, { size: 160, motion: "ambient" }), !valid && h("p", { className: "mosaic-name-error", role: "status" }, t("invalidName")), error && h("p", { className: "mosaic-name-error", role: "alert" }, error), h("button", { type: "submit", className: "mosaic-name-save", disabled: saving || !valid || !changed }, saving ? t("savingName") : t("saveName"))));
-  }
   const replySources = new Map();
   function useReplySource({ reference, records, sessionID, agentID }) {
     const key = `${agentID}:${reference?.session_id}:${reference?.seq}`;
@@ -875,10 +891,6 @@ export async function activate(api) {
     const { record, loading, retry } = useReplySource({ reference, records, sessionID, agentID });
     const excerpt = record ? record.display_content || record.content || record.attachments?.map(item => item.name).join(", ") || t("message") : t(loading ? "replyLoading" : "replyUnavailable");
     return h("button", { type: "button", className: "plugin-reply-reference", "data-reply-reference": true, "data-unavailable": !record && !loading, disabled: loading || (!record && !retry), title: record ? t("viewOriginal") : retry && !loading ? t("retry") : excerpt, onClick: event => { event.currentTarget.focus({ preventScroll: true }); if (record) onOpen(record); else retry?.(); } }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M4 5v5a3 3 0 0 0 3 3h13m-5-5 5 5-5 5" })), h("span", null, excerpt, !record && !loading && retry ? ` · ${t("retry")}` : ""));
-  }
-  function ReplyOriginal({ reference, records, sessionID, agentID, t, renderMessage }) {
-    const { record, loading, retry } = useReplySource({ reference, records, sessionID, agentID });
-    return record ? renderMessage(record, true) : h("p", { className: "mosaic-reply-status", role: "status" }, t(loading ? "replyLoading" : "replyUnavailable"), !loading && retry && h(Button, { onClick: retry }, t("retry")));
   }
   const receiptDisplayDuration = 5000;
   function MessageReceipt({ receipt, state, busy, onRetry, locale }) {
@@ -946,8 +958,8 @@ export async function activate(api) {
       const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
       return h(MessageReceipt, { receipt: r, state, busy: entry?.busy, onRetry: () => retryReceipt(entry || { receipt: r }), locale });
     };
-    const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
-    const [nameOpen, setNameOpen] = React.useState(false);
+    const [readingFiles, setReadingFiles] = React.useState(false);
+    const [avatarOpen, setAvatarOpen] = React.useState(false);
     const [replySelection, setReplySelection] = React.useState(null);
     const [replyHistory, setReplyHistory] = React.useState(null);
     const reactionStates = React.useRef(new Map()), reactionTargets = React.useRef(new Set());
@@ -962,7 +974,7 @@ export async function activate(api) {
     const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
     const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
-    const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+    const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
     const sendMotion = useSendMotion(React, rootRef);
     const [identityNode, setIdentityNode] = React.useState(null);
     React.useLayoutEffect(() => {
@@ -1231,7 +1243,6 @@ export async function activate(api) {
       });
       return () => { clearInterval(timer); stopWorkbench(); subscription.dispose(); };
     }, []);
-    const mutate = async action => { if (controlRef.current) return; controlRef.current = true; setBusy(true); setError(""); try { await action(); } catch (cause) { report(cause); } finally { controlRef.current = false; if (mounted.current) setBusy(false); } };
     React.useLayoutEffect(() => {
       if (!agent || loading || replySelection || !historyInfo?.has_earlier) return;
       const viewport = rootRef.current?.querySelector(".mosaic-main > .plugin-conversation .plugin-conversation-scroll");
@@ -1265,20 +1276,20 @@ export async function activate(api) {
       } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); }
       finally { readingRef.current = false; if (mounted.current) setReadingFiles(false); }
     };
-    const setReply = async (target, source, taskContext) => {
+    const setReply = async (target, source) => {
       const version = ++replyLoadVersion.current;
       replyTrigger.current = document.activeElement;
       const reference = target.relation.reply_to;
       try {
-        const history = taskContext ? null : await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
+        const history = await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
         if (!mounted.current || version !== replyLoadVersion.current) return;
-        const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
+        const key = `${conversationID}:reply:${history.reply_root_seq}`;
         if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
         for (const record of history?.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         setReplyHistory(history);
         closePanel(false);
         if (replyClosing.current && replyMotion.current) { replyClosing.current = false; replyMotion.current.onfinish = null; replyMotion.current.reverse(); }
-        setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
+        setReplySelection({ key, source, rootSeq: history.reply_root_seq });
       } catch (cause) { if (version === replyLoadVersion.current) report(cause); }
     };
     React.useLayoutEffect(() => {
@@ -1316,7 +1327,7 @@ export async function activate(api) {
       setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
     };
     const loadReplyHistory = async (earlier = false) => {
-      if (!replySelection || replySelection.taskContext || replyPaging.current || (earlier && !replyHistory?.has_earlier)) return;
+      if (!replySelection || replyPaging.current || (earlier && !replyHistory?.has_earlier)) return;
       const version = replyLoadVersion.current;
       replyPaging.current = true;
       try {
@@ -1329,7 +1340,7 @@ export async function activate(api) {
     };
     React.useEffect(() => { void loadReplyHistory(); }, [records.at(-1)?.seq, running]);
     React.useEffect(() => {
-      if (!replyHistory?.has_earlier || !replySelection || replySelection.taskContext) return;
+      if (!replyHistory?.has_earlier || !replySelection) return;
       const viewport = replyPanelRef.current?.querySelector('.plugin-conversation-scroll');
       if (!viewport) return;
       const load = () => { if (viewport.clientHeight > 0 && (viewport.scrollTop < 80 || viewport.scrollHeight <= viewport.clientHeight + 1)) void loadReplyHistory(true); };
@@ -1488,16 +1499,23 @@ export async function activate(api) {
     const activity = [...scheduled.map(item => ({ routine: item })), ...recent.filter(item => !scheduledIDs.has(item.routine_id)).map(item => ({ task: item }))];
     const routineRow = routine => h("button", { key: `routine:${routine.routine_id}`, type: "button", className: "mosaic-task", "data-routine-id": routine.routine_id, "data-action": "open-routine", onClick: event => { routineTrigger.current = event.currentTarget; setRoutineID(routine.routine_id); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("clock")), h("span", { className: "mosaic-task-copy mosaic-task-title" }, routine.title), h("span", { className: "mosaic-routine-next" }, routine.binding?.next_run_at && routine.status === "active" ? date(routine.binding.next_run_at, true, routine.timezone) : routineStatus(routine.status, locale, t)));
 
-    const openRename = () => { closePanel(false); setNameOpen(true); };
-    const closeRename = () => { const version = ++focusVersion.current; setNameOpen(false); requestAnimationFrame(() => { if (version === focusVersion.current) profileTrigger.current?.focus({ preventScroll: true }); }); };
-    const saveName = async name => {
-      try { const result = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, name }); if (!mounted.current) return; publishIdentity(result.agent); closeRename(); }
-      catch (cause) { if (mounted.current) await loadConversation(agent).catch(() => {}); throw cause; }
+    const openIdentity = () => { closePanel(false); setAvatarOpen(true); };
+    const closeAvatar = () => { const version = ++focusVersion.current; setAvatarOpen(false); requestAnimationFrame(() => { if (version === focusVersion.current) profileTrigger.current?.focus({ preventScroll: true }); }); };
+    const saveIdentity = async changes => {
+      try { const result = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, ...changes }); if (!mounted.current) return; publishIdentity(result.agent); closeAvatar(); }
+      catch (cause) {
+        if (mounted.current) {
+          await loadConversation(agent).catch(() => {});
+          if (identityAgent?.agent_id === agent.agent_id && Object.entries(changes).every(([field, value]) => identityAgent[field] === value)) { closeAvatar(); return; }
+        }
+        throw cause;
+      }
     };
     const displayName = agent?.name || "twin";
     const avatarStatus = running ? liveMessages.some(message => message.streaming && message.content) ? "responding" : "thinking" : queuedCount > 0 ? "queued" : "idle";
     const statusText = running ? t(avatarStatus) : queuedCount > 0 ? `${queuedCount} · ${t("queued")}` : t("ready");
-    const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : 40, status: avatarStatus, motion: large && panelOpen ? "ambient" : "static" }));
+    const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 64 : IDENTITY_AVATAR_SIZE, avatarKey: agent?.avatar_key, status: avatarStatus, motion: !large || panelOpen ? "ambient" : "static" }));
+    const editAvatar = () => h("button", { type: "button", className: "mosaic-avatar-edit", "data-action": "edit-personal", "aria-label": locale.startsWith("zh") ? "编辑 twin" : "Edit twin", onClick: openIdentity }, h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: "m16 3 5 5M4 20l4-1L21 6a2.1 2.1 0 0 0-3-3L5 16l-1 4Z" })));
     const sidebar = h("aside", { ref: panelRef, id: panelID, className: "mosaic-sidebar", "data-personal-panel": true, hidden: !panelPresent, inert: !panelOpen, "aria-hidden": !panelOpen, "data-panel-phase": panelPhase, "data-panel-visible": panelVisible, tabIndex: -1, role: "dialog", "aria-label": t("profile"), onKeyDown: event => {
       if (event.key === "Escape") { event.stopPropagation(); event.preventDefault(); if (selection) closeDetail(); else closePanel(); }
       if (event.key === "Tab") {
@@ -1509,9 +1527,9 @@ export async function activate(api) {
     } },
       h("div", { className: "mosaic-panel-scroll" }, selectedArtifact ? h("div", { className: "mosaic-detail", "data-artifact-detail": selectedArtifact.attachment.sha256 },
         h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: selectedArtifact.attachment.name }, selectedArtifact.attachment.name)),
-        h("div", { className: "mosaic-detail-content" }, h(Attachment, { key: `${selectedArtifact.seq}:${selectedArtifact.attachment.sha256}`, agentId: agent.agent_id, seq: selectedArtifact.seq, attachment: selectedArtifact.attachment, t }))) : selection && task ? h("div", { className: "mosaic-detail", "data-task-detail": task.task_id, "data-task-state": task.state },
+        h("div", { className: "mosaic-detail-content", tabIndex: 0 }, h(Attachment, { key: `${selectedArtifact.seq}:${selectedArtifact.attachment.sha256}`, agentId: agent.agent_id, seq: selectedArtifact.seq, attachment: selectedArtifact.attachment, t }))) : selection && task ? h("div", { className: "mosaic-detail", "data-task-detail": task.task_id, "data-task-state": task.state },
         h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: task.title }, task.title)),
-        h("div", { className: "mosaic-detail-content" },
+        h("div", { className: "mosaic-detail-content", tabIndex: 0 },
           task.existing_session && h("p", {className:"mosaic-task-meta"}, `${t("existingSession")}: ${task.existing_session.session_id} · ${task.existing_session.execution_host}`),
           task.worker_result && h("p", {className:"mosaic-task-meta","data-worker-result":true}, t("workerResult")),
           task.goal && h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:goal`, role: "user", content: task.goal, linkPolicy: "external-only", messageActions: "none" }),
@@ -1520,10 +1538,8 @@ export async function activate(api) {
           task.error && h("p", { role: "alert" }, task.error),
           task.reconciliation_required && h("p", { role: "status" }, t("reconciliation"))),
         h("div", { className: "mosaic-detail-actions" },
-          aliveTask(task) && h(Button, { disabled: busy || task.state === "stopping", "data-action": "stop-task", onClick: () => mutate(async () => { await call("tasks.stop", { task_id: task.task_id, expected_revision: task.revision }); await loadTasks(); }) }, t("stopTask")),
-          h(Button, { "data-action": "reply-task", onClick: () => setReply({ label: t("replyingTask"), preview: task.title, relation: { metadata: { task_links: [{ task_id: task.task_id, requirements_revision: task.question?.requirements_revision ?? task.requirements_revision, ...(task.execution?.session_id ? { execution_session_id: task.execution.session_id } : {}), ...(task.question?.request_id ? { question_request_id: task.question.request_id } : {}) }] } } }, undefined, task) }, t("replyTask")),
           h(Button, { "data-action": "open-main-chat", variant: "ghost", onClick: () => { closePanel(false); rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true }); } }, t("openMainChat"))))  : h(React.Fragment, null,
-        h("header", { className: "mosaic-profile-head" }, avatar(true), h("div", { className: "mosaic-profile-copy" }, h("button", { type: "button", className: "mosaic-profile-name mosaic-profile-name-button", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, onClick: openRename }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText))),
+        h("header", { className: "mosaic-profile-head" }, h("div", { className: "mosaic-avatar-editable" }, avatar(true), editAvatar()), h("div", { className: "mosaic-profile-copy" }, h("button", { type: "button", className: "mosaic-profile-name mosaic-profile-name-button", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "编辑 twin" : "Edit twin"} · ${displayName}`, onClick: openIdentity }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText))),
         h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map(item => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
         h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.slice(0, showAllOutputs ? undefined : 3).map(output => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => { detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`; setSelection({ kind: "artifact", seq: output.seq, sha256: output.attachment.sha256 }); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, output.attachment.name), h("span", { className: "mosaic-task-meta" }, date(output.at))))), outputs.length ? outputs.slice(0, showAllOutputs ? undefined : Math.max(0, 3 - artifactOutputs.length)).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-output-task-id": item.task_id, onClick: event => openDetail(event, item, "output") }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, date(item.updated_at))))) : !artifactOutputs.length && h("p", { className: "mosaic-eyebrow" }, t("noOutputs")), artifactOutputs.length + outputs.length > 3 && h(Button, { variant: "ghost", "data-action": "show-more-outputs", onClick: () => setShowAllOutputs(value => !value) }, t(showAllOutputs ? "showLess" : "showMore"))),
         null)));
@@ -1564,21 +1580,15 @@ export async function activate(api) {
     const renderReplyMessage = record => h(ConversationMessage, { className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), resources: resourcesFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: (record.ui_parts?.length || record.ui_resources?.length) ? record.ui_text || "" : record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
     const rootSeq = replySelection?.rootSeq;
-    const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
+    const replyPersisted = replyHistory?.records || [];
     const replyMessages = [...replyPersisted, ...liveMessages.filter(message => !replyPersisted.some(record => record.seq === message.seq || (message.source_id && record.provider_item_id === message.source_id))).map(message => ({ ...message, role: "assistant" }))];
     const relatedSeqs = new Set(rootSeq ? [rootSeq, ...replyPersisted.map(record => record.seq)] : []);
     for (let changed = true; changed;) { changed = false; for (const record of replyMessages) if (Number.isSafeInteger(record.seq) && !relatedSeqs.has(record.seq) && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq)) { relatedSeqs.add(record.seq); changed = true; } }
-    const taskSource = replySelection?.taskContext?.source;
-    const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : undefined;
-    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
+    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
     const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some(record => record.receipt?.receipt_id && record.receipt.receipt_id === entry.receipt?.receipt_id));
     const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : undefined, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
     const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
       if (entry.draftID === replySelection.key) return true;
-      if (replySelection.taskContext) {
-        const expected = replyDraft.replyTarget?.relation?.metadata?.task_links || [];
-        return entry.relation?.metadata?.task_links?.some(link => expected.some(target => ["task_id", "requirements_revision", "execution_session_id", "question_request_id"].every(key => link[key] === target[key])));
-      }
       return entry.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(entry.relation.reply_to.seq);
     }) : [];
     const sendRefreshNotice = sendRefreshError && h("div", { className: "mosaic-error", role: "alert", "data-send-refresh-error": true }, h("span", null, t("sendRefreshFailed"), " ", sendRefreshError), h(Button, { onClick: refreshAcceptedSend }, t("refreshHistory")));
@@ -1592,16 +1602,14 @@ export async function activate(api) {
     } }, h("div", { className: "mosaic-replies-toolbar" }, h("button", { type: "button", className: "icon-button mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" })))), sendRefreshNotice, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
       composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { ...commandProps, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply })) },
       replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
-      replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : null,
-      taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
       replyRecords.map(record => renderReplyMessage(record)), replyPending.map(entry => renderPendingReceipt(entry, replySelection.key))));
-    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": nameOpen || Boolean(replySelection) || Boolean(selectedRoutine) || undefined },
+    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine) || undefined },
       !replySelection && sendRefreshNotice,
       !replySelection && agent && draftNotice(conversationID, draft),
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
-        actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName))),
+        actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("div", { className: "mosaic-avatar-editable", inert: panelOpen, "aria-hidden": panelOpen }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), editAvatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "编辑 twin" : "Edit twin"} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openIdentity }, h("strong", null, displayName))),
         showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
         composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, { ...commandProps, conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
@@ -1613,10 +1621,27 @@ export async function activate(api) {
         h(settingsPanels.ReviewConversation, { locale }), h(settingsPanels.ConnectorConversation),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", inert: Boolean(selectedRoutine), "aria-hidden": Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
+          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), avatarOpen && h(IdentityDialog, { agent, locale, onSave: saveIdentity, onClose: closeAvatar })));
   }
-  // A cold/offline host keeps the manifest title until the normal view initialization succeeds.
-  call("agents.list").then(result => { if (!api.signal.aborted) publishIdentity(result.agents?.find(value => value.kind === "main")); }).catch(() => {});
+  // Runtime calls require an active generation. Keep prior artwork while its identity loads.
+  api.setNavigationAvatar?.("personal", null);
+  let identityLoading = false;
+  const stopIdentityActivation = api.contributions.subscribe(() => {
+    if (identityLoading || api.signal.aborted || !api.contributions.getGenerationActivation(api.pluginId, api.generation)) return;
+    identityLoading = true;
+    call("agents.list").then(result => {
+      if (api.signal.aborted) return;
+      const agent = result.agents?.find(value => value.kind === "main");
+      if (agent) publishIdentity(agent);
+      else if (!identityAgent) api.setNavigationAvatar?.("personal", undefined);
+    }).catch(() => {
+      if (api.signal.aborted || identityAgent) return;
+      const entry = api.contributions.getNavigationEntries().find(value => value.pluginId === api.pluginId && value.id === "personal");
+      // A transient read failure must not erase artwork retained from the previous generation.
+      if (entry?.avatarKey === null) api.setNavigationAvatar?.("personal", undefined);
+    });
+  });
+  api.registerCleanup(stopIdentityActivation);
   api.registerViewType({ id: "personal.home", title: "twin", icon: "mascot", defaultRegion: "primary", persistence: "durable", layout: "user-space", render: props => h(PersonalHome, props) });
   api.registerViewType({ id: "personal.preferences", title: "twin", icon: "settings", defaultRegion: "settings", persistence: "session", render: props => h(PersonalPreferences, props) });
 }

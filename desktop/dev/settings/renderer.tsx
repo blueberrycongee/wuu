@@ -213,7 +213,10 @@ function isoDay(back: number): string {
 function sampleUsage(): SettingsUsageResponse {
   const days: SettingsUsageDay[] = Array.from({ length: 300 }, (_, back) => {
     const tokens = back % 7 === 5 || back % 11 === 3 ? 0 : ((back * 37) % 23 + 1) * 9_000;
-    return { date: isoDay(back), input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0 };
+    const outside = back % 5 === 4 && tokens > 0
+      ? { input_tokens: Math.round(tokens * 1.8), output_tokens: Math.round(tokens * 0.45), cache_creation_tokens: 0, cache_read_tokens: Math.round(tokens * 5.4), sessions: 2 }
+      : undefined;
+    return { date: isoDay(back), input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0, outside };
   }).filter((day) => day.turns > 0).reverse();
   const sum = (key: "input_tokens" | "output_tokens" | "cache_read_tokens") => days.reduce((total, day) => total + day[key], 0);
   const input = sum("input_tokens"), output = sum("output_tokens"), cacheRead = sum("cache_read_tokens");
@@ -228,6 +231,12 @@ function sampleUsage(): SettingsUsageResponse {
       { provider: "anthropic", model: "claude-sonnet-5", input_tokens: input * 0.6, output_tokens: output * 0.6, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.6, sessions: 80 },
       { provider: "openrouter", model: "deepseek/deepseek-v4", input_tokens: input * 0.3, output_tokens: output * 0.3, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.3, sessions: 36 },
       { provider: "local", model: "qwen3-32b", input_tokens: input * 0.1, output_tokens: output * 0.1, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.1, sessions: 12 },
+    ],
+    engine_breakdowns: [
+      { engine: "wuu", name: "Wuu", in_wuu: { input_tokens: input * 0.5, output_tokens: output * 0.5, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.5, sessions: 110 } },
+      { engine: "claude", name: "Claude Code", in_wuu: { input_tokens: input * 0.3, output_tokens: output * 0.3, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.3, sessions: 16 }, outside: { input_tokens: input * 0.4, output_tokens: output * 0.4, cache_creation_tokens: 10_000, cache_read_tokens: cacheRead * 0.4, sessions: 58 } },
+      { engine: "codex", name: "Codex", in_wuu: { input_tokens: input * 0.2, output_tokens: output * 0.2, cache_creation_tokens: 0, cache_read_tokens: cacheRead * 0.2, sessions: 2 }, outside: { input_tokens: 120_000, output_tokens: 8_000, cache_creation_tokens: 0, cache_read_tokens: 900_000, sessions: 9 } },
+      { engine: "grok", name: "Grok", in_wuu: { input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, sessions: 4 } },
     ],
     skill_usage: [{ name: "code-review", count: 42 }, { name: "frontend-design", count: 18 }, { name: "release-notes", count: 7 }],
   };
@@ -670,10 +679,12 @@ function Fixture(): JSX.Element {
       };
     });
   };
-  return (
-    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
+  const floating = params.has("overlay");
+  const [overlayOpen, setOverlayOpen] = useState(true);
+  const settingsView = (
       <SettingsView
         application={application}
+        floating={floating}
         initialized={state}
         initialPage={(params.get("page") as SettingsPage | null) ?? undefined}
         running={false}
@@ -687,7 +698,7 @@ function Fixture(): JSX.Element {
         sidebarMaxWidth={420}
         resizingSidebar={false}
         shellRef={shellRef}
-        onBack={() => undefined}
+        onBack={() => { if (floating) setOverlayOpen(false); }}
         onSave={save}
         onRemoveProvider={async (name) => setState((current) => ({ ...current, providers: current.providers?.filter((item) => item.name !== name) }))}
         onProvidersChanged={updated => setState(current => ({ ...current,
@@ -711,6 +722,13 @@ function Fixture(): JSX.Element {
         sidebarAnimating={false}
         onToggleSidebar={() => setCollapsed((value) => !value)}
       />
+  );
+  return (
+    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
+      {floating ? overlayOpen ? <div
+        className="settings-overlay-layer"
+        onPointerDown={event => { if (event.target === event.currentTarget) setOverlayOpen(false); }}
+      >{settingsView}</div> : null : settingsView}
     </div>
   );
 }

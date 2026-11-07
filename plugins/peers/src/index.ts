@@ -17,6 +17,7 @@ import {
 
 const promptCapability = "agent.system_prompt.section";
 const lifecycleCapability = "agent.turn.lifecycle";
+const clientCapability = "plugin.client.request";
 const stateKey = "peers.state.v1";
 const requestPrefix = "peer:req:";
 const responsePrefix = "peer:reply:";
@@ -37,6 +38,7 @@ type SessionSummary = HostServiceContracts["host.session.list"]["result"]["sessi
 type RequestRecord = {
   id: string;
   source_session_id: string;
+  source_turn_id?: string;
   target_session_id: string;
   target_name: string;
   call_ids?: string[];
@@ -70,6 +72,7 @@ const digest = (value: string): string => createHash("sha256").update(value).dig
 const date = (value: string): number => Date.parse(value);
 
 class PeersPlugin implements RuntimePlugin {
+  readonly concurrentCapabilities = [promptCapability, clientCapability];
   private workspaceID = "";
   private readonly stop = new AbortController();
   private maintenance: Promise<void> | undefined;
@@ -99,6 +102,7 @@ class PeersPlugin implements RuntimePlugin {
       ],
       capabilities: [
         { id: promptCapability, kind: "transform" as const, version: 1 },
+        { id: clientCapability, kind: "decision" as const, version: 1 },
         { id: lifecycleCapability, kind: "observe" as const, version: 1, error_policy: "isolate" as const },
       ],
       required_services: services.map(requireKernelService),
@@ -160,7 +164,7 @@ class PeersPlugin implements RuntimePlugin {
     let requestID = call.call_id ? digest(callIdentity) : randomBytes(12).toString("hex");
     const messageDigest = digest(message);
     const record: RequestRecord = {
-      id: requestID, source_session_id: sourceID, target_session_id: target.session_id,
+      id: requestID, source_session_id: sourceID, source_turn_id: call.turn_id, target_session_id: target.session_id,
       target_name: truncateUTF8(displayName(target), maxStoredNameBytes), state: "accepted", created_at: now,
       workspace_id: this.workspaceID, message_digest: messageDigest,
       ...(call.call_id ? { call_ids: [requestID] } : {}),
@@ -233,6 +237,26 @@ class PeersPlugin implements RuntimePlugin {
 
   async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost) {
     if (call.capability === promptCapability) return { output: { text: promptSection } };
+    if (call.capability === clientCapability) {
+      const request = call.input as { method: string; input?: { source_session_id?: string } };
+      if (request.method !== "requests.list") throw new Error(`unknown peers client method ${JSON.stringify(request.method)}`);
+      const sourceID = request.input?.source_session_id?.trim();
+      if (!sourceID) throw new Error("source_session_id is required");
+      const sessions = await this.sharedSessions(host);
+      if (!sessions.some((session) => session.session_id === sourceID)) throw new Error("peer request source is not available in this workspace");
+      const state = await readState(host);
+      const requests = Object.values(state.requests)
+        .filter((record) => record.source_session_id === sourceID && record.workspace_id === this.workspaceID && record.source_turn_id)
+        .sort((left, right) => left.created_at.localeCompare(right.created_at))
+        .map((record) => {
+          const target = sessions.find((session) => session.session_id === record.target_session_id);
+          return {
+            id: record.id, source_turn_id: record.source_turn_id, session_id: record.target_session_id,
+            name: target ? displayName(target) : record.target_name, state: record.state, available: !!target,
+          };
+        });
+      return { output: { result: { requests } } };
+    }
     if (call.capability !== lifecycleCapability) throw new Error(`unknown peers capability ${JSON.stringify(call.capability)}`);
     const input = call.input as TurnLifecycleInput;
     if (input.request_id.startsWith(responsePrefix)) {

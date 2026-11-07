@@ -55,7 +55,7 @@ Omit `mode` (or use `content`) to supply content instead of the caller’s fallb
 
 The default conversation provider renders `wuu.default-conversation/welcome` only while its conversation is empty. The composer and message flow remain outside this slot. A content contribution can replace the whole welcome, or replace `wuu.default-conversation/welcome.greeting`, `welcome.mascot`, or `welcome.usage` independently. Return `null` to hide a part. Each slot has one content provider; the normal conflict, wrapper, and unload rules above apply.
 
-The welcome context is `ConversationWelcomeContextV1`: `projectDraft` and the React nodes `greeting`, `mascot`, and `usage`. Each node includes its own slot and default fallback, so a replacement layout can arrange or omit them without importing private components. Render each node at most once. Each part's context contains `projectDraft`; the default usage summary is absent for a project draft or when there is no usage. The default greeting includes the workspace switcher where applicable. Replacing it also replaces that control. The default mascot's idle interaction with the usage card requires both defaults inside the default welcome container.
+The welcome context is `ConversationWelcomeContextV1`: the React nodes `greeting`, `mascot`, and `usage`. Each node includes its own slot and default fallback, so a replacement layout can arrange or omit them without importing private components. Render each node at most once. The default usage summary is absent when there is no usage. The default greeting includes the workspace switcher where applicable. Replacing it also replaces that control. The default mascot's idle interaction with the usage card requires both defaults inside the default welcome container.
 
 For example, this layout moves the usage summary above the greeting and hides the mascot:
 
@@ -94,6 +94,79 @@ The `workspace.rail` slot belongs to the default preview provider and appears wh
 [Token Speed](../../../examples/plugins/token-speed/README.md) is an independently installable example using this slot. It estimates observable output over a two-second window from streamed text, reasoning, and tool-call arguments; hidden output and model-specific tokenization are not measured. The fixed-width readout uses compact units on a separate line and eases number changes over 320 ms, respecting reduced motion. It shows a dash before output arrives or after the turn ends, and returns to zero when an active stream pauses. Its accessible label and hover description explain the estimate.
 
 From a checkout containing this slot, run `wuu plugin install ./examples/plugins/token-speed`, or `wuu plugin dev ./examples/plugins/token-speed` for hot updates. Disabling the plugin removes its readout.
+
+## File explorers and editors
+
+A plugin can replace just the file tree with a `registerUIContribution` targeting
+`wuu.default-preview/workspace.file-tree`, without selecting a new `ui.preview`
+provider. This single-content slot supports wrappers and the normal conflict and
+unload rules. The default preview keeps its tabs, file viewer, docking and resize
+controls. Disabling the contribution restores the default tree.
+
+Its `WorkspaceFileTreeContextV1` (exported from `@wuu/plugin-sdk`) contains `root`,
+`selectedFilePath` and `visible`. A missing root means no workspace; `visible`
+becomes false while the region is hidden. Stop view-owned subscriptions while
+hidden and on unmount. Capture `root` with each operation; never substitute the
+currently selected workspace when an asynchronous operation finishes. Open a row
+through `application.previewContent.openFile({ root, path })`.
+
+`application.previewContent` supplies directory listing, bounded file reading,
+and optional saving and observation. Check both the corresponding capability and
+method: older or alternative V1 application providers may omit them.
+
+```ts
+const files = application.previewContent;
+const target = { root, path: "notes.md" };
+const original = await files.readFile(target);
+if (files.capabilities.saveFile && files.saveFile && !original.binary && !original.truncated) {
+  const result = await files.saveFile({
+    ...target, text: editedText,
+    base_mtime_ms: original.mtime_ms, base_sha256: original.sha256,
+  });
+  // A conflict leaves the file untouched and returns its current contents.
+  // Keep the user's draft and offer an explicit reload or merge.
+  if (result.status === "conflict") showConflict(result.file);
+}
+```
+
+Saving uses the existing host path rules and atomic text-file replacement. It
+updates existing complete text files; it does not create, rename or delete files.
+Version checks detect edits observed before the write; this is not a filesystem
+transaction against arbitrary external writers. Cancellation or a transport error
+after admission can leave a completed write: re-read before retrying.
+
+```ts
+const controller = new AbortController();
+if (files.capabilities.watch && files.watch) {
+  const stop = await files.watch(target, change => {
+    if (change.type === "error") showError(change.message);
+    else scheduleReload(target); // Coalesce reads and retain unsaved editor text.
+  }, { signal: controller.signal });
+  await loadInitialState(target); // Subscribe first, then read.
+  // On unmount: stop(), or controller.abort().
+}
+```
+
+The supplied local desktop provider uses native filesystem events, sharing
+underlying directory handles across subscriptions and coalescing bursts over
+40 ms. It asynchronously revalidates paths after events; idle native subscriptions
+do not scan metadata. If native observation is unavailable, shared directory
+timers fall back to metadata checks every two seconds. It reports invalidations
+for an existing file or a directory's direct entries, including deletion and
+recreation. It does not recursively observe child file contents, guarantee every
+transient change, or provide an ordered change journal. Events retain the requested root and path. A terminal
+`error` ends that subscription. Unsubscribe, abort, plugin/provider retirement,
+renderer reload and window closure all release observation. Remote web/mobile
+transports currently advertise no observation capability.
+
+For a knowledge base, a plugin may own its editor, link graph, recursive index,
+file mutations and persistence in a runtime service, called from its desktop
+module with `invokeService` or `invokeRuntime`; see [replaceable providers](replaceable-providers.md).
+Trusted runtime plugins can use their execution environment's filesystem APIs.
+That filesystem is not automatically the same as a remote conversation's
+filesystem: the plugin must define its workspace routing and access policy.
+The host does not need a new registry for each domain. Plugins can declare their
+own versioned services and child UI slots for other extensions to build on.
 
 ## Presenters and actions
 
@@ -217,15 +290,19 @@ The response includes runtime contribution failures and reported renderer regist
 
 Use `api.react` and `api.ui` so controls follow the host's theme, spacing, and typography. Keep UI size separate from code size. Prefer declarative theme tokens for appearance-only changes; the [surface matrix](theme-surface-matrix.md) lists the public contract.
 
-`api.ui.Avatar` and the public `mascot` icon share Wuu's circular headset identity on desktop. Avatar accepts `size` in pixels, `className`, `status` (`idle`, `thinking`, `sending`, `responding`, `queued`, `waiting`, `failed`, or `interrupted`), and `motion` (`static` by default, or `ambient`). Use static avatars in compact navigation and ambient motion for larger visible identity surfaces. Status changes retain the sphere, face, and headset; ambient motion respects reduced-motion preferences and page visibility. The avatar is decorative, so label its surrounding control. Hosts without the desktop avatar renderer provide a static agent mark. Feature-detect `api.ui.Avatar` when supporting older hosts.
+`api.ui.Avatar` defaults to Wuu's circular headset identity, shared with the public `mascot` icon. It accepts `size` in pixels, `className`, `status` (`idle`, `thinking`, `sending`, `responding`, `queued`, `waiting`, `failed`, or `interrupted`), and `motion` (`static` by default, or `ambient`). An optional `avatarKey` selects a `mascot-v1:shape:accessory:hue` style: shapes are `round`, `rounded-square`, `capsule`, `triangle`, and `diamond`; accessories are `none`, `beanie`, `hard-hat`, `headset`, and `leaf`; hue is an integer from 0 to 359. For example, `mascot-v1:diamond:leaf:150`. Omitting the key keeps the brand identity. Use static avatars in compact navigation and ambient motion for larger visible identity surfaces. Status changes retain the configured shape and accessory; ambient motion respects reduced-motion preferences and page visibility. Label the surrounding control because the avatar is decorative. Hosts without the desktop avatar renderer provide a static agent mark and may ignore the key. Feature-detect `api.ui.Avatar` when supporting older hosts.
+
+On desktop, Personal's profile panel provides **Change style** with shape, accessory, and color previews. Save persists the appearance on the existing Personal identity; Cancel or closing the editor discards changes. Reset previews the original round, headset, hue 222 style and also requires Save. The Twin sidebar entry, header, profile, and rename dialog share the saved appearance, including after navigation and restart. Global branding and other plugins retain their own icons. Renaming preserves it. Existing identities need no migration. Native iOS and Android avatars have not been adapted to this setting.
 
 Standard browser APIs such as selection and resize observers are available. Public `data-wuu-component`, `data-wuu-slot`, and `data-wuu-surface` anchors are preferable to private class names or React internals. They do not make surrounding DOM structure stable. Register cleanup for listeners, observers, timers, and other resources you create outside React's own effect cleanup.
 
 Registrations belong to a plugin generation and are removed when it unloads. On native desktop quit, Wuu first unmounts React consumers, aborts pending activation, cleans up plugins in reverse dependency order, and flushes activation reports before disconnecting the renderer and stopping backend processes. A renderer that cannot acknowledge cleanup within ten seconds is closed and the failure is logged. That lifecycle is not a security sandbox: trusted renderer code and CSS can still misbehave. Keep the default-UI recovery path available, handle asynchronous action errors, and test disable/reload as well as initial rendering. Package trust and update behavior are described in [plugin management](plugins.md).
 
-### Runtime navigation display names
+### Runtime display names
 
-`api.setNavigationTitle(id, title)` updates only a navigation entry declared by the calling plugin generation. The title is trimmed and must contain 1–64 Unicode characters. It returns `false` for an undeclared entry; invalid titles and calls from an unloaded generation fail. The override is presentation-only, resets on reload, and never changes routes, settings-page labels, or other plugins. Persist user preferences through the plugin's existing runtime service, then republish the stored title after loading or saving it.
+`api.setNavigationTitle(id, title)` updates only a navigation entry declared by the calling plugin generation. `api.setViewTitle(id, title)` updates the visible title of one registered View type. Titles are trimmed and must contain 1–64 Unicode characters. Both return `false` for an unknown ID; invalid titles and calls from an unloaded generation fail. The overrides are presentation-only, reset on reload, and never change routes, settings-page labels, or other plugins. Persist user preferences through the plugin's existing runtime service, then republish stored titles after loading or saving them.
+
+`api.setNavigationAvatar(id, avatarKey)` gives an owned navigation entry a static `Avatar` style using the same key format. It supports agent destinations such as personal assistants or project agents without changing global branding. Pass `null` while loading to retain the preceding generation’s artwork (or an empty icon slot on cold startup); pass `undefined` to restore the declared icon. Undeclared entries return `false`; invalid keys and unloaded generations fail. Overrides are transient and scoped to the declared entry; the plugin remains responsible for durable identity and revision ordering. Runtime calls require an active generation: subscribe to contribution changes and check `getGenerationActivation` before reading identity, then publish it after load/save. Navigation providers receive the optional `avatarKey` on each destination; `null` denotes a loading slot. Feature-detect the setter for older hosts.
 
 ### Surface focus and recovery
 

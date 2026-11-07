@@ -23,6 +23,25 @@ does not provide a second official authoring SDK for those processes.
 The Go core remains the runtime host. `internal/sdk` is an internal facade for
 embedding the host in Wuu entry points; it is not a plugin authoring API.
 
+## Peer request cards
+
+With Peers enabled, new coordination requests appear as compact cards below the
+source turn in the default desktop conversation. A card opens the peer in the
+main conversation; the header offers a return to the source, preserving its
+unsent draft. Session-message source links also open the main conversation.
+Cards use the same spacing and corner radius as inline error notices and follow
+the UI font preference.
+
+The status belongs to the specific request, not the peer's later activity.
+Archived or missing targets are unavailable; a failed status refresh shows
+“Status unavailable”. Cards refresh while the source conversation is visible
+and are removed when Peers is disabled.
+
+This initial implementation displays requests retained by Peers: at most 64
+records, with settled requests eligible for pruning after seven days or when
+capacity is needed. Older records without a source turn ID have no card. The
+original tool results and session messages remain in conversation history.
+
 ## Bundled TypeScript runtimes
 
 The nine bundled business plugins are `todo`, `ask-user`, `memory`, `subagent`,
@@ -274,6 +293,8 @@ Only opted-in next-step executions add `model_step` events and per-step metadata
 Continuation is additive within major 4. `settings().resume_sampling` marks an explicit request to sample after a previously completed response, so a driver must not return that response as the new execution's terminal result. A failed model round can include `completed_messages`: provider-confirmed complete items that remain valid for subsequent requests. Other partial output remains visible in history but is marked as an incomplete stream fragment and excluded from resumed model input.
 
 Model-operation failures return `failure` alongside partial assistant messages and reported usage. The SDK converts it to `DriverModelError`; native drivers receive `FailureError` with the partial `ModelRound`. Failure evidence includes origin, category, provider code, HTTP status, retry delay, context-overflow classification, and the recovery executor's stopping decision and attempt counts when available. A retryable cause does not grant a fresh retry budget. Transport, authorization, and malformed-request errors remain service errors. Direct protocol consumers must inspect `failure`; a response containing partial output does not imply success. Failed responses retain visible text and images in history, while incomplete tool declarations and provider replay state remain only in the failure reply.
+
+`round.preempted` is a successful model round cut short by newly admitted user input. Keep its visible partial messages in history and continue the same turn with that input; do not surface it as a transport failure.
 
 Save intent before calling `modelWithTools()`, since tools may start before the model reply arrives. `round.tool_work_started` reports accepted work even when the model fails. Failed model operations cancel and drain their tools; their batch IDs cannot be reused. Call IDs remain reserved until the next accepted model operation. Successful streaming receipts wait for the original executions rather than issuing them again. Execution cleanup also drains orphaned and nested work before releasing tool providers. A model stream cannot automatically replay after tools have started, including when no durable ledger is configured.
 

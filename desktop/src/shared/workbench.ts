@@ -238,8 +238,10 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
   active?: boolean;
 }
 
-/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+/** Decorative host identity. Static is the default; ambient preserves its configured appearance. */
 export interface PluginUIAvatarProps {
+  /** Optional mascot-v1:shape:accessory:hue style. Omit for the host brand identity. */
+  avatarKey?: string;
   size?: number;
   status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
   motion?: "static" | "ambient";

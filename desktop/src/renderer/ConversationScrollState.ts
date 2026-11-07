@@ -1435,12 +1435,14 @@ export function useConversationScrollState({
     } else if (
       isFollowing() &&
       scrolledUp &&
-      !atLatestView &&
-      node.scrollTop < maxScrollTop(node) - 1
+      node.scrollTop < latestFollowScrollTop(node) - 1
     ) {
-      // Native scrollbar drags and some platform scroll paths can arrive as
-      // a bare scroll event. If the viewport moved upward away from latest
-      // content, treat it as user control even without a prior wheel/key/touch.
+      // Native scrollbar drags, scroll chaining and some platform scroll paths
+      // can arrive as a bare scroll event. Any upward move away from the exact
+      // latest position is user control, even inside the bottom band; keeping
+      // the band here lets the next stream tick pull a reader who moved only a
+      // few pixels back down. A layout clamp that lands at latest still keeps
+      // following because it is not below this bound.
       suppressAutoFollowRearmRef.current = false;
       nextAutoFollow = false;
       setAutoFollow(false);

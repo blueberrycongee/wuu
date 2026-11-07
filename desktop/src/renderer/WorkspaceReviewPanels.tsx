@@ -29,7 +29,6 @@ import {
   filterGitChangeFiles,
   gitChangeStatusLabel,
   gitChangeStatusText,
-  gitDiffDisplayLines,
   gitPathName,
   groupGitChangeFiles,
   summarizeGitChangeFiles,
@@ -38,8 +37,8 @@ import {
 } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 
-const WorkspaceMonacoDiffEditor = lazy(async () => ({
-  default: (await import("./WorkspaceMonacoDiffEditor")).WorkspaceMonacoDiffEditor,
+const WorkspaceDiff = lazy(async () => ({
+  default: (await import("./WorkspaceDiff")).WorkspaceDiff,
 }));
 
 const WORKSPACE_REVIEW_LIST_DEFAULT_WIDTH = 280;
@@ -475,42 +474,15 @@ function WorkspaceDiffBody({ diff }: { diff?: ReviewDiff }): JSX.Element {
   if (fileDiff.binary) {
     return <div className="workspace-diff-empty">{t("workspaceReview.binaryNoTextDiff")}</div>;
   }
-  if (typeof fileDiff.original_text === "string" && typeof fileDiff.modified_text === "string") {
-    return (
-      <WorkspacePreviewBoundary resourceKey={fileDiff.path}>
-        <Suspense fallback={<div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>}>
-          <WorkspaceMonacoDiffEditor
-            path={fileDiff.path}
-            originalText={fileDiff.original_text}
-            modifiedText={fileDiff.modified_text}
-          />
-        </Suspense>
-      </WorkspacePreviewBoundary>
-    );
-  }
-  if (!fileDiff.patch) {
+  if (!fileDiff.patch && !(typeof fileDiff.original_text === "string" && typeof fileDiff.modified_text === "string")) {
     return <div className="workspace-diff-empty">{t("workspaceReview.noTextDiff")}</div>;
   }
   return (
-    <div className="workspace-diff-code-scroll">
-      <GitPatchLines patch={fileDiff.patch} label={t("workspaceReview.codeDiffFor", { path: fileDiff.path })} />
-    </div>
-  );
-}
-
-/** A unified Git patch with old and new line numbers. */
-function GitPatchLines({ patch, label }: { patch: string; label: string }): JSX.Element {
-  const diffLines = useMemo(() => gitDiffDisplayLines(patch), [patch]);
-  return (
-    <pre className="workspace-diff-code" aria-label={label}>
-      {diffLines.map((line, index) => (
-        <span className={`workspace-diff-line ${line.kind}`} key={`${index}:${line.content.slice(0, 24)}`}>
-          <span className="workspace-diff-line-number">{line.oldLine ?? ""}</span>
-          <span className="workspace-diff-line-number">{line.newLine ?? ""}</span>
-          <span className="workspace-diff-line-code">{line.content || " "}</span>
-        </span>
-      ))}
-    </pre>
+    <WorkspacePreviewBoundary resourceKey={fileDiff.path}>
+      <Suspense fallback={<div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>}>
+        <WorkspaceDiff diff={fileDiff} />
+      </Suspense>
+    </WorkspacePreviewBoundary>
   );
 }
 

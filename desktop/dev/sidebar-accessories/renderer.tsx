@@ -5,14 +5,16 @@ import { AppSidebar } from "../../src/renderer/AppSidebar";
 import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
+import { createFixtureApplication, FixtureServices } from "../preview-services";
 import { I18nProvider } from "../../src/renderer/i18n";
 import "../../src/renderer/styles.css";
 
+const application = createFixtureApplication();
 const noop = () => {};
 const date = "2026-09-17T00:00:00Z";
 const params = new URLSearchParams(location.search);
 const project = { id: "preview", name: "wuu", path: "/preview", created_at: date, updated_at: date };
-// `full` adds sibling workspaces and the project group, matching a populated rail.
+// `full` adds sibling workspaces, matching a populated rail.
 const full = params.has("full");
 const siblings = full ? ["dsh-TUI", "sglang-omni", "infra", "简历"].map(name => ({ ...project, id: name, name, path: `/${name}` })) : [];
 const workspaces = [...siblings, project];
@@ -41,7 +43,7 @@ function Fixture() {
   const empty = params.has("empty");
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const visible = empty ? [] : threads;
-  return <WuuUIRoot><div className="app-shell" style={{ height: "100dvh", gridTemplateColumns: "var(--sidebar-open-width) 1fr", "--sidebar-open-width": `${Number(params.get("width")) || 296}px` } as React.CSSProperties}>
+  return <WuuUIRoot><div className="app-shell navigation-ribbon-layout" style={{ height: "100dvh", gridTemplateColumns: "var(--sidebar-open-width) 1fr", "--sidebar-open-width": `${Number(params.get("width")) || 296}px` } as React.CSSProperties}>
     <AppSidebar
       initialized
       activeContextKind="project"
@@ -52,7 +54,6 @@ function Fixture() {
       collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}
       collapsedFolderIDs={collapsedFolderIDs} setCollapsedFolderIDs={setCollapsedFolderIDs}
       workspaceThreadsByWorkspaceID={{ [project.id]: visible }}
-      onCreateProject={full ? noop : undefined}
       workspaceMenuOpen={false} workspaceMenuRef={createRef()} searchOpen={false}
       sectionOrder={workspaces.map(workspace => workspace.id)} onStartNewThread={noop} onOpenSkillsTab={noop}
       onToggleConversationSearch={noop} onSelectThread={setActive}
@@ -69,4 +70,4 @@ function Fixture() {
   </div></WuuUIRoot>;
 }
 
-createRoot(document.getElementById("root")!).render(<I18nProvider><Fixture /></I18nProvider>);
+createRoot(document.getElementById("root")!).render(<I18nProvider><FixtureServices application={application}><Fixture /></FixtureServices></I18nProvider>);

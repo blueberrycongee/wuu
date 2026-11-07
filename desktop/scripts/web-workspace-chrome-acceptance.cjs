@@ -51,33 +51,24 @@ module.exports = async function acceptChrome(h, view) {
     const sample = { width, height, zoom, theme, anchor, hint, visibleDuringHover: view.getVisible(), menu: [] };
     samples.push(sample);
 
-    // The account panel is a second bounded view over the same live page.
-    const accountPoint = await evaluate(() => { const r = document.querySelector('.sidebar-account-trigger').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
-    await nativeInput(['mousemove', String(Math.round(b.x + accountPoint.x * zoom)), String(Math.round(b.y + accountPoint.y * zoom)), 'click', '1']);
-    const account = win.contentView.children.find(child => child.webContents?.getURL() === 'wuu-chrome://ui/chrome-overlay.html?surface=account');
-    await until(() => account?.getVisible(), 'Account panel has painted');
-    const accountBefore = await wc.executeJavaScript('window.ticks'); await delay(150);
-    sample.account = { bounds: account.getBounds(), beforeTicks: accountBefore, afterTicks: await wc.executeJavaScript('window.ticks'), visible: view.getVisible(),
-      authority: await account.webContents.executeJavaScript('({wuu:typeof window.wuu,require:typeof require,bridge:Object.keys(window.wuuChromeOverlay).sort()})') };
-    assert.ok(sample.account.visible && sample.account.afterTicks > accountBefore, 'Account menu keeps the webpage animating');
-    assert.deepEqual(sample.account.authority, { wuu: 'undefined', require: 'undefined', bridge: ['command','onState','painted','ready'] }, 'Native chrome has only its narrow bridge');
-    // Stale messages and commands for another surface must have no effect.
-    await account.webContents.executeJavaScript(`(async()=>{const state=await window.wuuChromeOverlay.ready();window.wuuChromeOverlay.command({token:state.token,generation:state.generation-1,command:{type:'account-action',action:'providers'}});window.wuuChromeOverlay.command({token:state.token,generation:state.generation,command:{type:'new-tab'}})})()`);
-    await settle();
-    assert.equal(view.getVisible(), true, 'Stale and cross-surface commands do not navigate the shell');
-    await capture('account-' + label);
-    // Test the first click while the account is still open, rather than after
-    // explicitly closing it: transparent native views must not eat page input.
+    // The settings layer occludes the native page while open and restores it
+    // with the same bounds on dismissal.
+    const settingsPoint = await evaluate(() => { const r = document.querySelector('[data-settings-entry="settings"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    await nativeInput(['mousemove', String(Math.round(b.x + settingsPoint.x * zoom)), String(Math.round(b.y + settingsPoint.y * zoom)), 'click', '1']);
+    await until(() => evaluate(() => Boolean(document.querySelector('.settings-shell'))), 'Settings layer has painted');
+    await until(() => !view.getVisible(), 'Settings occludes the live webpage');
+    sample.settings = { occludedWhileOpen: true };
+    await capture('settings-' + label);
+    await nativeInput(['key', 'Escape']);
+    await until(() => evaluate(() => !document.querySelector('.settings-shell')), 'Escape dismisses the settings layer');
+    await until(() => view.getVisible(), 'Live webpage is restored once settings closes');
+    assert.deepEqual(view.getBounds(), boundsBeforeHover, 'Settings dismissal restores the native page bounds');
+    const settingsTicks = await wc.executeJavaScript('window.ticks'); await delay(150);
+    assert.ok(await wc.executeJavaScript('window.ticks') > settingsTicks, 'Live webpage resumes animating after settings');
     const outsideInput = await wc.executeJavaScript(`(()=>{scrollTo(0,0);const r=document.querySelector('#draft').getBoundingClientRect();return{x:r.right-8,y:r.y+r.height/2}})()`);
     const liveBounds = view.getBounds();
     await nativeInput(['mousemove', String(Math.round(b.x + liveBounds.x + outsideInput.x)), String(Math.round(b.y + liveBounds.y + outsideInput.y)), 'click', '1']);
-    assert.equal(await wc.executeJavaScript('document.activeElement.id'), 'draft', 'The first click while account is open reaches the live webpage');
-    await until(() => !account.getVisible(), 'Outside click dismisses account');
-    await nativeInput(['mousemove', String(Math.round(b.x + (anchor.x + anchor.width / 2) * zoom)), String(Math.round(b.y + (anchor.y + anchor.height / 2) * zoom))]);
-    await nativeInput(['mousemove', String(Math.round(b.x + accountPoint.x * zoom)), String(Math.round(b.y + accountPoint.y * zoom)), 'click', '1']);
-    await until(() => account.getVisible(), 'Account reopens for keyboard dismissal');
-    await nativeInput(['key', 'Escape']);
-    await until(() => !account.getVisible(), 'Escape dismisses account');
+    assert.equal(await wc.executeJavaScript('document.activeElement.id'), 'draft', 'The live webpage receives input after settings closes');
     await nativeInput(['mousemove', String(b.x + width - 80), String(b.y + 40)]);
     assert.equal(view.getVisible(), true, 'Leaving chrome never hides the webpage');
     assert.deepEqual(view.getBounds(), boundsBeforeHover, 'Leaving the rail keeps native page bounds unchanged');

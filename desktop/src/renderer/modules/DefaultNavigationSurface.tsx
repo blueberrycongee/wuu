@@ -5,6 +5,7 @@ import type { ApplicationPresentationAPI, ApplicationServiceV1, ApplicationSnaps
 import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
 import { threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
+import { threadDisplayTitle } from "../ThreadTitles";
 import type { DesktopProject } from "../../shared/protocol";
 import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
@@ -169,16 +170,6 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     setCollapsed(current => { const next = new Set(current); if (opening) next.delete(id); else next.add(id); return next; });
     if (opening) run(invoke("navigation.load-workspace", { workspaceId: id }));
   };
-  const createProject = async (workspaceId?: string) => {
-    const targetId = workspaceId ?? defaultDraftWorkspaceID;
-    const workspace = view.workspaces.find(row => row.id === targetId);
-    if (!workspace || workspace.missing) throw new Error(t("projects.needsWorkspace"));
-    const result = await application.invoke("workspace.start-draft", { workspaceId: workspace.id });
-    if (result.activated) {
-      await application.invoke("draft.set-project-mode", { project: true });
-      return result.tabId;
-    }
-  };
   const archiveThread = async (thread: ThreadSummary, force = false) => {
     // The explicit confirmation admits one mutation, even before React has
     // painted the disabled button. A new provider never inherits this consent.
@@ -195,7 +186,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       if (request === archiveRequest.current) setArchiveTip({ id: ++archiveTipID.current, thread, error: error instanceof Error ? error.message : String(error) });
     } finally { if (pendingArchiveThreads.current.get(thread.id) === request) pendingArchiveThreads.current.delete(thread.id); }
   };
-  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={archiveTip.thread.title?.trim() || t("app.thisConversation")} errorMessage={archiveTip.error} pending={archiveTip.pending}
+  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={threadDisplayTitle(archiveTip.thread, rows, t("app.thisConversation"))} errorMessage={archiveTip.error} pending={archiveTip.pending}
     onDismiss={() => setArchiveTip(undefined)} onViewArchive={() => { setArchiveTip(undefined); run(application.invoke("settings.open", { pageId: "archive" })); }}
     onForceArchive={archiveTip.forceRetryable ? () => run(archiveThread(archiveTip.thread, true)) : undefined} /></UILayerPortal>}<AppSidebar {...layout} navigation={navigation} initialized={view.initialized}
     activeContextKind={view.activeContextKind} activeSessionTabID={snapshot.tabs.activeTabId} selectedWorkspaceID={view.selectedWorkspaceId}
@@ -232,11 +223,8 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onStartNewThreadInWorkspace={workspaceId => startDraft({ workspaceId })}
     onRemoveWorkspace={workspaceId => run((async () => { if (await confirmAction({ title: t("workspace.removeTitle", { name: view.workspaces.find(row => row.id === workspaceId)?.name ?? workspaceId }), message: t("workspace.removeConfirm"), confirmLabel: t("common.remove") })) await application.invoke("workspace.remove", { workspaceId }); })())}
     onRelocateWorkspace={workspaceId => run(application.invoke("workspace.relocate", { workspaceId }))}
-    onCreateProject={view.projectAgentEnabled ? workspaceId => run(focusAfterNavigation(() => createProject(workspaceId))) : undefined}
-    onAdoptIntoProject={view.projectAgentEnabled ? (projectId, threadId) => run(invoke("navigation.adopt-thread", { projectId, threadId })) : undefined}
     onReorderSections={next => { setOrder(next); localStorage.setItem("wuu.desktop.sidebarSectionOrder", JSON.stringify(next)); }}
-    onOpenSettings={pageId => run(application.invoke("settings.open", { pageId }))}
-    onOpenAccount={() => run(invoke("navigation.show-account", { open: true }))}
+    onOpenSettings={pageId => run(application.invoke("settings.open", pageId ? { pageId } : {}))}
     onMarkThreadsViewed={threads => run(invoke("navigation.mark-viewed", { threadIds: threads.map(row => row.id) }))}
     unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(value => !value)} attentionStickyIDs={attentionStickyIDs} onAttentionStickyIDsChange={setAttentionStickyIDs}
     onShowConversations={() => run(application.invoke("navigation.show-section", { section: "conversations" }))}

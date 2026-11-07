@@ -95,15 +95,17 @@ export class MCPLoginCoordinator {
           response.end("Authorization received. You can return to Wuu.");
           listener?.close();
           void (async () => {
+            let authorized = false;
             try {
               await attempt.request("mcp/auth/finish", { name, state: attempt.state, code });
+              authorized = true;
               if (attempt.cancelled) return;
               await attempt.request("mcp/connect", { name });
               if (attempt.cancelled) return;
               attempt.result = { status: "success" };
               if (!owner.isDestroyed()) this.onSuccess(owner.id);
             } catch (error) {
-              if (!attempt.cancelled) attempt.result = { status: "error", error: error instanceof Error ? error.message : String(error) };
+              if (!attempt.cancelled) attempt.result = { status: "error", error: error instanceof Error ? error.message : String(error), ...(authorized ? { authorized: true } : {}) };
             }
           })();
         });

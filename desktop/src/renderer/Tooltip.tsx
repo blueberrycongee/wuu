@@ -182,7 +182,7 @@ export function Tooltip({
     const rect = layer.getBoundingClientRect(), style = getComputedStyle(layer);
     void browser.showTooltip(token, { text: tooltipContent(content), x: Number(position.left), y: Number(position.top), width: rect.width, height: rect.height,
       style: { fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, fontStyle: style.fontStyle, color: style.color, backgroundColor: style.backgroundColor, border: style.border,
-        borderRadius: style.borderRadius, padding: style.padding, lineHeight: style.lineHeight } }).catch(() => undefined);
+        borderRadius: style.borderRadius, padding: style.padding, lineHeight: style.lineHeight, maxWidth: style.maxWidth } }).catch(() => undefined);
     return () => { void browser.showTooltip(token, null).catch(() => undefined); };
   }, [browser, token, nativeHint, open, content, position]);
 

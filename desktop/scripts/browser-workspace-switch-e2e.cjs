@@ -297,12 +297,18 @@ async function run() {
   }
   const route = ['a', 'b', 'a', 'chat', 'a', 'settings', 'b', 'chat', 'a'];
   for (let cycle = 0; cycle < 6; cycle++) for (const target of route) {
+    // The floating Settings panel is modal: its scrim swallows ribbon clicks,
+    // so leave through its own dismissal path before the next destination.
+    if (target !== 'settings' && await evaluate(() => Boolean(document.querySelector('.settings-shell')))) {
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      await until(() => evaluate(() => !document.querySelector('.settings-shell')), 'settings dismissed before destination');
+    }
     step = `${cycle + 1}:${target}`;
     const startedAt = performance.now();
     const start = report.events.length;
     if (target === 'settings') {
-      await click('.sidebar-account-trigger');
-      await click('button[role="menuitem"][data-settings-page="providers"]');
+      await click('[data-settings-entry="settings"]');
     } else {
       await click(target === 'chat' ? '[data-wuu-component="conversations-section"]' : `[data-ribbon-id="${pages[target].tab}"]`);
     }

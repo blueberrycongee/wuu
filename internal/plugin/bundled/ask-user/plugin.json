@@ -3,7 +3,7 @@
   "id": "ask-user",
   "name": "Ask User",
   "description": "Offer focused questions to the user without pausing the current turn.",
-  "icon": "message-square",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "defaultEnabled": false,
   "author": { "name": "Wuu" },

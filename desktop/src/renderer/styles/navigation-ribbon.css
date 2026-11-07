@@ -33,7 +33,9 @@
    use one symmetric inset instead of reserving a separate window-chrome row. */
 :root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
   --workbench-top: var(--conversation-pane-inset);
-  --navigation-toggle-left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2);
+  /* Match New conversation's visible left edge: its artwork starts at x=4,
+     while the panel artwork starts at x=3.5 on the same 24-unit grid. */
+  --navigation-toggle-left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2 - var(--sidebar-leading-icon-inset) + var(--icon-size) * 0.5 / 24);
 }
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(.section-sidebar-toggle, .ribbon-restore-toggle) {
@@ -58,7 +60,7 @@
   padding-right: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px));
 }
 
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar .sidebar-section-title {
   padding-left: calc(var(--control-size-toolbar) + var(--space-2) + var(--ribbon-restore-space));
 }
 
@@ -96,7 +98,7 @@
   box-shadow: none;
 }
 
-.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-content {
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar > .sidebar-content {
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: var(--space-2);
   width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
@@ -167,11 +169,13 @@
   --conversation-pane-left-radius: var(--conversation-canvas-radius);
 }
 
+/* The title row shares the workbench canvas, but it still needs its closing
+ * edge: it separates the title controls from the reading surface and meets
+ * the navigation divider, so the two columns read as one framed workbench. */
 .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar {
   padding-top: 0;
   padding-right: var(--control-toolbar-inset);
   padding-left: calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
-  box-shadow: none;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel {
@@ -182,7 +186,6 @@
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-tabbar {
   padding: 0 var(--control-toolbar-inset) 0 var(--workspace-row-inset);
-  box-shadow: none;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-sidebar-hit-hole {
@@ -233,6 +236,12 @@
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
   left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
+}
+
+/* The restore affordance only exists while the ribbon is hidden: keep its
+   ink at the engaged panel toggle's weight instead of the quiet action gray. */
+.navigation-ribbon-layout:has(.sidebar-ribbon) .ribbon-restore-toggle {
+  color: var(--ink);
 }
 
 .section-sidebar-toggle *,
@@ -396,7 +405,7 @@
   white-space: nowrap;
 }
 
-.sidebar-ribbon:not([data-expanded="true"]) :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
+.sidebar-ribbon:not([data-expanded="true"]) :is(.sidebar-ribbon-label, .sidebar-account-name) {
   display: none;
 }
 
@@ -408,8 +417,7 @@
 }
 
 .sidebar-ribbon-button:is([aria-current="page"], [aria-pressed="true"], [aria-expanded="true"]),
-.sidebar-ribbon-tab-row.active .sidebar-ribbon-button,
-.sidebar-ribbon .sidebar-account-trigger[aria-expanded="true"] {
+.sidebar-ribbon-tab-row.active .sidebar-ribbon-button {
   background: var(--sidebar-row-selected-bg);
   box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
@@ -499,6 +507,10 @@
 .sidebar-ribbon .sidebar-account-trigger {
   display: grid;
   grid-template-columns: var(--sidebar-ribbon-icon-size) minmax(0, 1fr) var(--sidebar-row-action-size);
+}
+
+.sidebar-ribbon .sidebar-settings-trigger {
+  grid-template-columns: var(--sidebar-ribbon-icon-size) minmax(0, 1fr);
 }
 
 .sidebar-ribbon .sidebar-account-trigger .sidebar-account-avatar {

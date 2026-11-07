@@ -13,11 +13,11 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       { id: 'research-1', kind: 'thread', label: 'Compare the evidence', parentId: 'research', active: true },
     ] },
     navigationWorkspace: { initialized: true, threads: [], workspaces: [], loadingWorkspaceIds: [], lastViewedTurnByThreadId: {}, pendingConversations: [],
-      folders: [], plugins: [], destinations: [], canRevealThread: false, canCreateWorkspace: false, canChooseWorkspace: false, projectAgentEnabled: false,
+      folders: [], plugins: [], destinations: [], canRevealThread: false, canCreateWorkspace: false, canChooseWorkspace: false,
       accountAvailable: false, update: { kind: 'unsupported' }, searchOpen: false, accountOpen: false },
     tabs: { navigationRevision: 0, activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
       title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
-      threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
+      threadId: 'research-1', draftText: '', hasAttachments: false }] },
     conversationDetails: [],
     conversationWorkspace: { turnStreamStatus: {}, activePane: "primary", threads: [] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{
@@ -65,7 +65,6 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   const onboarding: ReturnType<ApplicationServiceV1["onboarding"]["getSnapshot"]> = { revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } };
   const catalog: ReturnType<ApplicationServiceV1["catalog"]["getSnapshot"]> = { contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } };
   const fileSelections = new Map<string, ReturnType<ApplicationServiceV1["fileSelection"]["getSnapshot"]>>();
-  const projects = new Map<string, ReturnType<ApplicationServiceV1["projects"]["getSnapshot"]>>();
   // These disabled services never publish changes; external-store reads must retain identity.
   const empty = Object.freeze([]);
   const service: ApplicationServiceV1 = {
@@ -75,7 +74,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },
     composerPresentation: { setRuntimeMenu: unavailable, getStatusSnapshot: () => composerStatus, subscribeStatus: () => () => {}, getSnapshot: unavailable, subscribe: () => () => {}, getCommands: () => empty, executeCommand: unavailable,
       getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {},
-      getTelemetry: () => ({ tokensPerSecond: 0, source: "none", inputTokens: 0, outputTokens: 0 }), subscribeTelemetry: () => () => {} },
+      getTelemetry: () => ({}), subscribeTelemetry: () => () => {} },
     desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
     webWorkspace,
     onboarding: { getSnapshot: () => onboarding, subscribe: () => () => {}, checkpoint: unavailable, run: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
@@ -89,14 +88,6 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       return snapshot;
     }, subscribe: () => () => {},
       quote: unavailable, comment: unavailable, removeComment: unavailable, edit: unavailable, openPdf: unavailable, openFile: unavailable, askSide: unavailable },
-    projects: { getSnapshot: projectId => {
-      let snapshot = projects.get(projectId);
-      if (!snapshot) {
-        snapshot = { projectId, enabled: false, loading: false, error: "" };
-        projects.set(projectId, snapshot);
-      }
-      return snapshot;
-    }, subscribe: () => () => {}, refresh: unavailable, control: unavailable, releaseSession: unavailable },
     terminals: {
       capabilities: Object.freeze({ createTerminal: false }),
       start: unavailable, write: unavailable, resize: unavailable, stop: unavailable, onEvent: () => () => {},

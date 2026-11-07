@@ -38,6 +38,10 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     void application.invoke("settings.refresh-engines", {}, { signal: lifetime.signal }).catch(() => { /* The service publishes discovery errors beside the engine controls. */ });
     return () => lifetime.abort();
   }, [application, settings.open, initialized?.workspace_root, settings.engineInventoryRevision]);
+  function closeSettings(): void {
+    void application.invoke("settings.close", {}).catch(showErrorToast);
+  }
+
   async function refreshModelCatalog(): Promise<void> {
     if (!lifetime.active) return;
     setCatalogNotice(undefined);
@@ -51,12 +55,16 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
   }
   return <>
     {settings.open && catalogNotice && <ScopedToast key={catalogNotice.id} message={catalogNotice.message} tone={catalogNotice.isError ? "error" : "info"} />}
-    {settings.open && <div className={layout.embedded ? "settings-workbench-layer" : "settings-standalone-layer"}>
-      <SettingsShellRenderer {...layout} application={application} initialized={initialized} running={settings.runtimeSwitchPending}
+    {settings.open && <div
+      className={`app-modal-backdrop settings-overlay-layer${layout.embedded ? " settings-workbench-layer" : " settings-standalone-layer"}`}
+      data-wuu-component="settings-overlay"
+      onPointerDown={event => { if (event.target === event.currentTarget) closeSettings(); }}
+    >
+      <SettingsShellRenderer {...layout} floating application={application} initialized={initialized} running={settings.runtimeSwitchPending}
         runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryError={settings.engineInventoryError}
         page={settings.activePageId as SettingsPage | undefined}
         onPageChange={pageId => { void application.invoke("settings.open", { pageId }).catch(showErrorToast); }}
-        onBack={() => { void application.invoke("settings.close", {}).catch(showErrorToast); }}
+        onBack={closeSettings}
         onSave={(provider, model, effort, connection, variant) => application.invoke("settings.save-provider", { provider, model, effort, connection, variant })}
         onRemoveProvider={(provider, options) => application.invoke("settings.remove-provider", { provider, ...options })}
         onRefreshModelCatalog={refreshModelCatalog}

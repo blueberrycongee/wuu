@@ -85,9 +85,8 @@ async function run() {
   await app.whenReady();
   if (!main) await new Promise(resolve => app.once('browser-window-created', resolve));
   if (main.webContents.isLoading()) await new Promise(resolve => main.webContents.once('did-finish-load', resolve));
-  await waitFor(() => document.querySelector('.sidebar-account-trigger'));
-  await click('.sidebar-account-trigger');
-  await click('[data-settings-page="providers"]');
+  await waitFor(() => document.querySelector('[data-settings-entry="settings"]'));
+  await click('[data-settings-entry="settings"]');
   await waitFor(() => [...document.querySelectorAll('.settings-nav button')].some(button => button.textContent.trim() === 'External agents'));
   await evaluate(() => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === 'External agents').click());
   await waitFor(() => document.querySelector('[data-testid="settings-engine-codex-status"]'));

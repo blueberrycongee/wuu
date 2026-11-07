@@ -3,9 +3,11 @@ package appserver
 import (
 	"context"
 	"errors"
+
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // Remove this compatibility entry after the two session-fork callers retain
@@ -28,14 +30,17 @@ func preserveForkArtifacts(stateDir, sourceThreadID, forkThreadID string, histor
 // preserveForkArtifacts routes all managed artifact identities through the
 // captured provider, so external URI schemes never require filesystem parsing.
 func (s *Server) preserveForkArtifacts(services *runtime.StateServices, stateDir, sourceThreadID, forkThreadID string, history []providers.ChatMessage) error {
+	return s.preserveForkArtifactsWithDisplay(services, stateDir, sourceThreadID, forkThreadID, history, nil)
+}
+
+func (s *Server) preserveForkArtifactsWithDisplay(services *runtime.StateServices, stateDir, sourceThreadID, forkThreadID string, history []providers.ChatMessage, display []forkDisplayRecord) error {
 	if err := preserveForkInputImages(stateDir, sourceThreadID, forkThreadID, history); err != nil {
 		return err
 	}
 	replacements := make(map[string]pluginhost.ArtifactImportResult)
-	for index := range history {
-		result := history[index].ToolResult
+	copyResult := func(result *toolresult.Result) error {
 		if result == nil {
-			continue
+			return nil
 		}
 		for partIndex := range result.Content {
 			part := &result.Content[partIndex]
@@ -60,6 +65,18 @@ func (s *Server) preserveForkArtifacts(services *runtime.StateServices, stateDir
 			}
 			part.URI, part.Name, part.MIMEType = artifact.URI, artifact.Name, artifact.MIMEType
 			part.Artifact.Ref, part.Artifact.SHA256, part.Artifact.SizeBytes = artifact.ID, artifact.SHA256, &artifact.Size
+		}
+		return nil
+	}
+	for index := range history {
+		if err := copyResult(history[index].ToolResult); err != nil {
+			return err
+		}
+	}
+	for index := range display {
+		display[index].record.ToolResult = cloneToolResult(display[index].record.ToolResult)
+		if err := copyResult(display[index].record.ToolResult); err != nil {
+			return err
 		}
 	}
 	return nil

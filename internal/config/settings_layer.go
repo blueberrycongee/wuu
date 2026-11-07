@@ -264,9 +264,6 @@ func stripProjectUserSettings(overlay map[string]any, path string) {
 		if deleteKeysEqualFold(agent, "model_aliases") {
 			ignored = append(ignored, "agent.model_aliases")
 		}
-		if deleteKeysEqualFold(agent, "project_models") {
-			ignored = append(ignored, "agent.project_models")
-		}
 	}
 	if len(ignored) == 0 {
 		return

@@ -381,11 +381,6 @@ func (s *Store) SetWorkspaceID(id, workspaceID string) (Session, error) {
 	err := s.invoke("SetWorkspaceID", []any{id, workspaceID}, []any{&r0})
 	return r0, err
 }
-func (s *Store) SetProjectMembership(id, source, parentID, instructions string) (Session, error) {
-	var r0 Session
-	err := s.invoke("SetProjectMembership", []any{id, source, parentID, instructions}, []any{&r0})
-	return r0, err
-}
 func (s *Store) SetSource(id, source string) (Session, error) {
 	var r0 Session
 	err := s.invoke("SetSource", []any{id, source}, []any{&r0})
@@ -544,36 +539,6 @@ func (s *Store) SaveRequestContextCheckpoint(sessionID string, payload json.RawM
 	err := s.invoke("SaveRequestContextCheckpoint", []any{sessionID, payload}, []any{})
 	return err
 }
-func (s *Store) ReadProjectWork(id string) (ProjectWork, error) {
-	var r0 ProjectWork
-	err := s.invoke("ReadProjectWork", []any{id}, []any{&r0})
-	return r0, err
-}
-func (s *Store) ListProjectWork(projectID string) ([]ProjectWork, error) {
-	var r0 []ProjectWork
-	err := s.invoke("ListProjectWork", []any{projectID}, []any{&r0})
-	return r0, err
-}
-func (s *Store) PendingProjectWork(projectID string) ([]ProjectWork, error) {
-	var r0 []ProjectWork
-	err := s.invoke("PendingProjectWork", []any{projectID}, []any{&r0})
-	return r0, err
-}
-func (s *Store) ReconcileProjectWork(id string, version int) error {
-	err := s.invoke("ReconcileProjectWork", []any{id, version}, []any{})
-	return err
-}
-func (s *Store) ProjectWorkOperation(operationID string) (ProjectWork, bool, error) {
-	var r0 ProjectWork
-	var r1 bool
-	err := s.invoke("ProjectWorkOperation", []any{operationID}, []any{&r0, &r1})
-	return r0, r1, err
-}
-func (s *Store) SaveProjectWork(work ProjectWork, version int, operationID string) (ProjectWork, error) {
-	var r0 ProjectWork
-	err := s.invoke("SaveProjectWork", []any{work, version, operationID}, []any{&r0})
-	return r0, err
-}
 func (s *Store) Find(id string) (Session, bool, error) {
 	var r0 Session
 	var r1 bool
@@ -622,4 +587,4 @@ func (s *Store) ListTokenUsage() ([]TokenUsageRow, error) {
 	return r0, err
 }
 
-var domainMethods = []string{"AdmitThreadExecution", "RequestThreadExecutionResetRecord", "ThreadExecutionResetRequested", "RewriteHistoryRecordsAtBaseline", "RewriteHistoryRecordsForEdit", "StoreHistoryCheckpointAtBaseline", "StoreContextWindow", "RewriteHistoryRecordsForEngineEdit", "LoadCompactionNote", "StoreCompactionNote", "CompareAndSwapCompactionNote", "PutContextSeed", "LoadContextSeed", "PutSessionLaunch", "LoadSessionLaunch", "ReadControl", "ListControls", "ChangeControl", "ValidateControl", "ValidateContinuationControl", "CreateInitialized", "CreateInitializedWithLaunch", "CreateInitializedWithInbox", "Create", "CreateWithMetadata", "CreateManagedWithMetadata", "CreateForkWithMetadata", "CreateManagedForkWithMetadata", "CreateWithWorktree", "CreateManagedWithWorktree", "Delete", "DeleteArchived", "LoadDriverBinding", "BindDriver", "LoadDriverCheckpoint", "SaveDriverCheckpoint", "SetHistoryEngineTurnID", "SaveModelInputReceipt", "LoadModelInputReceipts", "ReplaceHeldUserWork", "LoadHeldUserWork", "DeleteHeldUserWork", "AcceptHeldUserWork", "UpdateHeldUserWork", "CancelHeldUserWork", "HasHeldUserWorkReceipt", "ClaimHeldUserWork", "ReleaseHeldUserWork", "AppendHistoryRecord", "AppendHistoryRecordReturningSeq", "AppendControlledHistoryRecord", "AppendContinuationHistoryRecord", "AppendAcceptedUserHistoryRecord", "AppendHistoryRecords", "AppendHistoryRecordsReturningRange", "RewriteHistoryRecords", "LoadHistoryRecords", "LoadActiveHistoryRecords", "LatestHistoryCheckpoint", "LoadProviderHistorySnapshot", "ReadHistoryPage", "ReadHistoryQuery", "SearchHistoryPage", "SearchHistoryQuery", "EnqueueInbox", "SettleInbox", "PendingInbox", "InboxTargets", "InboxHas", "ValidateInboxControls", "NewInferenceJournalRuntime", "RebuildSessionIndexes", "ListPage", "MaintainModelInputReceipts", "MaintainRedundantStorage", "UpdateIndex", "UpdateGeneratedTitle", "UpdateTitle", "UpdateWorkspaceBinding", "UpdatePinned", "SetWorkspaceID", "SetProjectMembership", "SetSource", "SetRuntimeSelection", "SetNextStepModelSelection", "SetEngine", "SetEngineRef", "SetModelSelection", "UpdateArchived", "BindWorktree", "WorktreeInfoForSession", "ListOrganization", "CreateFolder", "RenameFolder", "DeleteFolder", "ReorderFolders", "UpdateOrganization", "UpsertParticipant", "UpsertParticipantRun", "CompleteParticipantRun", "ListParticipantRuns", "GetParticipant", "ListParticipants", "CountParticipantsByKind", "RetireParticipant", "FindRetiredParticipantByName", "PutPluginTurnLifecycleOutbox", "DeletePluginTurnLifecycleOutbox", "DeletePluginTurnLifecycleOutboxForPlugin", "ListPluginTurnLifecycleOutbox", "FindPluginTurnLifecycle", "WritePluginGenerationSnapshot", "ReadPluginGenerationSnapshot", "LoadRequestContextCheckpoint", "SaveRequestContextCheckpoint", "ReadProjectWork", "ListProjectWork", "PendingProjectWork", "ReconcileProjectWork", "ProjectWorkOperation", "SaveProjectWork", "Find", "List", "ListForCWD", "FindPinnedArchived", "FindManagedByRequest", "MostRecent", "MostRecentForCWD", "LatestSubscriptionActivity", "ListTokenUsage"}
+var domainMethods = []string{"AdmitThreadExecution", "RequestThreadExecutionResetRecord", "ThreadExecutionResetRequested", "RewriteHistoryRecordsAtBaseline", "RewriteHistoryRecordsForEdit", "StoreHistoryCheckpointAtBaseline", "StoreContextWindow", "RewriteHistoryRecordsForEngineEdit", "LoadCompactionNote", "StoreCompactionNote", "CompareAndSwapCompactionNote", "PutContextSeed", "LoadContextSeed", "PutSessionLaunch", "LoadSessionLaunch", "ReadControl", "ListControls", "ChangeControl", "ValidateControl", "ValidateContinuationControl", "CreateInitialized", "CreateInitializedWithLaunch", "CreateInitializedWithInbox", "Create", "CreateWithMetadata", "CreateManagedWithMetadata", "CreateForkWithMetadata", "CreateManagedForkWithMetadata", "CreateWithWorktree", "CreateManagedWithWorktree", "Delete", "DeleteArchived", "LoadDriverBinding", "BindDriver", "LoadDriverCheckpoint", "SaveDriverCheckpoint", "SetHistoryEngineTurnID", "SaveModelInputReceipt", "LoadModelInputReceipts", "ReplaceHeldUserWork", "LoadHeldUserWork", "DeleteHeldUserWork", "AcceptHeldUserWork", "UpdateHeldUserWork", "CancelHeldUserWork", "HasHeldUserWorkReceipt", "ClaimHeldUserWork", "ReleaseHeldUserWork", "AppendHistoryRecord", "AppendHistoryRecordReturningSeq", "AppendControlledHistoryRecord", "AppendContinuationHistoryRecord", "AppendAcceptedUserHistoryRecord", "AppendHistoryRecords", "AppendHistoryRecordsReturningRange", "RewriteHistoryRecords", "LoadHistoryRecords", "LoadActiveHistoryRecords", "LatestHistoryCheckpoint", "LoadProviderHistorySnapshot", "ReadHistoryPage", "ReadHistoryQuery", "SearchHistoryPage", "SearchHistoryQuery", "EnqueueInbox", "SettleInbox", "PendingInbox", "InboxTargets", "InboxHas", "ValidateInboxControls", "NewInferenceJournalRuntime", "RebuildSessionIndexes", "ListPage", "MaintainModelInputReceipts", "MaintainRedundantStorage", "UpdateIndex", "UpdateGeneratedTitle", "UpdateTitle", "UpdateWorkspaceBinding", "UpdatePinned", "SetWorkspaceID", "SetSource", "SetRuntimeSelection", "SetNextStepModelSelection", "SetEngine", "SetEngineRef", "SetModelSelection", "UpdateArchived", "BindWorktree", "WorktreeInfoForSession", "ListOrganization", "CreateFolder", "RenameFolder", "DeleteFolder", "ReorderFolders", "UpdateOrganization", "UpsertParticipant", "UpsertParticipantRun", "CompleteParticipantRun", "ListParticipantRuns", "GetParticipant", "ListParticipants", "CountParticipantsByKind", "RetireParticipant", "FindRetiredParticipantByName", "PutPluginTurnLifecycleOutbox", "DeletePluginTurnLifecycleOutbox", "DeletePluginTurnLifecycleOutboxForPlugin", "ListPluginTurnLifecycleOutbox", "FindPluginTurnLifecycle", "WritePluginGenerationSnapshot", "ReadPluginGenerationSnapshot", "LoadRequestContextCheckpoint", "SaveRequestContextCheckpoint", "Find", "List", "ListForCWD", "FindPinnedArchived", "FindManagedByRequest", "MostRecent", "MostRecentForCWD", "LatestSubscriptionActivity", "ListTokenUsage"}

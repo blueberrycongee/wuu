@@ -85,6 +85,7 @@ import {
   variantLabel
 } from "./RuntimeHelpers";
 import { translateCurrent as translate, useI18n } from "./i18n";
+import { showToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import { ComposerMobileAttachmentChoices } from "./ComposerCamera";
@@ -802,6 +803,27 @@ function EngineRuntimeMenu({
   const effectiveModel = models.find((model) => effectiveModelID ? model.id === effectiveModelID : model.is_default);
   const supportedEfforts = effectiveModel?.supported_efforts ?? [];
   const effortOptions = supportedEfforts.length ? orderedEffortOptions(["", ...supportedEfforts]) : [];
+  // A degraded catalog still leaves its usable rows selectable, so discovery
+  // failures surface as a notice rather than a banner inside the list. The
+  // engine settings page keeps the full diagnostic; the notice quotes only
+  // its first line.
+  const modelsError = engine?.models_error?.trim();
+  const modelCount = models.length;
+  const modelsStatus = engine?.models_status;
+  const engineID = engine?.id;
+  useEffect(() => {
+    if (!modelsError) return;
+    const summary = t(
+      modelsStatus === "partial" ? "runtime.modelsPartial"
+        : modelCount > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed",
+    );
+    const detail = modelsError.split("\n").map(line => line.trim()).find(Boolean);
+    showToast({
+      message: detail ? `${summary}\n${detail}` : summary,
+      tone: "error",
+      dedupeKey: `engine-models:${engineID}:${modelsError}`,
+    });
+  }, [engineID, modelsStatus, modelsError, modelCount, t]);
   const changeSelection = async (save: () => void | Promise<boolean>): Promise<boolean> => {
     if (saving || disabled) return false;
     setSaving(true);
@@ -919,13 +941,7 @@ function EngineRuntimeMenu({
                 <span className="codex-model-item-name">{t("runtime.engineDefaultModel")}</span>
                 {!selectedModel ? <Check className="icon-lg" /> : null}
               </button>
-              {engine?.models_error ? (
-                <div className="composer-menu-note warning">
-                  <strong>{t(engine.models_status === "partial" ? "runtime.modelsPartial" : models.length > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed")}</strong>
-                  <span>{engine.models_error}</span>
-                </div>
-              ) : null}
-              {models.length === 0 && !engine?.models_error ? (
+              {models.length === 0 ? (
                 <div className="composer-menu-empty">
                   {t(engine?.models_status === "empty" ? "runtime.modelsEmpty" : "runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
                 </div>
@@ -1089,6 +1105,21 @@ export function RuntimeModelMenu({
       ? visibleModels.length
       : engineOptions.length;
 
+  // An unreadable Codex login still leaves the configured provider models
+  // selectable, so like external catalog failures it reports through the
+  // notice queue rather than a banner inside the list.
+  const codexLoadError = effectiveCodex ? state.error.trim() : "";
+  useEffect(() => {
+    if (!codexLoadError) return;
+    const summary = t("runtime.codexLoginUnavailable");
+    const detail = codexLoadError.split("\n").map(line => line.trim()).find(Boolean);
+    showToast({
+      message: detail ? `${summary}\n${detail}` : summary,
+      tone: "error",
+      dedupeKey: `codex-models:${codexLoadError}`,
+    });
+  }, [codexLoadError, t]);
+
   const selectModel = (provider: string, model: string, variant?: string): void => {
     setOptimistic({ provider, model, variant: variant ?? "" });
     void Promise.resolve(onSelectModel(provider, model, variant)).then((committed) => {
@@ -1223,12 +1254,6 @@ export function RuntimeModelMenu({
             </label>
             <div className="codex-model-groups">
               {effectiveCodex && state.loading ? <div className="composer-menu-empty">{t("runtime.loadingCodexModels")}</div> : null}
-              {effectiveCodex && state.error ? (
-                <div className="composer-menu-note warning">
-                  <strong>{t("runtime.codexLoginUnavailable")}</strong>
-                  <span>{state.error}</span>
-                </div>
-              ) : null}
               {!state.loading && providers.length === 0 ? <div className="composer-menu-empty">{t("runtime.noModels")}</div> : null}
               {filteredGroups.length === 0 ? <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div> : null}
               {filteredGroups.map((group) => (
@@ -1605,6 +1630,7 @@ export function ComposerPlusButton({
           align="left"
           offset={4}
           width={menuWidth}
+          matchAnchorWidth
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
         >
           <div
@@ -1616,38 +1642,39 @@ export function ComposerPlusButton({
             style={{ "--composer-menu-width": `${menuWidth}px` } as CSSProperties}
             onKeyDown={(event) => handleFloatingMenuKeyDown(event, close, pluginMenu?.fromMention ? pluginMenu.inputElement() : buttonRef.current)}
           >
-            {pluginMenu ? <ComposerPluginChoices menu={pluginMenu} /> : null}
-            {mobileAttachments ? (
-              <ComposerMobileAttachmentChoices
-                onTakePhoto={() => {
-                  setOpen(false);
-                  mobileAttachments.onTakePhoto();
-                }}
-                onPickPhotos={() => {
-                  setOpen(false);
-                  mobileAttachments.onPickPhotos();
-                }}
-                onPickFiles={() => {
-                  setOpen(false);
-                  mobileAttachments.onPickFiles();
-                }}
-              />
-            ) : (
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onAddAttachment();
-                }}
-              >
-                <Paperclip className="icon-lg" />
-                <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
-                <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
-              </button>
-            )}
-            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
-            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            <div className="composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
+              {pluginMenu ? <ComposerPluginChoices menu={pluginMenu} /> : null}
+              {mobileAttachments ? (
+                <ComposerMobileAttachmentChoices
+                  onTakePhoto={() => {
+                    setOpen(false);
+                    mobileAttachments.onTakePhoto();
+                  }}
+                  onPickPhotos={() => {
+                    setOpen(false);
+                    mobileAttachments.onPickPhotos();
+                  }}
+                  onPickFiles={() => {
+                    setOpen(false);
+                    mobileAttachments.onPickFiles();
+                  }}
+                />
+              ) : (
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onAddAttachment();
+                  }}
+                >
+                  <Paperclip className="icon-lg" />
+                  <span className="composer-plus-menu-item-title">{t("composer.addAttachment")}</span>
+                </button>
+              )}
+              <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+              <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands.filter(command => !pluginMenu?.query || `${command.title} ${command.name}`.toLocaleLowerCase().includes(pluginMenu.query.toLocaleLowerCase()))} onSelect={selectCommand} />
+            </div>
           </div>
         </FloatingMenuPortal>
       ) : null}

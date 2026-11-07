@@ -56,14 +56,7 @@ func isHumanUserMessage(msg providers.ChatMessage) bool {
 	return !(strings.HasPrefix(content, "<process_recheck>") && strings.HasSuffix(content, "</process_recheck>"))
 }
 
-func (s *Server) validateInboxInput(binding *runtime.State, msg providers.ChatMessage) error {
-	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == "project" || msg.Cause == projectCauseResult) {
-		return binding.Sessions.ValidateInboxControls(msg.ClientID)
-	}
-	return nil
-}
-
-// trySubmitSessionInput is shared by extension sends and project sessions. The
+// trySubmitSessionInput is shared by extension sends and managed sessions. The
 // caller retains queued work in its own durable policy/outbox; acceptance and
 // steering use the same host runtime, execution lease and control fence.
 // The bools report handled input and transfer of snapshot ownership respectively.
@@ -234,10 +227,6 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 func (s *Server) pruneRevokedSteersLocked(th *threadState) {
 	next := th.pendingSteers[:0]
 	for _, msg := range th.pendingSteers {
-		if err := s.validateInboxInput(th.state, msg); err != nil {
-			delete(th.pendingSteerControls, msg.ClientID)
-			continue
-		}
 		if c, ok := th.pendingSteerControls[msg.ClientID]; ok {
 			if err := th.state.Sessions.ValidateControl(c); err != nil {
 				delete(th.pendingSteerControls, msg.ClientID)

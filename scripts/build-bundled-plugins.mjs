@@ -86,12 +86,25 @@ await runJSONLRuntime(plugin, { input: process.stdin, output: process.stdout });
   await copyPackage(packageRoot, join(developmentRoot, "dist"));
   manifest.runtime.args = ["dist/runtime.mjs"];
   if (manifest.desktop) manifest.desktop.entry = `dist/${manifest.desktop.entry}`;
+  rebaseIconAssets(manifest);
   for (const command of manifest.contributes?.commands ?? []) {
     if (command.prompt) command.prompt = `./dist/${command.prompt.replace(/^\.\//, "")}`;
   }
   await writeChanged(join(developmentRoot, "plugin.json"), JSON.stringify(manifest, null, 2) + "\n");
 }
 console.log(`${check ? "verified" : "built"} ${selected ? 1 : pluginIDs.length} TypeScript plugin runtime(s)`);
+
+// Development manifests resolve the same artwork from their copied package.
+function rebaseIconAssets(value) {
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "icon" && child && typeof child === "object") {
+      for (const field of ["path", "light", "dark"]) {
+        if (typeof child[field] === "string") child[field] = `dist/${child[field].replace(/^\.\//, "")}`;
+      }
+    } else rebaseIconAssets(child);
+  }
+}
 
 async function writeChanged(path, content) {
   const data = Buffer.from(content);

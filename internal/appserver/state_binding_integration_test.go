@@ -143,17 +143,13 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			th, err := srv.ensureThreadLoaded(binding, id)
-			if err != nil {
+			if _, err := srv.ensureThreadLoaded(binding, id); err != nil {
 				t.Fatal(err)
 			}
 			srv.registerExecutionRun(binding, store, run, nil)
 			if _, _, err := rt.ActivityRegistry.Start(activity.StartOptions{ID: "captured-activity", ThreadID: id, Kind: activity.KindBrowser, Workdir: rt.RootDir}); err != nil {
 				t.Fatal(err)
 			}
-			srv.runMu.Lock()
-			srv.runs[run.ID].schemaRetry = &executionSchemaRetry{projectID: "same-project", thread: th, snapshot: turnRuntimeSnapshot{ExecutionRunID: run.ID}, prompt: "correction"}
-			srv.runMu.Unlock()
 			if err := binding.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -168,9 +164,6 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 			successor.Documents, successor.Sessions = replacement, session.NewStore(context.Background(), replacement)
 			srv.rt = successor
 			current := testRuntimeState(t, successor)
-			if pending, full := srv.drainExecutionSchemaRetries(current, "same-project", false); pending || full {
-				t.Fatalf("replacement scheduler observed original Run: pending=%v capacity=%v", pending, full)
-			}
 			view, err := srv.readExecutionRun(current, context.Background(), run.ID)
 			if err != nil || view.Run.ID != run.ID || !view.Attached {
 				t.Fatalf("attached run switched authority: %+v, %v", view, err)

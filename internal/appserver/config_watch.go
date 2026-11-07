@@ -316,6 +316,7 @@ func (s *Server) applyExternalConfigChangeLocked(cfg config.Config) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
+	s.rt.RetireRemovedMCPServers(cfg)
 	providerCfg, resolvedName, err := cfg.ResolveProvider("")
 	if err != nil {
 		return err
@@ -389,14 +390,13 @@ func (s *Server) effectiveConfigFingerprint() (string, error) {
 
 func (s *Server) currentConfigChangedNotification() ConfigChangedNotification {
 	return ConfigChangedNotification{
-		Provider:      s.rt.ProviderName,
-		Model:         s.rt.Model,
-		Effort:        s.currentDisplayEffort(),
-		Variant:       s.currentVariant(),
-		ModelRoles:    s.currentModelRoleSummaries(),
-		ModelAliases:  s.currentModelAliasSummaries(),
-		ProjectModels: s.rt.ProjectModels,
-		Providers:     s.providerSummaries(),
+		Provider:     s.rt.ProviderName,
+		Model:        s.rt.Model,
+		Effort:       s.currentDisplayEffort(),
+		Variant:      s.currentVariant(),
+		ModelRoles:   s.currentModelRoleSummaries(),
+		ModelAliases: s.currentModelAliasSummaries(),
+		Providers:    s.providerSummaries(),
 	}
 }
 

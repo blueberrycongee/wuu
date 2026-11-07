@@ -136,6 +136,10 @@ type DriverTurnModelResult struct {
 	Failure           *DriverFailure     `json:"failure,omitempty"`
 	ToolBatchID       string             `json:"tool_batch_id,omitempty"`
 	ToolWorkStarted   bool               `json:"tool_work_started,omitempty"`
+	// Preempted marks a successful model round cut short by newly admitted
+	// user input. The driver must keep the partial messages and continue the
+	// same turn; this is not a transport failure.
+	Preempted bool `json:"preempted,omitempty"`
 }
 
 type DriverTurnToolsParams struct {

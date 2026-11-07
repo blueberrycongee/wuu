@@ -322,11 +322,15 @@
   padding: var(--card-padding);
 }
 
+/* Its children are a control and a scrolling list, not divided rows. */
+.settings-group.onboarding-choice-card > :not([hidden]) ~ :not([hidden]) {
+  border-top: 0;
+}
+
 .first-run-onboarding :is(.model-service-catalog, .system-permission-row) {
   border-color: var(--hairline-soft);
-  border-radius: var(--settings-group-radius);
-  background: var(--settings-card);
-  box-shadow: var(--settings-group-shadow);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
 }
 
 .first-run-onboarding .system-permission-row {
@@ -481,9 +485,12 @@
 .onboarding-stage-permissions .onboarding-heading { text-align: left; }
 .onboarding-stage-permissions .onboarding-lead { max-width: 34em; }
 
-/* Reserve the scrollbar inside the card; its footer stays visible while
- * a long workspace list scrolls above it. Short lists keep their height. */
+/* The scroller reaches through the card's padding and 1px border so the
+ * scrollbar sits outside the card. Add the border width to the scroller's
+ * padding too, keeping row content aligned with the footer. */
 .onboarding-workspaces {
+  margin-inline-end: calc((var(--card-padding) + var(--scrollbar-width) + 1px) * -1);
+  padding-inline-end: calc(var(--space-2) + 1px);
   scrollbar-gutter: stable;
 }
 .onboarding-workspaces > .onboarding-status { padding-inline: var(--space-2); }

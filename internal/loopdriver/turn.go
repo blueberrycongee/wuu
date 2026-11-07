@@ -91,6 +91,10 @@ type ModelRound struct {
 	// model failure and is evidence against blind replay.
 	ToolBatchID     string
 	ToolWorkStarted bool
+	// Preempted reports that newly admitted user input stopped the model stream.
+	// Messages contains the visible partial answer; the driver continues the
+	// same turn instead of completing or failing it.
+	Preempted bool
 }
 
 // ToolBatch.ID is unique within an execution. A duplicate is rejected, including

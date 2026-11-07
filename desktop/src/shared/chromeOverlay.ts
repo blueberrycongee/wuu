@@ -10,7 +10,7 @@ export type ChromeOverlayAppearance = {
 };
 export type ChromeAccountTrigger = { title: string; initials?: string; disabled: boolean; open: boolean; label: string };
 export type ChromeDesktopUpdate = { state: "available" | "ready" | "error" | "downloading" | "checking" | "prompting" | "installing"; label: string; progressLabel: string; busy: boolean; percent?: number };
-export type ChromeAccountAction = "devices" | "usage" | "account" | "providers" | "logout";
+export type ChromeAccountAction = "devices" | "usage" | "account" | "settings" | "providers" | "logout";
 export type ChromeAccountPanel = {
   label: string;
   profile?: { title: string; initials: string; server?: string };

@@ -301,7 +301,7 @@ func (s *driverResourceStep) Execute(ctx context.Context, request providers.Chat
 	} else {
 		round, err = s.turn.CallModel(ctx, request)
 	}
-	result := StepResult{Usage: round.Usage, CompletedMessages: providers.CloneChatMessages(round.CompletedMessages)}
+	result := StepResult{Usage: round.Usage, CompletedMessages: providers.CloneChatMessages(round.CompletedMessages), Preempted: round.Preempted}
 	for _, message := range round.Messages {
 		if message.Role != "assistant" {
 			continue
