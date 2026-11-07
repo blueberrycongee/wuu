@@ -33,7 +33,6 @@ export type FloatingMenuOwner =
   | "composer-runtime"
   | "composer-access"
   | "composer-context-meter"
-  | "composer-token-gauge"
   | "composer-focus"
   | "composer-plus"
   | "composer-attach"

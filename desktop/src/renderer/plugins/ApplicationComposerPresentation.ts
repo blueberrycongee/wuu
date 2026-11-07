@@ -1,7 +1,7 @@
 import { externalAgentActivityStatusSource } from "../ExternalAgentActivityStore";
 import type { ComposerStatusItem, ComposerStatusState } from "../../../../packages/plugin-sdk/src/index";
 import type { ApplicationComposerStatusSnapshotV1, ApplicationComposerStatusItemV1, ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1, ApplicationComposerInlineProviderV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
-import { activeTodoUpdateForThread, activeTurnAcceptsSteering, activeTurnForThread, activeTurnIsAnswerReady, isThreadRunning, latestContextUsageForThread, queryTextForUserItem, requestedHandoffIntentForThread, type AppState } from "../AppState";
+import { activeTodoUpdateForThread, activeTurnAcceptsSteering, activeTurnForThread, activeTurnIsAnswerReady, isThreadRunning, latestContextUsageForThread, queryTextsForThread, requestedHandoffIntentForThread, type AppState } from "../AppState";
 import { providerModelContextWindow } from "../RuntimeHelpers";
 import { runtimeViewForConversation } from "../SessionRuntimeState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
@@ -13,10 +13,28 @@ function immutable<T>(value: T): T {
   freeze(result); return result;
 }
 
+// Heavy configuration inputs (providers, extension inventory, permissions) are
+// structurally shared across AppState updates, so one deep-frozen copy per
+// source object is reused by every snapshot.
+const frozenBySource = new WeakMap<object, unknown>();
+
+function frozenCopy<T>(value: T): T {
+  if (!value || typeof value !== "object") return value;
+  const cached = frozenBySource.get(value);
+  if (cached !== undefined) return cached as T;
+  const copy = immutable(value);
+  frozenBySource.set(value, copy);
+  return copy;
+}
+
 /** Adapts existing owners; neither canonical composer state nor telemetry is duplicated. */
 export class ApplicationComposerPresentation {
   private disposed = false;
   private readonly scopes = new Set<() => void>();
+  // View snapshots are shared by all scopes so each consumer does not pay the
+  // recomputation cost separately on every state notification.
+  private readonly views = new Map<string, { state: AppState; key: string; heavy: readonly unknown[]; value: ApplicationComposerPresentationViewV1 }>();
+  private skillRevisionCache: { inventory: unknown; count: unknown; value: string } | undefined;
   constructor(private readonly host: { getState(): AppState; updateState(update: (state: AppState) => AppState): void; subscribeState(listener: () => void): () => void; getPluginHost(): PluginHost }) {}
 
   createScope(signal: AbortSignal): ApplicationComposerPresentationV1 {
@@ -25,7 +43,6 @@ export class ApplicationComposerPresentation {
     const subscriptions = new Set<() => void>();
     const statusViews = new Map<string | undefined, { key: string; value: ApplicationComposerStatusSnapshotV1 }>();
     const statusSources = () => [...this.host.getPluginHost().getComposerStatusSources(), externalAgentActivityStatusSource];
-    const views = new Map<string, { key: string; value: ApplicationComposerPresentationViewV1 }>();
     const inlineCache = new WeakMap<readonly RegisteredComposerInlineCompletionProvider[], readonly ApplicationComposerInlineProviderV1[]>();
     const telemetryCache = new WeakMap<ReturnType<typeof turnTelemetryStore.getSnapshot>, ReturnType<ApplicationComposerPresentationV1["getTelemetry"]>>();
     let commandSource: ReturnType<PluginHost["getCommands"]> | undefined;
@@ -35,7 +52,7 @@ export class ApplicationComposerPresentation {
       check(); const stop = start(() => { if (active && !this.disposed && !signal.aborted) callback(); });
       const off = () => { if (subscriptions.delete(off)) stop(); }; subscriptions.add(off); return off;
     };
-    const retire = () => { if (!active) return; active = false; for (const off of [...subscriptions]) off(); views.clear(); statusViews.clear(); signal.removeEventListener("abort", retire); this.scopes.delete(retire); };
+    const retire = () => { if (!active) return; active = false; for (const off of [...subscriptions]) off(); statusViews.clear(); signal.removeEventListener("abort", retire); this.scopes.delete(retire); };
     this.scopes.add(retire); signal.addEventListener("abort", retire, { once: true });
     const owner = (ownerTabId: string) => {
       check(); const state = this.host.getState(); const tab = state.sessionTabs.find(tab => tab.id === ownerTabId && tab.kind !== "skills");
@@ -88,29 +105,7 @@ export class ApplicationComposerPresentation {
       }, callback),
       getSnapshot: (ownerTabId: string) => {
         check();
-        if (!this.host.getState().sessionTabs.some(tab => tab.id === ownerTabId && tab.kind !== "skills")) {
-          const previous = views.get(ownerTabId); if (previous?.key === "unavailable") return previous.value;
-          const value = immutable({ ownerTabId, runtimeMenu: null, available: false, running: false, turnRunning: false, canSteer: false, readOnly: true,
-            status: "", queryHistory: [], skillRevision: "", workspaceCapabilities: { create: false, open: false } });
-          views.set(ownerTabId, { key: "unavailable", value }); return value;
-        }
-        const { state, tab, thread } = owner(ownerTabId);
-        const initialized = runtimeViewForConversation(state.initialized, thread, activeTurnForThread(thread));
-        const turn = activeTurnForThread(thread); const running = Boolean(thread && isThreadRunning(thread));
-        const ceiling = providerModelContextWindow(initialized, thread?.model_provider || initialized?.provider, thread?.model || initialized?.model)
-          || (!thread ? state.initialized?.advanced_settings?.context_window_tokens : undefined);
-        const usage = latestContextUsageForThread(state, thread, { model: thread?.model || initialized?.model, contextWindowTokens: ceiling });
-        const configuration = initialized && { provider: initialized.provider, model: initialized.model, effort: initialized.effort, variant: initialized.variant,
-          speed: initialized.speed, permissions: initialized.permissions, providers: initialized.providers, features: { safe_mode: initialized.features?.safe_mode },
-          extension_inventory: initialized.extension_inventory };
-        const value: ApplicationComposerPresentationViewV1 = { ownerTabId, runtimeMenu: state.codexRuntimeMenu ?? null, threadId: thread?.id, available: Boolean(initialized && (tab.kind === "draft" || thread)),
-          running, turnRunning: running && !activeTurnIsAnswerReady(thread), canSteer: activeTurnAcceptsSteering(thread), readOnly: Boolean(thread?.read_only),
-          status: state.status, turnId: turn?.id, configuration, contextUsage: usage && ceiling ? { ...usage, window: ceiling } : usage,
-          queryHistory: (thread?.turns ?? []).flatMap(turn => turn.items.flatMap(item => { const text = queryTextForUserItem(item); return text ? [text] : []; })),
-          requestedHandoffIntent: requestedHandoffIntentForThread(thread), skillRevision: JSON.stringify([initialized?.extension_trust?.main_session?.skills?.count, initialized?.extension_inventory]),
-          workspaceCapabilities: { create: !window.wuu.unsupportedMethods?.includes("createBlankProject"), open: !window.wuu.unsupportedMethods?.includes("chooseProjectFolder") } };
-        const key = JSON.stringify(value); const previous = views.get(ownerTabId); if (previous?.key === key) return previous.value;
-        const snapshot = immutable(value); views.set(ownerTabId, { key, value: snapshot }); return snapshot;
+        return this.viewForOwner(ownerTabId);
       },
       subscribe: (callback: () => void) => {
         const stateOff = listen(listener => this.host.subscribeState(listener), callback);
@@ -166,7 +161,51 @@ export class ApplicationComposerPresentation {
       subscribeTelemetry: callback => listen(turnTelemetryStore.subscribe, callback),
     } satisfies ApplicationComposerPresentationV1);
   }
-  dispose(): void { if (this.disposed) return; this.disposed = true; for (const retire of [...this.scopes]) retire(); }
+  private viewForOwner(ownerTabId: string): ApplicationComposerPresentationViewV1 {
+    const cached = this.views.get(ownerTabId);
+    const state = this.host.getState();
+    if (cached?.state === state) return cached.value;
+    const tab = state.sessionTabs.find(tab => tab.id === ownerTabId && tab.kind !== "skills");
+    if (!tab) {
+      if (cached?.key === "unavailable") { cached.state = state; return cached.value; }
+      const value = immutable({ ownerTabId, runtimeMenu: null, available: false, running: false, turnRunning: false, canSteer: false, readOnly: true,
+        status: "", queryHistory: [], skillRevision: "", workspaceCapabilities: { create: false, open: false } });
+      this.views.set(ownerTabId, { state, key: "unavailable", heavy: [], value }); return value;
+    }
+    const thread = tab.kind === "thread" ? [state.thread, state.secondaryThread, ...state.threads].find(thread => thread?.id === tab.threadID) : undefined;
+    const initialized = runtimeViewForConversation(state.initialized, thread, activeTurnForThread(thread));
+    const turn = activeTurnForThread(thread); const running = Boolean(thread && isThreadRunning(thread));
+    const ceiling = providerModelContextWindow(initialized, thread?.model_provider || initialized?.provider, thread?.model || initialized?.model)
+      || (!thread ? state.initialized?.advanced_settings?.context_window_tokens : undefined);
+    const usage = latestContextUsageForThread(state, thread, { model: thread?.model || initialized?.model, contextWindowTokens: ceiling });
+    const configuration = initialized && Object.freeze({ provider: initialized.provider, model: initialized.model, effort: initialized.effort, variant: initialized.variant,
+      speed: initialized.speed, permissions: frozenCopy(initialized.permissions), providers: frozenCopy(initialized.providers),
+      features: immutable({ safe_mode: initialized.features?.safe_mode }),
+      extension_inventory: frozenCopy(initialized.extension_inventory) });
+    const skillsCount = initialized?.extension_trust?.main_session?.skills?.count;
+    const inventory = initialized?.extension_inventory;
+    const revision = this.skillRevisionCache;
+    const skillRevision = revision && revision.inventory === inventory && revision.count === skillsCount
+      ? revision.value
+      : (this.skillRevisionCache = { inventory, count: skillsCount, value: JSON.stringify([skillsCount, inventory]) }).value;
+    const queryHistory = queryTextsForThread(thread);
+    const value: ApplicationComposerPresentationViewV1 = Object.freeze({ ownerTabId, runtimeMenu: state.codexRuntimeMenu ?? null, threadId: thread?.id, available: Boolean(initialized && (tab.kind === "draft" || thread)),
+      running, turnRunning: running && !activeTurnIsAnswerReady(thread), canSteer: activeTurnAcceptsSteering(thread), readOnly: Boolean(thread?.read_only),
+      status: state.status, turnId: turn?.id, configuration, contextUsage: immutable(usage && ceiling ? { ...usage, window: ceiling } : usage),
+      queryHistory,
+      requestedHandoffIntent: requestedHandoffIntentForThread(thread), skillRevision,
+      workspaceCapabilities: immutable({ create: !window.wuu.unsupportedMethods?.includes("createBlankProject"), open: !window.wuu.unsupportedMethods?.includes("chooseProjectFolder") }) });
+    const { queryHistory: _queryHistory, skillRevision: _skillRevision, configuration: valueConfiguration, ...keyRest } = value;
+    const { providers: _providers, extension_inventory: _inventory, permissions: _permissions, ...configurationRest } = valueConfiguration ?? {};
+    const key = JSON.stringify({ ...keyRest, configuration: valueConfiguration ? configurationRest : undefined });
+    const heavy = [queryHistory, skillRevision, configuration?.providers, configuration?.extension_inventory, configuration?.permissions];
+    if (cached && cached.key === key && cached.heavy.length === heavy.length && cached.heavy.every((item, index) => item === heavy[index])) {
+      cached.state = state; return cached.value;
+    }
+    this.views.set(ownerTabId, { state, key, heavy, value }); return value;
+  }
+
+  dispose(): void { if (this.disposed) return; this.disposed = true; this.views.clear(); for (const retire of [...this.scopes]) retire(); }
 }
 
 function normalizeStatusItem(

@@ -1,4 +1,12 @@
 :root {
+  /* Component color tokens for context-usage-ring.css.
+     Light-theme values; the dark theme overrides these in base.css theme blocks. */
+  /* Fill-level colors for the context usage ring: gray when empty, amber
+     while filling, warm red as the window approaches its limit. The
+     consumer sets color on the ring; the track stays a neutral gray. */
+  --context-meter-idle: var(--ink-muted);
+  --context-meter-mid: #d48345;
+  --context-meter-high: var(--warning);
   --context-meter-track: rgba(138, 142, 145, 0.24);
 }
 
@@ -22,8 +30,7 @@
   stroke-width: 2;
   stroke-linecap: round;
   /* Dash math: strokeDasharray is the full circumference, strokeDashoffset
-     shrinks toward 0 as the fill grows. The fold rung matches the
-     token-speed gauge's color settle, so the two meters share a cadence. */
+     shrinks toward 0 as the fill grows. */
   transition:
     stroke-dashoffset var(--motion-slower) var(--ease-out),
     stroke var(--motion-slower) var(--ease-out);

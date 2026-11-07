@@ -1900,25 +1900,17 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   max-width: 100%;
 }
 
+/* In the plus and slash menus the title leads and gives way first, and the
+ * command that runs it trails at the row's end like a shortcut. */
 .composer-plus-menu button .composer-plus-menu-item-desc {
-  flex: 1 1 0%;
-  color: var(--ink-tertiary);
-  font-weight: var(--weight-regular);
-}
-
-/* In the plus menu the title leads and gives way first, and the command that
- * runs it trails at the row's end like a shortcut. */
-.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-title {
-  flex: 1 1 auto;
-}
-
-.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-desc {
   flex: 0 0 auto;
   max-width: 50%;
+  color: var(--ink-tertiary);
+  font-weight: var(--weight-regular);
 }
 
 .composer-menu-empty {

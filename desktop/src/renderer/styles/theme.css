@@ -158,9 +158,6 @@
   --context-meter-tooltip-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
   --context-meter-tooltip-border: var(--theme-override-color-border-strong, var(--hairline-strong));
   --context-meter-tooltip-shadow: var(--shadow-card);
-  --token-gauge-tooltip-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
-  --token-gauge-tooltip-border: var(--theme-override-color-border-strong, var(--hairline-strong));
-  --token-gauge-tooltip-shadow: var(--shadow-card);
 
   /* environment.css */
   /* Dialog text follows the shared ink ladder. */
