@@ -1671,6 +1671,9 @@ export class PluginHost {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "view", definition.id);
         validatePublicIcon(definition.icon, `Plugin view ${id}`);
+        if (definition.canvas !== undefined && !["opaque", "translucent", "transparent"].includes(definition.canvas)) {
+          throw new Error(`Plugin view ${id} canvas must be opaque, translucent, or transparent`);
+        }
         const RegisteredView = definition.render;
         const render: ViewTypeDefinition["render"] = props => this.react.createElement(BrowserControlsProvider, { service: application.browser, children:
           this.react.createElement(PluginViewAttachmentPreviews, { children: this.react.createElement(RegisteredView, props) }) });

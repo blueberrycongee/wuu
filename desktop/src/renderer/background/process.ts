@@ -1,3 +1,6 @@
+/** "light"/"dark" soften the picture for the frame; "canvas-*" keep it sharp for canvas skins. */
+export type BackgroundPurpose = "import" | "light" | "dark" | "canvas-light" | "canvas-dark";
+
 export const MAX_BACKGROUND_BYTES = 20 * 1024 * 1024;
 
 export function isBackgroundRaster(bytes: Uint8Array): boolean {

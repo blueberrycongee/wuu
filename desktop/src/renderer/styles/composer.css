@@ -396,11 +396,14 @@
   container: conversation-composer / inline-size;
 }
 
-.dock-composer-wrap {
+:is(.conversation-pane, .dock-composer-wrap) {
   --composer-dock-bottom-space: max(
     var(--space-4),
     env(safe-area-inset-bottom, 0px)
   );
+}
+
+.dock-composer-wrap {
   position: relative;
   z-index: 5;
   grid-column: 1;
@@ -449,8 +452,11 @@
   background: transparent;
 }
 
-.composer-stack {
+:is(.conversation-pane, .composer-stack) {
   --session-composer-radius: max(22px, calc((var(--conversation-reading-line-height) + 20px) / 2));
+}
+
+.composer-stack {
   --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
   --composer-expanded-offset: var(--composer-input-growth, 0px);
   display: flex;

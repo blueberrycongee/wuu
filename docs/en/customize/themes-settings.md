@@ -12,15 +12,17 @@ Disabling or removing a plugin also removes its contributed themes. If a theme m
 
 ## Shell skins
 
-Shell skins decorate the ribbon and window frame. Choose a preview under **Settings → Appearance → Shell skin** to apply it immediately. The rounded workbench keeps its own content background, independently of the skin.
+Shell skins decorate the ribbon and window frame; skins that opt into **canvas placement** also paint their artwork behind the main workbench canvas. Choose a preview under **Settings → Appearance → Shell skin** to apply it immediately.
 
-Plugins contribute paired light and dark variants. Disabling or removing a skin plugin restores the default frame; the saved choice returns when that plugin becomes available again. Safe mode also removes plugin skins. The shell skin example in `examples/plugins/shell-skins` provides two complete skins without a runtime or desktop module.
+With frame placement (the default), the rounded workbench keeps its own content background, independently of the skin. With canvas placement, the empty conversation home exposes the artwork directly, conversations sit under a translucent veil, and Settings, Skills and plugin pages stay opaque unless a plugin view opts in. Floating panels such as the composer and cards become frosted over the artwork. A canvas skin may render the artwork as a screen of round dots or square pixels, one color per cell. Under **Reduce transparency** the canvases stay opaque.
+
+Plugins contribute paired light and dark variants. Disabling or removing a skin plugin restores the default frame; the saved choice returns when that plugin becomes available again. Safe mode also removes plugin skins. The shell skin example in `examples/plugins/shell-skins` provides two frame-placement skins without a runtime or desktop module; `examples/plugins/deep-field` demonstrates canvas placement with your own picture, a pixel screen, paired themes, and a custom welcome.
 
 ## Use a background image
 
 On desktop, choose **Background image → Choose image** in Appearance. Import a local PNG, JPEG or WebP up to 20 MB and 64 megapixels. Wuu stores a resized copy (up to 2048 pixels on its longest edge) in this desktop profile; the original file can be moved or deleted. Images are not uploaded or synced to other devices. Animated images use a still frame.
 
-The picture decorates only the outer frame and ribbon. Conversation, settings and workspace content keep their own surfaces. Importing selects **My image**; switching to another skin retains the saved picture. Wuu centers and softens the image with Gaussian blur, preserving its color and automatically adjusting contrast for light or dark shell text. This treatment is built in, with no effect, strength or position controls. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image. Existing saved pictures adopt this treatment.
+The **Default** skin shows the picture in the outer frame and ribbon; conversation, settings and workspace content keep their own surfaces. There, Wuu centers and softens the image with Gaussian blur, preserving its color and automatically adjusting contrast for light or dark shell text. Skins that accept your picture show it in place of their own artwork, with their placement: a canvas skin shows it sharp behind the main canvas, limiting its brightness so the content on top stays readable. Other skins keep their own artwork, and Appearance says so; importing a picture while one of them is selected switches to **Default**. These treatments are built in, with no effect, strength or position controls. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image. Existing saved pictures adopt this treatment.
 
 ## Adjust text and motion
 

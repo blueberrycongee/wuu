@@ -61,7 +61,7 @@ export interface ApplicationNavigationViewV1 {
   readonly folders: readonly { readonly id: string; readonly name: string }[];
   readonly plugins: readonly { readonly id: string; readonly name: string; readonly pluginId: string; readonly fingerprint: string; readonly icon?: NavigationIconV1; readonly family?: import("./ui-catalog.js").CatalogExtensionV1["family"]; readonly enabled: boolean; readonly kind: "plugin" | "skill" }[];
   readonly destinations: readonly NavigationPluginDestinationV1[];
-  readonly activePluginView?: { readonly layout?: "user-space"; readonly id: string; readonly viewTypeId?: string; readonly context?: Readonly<Record<string, unknown>>; readonly pluginId: string; readonly title: string; readonly webPage: boolean; readonly closable: boolean };
+  readonly activePluginView?: { readonly layout?: "user-space"; readonly canvas?: "opaque" | "translucent" | "transparent"; readonly id: string; readonly viewTypeId?: string; readonly context?: Readonly<Record<string, unknown>>; readonly pluginId: string; readonly title: string; readonly webPage: boolean; readonly closable: boolean };
   readonly regionVisibilityRequest?: { readonly id: number; readonly region: ViewPlacementRegion };
   readonly canRevealThread: boolean;
   readonly canCreateWorkspace: boolean;

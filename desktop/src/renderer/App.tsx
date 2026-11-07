@@ -116,6 +116,7 @@ import {
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
+import { ShellCanvasArtwork } from "./background/ShellCanvasArtwork";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
 const ENGINE_INVENTORY_STALE_MS = 2 * 60 * 1000;
@@ -1001,6 +1002,13 @@ export function App({ application, slots, shellPluginId }: {
     !workspaceToolsCoverConversation &&
     !settingsOpen &&
     !showingPrimaryPluginView;
+  // How much canvas-placement skin artwork shows through the main pane.
+  // Non-canvas skins ignore this attribute entirely.
+  const paneCanvas: "opaque" | "translucent" | "transparent" = showingPrimaryPluginView
+    ? (primaryPageView.canvas ?? "opaque")
+    : conversationVisible
+      ? (emptyConversation ? "transparent" : "translucent")
+      : "opaque";
 
   useEffect(() => {
     // Delivered snapshots may belong to either visible conversation pane.
@@ -1690,11 +1698,13 @@ export function App({ application, slots, shellPluginId }: {
         data-workbench-layout={userSpaceViewActive ? "user-space" : undefined}
         data-primary-plugin-web-page={showingPluginWebPage ? "" : undefined}
         data-native-section={showingManagementCatalog ? "catalog" : "conversations"}
+        data-canvas={paneCanvas}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
         }`}
         ref={conversationPaneRef}
       >
+        <ShellCanvasArtwork />
         <header hidden={userSpaceViewActive} className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {/* The ribbon owns a shell-level toggle. A hidden legacy toggle

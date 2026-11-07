@@ -279,7 +279,7 @@ const config = await settings.capture();
 
 ### 外壳皮肤
 
-使用独立于 `contributes.themes` 的 `contributes.skins` 声明皮肤。每套皮肤包含插件内唯一的 `id`、`name`，以及必填的 `light` 和 `dark` 两种方案。每种方案提供不透明的 `#RRGGBB` 格式 `background` 和 `foreground`，可选包内相对路径 `image`，以及可选的 `overlay`、`hover`、`active` 颜色（`#RRGGBB` 或 `#RRGGBBAA`）。`position` 可选 `center`（默认）、`top`、`bottom`、`left` 或 `right`。
+使用独立于 `contributes.themes` 的 `contributes.skins` 声明皮肤。每套皮肤包含插件内唯一的 `id`、`name`，可选的 `placement` 和 `userImage`，以及必填的 `light` 和 `dark` 两种方案。`placement` 可取 `"frame"`（默认）或 `"canvas"`：frame 仅装饰窗口外框和 ribbon，canvas 还会把图片铺在主内容区画布之下——空对话主页直接露出图片，对话盖在半透遮罩下，不透明目的地则将其完全遮住。每种方案提供不透明的 `#RRGGBB` 格式 `background` 和 `foreground`，可选包内相对路径 `image`，以及可选的 `overlay`、`hover`、`active` 颜色（`#RRGGBB` 或 `#RRGGBBAA`）。`position` 可选 `center`（默认）、`top`、`bottom`、`left` 或 `right`。另有两个可选的方案字段控制画布渲染，二者都要求 `"placement": "canvas"`：`veil` 为 0 到 1 的数值（默认 0.86），决定半透明目的地上主题画布遮盖图片的强度；`dots` 为 `{ "pitch": p, "size": s, "shape": "round" | "square" }` 对象，把图片渲染成格点网格。宿主按整设备像素为每格采样一种颜色；`pitch` 是以 CSS 像素计的格距（2–32），`size` 是圆点直径或方块边长（0.5 起、不超过 pitch），`shape` 默认 `"round"`。设置 `"userImage": true` 后，用户的背景图片会替换方案中的图片，宿主按皮肤的摆放方式处理这张图片；未保存图片时仍使用方案的 `image`。`placement`、`userImage`、`veil` 和 `dots` 要求宿主不低于你声明的 `minimumWuuVersion`；更旧的宿主会在安装时拒绝未知的皮肤字段。
 
 ```json
 {
@@ -287,14 +287,16 @@ const config = await settings.capture();
     "skins": [{
       "id": "ocean",
       "name": "Ocean",
-      "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "ocean.svg" },
-      "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "ocean.svg", "overlay": "#06172555" }
+      "placement": "canvas",
+      "userImage": true,
+      "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "ocean.svg", "veil": 0.86, "dots": { "pitch": 4, "size": 2.4 } },
+      "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "ocean.svg", "overlay": "#06172555", "veil": 0.82, "dots": { "pitch": 4, "size": 3, "shape": "square" } }
     }]
   }
 }
 ```
 
-图片支持 PNG、JPEG、WebP 和自包含 SVG，每张最多 8 MiB；渐变和纹理也通过图片提供。路径必须位于插件包内，SVG 不允许外部引用和脚本。桌面只提供所请求包指纹中声明的图片。图片以整个窗口为基准连续覆盖 ribbon 和外框。应用负责布局、裁切、交互和内容区边界，皮肤颜色不会覆盖内容主题变量。请搭配图片设计前景、悬停和选中颜色，保证控件清晰。
+图片支持 PNG、JPEG、WebP 和自包含 SVG，每张最多 8 MiB；渐变和纹理也通过图片提供。路径必须位于插件包内，SVG 不允许外部引用和脚本。桌面只提供所请求包指纹中声明的图片。frame 摆放时图片以整个窗口为基准连续覆盖 ribbon 和外框；canvas 摆放时，外框和 ribbon 保持方案的纯色底色，与窗口对齐的图片只铺在主内容区之下。应用负责布局、裁切、交互和内容区边界，皮肤颜色不会覆盖内容主题变量——主题的画布和表面色请保持不透明，因为文字层级由宿主从中推导，半透明效果由宿主通过遮罩和玻璃材质自行施加。请搭配图片设计前景、悬停和选中颜色，保证控件清晰。
 
 皮肤选择保存在桌面配置中，跟随浅色／深色模式，并在插件更新后保留。禁用、移除插件或进入安全模式会停止装饰外框；重新启用同一插件会恢复选择。图片加载失败时显示方案底色，并在预览中报告图片不可用。同一插件可以同时提供皮肤和内容主题，用户分别选择。可安装的完整示例见外壳皮肤示例（`examples/plugins/shell-skins`）。
 

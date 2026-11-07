@@ -1,0 +1,6 @@
+{
+  "name": "wuu-deep-field",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node --check desktop.js" }
+}
