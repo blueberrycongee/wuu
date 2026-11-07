@@ -132,25 +132,44 @@ test('unit work has no artifact dependency while the stable Desktop gate joins b
 
 test('final CI gate never reports unsuccessful required jobs as passing', () => {
   const needs = Object.fromEntries([
-    'changes', 'repository-check', 'go-check', 'desktop-check',
+    'changes', 'repository-check', 'go-validation', 'go-race', 'architecture-conformance', 'desktop-unit', 'desktop-suite',
     'desktop-macos-controls', 'clients-check', 'macos-check', 'windows-check', 'linux-check',
   ].map(job => [job, { result: 'success' }]));
-  needs.changes.outputs = { desktop: 'true', desktop_suites: '["shell"]', clients: 'true', native: 'true' };
-  const passes = () => gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: 'pull_request' });
+  needs.changes.outputs = { go: 'true', architecture: 'true', desktop: 'true', desktop_suites: '["unit","unit-extra","shell"]', desktop_e2e_suites: '["shell"]', clients: 'true', native: 'true' };
+  const passes = (event = 'pull_request') => gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: event });
   assert.equal(passes(), true);
+  assert.equal(passes('push'), true);
   for (const job of Object.keys(needs)) {
     for (const result of ['failure', 'cancelled', 'skipped', '']) {
       needs[job].result = result;
       assert.equal(passes(), false, `${job}=${result}`);
+      assert.equal(passes('push'), false, `push: ${job}=${result}`);
     }
     needs[job].result = 'success';
   }
-  needs.changes.outputs = { desktop: 'false', desktop_suites: '[]', clients: 'false', native: 'false' };
-  for (const job of ['desktop-macos-controls', 'clients-check', 'macos-check', 'windows-check', 'linux-check']) {
+  needs.changes.outputs = { go: 'false', architecture: 'false', desktop: 'false', desktop_suites: '[]', desktop_e2e_suites: '[]', clients: 'false', native: 'false' };
+  for (const job of ['go-validation', 'go-race', 'architecture-conformance', 'desktop-unit', 'desktop-suite', 'desktop-macos-controls', 'clients-check', 'macos-check', 'windows-check', 'linux-check']) {
     needs[job].result = 'skipped';
   }
   assert.equal(passes(), true, 'unrelated paths permit only unselected jobs to skip');
   needs['repository-check'].result = 'skipped';
   assert.equal(passes(), false, 'pull requests still require repository checks');
+  assert.equal(gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: 'push' }), false, 'main pushes still require repository checks');
+  needs['repository-check'].result = 'success';
   assert.equal(gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: 'push' }), true);
 });
+
+test('final gate joins real jobs directly without an extra gate hop', () => {
+  const block = workflow.split('\n  ci-check:\n')[1];
+  const dependencies = block.match(/needs: \[([^\]]+)\]/)[1].split(',').map(value => value.trim());
+  assert.deepEqual(dependencies, ['changes', 'repository-check', 'go-validation', 'go-race', 'architecture-conformance', 'desktop-unit', 'desktop-suite', 'desktop-macos-controls', 'clients-check', 'macos-check', 'linux-check', 'windows-check']);
+});
+
+for (const name of ['ci', 'docs', 'windows-desktop', 'remote-service', 'native-mobile']) {
+  test(`${name} preserves every push run while superseding PR runs`, () => {
+    const source = readFileSync(`.github/workflows/${name}.yml`, 'utf8');
+    const concurrency = source.split('\nconcurrency:\n')[1].split('\njobs:')[0];
+    assert.match(concurrency, /github.event_name == 'pull_request' && 'pr' \|\| github.run_id/);
+    assert.match(concurrency, /cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}/);
+  });
+}

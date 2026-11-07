@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -29,36 +29,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
       - name: Select jobs from the complete change
         id: select
         env:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.sha }}
         run: |
-          # Selection compares two trees, not history. Fetch the exact base even
-          # when a push spans several commits; failures must not skip checks.
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+          # PRs compare two trees; pushes use full history to verify ancestry.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
             git fetch --no-tags --depth=1 origin "$CI_BASE"
           fi
           node .github/scripts/select-ci.mjs
 
   repository-check:
     name: Repository check
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-
-      - name: Verify CI selection contracts
-        run: node --test .github/scripts/select-ci.test.mjs .github/scripts/workflow-context.test.mjs .github/scripts/go-check-contract.test.mjs .github/scripts/mcp-auth-evidence.test.mjs
 
       # Reuse this already allocated runner instead of queueing another producer
       # after changes. Selection uses the same immutable base/head as changes.
@@ -68,9 +62,8 @@ jobs:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.sha }}
         run: |
-          # Selection compares two trees, not history. Fetch the exact base even
-          # when a push spans several commits; failures must not skip checks.
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+          # PRs compare two trees; pushes use full history to verify ancestry.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
             git fetch --no-tags --depth=1 origin "$CI_BASE"
           fi
           node .github/scripts/select-ci.mjs
@@ -172,7 +165,7 @@ jobs:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
     services:
       postgres:
-        image: postgres:18-bookworm
+        image: ${{ matrix.suite == 'packages' && 'postgres:18-bookworm' || '' }}
         env:
           POSTGRES_USER: wuu
           POSTGRES_PASSWORD: wuu_test
@@ -192,6 +185,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            packages/plugin-sdk/package-lock.json
+            plugins/package-lock.json
 
       - name: Install ripgrep for search tests
         if: matrix.suite == 'packages'
@@ -393,7 +390,8 @@ jobs:
 
       # Ordinary build caches can be saved before any race objects are compiled.
       # Give the race detector one complete cache instead of competing for that key.
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: race-cache
         with:
           path: |
             ~/go/pkg/mod
@@ -404,6 +402,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            packages/plugin-sdk/package-lock.json
+            plugins/package-lock.json
 
       - name: Install plugin and SDK dependencies
         run: |
@@ -438,6 +440,15 @@ jobs:
           name: go-race-runtime-${{ matrix.shard }}-inventory
           path: ${{ runner.temp }}/go-race-shard/manifest.json
           if-no-files-found: warn
+
+      - name: Save Go race cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.race-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ steps.race-cache.outputs.cache-primary-key }}
 
   architecture-conformance:
     name: Public provider conformance / ${{ matrix.suite }}
@@ -716,6 +727,10 @@ jobs:
     # Evaluate failed dependencies, but let superseded workflow runs cancel.
     if: ${{ !cancelled() }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
       - name: Require selected Go suites
         env:
           SELECTION_RESULT: ${{ needs.changes.result }}
@@ -725,19 +740,7 @@ jobs:
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
           GO_RACE_RESULT: ${{ needs.go-race.result }}
         run: |
-          test "$SELECTION_RESULT" = success
-          if [ "$GO_REQUIRED" = true ]; then
-            test "$GO_VALIDATION_RESULT" = success
-            test "$GO_RACE_RESULT" = success
-          else
-            test "$GO_VALIDATION_RESULT" = skipped
-            test "$GO_RACE_RESULT" = skipped
-          fi
-          if [ "$ARCHITECTURE_REQUIRED" = true ]; then
-            test "$ARCHITECTURE_RESULT" = success
-          else
-            test "$ARCHITECTURE_RESULT" = skipped
-          fi
+          python3 .github/scripts/ci-gate.py go
 
   desktop-unit:
     name: Desktop / ${{ matrix.suite }}
@@ -2070,6 +2073,10 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
       - name: Require every selected Desktop suite
         env:
           SELECTION_RESULT: ${{ needs.changes.result }}
@@ -2079,22 +2086,7 @@ jobs:
           UNIT_RESULT: ${{ needs.desktop-unit.result }}
           SUITES_RESULT: ${{ needs.desktop-suite.result }}
         run: |
-          test "$SELECTION_RESULT" = success
-          python3 - <<'PYTHON'
-          import json, os
-          suites = json.loads(os.environ['DESKTOP_SUITES'])
-          e2e = json.loads(os.environ['E2E_SUITES'])
-          flag = os.environ['DESKTOP_REQUIRED']
-          if not isinstance(suites, list) or flag not in ('true', 'false') or bool(suites) != (flag == 'true'):
-              raise SystemExit('Invalid Desktop selection')
-          unit = [suite for suite in suites if suite.startswith('unit')]
-          if unit not in ([], ['unit', 'unit-extra']) or e2e != [suite for suite in suites if not suite.startswith('unit')]:
-              raise SystemExit('Desktop partition differs from complete selection')
-          for name, selected in [('UNIT_RESULT', unit), ('SUITES_RESULT', e2e)]:
-              wanted = 'success' if selected else 'skipped'
-              if os.environ[name] != wanted:
-                  raise SystemExit(f'{name}: expected {wanted}, got {os.environ[name]}')
-          PYTHON
+          python3 .github/scripts/ci-gate.py desktop
 
   clients-check:
     name: Clients check
@@ -2263,7 +2255,8 @@ jobs:
         id: swift-toolchain
         run: echo "digest=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: swift-cache
         with:
           path: |
             desktop/native/cua-mac/.build
@@ -2274,15 +2267,12 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.swift-toolchain.outputs.digest }}-
 
       - name: Test macOS process sandbox
-        if: github.event_name != 'push'
         run: go test ./internal/processsandbox -count=1
 
       - name: Test macOS PTY lifecycle
-        if: github.event_name != 'push'
         run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
 
       - name: Test macOS release signing fixtures
-        if: github.event_name != 'push'
         run: |
           npm --prefix desktop run test:release-signing
           npm --prefix desktop run test:release-packaging
@@ -2290,7 +2280,6 @@ jobs:
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
       - name: Validate app snapshot and native helpers
-        if: github.event_name != 'push'
         shell: bash
         run: |
           # These Swift packages have separate .build directories and outputs.
@@ -2342,6 +2331,16 @@ jobs:
             execFileSync(process.execPath, ["desktop/scripts/verify-mac-release.cjs", bundles[0]], { stdio: "inherit" });
           })().catch(error => { console.error(error); process.exitCode = 1; });
           NODE
+
+      - name: Save Swift cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.swift-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            desktop/native/cua-mac/.build
+            desktop/native/app-context-mac/.build
+            desktop/native/speech-mac/.build
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
 
   linux-check:
     name: Linux package check
@@ -2433,7 +2432,6 @@ jobs:
       # contracts. Keep this job focused on the Windows-native boundaries it can
       # validate rather than turning expected POSIX differences into a red gate.
       - name: Test Windows-native runtime boundaries
-        if: github.event_name != 'push'
         run: |
           go test ./internal/process -run '^Test(VerifyProcessGroupRejectsMismatchedRecords|LookupProcessGroupIsPid|PTYUnsupported|TaskkillTreeIgnoresInvalidPids|ProcessExistsSelf)$'
           go test ./internal/mcp -run '^TestStdioTransportCloseTerminatesWindowsDescendants$' -count=1
@@ -2441,7 +2439,6 @@ jobs:
           go test ./internal/tools -run '^TestProcessSandbox(PolicyMapsWorkspaceBoundary|TempRejectsSymlink|PolicyFailsClosedWithoutBackend)$'
 
       - name: Test Windows plugin generation leases
-        if: github.event_name != 'push'
         run: go test ./internal/session -run '^Test(PluginGenerationLease|ReadPluginGenerationEpoch|PluginCatalogMutation|PluginCatalogReadLease)' -count=1 -v
 
       - name: Install Desktop dependencies
@@ -2450,7 +2447,6 @@ jobs:
           npm ci --prefix clients/core
 
       - name: Typecheck Desktop on Windows
-        if: github.event_name != 'push'
         run: npm --prefix desktop run typecheck
 
       - name: Install phone Web dependencies
@@ -2468,33 +2464,17 @@ jobs:
   ci-check:
     name: CI check
     runs-on: ubuntu-latest
-    needs: [changes, repository-check, go-check, desktop-check, desktop-macos-controls, clients-check, macos-check, linux-check, windows-check]
+    needs: [changes, repository-check, go-validation, go-race, architecture-conformance, desktop-unit, desktop-suite, desktop-macos-controls, clients-check, macos-check, linux-check, windows-check]
     # Evaluate failed dependencies, but let superseded workflow runs cancel.
     if: ${{ !cancelled() }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
       - name: Require successful selection and all selected jobs
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
         run: |
-          python3 - <<'PYTHON'
-          import json, os
-          needs = json.loads(os.environ['RESULTS'])
-          selected = needs['changes']['outputs']
-          expected = {
-              'changes': True,
-              'repository-check': os.environ['EVENT'] != 'push',
-              'go-check': True,
-              'desktop-check': True,
-              'desktop-macos-controls': selected.get('desktop') == 'true' and 'shell' in json.loads(selected.get('desktop_suites', '[]')),
-              'clients-check': selected.get('clients') == 'true',
-              'macos-check': selected.get('native') == 'true',
-              'windows-check': selected.get('native') == 'true',
-              'linux-check': selected.get('native') == 'true',
-          }
-          for job, required in expected.items():
-              result = needs[job]['result']
-              wanted = 'success' if required else 'skipped'
-              if result != wanted:
-                  raise SystemExit(f'{job}: expected {wanted}, got {result}')
-          PYTHON
+          python3 .github/scripts/ci-gate.py ci
