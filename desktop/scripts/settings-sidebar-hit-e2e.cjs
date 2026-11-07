@@ -732,11 +732,11 @@ async function chromeToggleGeometry(win) {
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     const settingsOpen = document.querySelector('.app-shell').hasAttribute('data-settings-open');
     const floatingSettings = settingsOpen && !!document.querySelector('.settings-shell.settings-floating');
-    const chromeHeader = document.querySelector(settingsOpen ? '.settings-titlebar' : '.conversation-pane .titlebar');
+    // The floating panel folds its close control into the page header, so that header is its chrome row.
+    const chromeHeader = document.querySelector(settingsOpen ? (floatingSettings ? '.settings-page-header' : '.settings-titlebar') : '.conversation-pane .titlebar');
     // Settings owns its title/actions in the scrolling reading column, not
     // the window chrome. Keep hit/clipping coverage at their actual location.
     const activeHeader = settingsOpen ? document.querySelector('.settings-page-header') : chromeHeader;
-    // The floating panel has no window strip; only the page header is left to check.
     const headers = [...new Set([chromeHeader, activeHeader])].filter(Boolean);
     const clippedChrome = [];
     for (const header of headers) {
