@@ -78,7 +78,7 @@ func (e *Engine) Authenticate(ctx context.Context, methodID string) (AuthResult,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	p, err := startChild(e.binary, e.entry.LaunchArgs(e.binary), e.root, nil)
+	p, err := startChild(e.binary, e.entry.LaunchArgs(e.binary), e.root, e.acpEnvironment())
 	if err != nil {
 		return result, err
 	}

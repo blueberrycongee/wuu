@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,25 @@ type Engine struct {
 
 func New(entry enginecatalog.Entry, binary, root string) *Engine {
 	return &Engine{entry: entry, binary: binary, root: root}
+}
+
+// acpEnvironment returns nil to inherit the host environment unchanged.
+// Devin treats ACP_BACKEND as "the ACP host supplies credentials" and then
+// ignores its own `devin auth login`, refusing session/new until the host calls
+// authenticate. Devin Desktop exports the variable to everything it launches,
+// so a Wuu started from there would pass it on although Wuu never supplies
+// host credentials. Remove once Wuu authenticates Devin as an ACP host.
+func (e *Engine) acpEnvironment() []string {
+	if e.entry.ID != "devin" {
+		return nil
+	}
+	env := make([]string, 0, len(os.Environ()))
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, "ACP_BACKEND=") {
+			env = append(env, item)
+		}
+	}
+	return env
 }
 
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {

@@ -106,7 +106,7 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 	if err := ctx.Err(); err != nil {
 		return DiscoveredCatalog{}, err
 	}
-	p, err := startChild(e.binary, e.entry.LaunchArgs(e.binary), e.root, nil)
+	p, err := startChild(e.binary, e.entry.LaunchArgs(e.binary), e.root, e.acpEnvironment())
 	if err != nil {
 		return DiscoveredCatalog{}, err
 	}
@@ -191,7 +191,7 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 }
 
 func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) (err error) {
-	p, err := startChild(s.engine.binary, s.engine.entry.LaunchArgs(s.engine.binary), s.binding.RootDir, nil)
+	p, err := startChild(s.engine.binary, s.engine.entry.LaunchArgs(s.engine.binary), s.binding.RootDir, s.engine.acpEnvironment())
 	if err != nil {
 		return err
 	}
