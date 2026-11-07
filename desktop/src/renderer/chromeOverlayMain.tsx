@@ -2,7 +2,7 @@ import "./ReactDevPerformance";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { ChromeOverlayCommand, ChromeOverlayRendererApi, ChromeOverlayRendererRequest } from "../shared/chromeOverlay";
-import { SidebarAccountPanel } from "./SidebarAccountParts";
+import { SidebarAccountPanel } from "./SidebarAccountPanel";
 import { ContextChatCapsuleSurface } from "./ContextChatCapsuleSurface";
 import { I18nProvider } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";

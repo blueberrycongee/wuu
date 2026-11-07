@@ -492,7 +492,7 @@ describe("sidebar collapse-state independence", () => {
     }
   });
 
-  it("keeps the account control available and dismisses its menu on collapse", async () => {
+  it("keeps the settings gear available across collapse", async () => {
     installWuuApi();
     window.wuu.remoteAccount = vi.fn().mockResolvedValue({});
     window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({});
@@ -501,21 +501,17 @@ describe("sidebar collapse-state independence", () => {
       root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
-    const accountTrigger = () => container.querySelector<HTMLButtonElement>(".sidebar-account-menu-trigger");
-    expect(accountTrigger()).not.toBeNull();
-    await act(async () => accountTrigger()?.click());
-    expect(document.querySelector(".sidebar-account-menu")).not.toBeNull();
+    const gear = () => container.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]');
+    expect(gear()).not.toBeNull();
+    expect(container.querySelector(".sidebar-account-menu-trigger")).toBeNull();
 
-    const toggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
-    expect(toggle).not.toBeNull();
-    await act(async () => toggle?.click());
-    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
-    expect(accountTrigger()?.getAttribute("aria-expanded")).toBe("false");
+    const toggle = () => container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
+    expect(toggle()).not.toBeNull();
+    await act(async () => toggle()?.click());
+    expect(gear()).not.toBeNull();
 
-    const expandedToggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
-    expect(expandedToggle).not.toBeNull();
-    await act(async () => expandedToggle?.click());
-    expect(accountTrigger()?.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => toggle()?.click());
+    expect(gear()).not.toBeNull();
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
   });
 

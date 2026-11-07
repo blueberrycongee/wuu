@@ -98,9 +98,29 @@ async function run() {
   const floatingSettings = await evaluate(win, () => !!document.querySelector(".settings-shell.settings-floating"));
   if (floatingSettings) {
     // The floating panel owns its navigation. The main sidebar toggle must
-    // not turn that navigation into the legacy drawer at narrow widths.
-    win.setContentSize(760, 820);
-    await waitFor(win, () => innerWidth === 760, 3000);
+    // not turn that navigation into the legacy drawer at narrow widths: the
+    // panel remains a floating card with its side rail at every width.
+    win.setContentSize(700, 820);
+    await waitFor(win, () => innerWidth === 700, 3000);
+    await settleChrome(win);
+    const floating = await evaluate(win, () => {
+      const panel = document.querySelector(".settings-shell.settings-floating").getBoundingClientRect();
+      const style = getComputedStyle(document.querySelector(".settings-shell.settings-floating"));
+      const nav = document.querySelector(".settings-floating .settings-nav");
+      return { panel: panel.toJSON(), nav: getComputedStyle(nav).flexDirection,
+        borderRadius: style.borderTopLeftRadius, border: style.borderTopWidth,
+        viewport: { width: innerWidth, height: innerHeight } };
+    });
+    assert.equal(floating.nav, "column",
+      `Moderately narrow windows keep the floating rail: ${JSON.stringify(floating)}`);
+    assert.ok(parseFloat(floating.borderRadius) > 0 && parseFloat(floating.border) > 0
+      && floating.panel.left > 0 && floating.panel.top > 0,
+      `Moderately narrow windows keep card chrome and scrim margins: ${JSON.stringify(floating)}`);
+    results.push({ scenario: "floating-settings-medium", floating });
+    // There is no compact sheet: a very narrow window keeps the same floating
+    // card, side rail, and scrim margins.
+    win.setContentSize(560, 820);
+    await waitFor(win, () => innerWidth === 560, 3000);
     await settleChrome(win);
     const narrow = await evaluate(win, () => {
       const panel = document.querySelector(".settings-shell.settings-floating").getBoundingClientRect();
@@ -110,9 +130,14 @@ async function run() {
       const closeHit = document.elementFromPoint(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
       return { panel: panel.toJSON(), nav: nav.toJSON(), close: closeBox.toJSON(),
         closeHit: close === closeHit || close.contains(closeHit),
+        navDirection: getComputedStyle(document.querySelector(".settings-floating .settings-nav")).flexDirection,
+        borderRadius: getComputedStyle(document.querySelector(".settings-shell.settings-floating")).borderTopLeftRadius,
         labels: [...document.querySelectorAll(".settings-nav-item .settings-nav-label")].map(label => label.textContent),
         viewport: { width: innerWidth, height: innerHeight } };
     });
+    assert.equal(narrow.navDirection, "column", `Narrow windows keep the floating rail: ${JSON.stringify(narrow)}`);
+    assert.ok(parseFloat(narrow.borderRadius) > 0 && narrow.panel.left > 0 && narrow.panel.top > 0,
+      `Narrow windows keep card chrome and scrim margins: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.nav.width > 0 && narrow.nav.height > 0, `Floating settings navigation stays visible: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.closeHit, `Floating settings close button owns its hit target: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.labels.length >= 2, `Floating settings destinations remain readable: ${JSON.stringify(narrow)}`);
