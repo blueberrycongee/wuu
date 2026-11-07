@@ -25,6 +25,7 @@ func (s *Server) handleEngineList(req Request) error {
 	var params struct {
 		IncludeQuota    bool   `json:"include_quota"`
 		IncludeActivity *bool  `json:"include_activity"`
+		IncludeModels   *bool  `json:"include_models"`
 		RefreshModels   bool   `json:"refresh_models"`
 		CWD             string `json:"cwd"`
 	}
@@ -47,7 +48,7 @@ func (s *Server) handleEngineList(req Request) error {
 		s.releaseEngineScopes()
 	}
 	result := EngineListResult{
-		Engines:  s.engineInventoryForState(binding, firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels),
+		Engines:  s.engineInventoryForState(binding, firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels, params.IncludeModels == nil || *params.IncludeModels),
 		Settings: s.engineSettingsFromConfig(),
 	}
 	if params.IncludeQuota {
@@ -103,10 +104,10 @@ func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo
 		return nil
 	}
 	defer binding.Close()
-	return s.engineInventoryForState(binding, root, refreshModels)
+	return s.engineInventoryForState(binding, root, refreshModels, true)
 }
 
-func (s *Server) engineInventoryForState(binding *runtime.State, root string, refreshModels bool) []EngineInfo {
+func (s *Server) engineInventoryForState(binding *runtime.State, root string, refreshModels, includeModels bool) []EngineInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	descriptors := binding.EngineDescriptors(ctx)
@@ -128,7 +129,10 @@ func (s *Server) engineInventoryForState(binding *runtime.State, root string, re
 					info.Enabled = *description.Enabled
 				}
 			}
-			if info.Enabled && info.BinaryOK {
+			if !includeModels {
+				info.ModelsStatus = "deferred"
+			}
+			if includeModels && info.Enabled && info.BinaryOK {
 				var models pluginprotocol.EngineModelsResult
 				if err := binding.CallEngine(ctx, descriptor.ID, "models", pluginprotocol.EngineModelsRequest{CWD: root, Refresh: refreshModels}, &models); err != nil {
 					info.ModelsStatus, info.ModelsError = "error", err.Error()

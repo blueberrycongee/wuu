@@ -231,6 +231,11 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 ## 刷新外部引擎
 
 `engine/list` 接受 `{ "cwd": "/absolute/session/directory", "refresh_models": true }`。
+也接受 `{ "include_models": false }`，此时只返回引擎描述与设置，不启动原生模型发现；
+每个条目的 `models_status` 为 `deferred`，未返回目录不表示目录为空或不受支持。
+客户端可以用这份可用性清单选择引擎并创建会话，包括使用原生默认配置或已知选择，
+随后再单独请求完整目录。省略 `include_models` 时仍执行完整发现。
+
 `cwd` 默认使用运行时根目录；会话位于其他目录或 worktree 时应传入实际路径。
 显式刷新重新扫描桌面安装目录和登录 shell 路径，将保存的启用/禁用选择重新应用到
 运行时，并绕过原生模型发现缓存。应用启动后新安装的引擎无需重启即可使用，

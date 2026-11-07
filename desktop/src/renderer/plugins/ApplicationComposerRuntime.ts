@@ -192,7 +192,7 @@ export class ApplicationComposerRuntime {
     if (workspace.kind === "project" && (!project || project.missing)) throw new Error("Workspace is no longer available");
     const context: RuntimeContext = project ? { kind: "project", project_id: project.id, cwd: project.path } : { ...workspace };
     const configuration = state.initialized;
-    const inventory = await window.wuu.listEngines({ cwd: context.cwd }, context);
+    const inventory = await window.wuu.listEngines({ cwd: context.cwd, include_models: false }, context);
     if (this.disposed) throw new Error("Composer runtime is disposed");
     const engine = inventory.settings?.default_engine || "wuu";
     const selectedEngine = inventory.engines.find(row => row.id === engine);
@@ -310,14 +310,27 @@ export class ApplicationComposerRuntime {
     if (!force && owner.inventory && Date.now() - owner.fetchedAt < engineFreshnessMS) return;
     if (!force && owner.enginePending && !owner.engineSignal?.aborted) return owner.enginePending.then(() => { source.signal?.throwIfAborted(); });
     const request = ++owner.engineRequest; owner.engineSignal = source.signal; owner.engineLoading = true; owner.engineError = ""; this.host.changed();
+    const publish = (result: EngineListResult): boolean => {
+      source.signal?.throwIfAborted();
+      if (!this.current(source) || request !== owner.engineRequest) return false;
+      owner.inventory = immutable(result); owner.explicitEngineAfterDiscoveryFailure = false; owner.fetchedAt = Date.now();
+      this.seed(owner, source.tab); this.host.changed(); return true;
+    };
     const pending = (async () => {
+      let availabilityPublished = false;
       try {
+        if (!force && !owner.inventory) {
+          const availability = await window.wuu.listEngines({ cwd: owner.cwd, include_models: false }, owner.context);
+          if (!publish(availability)) return;
+          availabilityPublished = true;
+        }
         const result = await window.wuu.listEngines({ cwd: owner.cwd, ...(force ? { refresh_models: true } : {}) }, owner.context);
-        source.signal?.throwIfAborted();
-        if (!this.current(source) || request !== owner.engineRequest) return;
-        owner.inventory = immutable(result); owner.explicitEngineAfterDiscoveryFailure = false; owner.fetchedAt = Date.now();
-        this.seed(owner, source.tab);
+        if (!publish(result) && availabilityPublished) owner.fetchedAt = 0;
       } catch (error) {
+        // A discarded or aborted full refresh must not leave the deferred
+        // availability publish marked fresh, or later refresh calls early-return
+        // and the catalog never completes. The owner outlives this source.
+        if (availabilityPublished) owner.fetchedAt = 0;
         if (source.signal?.aborted) throw error;
         if (this.current(source) && request === owner.engineRequest) {
           owner.engineError = error instanceof Error ? error.message : String(error);

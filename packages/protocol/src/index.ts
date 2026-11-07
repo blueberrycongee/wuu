@@ -1481,7 +1481,7 @@ export type EngineInfo = {
   binary_ok: boolean;
   error?: string;
   models?: EngineModelInfo[];
-  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale";
+  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale" | "deferred";
   models_error?: string;
   permission_modes?: EnginePermissionModeInfo[];
   latest_request?: EngineLatestRequest;
@@ -3405,7 +3405,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: (options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean; include_activity?: boolean; include_models?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;
