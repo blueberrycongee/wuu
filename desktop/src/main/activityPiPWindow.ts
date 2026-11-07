@@ -156,6 +156,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // The page's layout viewport, captured before the card zooms it down.
   // Later view bounds are the zoomed size, so they must not replace this.
   private layoutViewport: { width: number; height: number } | undefined;
+  // Set by a host layout that only translated the column; consumed by the
+  // stack placement that follows it.
+  private hostShifted = false;
   private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint } | undefined;
   private snapTimer: ReturnType<typeof setTimeout> | undefined;
   private transition: PiPTransition | undefined;
@@ -404,7 +407,21 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.applyVisibility();
       return;
     }
+    const previous = this.screenLayout?.host;
     this.screenLayout = layout;
+    // A pure window move translates the whole stack at once. Springs keep
+    // running in the moved frame; restarting them from the old position makes
+    // trailing cards lag and jitter behind the window.
+    const shift = previous && previous.width === layout.host.width && previous.height === layout.host.height
+      ? { x: layout.host.x - previous.x, y: layout.host.y - previous.y } : undefined;
+    this.hostShifted = Boolean(shift && (shift.x || shift.y)) && !this.desktopDocked;
+    if (this.hostShifted && this.motion) {
+      for (const point of [this.motion.origin, this.motion.point]) {
+        point.x += shift!.x;
+        point.y += shift!.y;
+      }
+      this.applyBounds({ ...this.motion.point, ...this.motion.card });
+    }
     // While detached, the Wuu column moves without moving the card.
     if (!this.desktopDocked && !this.dragging && !this.resizing) this.placeCommitted();
     this.applyVisibility();
@@ -1218,6 +1235,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.stackIndex = 0;
       return;
     }
+    const hostShifted = this.hostShifted;
+    this.hostShifted = false;
     const wasLead = this.stackIndex === 0;
     this.stackIndex = index;
     if (lead) this.stackMaxEdge = Math.max(lead.frame.width, lead.frame.height);
@@ -1257,7 +1276,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     };
     const frame = lead.dragging ? layout?.visibleFrame : this.resizeFrame();
     const origin = frame ? browserPiPClampOrigin(desired, card, frame) : desired;
-    if (!win.isVisible() || this.transition) {
+    if (!win.isVisible() || this.transition || (hostShifted && !this.motion)) {
       this.applyBounds({ ...origin, ...card });
       return;
     }

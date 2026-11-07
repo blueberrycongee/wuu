@@ -1032,6 +1032,50 @@ describe("BrowserPiPSurface", () => {
     second.surface.stop();
   });
 
+  it("moves trailing cards with the conversation window instead of springing after it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    try {
+      const layout = {
+        host: { x: 0, y: 0, width: 800, height: 600 },
+        obstacles: [],
+        visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+      };
+      const lead = makeSurface();
+      const trailing = makeSurface();
+      for (const card of [lead, trailing]) {
+        card.surface.start();
+        card.surface.setHostLayout(layout);
+        card.surface.setVisible(true);
+      }
+      await settle();
+      finishMotion();
+      lead.surface.setStackPosition(0);
+      trailing.surface.setStackPosition(1, lead.surface.stackLead());
+      vi.advanceTimersByTime(2000);
+      const rest = { ...trailing.win.bounds };
+
+      // The column keeps its size while the window moves; a trailing card
+      // that is mid-spring keeps its offset instead of jumping back.
+      trailing.surface.setStackPosition(1, { ...lead.surface.stackLead()!, frame: { ...lead.surface.stackLead()!.frame, x: lead.win.bounds.x - 40 } });
+      vi.advanceTimersByTime(16);
+      const midSpring = { ...trailing.win.bounds };
+      for (const card of [lead, trailing]) card.surface.setHostLayout({ ...layout, host: { ...layout.host, x: 120, y: 60 } });
+      trailing.surface.setStackPosition(1, lead.surface.stackLead());
+      expect(trailing.win.bounds).toMatchObject({ x: midSpring.x + 120, y: midSpring.y + 60 });
+      vi.advanceTimersByTime(2000);
+      expect(trailing.win.bounds).toMatchObject({ x: rest.x + 120, y: rest.y + 60 });
+
+      // A resting trailing card lands on its new place on the same move.
+      for (const card of [lead, trailing]) card.surface.setHostLayout({ ...layout, host: { ...layout.host, x: 200, y: 100 } });
+      trailing.surface.setStackPosition(1, lead.surface.stackLead());
+      expect(trailing.win.bounds).toMatchObject({ x: rest.x + 200, y: rest.y + 100 });
+      lead.surface.stop();
+      trailing.surface.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("snaps a drag to the nearest corner of the conversation column", () => {
     vi.useFakeTimers();
     try {
