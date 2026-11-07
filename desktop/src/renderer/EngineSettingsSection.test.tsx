@@ -305,7 +305,7 @@ it("keeps disabled models recoverable and preserves model selection while reorde
   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineSettingsSection {...props} />}</SettingsControlsProvider>));
   await act(async () => container.querySelector<HTMLButtonElement>('[data-model-id="opus"] [role="switch"]')!.click());
   expect(container.querySelector('[data-model-id="opus"] [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
-  await act(async () => container.querySelector<HTMLButtonElement>('[data-model-id="opus"] .connection-model-order button')!.click());
+  await act(async () => container.querySelector('[data-model-id="opus"] [role="switch"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, bubbles: true })));
   expect([...container.querySelectorAll('[data-model-id]')].map(row => row.getAttribute("data-model-id"))).toEqual(["opus", "sonnet"]);
   expect(readDraftEngineMemory()).toMatchObject({ engine: "claude", model: "sonnet", effort: "high" });
   expect(onUpdate).not.toHaveBeenCalled();

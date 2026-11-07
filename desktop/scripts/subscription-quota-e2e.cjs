@@ -385,23 +385,14 @@ async function run() {
   await capture(main, '01-accounts-light.png');
 
   const beforeMenuRequests = requests.length;
-  assert.equal(await evaluate(main, () => document.querySelector('details.connection-credential-menu').open), false);
-  await evaluate(main, () => document.querySelector('details.connection-credential-menu > summary').focus());
-  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
-  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-  await waitFor(main, () => document.querySelector('details.connection-credential-menu')?.open === true);
   assert.deepEqual(await evaluate(main, () => ['settings-auth-method-local', 'settings-check-codex-login'].map(id => {
-    const action = document.querySelector(`details.connection-credential-menu [data-testid="${id}"]`);
+    const action = document.querySelector(`[data-testid="settings-provider-connection"] [data-testid="${id}"]`);
     const rect = action?.getBoundingClientRect();
     return Boolean(action && !action.disabled && rect.width > 0 && rect.height > 0);
-  })), [true, true], 'Credential disclosure keeps local credential reuse and login checking available.');
+  })), [true, true], 'The connection section keeps local credential reuse and login checking available.');
+  await evaluate(main, () => document.querySelector('[data-testid="settings-provider-connection"]').scrollIntoView({ block: 'start' }));
   await capture(main, '01-account-actions-light.png');
-  assert.equal(await evaluate(main, () => document.activeElement === document.querySelector('details.connection-credential-menu > summary')), true);
-  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
-  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-  await waitFor(main, () => document.querySelector('details.connection-credential-menu')?.open === false);
-  assert.equal(await evaluate(main, () => document.activeElement === document.querySelector('details.connection-credential-menu > summary')), true);
-  assert.equal(requests.length, beforeMenuRequests, 'Opening and dismissing credential actions must not read quota or start authentication.');
+  assert.equal(requests.length, beforeMenuRequests, 'Showing credential actions must not read quota or start authentication.');
 
   const layouts = [];
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1280, 760]) {

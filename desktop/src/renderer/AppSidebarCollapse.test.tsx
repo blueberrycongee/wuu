@@ -620,8 +620,8 @@ describe("sidebar collapse-state independence", () => {
     expect(container.querySelector('[data-provider="fake"]')?.hasAttribute('data-default')).toBe(true);
     await click('[data-provider="codex-account"]');
     expect(sourceValue()).toContain(translateCurrent("settings.codexSourceLocal"));
-    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')?.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="snapshot-model"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')?.hasAttribute('data-current')).toBe(true);
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="snapshot-model"]')?.hasAttribute('data-current')).toBe(false);
   });
 
   it("retains verified Grok login through App reopening without replacing the selected model or default", async () => {
@@ -651,14 +651,14 @@ describe("sidebar collapse-state independence", () => {
     expect(window.wuu.authenticateEngine).toHaveBeenCalledExactlyOnceWith("grok", "local-cli");
     expect(window.wuu.refreshModelCatalog).toHaveBeenCalledOnce();
     expect(container.querySelector<HTMLButtonElement>('[data-testid="grok-login-local"]')?.disabled).toBe(false);
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')?.disabled).toBe(false);
     await click('[data-testid="settings-provider-back"]');
     expect(container.querySelector('[data-provider="fake"]')?.hasAttribute('data-default')).toBe(true);
     await click('[data-provider="grok-account"]');
     expect(container.querySelector<HTMLButtonElement>('[data-testid="grok-login-local"]')?.disabled).toBe(false);
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')?.disabled).toBe(false);
-    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')?.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="snapshot-model"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')?.hasAttribute('data-current')).toBe(true);
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="snapshot-model"]')?.hasAttribute('data-current')).toBe(false);
+    await act(async () => container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
+    expect(document.querySelector<HTMLButtonElement>('[role="menuitem"]:not([data-tone])')?.disabled).toBe(false);
   });
 
 });

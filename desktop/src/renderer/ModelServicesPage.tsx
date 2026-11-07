@@ -29,13 +29,10 @@ import type {
   SubscriptionQuota,
 } from "../shared/protocol";
 import {
-  ArrowUp,
-  ArrowDown,
   AlertTriangle,
   Check,
   ChevronRight,
   Code2,
-  MoreHorizontal,
   Plus,
   RotateCcw,
   Search,
@@ -64,6 +61,7 @@ import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSe
 import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
 import { SettingsRow } from "./SettingsRow";
 import { ThreadContextMenu } from "./ThreadContextMenu";
+import { placedModelIDs, SortableModelRow, SortableModelRows } from "./SortableModelRows";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Switch } from "./ui/Switch";
@@ -285,11 +283,8 @@ function errorMessage(error: unknown, t: Translate): string {
 type AccountMethod = "login" | "local";
 function AccountMethods({ selected, disabled, onSelect }: { selected: AccountMethod | undefined; disabled: boolean; onSelect: (method: AccountMethod) => void }): JSX.Element {
   const { t } = useI18n();
-  return <div className="connection-auth-methods" role="group" aria-label={t("provider.authMethod")}>
-    {(["login", "local"] as const).map(method => <button key={method} type="button" className="settings-button settings-button-ghost"
-      data-testid={`settings-auth-method-${method}`} aria-pressed={selected === method} disabled={disabled}
-      onClick={() => onSelect(method)}>{t(method === "login" ? "provider.authSignIn" : "provider.authUseLocal")}</button>)}
-  </div>;
+  return <SegmentedControl label={t("provider.authMethod")} value={selected} disabled={disabled} onChange={onSelect}
+    options={(["login", "local"] as const).map(method => ({ value: method, label: t(method === "login" ? "provider.authSignIn" : "provider.authUseLocal"), testID: `settings-auth-method-${method}` }))} />;
 }
 
 type CatalogState = { providers?: CatalogProviderSummary[]; failed: boolean };
@@ -749,13 +744,7 @@ function ServiceDetail({
   const direct = isChatGPTProvider(configuredProvider);
   const provider = direct ? { ...configuredProvider, models: liveModels } : configuredProvider;
   const identity = serviceIdentity(provider, t);
-  const detectedLocalCodex = ["codex-cli", "codex-cli-readonly"].includes(provider.codex_credential_source ?? "");
   const usingLocalCodex = Boolean(provider.reuse_codex_credentials) && provider.codex_credential_source !== "explicit";
-  const authSource = direct ? "wuu-siwc" : usingLocalCodex ? "codex-local" : detectedLocalCodex ? "codex-local-available" : provider.codex_credential_source === "explicit" ? "codex-explicit" : "codex-saved";
-  const authSourceLabel = {
-    "wuu-siwc": "provider.authAppSource", "codex-local": "provider.authCodexSource", "codex-local-available": "provider.authCodexAvailable",
-    "codex-explicit": "settings.codexSourceExplicit", "codex-saved": "settings.codexSourceSaved",
-  } as const;
   const attention = provider.quota?.status === "sign_in" ? t("provider.loginRequired") : identity.attention;
   const [authBusy, setAuthBusy] = useState(false);
   const isDefault = provider.name === initialized?.provider;
@@ -771,7 +760,6 @@ function ServiceDetail({
   const fallback = fallbackProviders.find((item) => item.name === fallbackProvider);
   const lastProvider = fallbackProviders.length === 0;
   const disabled = running || busy || authBusy;
-  const canMakeDefault = !isDefault && !attention && (!direct || liveModels.some(model => model.id === provider.model));
 
   useEffect(() => { setBusy(false); setError(""); }, [controls]);
 
@@ -810,11 +798,8 @@ function ServiceDetail({
   const saveConnection = (connection: RuntimeConnectionUpdate): Promise<boolean> =>
     run(() => onSave(provider.name, serviceModel, undefined, { ...connection, keep_selection: true }));
 
-  function chooseModel(model: string): void {
-    if (model === serviceModel) return;
-    void run(() => isDefault
-      ? onSave(provider.name, model, undefined, undefined, normalizedVariantForProviderModel(currentVariant, provider, model))
-      : onSave(provider.name, model, undefined, { keep_selection: true }));
+  function makeDefault(model: string): void {
+    void run(() => onSave(provider.name, model, undefined, undefined, normalizedVariantForProviderModel(currentVariant, provider, model)));
   }
 
   function removeModel(model: string, replacement: string): Promise<boolean> {
@@ -829,62 +814,59 @@ function ServiceDetail({
     ));
   }
 
+  const accountMethods = direct || isCodexType(provider.type) ? <SettingsRow title={t("provider.authMethod")}>
+    <AccountMethods selected={direct ? "login" : usingLocalCodex ? "local" : undefined} disabled={disabled}
+      onSelect={method => {
+        if (method === "local" && isCodexType(provider.type)) {
+          void run(async () => {
+            const signal = lifetime.current.signal;
+            const reused = await controls.useCodexCredentials(provider.name);
+            signal.throwIfAborted();
+            onProvidersChanged?.(reused.providers);
+            const checked = await controls.loadCodexModels(provider.name);
+            signal.throwIfAborted();
+            onProvidersChanged?.(checked.providers);
+          });
+        } else onChooseMethod(method);
+      }} />
+  </SettingsRow> : null;
+  const checkLogin = isCodexType(provider.type) ? <button type="button" className="settings-button" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const signal = lifetime.current.signal; const result = await controls.loadCodexModels(provider.name); signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : undefined;
+  const connectionSection = <SettingsSection title={t("provider.connectionSection")} testID="settings-provider-connection">
+    {isGrokBuildType(provider.type) ? <GrokLogin disabled={running || busy} onBusyChange={setAuthBusy} onAuthenticated={onRefreshConnection} onReuseLocal={onRefreshConnection} /> : <SettingsGroup>
+      <div className="connection-fields">
+        {accountMethods}
+        {direct ? <Suspense fallback={<p className="settings-muted-line" role="status">{t("settings.loading")}</p>}>
+          <ChatGPTAccountRows onBusyChange={setAuthBusy} provider={provider} disabled={disabled} onProvidersChanged={onProvidersChanged} onRefresh={() => setCatalogRevision(value => value + 1)} />
+        </Suspense> : <ConnectionRows provider={provider} identity={identity} disabled={disabled} loginAction={checkLogin} onSave={saveConnection} onRun={run} />}
+      </div>
+    </SettingsGroup>}
+  </SettingsSection>;
+
   return (
     <ConnectionPage title={<ConnectionTitle connectionKey={`provider:${provider.name}`} fallback={identity.label} disabled={disabled} />} icon={<ServiceMark identity={identity} />}
       subtitle={attention ? <span className="connection-status-text">{attention}</span> : undefined}
-      actions={<details className="connection-credential-menu">
-        <summary className="settings-button">{t(!identity.subscription ? "connection.connectionSettings" : attention ? "provider.authSignIn" : "connection.account")}</summary>
-        <div className="connection-credential-panel">
-      {direct || isCodexType(provider.type) ? <>
-        <AccountMethods selected={direct ? "login" : usingLocalCodex ? "local" : undefined} disabled={disabled}
-          onSelect={method => {
-            if (method === "local" && isCodexType(provider.type)) {
-              void run(async () => {
-                const signal = lifetime.current.signal;
-                const reused = await controls.useCodexCredentials(provider.name);
-                signal.throwIfAborted();
-                onProvidersChanged?.(reused.providers);
-                const checked = await controls.loadCodexModels(provider.name);
-                signal.throwIfAborted();
-                onProvidersChanged?.(checked.providers);
-              });
-            } else onChooseMethod(method);
-          }} />
-        {direct || usingLocalCodex || provider.codex_credential_source ? <small className="connection-auth-source" data-auth-source={authSource}>{t(authSourceLabel[authSource])}</small> : null}
-        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const signal = lifetime.current.signal; const result = await controls.loadCodexModels(provider.name); signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
-      </> : null}
-        {isGrokBuildType(provider.type) ? <GrokLogin disabled={running || busy} onBusyChange={setAuthBusy} onAuthenticated={onRefreshConnection} onReuseLocal={onRefreshConnection} /> : null}
-      {!isGrokBuildType(provider.type) ? <SettingsSection title={t("provider.connectionSection")}>
-        <div className="connection-fields">
-          {direct ? <Suspense fallback={<p className="settings-muted-line" role="status">{t("settings.loading")}</p>}>
-            <ChatGPTAccountRows onBusyChange={setAuthBusy} provider={provider} disabled={disabled} onProvidersChanged={onProvidersChanged} onRefresh={() => setCatalogRevision(value => value + 1)} />
-          </Suspense> : <ConnectionRows provider={provider} identity={identity} disabled={disabled} onSave={saveConnection} onRun={run} />}
-        </div>
-      </SettingsSection> : null}
-
-        </div>
-      </details>}
       closeDisabled={busy || authBusy} onClose={onBack} backTestId="settings-provider-back" backLabel={t("settings.providers")}>
       <div className="connection-detail-body">
       {error && !confirmingRemove ? <p className="settings-error" role="alert">{error}</p> : null}
 
+      {attention ? connectionSection : null}
       {ENABLE_SUBSCRIPTIONS && !attention && (provider.quota || hasBuiltInSubscriptionControls(provider)) ? <SubscriptionDashboard detailOnly scope={{ kind: "provider", name: provider.name }} providers={[provider]} onProvidersChanged={onProvidersChanged} onInventoryLoaded={onQuotaLoaded} onSelectBuiltinModel={(name, model) => onSave(name, model)} /> : null}
 
       <ModelChoices
         provider={provider}
-        serviceModel={serviceModel}
-        disabled={disabled || modelsLoading || (direct && !!identity.attention)}
+        currentModel={serviceModel}
+        isDefault={isDefault}
+        disabled={disabled || modelsLoading}
         error={error}
-        onChoose={chooseModel}
+        onMakeDefault={makeDefault}
         onRemove={removeModel}
         onAdd={(model) => saveConnection({ add_model: model })}
       />
+      {!attention ? connectionSection : null}
 
-      {canMakeDefault || removable ? <div className="connection-detail-actions">
-        {canMakeDefault ? <button type="button" className="settings-button" data-testid="settings-provider-make-default" disabled={disabled}
-          onClick={() => void run(() => onSave(provider.name, provider.model, undefined, undefined, normalizedVariantForProviderModel(currentVariant, provider, provider.model)))}>{t("provider.makeDefault")}</button> : null}
-        {removable ? <button type="button" className="settings-button settings-button-danger" data-testid="settings-provider-remove" disabled={disabled}
-          onClick={() => { if (inUse) { setError(t("provider.inUse")); return; } setError(""); setFallbackProvider(""); setConfirmingRemove(true); }}>{t("provider.removeAction")}</button> : null}
+      {removable ? <div className="connection-detail-actions">
+        <button type="button" className="settings-button settings-button-ghost settings-button-danger" data-testid="settings-provider-remove" disabled={disabled}
+          onClick={() => { if (inUse) { setError(t("provider.inUse")); return; } setError(""); setFallbackProvider(""); setConfirmingRemove(true); }}>{t("provider.removeAction")}</button>
       </div> : null}
       {confirmingRemove ? (
         <Modal
@@ -941,12 +923,14 @@ function ConnectionRows({
   provider,
   identity,
   disabled,
+  loginAction,
   onSave,
   onRun,
 }: {
   provider: ProviderSummary;
   identity: ServiceIdentity;
   disabled: boolean;
+  loginAction?: ReactNode;
   onSave: (connection: RuntimeConnectionUpdate) => Promise<boolean>;
   onRun: (action: () => Promise<void>) => Promise<boolean>;
 }): JSX.Element {
@@ -971,14 +955,24 @@ function ConnectionRows({
     );
   }
   if (identity.subscription) {
+    const source = provider.codex_credential_source;
+    const authSource = provider.reuse_codex_credentials && source !== "explicit" ? "codex-local"
+      : source === "codex-cli" || source === "codex-cli-readonly" ? "codex-local-available"
+      : source === "explicit" ? "codex-explicit" : "codex-saved";
+    const authSourceLabel = {
+      "codex-local": "settings.codexSourceLocal", "codex-local-available": "provider.authCodexAvailable",
+      "codex-explicit": "settings.codexSourceExplicit", "codex-saved": "settings.codexSourceSaved",
+    } as const;
     return (
       <>
-        {provider.api_key_configured ? <SettingsRow title={t("provider.chatgptLogin")}>
+        {provider.api_key_configured || loginAction ? <SettingsRow title={t("provider.chatgptLogin")}>
           <StatusValue
             ok={Boolean(provider.api_key_configured)}
-            okLabel={t(provider.codex_credential_source === "explicit" ? "settings.codexSourceExplicit" : provider.reuse_codex_credentials ? "settings.codexSourceLocal" : "settings.codexSourceSaved")}
+            okLabel={t(authSourceLabel[authSource])}
             missingLabel={identity.attention ?? ""}
+            source={provider.codex_credential_source ? authSource : undefined}
           />
+          {loginAction}
         </SettingsRow> : null}
         {!ENABLE_SUBSCRIPTIONS ? <SettingsRow title={t("settings.codexUseLocal")}>
           <button type="button" className="settings-button" disabled={disabled} onClick={() => void onRun(async () => {
@@ -1002,8 +996,7 @@ function ConnectionRows({
         testID="settings-provider-key"
         secret
         value={provider.api_key_configured ? t("provider.keySaved") : ""}
-        emptyLabel={identity.attention ?? t("provider.keyNotSet")}
-        attention={!provider.api_key_configured}
+        emptyLabel={t("provider.keyNotSet")}
         actionLabel={provider.api_key_configured ? t("provider.replaceKey") : t("provider.setKey")}
         placeholder={t("provider.pasteKey")}
         disabled={disabled}
@@ -1024,9 +1017,9 @@ function ConnectionRows({
   );
 }
 
-function StatusValue({ ok, okLabel, missingLabel }: { ok: boolean; okLabel: string; missingLabel: string }): JSX.Element {
+function StatusValue({ ok, okLabel, missingLabel, source }: { ok: boolean; okLabel: string; missingLabel: string; source?: string }): JSX.Element {
   return (
-    <span className="settings-row-control-value model-service-status" data-attention={ok ? undefined : ""}>
+    <span className="settings-row-control-value model-service-status" data-attention={ok ? undefined : ""} data-auth-source={source}>
       {ok ? <Check className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
       {ok ? okLabel : missingLabel}
     </span>
@@ -1040,7 +1033,6 @@ function EditableRow({
   value,
   initialDraft = "",
   emptyLabel,
-  attention = false,
   secret = false,
   actionLabel,
   placeholder,
@@ -1052,7 +1044,6 @@ function EditableRow({
   value: string;
   initialDraft?: string;
   emptyLabel: string;
-  attention?: boolean;
   secret?: boolean;
   actionLabel: string;
   placeholder: string;
@@ -1113,8 +1104,7 @@ function EditableRow({
   }
   return (
     <SettingsRow title={title}>
-      <span className="settings-row-control-value model-service-value" data-attention={attention ? "" : undefined}>
-        {attention ? <AlertTriangle className="icon-sm" aria-hidden="true" /> : null}
+      <span className={value && !secret ? "settings-row-control-value model-service-value" : "settings-row-control-value model-service-value model-service-plain"} data-empty={value ? undefined : ""}>
         <span className="model-service-value-text">{value || emptyLabel}</span>
       </span>
       <button
@@ -1233,18 +1223,20 @@ async function runXAILogin(controls: import("../../../packages/plugin-sdk/src/ui
 
 function ModelChoices({
   provider,
-  serviceModel,
+  currentModel,
+  isDefault: defaultConnection,
   disabled,
   error,
-  onChoose,
+  onMakeDefault,
   onRemove,
   onAdd,
 }: {
   provider: ProviderSummary;
-  serviceModel: string;
+  currentModel: string;
+  isDefault: boolean;
   disabled: boolean;
   error: string;
-  onChoose: (model: string) => void;
+  onMakeDefault: (model: string) => void;
   onRemove: (model: string, replacement: string) => Promise<boolean>;
   onAdd: (model: string) => Promise<boolean>;
 }): JSX.Element {
@@ -1259,91 +1251,68 @@ function ModelChoices({
   const preferences = useSettingsConnectionDisplay();
   const preferenceKey = `provider:${provider.name}`;
   const models = preferences.orderModels(preferenceKey, providerModels(provider));
+  const hiddenModels = preferences.get(preferenceKey).hiddenModels;
   const [preferenceError, setPreferenceError] = useState("");
   function updatePreference(action: () => void): void { try { action(); setPreferenceError(""); } catch (cause) { setPreferenceError(errorMessage(cause, t)); } }
   const managedCatalog = isChatGPTProvider(provider);
   const hidden = provider.hidden_models ?? [];
-  const removingSelected = removing?.id === serviceModel;
+  // Only the workspace default needs a chosen successor; any other connection
+  // keeps its own fallback model without asking.
+  const defaultModel = defaultConnection ? currentModel : undefined;
+  const removingDefault = removing !== null && removing.id === defaultModel;
   const replacements = models.filter((model) => model.id !== removing?.id);
+  const fallbackModel = [defaultModel, provider.model].find(id => id && id !== removing?.id) ?? replacements[0]?.id;
   const normalized = query.trim().toLocaleLowerCase();
   const visible = normalized
     ? models.filter((model) => `${providerModelDisplayName(model)} ${model.id}`.toLocaleLowerCase().includes(normalized))
     : models;
+  const menuModel = modelMenu?.model;
 
   return (
-    <SettingsSection
-      title={t("provider.modelsSection")}
-      actions={<>
-        {models.length > MODEL_SEARCH_THRESHOLD ? (
-          <CatalogSearchField value={query} placeholder={t("provider.searchModels")} onValueChange={setQuery} />
-        ) : null}
-        {!managedCatalog ? <button
-          type="button"
-          className="settings-button settings-button-ghost"
-          aria-label={t("provider.addModel")}
-          data-testid="settings-provider-add-model-open"
-          disabled={disabled || adding}
-          onClick={() => setAdding(true)}
-        >
-          <Plus className="icon" aria-hidden="true" />{t("provider.addModel")}
-        </button> : null}
-      </>}
-    >
-      {modelMenu ? <ThreadContextMenu x={modelMenu.x} y={modelMenu.y} onClose={() => setModelMenu(null)} items={[{
-        label: t("provider.removeModel", { model: providerModelDisplayName(modelMenu.model) }),
-        icon: <Trash2 className="icon" aria-hidden="true" />, danger: true, disabled,
-        onSelect: () => { setRemoving(modelMenu.model); setReplacement(""); setRemoveError(""); },
-      }]} /> : null}
+    <SettingsSection title={t("provider.modelsSection")}>
+      {modelMenu && menuModel ? <ThreadContextMenu x={modelMenu.x} y={modelMenu.y} onClose={() => setModelMenu(null)} items={[
+        ...(menuModel.id !== defaultModel ? [{
+          label: t("provider.makeDefault"), icon: <Check className="icon" aria-hidden="true" />,
+          disabled: disabled || hiddenModels.includes(menuModel.id), onSelect: () => onMakeDefault(menuModel.id),
+        }] : []),
+        ...(!managedCatalog ? [{
+          label: t("provider.removeModel", { model: providerModelDisplayName(menuModel) }),
+          icon: <Trash2 className="icon" aria-hidden="true" />, danger: true, disabled,
+          onSelect: () => { setRemoving(menuModel); setReplacement(""); setRemoveError(""); },
+        }] : []),
+      ]} /> : null}
       {preferenceError ? <p role="alert" className="settings-error">{preferenceError}</p> : null}
-      <div className="settings-group model-choice-list connection-model-table" role="group" aria-label={t("provider.modelsSection")}>
-        <div className="connection-model-table-heading"><span>{t("connection.modelName")}</span><span>{t("connection.modelID")}</span><span>{t("connection.enabled")}</span><span /><span /></div>
+      <div className="settings-group connection-model-list" role="list" aria-label={t("provider.modelsSection")}>
+        {models.length > MODEL_SEARCH_THRESHOLD ? <label className="connection-model-search">
+          <Search className="icon" aria-hidden="true" />
+          <input type="search" value={query} aria-label={t("provider.searchModels")} placeholder={t("provider.searchModels")} onChange={event => setQuery(event.currentTarget.value)} />
+        </label> : null}
+        <SortableModelRows ids={visible.map(model => model.id)} disabled={disabled}
+          onReorder={(id, target) => updatePreference(() => preferences.setModelOrder(preferenceKey, placedModelIDs(models, id, target)))}>
         {visible.map((model) => {
           const name = providerModelDisplayName(model);
-          const selected = model.id === serviceModel;
+          const isDefault = model.id === defaultModel;
+          const canMenu = !managedCatalog || !isDefault;
           return (
-            <div className="model-choice connection-model-row" key={model.id} data-selected={selected ? "" : undefined}>
-              <button
-                type="button"
-                className="model-choice-main"
-                data-testid="settings-provider-model"
-                data-model={model.id}
-                aria-pressed={selected}
-                aria-label={t("provider.useModel", { model: name })}
-                disabled={disabled}
-                onClick={() => onChoose(model.id)}
-              >
-                <span className="model-choice-label"><span className="model-choice-name">{name}</span>{selected ? <Check className="icon model-choice-selected" aria-hidden="true" /> : null}</span>
-              </button>
-              <code className="connection-model-id">{model.id}</code>
-              <Switch className="connection-model-enabled" aria-label={`${t("connection.enabled")} ${name}`} checked={!preferences.get(preferenceKey).hiddenModels.includes(model.id)} disabled={disabled || selected}
-                onClick={() => updatePreference(() => preferences.setModelVisible(preferenceKey, model.id, preferences.get(preferenceKey).hiddenModels.includes(model.id)))} />
-              <span className="connection-model-order">
-                <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveUp", { name })} disabled={disabled || models[0]?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, -1))}><ArrowUp className="icon" /></button>
-                <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveDown", { name })} disabled={disabled || models.at(-1)?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, 1))}><ArrowDown className="icon" /></button>
+            <SortableModelRow className="connection-model-row" role="listitem" key={model.id} id={model.id}
+              data-testid="settings-provider-model" data-model={model.id} data-current={model.id === currentModel ? "" : undefined}
+              onMove={direction => { if (!disabled) updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, direction)); }}
+              onMenu={canMenu && !disabled ? (x, y) => setModelMenu({ model, x, y }) : undefined}>
+              <span className="connection-model-text">
+                <span className="connection-model-name">{name}{isDefault ? <span className="connection-model-badge">{t("connection.defaultModel")}</span> : null}</span>
+                {name !== model.id ? <code className="connection-model-id">{model.id}</code> : null}
               </span>
-              {!managedCatalog ? <Tooltip asChild content={t("provider.moreActions", { name })}><button
-                type="button"
-                className="icon-button model-choice-action"
-                data-testid="settings-provider-model-actions"
-                data-model={model.id}
-                aria-label={t("provider.moreActions", { name })}
-                aria-haspopup="menu"
-                aria-expanded={modelMenu?.model.id === model.id}
-                disabled={disabled}
-                onClick={event => {
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  setModelMenu({ model, x: bounds.right, y: bounds.bottom + 4 });
-                }}
-              >
-                <Trash2 className="icon" aria-hidden="true" />
-              </button></Tooltip> : null}
-            </div>
+              <Switch className="connection-model-enabled" aria-label={`${t("connection.enabled")} ${name}`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
+                checked={!hiddenModels.includes(model.id)} disabled={disabled || isDefault}
+                onClick={() => updatePreference(() => preferences.setModelVisible(preferenceKey, model.id, hiddenModels.includes(model.id)))} />
+            </SortableModelRow>
           );
         })}
+        </SortableModelRows>
         {visible.length === 0 ? <p className="settings-group-empty">{t("provider.noModelMatches")}</p> : null}
-        {adding ? (
+        {managedCatalog ? null : adding ? (
           <form
-            className="model-choice-add"
+            className="connection-model-add"
             onSubmit={(event) => {
               event.preventDefault();
               const model = draft.trim();
@@ -1380,7 +1349,11 @@ function ModelChoices({
               {t("provider.addModelAction")}
             </button>
           </form>
-        ) : null}
+        ) : (
+          <button type="button" className="connection-model-add-trigger" data-testid="settings-provider-add-model-open" disabled={disabled} onClick={() => setAdding(true)}>
+            <Plus className="icon" aria-hidden="true" />{t("provider.addModel")}
+          </button>
+        )}
       </div>
       {!managedCatalog && hidden.length > 0 ? (
         <details className="model-choice-hidden">
@@ -1420,9 +1393,9 @@ function ModelChoices({
               type="button"
               className="settings-button settings-button-danger"
               data-testid="settings-provider-remove-model-confirm"
-              disabled={disabled || (removingSelected && !replacement)}
+              disabled={disabled || (removingDefault ? !replacement : !fallbackModel)}
               onClick={() => {
-                void onRemove(removing.id, removingSelected ? replacement : serviceModel).then((removed) => {
+                void onRemove(removing.id, removingDefault ? replacement : fallbackModel!).then((removed) => {
                   if (removed) setRemoving(null);
                   else setRemoveError(t("provider.saveFailed"));
                 });
@@ -1433,7 +1406,7 @@ function ModelChoices({
           </>}
         >
           <p>{t("provider.removeModelDescription")}</p>
-          {removingSelected ? replacements.length ? (
+          {!fallbackModel ? <p>{t("provider.lastModel")}</p> : removingDefault ? (
             <div className="model-connect-field">
               <span>{t("provider.replacementModel")}</span>
               <SelectMenu
@@ -1450,7 +1423,7 @@ function ModelChoices({
                 flip
               />
             </div>
-          ) : <p>{t("provider.lastModel")}</p> : null}
+          ) : null}
           {removeError ? <p className="settings-error" role="alert">{error || removeError}</p> : null}
         </Modal>
       ) : null}

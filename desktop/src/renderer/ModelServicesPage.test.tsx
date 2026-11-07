@@ -130,7 +130,7 @@ it("renews catalog model discovery while preserving an unfinished connection for
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
-it("allows offline configured Grok model changes without promoting the connection to default", async () => {
+it("keeps offline configured Grok models manageable and makes one default only on request", async () => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -144,15 +144,14 @@ it("allows offline configured Grok model changes without promoting the connectio
       ] }} running={false} runningProviderNames={new Set()} onSave={onSave}
       onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
-    const model = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model"][data-model="grok-4.6"]')!;
+    const model = container.querySelector('[data-testid="settings-provider-model"][data-model="grok-4.6"]')!;
     expect(model).not.toBeNull();
-    expect(model.disabled).toBe(false);
     expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-add-model-open"]')!.disabled).toBe(false);
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model-actions"]')!.disabled).toBe(false);
-    expect(container.querySelector('[data-testid="settings-provider-make-default"]')).toBeNull();
     expect(container.querySelector('[data-testid="settings-provider-add-model-open"]')?.textContent?.trim()).toBeTruthy();
-    await act(async () => model.click());
-    expect(onSave).toHaveBeenCalledWith("grok", "grok-4.6", undefined, { keep_selection: true });
+    await act(async () => model.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+    expect(onSave).not.toHaveBeenCalled();
+    await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]:not([data-tone])')!.click());
+    expect(onSave).toHaveBeenCalledWith("grok", "grok-4.6", undefined, undefined, "");
   } finally {
     act(() => root.unmount());
     container.remove();
@@ -187,7 +186,7 @@ it.each(["wuu-auth-store", "codex-cli", "codex-cli-readonly", "explicit", undefi
     expect(changed).toHaveBeenLastCalledWith([local]);
     expect(login).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-model="chosen-model"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector('[data-model="chosen-model"]')?.hasAttribute("data-current")).toBe(true);
   } finally { act(() => root.unmount()); container.remove(); window.wuu = previous; }
 });
 
@@ -205,12 +204,12 @@ it("keeps alias and display ordering separate from configuration identity and se
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Personal account"); input.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => container.querySelector<HTMLButtonElement>('.connection-title-form button')!.click());
     expect(container.querySelector('.connection-page-title')?.textContent).toContain("Personal account");
-    const rows = () => [...container.querySelectorAll<HTMLButtonElement>('[data-testid="settings-provider-model"]')].map(button => button.dataset.model);
-    await act(async () => container.querySelector<HTMLButtonElement>('.connection-model-row:last-child .connection-model-order button')!.click());
+    const rows = () => [...container.querySelectorAll<HTMLElement>('[data-testid="settings-provider-model"]')].map(row => row.dataset.model);
+    const last = container.querySelector('[data-testid="settings-provider-model"][data-model="model-b"] [role="switch"]')!;
+    await act(async () => last.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, bubbles: true })));
     expect(rows()).toEqual(["model-b", "model-a"]);
     expect(save).not.toHaveBeenCalled();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model"][data-model="model-b"]')!.click());
-    expect(save.mock.calls[0].slice(0, 2)).toEqual(["api-stable-id", "model-b"]);
+    expect(container.querySelector('[data-model="model-a"]')?.hasAttribute("data-current")).toBe(true);
   } finally { act(() => root.unmount()); container.remove(); window.wuu = previous; localStorage.removeItem("wuu.connectionDisplay.v1"); }
 });
 
