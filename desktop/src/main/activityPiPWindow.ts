@@ -38,8 +38,11 @@ const LEAD_SPRING = { stiffness: 320, damping: 42 };
 const FOLLOW_SPRING = { stiffness: 150, damping: 30 };
 const FOLLOW_DRAG_SPRING = { stiffness: 260, damping: 32 };
 const STACK_OFFSET = { x: 28, y: 22 };
-// Detaching glides the card from the column to its display corner.
+// Detaching flies the card to its display corner along an upward arc whose
+// bow grows with the distance, up to a cap.
 const DESKTOP_DOCK_SPRING = { stiffness: 200, damping: 24 };
+const DESKTOP_DOCK_ARC = 0.35;
+const DESKTOP_DOCK_ARC_MAX = 480;
 
 export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean; index?: number };
 
@@ -167,9 +170,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     spring: { stiffness: number; damping: number };
     point: PipPoint;
     speed: PipPoint;
-    size: { width: number; height: number };
-    growth: { width: number; height: number };
     previous: number;
+    // A flight follows a quadratic curve; its spring drives progress 0 -> 1.
+    arc?: { from: Rectangle; control: PipPoint; progress: number; rate: number };
   } | undefined;
   // 0 leads the stack; -1 until the coordinator first places the card.
   private stackIndex = -1;
@@ -466,7 +469,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       win.setParentWindow(parent);
     }
     this.pushDesktopDock();
-    this.placeCommitted(enabled ? DESKTOP_DOCK_SPRING : undefined);
+    this.placeCommitted(enabled);
     this.deps.sink.onEvent({ event: "desktop_dock", desktop: enabled });
     this.applyVisibility();
   }
@@ -474,7 +477,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setDesktopAlignment(alignment: PipAlignment): void {
     if (!this.desktopDocked || this.alignment === alignment) return;
     this.alignment = alignment;
-    this.placeCommitted(DESKTOP_DOCK_SPRING);
+    this.placeCommitted(true);
   }
 
   isDesktopDocked(): boolean {
@@ -759,13 +762,14 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.execute(`window.wuuPipDesktop?.(${JSON.stringify(this.desktopDocked)})`);
   }
 
-  // Layout changes place the card at once; a spring makes a visible card
-  // travel there instead.
-  private placeCommitted(spring?: { stiffness: number; damping: number }): void {
+  // Layout changes place the card at once; a flight carries a visible card
+  // there instead.
+  private placeCommitted(fly = false): void {
     const layout = this.placementLayout();
     const win = this.win;
     // A trailing card rests relative to its lead, never at a corner of its own.
     if (!layout || !win || win.isDestroyed() || this.stackIndex > 0) return;
+    this.cancelSnap();
     const card = this.userSize
       ? browserPiPFitCard(layout.host, this.userSize)
       : browserPiPCardSize(layout.host, browserPiPSizeForAspect(this.initialAspect ?? 4 / 3));
@@ -773,12 +777,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
     const origin = browserPiPOrigin(anchor, card);
-    if (spring && win.isVisible() && !this.transition) {
-      this.animateTo(origin, card, { x: 0, y: 0 }, spring);
-      return;
-    }
-    this.cancelSnap();
-    this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
+    if (fly && win.isVisible() && !this.transition) this.flyTo(origin, card);
+    else this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
   }
 
   private handleDrag(command: { phase: "start" | "move" | "end"; x: number; y: number; vx: number; vy: number }): void {
@@ -1172,7 +1172,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.applyBounds({ ...origin, ...card });
       return;
     }
-    if (this.motion && this.snapTimer !== undefined) {
+    if (this.motion && !this.motion.arc && this.snapTimer !== undefined) {
       Object.assign(this.motion, { origin, card, spring });
       return;
     }
@@ -1185,8 +1185,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       origin, card, spring,
       point: { x: start.x, y: start.y },
       speed: { x: velocity.x * release, y: velocity.y * release },
-      size: { width: start.width, height: start.height },
-      growth: { width: 0, height: 0 },
       previous: Date.now(),
     };
     this.motion = motion;
@@ -1197,27 +1195,77 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       const now = Date.now();
       const dt = Math.min(1 / 30, Math.max(1 / 120, (now - motion.previous) / 1000));
       motion.previous = now;
-      const { point, speed, size, growth, card, spring } = motion;
-      speed.x += (spring.stiffness * (motion.origin.x - point.x) - spring.damping * speed.x) * dt;
-      speed.y += (spring.stiffness * (motion.origin.y - point.y) - spring.damping * speed.y) * dt;
+      const { point, speed } = motion;
+      speed.x += (motion.spring.stiffness * (motion.origin.x - point.x) - motion.spring.damping * speed.x) * dt;
+      speed.y += (motion.spring.stiffness * (motion.origin.y - point.y) - motion.spring.damping * speed.y) * dt;
       point.x += speed.x * dt;
       point.y += speed.y * dt;
-      // The frame size rides the same spring, so a card changing size on the
-      // way grows or shrinks with its travel instead of jumping on the first frame.
-      growth.width += (spring.stiffness * (card.width - size.width) - spring.damping * growth.width) * dt;
-      growth.height += (spring.stiffness * (card.height - size.height) - spring.damping * growth.height) * dt;
-      size.width += growth.width * dt;
-      size.height += growth.height * dt;
       const settled = Math.hypot(motion.origin.x - point.x, motion.origin.y - point.y) <= 0.5
-        && Math.hypot(speed.x, speed.y) <= 2
-        && Math.hypot(card.width - size.width, card.height - size.height) <= 0.5
-        && Math.hypot(growth.width, growth.height) <= 2;
+        && Math.hypot(speed.x, speed.y) <= 2;
       const next = settled ? motion.origin : point;
-      const extent = settled ? card : size;
       const layout = this.placementLayout();
       const confined = layout
-        ? browserPiPClampOrigin(next, extent, layout.visibleFrame) : next;
-      this.applyBounds({ ...confined, width: extent.width, height: extent.height });
+        ? browserPiPClampOrigin(next, motion.card, layout.visibleFrame) : next;
+      this.applyBounds({ ...confined, width: motion.card.width, height: motion.card.height });
+      if (settled) this.motion = undefined;
+      else this.scheduleSnap(frame);
+    };
+    this.scheduleSnap(frame);
+  }
+
+  // The card bows upward on its way, like a toss, and its frame size changes
+  // with the progress. A new destination starts a fresh flight from where the
+  // card is.
+  private flyTo(origin: PipPoint, card: { width: number; height: number }): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    this.cancelSnap();
+    if (this.reducedMotion()) {
+      this.applyBounds({ ...origin, ...card });
+      return;
+    }
+    const from = win.getBounds();
+    const dx = origin.x - from.x;
+    const dy = origin.y - from.y;
+    const distance = Math.hypot(dx, dy);
+    // The bow is perpendicular to the chord, on its upper side.
+    const bow = distance > 0 ? Math.min(distance * DESKTOP_DOCK_ARC, DESKTOP_DOCK_ARC_MAX) / distance : 0;
+    const flip = dx > 0 ? 1 : -1;
+    const control = {
+      x: from.x + dx / 2 + dy * bow * flip,
+      y: from.y + dy / 2 - Math.abs(dx) * bow,
+    };
+    const arc = { from, control, progress: 0, rate: 0 };
+    const motion = {
+      origin, card, spring: DESKTOP_DOCK_SPRING, arc,
+      point: { x: from.x, y: from.y }, speed: { x: 0, y: 0 }, previous: Date.now(),
+    };
+    this.motion = motion;
+    const span = Math.max(1, distance, Math.abs(card.width - from.width), Math.abs(card.height - from.height));
+    const frame = (): void => {
+      this.snapTimer = undefined;
+      const current = this.win;
+      if (this.motion !== motion || !current || current.isDestroyed() || this.dragging || this.resizing) return;
+      const now = Date.now();
+      const dt = Math.min(1 / 30, Math.max(1 / 120, (now - motion.previous) / 1000));
+      motion.previous = now;
+      const { stiffness, damping } = DESKTOP_DOCK_SPRING;
+      arc.rate += (stiffness * (1 - arc.progress) - damping * arc.rate) * dt;
+      arc.progress += arc.rate * dt;
+      const settled = Math.abs(1 - arc.progress) * span <= 0.5 && Math.abs(arc.rate) * span <= 2;
+      const t = settled ? 1 : arc.progress;
+      const u = 1 - t;
+      const point = {
+        x: u * u * from.x + 2 * u * t * control.x + t * t * origin.x,
+        y: u * u * from.y + 2 * u * t * control.y + t * t * origin.y,
+      };
+      const size = {
+        width: from.width + (card.width - from.width) * t,
+        height: from.height + (card.height - from.height) * t,
+      };
+      const layout = this.placementLayout();
+      const confined = layout ? browserPiPClampOrigin(point, size, layout.visibleFrame) : point;
+      this.applyBounds({ ...confined, ...size });
       if (settled) this.motion = undefined;
       else this.scheduleSnap(frame);
     };
