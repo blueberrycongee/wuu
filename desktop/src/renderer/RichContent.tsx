@@ -410,11 +410,11 @@ function markdownComponents(
       const source = useContext(MarkdownSourceContext);
       return <RichTable source={source.slice(node?.position?.start.offset, node?.position?.end.offset)}>{children}</RichTable>;
     },
-    th({ children }) {
-      return <th>{renderMarkdownText(children, richTextOptions, "th")}</th>;
+    th({ children, style }) {
+      return <th style={style}>{renderMarkdownText(children, richTextOptions, "th")}</th>;
     },
-    td({ children }) {
-      return <td>{renderMarkdownText(children, richTextOptions, "td")}</td>;
+    td({ children, style }) {
+      return <td style={style}>{renderMarkdownText(children, richTextOptions, "td")}</td>;
     },
     blockquote({ children }) {
       return <blockquote className="rich-blockquote">{renderMarkdownText(children, richTextOptions, "blockquote")}</blockquote>;
