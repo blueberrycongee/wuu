@@ -382,7 +382,6 @@
   --composer-surface-bg: var(--surface-raised);
   --composer-textarea-disabled: var(--theme-override-color-text-muted, #6d7471);
   --composer-project-menu-icon: var(--theme-override-color-text-muted, #6b7176);
-  --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
 }
 
 .composer-wrap {
@@ -1914,7 +1913,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   font-weight: var(--weight-regular);
 }
 
-.composer-menu-note,
 .composer-menu-empty {
   display: grid;
   gap: 4px;
@@ -1922,15 +1920,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
-}
-
-.composer-menu-note strong {
-  color: var(--ink);
-  font-size: var(--font-menu);
-}
-
-.composer-menu-note.warning strong {
-  color: var(--composer-menu-note-warning-strong);
 }
 
 .hero-composer-wrap .composer-project-menu {
