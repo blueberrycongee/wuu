@@ -14,7 +14,10 @@ type SkinSpec struct {
 	Name string `json:"name"`
 	// Placement selects where the artwork renders: "frame" decorates the window
 	// frame only (default), "canvas" also places it behind the main pane.
-	Placement string          `json:"placement,omitempty"`
+	Placement string `json:"placement,omitempty"`
+	// UserImage lets the user's Background image replace the skin's artwork,
+	// processed with the host treatment for the skin's placement.
+	UserImage bool            `json:"userImage,omitempty"`
 	Light     SkinVariantSpec `json:"light"`
 	Dark      SkinVariantSpec `json:"dark"`
 }
@@ -28,17 +31,20 @@ type SkinVariantSpec struct {
 	Hover      string `json:"hover,omitempty"`
 	Active     string `json:"active,omitempty"`
 	// Veil is the opacity of the theme canvas laid over canvas artwork for
-	// translucent destinations, in [0, 1]. Only used with placement "canvas".
+	// translucent destinations, in [0, 1]. Requires placement "canvas".
 	Veil *float64 `json:"veil,omitempty"`
-	// Dots renders a host dot screen over the artwork.
+	// Dots renders the canvas artwork as a screen of solid cells, one sampled
+	// color per cell. Requires placement "canvas".
 	Dots *SkinDotsSpec `json:"dots,omitempty"`
 }
 
 type SkinDotsSpec struct {
 	// Pitch is the dot grid spacing in CSS px, in [2, 32].
 	Pitch float64 `json:"pitch"`
-	// Size is the dot diameter in CSS px, in [0.5, pitch].
+	// Size is the cell diameter or side in CSS px, in [0.5, pitch].
 	Size float64 `json:"size"`
+	// Shape is "round" (default) or "square".
+	Shape string `json:"shape,omitempty"`
 }
 
 var skinColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -52,12 +58,12 @@ func normalizeSkins(root string, raw json.RawMessage) ([]SkinSpec, error) {
 	seen := make(map[string]bool)
 	for index, item := range items {
 		field := fmt.Sprintf("contributes.skins[%d]", index)
-		if err := validateObjectFields(field, item, "id", "name", "placement", "light", "dark"); err != nil {
+		if err := validateObjectFields(field, item, "id", "name", "placement", "userImage", "light", "dark"); err != nil {
 			return nil, err
 		}
 		var skin SkinSpec
 		if err := json.Unmarshal(item, &skin); err != nil {
-			return nil, fmt.Errorf("%s: %w", field, err)
+			return nil, fmt.Errorf("%s: %w (placement must be a string, userImage a boolean)", field, err)
 		}
 		skin.ID, skin.Name = strings.TrimSpace(skin.ID), strings.TrimSpace(skin.Name)
 		if !validCommandID(skin.ID) || seen[skin.ID] || skin.Name == "" {
@@ -91,6 +97,9 @@ func normalizeSkins(root string, raw json.RawMessage) ([]SkinSpec, error) {
 				return nil, fmt.Errorf("%s.%s.position must be center, top, bottom, left, or right", field, mode)
 			}
 			variantField := field + "." + mode
+			if skin.Placement != "canvas" && (variant.Veil != nil || variant.Dots != nil) {
+				return nil, fmt.Errorf("%s.veil and dots require canvas placement", variantField)
+			}
 			if variant.Veil != nil && (*variant.Veil < 0 || *variant.Veil > 1) {
 				return nil, fmt.Errorf("%s.veil must be a number between 0 and 1", variantField)
 			}
@@ -99,7 +108,7 @@ func normalizeSkins(root string, raw json.RawMessage) ([]SkinSpec, error) {
 				return nil, err
 			}
 			if raw, ok := variantFields["dots"]; ok {
-				if err := validateObjectFields(variantField+".dots", raw, "pitch", "size"); err != nil {
+				if err := validateObjectFields(variantField+".dots", raw, "pitch", "size", "shape"); err != nil {
 					return nil, err
 				}
 				var dotFields map[string]json.RawMessage
@@ -118,6 +127,11 @@ func normalizeSkins(root string, raw json.RawMessage) ([]SkinSpec, error) {
 				}
 				if dots.Size < 0.5 || dots.Size > dots.Pitch {
 					return nil, fmt.Errorf("%s.dots.size must be a number between 0.5 and dots.pitch", variantField)
+				}
+				switch dots.Shape {
+				case "", "round", "square":
+				default:
+					return nil, fmt.Errorf("%s.dots.shape must be round or square", variantField)
 				}
 			}
 			if variant.Image != "" {

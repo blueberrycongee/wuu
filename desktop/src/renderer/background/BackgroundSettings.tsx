@@ -3,12 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
 import { useBackground } from "./useBackground";
+import { useShellSkins } from "./ShellSkin";
 import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 
 export function BackgroundSettings(): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
   const { preferences, error: readError, loading } = useBackground(controls);
+  const { skins, selected } = useShellSkins(controls);
+  // The default frame and skins that accept it show the picture; others keep their own artwork.
+  const ownArtwork = skins.find(skin => skin.key === selected && !skin.userImage);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<"image" | "save" | null>(null);
   const operations = useMemo(() => ({ active: true, importer: null as AbortController | null }), [controls]);
@@ -45,7 +49,9 @@ export function BackgroundSettings(): JSX.Element {
         if (signal.aborted) return current;
         return { image, imageID: crypto.randomUUID(), name: file.name };
       });
-      if (!signal.aborted) controls.selectShellSkin("custom");
+      // Choosing a picture means showing it: leave a skin that would hide it.
+      const current = controls.getShellSkins();
+      if (!signal.aborted && current.skins.some(skin => skin.key === current.selected && !skin.userImage)) controls.selectShellSkin("default");
     } catch (reason) {
       if (!signal.aborted && !isPluginLifecycleCancellation(reason)) setError(stage);
     } finally {
@@ -56,7 +62,7 @@ export function BackgroundSettings(): JSX.Element {
     }
   }
   return <>
-    <SettingsRow title={t("settings.backgroundImage")}>
+    <SettingsRow title={t("settings.backgroundImage")} description={preferences && ownArtwork ? t("settings.backgroundSkinArtwork", { skin: ownArtwork.name }) : undefined}>
       <label className={`settings-button background-file-picker${busy || loading ? " disabled" : ""}`}>
         {t(busy ? "settings.backgroundLoading" : "settings.backgroundChoose")}
         <input type="file" accept="image/png,image/jpeg,image/webp" aria-label={t("settings.backgroundChoose")} disabled={busy || loading}

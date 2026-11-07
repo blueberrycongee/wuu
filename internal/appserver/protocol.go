@@ -806,6 +806,7 @@ type ExtensionSkinDescriptor struct {
 	ID        string               `json:"id"`
 	Name      string               `json:"name"`
 	Placement string               `json:"placement,omitempty"`
+	UserImage bool                 `json:"userImage,omitempty"`
 	Light     ExtensionSkinVariant `json:"light"`
 	Dark      ExtensionSkinVariant `json:"dark"`
 }

@@ -116,6 +116,7 @@ import {
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
+import { ShellCanvasArtwork } from "./background/ShellCanvasArtwork";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
 const ENGINE_INVENTORY_STALE_MS = 2 * 60 * 1000;
@@ -1703,6 +1704,7 @@ export function App({ application, slots, shellPluginId }: {
         }`}
         ref={conversationPaneRef}
       >
+        <ShellCanvasArtwork />
         <header hidden={userSpaceViewActive} className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {/* The ribbon owns a shell-level toggle. A hidden legacy toggle

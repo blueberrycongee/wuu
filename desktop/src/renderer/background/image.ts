@@ -1,4 +1,6 @@
-export function processBackground(image: Blob, purpose: "import" | "light" | "dark", signal?: AbortSignal): Promise<Blob> {
+import type { BackgroundPurpose } from "./process";
+
+export function processBackground(image: Blob, purpose: BackgroundPurpose, signal?: AbortSignal): Promise<Blob> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
     const worker = new Worker(new URL("./image.worker.ts", import.meta.url), { type: "module" });

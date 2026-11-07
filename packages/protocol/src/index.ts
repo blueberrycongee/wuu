@@ -525,6 +525,7 @@ export interface ExtensionThemeDescriptor {
 export interface ExtensionSkinDots {
   pitch: number;
   size: number;
+  shape?: "round" | "square";
 }
 
 export interface ExtensionSkinVariant {
@@ -543,6 +544,7 @@ export interface ExtensionSkinDescriptor {
   id: string;
   name: string;
   placement?: "frame" | "canvas";
+  userImage?: boolean;
   light: ExtensionSkinVariant;
   dark: ExtensionSkinVariant;
 }

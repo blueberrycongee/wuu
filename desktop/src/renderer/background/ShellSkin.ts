@@ -4,10 +4,17 @@ import type { ExtensionInventoryRecord, ExtensionSkinDescriptor } from "../../sh
 export type AvailableShellSkin = ExtensionSkinDescriptor & { key: string; pluginId: string; fingerprint: string; pluginName: string };
 const selectionKey = "wuu.shell-skin";
 const listeners = new Set<() => void>();
-let snapshot: { skins: AvailableShellSkin[]; selected: string } = { skins: [], selected: "custom" };
+let snapshot: { skins: AvailableShellSkin[]; selected: string } = { skins: [], selected: "default" };
+
+// "custom" was the former "My image" pseudo-skin; the default skin now shows
+// the saved picture, so that choice reads as the default.
+function storedSelection(): string {
+  const stored = window.localStorage.getItem(selectionKey);
+  return !stored || stored === "custom" ? "default" : stored;
+}
 
 function publish(): void {
-  snapshot = { ...snapshot, selected: window.localStorage.getItem(selectionKey) ?? "custom" };
+  snapshot = { ...snapshot, selected: storedSelection() };
   for (const listener of listeners) listener();
 }
 

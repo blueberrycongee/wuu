@@ -483,7 +483,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		skins := make([]ExtensionSkinDescriptor, 0, len(item.Skins))
 		for _, skin := range item.Skins {
 			skins = append(skins, ExtensionSkinDescriptor{
-				ID: skin.ID, Name: skin.Name, Placement: skin.Placement,
+				ID: skin.ID, Name: skin.Name, Placement: skin.Placement, UserImage: skin.UserImage,
 				Light: ExtensionSkinVariant(skin.Light), Dark: ExtensionSkinVariant(skin.Dark),
 			})
 		}

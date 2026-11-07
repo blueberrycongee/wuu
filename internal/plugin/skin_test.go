@@ -16,6 +16,9 @@ func TestNormalizeSkinsRejectsInvalidPlacementAndVariantOptions(t *testing.T) {
 		return `[{"id":"demo","name":"Demo",` + extra + `"light":{"background":"#112233","foreground":"#f5f5f5"},"dark":{"background":"#112233","foreground":"#f5f5f5"}}]`
 	}
 	variant := func(body string) string {
+		return `[{"id":"demo","name":"Demo","placement":"canvas","light":{"background":"#112233","foreground":"#f5f5f5",` + body + `},"dark":{"background":"#112233","foreground":"#f5f5f5"}}]`
+	}
+	frameVariant := func(body string) string {
 		return `[{"id":"demo","name":"Demo","light":{"background":"#112233","foreground":"#f5f5f5",` + body + `},"dark":{"background":"#112233","foreground":"#f5f5f5"}}]`
 	}
 	tests := []struct {
@@ -34,8 +37,12 @@ func TestNormalizeSkinsRejectsInvalidPlacementAndVariantOptions(t *testing.T) {
 		{name: "dots pitch above range", raw: variant(`"dots":{"pitch":33,"size":2}`), wantErr: "dots"},
 		{name: "dots size below range", raw: variant(`"dots":{"pitch":4,"size":0.4}`), wantErr: "dots"},
 		{name: "dots size above pitch", raw: variant(`"dots":{"pitch":4,"size":4.5}`), wantErr: "dots"},
-		{name: "dots unknown field", raw: variant(`"dots":{"pitch":4,"size":2,"shape":"square"}`), wantErr: "dots"},
+		{name: "dots unknown field", raw: variant(`"dots":{"pitch":4,"size":2,"angle":45}`), wantErr: "dots"},
 		{name: "dots non-object", raw: variant(`"dots":4`), wantErr: "dots"},
+		{name: "dots shape outside enum", raw: variant(`"dots":{"pitch":4,"size":2,"shape":"star"}`), wantErr: "shape"},
+		{name: "veil without canvas placement", raw: frameVariant(`"veil":0.5`), wantErr: "canvas"},
+		{name: "dots without canvas placement", raw: frameVariant(`"dots":{"pitch":4,"size":2}`), wantErr: "canvas"},
+		{name: "userImage non-boolean", raw: skin(`"userImage":"yes",`), wantErr: "userImage"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -48,8 +55,8 @@ func TestNormalizeSkinsRejectsInvalidPlacementAndVariantOptions(t *testing.T) {
 
 func TestNormalizeSkinsAcceptsCanvasPlacementAndDefaults(t *testing.T) {
 	skins, err := normalizeSkinsJSON(t, `[{
-		"id": "deep-field", "name": "Deep field", "placement": "canvas",
-		"light": {"background": "#112233", "foreground": "#f5f5f5", "veil": 0.8, "dots": {"pitch": 4, "size": 2.6}},
+		"id": "deep-field", "name": "Deep field", "placement": "canvas", "userImage": true,
+		"light": {"background": "#112233", "foreground": "#f5f5f5", "veil": 0.8, "dots": {"pitch": 4, "size": 2.6, "shape": "square"}},
 		"dark": {"background": "#0a1520", "foreground": "#e3f1f6"}
 	}]`)
 	if err != nil {
@@ -61,7 +68,10 @@ func TestNormalizeSkinsAcceptsCanvasPlacementAndDefaults(t *testing.T) {
 	if skins[0].Light.Veil == nil || *skins[0].Light.Veil != 0.8 {
 		t.Fatalf("veil did not round-trip: %+v", skins[0].Light.Veil)
 	}
-	if skins[0].Light.Dots == nil || skins[0].Light.Dots.Pitch != 4 || skins[0].Light.Dots.Size != 2.6 {
+	if !skins[0].UserImage {
+		t.Fatalf("userImage did not round-trip: %+v", skins[0])
+	}
+	if skins[0].Light.Dots == nil || skins[0].Light.Dots.Pitch != 4 || skins[0].Light.Dots.Size != 2.6 || skins[0].Light.Dots.Shape != "square" {
 		t.Fatalf("dots did not round-trip: %+v", skins[0].Light.Dots)
 	}
 	if skins[0].Dark.Veil != nil || skins[0].Dark.Dots != nil {
@@ -72,7 +82,7 @@ func TestNormalizeSkinsAcceptsCanvasPlacementAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalizeSkins without new fields: %v", err)
 	}
-	if skins[0].Placement != "" || skins[0].Light.Veil != nil || skins[0].Light.Dots != nil {
+	if skins[0].Placement != "" || skins[0].UserImage || skins[0].Light.Veil != nil || skins[0].Light.Dots != nil {
 		t.Fatalf("a skin without canvas fields must keep defaults: %+v", skins[0])
 	}
 }

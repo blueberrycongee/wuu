@@ -72,24 +72,12 @@ html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-vis
 
 @media (forced-colors: active), print { .app-background { display: none; } }
 
-/* A host dot screen turns the artwork into a halftone layer: the element is
-   masked down to the dots and the gap color shows through from the frame. */
-html[data-shell-dots],
-html[data-shell-dots] body {
-  background: var(--shell-background);
-}
-
-html[data-shell-dots] .app-background {
-  mask-image: radial-gradient(circle, #000 calc(var(--shell-dots-size, 1px) / 2), transparent calc(var(--shell-dots-size, 1px) / 2 + 0.5px));
-  mask-repeat: repeat;
-  mask-size: var(--shell-dots-pitch, 4px) var(--shell-dots-pitch, 4px);
-}
-
 /* Canvas placement: the frame and ribbon keep the skin's opaque background,
-   while the main pane paints base color, window-aligned artwork (masked by the
-   dot screen when declared) and a veil whose opacity follows the active
-   destination's data-canvas. The workbench sheet keeps only its frame
-   border/shadow; the sidebar paints the workbench canvas itself. */
+   while the main pane paints base color, the window-aligned artwork canvas
+   (ShellCanvasArtwork, which also draws the dot screen) and a veil whose
+   opacity follows the active destination's data-canvas. The workbench sheet
+   keeps only its frame border/shadow; the sidebar paints the workbench canvas
+   itself. */
 html[data-shell-placement="canvas"],
 html[data-shell-placement="canvas"] body {
   background: var(--shell-background);
@@ -112,24 +100,25 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
   background-color: var(--shell-background);
 }
 
+/* The artwork canvas replaces the pane's paper inset; the veil paints paper. */
 html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane::before {
+  content: none;
+}
+
+.shell-canvas-artwork {
+  display: none;
+}
+
+html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane > .shell-canvas-artwork {
   position: absolute;
   inset: 0;
   z-index: -1;
+  display: block;
+  grid-area: auto;
+  width: 100%;
+  height: 100%;
   border-radius: inherit;
-  background-image: linear-gradient(var(--shell-overlay), var(--shell-overlay)), var(--shell-image, none);
-  background-attachment: fixed, fixed;
-  background-size: cover, cover;
-  background-position: calc(var(--shell-image-align-x, 0.5) * 100%) calc(var(--shell-image-align-y, 0.5) * 100%);
-  background-repeat: no-repeat;
-  content: "";
   pointer-events: none;
-}
-
-html[data-shell-placement="canvas"][data-shell-dots] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane::before {
-  mask-image: radial-gradient(circle, #000 calc(var(--shell-dots-size, 1px) / 2), transparent calc(var(--shell-dots-size, 1px) / 2 + 0.5px));
-  mask-repeat: repeat;
-  mask-size: var(--shell-dots-pitch, 4px) var(--shell-dots-pitch, 4px);
 }
 
 html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane::after {
@@ -235,7 +224,7 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane[data-canvas] {
     --canvas-veil: 1;
   }
-  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane::before {
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane > .shell-canvas-artwork {
     display: none;
   }
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane::after {

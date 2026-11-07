@@ -78,7 +78,8 @@ export interface ApplicationSettingsControlsV1 {
   readBackground(): Promise<SettingsBackgroundV1 | null>;
   updateBackground(update: (current: SettingsBackgroundV1 | null) => SettingsBackgroundV1 | null): Promise<void>;
   observeBackground(listener: () => void): () => void;
-  processBackground(image: Blob, purpose: "import" | "light" | "dark", signal?: AbortSignal): Promise<Blob>;
+  /** "light"/"dark" prepare frame artwork; "canvas-light"/"canvas-dark" prepare artwork for canvas-placement skins. */
+  processBackground(image: Blob, purpose: "import" | "light" | "dark" | "canvas-light" | "canvas-dark", signal?: AbortSignal): Promise<Blob>;
   subscribeShellSkins(listener: () => void): () => void;
   getShellSkins(): { readonly skins: readonly SettingsShellSkinV1[]; readonly selected: string };
   selectShellSkin(key: string): void;
@@ -611,6 +612,8 @@ export interface SettingsShellSkinV1 {
  readonly fingerprint: string;
  readonly pluginName: string;
  readonly placement?: "frame" | "canvas";
+ /** The user's Background image replaces this skin's artwork. */
+ readonly userImage?: boolean;
  readonly light: SettingsSkinVariantV1;
  readonly dark: SettingsSkinVariantV1;
 }
@@ -623,5 +626,5 @@ export interface SettingsSkinVariantV1 {
  readonly hover?: string;
  readonly active?: string;
  readonly veil?: number;
- readonly dots?: { readonly pitch: number; readonly size: number };
+ readonly dots?: { readonly pitch: number; readonly size: number; readonly shape?: "round" | "square" };
 }

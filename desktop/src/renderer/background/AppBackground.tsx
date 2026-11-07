@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { processBackground } from "./image";
 import { useBackground } from "./useBackground";
+import { publishCanvasArtwork } from "./ShellCanvasArtwork";
 import { useShellSkins, useSkinImage } from "./ShellSkin";
 
 export function AppBackground(): JSX.Element | null {
@@ -11,8 +12,12 @@ export function AppBackground(): JSX.Element | null {
   const [mode, setMode] = useState(currentAppliedTheme);
   const skin = skins.find(candidate => candidate.key === selected);
   const variant = skin?.[mode];
-  const pluginImage = useSkinImage(skin, mode);
-  const [localURL, setLocalURL] = useState("");
+  const placement = skin?.placement === "canvas" ? "canvas" : "frame";
+  // The default frame, and every skin that accepts it, shows the user's
+  // picture in place of its own artwork.
+  const picture = (!skin || skin.userImage) && preferences ? preferences.image : null;
+  const pluginImage = useSkinImage(picture ? undefined : skin, mode);
+  const [processed, setProcessed] = useState<{ blob: Blob; url: string } | null>(null);
   useEffect(() => {
     setMode(currentAppliedTheme());
     return observeAppliedTheme(setMode);
@@ -20,21 +25,30 @@ export function AppBackground(): JSX.Element | null {
   useEffect(() => {
     const controller = new AbortController();
     let objectURL = "";
-    setLocalURL("");
-    if (selected === "custom" && preferences) void processBackground(preferences.image, mode, controller.signal).then(async blob => {
+    setProcessed(null);
+    if (picture) void processBackground(picture, placement === "canvas" ? `canvas-${mode}` : mode, controller.signal).then(async blob => {
       if (controller.signal.aborted) return;
-      const url = window.wuu?.cacheShellImage
-        ? await window.wuu.cacheShellImage(await blob.arrayBuffer())
+      // Canvas artwork is painted from the blob; frame artwork is a CSS URL
+      // that the native chrome overlay must also be able to load.
+      const url = placement === "canvas" ? ""
+        : window.wuu?.cacheShellImage ? await window.wuu.cacheShellImage(await blob.arrayBuffer())
         : (objectURL = URL.createObjectURL(blob));
-      if (!controller.signal.aborted) setLocalURL(url);
+      if (!controller.signal.aborted) setProcessed({ blob, url });
     }).catch(() => {});
     return () => { controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL); };
-  }, [selected, preferences?.image, mode]);
-  const url = skin ? pluginImage.url : selected === "custom" ? localURL : "";
-  const enabled = Boolean(skin || url);
-  // Canvas placement moves the artwork behind the main pane; the custom image
-  // and every skin without a placement keep decorating only the frame.
-  const placement = skin?.placement === "canvas" ? "canvas" : "frame";
+  }, [picture, mode, placement]);
+  const frameURL = placement !== "frame" ? "" : picture ? processed?.url ?? "" : pluginImage.url;
+  const canvasSource = placement !== "canvas" ? undefined : picture ? processed?.blob : pluginImage.url || undefined;
+  const enabled = Boolean(skin || frameURL);
+  const position = variant?.position ?? "center";
+  const align = useMemo(() => [
+    position === "left" ? 0 : position === "right" ? 1 : 0.5,
+    position === "top" ? 0 : position === "bottom" ? 1 : 0.5,
+  ] as const, [position]);
+  useEffect(() => {
+    publishCanvasArtwork(canvasSource ? { source: canvasSource, dots: variant?.dots, overlay: variant?.overlay, align } : null);
+    return () => publishCanvasArtwork(null);
+  }, [canvasSource, variant, align]);
   useLayoutEffect(() => {
     const root = document.documentElement;
     const variables: Record<string, string> = {};
@@ -46,40 +60,32 @@ export function AppBackground(): JSX.Element | null {
       else if (!skin) variables["--shell-hover"] = mode === "light" ? "#ffffff70" : "#18181970";
       if (variant?.active) variables["--shell-active"] = variant.active;
       else if (!skin) variables["--shell-active"] = mode === "light" ? "#ffffffcc" : "#181819cc";
-      if (url) variables["--shell-image"] = `url(${JSON.stringify(url)})`;
-      variables["--shell-image-ratio"] = "1";
-      const position = variant?.position ?? "center";
-      variables["--shell-image-align-x"] = position === "left" ? "0" : position === "right" ? "1" : "0.5";
-      variables["--shell-image-align-y"] = position === "top" ? "0" : position === "bottom" ? "1" : "0.5";
-      if (placement === "canvas") {
-        variables["--shell-veil"] = String(variant?.veil ?? 0.86);
-        if (variant?.dots) {
-          variables["--shell-dots-pitch"] = `${variant.dots.pitch}px`;
-          variables["--shell-dots-size"] = `${variant.dots.size}px`;
-        }
+      if (placement === "canvas") variables["--shell-veil"] = String(variant?.veil ?? 0.86);
+      if (frameURL) {
+        variables["--shell-image"] = `url(${JSON.stringify(frameURL)})`;
+        variables["--shell-image-ratio"] = "1";
+        variables["--shell-image-align-x"] = String(align[0]);
+        variables["--shell-image-align-y"] = String(align[1]);
       }
     }
     for (const [name, value] of Object.entries(variables)) root.style.setProperty(name, value);
     root.toggleAttribute("data-shell-skin", enabled);
     if (enabled) root.dataset.shellPlacement = placement;
     else delete root.dataset.shellPlacement;
-    root.toggleAttribute("data-shell-dots", enabled && Boolean(variant?.dots));
-    // The chrome overlay receives this URL separately from CSS values. Canvas
-    // artwork lives inside the pane, so the frame keeps a solid fill there.
-    if (url && placement === "frame") root.dataset.shellImage = url;
+    // The chrome overlay receives this URL separately from CSS values.
+    if (frameURL) root.dataset.shellImage = frameURL;
     else delete root.dataset.shellImage;
     const image = new Image();
     image.onload = () => root.style.setProperty("--shell-image-ratio", String(image.naturalWidth / image.naturalHeight));
-    if (url) image.src = url;
+    if (frameURL) image.src = frameURL;
     return () => {
       image.onload = null;
       for (const name of Object.keys(variables)) root.style.removeProperty(name);
       root.removeAttribute("data-shell-skin");
-      root.removeAttribute("data-shell-dots");
       delete root.dataset.shellPlacement;
       delete root.dataset.shellImage;
     };
-  }, [enabled, url, variant, mode, placement]);
+  }, [enabled, frameURL, variant, mode, placement, skin, align]);
   return enabled && placement === "frame"
     ? createPortal(<div className="app-background" aria-hidden="true" />, document.body)
     : null;
