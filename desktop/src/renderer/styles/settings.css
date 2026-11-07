@@ -656,6 +656,37 @@
   color: var(--danger);
 }
 
+/* An empty list says what would appear here and offers the one step that
+ * fills it. It takes a card's padding so it reads as the card's content. */
+.settings-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  padding: var(--space-5) 0;
+}
+
+.settings-empty-state-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.4;
+}
+
+.settings-empty-state-description {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-empty-state-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
 /* --- Row -------------------------------------------------------------------
  * Two columns: a growing label on the left, a natural-width control pinned
  * right. Every row reserves a control's height plus its padding, so rows
@@ -2663,20 +2694,6 @@ button.settings-engine-expand:hover {
 
 .settings-archive-restore {
   flex: 0 0 auto;
-}
-
-/* The empty archive says what would appear here and how it gets here. */
-.settings-archive-empty {
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: var(--space-1);
-  padding-block: var(--settings-row-pad-block);
-}
-
-.settings-archive-empty-hint {
-  font-size: var(--font-sm);
-  line-height: 1.5;
 }
 
 /* --- Remote control ------------------------------------------------------------------ */

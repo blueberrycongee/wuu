@@ -76,7 +76,7 @@ export type ArchivedSessionView = {
 import { AppearanceTypography } from "./AppearanceTypography";
 import { ShellSkinSettings } from "./background/ShellSkinSettings";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
+import { SettingsEmptyState, SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { Switch } from "./ui/Switch";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
@@ -1243,12 +1243,10 @@ function SettingsArchivePage({
         </div> : null}
         {sortedThreads.length === 0 || noMatches ? (
           <div className="settings-group">
-            <div className="settings-group-empty settings-archive-empty" role="status">
-              <span>{noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}</span>
-              {noMatches || isTouchWebShell() ? null : (
-                <span className="settings-archive-empty-hint">{t("settings.archiveHint")}</span>
-              )}
-            </div>
+            <SettingsEmptyState
+              title={noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
+              description={noMatches ? undefined : t("settings.archiveHint")}
+            />
           </div>
         ) : (
           <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
