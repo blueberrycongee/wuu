@@ -8,7 +8,7 @@ import { sideThreadMessagesToTurns } from "../SideThreadTurns";
 import { buildComposerSlashCommands } from "../ComposerSlashCommands";
 import { createComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
 import { hasAuthenticatedProvider } from "../RuntimeHelpers";
-import { translateCurrent as t } from "../i18n";
+import { getActiveLocale, translateCurrent as t } from "../i18n";
 import { createImmutableSnapshotProjector } from "./ImmutableSnapshot";
 
 const names = new Set<keyof Actions>(["side.open", "side.close", "side.set-draft", "side.set-selection", "side.send", "side.interrupt", "side.reset", "context-chat.submit"]);
@@ -36,9 +36,16 @@ export class ApplicationSideConversation {
   private selectionAbort?: AbortController;
   private syncing = false;
   constructor(private readonly host: ApplicationSideConversationHost) { this.side = new SideThreadOwner(this.options()); }
+  private commandCache?: { activeContext: AppState["activeContext"]; initialized: AppState["initialized"]; locale: string; commands: ReturnType<typeof buildComposerSlashCommands> };
   private commands() {
-    const state = this.host.getState();
-    return buildComposerSlashCommands({ activeContext: state.activeContext, initialized: state.initialized, running: false }).filter(command => command.action === "open-side-thread");
+    // Every snapshot read asks for these; rebuilding the localized catalog per
+    // publication showed up in profiles while background sessions streamed.
+    const state = this.host.getState(), locale = getActiveLocale();
+    const cached = this.commandCache;
+    if (cached && cached.activeContext === state.activeContext && cached.initialized === state.initialized && cached.locale === locale) return cached.commands;
+    const commands = buildComposerSlashCommands({ activeContext: state.activeContext, initialized: state.initialized, running: false }).filter(command => command.action === "open-side-thread");
+    this.commandCache = { activeContext: state.activeContext, initialized: state.initialized, locale, commands };
+    return commands;
   }
   private options() {
     const state = this.host.getState(), activeThreadId = activeThreadForState(state)?.id;

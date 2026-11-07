@@ -67,6 +67,7 @@ import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPre
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { createConversationThreadProjector, createConversationTurnsProjector } from "./ApplicationSnapshots";
+import { retainUnchangedSnapshotFields } from "./ImmutableSnapshot";
 
 export interface ApplicationShellSelection {
   readonly plugin_id: string;
@@ -78,6 +79,11 @@ export type ShellInitializeResult = InitializeResult & { application_shell?: App
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
 /** Only a committed selected-graph change carries presentation across preparation. */
 class ApplicationGraphHandoff extends PluginLifecycleCancellationError {}
+
+// Background sessions publish coalesced live text at reading cadence, not frame cadence.
+const BACKGROUND_STREAM_PUBLISH_INTERVAL_MS = 250;
+// Fields rebuilt from their own stores or changed on every publication by contract.
+const VOLATILE_SNAPSHOT_FIELDS: ReadonlySet<keyof ApplicationSnapshotV1> = new Set<keyof ApplicationSnapshotV1>(["revision"]);
 
 export class ApplicationController implements HostApplicationService {
   readonly contractVersion = 1 as const;
@@ -472,6 +478,7 @@ export class ApplicationController implements HostApplicationService {
     try { this.submissionOwner.reconcile(); } finally { this.reconcilingSubmission = false; }
   }
   private streamPublication?: number;
+  private backgroundStreamPublication?: ReturnType<typeof setTimeout>;
 
   constructor(state?: AppState, private readonly dependencies?: { readonly applicationProviderId?: string; readonly contributions: UIContributionRegistryV1; readonly workbench: ApplicationWorkbenchV1 }) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
@@ -733,6 +740,8 @@ export class ApplicationController implements HostApplicationService {
       this.subscriptions.splice(0).reverse().forEach(stop => stop());
       if (this.streamPublication !== undefined) cancelAnimationFrame(this.streamPublication);
       this.streamPublication = undefined;
+      if (this.backgroundStreamPublication !== undefined) clearTimeout(this.backgroundStreamPublication);
+      this.backgroundStreamPublication = undefined;
     };
   }
 
@@ -822,13 +831,22 @@ export class ApplicationController implements HostApplicationService {
     this.submissionOwner?.receive(event);
     if (!serverEventTargetsActiveContext(event, this.state)) return;
     const handling = handleStreamingNotification(event, this.state);
-    if (handling === "stream" || handling === "background-stream") {
+    if (handling === "stream") {
       // Snapshot readers receive coalesced live text without forcing the default
       // shell's structural state to update for every token.
-      if (this.streamPublication === undefined) this.streamPublication = requestAnimationFrame(() => {
-        this.streamPublication = undefined;
-        this.publish();
-      });
+      this.scheduleStreamPublication();
+      return;
+    }
+    if (handling === "background-stream") {
+      // Nobody is reading a background session's live text frame by frame. Publishing
+      // every token still rerenders the whole shell, so a few sessions running in
+      // other tabs would keep the renderer busy for as long as they stream.
+      if (this.streamPublication === undefined && this.backgroundStreamPublication === undefined) {
+        this.backgroundStreamPublication = setTimeout(() => {
+          this.backgroundStreamPublication = undefined;
+          this.publish();
+        }, BACKGROUND_STREAM_PUBLISH_INTERVAL_MS);
+      }
       return;
     }
     if (handling === "skip") return;
@@ -838,6 +856,18 @@ export class ApplicationController implements HostApplicationService {
       return;
     }
     this.updateState(state => reduceServerEvent(state, event));
+  }
+
+  private scheduleStreamPublication(): void {
+    if (this.streamPublication !== undefined) return;
+    if (this.backgroundStreamPublication !== undefined) {
+      clearTimeout(this.backgroundStreamPublication);
+      this.backgroundStreamPublication = undefined;
+    }
+    this.streamPublication = requestAnimationFrame(() => {
+      this.streamPublication = undefined;
+      this.publish();
+    });
   }
 
   private flushBackgroundEvents(): void {
@@ -1724,7 +1754,8 @@ export class ApplicationController implements HostApplicationService {
 
   private publish(snapshot?: ApplicationSnapshotV1): void {
     this.revision++;
-    this.snapshot = snapshot ? Object.freeze({ ...snapshot, revision: this.revision }) : this.project();
+    const next = snapshot ? Object.freeze({ ...snapshot, revision: this.revision }) : this.project();
+    this.snapshot = retainUnchangedSnapshotFields(this.snapshot, next, VOLATILE_SNAPSHOT_FIELDS);
     this.desktopOwner?.syncPet();
     for (const listener of this.listeners) listener();
   }
