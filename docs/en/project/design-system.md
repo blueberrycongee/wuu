@@ -39,7 +39,7 @@ These are internal renderer roles, not all public API promises. Extensions use t
 
 ## Product defaults
 
-Offer complete choices rather than visual tuning controls. Users choose a shell skin or local image, content theme, light/dark mode and readable fonts. Hide the content-theme chooser when no alternative is installed. Blur, image strength, crop position, materials, corners and shadows are product decisions. Existing saved pictures adopt the current treatment. Accessibility preferences remain independent.
+Offer complete choices rather than visual tuning controls. Users choose a shell skin (with a local image when that skin shows one), content theme, light/dark mode and readable fonts. Hide the content-theme chooser when no alternative is installed. Blur, image strength, crop position, materials, corners and shadows are product decisions. Existing saved pictures adopt the current treatment. Accessibility preferences remain independent.
 
 ## Color
 
