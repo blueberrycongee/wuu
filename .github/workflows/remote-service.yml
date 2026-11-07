@@ -28,8 +28,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: remote-service-${{ github.ref }}
-  cancel-in-progress: true
+  group: remote-service-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:

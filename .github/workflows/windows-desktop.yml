@@ -41,8 +41,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-desktop-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: windows-desktop-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-windows-x64:
