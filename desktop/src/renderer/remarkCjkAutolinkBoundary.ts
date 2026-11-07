@@ -76,6 +76,14 @@ export function cjkAutolinkUrlEnd(url: string): number {
   return depth > 0 ? firstUnmatchedOpen : url.length;
 }
 
+// GFM drops these characters from the end of a literal autolink (`?`, `!`,
+// `.`, `,`, `:`, `*`, `_`, `~`). micromark only applies that strip at the end
+// of the link token, so when CJK text follows the URL without whitespace a
+// closing `**` or `__` stays glued inside the href. Once the CJK trim above
+// finds where the URL really ends, the same trailing strip runs at that
+// boundary.
+const GFM_TRAILING_PUNCTUATION = new Set(["?", "!", ".", ",", ":", "*", "_", "~"]);
+
 function isAutolinkLiteral(node: MdastNode, source: string): boolean {
   if (node.type !== "link" || typeof node.url !== "string") {
     return false;
@@ -104,7 +112,10 @@ function trimLinkNode(node: MdastNode): string {
   if (!text || typeof text.value !== "string" || typeof node.url !== "string") {
     return "";
   }
-  const end = cjkAutolinkUrlEnd(text.value);
+  let end = cjkAutolinkUrlEnd(text.value);
+  while (end > 0 && GFM_TRAILING_PUNCTUATION.has(text.value[end - 1])) {
+    end -= 1;
+  }
   if (end >= text.value.length) {
     return "";
   }

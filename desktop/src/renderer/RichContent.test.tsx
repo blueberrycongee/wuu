@@ -664,6 +664,22 @@ describe("RichContent raw HTML and heading levels", () => {
       expect(paragraph?.querySelectorAll("a.rich-web-link")).toHaveLength(1);
       expect(paragraph?.textContent).not.toContain("**");
     });
+
+    it("repairs bold wrapping a bare URL whose closing markers are glued to CJK text", () => {
+      // The autolink tokenizer swallows the `**` glued to `（` into the link
+      // token, so emphasis never pairs and both marker runs render literally.
+      render(<RichContent text={"完成。PR 已创建：**🔗 https://github.com/blueberrycongee/wuu/pull/1247**（分支 chore/calver）"} />);
+
+      const paragraph = container.querySelector(".rich-paragraph");
+      expect(paragraph?.textContent).not.toContain("**");
+      const strong = paragraph?.querySelector("strong");
+      expect(strong?.textContent).toBe("🔗 https://github.com/blueberrycongee/wuu/pull/1247");
+      const link = strong?.querySelector("a.rich-web-link");
+      expect(link?.getAttribute("href")).toBe("https://github.com/blueberrycongee/wuu/pull/1247");
+      expect(link?.textContent).toBe("https://github.com/blueberrycongee/wuu/pull/1247");
+      expect(paragraph?.querySelectorAll("a.rich-web-link")).toHaveLength(1);
+      expect(paragraph?.textContent).toBe("完成。PR 已创建：🔗 https://github.com/blueberrycongee/wuu/pull/1247（分支 chore/calver）");
+    });
   });
 });
 
