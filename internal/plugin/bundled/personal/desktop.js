@@ -150,259 +150,6 @@ var personalDesktop = (() => {
     };
   }
 
-  // plugins/personal/ui/connector-oauth.ts
-  var permissions = {
-    gmail: [["\u8BFB\u53D6\u90AE\u4EF6", "https://www.googleapis.com/auth/gmail.readonly"], ["\u521B\u5EFA\u8349\u7A3F", "https://www.googleapis.com/auth/gmail.compose"], ["\u53D1\u9001\u90AE\u4EF6", "https://www.googleapis.com/auth/gmail.send"]],
-    "google-calendar": [["\u8BFB\u53D6\u4E8B\u4EF6", "https://www.googleapis.com/auth/calendar.events.readonly"], ["\u521B\u5EFA\u3001\u6539\u671F\u3001\u53D6\u6D88\u4E8B\u4EF6", "https://www.googleapis.com/auth/calendar.events"]],
-    drive: [["\u5DF2\u9009\u62E9\u6587\u4EF6", "https://www.googleapis.com/auth/drive.file"]],
-    notion: [["\u8BFB\u53D6\u5185\u5BB9", "read_content"], ["\u8FFD\u52A0\u62A5\u544A", "insert_content"]],
-    slack: [["\u5DF2\u9009\u516C\u5F00\u9891\u9053\u5386\u53F2", "channels:history"], ["\u5DF2\u9009\u79C1\u6709\u9891\u9053\u5386\u53F2", "groups:history"]],
-    feishu: [["\u6240\u9009\u4F1A\u8BDD\u6D88\u606F", "im:message:readonly"]]
-  };
-  function result(raw) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("invalid_oauth_status");
-    const value = raw;
-    if (typeof value.attempt_id !== "string" || typeof value.state !== "string") throw Error("invalid_oauth_status");
-    return value;
-  }
-  function createConnectorOAuth(react) {
-    const h = react.createElement;
-    return function OAuth({ provider, service, onConnected, existing }) {
-      const [resource, setResource] = react.useState(existing?.resources.join("\n") ?? (provider === "gmail" ? "me" : "")), [selected, setSelected] = react.useState(existing?.scopes ?? [permissions[provider]?.[0]?.[1]].filter(Boolean)), [allowWork, setAllowWork] = react.useState(false), [state, setState] = react.useState("idle"), [message, setMessage] = react.useState(""), [cancellationUnknown, setCancellationUnknown] = react.useState(false);
-      const active = react.useRef(true), pending = react.useRef(false), attempt = react.useRef(""), generation = react.useRef(0), timer = react.useRef(void 0);
-      const cancelAttempt = async (id) => {
-        try {
-          await service.cancel({ attempt_id: id });
-        } catch {
-          if (active.current) setCancellationUnknown(true);
-        }
-      };
-      const cancel = async () => {
-        const epoch = ++generation.current;
-        clearTimeout(timer.current);
-        if (attempt.current) {
-          const id = attempt.current;
-          attempt.current = "";
-          await cancelAttempt(id);
-        }
-        if (active.current && epoch === generation.current) {
-          setState("idle");
-          pending.current = false;
-        }
-      };
-      react.useEffect(() => {
-        active.current = true;
-        return () => {
-          active.current = false;
-          void cancel();
-        };
-      }, [service]);
-      const begin = async () => {
-        if (pending.current) return;
-        const resources = resource.split(/\n|,/).map((s) => s.trim()).filter(Boolean);
-        if (!resources.length || !selected.length) {
-          setMessage("\u8BF7\u9009\u62E9\u6743\u9650\u5E76\u586B\u5199\u660E\u786E\u7684\u8D44\u6E90 ID\u3002");
-          return;
-        }
-        pending.current = true;
-        const epoch = ++generation.current, isCurrent = () => active.current && epoch === generation.current;
-        setState("starting");
-        setMessage("");
-        try {
-          const work = provider === "slack" || provider === "feishu";
-          const initial = result(await service.start({ provider, connection_id: existing?.connection_id ?? `${provider}-${crypto.randomUUID()}`, ...existing ? { account_id: existing.account_id } : {}, domain: work ? "work" : "personal", scopes: selected, resources, ...work ? { work_read_policy: allowWork ? "selected_resources" : "confirm_each_request" } : {} }));
-          if (!isCurrent()) {
-            await cancelAttempt(initial.attempt_id);
-            return;
-          }
-          attempt.current = initial.attempt_id;
-          setState(initial.state);
-          setMessage("\u8BF7\u5728\u5BBF\u4E3B\u6253\u5F00\u7684\u6388\u6743\u9875\u5B8C\u6210\u9009\u62E9\uFF1B\u6B64\u5904\u4E0D\u4F1A\u63A5\u6536\u5BC6\u7801\u6216\u4EE4\u724C\u3002");
-          const poll = async () => {
-            try {
-              const current = result(await service.attempt({ attempt_id: initial.attempt_id }));
-              if (!isCurrent()) return;
-              setState(current.state);
-              if (["pending", "exchanging"].includes(current.state)) {
-                timer.current = setTimeout(() => void poll(), 750);
-                return;
-              }
-              pending.current = false;
-              attempt.current = "";
-              if (current.state === "connected") {
-                setMessage("\u6388\u6743\u5DF2\u4FDD\u5B58\u3002\u8BF7\u5237\u65B0\u5E76\u6838\u5B9E\u8D44\u6E90\u4E0E\u80FD\u529B\u3002");
-                onConnected();
-              } else setMessage(`\u6388\u6743\u672A\u5B8C\u6210\uFF1A${current.error_code ?? current.state}`);
-            } catch {
-              if (isCurrent()) {
-                setMessage("\u6388\u6743\u72B6\u6001\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\uFF1B\u8BF7\u53D6\u6D88\u540E\u518D\u68C0\u67E5\u3002");
-                setState("unknown");
-              }
-            }
-          };
-          void poll();
-        } catch (error) {
-          if (isCurrent()) {
-            pending.current = false;
-            setState("idle");
-            const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
-            setMessage(code === "oauth_client_not_configured" ? "\u5BBF\u4E3B\u5C1A\u672A\u914D\u7F6E\u6B64\u670D\u52A1\u7684 OAuth \u5BA2\u6237\u7AEF\u3002\u8BF7\u5148\u5B8C\u6210\u5B89\u5168\u914D\u7F6E\uFF1B\u8D26\u53F7\u5C1A\u672A\u63A5\u901A\u3002" : `\u65E0\u6CD5\u5F00\u59CB\u6388\u6743${code ? `\uFF08${code}\uFF09` : ""}\u3002\u6CA1\u6709\u786E\u8BA4\u8D26\u53F7\u5DF2\u63A5\u901A\u3002`);
-          }
-        }
-      };
-      const busy = !["idle", "connected", "failed", "cancelled", "expired"].includes(state);
-      return h(
-        "div",
-        { className: "personal-connector-oauth" },
-        h("label", null, "\u4EC5\u6388\u6743\u8FD9\u4E9B\u8D44\u6E90 ID\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF09", h("textarea", { value: resource, disabled: busy, rows: 2, onChange: (e) => setResource(e.target.value) })),
-        h("fieldset", { disabled: busy }, h("legend", null, provider === "notion" ? "\u9700\u6838\u5B9E\u7684\u96C6\u6210\u80FD\u529B\uFF08\u987B\u5728 Notion \u96C6\u6210\u8BBE\u7F6E\u914D\u7F6E\uFF09" : "\u6240\u9700\u6743\u9650"), ...(permissions[provider] ?? []).map(([label, scope]) => h("label", { key: scope }, h("input", { type: "checkbox", checked: selected.includes(scope), onChange: () => setSelected((previous) => previous.includes(scope) ? previous.filter((s) => s !== scope) : [...previous, scope]) }), label))),
-        ["slack", "feishu"].includes(provider) ? h("label", null, h("input", { type: "checkbox", checked: allowWork, disabled: busy, onChange: () => setAllowWork((v) => !v) }), "\u5141\u8BB8 Personal \u4EFB\u52A1\u8BFB\u53D6\u6240\u9009\u5DE5\u4F5C\u9891\u9053\uFF1B\u4E0D\u81EA\u52A8\u7EB3\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002\u672A\u52FE\u9009\u5219\u9010\u6B21\u786E\u8BA4\u3002") : null,
-        h("div", { className: "personal-connectors-controls" }, h("button", { "data-oauth-start": true, disabled: busy, onClick: () => void begin() }, existing ? "\u91CD\u65B0\u6388\u6743" : "\u5F00\u59CB\u6388\u6743"), busy ? h("button", { onClick: () => void cancel() }, "\u53D6\u6D88\u6388\u6743") : null),
-        message ? h("p", { role: "status" }, message) : null,
-        cancellationUnknown ? h("p", { role: "alert", "data-oauth-cancellation-unknown": true }, "\u5148\u524D\u6388\u6743\u7684\u53D6\u6D88\u5C1A\u672A\u6838\u5B9E\uFF1B\u8BF7\u5728\u6388\u6743\u9875\u505C\u6B62\u64CD\u4F5C\uFF0C\u5E76\u5237\u65B0\u8FDE\u63A5\u72B6\u6001\u6838\u5BF9\u662F\u5426\u5DF2\u63A5\u901A\u3002") : null
-      );
-    };
-  }
-  var connectorOAuthStyles = ".personal-connector-oauth{margin-top:var(--space-3)}.personal-connector-oauth>label{display:flex;flex-direction:column;gap:var(--space-2)}.personal-connector-oauth textarea{font:inherit;width:100%;box-sizing:border-box}.personal-connector-oauth fieldset{border:0;padding:0;margin:var(--space-3) 0;display:flex;gap:var(--space-3);flex-wrap:wrap}.personal-connector-oauth fieldset label{display:flex;align-items:center;gap:var(--space-2)}.personal-connector-oauth button{font:inherit}";
-
-  // plugins/personal/ui/connectors-panel.ts
-  var providers = [["gmail", "Gmail", "\u90AE\u4EF6\u3001\u7EBF\u7A0B\u4E0E\u9644\u4EF6\uFF1B\u8349\u7A3F\u548C\u53D1\u9001"], ["notion", "Notion", "\u9875\u9762\u3001\u6570\u636E\u5E93\u4E0E\u62A5\u544A\u4FDD\u5B58"], ["drive", "Google Drive", "\u5DF2\u6388\u6743\u6587\u4EF6\u3001Docs \u4E0E PDF"], ["calendar", "Google Calendar", "\u521B\u5EFA\u3001\u6539\u671F\u4E0E\u53D6\u6D88"], ["slack", "Slack", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u641C\u7D22\u3001\u6D88\u606F\u4E0E\u63D0\u53CA"], ["feishu", "\u98DE\u4E66", "\u5DE5\u4F5C\u8D44\u6599\uFF1A\u5DF2\u6388\u6743\u7FA4\u6D88\u606F"]];
-  var states = { awaiting_confirmation: "\u7B49\u5F85\u4F60\u7684\u786E\u8BA4", completed: "\u5DF2\u5B8C\u6210", failed: "\u6267\u884C\u5931\u8D25", rejected: "\u5DF2\u62D2\u7EDD", uncertain: "\u7ED3\u679C\u672A\u77E5\uFF0C\u5148\u6838\u5BF9", executing: "\u6B63\u5728\u6267\u884C", cancelled: "\u5DF2\u53D6\u6D88" };
-  function object(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid connector response");
-    return value;
-  }
-  function connections(raw) {
-    const rows = object(raw).connections;
-    if (!Array.isArray(rows) || rows.length > 100) throw Error("Invalid connector list");
-    return rows.map((row) => {
-      const v = object(row);
-      if (!["connection_id", "provider", "account_id", "domain", "state"].every((key) => typeof v[key] === "string") || !Array.isArray(v.resources) || !v.resources.every((x) => typeof x === "string") || !Array.isArray(v.scopes) || !v.scopes.every((x) => typeof x === "string")) throw Error("Invalid connector identity");
-      return structuredClone(v);
-    });
-  }
-  function actions(raw) {
-    const rows = object(raw).actions;
-    if (!Array.isArray(rows) || rows.length > 1e3) throw Error("Invalid connector actions");
-    return rows.map((row) => {
-      const v = object(row);
-      if (typeof v.state !== "string" || typeof v.action_id !== "string") throw Error("Invalid connector action");
-      for (const key of ["digest", "summary", "connection_id", "operation", "arguments_json", "account_id", "code"]) if (v[key] !== void 0 && typeof v[key] !== "string") throw Error("Invalid connector action");
-      return structuredClone(v);
-    });
-  }
-  function confirmable(a) {
-    if (a.state !== "awaiting_confirmation" || !a.digest || !/^[a-f0-9]{64}$/.test(a.digest) || !a.arguments_json) return false;
-    try {
-      return !!object(JSON.parse(a.arguments_json));
-    } catch {
-      return false;
-    }
-  }
-  function capabilitySummary(c) {
-    const granted = (scope) => c.state === "connected" && c.scopes.includes(scope);
-    const read = { gmail: ["https://www.googleapis.com/auth/gmail.readonly"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events.readonly", "https://www.googleapis.com/auth/calendar.events"], drive: ["https://www.googleapis.com/auth/drive.file"], notion: ["read_content"], slack: ["channels:history", "groups:history"], feishu: ["im:message:readonly"] };
-    const write = { gmail: ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.compose"], "google-calendar": ["https://www.googleapis.com/auth/calendar.events"], notion: ["insert_content"] };
-    const reads = (read[c.provider] ?? []).filter(granted), writes = (write[c.provider] ?? []).filter(granted);
-    return `\u8BFB\u53D6\uFF1A${reads.length ? "\u5728\u6240\u9009\u8D44\u6E90\u5185\u9010\u64CD\u4F5C\u6821\u9A8C" : "\u7F3A\u5C11\u8BFB\u53D6\u6388\u6743"}\uFF1B\u5199\u5165\uFF1A${writes.length ? "\u5DF2\u6388\u6743\u80FD\u529B\u4ECD\u9700\u7CBE\u786E\u786E\u8BA4" : write[c.provider] ? "\u672A\u83B7\u5199\u5165\u6388\u6743" : "\u672C\u8FDE\u63A5\u5668\u53EA\u8BFB"}`;
-  }
-  function createConnectorsPanel(react, ui) {
-    const h = react.createElement, Button = ui.Button, OAuth = createConnectorOAuth(react);
-    return function Connectors({ service, conversation = false }) {
-      const [rows, setRows] = react.useState([]), [saved, setSaved] = react.useState([]), [error, setError] = react.useState(""), [loading, setLoading] = react.useState(true), [busy, setBusy] = react.useState(false), [uncertain, setUncertain] = react.useState(false), [disconnectID, setDisconnectID] = react.useState("");
-      const gate = react.useRef(false), alive = react.useRef(true), generation = react.useRef(0);
-      const load = async () => {
-        const n = ++generation.current;
-        setLoading(true);
-        try {
-          const [list, history] = await Promise.all([conversation ? Promise.resolve({ connections: [] }) : service.list(), service.actions()]);
-          if (!alive.current || n !== generation.current) return;
-          setRows(connections(list));
-          setSaved(actions(history));
-          setError("");
-          setUncertain(false);
-        } catch {
-          if (alive.current && n === generation.current) setError("\u6682\u65F6\u65E0\u6CD5\u6838\u5B9E\u8FDE\u63A5\u6216\u52A8\u4F5C\u72B6\u6001\uFF0C\u8BF7\u5237\u65B0\u3002");
-        } finally {
-          if (alive.current && n === generation.current) setLoading(false);
-        }
-      };
-      react.useEffect(() => {
-        alive.current = true;
-        void load();
-        const timer = conversation ? setInterval(() => {
-          if (!gate.current) void load();
-        }, 5e3) : void 0;
-        return () => {
-          alive.current = false;
-          generation.current++;
-          clearInterval(timer);
-        };
-      }, [service]);
-      const mutate = async (work) => {
-        if (gate.current || uncertain) return;
-        gate.current = true;
-        setBusy(true);
-        setError("");
-        try {
-          await work();
-          if (alive.current) await load();
-        } catch {
-          if (alive.current) {
-            setUncertain(true);
-            setError("\u672A\u6536\u5230\u53EF\u6838\u5B9E\u56DE\u6267\u3002\u8BF7\u5148\u5237\u65B0\u6838\u5BF9\u5DF2\u4FDD\u5B58\u72B6\u6001\uFF0C\u4E0D\u8981\u91CD\u590D\u64CD\u4F5C\u3002");
-          }
-        } finally {
-          gate.current = false;
-          if (alive.current) setBusy(false);
-        }
-      };
-      const visible = conversation ? saved.filter((a) => ["awaiting_confirmation", "uncertain", "executing"].includes(a.state)) : saved;
-      if (conversation && !visible.length) return null;
-      return h(
-        "section",
-        { className: "personal-connectors", "data-personal-connectors": conversation ? "conversation" : "settings" },
-        h("div", { className: "personal-connectors-heading" }, h("h3", null, conversation ? "\u8FDE\u63A5\u5668\u52A8\u4F5C" : "\u8D26\u53F7\u4E0E\u8D44\u6599"), h(Button, { disabled: busy || loading, onClick: () => void load(), "data-connector-refresh": true }, loading ? "\u6B63\u5728\u6838\u5BF9\u2026" : "\u5237\u65B0\u72B6\u6001")),
-        error ? h("p", { role: "alert" }, error) : null,
-        !conversation ? h("p", null, "\u8BFB\u53D6\u4EC5\u9650\u5DF2\u6388\u6743\u8303\u56F4\uFF1B\u5916\u90E8\u5199\u5165\u5148\u6838\u5BF9\u7CBE\u786E\u5185\u5BB9\u3002\u5DE5\u4F5C\u8D44\u6599\u5355\u72EC\u9694\u79BB\uFF0C\u4E0D\u81EA\u52A8\u52A0\u5165\u4E2A\u4EBA\u8BB0\u5FC6\u3002") : null,
-        !conversation ? h("div", { className: "personal-connectors-list" }, ...providers.map(([provider, title, description]) => {
-          const matching = rows.filter((c) => c.provider === provider || provider === "calendar" && c.provider === "google-calendar" || provider === "drive" && c.provider === "google-drive");
-          return h(
-            "div",
-            { key: provider, className: "personal-connector-provider" },
-            h("div", { className: "personal-connector-title" }, h("h4", null, title), h("span", null, matching.some((c) => c.state === "connected") ? "\u5DF2\u8FDE\u63A5" : "\u672A\u63A5\u901A")),
-            h("p", null, description),
-            matching.length ? matching.map((c) => h(
-              "div",
-              { key: c.connection_id },
-              h("p", null, `${c.account_id} \xB7 ${c.domain === "work" ? "\u5DE5\u4F5C\u9694\u79BB\u57DF" : "\u4E2A\u4EBA\u57DF"} \xB7 ${c.state}`),
-              h("p", null, `\u8303\u56F4\uFF1A${c.resources.join("\u3001") || "\u5C1A\u672A\u9009\u62E9\u8D44\u6E90"}`),
-              h("p", null, capabilitySummary(c)),
-              h("p", null, "\u53D8\u5316\u6BD4\u8F83\uFF1A\u8C03\u7528\u65F6\u6BD4\u8F83\u540C\u4E00\u6267\u884C\u4F1A\u8BDD\u5185\u7684\u6709\u754C\u9875\uFF1B\u65B0\u4EFB\u52A1\u53E6\u5EFA\u57FA\u7EBF\uFF0C\u65E0\u5E38\u9A7B\u63A8\u9001\u6216\u5168\u91CF\u540C\u6B65"),
-              disconnectID === c.connection_id ? h("div", { className: "personal-connectors-controls" }, h("span", null, "\u65AD\u5F00\u540E\u505C\u6B62\u6B64\u8D26\u53F7\u540E\u7EED\u8C03\u7528\u3002"), h(Button, { disabled: busy || uncertain, onClick: () => void mutate(async () => {
-                const value = await service.disconnect({ connection_id: c.connection_id });
-                setDisconnectID("");
-                return value;
-              }) }, "\u786E\u8BA4\u65AD\u5F00"), h(Button, { disabled: busy, onClick: () => setDisconnectID("") }, "\u53D6\u6D88")) : h(Button, { disabled: busy || uncertain, onClick: () => setDisconnectID(c.connection_id) }, "\u65AD\u5F00\u8FDE\u63A5")
-            )) : h("p", { className: "personal-connectors-muted" }, "\u9700\u5148\u5728\u5BBF\u4E3B\u5B89\u5168\u914D\u7F6E\u8D26\u53F7\u548C\u8D44\u6E90\u8303\u56F4\uFF1B\u5C1A\u672A\u8FDB\u884C\u771F\u5B9E\u8D26\u53F7\u9A8C\u6536\u3002"),
-            service.oauth ? h("details", null, h("summary", null, matching.length ? "\u7BA1\u7406\u6388\u6743\u8303\u56F4" : "\u914D\u7F6E\u8D26\u53F7\u6388\u6743"), h(OAuth, { provider: provider === "calendar" ? "google-calendar" : provider, service: service.oauth, onConnected: () => void load(), existing: matching[0] })) : null
-          );
-        })) : null,
-        visible.length ? h("div", { className: "personal-connectors-actions" }, !conversation ? h("h3", null, "\u52A8\u4F5C\u4E0E\u56DE\u6267") : null, ...visible.map((a) => h(
-          "article",
-          { key: a.action_id, "data-connector-state": a.state, className: "personal-connector-action" },
-          h("div", { className: "personal-connector-title" }, h("h4", null, a.summary || a.operation || "\u8FDE\u63A5\u5668\u52A8\u4F5C"), h("span", null, states[a.state] || "\u5F85\u6838\u5B9E\u72B6\u6001")),
-          h("p", null, `${a.account_id || a.connection_id || ""} \xB7 ${a.operation || ""}`),
-          a.arguments_json ? h("details", { open: a.state === "awaiting_confirmation" }, h("summary", null, "\u6838\u5BF9\u5B8C\u6574\u64CD\u4F5C\u5185\u5BB9"), h("pre", null, a.arguments_json)) : null,
-          a.state === "uncertain" ? h("p", null, "\u5916\u90E8\u670D\u52A1\u53EF\u80FD\u5DF2\u63A5\u53D7\u6B64\u64CD\u4F5C\u3002\u6B64\u5904\u4E0D\u4F1A\u91CD\u53D1\uFF1B\u5148\u5230\u6765\u6E90\u6838\u5BF9\u7ED3\u679C\u3002") : null,
-          a.state === "awaiting_confirmation" ? h("div", { className: "personal-connectors-controls" }, h(Button, { "data-connector-approve": true, disabled: busy || uncertain || !confirmable(a), onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: true })) }, "\u4EC5\u6267\u884C\u8FD9\u4E00\u6B21"), h(Button, { "data-connector-reject": true, disabled: busy || uncertain || !a.digest, onClick: () => void mutate(() => service.decide({ action_id: a.action_id, digest: a.digest, approve: false })) }, "\u62D2\u7EDD")) : null,
-          a.code ? h("p", null, `\u72B6\u6001\u4EE3\u7801\uFF1A${a.code}`) : null
-        ))) : null
-      );
-    };
-  }
-  var connectorsStyles = connectorOAuthStyles + `.personal-connectors{font:inherit;margin-block:var(--space-5,20px);}.personal-connectors h3{color:var(--ink);font-size:var(--font-title,16px);font-weight:var(--weight-semibold,600);letter-spacing:-0.012em;margin:0;}.personal-connectors h4{color:var(--ink);font-size:var(--font-ui,15px);font-weight:var(--weight-medium,500);margin:0;}.personal-connectors p{margin:var(--space-1,4px) 0;color:var(--ink-tertiary);font-size:var(--font-sm,14px);overflow-wrap:anywhere;}.personal-connectors-heading,.personal-connector-title{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3,12px);flex-wrap:wrap;}.personal-connector-title span{font-size:var(--font-xs,12px);color:var(--ink-tertiary);padding:1px 8px;border-radius:var(--radius-pill,999px);background:var(--surface-2);}.personal-connectors-list{display:flex;flex-direction:column;margin-block:var(--space-3,12px);border-top:1px solid var(--hairline-soft);}.personal-connector-provider{padding-block:var(--settings-row-pad-block,12px);border-bottom:1px solid var(--hairline-soft);min-width:0;}.personal-connector-provider details{margin-top:var(--space-2);font-size:var(--font-sm,14px);color:var(--ink-soft);}.personal-connector-provider summary{cursor:pointer;color:var(--ink-tertiary);font-weight:var(--weight-medium,500);}.personal-connectors-controls{display:flex;gap:var(--space-2,8px);align-items:center;flex-wrap:wrap;margin-top:var(--space-2,8px);}.personal-connectors-muted{color:var(--ink-tertiary);font-size:var(--font-xs,12px)!important;}.personal-connector-action{border-top:1px solid var(--hairline-soft);padding-block:var(--space-3,12px);min-width:0;}.personal-connector-action pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18em;overflow:auto;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3,12px);background:var(--surface-2);border-radius:var(--radius-sm,6px);}.personal-connectors [role=alert]{color:var(--danger);border-left:2px solid var(--danger);padding-left:var(--space-3,12px);}.personal-connectors button{white-space:normal;}`;
-
   // plugins/personal/ui/action-review-panel.ts
   var ReviewContractError = class extends Error {
   };
@@ -738,7 +485,7 @@ var personalDesktop = (() => {
     };
   }
 
-  // plugins/personal-calendar/src/host-bridge.ts
+  // plugins/personal/src/host-bridge.ts
   function unwrapPersonalHost(value) {
     if (!value || typeof value !== "object" || !("ok" in value)) throw new Error("Invalid Personal host response");
     if (value.ok === true && "value" in value) return value.value;
@@ -750,16 +497,11 @@ var personalDesktop = (() => {
 
   // plugins/personal/ui/settings-panels.ts
   function createSettingsPanels(react, ui, invoke) {
-    const h = react.createElement, ReviewPanel = createPersonalReviewPanel(react, ui), ConnectorsPanel = createConnectorsPanel(react, ui);
+    const h = react.createElement, ReviewPanel = createPersonalReviewPanel(react, ui);
     const host = async (method, input) => unwrapPersonalHost(await invoke(method, input));
     const reviewService = { list: () => host("review.list"), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
-    const connectorService = { oauth: { start: (input) => host("connectors.start", input), attempt: (input) => host("connectors.attempt", input), cancel: (input) => host("connectors.cancel", input) }, list: () => host("connectors.list"), actions: () => host("connectors.actions"), decide: (input) => host("connectors.decide", input), disconnect: (input) => host("connectors.disconnect", input) };
-    function Connections() {
-      return h("section", { "data-personal-connections": true }, h("h2", null, "\u8FDE\u63A5\u4E0E\u5DE5\u5177"), h(ConnectorsPanel, { service: connectorService }));
-    }
-    return { Connections, ConnectorConversation: () => h(ConnectorsPanel, { service: connectorService, conversation: true }), ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${connectorsStyles}
-${personalReviewStyles}
-.mosaic-settings>[data-personal-connections],.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}.mosaic-settings>[data-personal-connections]>h2{font:inherit;font-weight:600;margin:0 0 var(--space-5);}` };
+    return { ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${personalReviewStyles}
+.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}` };
   }
 
   // plugins/personal/ui/send-motion.js
@@ -1062,13 +804,8 @@ ${personalReviewStyles}
         "noOutputs": "Finished outputs will appear here",
         "showMore": "Show more",
         "showLess": "Show less",
-        "calendarReview": "Review calendar proposals",
         "applyingChanges": "Applying your changes; waiting for the previous run to stop before continuing.",
-        "calendarReadOnly": "Calendar changes are unavailable until an authorized connection is configured.",
-        "calendarUnconnected": "Calendar is not connected.",
-        "calendarProposed": "Waiting for your review",
         "confirmed": "Confirmed \xB7 awaiting execution",
-        "calendarUncertain": "Outcome needs verification",
         "reconciliation": "The external outcome still needs checking. Stopping does not undo completed actions."
       },
       "zh": {
@@ -1184,13 +921,8 @@ ${personalReviewStyles}
         "noOutputs": "\u5B8C\u6210\u7684\u8F93\u51FA\u4F1A\u663E\u793A\u5728\u8FD9\u91CC",
         "showMore": "\u663E\u793A\u66F4\u591A",
         "showLess": "\u6536\u8D77",
-        "calendarReview": "\u67E5\u770B\u65E5\u5386\u63D0\u6848",
         "applyingChanges": "\u6B63\u5728\u5E94\u7528\u4F60\u7684\u4FEE\u6539\uFF0C\u7B49\u4E0A\u4E00\u8F6E\u5904\u7406\u505C\u6B62\u540E\u7EE7\u7EED",
-        "calendarReadOnly": "\u5C1A\u672A\u914D\u7F6E\u6388\u6743\u8FDE\u63A5\uFF0C\u5F53\u524D\u65E0\u6CD5\u4FEE\u6539\u65E5\u5386\u3002",
-        "calendarUnconnected": "\u65E5\u5386\u5C1A\u672A\u8FDE\u63A5\u3002",
-        "calendarProposed": "\u7B49\u5F85\u4F60\u786E\u8BA4",
         "confirmed": "\u5DF2\u786E\u8BA4\uFF0C\u7B49\u5F85\u6267\u884C",
-        "calendarUncertain": "\u7ED3\u679C\u4ECD\u5F85\u6838\u5BF9",
         "reconciliation": "\u5916\u90E8\u7ED3\u679C\u4ECD\u9700\u6838\u5BF9\u3002\u505C\u6B62\u4E0D\u4F1A\u64A4\u9500\u5DF2\u7ECF\u53D1\u751F\u7684\u64CD\u4F5C\u3002"
       }
     };
@@ -1412,8 +1144,6 @@ ${personalReviewStyles}
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
-    .mosaic-calendar-proposals { margin-block:var(--space-5);padding-top:var(--space-3);border-top:1px solid var(--hairline-soft); }
-    .mosaic-calendar-proposals p { margin:var(--space-2) 0;color:var(--ink-muted); }
     @media(max-width:480px) { .mosaic-sidebar { right:8px;width:calc(100% - 16px); } .mosaic-panel-scroll { padding:16px; } }
   ` });
     const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
@@ -1495,8 +1225,8 @@ ${personalReviewStyles}
         const epoch = ++generation.current;
         setError("");
         setRecords(null);
-        void call("tasks.history", { task_id: taskId, requirements_revision: revision }).then((result2) => {
-          if (epoch === generation.current) setRecords(result2.records || []);
+        void call("tasks.history", { task_id: taskId, requirements_revision: revision }).then((result) => {
+          if (epoch === generation.current) setRecords(result.records || []);
         }).catch((cause) => {
           if (epoch === generation.current) setError(String(cause));
         });
@@ -1517,7 +1247,7 @@ ${personalReviewStyles}
     }
     function AgentHistorySearch({ agentId, name, t }) {
       const [query, setQuery] = React.useState(""), [from, setFrom] = React.useState(""), [until, setUntil] = React.useState("");
-      const [result2, setResult] = React.useState(null), [error, setError] = React.useState(""), [searching, setSearching] = React.useState(false);
+      const [result, setResult] = React.useState(null), [error, setError] = React.useState(""), [searching, setSearching] = React.useState(false);
       const [original, setOriginal] = React.useState(null), [originalError, setOriginalError] = React.useState(""), [reading, setReading] = React.useState(false);
       const generation = React.useRef(0), originalGeneration = React.useRef(0);
       React.useEffect(() => () => {
@@ -1580,7 +1310,7 @@ ${personalReviewStyles}
         }
       };
       const timestamp = (item) => h("p", { className: "mosaic-eyebrow", "data-history-timestamp": item.at || "unknown" }, item.at || t("unknownTimestamp"));
-      const matches = result2?.matches?.filter((item) => ["user", "assistant"].includes(item.role)) || [];
+      const matches = result?.matches?.filter((item) => ["user", "assistant"].includes(item.role)) || [];
       return h(
         "section",
         { className: "mosaic-history-search" },
@@ -1607,11 +1337,11 @@ ${personalReviewStyles}
         h("p", { className: "mosaic-eyebrow" }, t("historyDateHint")),
         invalidDates && h("p", { role: "alert" }, t("invalidDates")),
         error && h("p", { role: "alert" }, error),
-        result2 && h(
+        result && h(
           "section",
           { "data-history-search-results": true },
           h("h2", null, t("searchExcerpts")),
-          (result2.has_more || result2.budget_exhausted) && h("p", { "data-history-search-partial": true, role: "status" }, t("searchPartial")),
+          (result.has_more || result.budget_exhausted) && h("p", { "data-history-search-partial": true, role: "status" }, t("searchPartial")),
           !matches.length && h("p", null, t("searchEmpty")),
           matches.map((item) => h(
             "article",
@@ -1621,7 +1351,7 @@ ${personalReviewStyles}
             h(ConversationMessage, { role: item.role, content: item.excerpt || "", linkPolicy: "external-only" }),
             h(Button, { "data-history-hit": item.seq, disabled: reading, onClick: () => readOriginal(item.seq) }, t("viewOriginal"))
           )),
-          result2.next_cursor && h(Button, { "data-action": "more-agent-history", disabled: searching, onClick: () => search(result2.next_cursor) }, t("moreHistory"))
+          result.next_cursor && h(Button, { "data-action": "more-agent-history", disabled: searching, onClick: () => search(result.next_cursor) }, t("moreHistory"))
         ),
         originalError && h("p", { role: "alert", "data-history-original-error": true }, originalError),
         original && h(
@@ -1849,10 +1579,10 @@ ${personalReviewStyles}
       const modelKey = (value) => JSON.stringify([value.provider, value.model]);
       React.useEffect(() => {
         let active = true;
-        call("model.get").then((result2) => {
+        call("model.get").then((result) => {
           if (active) {
-            setModel(result2);
-            setSelectedModel(modelKey(result2));
+            setModel(result);
+            setSelectedModel(modelKey(result));
           }
         }).catch((cause) => {
           if (active) setModelError(String(cause));
@@ -1868,9 +1598,9 @@ ${personalReviewStyles}
         setModelSaving(true);
         setModelError("");
         try {
-          const result2 = await call("model.update", { provider: choice.provider, model: choice.model });
-          setModel(result2);
-          setSelectedModel(modelKey(result2));
+          const result = await call("model.update", { provider: choice.provider, model: choice.model });
+          setModel(result);
+          setSelectedModel(modelKey(result));
         } catch (cause) {
           setSelectedModel(modelKey(model));
           const message = String(cause);
@@ -1898,7 +1628,6 @@ ${personalReviewStyles}
           })()),
           !availableModels.length && h("p", null, t("modelUnavailable"))
         )),
-        h(settingsPanels.Connections),
         h(settingsPanels.Review, { locale })
       );
     }
@@ -1962,9 +1691,9 @@ ${personalReviewStyles}
         setBusy(true);
         setError("");
         try {
-          const result2 = await call(method, { routine_id: routine.routine_id, ...input });
+          const result = await call(method, { routine_id: routine.routine_id, ...input });
           if (!alive.current) return;
-          onChanged(result2.routine);
+          onChanged(result.routine);
           setView("details");
           setForm(null);
         } catch (cause) {
@@ -2004,8 +1733,8 @@ ${personalReviewStyles}
         setError("");
         setView("history");
         try {
-          const result2 = await call("routines.history", { routine_id: routine.routine_id, ...more && history?.cursor ? { cursor: history.cursor } : {} });
-          if (alive.current && version === historyVersion.current) setHistory((current) => more && current ? { ...result2, events: [...new Map([...current.events, ...result2.events].map((item) => [item.event_id, item])).values()], tasks: [...new Map([...current.tasks, ...result2.tasks].map((item) => [item.task_id, item])).values()], skipped_records: (current.skipped_records || 0) + (result2.skipped_records || 0) } : result2);
+          const result = await call("routines.history", { routine_id: routine.routine_id, ...more && history?.cursor ? { cursor: history.cursor } : {} });
+          if (alive.current && version === historyVersion.current) setHistory((current) => more && current ? { ...result, events: [...new Map([...current.events, ...result.events].map((item) => [item.event_id, item])).values()], tasks: [...new Map([...current.tasks, ...result.tasks].map((item) => [item.task_id, item])).values()], skipped_records: (current.skipped_records || 0) + (result.skipped_records || 0) } : result);
         } catch (cause) {
           if (alive.current && version === historyVersion.current) setError(String(cause.message || cause));
         } finally {
@@ -2059,8 +1788,8 @@ ${personalReviewStyles}
             pending.current = true;
             setBusy(true);
             try {
-              const result2 = await call("routines.list");
-              const latest = result2.routines.find((item) => item.routine_id === routine.routine_id);
+              const result = await call("routines.list");
+              const latest = result.routines.find((item) => item.routine_id === routine.routine_id);
               if (alive.current && latest) {
                 onChanged(latest);
                 setForm(null);
@@ -2106,7 +1835,7 @@ ${personalReviewStyles}
             history?.has_more && h("p", { className: "mosaic-eyebrow" }, label("Loaded records are sorted by time. Load more to see earlier or other records.", "\u5DF2\u52A0\u8F7D\u8BB0\u5F55\u6309\u65F6\u95F4\u6392\u5E8F\uFF1B\u52A0\u8F7D\u66F4\u591A\u53EF\u67E5\u770B\u66F4\u65E9\u6216\u5176\u4ED6\u8BB0\u5F55\u3002")),
             history?.skipped_records > 0 && h("p", { role: "status" }, label("Some unreadable historical records were skipped.", "\u90E8\u5206\u65E0\u6CD5\u8BFB\u53D6\u7684\u5386\u53F2\u8BB0\u5F55\u5DF2\u8DF3\u8FC7\u3002")),
             history?.has_more && h(Button, { "data-action": "more-routine-history", disabled: historyLoading, onClick: () => loadHistory(true) }, label("Load more history", "\u52A0\u8F7D\u66F4\u591A\u8BB0\u5F55")),
-            h("ol", { className: "mosaic-routine-history" }, rows.map((row) => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} \xB7 ${stateLabel(row.state)} \xB7 ${t("process")}` } : {} }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "\u4EFB\u52A1") : row.kind === "reminder" ? label("Reminder", "\u63D0\u9192") : row.kind === "calendar" ? label("Calendar trigger", "\u65E5\u5386\u89E6\u53D1") : label("Legacy run", "\u5386\u53F2\u8FD0\u884C")), row.output && h("details", null, h("summary", null, label("Result", "\u67E5\u770B\u7ED3\u679C")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))
+            h("ol", { className: "mosaic-routine-history" }, rows.map((row) => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} \xB7 ${stateLabel(row.state)} \xB7 ${t("process")}` } : {} }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "\u4EFB\u52A1") : row.kind === "reminder" ? label("Reminder", "\u63D0\u9192") : label("Legacy run", "\u5386\u53F2\u8FD0\u884C")), row.output && h("details", null, h("summary", null, label("Result", "\u67E5\u770B\u7ED3\u679C")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))
           ) : h(
             "form",
             { id: "mosaic-routine-editor", onSubmit: save },
@@ -2114,13 +1843,13 @@ ${personalReviewStyles}
             h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "\u6267\u884C\u8BA1\u5212")), h(
               "div",
               { className: "mosaic-routine-fields" },
-              select("schedule_type", label("Repeat", "\u91CD\u590D"), [["daily", label("Every day", "\u6BCF\u5929")], ["weekly", label("Every week", "\u6BCF\u5468")], ["cron", label("Custom cron", "\u81EA\u5B9A\u4E49 cron")], ...!routine.source ? [["once", label("Once", "\u4EC5\u4E00\u6B21")]] : []]),
+              select("schedule_type", label("Repeat", "\u91CD\u590D"), [["daily", label("Every day", "\u6BCF\u5929")], ["weekly", label("Every week", "\u6BCF\u5468")], ["cron", label("Custom cron", "\u81EA\u5B9A\u4E49 cron")], ["once", label("Once", "\u4EC5\u4E00\u6B21")]]),
               ["daily", "weekly"].includes(form.schedule_type) && field("time", label("Time", "\u65F6\u95F4"), { type: "time", required: true }),
               form.schedule_type === "weekly" && select("weekday", label("Day", "\u661F\u671F"), Array.from({ length: 7 }, (_, day) => [String(day), new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 0, 4 + day)))])),
               form.schedule_type === "cron" && field("cron", label("Cron", "Cron"), { required: true }),
               form.schedule_type === "once" && h(React.Fragment, null, field("run_at", label("Date and time", "\u65E5\u671F\u548C\u65F6\u95F4"), { type: "datetime-local", required: true }), field("utc_offset", label("UTC offset", "UTC \u504F\u79FB"), { required: true, placeholder: "+08:00" }))
             ), h("p", { className: "mosaic-routine-meta" }, form.timezone, form.schedule_type === "once" ? label(" \xB7 Check the offset if this date crosses a daylight-saving change.", " \xB7 \u82E5\u8DE8\u8D8A\u590F\u4EE4\u65F6\u5207\u6362\uFF0C\u8BF7\u6838\u5BF9\u504F\u79FB\u3002") : "")),
-            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "\u9AD8\u7EA7\u8BBE\u7F6E")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "\u7C7B\u578B"), routine.source ? [["task", label("Task", "\u4EFB\u52A1")]] : [["task", label("Task", "\u4EFB\u52A1")], ["reminder", label("Reminder", "\u63D0\u9192")]]), select("missed_policy", label("If missed", "\u9519\u8FC7\u6267\u884C\u65F6"), [["run_once", label("Run once when available", "\u8865\u6267\u884C\u4E00\u6B21")], ["skip", label("Skip", "\u8DF3\u8FC7")]]))),
+            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "\u9AD8\u7EA7\u8BBE\u7F6E")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "\u7C7B\u578B"), [["task", label("Task", "\u4EFB\u52A1")], ["reminder", label("Reminder", "\u63D0\u9192")]]), select("missed_policy", label("If missed", "\u9519\u8FC7\u6267\u884C\u65F6"), [["run_once", label("Run once when available", "\u8865\u6267\u884C\u4E00\u6B21")], ["skip", label("Skip", "\u8DF3\u8FC7")]]))),
             h("p", { className: "mosaic-routine-meta" }, label("Saving stops the previous run. Completed actions are not undone.", "\u4FDD\u5B58\u4F1A\u505C\u6B62\u4E4B\u524D\u7684\u8FD0\u884C\uFF0C\u5DF2\u5B8C\u6210\u7684\u64CD\u4F5C\u4E0D\u4F1A\u64A4\u9500\u3002"))
           )
         ),
@@ -2137,7 +1866,7 @@ ${personalReviewStyles}
         if (!valid || visible) return;
         let current = true;
         if (!replySources.has(key)) {
-          const request = call("agents.history", { agent_id: agentID, start_seq: reference.seq, end_seq: reference.seq }).then((result2) => result2.records?.find((record) => record.seq === reference.seq && ["user", "assistant"].includes(record.role)) ?? null).catch(() => null).then((record) => {
+          const request = call("agents.history", { agent_id: agentID, start_seq: reference.seq, end_seq: reference.seq }).then((result) => result.records?.find((record) => record.seq === reference.seq && ["user", "assistant"].includes(record.role)) ?? null).catch(() => null).then((record) => {
             if (!record && replySources.get(key) === request) replySources.delete(key);
             return record;
           });
@@ -2197,7 +1926,6 @@ ${personalReviewStyles}
         });
       };
       const changeRoutine = (value) => setRoutines((current) => current.map((item) => item.routine_id === value.routine_id && item.revision <= value.revision ? value : item));
-      const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
       const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
       const [sendRefreshError, setSendRefreshError] = React.useState("");
       const [rendererContextLimited, setRendererContextLimited] = React.useState(false);
@@ -2219,8 +1947,8 @@ ${personalReviewStyles}
         setDraftVersion((value) => value + 1);
         try {
           const input = { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id, receipt_id: receipt.receipt_id };
-          const result2 = await api.invokeRuntime("agents.messages.resume", input, { ...route, userInput: { requestId: receipt.request_id, prompt: "", resumeReceiptId: receipt.receipt_id } });
-          if (result2?.receipt) acceptReceipt(result2.receipt);
+          const result = await api.invokeRuntime("agents.messages.resume", input, { ...route, userInput: { requestId: receipt.request_id, prompt: "", resumeReceiptId: receipt.receipt_id } });
+          if (result?.receipt) acceptReceipt(result.receipt);
           const status = await call("agents.messages.status", { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id });
           acceptReceipt(status.receipt);
           await loadConversation(currentAgent.current);
@@ -2344,7 +2072,7 @@ ${personalReviewStyles}
         if (identityAgent) setAgent(identityAgent);
         return () => identityListeners.delete(setAgent);
       }, []);
-      const calendarRead = React.useRef(0), calendarOpening = React.useRef(false), historyRecovery = React.useRef({ complete: false, endSeq: void 0 });
+      const historyRecovery = React.useRef({ complete: false, endSeq: void 0 });
       currentAgent.current = agent;
       const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
       const [commandState, setCommandState] = React.useState({ session: "", skills: [], loading: false, error: "" });
@@ -2353,9 +2081,9 @@ ${personalReviewStyles}
         if (!conversationID || !agent) return;
         const request = ++commandRequest.current;
         setCommandState({ session: conversationID, skills: [], loading: true, error: "" });
-        call("agents.skills", { agent_id: agent.agent_id }).then((result2) => {
-          if (!Array.isArray(result2?.skills)) throw new Error("Skill catalog is unavailable");
-          if (request === commandRequest.current && !api.signal.aborted) setCommandState({ session: conversationID, skills: result2.skills, loading: false, error: "" });
+        call("agents.skills", { agent_id: agent.agent_id }).then((result) => {
+          if (!Array.isArray(result?.skills)) throw new Error("Skill catalog is unavailable");
+          if (request === commandRequest.current && !api.signal.aborted) setCommandState({ session: conversationID, skills: result.skills, loading: false, error: "" });
         }).catch((error2) => {
           if (request === commandRequest.current && !api.signal.aborted) setCommandState({ session: conversationID, skills: [], loading: false, error: error2 instanceof Error ? error2.message : String(error2) });
         });
@@ -2375,7 +2103,6 @@ ${personalReviewStyles}
       const task = tasks.find((item) => item.task_id === selection?.taskId);
       const artifactOutputs = records.flatMap((record) => (record.attachments || []).filter((attachment) => attachment.kind === "artifact").map((attachment) => ({ seq: record.seq, at: record.at, attachment })));
       const selectedArtifact = artifactOutputs.find((output) => output.seq === selection?.seq && output.attachment.sha256 === selection?.sha256);
-      const pendingCalendarOperations = calendar.operations.filter((item) => !["completed", "cancelled"].includes(item.status));
       const report = (cause) => {
         if (mounted.current && !api.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause));
       };
@@ -2389,10 +2116,10 @@ ${personalReviewStyles}
         if (!identity || !mounted.current) return;
         const seqs = [...reactionTargets.current].filter((key) => key.startsWith(`${identity.main_session_id}:`)).map((key) => Number(key.slice(identity.main_session_id.length + 1)));
         for (let offset = 0; offset < seqs.length; offset += 100) {
-          const result2 = await call("agents.reactions", { agent_id: identity.agent_id, session_id: identity.main_session_id, message_seqs: seqs.slice(offset, offset + 100) });
+          const result = await call("agents.reactions", { agent_id: identity.agent_id, session_id: identity.main_session_id, message_seqs: seqs.slice(offset, offset + 100) });
           if (!mounted.current || currentAgent.current?.main_session_id !== identity.main_session_id) return;
-          if (result2.session_id !== identity.main_session_id) continue;
-          for (const record of result2.records || []) acceptReaction(identity, record.seq, record.reactions);
+          if (result.session_id !== identity.main_session_id) continue;
+          for (const record of result.records || []) acceptReaction(identity, record.seq, record.reactions);
         }
         if (mounted.current) redrawReactions((value) => value + 1);
       };
@@ -2404,9 +2131,9 @@ ${personalReviewStyles}
         reactionStates.current.set(key, { value: before.value, pending: true, optimistic: emoji });
         redrawReactions((value) => value + 1);
         try {
-          const result2 = await call("agents.react", request);
-          if (result2.session_id !== identity.main_session_id || result2.message_seq !== record.seq) throw new Error("Reaction target mismatch");
-          acceptReaction(identity, record.seq, result2.reactions);
+          const result = await call("agents.react", request);
+          if (result.session_id !== identity.main_session_id || result.message_seq !== record.seq) throw new Error("Reaction target mismatch");
+          acceptReaction(identity, record.seq, result.reactions);
           const current = reactionStates.current.get(key);
           reactionStates.current.set(key, { value: current.value });
         } catch (cause) {
@@ -2443,44 +2170,18 @@ ${personalReviewStyles}
         }
       };
       const loadTasks = async () => {
-        const result2 = await call("tasks.list");
-        if (mounted.current) setTasks((current) => (result2.tasks || []).map((item) => {
+        const result = await call("tasks.list");
+        if (mounted.current) setTasks((current) => (result.tasks || []).map((item) => {
           const previous = current.find((value) => value.task_id === item.task_id);
           return previous?.revision > item.revision ? previous : item;
         }));
       };
       const loadRoutines = async () => {
-        const result2 = await call("routines.list");
-        if (mounted.current) setRoutines((current) => (result2.routines || []).map((item) => {
+        const result = await call("routines.list");
+        if (mounted.current) setRoutines((current) => (result.routines || []).map((item) => {
           const previous = current.find((value) => value.routine_id === item.routine_id);
           return previous?.revision > item.revision ? previous : item;
         }));
-      };
-      const loadCalendar = async (identity) => {
-        if (!identity) return;
-        const version = ++calendarRead.current;
-        try {
-          const [status, result2] = await Promise.all([call("calendar.status", { agent_id: identity.agent_id }), call("calendar.operations.list", { agent_id: identity.agent_id })]);
-          if (mounted.current && version === calendarRead.current) {
-            setCalendar({ status, operations: result2.operations || [] });
-            setCalendarError("");
-          }
-        } catch (cause) {
-          if (mounted.current && version === calendarRead.current) setCalendarError(cause instanceof Error ? cause.message : String(cause));
-        }
-      };
-      const openCalendar = async (operationId) => {
-        if (calendarOpening.current) return;
-        calendarOpening.current = true;
-        setCalendarBusy(true);
-        try {
-          await host.openView("personal-calendar.confirmation", { region: "overlay", context: operationId ? { operationId } : {}, persistence: "session", reveal: false });
-        } catch (cause) {
-          if (mounted.current) setCalendarError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-          calendarOpening.current = false;
-          if (mounted.current) setCalendarBusy(false);
-        }
       };
       const loadConversation = async (identity) => {
         if (!identity) return;
@@ -2563,13 +2264,13 @@ ${personalReviewStyles}
         setError("");
         setLoading(true);
         try {
-          const result2 = await call("agents.ensure_default", { name: "twin" });
-          if (!result2.agent?.main_session_id) throw new Error("main_session_recovery_required");
+          const result = await call("agents.ensure_default", { name: "twin" });
+          if (!result.agent?.main_session_id) throw new Error("main_session_recovery_required");
           if (!mounted.current) return;
-          const identity = publishIdentity(result2.agent);
+          const identity = publishIdentity(result.agent);
           mainSessionID = identity.main_session_id;
           currentAgent.current = identity;
-          await Promise.all([loadConversation(identity), loadTasks(), loadRoutines(), loadCalendar(identity)]);
+          await Promise.all([loadConversation(identity), loadTasks(), loadRoutines()]);
         } catch (cause) {
           report(cause);
         } finally {
@@ -2597,7 +2298,7 @@ ${personalReviewStyles}
           }
           checking = true;
           try {
-            await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), loadCalendar(currentAgent.current), refreshReactions(currentAgent.current)]);
+            await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), refreshReactions(currentAgent.current)]);
           } catch (cause) {
             report(cause);
           } finally {
@@ -2806,11 +2507,11 @@ ${personalReviewStyles}
         return { contexts: selected, limited };
       };
       const rendererContexts = () => structuredClone(rendererContextSelection().contexts);
-      const send = async (submitted, draftID = conversationID, rendererContext) => {
+      const send = async (submitted, draftID = conversationID, rendererContext, contentParts) => {
         const id = draftID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
         if (!agent || state.submitting || state.attachmentsMissing || readingRef.current || !text.trim() && !sentFiles.length) return false;
         const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
-        if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext)) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? void 0 : rendererContexts() };
+        if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext) || JSON.stringify(state.pending.contentParts) !== JSON.stringify(contentParts)) state.pending = { draftPrompt: state.prompt, contentParts: contentParts ? structuredClone(contentParts) : void 0, prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? void 0 : rendererContexts() };
         const requestID = state.pending.requestID, editVersion = state.editVersion;
         if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
         const stream2 = streamFor(conversationID), version = stream2.version;
@@ -2823,20 +2524,20 @@ ${personalReviewStyles}
           return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null;
         };
         try {
-          let result2 = state.pending.uncertain ? await recover().catch(() => null) : null;
-          if (!result2) result2 = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}, ...state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}, ...state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
-          if (!acceptReceipt(result2?.receipt, detail)) {
-            result2 = await recover();
-            if (!result2) throw new Error(locale?.startsWith("zh") ? "\u5C1A\u672A\u786E\u8BA4\u6301\u4E45\u63A5\u6536\uFF0C\u8BF7\u4FDD\u7559\u8349\u7A3F\u5E76\u91CD\u8BD5\u3002" : "Durable delivery is not confirmed. Keep the draft and retry.");
+          let result = state.pending.uncertain ? await recover().catch(() => null) : null;
+          if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...state.pending.contentParts ? { content_parts: state.pending.contentParts } : {}, ...state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}, ...state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}, ...state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text, ...state.pending.contentParts ? { contentParts: state.pending.contentParts } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
+          if (!acceptReceipt(result?.receipt, detail)) {
+            result = await recover();
+            if (!result) throw new Error(locale?.startsWith("zh") ? "\u5C1A\u672A\u786E\u8BA4\u6301\u4E45\u63A5\u6536\uFF0C\u8BF7\u4FDD\u7559\u8349\u7A3F\u5E76\u91CD\u8BD5\u3002" : "Durable delivery is not confirmed. Keep the draft and retry.");
           }
           const latest = draftFor(id);
           updateDraft(id, { pending: null, ...latest.editVersion === editVersion ? { prompt: "", files: [], attachmentsMissing: false } : {} });
-          if (result2?.state === "queued" && result2.queue_id && !draftFor(conversationID).dequeuedIds.has(result2.queue_id)) {
-            draftFor(conversationID).queueIds.add(result2.queue_id);
+          if (result?.state === "queued" && result.queue_id && !draftFor(conversationID).dequeuedIds.has(result.queue_id)) {
+            draftFor(conversationID).queueIds.add(result.queue_id);
             updateDraft(conversationID, {});
           }
-          if (result2?.state === "running" && result2.turn_id && version === stream2.version && !stream2.completedTurns.has(result2.turn_id)) {
-            stream2.activeTurnID = result2.turn_id;
+          if (result?.state === "running" && result.turn_id && version === stream2.version && !stream2.completedTurns.has(result.turn_id)) {
+            stream2.activeTurnID = result.turn_id;
             stream2.running = true;
             stream2.version++;
             updateDraft(id, {});
@@ -2877,7 +2578,7 @@ ${personalReviewStyles}
         const fileKey = originalInput?.fileKey || JSON.stringify(entry.attachments || []);
         const clearOriginalDraft = () => {
           if (originalDraft.pending && originalDraft.pending.requestID !== originalID) return;
-          const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === entry.prompt && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
+          const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === (originalInput?.draftPrompt ?? entry.prompt) && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
           updateDraft(entry.draftID, { pending: null, ...unchanged ? { prompt: "", files: [], attachmentsMissing: false } : {}, error: "" });
         };
         const retryID = `${conversationID}:retry:${originalID}`;
@@ -2903,7 +2604,7 @@ ${personalReviewStyles}
             receiptStates.current.delete(originalID);
             if (originalDraft.pending?.requestID === originalID) updateDraft(entry.draftID, { pending: null });
           }
-          await send(entry.prompt, retryID, pending.rendererContext);
+          await send(entry.prompt, retryID, pending.rendererContext, pending.contentParts);
           if (receiptStates.current.get(pending.requestID)?.receipt) clearOriginalDraft();
         } finally {
           const latest = receiptStates.current.get(originalID);
@@ -2935,9 +2636,9 @@ ${personalReviewStyles}
         const requestID = `question-${questionID}`;
         const questionDraft = draftFor(`${conversationID}:${requestID}`);
         questionDraft.genuiContext ??= genuiContext();
-        const result2 = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt, ...questionDraft.genuiContext.length ? { genui_context: questionDraft.genuiContext } : {}, ...relation ? { relation } : {} }, { ...route, userInput: { requestId: requestID, prompt, ...relation ? { relation } : {} } });
-        if (result2?.state === "queued" && result2.queue_id && !draftFor(conversationID).dequeuedIds.has(result2.queue_id)) {
-          draftFor(conversationID).queueIds.add(result2.queue_id);
+        const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt, ...questionDraft.genuiContext.length ? { genui_context: questionDraft.genuiContext } : {}, ...relation ? { relation } : {} }, { ...route, userInput: { requestId: requestID, prompt, ...relation ? { relation } : {} } });
+        if (result?.state === "queued" && result.queue_id && !draftFor(conversationID).dequeuedIds.has(result.queue_id)) {
+          draftFor(conversationID).queueIds.add(result.queue_id);
           updateDraft(conversationID, {});
         }
         try {
@@ -3009,9 +2710,9 @@ ${personalReviewStyles}
       };
       const saveIdentity = async (changes) => {
         try {
-          const result2 = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, ...changes });
+          const result = await call("agents.update", { agent_id: agent.agent_id, expected_revision: agent.revision, ...changes });
           if (!mounted.current) return;
-          publishIdentity(result2.agent);
+          publishIdentity(result.agent);
           closeAvatar();
         } catch (cause) {
           if (mounted.current) {
@@ -3093,9 +2794,9 @@ ${personalReviewStyles}
       );
       const interactiveFor = (record) => record.ui_parts?.map((snapshot) => {
         const input = { agent_id: agent.agent_id, surface_id: snapshot.surface.surfaceId };
-        const deliver = async (result2, resumeHeld = false) => {
-          const admission = result2.submission;
-          if (!admission || result2.delivery === "held" && !resumeHeld) return result2;
+        const deliver = async (result, resumeHeld = false) => {
+          const admission = result.submission;
+          if (!admission || result.delivery === "held" && !resumeHeld) return result;
           return api.invokeRuntime("genui.retry", { ...input, ...admission.resumeReceiptId ? { receipt_id: admission.resumeReceiptId } : {} }, { ...route, userInput: admission });
         };
         return {
@@ -3193,7 +2894,7 @@ ${personalReviewStyles}
           showJumpToLatest: false,
           searchLabel: "",
           searchContent: null,
-          composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { ...commandProps, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text) => send(text, replySelection.key), onStop: stopReply }))
+          composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { ...commandProps, sessionScope: route, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, replySelection.key, void 0, contentParts), onStop: stopReply }))
         },
         replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
         replyRecords.map((record) => renderReplyMessage(record)),
@@ -3228,6 +2929,7 @@ ${personalReviewStyles}
             searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
             composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, {
               ...commandProps,
+              sessionScope: route,
               conversationId: conversationID,
               prompt: draft.prompt,
               placeholder: t("placeholder"),
@@ -3241,7 +2943,7 @@ ${personalReviewStyles}
               onChangePrompt: (value) => updateDraft(conversationID, { prompt: value }),
               onAddAttachments: selectFiles,
               onRemoveAttachment: (id) => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }),
-              onSend: send,
+              onSend: (text, contentParts) => send(text, conversationID, void 0, contentParts),
               onStop: stopReply
             }))
           },
@@ -3267,14 +2969,7 @@ ${personalReviewStyles}
           pendingReceipts.map((entry) => renderPendingReceipt(entry, conversationID)),
           liveMessages.filter((message) => !records.some((record) => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || message.source_id && message.source_id === record.provider_item_id))).map((message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })),
           !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
-          h(settingsPanels.ReviewConversation, { locale }),
-          h(settingsPanels.ConnectorConversation),
-          pendingCalendarOperations.length > 0 && h(
-            "section",
-            { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
-            pendingCalendarOperations.map((item) => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} \xB7 ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-            calendarError && h("p", { role: "alert" }, calendarError)
-          )
+          h(settingsPanels.ReviewConversation, { locale })
         )
       ), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || void 0, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: (item) => {
         setTasks((current) => current.some((value) => value.task_id === item.task_id) ? current : [...current, item]);
@@ -3288,9 +2983,9 @@ ${personalReviewStyles}
     const stopIdentityActivation = api.contributions.subscribe(() => {
       if (identityLoading || api.signal.aborted || !api.contributions.getGenerationActivation(api.pluginId, api.generation)) return;
       identityLoading = true;
-      call("agents.list").then((result2) => {
+      call("agents.list").then((result) => {
         if (api.signal.aborted) return;
-        const agent = result2.agents?.find((value) => value.kind === "main");
+        const agent = result.agents?.find((value) => value.kind === "main");
         if (agent) publishIdentity(agent);
         else if (!identityAgent) api.setNavigationAvatar?.("personal", void 0);
       }).catch(() => {
