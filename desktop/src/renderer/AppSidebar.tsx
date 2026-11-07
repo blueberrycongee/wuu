@@ -7,7 +7,7 @@ import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } fr
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { SessionOrganizationController } from "./SessionOrganization";
 import { hostSupports } from "./HostCapabilities";
-import { SidebarAccountMenu } from "./SidebarAccountMenu";
+import { SidebarSettingsMenu } from "./SidebarSettingsMenu";
 import { DesktopUpdateButton } from "./DesktopUpdateButton";
 import { NavigationRibbon, type RibbonBrowserActions } from "./NavigationRibbon";
 import type { RibbonWebsite } from "./NavigationRibbonPreferences";
@@ -472,7 +472,6 @@ export function AppSidebar({
   onPointerEnter,
   onPointerLeave,
   onOpenSettings,
-  onOpenAccount,
   onMarkThreadsViewed,
   unreadViewOpen,
   onToggleUnreadView,
@@ -556,7 +555,6 @@ export function AppSidebar({
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
   onOpenSettings: (page?: "providers" | "usage") => void;
-  onOpenAccount?: () => void;
   onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
   // The bell view is a sidebar navigation mode, so App owns the flag: faces
   // that replace this component wholesale (settings, account) must bring the
@@ -1622,16 +1620,10 @@ export function AppSidebar({
           })),
         ]}
         footerLeading={<DesktopUpdateButton navigation={navigation} />}
-        footer={<>
-          <SidebarAccountMenu
-            navigation={navigation}
-            key={sidebarCollapsed ? "collapsed" : "docked"}
-            matchTriggerWidth={false}
-            disabled={!initialized}
-            onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
-            onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
-          />
-        </>}
+        footer={<SidebarSettingsMenu
+          disabled={!initialized}
+          onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
+        />}
       />
       </HoverRevealScopeContext.Provider>
       <div className="sidebar-content" inert={!sidebarVisible || settingsActive} aria-hidden={settingsActive || undefined}>

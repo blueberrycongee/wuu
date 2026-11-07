@@ -224,7 +224,6 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onRelocateWorkspace={workspaceId => run(application.invoke("workspace.relocate", { workspaceId }))}
     onReorderSections={next => { setOrder(next); localStorage.setItem("wuu.desktop.sidebarSectionOrder", JSON.stringify(next)); }}
     onOpenSettings={pageId => run(application.invoke("settings.open", pageId ? { pageId } : {}))}
-    onOpenAccount={() => run(invoke("navigation.show-account", { open: true }))}
     onMarkThreadsViewed={threads => run(invoke("navigation.mark-viewed", { threadIds: threads.map(row => row.id) }))}
     unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(value => !value)} attentionStickyIDs={attentionStickyIDs} onAttentionStickyIDsChange={setAttentionStickyIDs}
     onShowConversations={() => run(application.invoke("navigation.show-section", { section: "conversations" }))}

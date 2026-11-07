@@ -399,7 +399,7 @@
   white-space: nowrap;
 }
 
-.sidebar-ribbon:not([data-expanded="true"]) :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
+.sidebar-ribbon:not([data-expanded="true"]) :is(.sidebar-ribbon-label, .sidebar-account-name) {
   display: none;
 }
 
@@ -411,8 +411,7 @@
 }
 
 .sidebar-ribbon-button:is([aria-current="page"], [aria-pressed="true"], [aria-expanded="true"]),
-.sidebar-ribbon-tab-row.active .sidebar-ribbon-button,
-.sidebar-ribbon .sidebar-account-trigger[aria-expanded="true"] {
+.sidebar-ribbon-tab-row.active .sidebar-ribbon-button {
   background: var(--sidebar-row-selected-bg);
   box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
@@ -502,6 +501,10 @@
 .sidebar-ribbon .sidebar-account-trigger {
   display: grid;
   grid-template-columns: var(--sidebar-ribbon-icon-size) minmax(0, 1fr) var(--sidebar-row-action-size);
+}
+
+.sidebar-ribbon .sidebar-settings-trigger {
+  grid-template-columns: var(--sidebar-ribbon-icon-size) minmax(0, 1fr);
 }
 
 .sidebar-ribbon .sidebar-account-trigger .sidebar-account-avatar {
