@@ -63,7 +63,8 @@ interface LocalRect {
 
 // A preview whose longer side is `maxEdge`, keeping the page's aspect ratio.
 export function browserPiPSizeForAspect(aspect: number, maxEdge = PIP_MAX_EDGE): PipSize {
-  const ratio = Number.isFinite(aspect) && aspect > 0 ? aspect : 4 / 3;
+  // Extreme window shapes letterbox instead of producing a sliver of a card.
+  const ratio = clamp(Number.isFinite(aspect) && aspect > 0 ? aspect : 4 / 3, 0.45, 2.4);
   if (ratio >= 1) {
     return { width: maxEdge, height: Math.max(1, Math.round(maxEdge / ratio)) };
   }
