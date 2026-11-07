@@ -297,8 +297,8 @@ async function run() {
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
     }), "Settings page is visible and above the conversation");
     await capture(`${name}-settings`);
-    // The narrow pass uses the single-column sheet layout; keep its dismissal
-    // on Escape so both the scrim gap and keyboard paths stay covered.
+    // The narrow pass keeps the same floating card; dismiss it on Escape so
+    // both the scrim gap and keyboard paths stay covered.
     if (index === 0) await dismissSettingsViaScrim();
     else key(win.webContents, "Escape");
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");

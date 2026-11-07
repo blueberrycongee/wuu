@@ -98,9 +98,8 @@ async function run() {
   const floatingSettings = await evaluate(win, () => !!document.querySelector(".settings-shell.settings-floating"));
   if (floatingSettings) {
     // The floating panel owns its navigation. The main sidebar toggle must
-    // not turn that navigation into the legacy drawer at narrow widths.
-    // 700px is above the compact breakpoint: the panel must remain a floating
-    // card with its side rail rather than becoming a window-filling sheet.
+    // not turn that navigation into the legacy drawer at narrow widths: the
+    // panel remains a floating card with its side rail at every width.
     win.setContentSize(700, 820);
     await waitFor(win, () => innerWidth === 700, 3000);
     await settleChrome(win);
@@ -118,8 +117,8 @@ async function run() {
       && floating.panel.left > 0 && floating.panel.top > 0,
       `Moderately narrow windows keep card chrome and scrim margins: ${JSON.stringify(floating)}`);
     results.push({ scenario: "floating-settings-medium", floating });
-    // The compact sheet keeps the same card chrome and scrim margin below the
-    // breakpoint instead of taking over the window.
+    // There is no compact sheet: a very narrow window keeps the same floating
+    // card, side rail, and scrim margins.
     win.setContentSize(560, 820);
     await waitFor(win, () => innerWidth === 560, 3000);
     await settleChrome(win);
@@ -136,9 +135,9 @@ async function run() {
         labels: [...document.querySelectorAll(".settings-nav-item .settings-nav-label")].map(label => label.textContent),
         viewport: { width: innerWidth, height: innerHeight } };
     });
-    assert.equal(narrow.navDirection, "row", `Compact sheet uses its horizontal destination strip: ${JSON.stringify(narrow)}`);
+    assert.equal(narrow.navDirection, "column", `Narrow windows keep the floating rail: ${JSON.stringify(narrow)}`);
     assert.ok(parseFloat(narrow.borderRadius) > 0 && narrow.panel.left > 0 && narrow.panel.top > 0,
-      `Compact sheet keeps card chrome and scrim margins: ${JSON.stringify(narrow)}`);
+      `Narrow windows keep card chrome and scrim margins: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.nav.width > 0 && narrow.nav.height > 0, `Floating settings navigation stays visible: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.closeHit, `Floating settings close button owns its hit target: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.labels.length >= 2, `Floating settings destinations remain readable: ${JSON.stringify(narrow)}`);
