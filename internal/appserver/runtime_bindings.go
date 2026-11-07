@@ -1,7 +1,6 @@
 package appserver
 
 import (
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -16,36 +15,20 @@ type RuntimeBindings struct {
 	managedSessions         *managedSessionBridge
 	personalCoordination    *personalCoordinatorBridge
 	personalEffects         *PersonalEffectBridge
-	personalAccounts        PersonalAccountsFactory
 }
 
 func NewRuntimeBindings() *RuntimeBindings {
 	return &RuntimeBindings{desktopSessionTransport: newDesktopSessionTransportBridge(), managedSessions: newManagedSessionBridge(), personalCoordination: newPersonalCoordinatorBridge(), personalEffects: NewPersonalEffectBridge()}
 }
 func (b *RuntimeBindings) NativeProviders() []runtime.NativeProviderFactory {
-	factory := b.personalAccounts
-	return []runtime.NativeProviderFactory{b.desktopSessionTransport.factory(), b.personalEffects.ProviderFactory(), b.managedSessions.MechanismFactory(), PersonalActionsConsumerFactory(), PersonalCoordinationConsumerFactory(),
-		{ID: PersonalAccountsModule, DefaultEnabled: true, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
-			return newPersonalAccountsProvider(input, factory), nil
-		}},
-		{ID: PersonalAccountsConsumer, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
-			return &personalAccountsConsumer{}, nil
-		}},
-	}
+	return []runtime.NativeProviderFactory{b.desktopSessionTransport.factory(), b.personalEffects.ProviderFactory(), b.managedSessions.MechanismFactory(), PersonalActionsConsumerFactory(), PersonalCoordinationConsumerFactory()}
 }
 func WithRuntimeBindings(bindings *RuntimeBindings) ServerOption {
 	return func(server *Server) error {
 		bindings.desktopSessionTransport.bind(server)
 		server.personalEffects = bindings.personalEffects
-		server.personalAccountsRouted = true
 		server.personalCoordination = bindings.personalCoordination
 		_, err := bindings.managedSessions.Bind(server)
 		return err
 	}
-}
-
-// SetPersonalAccountsFactory configures the native account provider before the
-// runtime is built. Disabled or replaced providers never invoke this factory.
-func (b *RuntimeBindings) SetPersonalAccountsFactory(factory PersonalAccountsFactory) {
-	b.personalAccounts = factory
 }

@@ -109,6 +109,17 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		return result, nil
 	}
 	kit.ConfigureExternalCapabilities()
+	if s.UserBinding().IsUser() && s.sharedMCPConnectors {
+		if manager := kit.MCPManager(); manager != nil {
+			var names []string
+			for _, server := range manager.Configs() {
+				if server.IsEnabled() {
+					names = append(names, server.Name)
+				}
+			}
+			kit.SetConversationTools(names, nil)
+		}
+	}
 	ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: selection.PermissionMode})
 	kit.SetApproveForMe(false)
 	kit.SetStateDir(stateDir)

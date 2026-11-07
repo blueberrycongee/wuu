@@ -1221,7 +1221,6 @@ it("does not restart a disposed core while the desktop is waiting for exit", asy
 
 it("keeps an explicit user host resident across project switches and passes its binding to core", async () => {
   vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
-  vi.stubEnv("WUU_PERSONAL_GOOGLE_CALENDAR_CLIENT_ID", "synthetic.apps.googleusercontent.com");
   const user = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, composition_profile: "personal", cwd: join(tmpdir(), "user-host-pool") };
   const argsByCwd = new Map<string, readonly string[]>();
   const disposed: string[] = [];
@@ -1245,9 +1244,7 @@ it("keeps an explicit user host resident across project switches and passes its 
     expect(args.slice(args.indexOf("--composition-profile"), args.indexOf("--composition-profile") + 2)).toEqual(["--composition-profile", "personal"]);
     expect(args).not.toContain("--workspace-id");
     expect(args).toContain("--desktop-owner-pipe");
-    expect(args.slice(args.indexOf("--personal-calendar-client-id"), args.indexOf("--personal-calendar-client-id") + 2)).toEqual(["--personal-calendar-client-id", "synthetic.apps.googleusercontent.com"]);
-    for (const [cwd, projectArgs] of argsByCwd) if (cwd !== user.cwd) expect(projectArgs).not.toContain("--personal-calendar-client-id");
-    expect(admissions.map(raw => JSON.parse(raw))).toEqual([{ version: 1, user_space_id: "local", product_domain: "personal" }]);
+    expect(admissions.map(raw => JSON.parse(raw))).toEqual([{ version: 1, user_space_id: "local", product_domain: "personal", mcp_account_user_space_id: "local" }]);
   } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
 });
 

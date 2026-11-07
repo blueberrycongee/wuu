@@ -66,15 +66,16 @@ describe("DesktopPluginRuntime", () => {
       expect(host.getGenerationDiagnostics(plugin.id, plugin.fingerprint!)).toEqual([]);
     } finally { release(); act(() => root.unmount()); await runtime.shutdown(); host.unload("fixture"); errors.mockRestore(); }
   });
-  it("preserves message relations in the authenticated renderer input receipt", async () => {
+  it("preserves message relations and connection identity in the authenticated renderer input receipt", async () => {
     const request = vi.fn().mockResolvedValue({ ok: true, value: { result: { state: "accepted" } } });
     window.wuu = { ...originalWuu, requestPluginRuntime: request, reportPluginDesktopActivation: vi.fn(async () => {}), cancelPluginRuntime: vi.fn().mockResolvedValue({}) };
+    const contentParts = [{ type: "plugin_reference" as const, text: "@Notion", plugin: { plugin_id: "accounts", mcp_server: "plugin.accounts.notion", authorization_id: "grant-1" } }];
     const relation = { reply_to: { session_id: "main", seq: 7 }, metadata: { task_links: [{ task_id: "task-a", requirements_revision: 2 }] } };
     try {
       let api!: PluginGenerationApi;
       await desktopPluginHost.activateGeneration({ pluginId: "test:reply-receipt", generation: "one", graphGeneration: "test-graph", register: value => { api = value; } });
-      await api.invokeRuntime("agents.send", { prompt: "Change this", relation }, { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal", userInput: { requestId: "reply-one", prompt: "Change this", relation } });
-      expect(request).toHaveBeenCalledWith(expect.objectContaining({ graph_generation: "test-graph", composition_profile: "personal", input: { prompt: "Change this", relation }, user_input: { request_id: "reply-one", prompt: "Change this", relation } }));
+      await api.invokeRuntime("agents.send", { prompt: "Change this", relation }, { userSpaceId: "local", productDomain: "personal", compositionProfile: "personal", userInput: { requestId: "reply-one", prompt: "Change this", relation, contentParts } });
+      expect(request).toHaveBeenCalledWith(expect.objectContaining({ graph_generation: "test-graph", composition_profile: "personal", input: { prompt: "Change this", relation }, user_input: { request_id: "reply-one", prompt: "Change this", relation, content_parts: contentParts } }));
       await api.invokeRuntime("agents.messages.resume", {request_id:"reply-one",receipt_id:"receipt"},{userSpaceId:"local",productDomain:"personal",userInput:{requestId:"reply-one",prompt:"",resumeReceiptId:"receipt"}});
       expect(request).toHaveBeenLastCalledWith(expect.objectContaining({user_input:{request_id:"reply-one",prompt:"",resume_receipt_id:"receipt"}}));
     } finally { desktopPluginHost.unload("test:reply-receipt"); }

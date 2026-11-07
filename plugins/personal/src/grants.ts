@@ -30,14 +30,12 @@ export function authorizationRequired(error: unknown): boolean {
 }
 
 /** These are ceilings checked by the selected resource policy at admission, not
- * permission to bypass native review, connector scopes or tool policy. */
+ * permission to bypass native review, or tool policy. */
 export const TASK_EXECUTION_ACTIONS = [
   'personal/memory.read', 'personal/memory.operation', 'personal/memory.source', 'personal/memory.commit',
   'user/session/send', 'user/session/inspect', 'user/session/cancel',
   'user/session/context', 'user/session/history.read', 'user/session/history.search', 'user/session/attachment.read',
   'personal/review.execution.status', 'personal/actions.sync', 'personal/actions.resume', 'personal/file.execute',
-  'personal/connectors.read.list', 'personal/connectors.read.actions', 'personal/connectors.call', 'personal/connectors.poll',
-  'personal/calendar.read.status', 'personal/calendar.read.events', 'personal/calendar.read.authorize',
 ] as const;
 export const FEEDBACK_ACTIONS = ['personal/memory.read','user/session/send','user/session/inspect','user/session/context','user/session/history.read'] as const;
 

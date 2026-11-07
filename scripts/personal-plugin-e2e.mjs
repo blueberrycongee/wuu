@@ -2,8 +2,6 @@
 // Failure-first public runtime contracts: interrupted identity creation, concurrent
 // default creation, lost main sessions, stale edits, unapproved specialists,
 // durable dispatch, stale/duplicate completion, cancellation, and unknown outcomes.
-// Calendar proposal visibility must stay main-scoped and never proxy confirmation
-// or cancellation through Personal, including forged client routing parameters.
 // Personal-only memory must retain main/worker authority, evidence validation and
 // correction routing without an external memory service or duplicate provider.
 // Run against source in an isolated JSONL subprocess; fixture implements only host services.
@@ -22,7 +20,6 @@ const evidencePath = resolve(process.env.WUU_PERSONAL_E2E_OUTPUT ?? join(root, '
 const bundled = process.env.WUU_PERSONAL_E2E_BUNDLED === '1';
 const evidence = { runtime: bundled ? 'bundled' : 'source', scenarios: [], frames: [], node: process.version, started_at: new Date().toISOString() };
 const runtimePath = bundled ? join(root, 'internal/plugin/bundled/personal/runtime.mjs') : join(scratch, 'runtime.mjs');
-const calendarRuntimePath = join(scratch, 'calendar-runtime.mjs');
 const active = new Set();
 let UserRoutineScheduler;
 class Host {
@@ -131,7 +128,6 @@ class Host {
         assert.equal(p.operation,'revoke');this.grants.delete(p.reference.id);return {revoked:true};
       }
       case 'host.file-lock': return method === 'acquire' ? { lock_id: 'personal-fixture-lock' } : { released: true };
-      case 'calendar.personal': if (this.calendar) return this.calendar.call('service.invoke', { service, method, caller: 'personal', params: p }); throw new Error('calendar service unavailable');
       case 'automation.routines': {
         if (method === 'validate') return { schedule: new UserRoutineScheduler({ call() { throw new Error('validation must not access storage'); } }, 'validation').validate(p) };
         if (method === 'read') return { binding: this.bindings.get(p.binding_id) };
@@ -170,7 +166,7 @@ class Host {
         if(p.cause==='personal.reminder')assert.equal(p.disable_tools,true,'a reminder is bounded delivery, not permission to run tools');
         if(p.disable_tools && p.execution_authorization){const issue=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert(issue.requested_actions.includes('user/session/context'),'disabled-tools delivery still needs scoped pre-step context');assert(issue.requested_actions.includes('user/session/history.read'),'delivery hook reads remain explicitly scoped');}
         if(p.cause==='personal.reaction.feedback'){assert(p.execution_authorization,'bounded feedback recovery needs its own exact grant');const intent=this.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && `grant-${c.params.request_id}`===p.execution_authorization.id).params;assert.equal(intent.kind,'exact-run');assert(intent.requested_actions.every(a=>['personal/memory.read','user/session/send','user/session/inspect','user/session/context','user/session/history.read'].includes(a)));assert.equal(p.disable_tools,true);}
-        if(['personal.review.outcome','personal.connector.outcome'].includes(p.cause)){const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution && (v.execution.session_id===p.session_id || v.delivery?.request_id===p.request_id));if(task)assert(p.execution_authorization,'task outcome sends must carry persisted exact grant');}
+        if(p.cause === 'personal.review.outcome'){const task=[...this.storage.values()].map(v=>JSON.parse(v)).find(v=>v.execution && (v.execution.session_id===p.session_id || v.delivery?.request_id===p.request_id));if(task)assert(p.execution_authorization,'task outcome sends must carry persisted exact grant');}
         assert(this.sessions.has(p.session_id));
         if (p.user_input_request_id) {
           const proof = this.userInputs.get(p.user_input_request_id);
@@ -280,7 +276,6 @@ class Runtime {
 async function scenario(name, fn) { await fn(); evidence.scenarios.push({ name, passed: true }); console.log(`PASS ${name}`); }
 try {
   if (!bundled) await build({ stdin: { contents: `import plugin from '${join(root, 'plugins/personal/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: runtimePath });
-  await build({ stdin: { contents: `import {PersonalCalendarPlugin} from '${join(root, 'plugins/personal-calendar/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; let host; class CalendarFixture extends PersonalCalendarPlugin { initialize(params,value,lifecycle){host=value;return super.initialize(params,value,lifecycle)} } const plugin=new CalendarFixture({reader:{async read(space,query){const {value}=await host.call('host.storage.get',{scope:'user',key:'fixture.calendar.snapshot'});const data=JSON.parse(value);return {source:{...query,provider:'google-calendar',account_id:'integration-account',user_space_id:space,fetched_at:new Date().toISOString(),read_only:true},events:data.events,cancelled_events:data.cancelled_events||[]}}}}); await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: calendarRuntimePath });
   const schedulerPath = join(scratch, 'scheduler.mjs');
   await build({ entryPoints: [join(root, 'plugins/automation/src/user-routines.ts')], alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', format: 'esm', outfile: schedulerPath });
   ({ UserRoutineScheduler } = await import(schedulerPath));
@@ -344,47 +339,6 @@ try {
     ...(status === 'succeeded' ? { result: { receipt: { summary: 'Synthetic local artifact saved' }, tool_result: { content: [{ type: 'text', text: 'Synthetic local artifact saved' }], is_error: false } } } : {}),
   });
   const actionSends = host => host.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.review.outcome');
-  await scenario('connector shipped tool waits for owner receipt and recovers without repeating provider effects', async () => {
-    const h=new Host();let r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');
-    let state='awaiting_confirmation',effects=0,entered;const pending=new Promise(resolve=>{entered=resolve});
-    h.intercept=(service,p)=>{
-      if(service!=='host.personal')return;
-      if(p.operation==='connectors.call'){assert.equal(p.session_id,agent.main_session_id);entered();return {ok:true,value:{state,action_id:'connector-one',digest:'a'.repeat(64)}}}
-      if(p.operation==='connectors.read.actions')return {ok:true,value:{actions:[{state,action_id:'connector-one',digest:'a'.repeat(64)}]}};
-      if(p.operation==='connectors.decide'){assert.deepEqual(p.input,{action_id:'connector-one',digest:'a'.repeat(64),approve:true});if(state==='awaiting_confirmation'){state='completed';effects++}return {ok:true,value:{state,action_id:'connector-one'}}}
-    };
-    assert(r.definition.tools.some(tool=>tool.id==='personal_connector_call'));
-    const intent={connection_id:'synthetic',operation:'gmail.send',arguments:{to:['synthetic@example.invalid'],subject:'Synthetic',body:'Never sent'},request_id:'one'};
-    let finished=false;const tool=r.tool('personal_connector_call',intent,agent.main_session_id).then(value=>{finished=true;return value});await pending;assert.equal(finished,false);
-    await r.client('connectors.decide',{action_id:'connector-one',digest:'a'.repeat(64),approve:true});assert.equal((await tool).state,'completed');assert.equal(effects,1);
-    await r.close();r=await new Runtime(h).start();assert.equal((await r.tool('personal_connector_call',intent,agent.main_session_id)).state,'completed');assert.equal(effects,1);await r.close();
-  });
-  await scenario('connector ledger prevents pending unknown failed or rejected effects from becoming task completion evidence', async () => {
-    const h=new Host(),r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');
-    let status='uncertain';h.intercept=(service,p)=>service==='host.personal'&&p.operation==='connectors.read.actions'?{ok:true,value:{actions:[{state:status,action_id:'connector-blocker'}]}}:undefined;
-    const {task}=await r.tool('create_task',{request_id:'connector-task',title:'Synthetic connector task',goal:'Check a synthetic connector effect'},agent.main_session_id);
-    await r.tool('personal_connector_actions',{},task.execution.session_id);
-    for(const state of ['awaiting_confirmation','executing','uncertain','failed','rejected']){status=state;await assert.rejects(r.tool('complete_task',{task_id:task.task_id,requirements_revision:1,summary:'Pretend completed',evidence:[{tool_call_id:'receipt-read',description:'A read succeeded'}]},task.execution.session_id),/unresolved connector action/)}
-    assert.notEqual((await r.client('tasks.get',{task_id:task.task_id})).task.state,'completed');await r.close();
-  });
-  await scenario('cold connector approval preserves original task and resumes one receipt-bound continuation',async()=>{
-    const h=new Host();let r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');let state='awaiting_confirmation';
-    h.intercept=(service,p)=>service==='host.personal'&&p.operation==='connectors.read.actions'?{ok:true,value:{actions:[{state,action_id:'cold-action',digest:'c'.repeat(64),operation:'gmail.send',data:{id:'provider-receipt'}}]}}:undefined;
-    let {task}=await r.tool('create_task',{request_id:'cold-task',title:'Cold task',goal:'Synthetic receipt task'},agent.main_session_id);
-    await r.tool('personal_connector_actions',{},task.execution.session_id);h.turns.get(task.execution.request_id).state='interrupted';await r.lifecycle(task,'interrupted');
-    task=(await r.client('tasks.get',{task_id:task.task_id})).task;assert.equal(task.state,'waiting_user');assert.equal(task.cancel_requested,false);const session=task.execution.session_id;
-    await r.close();r=await new Runtime(h).start();state='completed';await r.client('tasks.reconcile',{task_id:task.task_id});
-    task=(await r.client('tasks.get',{task_id:task.task_id})).task;assert.equal(task.execution.session_id,session);assert.equal(task.requirements_revision,1);
-    const sends=()=>h.calls.filter(c=>c.service==='host.session.send'&&c.params.cause==='personal.connector.outcome');assert.equal(sends().length,1);
-    await r.close();r=await new Runtime(h).start();await r.client('tasks.reconcile',{task_id:task.task_id});assert.equal(sends().length,1);
-    const completed=await r.tool('complete_task',{task_id:task.task_id,requirements_revision:1,summary:'Verified synthetic connector outcome',evidence:[{action_id:'cold-action',description:'Host verified connector receipt'}]},session);assert.equal(completed.task.result.evidence[0].action_digest,'c'.repeat(64));await r.close();
-  });
-  await scenario('cold unknown connector outcome reports once without starting a tool-enabled worker',async()=>{
-    const h=new Host();let r=await new Runtime(h).start();const {agent}=await r.client('agents.ensure_default');let state='awaiting_confirmation';
-    h.intercept=(service,p)=>service==='host.personal'&&p.operation==='connectors.read.actions'?{ok:true,value:{actions:[{state,action_id:'unknown-action',digest:'d'.repeat(64),operation:'gmail.send'}]}}:undefined;
-    let {task}=await r.tool('create_task',{request_id:'unknown-task',title:'Unknown task',goal:'Synthetic uncertain connector'},agent.main_session_id);await r.tool('personal_connector_actions',{},task.execution.session_id);h.turns.get(task.execution.request_id).state='interrupted';await r.lifecycle(task,'interrupted');await r.close();state='uncertain';r=await new Runtime(h).start();await r.client('tasks.reconcile',{task_id:task.task_id});
-    const sends=h.calls.filter(c=>c.service==='host.session.send'&&c.params.cause==='personal.connector.outcome');assert.equal(sends.length,1);assert.equal(sends[0].params.disable_tools,true);assert.equal(sends[0].params.session_id,agent.main_session_id);assert.equal((await r.client('tasks.get',{task_id:task.task_id})).task.state,'waiting_external');await r.close();
-  });
   await scenario('pending action card waits for its owner without a conversational question or result delivery', async () => {
     const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
     let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-pending', title: 'Save artifact', goal: 'Save the requested local artifact' })).task;
@@ -1231,33 +1185,6 @@ try {
     assert.notEqual(legacy.delivery.request_id, oldRequest); assert.equal(host.turns.get(legacy.delivery.request_id).session_id, main.main_session_id);
     assert.equal((await runtime.client('agents.ensure_default')).agent.main_session_id, main.main_session_id);
   });
-  await scenario('Calendar proposal list stays main-scoped and exposes no Personal confirmation or cancellation route', async () => {
-    const methods = runtime.definition.provided_services.find(service => service.name === 'personal.agents').methods.map(method => method.name);
-    assert(methods.includes('calendar.operations.list'));
-    assert(!methods.includes('calendar.operations.confirm')); assert(!methods.includes('calendar.operations.cancel'));
-    const operations = [{ operation_id: 'pending-calendar-proposal', status: 'proposed', revision: 1, preview_digest: 'immutable-preview' }];
-    let forwarded;
-    host.intercept = (service, params) => { if (service === 'calendar.personal') { forwarded = params; return { operations }; } };
-    assert.deepEqual(await runtime.client('calendar.operations.list', { agent_id: main.agent_id, session_id: specialist.main_session_id }), { operations });
-    assert.equal(forwarded.session_id, main.main_session_id); assert(!('agent_id' in forwarded));
-    assert.equal(host.calls.filter(call => call.service === 'calendar.personal').at(-1).method, 'operations.list');
-    await assert.rejects(runtime.client('calendar.operations.list', { agent_id: specialist.agent_id }), /main Personal conversation/);
-    const callsBefore = host.calls.filter(call => call.service === 'calendar.personal').length;
-    for (const method of ['calendar.operations.confirm', 'calendar.operations.cancel']) {
-      await assert.rejects(runtime.client(method, { operation_id: operations[0].operation_id, expected_revision: 1, preview_digest: 'immutable-preview', confirmed: true }), /unknown Personal client method/);
-      await assert.rejects(runtime.call('service.invoke', { service: 'personal.agents', method, caller: 'personal-calendar', params: { session_id: main.main_session_id, confirmed: true } }), /unknown Personal client method/);
-    }
-    assert.equal(host.calls.filter(call => call.service === 'calendar.personal').length, callsBefore);
-    host.intercept = undefined;
-    await assert.rejects(runtime.client('calendar.operations.list'), /calendar service unavailable/);
-    const calendar = await new Runtime(host, calendarRuntimePath, 'personal-calendar').start(); host.calendar = calendar;
-    assert.deepEqual(await runtime.client('calendar.operations.list'), { operations: [] });
-    assert.deepEqual(await runtime.call('service.invoke', { service: 'personal.agents', method: 'calendar.operations.list', caller: 'personal-calendar', params: {} }), { operations: [] });
-    for (const method of ['operations.confirm', 'operations.cancel']) {
-      await assert.rejects(calendar.call('service.invoke', { service: 'calendar.personal', method, caller: 'personal', params: { session_id: main.main_session_id, expected_revision: 1, confirmed: true } }), /trusted user client capability/);
-    }
-    await calendar.close(); host.calendar = undefined;
-  });
   await scenario('memory correction uses the bound main session and ignores forged client routing fields', async () => {
     const original = (await runtime.tool('personal_memory_create', { key: 'correction-routing', expected_revision: 0, content: 'Original preference', evidence: 'explicit', sources: [{ kind: 'message', ref: 'correction-source', occurred_at: new Date(Date.now() - 60000).toISOString() }] }, main.main_session_id)).record;
     const correction = { agent_id: main.agent_id, request_id: 'edit-one', id: original.id, expected_revision: 1, content: 'Updated preference' };
@@ -1452,18 +1379,6 @@ try {
     const missing=JSON.parse(h.storage.get(entry[0]));missing.delivery.authorization.expires_at='2000-01-01T00:00:00Z';h.storage.set(entry[0],JSON.stringify(missing));h.turns.delete(missing.delivery.request_id);
     paused=(await r.client('tasks.reconcile',{task_id:task.task_id})).task;assert.equal(paused.authorization_state,'needs_authorization');const before=h.calls.filter(c=>c.service==='host.session.send').length;
     await assert.rejects(r.client('tasks.reconcile',{task_id:task.task_id,retry_delivery:true,expected_revision:paused.revision}),/unconfirmed|unknown/);assert.equal(h.calls.filter(c=>c.service==='host.session.send').length,before);assert.equal((await r.client('tasks.get',{task_id:task.task_id})).task.delivery.request_id,missing.delivery.request_id);await r.close();
-  });
-  await scenario('Calendar source observation uses an exact selected-service delegation without tool effects', async () => {
-    const h=new Host();const r=await new Runtime(h).start();const agent=(await r.client('agents.ensure_default')).agent;
-    const source={kind:'calendar',account_id:'account-one',generation:'generation-one',calendar_id:'cal-one',time_min:'2099-01-01T00:00:00.000Z',time_max:'2099-01-08T00:00:00.000Z',timezone:'UTC'};
-    h.intercept=(service,p)=>service==='calendar.personal'?{state:'ready',freshness:'fresh',source:{user_space_id:'local',...source},available:true,baseline:true,cursor:'observed',changes:[]}:undefined;
-    const {routine}=await r.client('routines.create',{agent_id:agent.agent_id,request_id:'source-proof',title:'Selected source',prompt:'Only this selected calendar',kind:'task',cron:'0 12 * * *',timezone:'UTC',source});
-    const binding=h.bindings.get(routine.binding.binding_id);binding.pending_event={event_id:'source-observation',binding_revision:binding.revision};
-    await r.call('service.invoke',{service:'automation.trigger',method:'fire',caller:'scheduler',params:{binding_id:binding.binding_id,...binding.pending_event,payload:binding.payload}});
-    const latest=(await r.client('routines.list')).routines[0];assert(latest.observation?.authorization?.reference);assert.equal(latest.last_error,undefined);
-    const delegated=h.calls.filter(c=>c.service==='host.execution.authorization' && c.params.operation==='call-service');assert.deepEqual(delegated.map(c=>c.params.method),['refresh','changes']);assert(delegated.every(c=>c.params.reference.id===latest.observation.authorization.reference.id));
-    const issue=h.calls.find(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && c.params.request_id===latest.observation.request_id).params;assert(!issue.requested_actions.includes('user/session/send'));assert(!issue.requested_actions.includes('personal/file.execute'));
-    const observed=await r.call('service.invoke',{service:'personal.agents',method:'resolve-lineage',caller:'host',params:{kind:'exact-run',task_id:routine.routine_id,session_id:agent.main_session_id,request_id:latest.observation.request_id,reference:latest.observation.authorization.reference}});assert.equal(observed.run_id,latest.observation.request_id);await r.close();
   });
   await scenario('Personal pulls producer outbox and lost acknowledgment cannot replay a scheduled task', async () => {
     const h=new Host(); let r=await new Runtime(h).start();
@@ -1710,74 +1625,6 @@ try {
     task = (await runtime.client('tasks.reconcile', { task_id: task.task_id })).task;
     assert.equal(task.state, 'running'); assert.equal(task.previous_deliveries[0].cancel_pending, false); assert.equal(host.turns.get(oldDelivery).state, 'interrupted'); assert.equal(unrelated.state, 'running');
   });
-  await scenario('Calendar source baselines silently then durably deduplicates meaningful changes into responsible tasks', async () => {
-    const source = { kind: 'calendar', account_id: 'calendar-account', generation: 'source-generation-1', calendar_id: 'primary', time_min: new Date().toISOString(), time_max: new Date(Date.now() + 86400000).toISOString(), timezone: 'UTC' };
-    const provenance = { ...source, provider: 'google-calendar', user_space_id: 'local', fetched_at: new Date().toISOString(), read_only: true };
-    const change = { event_id: 'meaningful-change-1', calendar_event_id: 'meeting-1', kind: 'updated', before: { id: 'meeting-1', summary: 'Meeting', start: '10:00' }, after: { id: 'meeting-1', summary: 'Meeting', start: '11:00' }, occurred_at: new Date().toISOString(), source: provenance };
-    let reads = 0;
-    host.intercept = (service, p) => { if (service === 'calendar.personal') return p.cursor ? { available: true, baseline: false, reset_required: false, cursor: 'cursor-1', changes: [change], source: provenance } : { available: true, baseline: true, reset_required: false, cursor: 'cursor-0', changes: [], source: provenance, state: 'ready', freshness: 'fresh' }; };
-    let routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'calendar-source', title: 'Watch meeting changes', prompt: 'Explain meaningful schedule changes', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source })).routine;
-    const fire = async eventID => { const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: eventID, binding_revision: binding.revision, scheduled_at: new Date().toISOString() }; return runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } }); };
-    await fire('calendar-tick-1'); routine = (await runtime.client('routines.list')).routines.find(r => r.routine_id === routine.routine_id);
-    assert.equal(routine.source_cursor, 'cursor-0'); assert.equal((await runtime.client('tasks.list')).tasks.filter(t => t.routine_id === routine.routine_id).length, 0);
-    await fire('calendar-tick-2'); await fire('calendar-tick-2'); await fire('calendar-tick-3');
-    const tasks = (await runtime.client('tasks.list')).tasks.filter(t => t.routine_id === routine.routine_id); assert.equal(tasks.length, 1); assert.equal(tasks[0].agent_id, main.agent_id); assert.equal(tasks[0].source.calendar.event_id, change.event_id);
-    routine = (await runtime.client('routines.list')).routines.find(r => r.routine_id === routine.routine_id); assert.equal(routine.source_cursor, 'cursor-1'); assert(!routine.source_pending);
-    const complete = async task => { host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'Verified distinct calendar event' }]); await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'A meeting changed', evidence: [{ seq: 1, description: 'Distinct change evidence' }] }, task.execution.session_id); host.turns.get(task.execution.request_id).state = 'completed'; await runtime.lifecycle(task, 'completed'); return (await runtime.client('tasks.get', { task_id: task.task_id })).task; };
-    const firstResult = await complete(tasks[0]);
-    await runtime.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: main.main_session_id, request_id: firstResult.delivery.request_id, state: 'completed', final_output: 'A meeting changed' } });
-    const nextChange = { ...change, event_id: 'meaningful-change-2', calendar_event_id: 'meeting-2', after: { id: 'meeting-2', summary: 'Another meeting', start: '12:00' } };
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', available: true, baseline: false, reset_required: false, cursor: 'cursor-2', changes: [nextChange], source: provenance } : undefined;
-    await fire('calendar-tick-4'); const nextTask = (await runtime.client('tasks.list')).tasks.find(task => task.routine_id === routine.routine_id && task.source.calendar.event_id === nextChange.event_id);
-    assert.equal((await complete(nextTask)).delivery.status, 'submitted', 'distinct Calendar events must not be suppressed merely because summaries match');
-    host.intercept = undefined;
-  });
-  await scenario('Calendar source account reset blocks model work and pause resume discards old pending events', async () => {
-    const source = { kind: 'calendar', account_id: 'expected-account', generation: 'expected-generation', calendar_id: 'primary', time_min: new Date().toISOString(), time_max: new Date(Date.now() + 86400000).toISOString(), timezone: 'UTC' };
-    let routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'calendar-reset', title: 'Bound source', prompt: 'Watch only the requested calendar', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source })).routine;
-    host.intercept = (service) => { if (service === 'calendar.personal') return { state: 'ready', freshness: 'fresh', available: false, reset_required: true, reason: 'account_generation_changed', changes: [], source: { ...source, account_id: 'different-account', user_space_id: 'local' } }; };
-    const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: 'reset-tick', binding_revision: binding.revision, scheduled_at: new Date().toISOString() };
-    await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
-    routine = (await runtime.client('routines.list')).routines.find(r => r.routine_id === routine.routine_id); assert.equal(routine.source_blocked, true); assert.match(routine.last_error, /account|generation|reset/i); assert.equal((await runtime.client('tasks.list')).tasks.filter(t => t.routine_id === routine.routine_id).length, 0);
-    const paused = (await runtime.client('routines.pause', { routine_id: routine.routine_id, expected_revision: routine.revision })).routine;
-    await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
-    routine = (await runtime.client('routines.resume', { routine_id: paused.routine_id, expected_revision: paused.revision })).routine; assert.equal(routine.source_cursor, undefined); assert.equal(routine.source_blocked, false);
-    host.intercept = undefined;
-  });
-  await scenario('Calendar cursor interruption replays one durable task and expired windows stop without a model', async () => {
-    const source = { kind: 'calendar', account_id: 'recovery-account', generation: 'recovery-generation', calendar_id: 'primary', time_min: new Date().toISOString(), time_max: new Date(Date.now() + 86400000).toISOString(), timezone: 'UTC' };
-    const provenance = { ...source, provider: 'google-calendar', user_space_id: 'local', fetched_at: new Date().toISOString(), read_only: true };
-    const change = { event_id: 'recover-change', calendar_event_id: 'event-recover', kind: 'created', after: { id: 'event-recover', summary: 'New meeting' }, occurred_at: new Date().toISOString(), source: provenance };
-    let routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'calendar-cursor-recovery', title: 'Recover source', prompt: 'Review changes', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source })).routine;
-    let failCursor = true;
-    host.intercept = (service, p) => {
-      if (service === 'calendar.personal') return { state: 'ready', freshness: 'fresh', available: true, baseline: !p.cursor, reset_required: false, cursor: p.cursor ? 'cursor-next' : 'cursor-start', changes: p.cursor ? [change] : [], source: provenance };
-      if (service === 'host.storage.compare-exchange' && p.value) { const next = JSON.parse(p.value); if (failCursor && next.routine_id === routine.routine_id && next.source_cursor === 'cursor-next' && !next.source_pending) { failCursor = false; throw new Error('cursor acknowledgement interrupted'); } }
-    };
-    const fire = async eventID => { const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: eventID, binding_revision: binding.revision, scheduled_at: new Date().toISOString() }; await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } }); };
-    await fire('cursor-tick-1'); await fire('cursor-tick-2');
-    routine = (await runtime.client('routines.list')).routines.find(r => r.routine_id === routine.routine_id); assert.equal(routine.source_cursor, 'cursor-start'); assert.equal(routine.source_pending.cursor, 'cursor-next');
-    await runtime.close(); runtime = await new Runtime(host).start(); await fire('cursor-tick-3');
-    routine = (await runtime.client('routines.list')).routines.find(r => r.routine_id === routine.routine_id); assert.equal(routine.source_cursor, 'cursor-next'); assert(!routine.source_pending); assert.equal((await runtime.client('tasks.list')).tasks.filter(t => t.routine_id === routine.routine_id).length, 1);
-    const expiredCancellation = { ...change, event_id: 'past-cancellation', kind: 'cancelled', before: { id: 'past-event', end: { date_time: new Date(Date.now() - 3600000).toISOString(), timezone: 'UTC' } }, after: { id: 'past-event', status: 'cancelled' } };
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', available: true, baseline: false, reset_required: false, cursor: 'cursor-after-expired', changes: [expiredCancellation], source: provenance } : undefined;
-    await fire('cursor-past-cancellation'); assert.equal((await runtime.client('tasks.list')).tasks.filter(t => t.routine_id === routine.routine_id).length, 1);
-    let task = (await runtime.client('tasks.list')).tasks.find(t => t.routine_id === routine.routine_id);
-    host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'Verified calendar assessment' }]);
-    await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'The meeting change matters', evidence: [{ seq: 1, description: 'Assessment evidence' }] }, task.execution.session_id);
-    host.intercept = service => service === 'calendar.personal' ? { state: 'refreshing', freshness: 'stale', source: provenance } : undefined;
-    host.turns.get(task.execution.request_id).state = 'completed'; await runtime.lifecycle(task, 'completed');
-    task = (await runtime.client('tasks.get', { task_id: task.task_id })).task; assert.equal(task.delivery.status, 'pending'); assert.notEqual((await runtime.client('routines.list')).routines.find(r => r.routine_id === routine.routine_id).source_blocked, true);
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', source: provenance } : undefined;
-    task = (await runtime.client('tasks.reconcile', { task_id: task.task_id })).task; assert.equal(task.delivery.status, 'pending', 'missing source freshness must defer rather than claim delivery eligibility');
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', source: provenance } : undefined;
-    task = (await runtime.client('tasks.reconcile', { task_id: task.task_id })).task; assert.equal(task.delivery.status, 'submitted');
-    host.intercept = undefined;
-    const expired = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'expired-calendar-window', title: 'Expired source', prompt: 'Should not execute', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source: { ...source, time_min: new Date(Date.now() - 7200000).toISOString(), time_max: new Date(Date.now() - 3600000).toISOString() } })).routine;
-    const binding = host.bindings.get(expired.binding.binding_id); binding.pending_event = { event_id: 'expired-tick', binding_revision: binding.revision, scheduled_at: new Date().toISOString() };
-    await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
-    assert.equal((await runtime.client('routines.list')).routines.find(r => r.routine_id === expired.routine_id).status, 'completed'); assert.equal(host.bindings.get(binding.binding_id).status, 'stopped'); assert.equal((await runtime.client('tasks.list')).tasks.filter(t => t.routine_id === expired.routine_id).length, 0);
-  });
   await scenario('attachment-only chat preserves trusted refs and renders safe artifact history with scoped chunk reads', async () => {
     const sha256 = 'a'.repeat(64), attachment = { sha256, filename: 'agenda.txt', media_type: 'text/plain' };
     await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'attachment-only', prompt: '', attachments: [attachment] });
@@ -1789,29 +1636,6 @@ try {
     const next = await runtime.client('agents.attachments.read', { agent_id: main.agent_id, seq: 2, kind: 'artifact', index: 0, sha256, offset: first.data.length }); assert.equal(next.offset, first.data.length); assert.equal(first.sha256, sha256);
     await assert.rejects(runtime.client('agents.attachments.read', { agent_id: main.agent_id, seq: 2, kind: 'artifact', index: 0, sha256, session_id: specialist.main_session_id }), /session|scope/i);
     await assert.rejects(runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'attachment-bytes-forgery', prompt: '', attachments: [{ ...attachment, data: 'privatebytes' }] }), /reference|bytes|attachment/i);
-  });
-  await scenario('actual Calendar and Personal runtimes integrate silent baseline meaningful change and restart dedupe', async () => {
-    const host = new Host(); let calendar = await new Runtime(host, calendarRuntimePath, 'personal-calendar').start(); host.calendar = calendar;
-    let personal = await new Runtime(host).start(); const agent = (await personal.client('agents.ensure_default')).agent;
-    const query = { calendar_id: 'primary', time_min: new Date().toISOString(), time_max: new Date(Date.now() + 86400000).toISOString(), timezone: 'UTC' };
-    const event = { id: 'integrated-meeting', status: 'confirmed', summary: 'Design review', start: { date_time: new Date(Date.now() + 3600000).toISOString(), timezone: 'UTC' }, end: { date_time: new Date(Date.now() + 7200000).toISOString(), timezone: 'UTC' } };
-    host.storage.set('user:fixture.calendar.snapshot', JSON.stringify({ events: [event] }));
-    const snapshot = await calendar.client('calendar.refresh', query); assert(snapshot.source.generation);
-    let routine = (await personal.client('routines.create', { agent_id: agent.agent_id, request_id: 'integrated-calendar', title: 'Calendar review', prompt: 'Explain important schedule changes', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source: { ...snapshot.source, kind: 'calendar' } })).routine;
-    const fire = async eventID => { const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: eventID, binding_revision: binding.revision, scheduled_at: new Date().toISOString() }; await personal.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } }); };
-    await fire('integrated-tick-1'); assert.equal((await personal.client('tasks.list')).tasks.length, 0);
-    const todayQuery = { ...query, time_max: new Date(Date.now() + 6 * 3600000).toISOString() };
-    await calendar.client('calendar.refresh', todayQuery);
-    host.storage.set('user:fixture.calendar.snapshot', JSON.stringify({ events: [{ ...event, summary: 'Moved design review', start: { ...event.start, date_time: new Date(Date.now() + 5400000).toISOString() } }] }));
-    await fire('integrated-tick-2'); const tasks = (await personal.client('tasks.list')).tasks; assert.equal(tasks.length, 1); assert.equal(tasks[0].source.calendar.calendar_event_id, event.id); assert.equal(tasks[0].source.calendar.kind, 'updated');
-    await calendar.client('calendar.refresh', todayQuery);
-    host.histories.set(tasks[0].execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'Verified calendar change assessment' }]);
-    await personal.tool('complete_task', { task_id: tasks[0].task_id, requirements_revision: 1, summary: 'The design review moved', evidence: [{ seq: 1, description: 'Assessment of the sourced calendar change' }] }, tasks[0].execution.session_id);
-    host.turns.get(tasks[0].execution.request_id).state = 'completed'; await personal.lifecycle(tasks[0], 'completed');
-    assert.equal((await personal.client('tasks.get', { task_id: tasks[0].task_id })).task.delivery.status, 'submitted');
-    await personal.close(); await calendar.close(); calendar = await new Runtime(host, calendarRuntimePath, 'personal-calendar').start(); host.calendar = calendar; personal = await new Runtime(host).start();
-    await fire('integrated-tick-3'); assert.equal((await personal.client('tasks.list')).tasks.length, 1);
-    await personal.close(); await calendar.close();
   });
   await scenario('pausing a task Routine durably cancels descendants and waits for confirmation before resume', async () => {
     let routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'pause-task-routine', title: 'Pause recurring work', prompt: 'Execute only while responsibility is active', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC' })).routine;
@@ -1840,26 +1664,6 @@ try {
     const before = host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === task.execution.request_id).length;
     await runtime.close(); runtime = await new Runtime(host).start();
     assert.equal(host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === task.execution.request_id).length, before); assert.equal((await runtime.client('tasks.get', { task_id: task.task_id })).task.state, 'stopped');
-  });
-  await scenario('a proven Calendar source block survives transient sibling diagnostics and fences old work', async () => {
-    const source = { kind: 'calendar', account_id: 'blocked-account', generation: 'blocked-generation', calendar_id: 'primary', time_min: new Date().toISOString(), time_max: new Date(Date.now() + 86400000).toISOString(), timezone: 'UTC' };
-    const provenance = { ...source, provider: 'google-calendar', user_space_id: 'local', fetched_at: new Date().toISOString(), read_only: true };
-    const changes = [1, 2, 3].map(index => ({ event_id: `blocked-change-${index}`, calendar_event_id: `blocked-event-${index}`, kind: 'updated', after: { id: `blocked-event-${index}`, summary: 'Changed event' }, occurred_at: new Date().toISOString(), source: provenance }));
-    host.intercept = (service, p) => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', available: true, baseline: !p.cursor, cursor: p.cursor ? 'blocked-cursor-1' : 'blocked-cursor-0', changes: p.cursor ? changes : [], source: provenance } : undefined;
-    const routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'monotonic-source-block', title: 'Bound account work', prompt: 'Assess calendar changes', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source })).routine;
-    const fire = async eventID => { const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: eventID, binding_revision: binding.revision }; await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } }); };
-    await fire('blocked-tick-1'); await fire('blocked-tick-2');
-    const tasks = (await runtime.client('tasks.list')).tasks.filter(task => task.routine_id === routine.routine_id); assert.equal(tasks.length, 3);
-    const complete = async task => { host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'Verified assessment' }]); await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Assessment ready', evidence: [{ seq: 1, description: 'Verified assessment' }] }, task.execution.session_id); host.turns.get(task.execution.request_id).state = 'completed'; await runtime.lifecycle(task, 'completed'); };
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', source: { ...provenance, generation: 'different-generation' } } : undefined;
-    await complete(tasks[0]); assert.equal((await runtime.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id).source_blocked, true);
-    host.intercept = service => service === 'calendar.personal' ? { state: 'unconnected', freshness: 'empty' } : undefined;
-    await complete(tasks[1]); assert.equal((await runtime.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id).source_blocked, true, 'transient diagnostics must not remove a proven source block');
-    host.turns.get(tasks[2].execution.request_id).state = 'discarded'; host.turns.get(tasks[2].execution.request_id).retryable = true;
-    const before = host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === tasks[2].execution.request_id).length;
-    const stopped = (await runtime.client('tasks.reconcile', { task_id: tasks[2].task_id })).task;
-    assert.equal(stopped.state, 'stopped'); assert.equal(host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === tasks[2].execution.request_id).length, before);
-    host.intercept = undefined;
   });
   await scenario('queued Routine replies retain honest delivery receipts after notifications or quiet hours change', async () => {
     for (const policy of ['disabled', 'quiet']) {
@@ -1974,48 +1778,6 @@ try {
     const search = await runtime.client('agents.search', { agent_id: main.agent_id, query: 'conversation', time_min: '2026-10-18T00:00:00Z', time_max: '2026-10-19T00:00:00Z', cursor: 'owned-history-cursor', limit: 1000, session_id: 'untrusted-ignored-session' });
     assert.equal(search.matches[0].at, at); assert.equal(search.next_cursor, 'next-owned-cursor'); assert.equal(search.has_more, true); host.intercept = undefined;
     await runtime.client('agents.search', { agent_id: main.agent_id, query: 'conversation' });
-  });
-  await scenario('queued Calendar result attention revalidates live source authority on completion and replay without self dedupe', async () => {
-    const source = { kind: 'calendar', account_id: 'attention-calendar-account', generation: 'attention-generation-a', calendar_id: 'primary', time_min: new Date().toISOString(), time_max: new Date(Date.now() + 86400000).toISOString(), timezone: 'UTC' };
-    const provenance = { ...source, provider: 'google-calendar', user_space_id: 'local', fetched_at: new Date().toISOString(), read_only: true };
-    const change = { event_id: 'attention-calendar-change', calendar_event_id: 'attention-calendar-event', kind: 'updated', after: { id: 'attention-calendar-event', summary: 'Changed meeting' }, occurred_at: new Date().toISOString(), source: provenance };
-    host.intercept = (service, p) => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', available: true, baseline: !p.cursor, cursor: p.cursor ? 'attention-cursor-1' : 'attention-cursor-0', changes: p.cursor ? [change] : [], source: provenance } : undefined;
-    const routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'attention-source-fence', title: 'Watch current account', prompt: 'Assess calendar changes', kind: 'task', cron: '*/5 * * * *', timezone: 'UTC', source })).routine;
-    const fire = async eventID => { const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: eventID, binding_revision: binding.revision }; await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } }); };
-    await fire('attention-source-tick-1'); await fire('attention-source-tick-2');
-    let task = (await runtime.client('tasks.list')).tasks.find(item => item.routine_id === routine.routine_id);
-    host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'Verified calendar assessment' }]);
-    await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'The meeting changed', evidence: [{ seq: 1, description: 'Verified assessment' }] }, task.execution.session_id);
-    host.turns.get(task.execution.request_id).state = 'completed'; await runtime.lifecycle(task, 'completed');
-    task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
-    const receipt = host.turns.get(task.delivery.request_id); receipt.state = 'completed'; receipt.final_output = 'The meeting changed';
-    await runtime.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: main.main_session_id, request_id: receipt.request_id, state: 'completed', final_output: receipt.final_output } });
-    const attention = async () => (await runtime.call('capability.invoke', { capability: 'session.attention', input: { session_id: main.main_session_id, agent_id: main.agent_id, turn_id: receipt.turn_id, request_id: receipt.request_id, outcome: 'completed', user_space_id: 'local', product_domain: 'personal' } })).output;
-    assert.equal((await attention()).allowed, true, 'recording delivery must not make its own attention look like a duplicate result');
-    let releaseStatus, enteredStatus;
-    const heldStatus = new Promise(resolve => { releaseStatus = resolve; });
-    const entered = new Promise(resolve => { enteredStatus = resolve; });
-    let holdOnce = true;
-    host.intercept = async service => {
-      if (service !== 'calendar.personal') return;
-      if (holdOnce) { holdOnce = false; enteredStatus(); await heldStatus; }
-      return { state: 'ready', freshness: 'fresh', source: provenance };
-    };
-    const heldAttention = attention(); await entered;
-    const currentAgent = (await runtime.client('agents.list')).agents.find(agent => agent.agent_id === main.agent_id);
-    await runtime.client('agents.update', { agent_id: main.agent_id, expected_revision: currentAgent.revision, name: currentAgent.name, communication: 'Changed while attention awaits Calendar status' });
-    releaseStatus();
-    assert.deepEqual(await heldAttention, { allowed: false }, 'a callback must not outlive a concurrent authority mutation');
-
-    for (const transient of [{ state: 'refreshing', freshness: 'stale', source: provenance }, { state: 'ready', source: provenance }]) {
-      host.intercept = service => service === 'calendar.personal' ? transient : undefined;
-      assert.deepEqual(await attention(), { allowed: false }); assert.notEqual((await runtime.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id).source_blocked, true);
-    }
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', source: provenance } : undefined;
-    assert.equal((await attention()).allowed, true);
-    host.intercept = service => service === 'calendar.personal' ? { state: 'ready', freshness: 'fresh', source: { ...provenance, generation: 'attention-generation-b' } } : undefined;
-    assert.deepEqual(await attention(), { allowed: false }); assert.equal((await runtime.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id).source_blocked, true);
-    await runtime.close(); runtime = await new Runtime(host).start(); assert.deepEqual(await attention(), { allowed: false }); host.intercept = undefined;
   });
   await runtime.close(); evidence.passed = true;
 } catch (error) { evidence.passed = false; evidence.error = error.stack; console.error(error); throw error; }

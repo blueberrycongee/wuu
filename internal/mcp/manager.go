@@ -51,6 +51,7 @@ type Manager struct {
 	generation      uint64
 	// connectionRetired releases host resources owned by a disconnected provider.
 	connectionRetired func(string, string)
+	callAdmission     func(context.Context, string) error
 	oauth             *OAuthManager
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -96,6 +97,16 @@ func (m *Manager) SetConnectionRetiredCallback(callback func(serverName, connect
 	m.mu.Lock()
 	m.connectionRetired = callback
 	m.mu.Unlock()
+}
+
+// SetCallAdmission applies live authorization to existing and future clients.
+func (m *Manager) SetCallAdmission(admit func(context.Context, string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callAdmission = admit
+	for _, client := range m.clients {
+		client.SetCallAdmission(admit)
+	}
 }
 
 func (m *Manager) notifyConnectionRetired(client *Client) {
@@ -258,6 +269,7 @@ func (m *Manager) add(ctx context.Context, cfg ServerConfig, mode connectionMode
 	}
 	client.SetToolsChangedCallback(func() { m.catalogChanged(cfg.Name, generation, client) })
 	m.mu.Lock()
+	client.SetCallAdmission(m.callAdmission)
 	if err := m.connectionErrorLocked(cfg.Name, generation); err != nil {
 		m.mu.Unlock()
 		_ = client.Close()

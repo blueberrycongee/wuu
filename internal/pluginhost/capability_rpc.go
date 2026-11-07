@@ -382,9 +382,10 @@ type SessionInputAttachment struct {
 }
 
 type SessionInput struct {
-	Attachments   []SessionInputAttachment `json:"attachments,omitempty"`
-	Prompt        string                   `json:"prompt"`
-	ContextBlocks []SessionContextBlock    `json:"context_blocks,omitempty"`
+	ContentParts  []providers.MessageContentPart `json:"content_parts,omitempty"`
+	Attachments   []SessionInputAttachment       `json:"attachments,omitempty"`
+	Prompt        string                         `json:"prompt"`
+	ContextBlocks []SessionContextBlock          `json:"context_blocks,omitempty"`
 }
 
 type SessionInputPresentation struct {

@@ -381,7 +381,7 @@ const api: WuuDesktopApi = {
   pollMCPLogin: (loginId) => ipcRenderer.invoke("wuu:mcp-login-poll", loginId),
   cancelMCPLogin: (loginId) => ipcRenderer.invoke("wuu:mcp-login-cancel", loginId),
   cancelMCPAuth: (name, state) => ipcRenderer.invoke("wuu:mcp-auth-cancel", name, state),
-  listMCPServers: () => ipcRenderer.invoke("wuu:mcp-list"),
+  listMCPServers: (context) => ipcRenderer.invoke("wuu:mcp-list", context),
   connectMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-connect", name),
   disconnectMCPServer: (name: string) =>
     ipcRenderer.invoke("wuu:mcp-disconnect", name),

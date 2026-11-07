@@ -16,7 +16,6 @@ struct PersonalToolsView: View {
     @State private var historyDated = false
     @State private var historyFrom = Date()
     @State private var historyThrough = Date()
-    @State private var calendarID = "primary"
     @State private var notifications = true
     @State private var notificationBatchSeconds = 0
     @State private var quiet = false
@@ -27,8 +26,6 @@ struct PersonalToolsView: View {
     @State private var memoryContent = ""
     @State private var editRequestID = UUID().uuidString
     @State private var forget: JSONValue?
-    @State private var confirmation: PersonalCalendarConfirmation?
-    @State private var confirmationAttempted = false
     @State private var feedback: String?
     private var enabled: Bool { personal.available && !personal.controlBusy }
 
@@ -36,7 +33,7 @@ struct PersonalToolsView: View {
         List {
             Section {
                 if section == 3 { TextField("搜索记忆", text: $query) }
-                if section == 6 {
+                if section == 5 {
                     TextField("人物、事情或原话", text: $query)
                     Toggle("按消息日期筛选", isOn: $historyDated)
                     if historyDated {
@@ -45,7 +42,6 @@ struct PersonalToolsView: View {
                     }
                     Text("搜索当前助理的持久主对话；可在上方切换助理。").foregroundStyle(.secondary)
                 }
-                if section == 5 { TextField("日历 ID", text: $calendarID).textInputAutocapitalization(.never).autocorrectionDisabled() }
                 Button("刷新") { Task { await load() } }.disabled(!enabled)
                 if let feedback { Text(feedback).foregroundStyle(.secondary) }
                 if !personal.available { Text("离线时仅显示已经读取的内容，不能修改、确认或提交执行。").foregroundStyle(.secondary) }
@@ -53,8 +49,7 @@ struct PersonalToolsView: View {
             if section == 2 { today }
             if section == 3 { memories }
             if section == 4 { settings }
-            if section == 5 { calendar }
-            if section == 6 {
+            if section == 5 {
                 Section("原消息") {
                     ForEach(Array(data["matches"].array.enumerated()), id: \.offset) { _, match in
                         Button { selectSection(0); Task { await personal.showSource(Int(match["seq"].number ?? 0)) } } label: {
@@ -74,10 +69,10 @@ struct PersonalToolsView: View {
             guard !Task.isCancelled else { return }
             await load()
         }
-        .onChange(of: query) { _, _ in if section == 6 { data = .null } }
-        .onChange(of: historyDated) { _, _ in if section == 6 { data = .null } }
-        .onChange(of: historyFrom) { _, _ in if section == 6 { data = .null } }
-        .onChange(of: historyThrough) { _, _ in if section == 6 { data = .null } }
+        .onChange(of: query) { _, _ in if section == 5 { data = .null } }
+        .onChange(of: historyDated) { _, _ in if section == 5 { data = .null } }
+        .onChange(of: historyFrom) { _, _ in if section == 5 { data = .null } }
+        .onChange(of: historyThrough) { _, _ in if section == 5 { data = .null } }
         .confirmationDialog("创建具名专属助理？", isPresented: Binding(get: { proposal != nil }, set: { if !$0 { proposal = nil } }), titleVisibility: .visible) {
             Button(proposal?["status"].string == "approved" ? "重试原创建请求" : "确认创建") {
                 guard let snapshot = proposal else { return }; proposal = nil
@@ -123,31 +118,6 @@ struct PersonalToolsView: View {
                 }
             }
         } message: { Text("所有 Personal 助理将停止使用此记忆。原始聊天、文件、导出和备份仍保留；不能保证识别所有不同表述。") }
-        .sheet(isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } })) {
-            NavigationStack {
-                if let confirmation {
-                    List {
-                        calendarPreview(confirmation.preview)
-                        Section {
-                            Text("确认会按下列不可变预览向 Google Calendar 提交修改。刷新或修改事项后，必须重新审阅新的提案。")
-                            if let error = personal.error { Text(error).foregroundStyle(.red) }
-                            if confirmationAttempted {
-                                Text("提交结果尚待核对。请读取状态，不会再次提交。")
-                                Button("读取操作状态") { Task {
-                                    if let result = await personal.control({ try await $0.calendarOperation(confirmation.preview["operation_id"].string ?? "") }) { feedback = calendarOutcome(result); self.confirmation = nil; await load() }
-                                } }.disabled(!enabled)
-                            }
-                            Button("确认并提交日历修改") { confirmationAttempted = true; Task {
-                                // Keep this snapshot and digest unchanged even if the list refreshes.
-                                if let result = await personal.control({ try await $0.confirmCalendar(confirmation) }) {
-                                    feedback = calendarOutcome(result); self.confirmation = nil; await load()
-                                }
-                            } }.disabled(!enabled || confirmationAttempted)
-                        }
-                    }.navigationTitle("确认日历修改").toolbar { Button("取消") { self.confirmation = nil } }
-                }
-            }
-        }
     }
     @ViewBuilder private var today: some View {
         Section("进行中的事项") {
@@ -161,11 +131,7 @@ struct PersonalToolsView: View {
             ForEach(Array(data["proposals"].array.enumerated()), id: \.offset) { _, value in
                 Button(value["status"].string == "approved" ? "重试创建：" + (value["name"].string ?? "") : "创建专属助理：" + (value["name"].string ?? "")) { proposal = value }.disabled(!enabled)
             }
-            ForEach(Array(data["operations"].array.filter { ["proposed", "uncertain"].contains($0["status"].string ?? "") }.enumerated()), id: \.offset) { _, value in
-                Button("日历：" + (value["fields"]["summary"].string ?? "待审阅操作")) { selectSection(5) }
-            }
             if let error = data["proposal_error"].string { Text(error).foregroundStyle(.secondary) }
-            if let error = data["operations_error"].string { Text(error).foregroundStyle(.secondary) }
         }
         Section("最近结果") {
             ForEach(Array(data["tasks"].array.filter { ["completed", "failed", "stopped"].contains($0["state"].string ?? "") }.prefix(10).enumerated()), id: \.offset) { _, value in
@@ -180,7 +146,6 @@ struct PersonalToolsView: View {
             }
             if let error = data["routine_error"].string { Text(error).foregroundStyle(.secondary) }
         }
-        Section("今日日程") { agenda(data["agenda"]); if let error = data["calendar_error"].string { Text(error).foregroundStyle(.secondary) } }
     }
     @ViewBuilder private var memories: some View {
         Section("共享记忆") {
@@ -249,78 +214,13 @@ struct PersonalToolsView: View {
             }
         }
     }
-    @ViewBuilder private var calendar: some View {
-        Section("今日日程") {
-            agenda(data["agenda"])
-            Button("从已授权日历重新读取") { Task { await load(refreshCalendar: true) } }.disabled(!enabled)
-            if let error = data["calendar_error"].string { Text(error).foregroundStyle(.secondary) }
-        }
-        Section("待确认与执行结果") {
-            if let error = data["operations_error"].string { Text(error).foregroundStyle(.secondary) }
-            ForEach(Array(data["operations"].array.enumerated()), id: \.offset) { _, operation in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(operation["fields"]["summary"].string ?? "日历修改")
-                    Text(calendarOutcome(operation)).foregroundStyle(.secondary)
-                    if operation["status"].string == "proposed" {
-                        Button("审阅完整提案") { Task {
-                            guard let result = await personal.control({ client in
-                                let current = try await client.calendarOperation(operation["operation_id"].string ?? "")
-                                let prepared = try await client.prepareCalendarConfirmation(current)
-                                return prepared.preview
-                            }) else { return }
-                            _ = await personal.control { client in confirmation = try await client.prepareCalendarConfirmation(result); confirmationAttempted = false; return [:] }
-                        } }.disabled(!enabled)
-                    } else if ["uncertain", "running"].contains(operation["status"].string ?? "") {
-                        Button("只读核对远端结果") { Task {
-                            if let result = await personal.control({ try await $0.calendarOperation(operation["operation_id"].string ?? "", reconcile: true) }) { feedback = calendarOutcome(result); await load() }
-                        } }.disabled(!enabled)
-                    }
-                    if let source = operation["result"]["source"]["verified_at"].string { Text("远端读取核验：" + source).font(.body) }
-                }
-            }
-        }
-    }
-    @ViewBuilder private func agenda(_ value: JSONValue) -> some View {
-        if value != .null {
-            Text("状态：\(value["state"].string ?? "未知") · \(value["freshness"].string ?? "未知新鲜度")").foregroundStyle(.secondary)
-            if let fetched = value["last_success_at"].string { Text("最近读取：" + fetched).font(.body) }
-            Text("空列表或过期缓存不能证明这个时段有空。冲突检查只覆盖选定日历。").font(.body).foregroundStyle(.secondary)
-            ForEach(Array(value["events"].array.enumerated()), id: \.offset) { _, event in
-                VStack(alignment: .leading) { Text(event["summary"].string ?? "日程"); Text(calendarTime(event["start"]) + " → " + calendarTime(event["end"])).font(.body) }
-            }
-        }
-    }
-    @ViewBuilder private func calendarPreview(_ value: JSONValue) -> some View {
-        Section("操作与归属") {
-            Text(value["kind"].string == "reschedule" ? "改期" : "创建日程")
-            Text("账号：" + (value["account_id"].string ?? "")); Text("日历：" + (value["calendar_id"].string ?? ""))
-            Text("事项：\(value["task_id"].string ?? "") · 要求版本 \(Int(value["requirements_revision"].number ?? 0))")
-        }
-        if value["original_event"]["fields"] != .null { Section("修改前") { eventFields(value["original_event"]["fields"]) } }
-        Section("将提交的内容") { eventFields(value["fields"]) }
-        Section("通知与冲突") {
-            Text("通知选项：" + (value["fields"]["send_updates"].string ?? ""))
-            Text(value["notification_notice"].string ?? "")
-            Text("检查时间：" + (value["availability"]["checked_at"].string ?? ""))
-            Text("仅检查选定日历；冲突数：\(value["availability"]["conflicting_event_ids"].array.count)")
-            ForEach(Array(value["availability"]["conflicting_event_ids"].array.enumerated()), id: \.offset) { _, id in Text(id.string ?? "") }
-        }
-    }
-    @ViewBuilder private func eventFields(_ fields: JSONValue) -> some View {
-        Text(fields["summary"].string ?? ""); Text("地点：" + (fields["location"].string ?? ""))
-        Text("开始：" + calendarTime(fields["start"])); Text("结束：" + calendarTime(fields["end"]))
-        ForEach(Array(fields["attendees"].array.enumerated()), id: \.offset) { _, attendee in Text((attendee["email"].string ?? "") + (attendee["optional"].bool ? "（可选）" : "（必需）")) }
-        if fields["attendees"].array.isEmpty { Text("无受邀人") }
-    }
-    private func load(refreshCalendar: Bool = false, historyCursor: String? = nil) async {
-        let section = section, query = query, calendarID = calendarID
+    private func load(historyCursor: String? = nil) async {
+        let section = section, query = query
         let dated = historyDated, historyStart = historyFrom, historyEnd = historyThrough
-        let zone = TimeZone.current.identifier, start = Calendar.current.startOfDay(for: Date())
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
-        let formatter = ISO8601DateFormatter(), from = formatter.string(from: start), to = formatter.string(from: end)
+        let formatter = ISO8601DateFormatter()
         guard let result = await personal.control({ client in
             if section == 3 { return try await client.memory(query: query) }
-            if section == 6 {
+            if section == 5 {
                 guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return ["matches": []] }
                 let lower = Calendar.current.startOfDay(for: historyStart)
                 guard let upper = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: historyEnd)) else { throw PersonalClientError.invalidResponse }
@@ -338,15 +238,10 @@ struct PersonalToolsView: View {
                 do { result["proposals"] = try await client.specialistProposals()["proposals"] } catch { result["proposal_error"] = .string(error.localizedDescription) }
                 do { result["routines"] = try await client.routines()["routines"] } catch { result["routine_error"] = .string(error.localizedDescription) }
             }
-            do { result["agenda"] = try await client.calendarAgenda(calendarID: calendarID, start: from, end: to, timezone: zone, refresh: refreshCalendar) }
-            catch { result["calendar_error"] = .string(error.localizedDescription) }
-            if section == 5 || section == 2 {
-                do { result["operations"] = try await client.calendarOperations()["operations"] } catch { result["operations_error"] = .string(error.localizedDescription) }
-            }
             return .object(result)
         }) else { return }
         guard self.section == section else { return }
-        if section == 6 && (self.query != query || historyDated != dated || historyFrom != historyStart || historyThrough != historyEnd) { return }
+        if section == 5 && (self.query != query || historyDated != dated || historyFrom != historyStart || historyThrough != historyEnd) { return }
         data = result
         if section == 4 {
             name = result["agent"]["name"].string ?? ""; communication = result["agent"]["communication"].string ?? ""; responsibility = result["agent"]["responsibility"].string ?? ""
@@ -355,11 +250,4 @@ struct PersonalToolsView: View {
             self.start = result["settings"]["quiet_hours"]["start"].string ?? "22:00"; self.end = result["settings"]["quiet_hours"]["end"].string ?? "08:00"; timezone = result["settings"]["quiet_hours"]["timezone"].string ?? "UTC"
         }
     }
-}
-private func calendarTime(_ value: JSONValue) -> String { (value["date_time"].string ?? value["date"].string ?? "时间未知") + " " + (value["timezone"].string ?? "") }
-private func calendarOutcome(_ value: JSONValue) -> String {
-    let state = value["status"].string ?? "未知"
-    if state == "uncertain" || value["reconciliation_required"].bool { return "结果尚不确定，请只读核对远端状态。不会自动重复提交。" }
-    if state == "completed" { return "远端日程已读取核验；通知是否送达仍未验证。" }
-    return "状态：" + state + (value["error_code"].string.map { " · " + $0 } ?? "")
 }

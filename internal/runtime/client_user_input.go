@@ -14,11 +14,12 @@ import (
 // ClientUserInput is an exact message submitted by an authenticated application
 // client. It is never inferred from plugin-generated text or tool arguments.
 type ClientUserInput struct {
-	ResumeReceiptID string                     `json:"resume_receipt_id,omitempty"`
-	Relation        *providers.MessageRelation `json:"relation,omitempty"`
-	RequestID       string                     `json:"request_id"`
-	Prompt          string                     `json:"prompt"`
-	Attachments     []ClientInputAttachment    `json:"attachments,omitempty"`
+	ResumeReceiptID string                         `json:"resume_receipt_id,omitempty"`
+	Relation        *providers.MessageRelation     `json:"relation,omitempty"`
+	RequestID       string                         `json:"request_id"`
+	Prompt          string                         `json:"prompt"`
+	ContentParts    []providers.MessageContentPart `json:"content_parts,omitempty"`
+	Attachments     []ClientInputAttachment        `json:"attachments,omitempty"`
 }
 type clientUserInputKey struct{}
 type clientUserInputProof struct {
@@ -35,6 +36,7 @@ type clientUserInputProof struct {
 // independently admitted background calls have no proof. A detached callback
 // cannot extend the originating admission lifetime or mint another send.
 func WithClientUserInput(ctx context.Context, pluginID string, input ClientUserInput) context.Context {
+	input.ContentParts = providers.CloneMessageContentParts(input.ContentParts)
 	input.Relation = providers.CloneMessageRelation(input.Relation)
 	input.Attachments = append([]ClientInputAttachment(nil), input.Attachments...)
 	return context.WithValue(ctx, clientUserInputKey{}, &clientUserInputProof{pluginID: pluginID, input: input, admission: ctx})
@@ -99,6 +101,30 @@ func AuthorizeClientUserInputRelation(ctx context.Context, pluginID, requestID s
 	}
 	if proof.pluginID != pluginID || proof.input.RequestID != requestID || !bytes.Equal(expected, actual) {
 		return errors.New("relation does not match the admitted client submission")
+	}
+	return nil
+}
+
+// AuthorizeClientUserInputContentParts prevents a plugin from replacing the
+// connection or account selected in the authenticated message.
+func AuthorizeClientUserInputContentParts(ctx context.Context, pluginID, requestID string, parts []providers.MessageContentPart) error {
+	proof, _ := ctx.Value(clientUserInputKey{}).(*clientUserInputProof)
+	if proof == nil || ctx.Err() != nil || proof.admission.Err() != nil {
+		return errors.New("content parts require a live authenticated client submission")
+	}
+	proof.mu.Lock()
+	defer proof.mu.Unlock()
+	expected, err := json.Marshal(proof.input.ContentParts)
+	if err != nil {
+		return err
+	}
+	actual, err := json.Marshal(parts)
+	if err != nil {
+		return err
+	}
+	equal := len(parts) == 0 && len(proof.input.ContentParts) == 0 || bytes.Equal(expected, actual)
+	if proof.pluginID != pluginID || proof.input.RequestID != requestID || !equal {
+		return errors.New("content parts do not match the admitted client submission")
 	}
 	return nil
 }

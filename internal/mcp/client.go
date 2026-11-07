@@ -95,6 +95,7 @@ type ToolOverride struct {
 
 // Client is a connected MCP server session.
 type Client struct {
+	callAdmission            func(context.Context, string) error
 	connectionID             string
 	name                     string
 	toolTimeout              time.Duration
@@ -539,9 +540,24 @@ func (c *Client) ToolTimeout() time.Duration {
 	return c.toolTimeout
 }
 
+// SetCallAdmission attaches host-owned live authorization to future tool calls.
+func (c *Client) SetCallAdmission(admit func(context.Context, string) error) {
+	c.mu.Lock()
+	c.callAdmission = admit
+	c.mu.Unlock()
+}
+
 // CallTool invokes a tool with the server budget or earlier caller deadline.
 // Expiry is returned to the caller; the tool is never replayed on timeout.
 func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMessage) (*CallToolResult, error) {
+	c.mu.Lock()
+	admission := c.callAdmission
+	c.mu.Unlock()
+	if admission != nil {
+		if err := admission(ctx, c.name); err != nil {
+			return nil, err
+		}
+	}
 	c.mu.Lock()
 	if c.retired || c.closed {
 		c.mu.Unlock()

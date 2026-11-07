@@ -889,7 +889,7 @@ export interface PluginScopeInvalidation {
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
   /** Exact client-authored message, bound to this live plugin invocation by the host. */
-  user_input?: { request_id: string; prompt: string; resume_receipt_id?: string; relation?: MessageRelation; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
+  user_input?: { request_id: string; prompt: string; content_parts?: MessageContentPart[]; resume_receipt_id?: string; relation?: MessageRelation; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
   user_space_id?: string;
   /** Explicit target profile, never inferred from the product domain. */
   composition_profile?: string;
@@ -3438,7 +3438,7 @@ export type WuuDesktopApi = {
   pollMCPLogin: (loginId: string) => Promise<MCPLoginPollResult>;
   cancelMCPLogin: (loginId: string) => Promise<{ ok: boolean }>;
   cancelMCPAuth: (name: string, state: string) => Promise<{ ok: boolean }>;
-  listMCPServers: () => Promise<MCPListResult>;
+  listMCPServers: (context?: RuntimeContext) => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   refreshMCPServer: (name: string) => Promise<MCPServerActionResult>;

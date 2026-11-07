@@ -2919,6 +2919,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	capabilityErr := instructionsErr
 	referenceParts := latestPluginReferenceParts(history)
+	var pluginGuidance string
 	if capabilityErr == nil && hasPluginReferences(referenceParts) {
 		servers := pluginReferenceServers(referenceParts)
 		if len(servers) > 0 && (turnKit == nil || turnKit.MCPManager() == nil) {
@@ -2944,15 +2945,21 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 				generation := manager.Generation()
 				turnKit.FreezeToolSurface()
 				defer turnKit.UnfreezeToolSurface()
-				_, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
+				pluginGuidance, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
 				currentManager, managerErr := s.mcpManager()
 				if managerErr != nil || currentManager != manager || manager.Generation() != generation {
 					capabilityErr = errors.New("plugin connections changed while starting this turn; select the connections again")
 				}
 			} else {
-				_, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
+				pluginGuidance, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
 			}
 		}
+	}
+	// Plugin-client submissions preserve literal text. Supply resolved tool and
+	// account identities at execution time, after the live reference checks.
+	if capabilityErr == nil && turnRuntime.PluginTurn != nil && pluginGuidance != "" {
+		requestContext = append(requestContext, agent.RequestOnlyContextBlocks([]wuucontext.Block{{Kind: wuucontext.BlockAdditionalContext, Source: "plugin-selection", Content: pluginGuidance}})...)
+		sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + pluginGuidance)
 	}
 	// A restricted turn must not initialize an external bridge before its
 	// admitted engine has proved that it can enforce the restriction.

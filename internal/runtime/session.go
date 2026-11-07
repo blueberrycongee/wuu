@@ -66,8 +66,10 @@ type Options struct {
 	StartupPresence           *session.AppServerPresenceLease
 	UserHostIsolationMode     UserHostIsolationMode
 	UserHostIsolationVerifier UserHostIsolationVerifier
-	UserSpaceID               string
-	ProductDomain             string
+	// SharedMCPConnectors is trusted embedding admission for a shared owner.
+	SharedMCPConnectors bool
+	UserSpaceID         string
+	ProductDomain       string
 	// CapacityResources explicitly shares physical account limits across sessions.
 	CapacityResources *CapacityResources
 	NativeProviders   []NativeProviderFactory
@@ -137,6 +139,7 @@ const (
 type Session struct {
 	UserHostIsolationMode     UserHostIsolationMode
 	userHostIsolationVerifier UserHostIsolationVerifier
+	sharedMCPConnectors       bool
 	UserSpaceID               string
 	ProductDomain             string
 	DataRoot                  string
@@ -271,7 +274,7 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		}
 	}
 	clone := &Session{
-		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot, UserHostIsolationMode: s.UserHostIsolationMode, userHostIsolationVerifier: s.userHostIsolationVerifier,
+		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot, UserHostIsolationMode: s.UserHostIsolationMode, userHostIsolationVerifier: s.userHostIsolationVerifier, sharedMCPConnectors: s.sharedMCPConnectors,
 		Documents: s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
@@ -454,7 +457,7 @@ func NewSession(opts Options) (*Session, error) {
 	if err := opts.Overrides.Apply(&cfg); err != nil {
 		return nil, err
 	}
-	cfg = userHostConfig(withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults), binding)
+	cfg = userHostConfig(withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults), binding, opts.SharedMCPConnectors && opts.UserHostIsolationMode != UserHostIsolationVerifiedHost)
 	configLoadMode := opts.ConfigLoadMode
 	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
 		configLoadMode = ConfigLoadFile
@@ -654,7 +657,7 @@ func NewSession(opts Options) (*Session, error) {
 	if err := opts.Overrides.Apply(&cfg); err != nil {
 		return nil, err
 	}
-	cfg = userHostConfig(withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults), binding)
+	cfg = userHostConfig(withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults), binding, opts.SharedMCPConnectors && opts.UserHostIsolationMode != UserHostIsolationVerifiedHost)
 	permissions := config.ResolveAgentPermissions(cfg.Agent)
 
 	var providerCfg config.ProviderConfig
@@ -767,6 +770,9 @@ func NewSession(opts Options) (*Session, error) {
 			toolkit = kit
 			if !binding.IsUser() {
 				connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+			} else if opts.SharedMCPConnectors && isolationMode != UserHostIsolationVerifiedHost {
+				sharedCfg, sharedPlugins := sharedConnectorInputs(cfg, activePlugins)
+				connectMCPServers(sharedCfg, sharedPlugins, toolkit, mcpOAuth)
 			}
 
 			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
@@ -901,7 +907,7 @@ func NewSession(opts Options) (*Session, error) {
 	runtimeSession := &Session{
 		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),
 		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts,
-		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, DataRoot: dataRoot, UserHostIsolationMode: isolationMode, userHostIsolationVerifier: opts.UserHostIsolationVerifier,
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, DataRoot: dataRoot, UserHostIsolationMode: isolationMode, userHostIsolationVerifier: opts.UserHostIsolationVerifier, sharedMCPConnectors: opts.SharedMCPConnectors && isolationMode != UserHostIsolationVerifiedHost,
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -996,6 +1002,10 @@ func NewSession(opts Options) (*Session, error) {
 	runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
+		if !binding.IsUser() || runtimeSession.sharedMCPConnectors {
+			_, sharedPlugins := sharedConnectorInputs(cfg, activePlugins)
+			runtimeSession.bindSharedMCPAdmission(toolkit.MCPManager(), sharedPlugins)
+		}
 	}
 	runtimeSession.pluginGeneration.bindActivityOwnership(activityRegistry)
 	if toolkit != nil {
@@ -1100,7 +1110,7 @@ func (s *Session) applyRuntimeConfig(cfg config.Config) (config.Config, error) {
 	if err := s.configOverrides.Apply(&cfg); err != nil {
 		return config.Config{}, err
 	}
-	return userHostConfig(withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), s.UserBinding()), nil
+	return userHostConfig(withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), s.UserBinding(), s.sharedMCPConnectors), nil
 }
 
 func withDesktopExecutionDefaults(cfg config.Config, enabled bool) config.Config {
@@ -3185,7 +3195,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) (string,
 	if strings.TrimSpace(homeDir) == "" {
 		homeDir = os.Getenv("HOME")
 	}
-	cfg = userHostConfig(cfg, s.UserBinding())
+	cfg = userHostConfig(cfg, s.UserBinding(), s.sharedMCPConnectors)
 	s.executionEnvironmentConfig = cfg.ExecutionEnvironments
 	s.instructionConfig = cfg.Instructions
 	if s.UserBinding().IsUser() {
@@ -3304,3 +3314,6 @@ func (store sessionRequestContextStore) Save(ctx context.Context, checkpoint age
 	}
 	return err
 }
+
+// SharedMCPConnectors reports whether trusted embedding admitted the shared owner.
+func (s *Session) SharedMCPConnectors() bool { return s != nil && s.sharedMCPConnectors }

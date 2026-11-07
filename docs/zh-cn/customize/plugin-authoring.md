@@ -99,6 +99,10 @@
 
 ### MCP 连接器卡片
 
+Personal 在嵌入宿主明确授予账号共享时，复用 Coding 的全局 MCP 连接器插件及所选凭据提供方。项目级 MCP 定义仍留在 Coding。桌面仅为自己的账号用户空间授予共享，其他嵌入应用需在可信启动路径设置 `SharedMCPConnectors`。启用 verified_host 隔离的宿主不共享账号。
+
+经认证的客户端输入可携带 `content_parts`，内容为文本、粘贴文本和插件引用。插件通过 `input.content_parts` 原样转发；宿主拒绝替换或遗漏，并将选择纳入持久请求摘要。插件引用保留资源和授权身份，在执行前重新验证；支持对话插件的外部引擎也走同一验证路径。
+
 插件所属 MCP 服务的可选 `connector` 元数据将其展示为账号连接器。它复用已有服务定义、连接生命周期、OAuth 凭据存储和插件归属，不会注册第二个服务。独立服务的元数据仅用于说明，不改变普通 MCP 管理操作。纯声明式插件无需 `runtime` 或 `desktop` 入口：
 
 ```json
@@ -144,7 +148,7 @@
 
 如果 OAuth 已完成而后续连接失败，登录的终态错误可以包含 `authorized: true`。此时可使用保存的授权重试连接；该标记不表示服务已经连接，也不保证服务端会接受该授权。
 
-当前选择入口仅支持 Coding/当前项目宿主。OAuth 存储以规范服务名而非项目身份为键：使用同一服务名及凭据提供方的项目共享账号，更换账号和本地退出也会影响它们。绑定用户的 Personal/twin 宿主会从运行配置中排除共享 MCP 定义，后端报告配置不可用并拒绝连接器修改，避免混用不同域的偏好或凭据。现有 Personal 专用连接器不受影响。扩展此流程需要按域隔离连接身份、偏好和凭据存储，而不是永久按产品 ID 判断。资源 URL 将凭据绑定到远程端点，不授予显示位置或域归属权限。没有获准的身份探测时，卡片不会将账号身份标为已验证。
+当前选择入口仅支持 Coding/当前项目宿主。OAuth 存储以规范服务名而非项目身份为键：使用同一服务名及凭据提供方的项目共享账号，更换账号和本地退出也会影响它们。绑定用户的 Personal/twin 宿主会从运行配置中排除共享 MCP 定义，后端报告配置不可用并拒绝连接器修改，避免混用不同域的偏好或凭据。扩展此流程需要按域隔离连接身份、偏好和凭据存储，而不是永久按产品 ID 判断。资源 URL 将凭据绑定到远程端点，不授予显示位置或域归属权限。没有获准的身份探测时，卡片不会将账号身份标为已验证。
 
 使用真实的服务商端点，并如实声明配置要求。有 URL 不等于支持动态客户端注册。如果还缺少固定 OAuth 客户端、预览资格或管理员配置，不应提供连接按钮。当前服务商限制见[内置账号连接器指南](mcp.md#连接账号)。
 
@@ -885,29 +889,9 @@ storage 的 inspection 契约；内存缓存不能成为事实读取的独立权
 这些事实，不能把回读排在正在等待宿主的调用之后。通过存储与 inspection 契约同步
 状态修改，而不是串行阻塞整个服务。
 
-### Personal 账户 provider 生命周期
-
-日历与连接器操作通过选中的 `personal.accounts@1` 服务执行。Personal bundle
-选择 `wuu.personal-account-client` 和原生 `wuu.personal-accounts` provider；
-composition 可以将客户端绑定到其他 provider，或禁用原生模块，不会隐式回退。
-
-`call` 方法接收 `{operation, input, session_id?}`，操作名沿用 `host.personal`
-的日历与连接器操作。宿主先解析执行会话、检查资源策略，并为账户控制操作验证
-仍然有效的所有者准入，再调用选中的服务。序列化的会话 ID 本身不授予权限。
-返回值为 `{value}`、`{calendar_error: {code, persistence_failed?}}` 或
-`{connector_error: {code}}`；传输与准入失败仍使用服务错误。该契约不返回凭据
-或授权 URL。
-
-原生嵌入方在创建 runtime 前配置 `RuntimeBindings.SetPersonalAccountsFactory`。
-只有对应代的 provider 首次收到调用时，工厂才创建全新的账户资源，不能返回已由
-其他代持有的 broker。provider 声明凭据依赖，拥有自己的 OAuth 尝试和清理职责。
-已接受的调用保留原服务图直到完成；旧代清理不会关闭新代 broker。使用 runtime
-bindings 的 `NewUserHost` 不接收预先构造的账户 broker。审批／记忆协调器与原生
-文件审批入口仍是独立于该账户服务的部分。
-
 ### Personal 协调器与宿主副作用机制
 
-`personal.coordination@1` 是可替换的审核、记忆、文件及连接器策略服务。
+`personal.coordination@1` 是可替换的审核、记忆及文件策略服务。
 Personal 组合选择 `wuu.personal-client`、原生协调器
 `wuu.personal-actions-consumer` 和宿主机制 `wuu.personal-effects`。
 替换绑定或禁用协调器不会创建原生回退；Go 宿主仍负责入口身份验证、
@@ -917,10 +901,6 @@ Personal 组合选择 `wuu.personal-client`、原生协调器
 `call` 承载现有 `review.*` / `memory.*` 操作；`file-gate` 接收工具调用并返回
 工具结果；`scope` / `cancel` 支持精确会话与任务取消；`inspection` 处理经所有者
 认证的审核策略、设置和会话恢复，并与正在进行的 Personal 副作用串行；`initialize` / `drain` 用于生命周期及调度。
-`connector-snapshot` 的 `input` 为 `{actor}`，返回 `{authority}`；
-`connector-commit` 的 `input` 为 `{actor, expected, effect_id}`。
-actor 沿用 `{ProductDomain, UserSpaceID, SessionID}`。原生协调器必须在持久化
-权限检查的临界区内执行副作用，不能把布尔授权响应当作实际提交。
 
 替代实现声明 `host.personal-effects@1`：`prepare-file` 接收工具调用，返回
 `{effect_id, file}` 冻结动作；`execute` 接收 `{effect_id}`，返回 `{tool_result}`，

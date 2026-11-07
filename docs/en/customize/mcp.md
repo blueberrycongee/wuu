@@ -14,7 +14,7 @@ Connection management opens the plugin catalog while preserving the draft. Retur
 
 ## Connect an account
 
-This plugin connector flow currently supports the **Coding / current-project host only**. User-bound Personal/twin hosts keep shared MCP configuration out of their domain and show setup as unavailable rather than changing shared preferences or credentials. Existing dedicated Personal connectors are unchanged; using this picker there requires domain-scoped connection identity, preferences, and credential storage.
+This plugin connector flow currently supports the **Coding / current-project host only**. User-bound Personal/twin hosts keep shared MCP configuration out of their domain and show setup as unavailable rather than changing shared preferences or credentials. Using this picker there requires domain-scoped connection identity, preferences, and credential storage.
 
 Open **Plugins → Account Connectors**. The bundled plugin is enabled by default so its connector cards are discoverable, but every service is initially disabled: no account connection starts until you choose to connect it. Disabling the plugin stops its services and removes its connector behavior.
 

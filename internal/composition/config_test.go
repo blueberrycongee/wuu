@@ -512,7 +512,7 @@ func TestPersonalProfileSelectsReplaceablePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resolved.Includes("personal") || !resolved.Includes("automation") || !resolved.Includes("personal-calendar") || resolved.Includes("wuu.prompt.default") {
+	if !resolved.Includes("personal") || !resolved.Includes("automation") || !resolved.Includes("account-connectors") || resolved.Includes("wuu.prompt.default") {
 		t.Fatal("Personal profile did not select its complete provider composition")
 	}
 	found := false
