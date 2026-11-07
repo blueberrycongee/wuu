@@ -6,9 +6,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-const calverPattern = /^[1-9]\d{3}\.(?:[1-9]|1[0-2])\.[1-9]\d*(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const nativeAndroid = "clients/native/android/app/build.gradle.kts";
 const nativeIOS = "clients/native/ios/Wuu.xcodeproj/project.pbxproj";
+// The same-day release index is a single digit because the native build
+// number reserves two digits for it, leaving two for the build iteration.
+const maxDailyIndex = 9;
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [command = "check", rawVersion] = process.argv.slice(2);
@@ -42,9 +44,7 @@ function checkVersions(expectedTag) {
   const version = requireCalver(currentVersion());
   const files = versionFiles(version);
   for (const [path, expected] of files) {
-    if (read(path) !== expected) {
-      fail(`release version differs from VERSION=${version}: ${path}; run make version-sync`);
-    }
+    if (read(path) !== expected) fail(`release version differs from VERSION=${version}: ${path}; run make version-sync`);
   }
   if (expectedTag) {
     const expected = requireCalver(expectedTag);
@@ -63,7 +63,15 @@ function syncVersions() {
 function prepare(rawNextVersion) {
   const current = requireCalver(currentVersion());
   const now = new Date();
-  const version = requireCalver(rawNextVersion || nextVersion(current, now));
+  const parsed = parseProductVersion(rawNextVersion || nextVersion(current, now));
+  if (parsed.legacy) {
+    fail(`new releases use YYYY.MMDD.P (e.g. ${parsed.year}.${parsed.month * 100 + parsed.day}.0); got ${parsed.version}`);
+  }
+  const version = parsed.version;
+  const currentParsed = parseProductVersion(current);
+  const versionDay = Date.UTC(parsed.year, parsed.month - 1, parsed.day);
+  const currentDay = Date.UTC(currentParsed.year, currentParsed.month - 1, currentParsed.day);
+  if (versionDay < currentDay) fail(`new version ${version} is dated before current version ${current}`);
   if (compareVersions(version, current) <= 0) fail(`new version ${version} must be greater than current version ${current}`);
 
   releaseNotes(version);
@@ -111,15 +119,19 @@ function versionFiles(version) {
 }
 
 function nativeBuildNumber(version) {
-  const [base, modifier] = version.split("-", 2);
-  const [year, month, day] = base.split(".").map(Number);
-  // Android limits versionCode to 2,100,000,000. Preserve the existing numeric
-  // layout while using the calendar day as the third component.
-  // Candidate builds use their numeric prerelease suffix; the final build uses 99,
-  // so promoting a candidate never reuses a store build number.
-  const candidateNumber = modifier?.match(/(?:^|\.)(\d+)$/)?.[1];
-  const buildIteration = modifier ? Math.min(Number(candidateNumber || 1), 98) : 99;
-  const value = (year % 100) * 10000000 + month * 100000 + day * 100 + buildIteration;
+  const parsed = parseProductVersion(version);
+  // Android limits versionCode to 2,100,000,000. The numeric layout encodes
+  // the release date, then the same-day index, then the build iteration:
+  // candidates use their numeric prerelease suffix (1-98) and the final build
+  // uses 99, so promoting a candidate never reuses a store build number.
+  // Legacy YYYY.M.D versions keep their original day*100+iteration layout so
+  // already published builds keep their ordering.
+  const candidateNumber = parsed.modifier?.match(/(?:^|\.)(\d+)$/)?.[1];
+  const buildIteration = parsed.modifier ? Math.min(Number(candidateNumber || 1), 98) : 99;
+  const year = parsed.year % 100;
+  const value = parsed.legacy
+    ? year * 10000000 + parsed.month * 100000 + parsed.day * 100 + buildIteration
+    : year * 10000000 + parsed.month * 100000 + parsed.day * 1000 + parsed.index * 100 + buildIteration;
   if (!Number.isSafeInteger(value) || value < 1 || value > 2100000000) {
     fail(`version ${version} cannot be represented as an Android build number`);
   }
@@ -127,11 +139,23 @@ function nativeBuildNumber(version) {
 }
 
 function nextVersion(rawCurrent, now) {
-  const current = requireCalver(rawCurrent);
-  const next = requireCalver(`${now.getUTCFullYear()}.${now.getUTCMonth() + 1}.${now.getUTCDate()}`);
-  if (compareVersions(current, next) > 0) fail(`current version ${current} is ahead of the UTC release date`);
-  if (current === next) fail(`version ${next} already exists; only one final release is allowed per UTC day`);
-  return next;
+  const current = parseProductVersion(rawCurrent);
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() + 1;
+  const day = now.getUTCDate();
+  const currentDay = Date.UTC(current.year, current.month - 1, current.day);
+  const today = Date.UTC(year, month - 1, day);
+  if (currentDay > today) fail(`current version ${current.version} is ahead of the UTC release date`);
+  if (currentDay < today) return formatVersion(year, month, day, 0);
+  // Same UTC day: a candidate promotes to the final build at its own index;
+  // a finished release moves to the next same-day index.
+  const index = current.modifier ? current.index : current.index + 1;
+  if (index > maxDailyIndex) fail(`at most ${maxDailyIndex + 1} final releases are allowed per UTC day`);
+  return formatVersion(current.year, current.month, current.day, index);
+}
+
+function formatVersion(year, month, day, index) {
+  return `${year}.${month * 100 + day}.${index}`;
 }
 
 function currentVersion() {
@@ -144,14 +168,42 @@ function requireSemver(rawVersion) {
   return version;
 }
 
-function requireCalver(rawVersion) {
+// Product versions are UTC CalVer `YYYY.MMDD.P`: the release year, the UTC
+// month and day packed as month*100+day (1108 is November 8), and a same-day
+// release index starting at 0. A minor below 100 is a legacy `YYYY.M.D`
+// release (month.minor, day.patch); existing tags and `release_tag`
+// dispatches for those releases still parse, but newly prepared releases
+// always use the packed form.
+function parseProductVersion(rawVersion) {
   const version = requireSemver(rawVersion);
-  if (!calverPattern.test(version)) fail(`invalid product version: ${version}; expected YYYY.M.D`);
-  const [year, month, day] = version.split("-")[0].split(".").map(Number);
-  if (day > new Date(Date.UTC(year, month, 0)).getUTCDate()) {
+  const [base, modifier] = version.split("-", 2);
+  const [year, minor, patch] = base.split(".").map(Number);
+  const parsed = { version, year, modifier, legacy: minor < 100 };
+  if (parsed.legacy) {
+    parsed.month = minor;
+    parsed.day = patch;
+    parsed.index = 0;
+  } else {
+    parsed.month = Math.floor(minor / 100);
+    parsed.day = minor % 100;
+    parsed.index = patch;
+    if (parsed.index > maxDailyIndex) {
+      fail(`invalid product version: ${version}; the same-day release index must be 0-${maxDailyIndex}`);
+    }
+  }
+  if (
+    parsed.month < 1 ||
+    parsed.month > 12 ||
+    parsed.day < 1 ||
+    parsed.day > new Date(Date.UTC(parsed.year, parsed.month, 0)).getUTCDate()
+  ) {
     fail(`invalid product version date: ${version}`);
   }
-  return version;
+  return parsed;
+}
+
+function requireCalver(rawVersion) {
+  return parseProductVersion(rawVersion).version;
 }
 
 function compareVersions(left, right) {

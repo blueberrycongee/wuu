@@ -28,7 +28,7 @@
 | `schema_version` | 包 schema，目前为 `1` |
 | `id` | 稳定的包身份，更新时应保持不变 |
 | `version` | 插件自身版本，与 Wuu 产品版本分开 |
-| `minimum_wuu_version` | 最低 Wuu CalVer，例如 `2026.9.1`，不能代替服务或 API 兼容性检查 |
+| `minimum_wuu_version` | 最低 Wuu CalVer，例如 `2026.1108.0`，不能代替服务或 API 兼容性检查 |
 | `platforms` | 可选的宿主平台限制 |
 | `requires` | 兼容旧格式的必需包 ID，不含版本约束 |
 | `dependencies` | `{ id, version?, optional? }` 形式的包关系；必需依赖必须可用且满足版本约束 |
