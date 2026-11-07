@@ -285,6 +285,33 @@ it("refetches a catalog left deferred by an aborted refresh", async () => {
 });
 
 
+it("completes a deferred catalog when the surface re-invokes after availability", async () => {
+  const pending: Array<{ resolve(result: EngineListResult): void; reject(error: Error): void }> = [];
+  window.wuu = { listEngines: vi.fn(() => new Promise<EngineListResult>((resolve, reject) => pending.push({ resolve, reject }))) } as unknown as typeof window.wuu;
+  const h = fixture();
+  const availability: EngineListResult = { settings: { default_engine: "devin" }, engines: [{ id: "devin", enabled: true, binary_ok: true, models_status: "deferred" }] };
+  const ready: EngineListResult = { ...availability, engines: [{ ...availability.engines[0], models: [{ id: "native-default" }], models_status: "ready" }] };
+  const first = new AbortController();
+  const refresh = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" }, first.signal);
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  pending[0].resolve(availability);
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  first.abort();
+  const rerun = new AbortController();
+  const rerunRequest = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" }, rerun.signal);
+  const menu = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  await vi.waitFor(() => expect(window.wuu.listEngines).toHaveBeenCalledTimes(3));
+  expect(window.wuu.listEngines).toHaveBeenNthCalledWith(3, { cwd: "/one" }, context);
+  pending[1].resolve(ready);
+  await expect(refresh).rejects.toThrow();
+  pending[2].resolve(ready);
+  await rerunRequest;
+  await menu;
+  expect(h.view().engines[0].models?.map(model => model.id)).toEqual(["native-default"]);
+  expect(window.wuu.listEngines).toHaveBeenCalledTimes(3);
+});
+
+
 it("captures workspace defaults before asynchronous engine discovery", async () => {
   const h = fixture();
   let finish!: (value: EngineListResult) => void;

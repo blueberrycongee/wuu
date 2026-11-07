@@ -55,9 +55,9 @@ async function key(win, keyCode) {
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode });
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
-async function capturePanel(win, name, fastSupported = true) {
-  // An asynchronous runtime reply can cancel and replace a transition after
-  // getAnimations() was read. Recheck each frame instead of awaiting one snapshot.
+// An asynchronous runtime reply can cancel and replace a transition after
+// getAnimations() was read. Recheck each frame instead of awaiting one snapshot.
+async function settlePanel(win) {
   await evaluate(win, () => new Promise((resolve, reject) => {
     let frame;
     let settledFrames = 0;
@@ -77,6 +77,9 @@ async function capturePanel(win, name, fastSupported = true) {
     };
     frame = requestAnimationFrame(check);
   }));
+}
+async function capturePanel(win, name, fastSupported = true) {
+  await settlePanel(win);
   const state = await evaluate(win, () => {
     const panel = document.querySelector('.runtime-panel');
     const context = panel.querySelector('.runtime-panel-context');
@@ -150,6 +153,8 @@ async function run() {
   engines.codex = { enabled: true, binary_path: codexBinary };
   process.env.WUU_TEST_CODEX_REQUESTS = path.join(fixture, 'codex-requests.jsonl');
   process.env.WUU_TEST_CODEX_DEFAULT_TIER = 'fast';
+  // Stall the first Codex model catalog until the test opens the gate.
+  process.env.WUU_TEST_CODEX_MODEL_LIST_GATE = path.join(fixture, 'codex-model-list.gate');
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
     providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture', models: { fixture: { name: 'Fixture model with a deliberately long display name', fast_mode: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } }, 'fixture-basic': { name: 'Basic fixture model', fast_mode: false, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } } } } },
@@ -166,6 +171,45 @@ async function run() {
   console.log('FIXTURE', fixture);
   main.setSize(1380, 860);
   await waitFor(main, () => document.querySelector('.composer textarea'));
+  // A stalled native catalog must still complete inside the already-open panel:
+  // the deferred availability publish is not fresh, so the surface re-invokes
+  // the full refresh after its aborted first attempt.
+  await waitFor(main, () => document.querySelector('.codex-runtime-trigger:not(:disabled)'));
+  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
+  await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
+  await waitFor(main, () => document.querySelector('.runtime-engine-option'));
+  await evaluate(main, () => [...document.querySelectorAll('.runtime-engine-option')].find(button => button.querySelector('.runtime-engine-option-name').textContent === 'Codex').click());
+  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)')?.textContent.includes('Codex'));
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.codex-effort-slider input'))), false,
+    'The gated Codex catalog must not have loaded before the gate opens.');
+  fs.writeFileSync(process.env.WUU_TEST_CODEX_MODEL_LIST_GATE, '');
+  await waitFor(main, () => document.querySelector('.codex-effort-slider input'), null, 15000);
+  await settlePanel(main);
+  const panelCrop = () => evaluate(main, () => {
+    const p = document.querySelector('.runtime-panel').getBoundingClientRect();
+    return { x: Math.max(0, Math.floor(p.x - 8)), y: Math.max(0, Math.floor(p.y - 8)),
+      width: Math.min(innerWidth - Math.max(0, Math.floor(p.x - 8)), Math.ceil(p.width + 16)),
+      height: Math.min(innerHeight - Math.max(0, Math.floor(p.y - 8)), Math.ceil(p.height + 16)) };
+  }).then(crop => Object.fromEntries(Object.entries(crop).map(([key, value]) => [key, Math.round(value * main.webContents.getZoomFactor())])));
+  const deferredCatalog = await evaluate(main, () => ({ effort: document.querySelector('.codex-effort-slider input')?.getAttribute('aria-valuetext') }));
+  fs.writeFileSync(path.join(output, 'deferred-catalog-summary.png'), (await main.webContents.capturePage(await panelCrop())).toPNG());
+  // The model name itself is only listed on the panel's model page.
+  await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
+  await waitFor(main, () => [...document.querySelectorAll('.codex-model-item-name')].some(item => item.textContent === 'GPT-6 Astra'), null, 15000);
+  await settlePanel(main);
+  deferredCatalog.models = await evaluate(main, () => [...document.querySelectorAll('.codex-model-item-name')].map(item => item.textContent));
+  fs.writeFileSync(path.join(output, 'deferred-catalog-models.png'), (await main.webContents.capturePage(await panelCrop())).toPNG());
+  await key(main, 'Escape');
+  await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
+  // Leave the draft on the default engine and close the panel for the rest.
+  await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
+  await waitFor(main, () => document.querySelector('.runtime-engine-option'));
+  await evaluate(main, () => [...document.querySelectorAll('.runtime-engine-option')].find(button => button.querySelector('.runtime-engine-option-name').textContent === 'Wuu').click());
+  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)')?.textContent.includes('Wuu')
+    && document.querySelector('.codex-effort-slider input'));
+  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  await waitFor(main, () => !document.querySelector('.runtime-panel'));
   // Keep native keyboard checks independent of other desktop windows.
   main.webContents.debugger.attach('1.3');
   await main.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -478,7 +522,7 @@ async function run() {
     })), selection, 'Reopening the current engine preserves its model and effort.');
     await capturePanel(main, `current-engine-${engine.toLowerCase()}`, engine === 'Codex');
   }
-  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, nativeRuntime, requests, persisted, layoutEvidence }, null, 2));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, nativeRuntime, deferredCatalog, requests, persisted, layoutEvidence }, null, 2));
   console.log('PASS: fast / standard speed reached the provider and native Codex; inherited native speed displayed; model and effort preserved. Artifacts:', output);
   clearTimeout(timeout); server.close(); app.quit();
 }

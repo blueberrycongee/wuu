@@ -310,27 +310,21 @@ export class ApplicationComposerRuntime {
     if (!force && owner.inventory && Date.now() - owner.fetchedAt < engineFreshnessMS) return;
     if (!force && owner.enginePending && !owner.engineSignal?.aborted) return owner.enginePending.then(() => { source.signal?.throwIfAborted(); });
     const request = ++owner.engineRequest; owner.engineSignal = source.signal; owner.engineLoading = true; owner.engineError = ""; this.host.changed();
-    const publish = (result: EngineListResult): boolean => {
+    const publish = (result: EngineListResult, fresh = true): boolean => {
       source.signal?.throwIfAborted();
       if (!this.current(source) || request !== owner.engineRequest) return false;
-      owner.inventory = immutable(result); owner.explicitEngineAfterDiscoveryFailure = false; owner.fetchedAt = Date.now();
+      owner.inventory = immutable(result); owner.explicitEngineAfterDiscoveryFailure = false; owner.fetchedAt = fresh ? Date.now() : 0;
       this.seed(owner, source.tab); this.host.changed(); return true;
     };
     const pending = (async () => {
-      let availabilityPublished = false;
       try {
         if (!force && !owner.inventory) {
           const availability = await window.wuu.listEngines({ cwd: owner.cwd, include_models: false }, owner.context);
-          if (!publish(availability)) return;
-          availabilityPublished = true;
+          if (!publish(availability, false)) return;
         }
         const result = await window.wuu.listEngines({ cwd: owner.cwd, ...(force ? { refresh_models: true } : {}) }, owner.context);
-        if (!publish(result) && availabilityPublished) owner.fetchedAt = 0;
+        publish(result);
       } catch (error) {
-        // A discarded or aborted full refresh must not leave the deferred
-        // availability publish marked fresh, or later refresh calls early-return
-        // and the catalog never completes. The owner outlives this source.
-        if (availabilityPublished) owner.fetchedAt = 0;
         if (source.signal?.aborted) throw error;
         if (this.current(source) && request === owner.engineRequest) {
           owner.engineError = error instanceof Error ? error.message : String(error);
