@@ -27,6 +27,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	hookspkg "github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/imageproc"
@@ -996,6 +998,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	removedQueuedTurn, removedQueued := s.removeQueuedUserTurn(params.ThreadID, clientID)
 	th.pendingSteers = append(th.pendingSteers, steerMsg)
 	th.signalSteerWakeLocked()
+	// Only explicit human steering closes the visible model stream. Generated
+	// completions and plugin mailbox input keep their next-boundary behavior.
+	th.signalModelPreemptLocked()
 	th.steerDocumentOverrides = append(th.steerDocumentOverrides, activeDocumentOverride{
 		steerID: clientID, document: cloneActiveDocument(steerDocument),
 	})
@@ -1066,6 +1071,32 @@ func (th *threadState) steerWaitInterrupt() <-chan struct{} {
 		th.steerWake = make(chan struct{})
 	}
 	return th.steerWake
+}
+
+func (th *threadState) signalModelPreemptLocked() {
+	if th.modelPreemptWake == nil {
+		th.modelPreemptWake = make(chan struct{})
+	}
+	if !th.modelPreemptClosed {
+		close(th.modelPreemptWake)
+		th.modelPreemptClosed = true
+	}
+}
+
+func (th *threadState) resetModelPreemptLocked() {
+	if th.modelPreemptWake == nil || th.modelPreemptClosed {
+		th.modelPreemptWake = make(chan struct{})
+		th.modelPreemptClosed = false
+	}
+}
+
+func (th *threadState) modelPreemptInterrupt() <-chan struct{} {
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	if th.modelPreemptWake == nil {
+		th.modelPreemptWake = make(chan struct{})
+	}
+	return th.modelPreemptWake
 }
 
 func (s *Server) steerAgentCompletion(binding *runtime.State, threadID, resultID string, msg providers.ChatMessage) bool {
@@ -3055,6 +3086,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	var baseResumeSampling bool
 	var baseCompactOnly bool
 	var baseToolWaitInterrupt func() <-chan struct{}
+	var baseModelInterrupt func() <-chan struct{}
 	var baseBeforeStep func() []providers.ChatMessage
 	var baseBeforeRequestContext func() []agent.ContextSegment
 	var baseOnRequestContext func(agent.RequestContextInfo)
@@ -3081,6 +3113,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		baseResumeSampling = runner.ResumeSampling
 		baseCompactOnly = runner.CompactOnly
 		baseToolWaitInterrupt = runner.ToolWaitInterrupt
+		baseModelInterrupt = runner.ModelInterrupt
 		baseBeforeStep = runner.BeforeStep
 		baseBeforeRequestContext = runner.BeforeRequestContext
 		baseOnRequestContext = runner.OnRequestContext
@@ -3098,6 +3131,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 				runner.ResumeSampling = baseResumeSampling
 				runner.CompactOnly = baseCompactOnly
 				runner.ToolWaitInterrupt = baseToolWaitInterrupt
+				runner.ModelInterrupt = baseModelInterrupt
 				runner.BeforeStep = baseBeforeStep
 				runner.BeforeRequestContext = baseBeforeRequestContext
 				runner.OnRequestContext = baseOnRequestContext
@@ -3111,8 +3145,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		}
 		if th != nil {
 			runner.ToolWaitInterrupt = th.steerWaitInterrupt
+			runner.ModelInterrupt = th.modelPreemptInterrupt
 		} else {
 			runner.ToolWaitInterrupt = nil
+			runner.ModelInterrupt = nil
 		}
 		runner.CommitFreshContext = func(commitCtx context.Context, messages []providers.ChatMessage, head int, key string, note agent.CompactionNote) ([]providers.ChatMessage, int, error) {
 			if err := commitCtx.Err(); err != nil {
@@ -3411,6 +3447,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
 			th.pendingSteers = append(th.pendingSteers, nativePending...)
 			th.resetSteerWakeLocked()
+			th.resetModelPreemptLocked()
+			// This admission starts a fresh model stream; late events from the
+			// preempted transport are no longer accepted.
+			th.preemptingAgentTurnID = ""
 			for _, msg := range steers {
 				delete(th.pendingSteerControls, msg.ClientID)
 			}
@@ -3573,11 +3613,13 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			providerStates = append(providerStates, providerStateRecord(ev.ProviderState))
 		}
 		notifyBatch(batch)
-		notify(NotificationTurnEvent, TurnEventNotification{
-			ThreadID: th.ID,
-			TurnID:   turnID,
-			Event:    sanitizeStreamEvent(ev),
-		})
+		if ev.Type != providers.EventModelPreempted {
+			notify(NotificationTurnEvent, TurnEventNotification{
+				ThreadID: th.ID,
+				TurnID:   turnID,
+				Event:    sanitizeStreamEvent(ev),
+			})
+		}
 	})
 	joinNativeSteering()
 	closeEngine()
@@ -6160,14 +6202,17 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	rows := scan.TokenRows
 
 	metrics, days := aggregateUsageRows(rows, loc)
+	engineBreakdowns, outsideRows := s.buildEngineBreakdowns(binding.Sessions, rows)
+	days = mergeOutsideUsageDays(days, outsideRows, loc)
 
 	response := SettingsUsageResponse{
-		TotalSessions:   countUsageSessions(rows),
-		GeneratedAt:     now.Format(time.RFC3339Nano),
-		Metrics:         metrics,
-		ModelBreakdowns: buildUsageModelBreakdowns(rows),
-		SkillUsage:      scan.Skills,
-		Days:            days,
+		TotalSessions:    countUsageSessions(rows),
+		GeneratedAt:      now.Format(time.RFC3339Nano),
+		Metrics:          metrics,
+		ModelBreakdowns:  buildUsageModelBreakdowns(rows),
+		EngineBreakdowns: engineBreakdowns,
+		SkillUsage:       scan.Skills,
+		Days:             days,
 	}
 	// Usage analytics is an approximate convenience view, not a live meter.
 	// Keep the full-history scan out of the normal interaction path for two hours.
@@ -6214,6 +6259,194 @@ func countUsageSessions(rows []insight.TokenUsageRow) int {
 		seen[r.SessionID] = struct{}{}
 	}
 	return len(seen)
+}
+
+// engineUsageScanTimeout bounds the local-ledger scan so a large engine log
+// directory cannot stall the settings response; the file cache makes repeat
+// scans incremental.
+const engineUsageScanTimeout = 30 * time.Second
+
+// buildEngineBreakdowns attributes the in-Wuu token_usage trail to each
+// thread's bound engine, then reads the engines' own on-disk ledgers for the
+// usage recorded outside Wuu. Native sessions a Wuu thread already claims are
+// excluded from the outside side, so the two columns never count the same work
+// twice. InWuu.Sessions counts every thread bound to the engine — including
+// engines like the ACP family whose turns report no token usage — so a bound
+// but unreported engine still surfaces with zero tokens. A ledger that fails
+// to scan leaves Outside nil rather than reporting partial data as complete.
+// buildEngineBreakdowns also returns the outside-Wuu ledger rows that survived
+// exclusion and engine failure filtering, so the daily series can color the
+// same days the breakdown counts.
+func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) ([]SettingsEngineUsage, []engineusage.Row) {
+	sessions, err := store.List(0)
+	if err != nil {
+		providers.DebugLogf("usage engine breakdown: list sessions: %v", err)
+		sessions = nil
+	}
+	engineBySession := make(map[string]string, len(sessions))
+	boundSessions := make(map[string]int)
+	exclude := engineusage.ExcludeRefs{}
+	for _, sess := range sessions {
+		id := string(agentengine.NormalizeEngineID(sess.EngineID))
+		engineBySession[sess.ID] = id
+		boundSessions[id]++
+		if ref := strings.TrimSpace(sess.EngineRef); ref != "" {
+			if exclude[id] == nil {
+				exclude[id] = map[string]struct{}{}
+			}
+			exclude[id][ref] = struct{}{}
+		}
+	}
+
+	engines := make(map[string]*SettingsEngineUsage)
+	get := func(id string) *SettingsEngineUsage {
+		b, ok := engines[id]
+		if !ok {
+			b = &SettingsEngineUsage{Engine: id, Name: engineUsageDisplayName(id)}
+			engines[id] = b
+		}
+		return b
+	}
+
+	for _, r := range rows {
+		id, ok := engineBySession[r.SessionID]
+		if !ok {
+			id = string(agentengine.EngineWuu)
+		}
+		b := get(id)
+		b.InWuu.InputTokens += r.InputTokens
+		b.InWuu.OutputTokens += r.OutputTokens
+		b.InWuu.CacheCreationTokens += r.CacheCreationTokens
+		b.InWuu.CacheReadTokens += r.CacheReadTokens
+	}
+	for id, bound := range boundSessions {
+		get(id).InWuu.Sessions = bound
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), engineUsageScanTimeout)
+	defer cancel()
+	if s.usageScanner == nil {
+		s.usageScanner = &engineusage.Scanner{}
+	}
+	scanned := s.usageScanner.Scan(ctx, exclude)
+	for engine, scanErr := range scanned.Failed {
+		providers.DebugLogf("usage engine breakdown: scan %s ledger: %v", engine, scanErr)
+	}
+	outsideSessions := make(map[string]map[string]struct{})
+	var outsideRows []engineusage.Row
+	for _, r := range scanned.Rows {
+		if _, failed := scanned.Failed[r.Engine]; failed {
+			continue
+		}
+		outsideRows = append(outsideRows, r)
+		b := get(r.Engine)
+		if b.Outside == nil {
+			b.Outside = &EngineUsageSum{}
+		}
+		b.Outside.InputTokens += r.InputTokens
+		b.Outside.OutputTokens += r.OutputTokens
+		b.Outside.CacheCreationTokens += r.CacheCreationTokens
+		b.Outside.CacheReadTokens += r.CacheReadTokens
+		if r.SessionID != "" {
+			if outsideSessions[r.Engine] == nil {
+				outsideSessions[r.Engine] = map[string]struct{}{}
+			}
+			outsideSessions[r.Engine][r.SessionID] = struct{}{}
+		}
+	}
+	for id, seen := range outsideSessions {
+		if engines[id].Outside != nil {
+			engines[id].Outside.Sessions = len(seen)
+		}
+	}
+
+	out := make([]SettingsEngineUsage, 0, len(engines))
+	for _, b := range engines {
+		outside := EngineUsageSum{}
+		if b.Outside != nil {
+			outside = *b.Outside
+		}
+		if b.InWuu.TotalTokens() == 0 && b.InWuu.Sessions == 0 && outside.TotalTokens() == 0 && outside.Sessions == 0 {
+			continue
+		}
+		out = append(out, *b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti, tj := out[i].InWuu.TotalTokens(), out[j].InWuu.TotalTokens()
+		if out[i].Outside != nil {
+			ti += out[i].Outside.TotalTokens()
+		}
+		if out[j].Outside != nil {
+			tj += out[j].Outside.TotalTokens()
+		}
+		if ti != tj {
+			return ti > tj
+		}
+		return out[i].Engine < out[j].Engine
+	})
+	return out, outsideRows
+}
+
+// mergeOutsideUsageDays folds outside-Wuu ledger rows into the daily series so
+// the trend and heatmap color every day the page counts. Outside totals land
+// on their own field — the in-Wuu token fields, hit rate, turns, and agents
+// stay exactly what aggregateUsageRows computed.
+func mergeOutsideUsageDays(days []SettingsUsageDay, rows []engineusage.Row, loc *time.Location) []SettingsUsageDay {
+	type outsideBucket struct {
+		sum      EngineUsageSum
+		sessions map[string]struct{}
+	}
+	byDate := make(map[string]*outsideBucket)
+	for _, r := range rows {
+		if r.At.IsZero() {
+			continue
+		}
+		date := r.At.In(loc).Format("2006-01-02")
+		bucket := byDate[date]
+		if bucket == nil {
+			bucket = &outsideBucket{}
+			byDate[date] = bucket
+		}
+		bucket.sum.InputTokens += r.InputTokens
+		bucket.sum.OutputTokens += r.OutputTokens
+		bucket.sum.CacheCreationTokens += r.CacheCreationTokens
+		bucket.sum.CacheReadTokens += r.CacheReadTokens
+		if r.SessionID != "" {
+			if bucket.sessions == nil {
+				bucket.sessions = map[string]struct{}{}
+			}
+			bucket.sessions[r.SessionID] = struct{}{}
+		}
+	}
+	if len(byDate) == 0 {
+		return days
+	}
+
+	index := make(map[string]int, len(days))
+	for i, day := range days {
+		index[day.Date] = i
+	}
+	for date, bucket := range byDate {
+		bucket.sum.Sessions = len(bucket.sessions)
+		sum := bucket.sum
+		if i, ok := index[date]; ok {
+			days[i].Outside = &sum
+		} else {
+			days = append(days, SettingsUsageDay{Date: date, Outside: &sum})
+		}
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
+	return days
+}
+
+func engineUsageDisplayName(id string) string {
+	if id == string(agentengine.EngineWuu) {
+		return "Wuu"
+	}
+	if entry, ok := enginecatalog.Lookup(id); ok {
+		return entry.Name
+	}
+	return id
 }
 
 func buildUsageModelBreakdowns(rows []insight.TokenUsageRow) []insight.ModelUsage {

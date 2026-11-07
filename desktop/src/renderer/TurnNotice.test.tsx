@@ -433,12 +433,13 @@ describe("TurnFailureNotice", () => {
 
   it("continues from a partial reply rather than resending the message", async () => {
     const retry = vi.fn();
-    const resume = vi.fn();
+    const resume = vi.fn(async () => true);
     const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={retry} onContinue={resume} />);
     expect(buttons(host).map((button) => button.textContent)).toEqual([t("turnFailure.continue")]);
     await act(async () => { buttons(host)[0].click(); });
     expect(resume).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
+    expect(host.querySelector(".turn-failure-presence.is-leaving")?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("does not offer a retry that would overflow the context again", () => {

@@ -28,6 +28,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -5661,9 +5662,15 @@ func TestServerQueuesUserTurnWhileThreadIsRunning(t *testing.T) {
 }
 
 func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) {
-	client := newBlockingStreamClient("done")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
+	client := &fakeClient{
+		responses: []providers.ChatResponse{
+			{ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "wait_for_steer", Arguments: `{}`}}},
+			{Content: "done"},
+		},
+	}
+	rt := newTestRuntime(t, client)
+	blockingTool := newBlockingToolExecutor()
+	rt.StreamRunner.Tools = blockingTool
 	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -5678,7 +5685,9 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 		t.Fatalf("turn/start: %v", err)
 	}
 	started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
-	<-client.started
+	// Keep the turn inside a running tool so the steer is still pending when
+	// the interrupt freezes input, preserving the original hold order.
+	<-blockingTool.started
 
 	queueReq := fmt.Sprintf(`{"id":"3","method":"turn/queue","params":{"thread_id":%q,"prompt":"queued follow-up","client_id":"queued-1"}}`, threadID)
 	if err := srv.handleLine(context.Background(), []byte(queueReq)); err != nil {
@@ -5755,7 +5764,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	if len(held) != 2 || held[0].id != "guide-1" || held[1].id != "queued-2" {
 		t.Fatalf("releasing queued-1 changed other held messages: %+v", held)
 	}
-	close(client.release)
+	close(blockingTool.release)
 	waitForTurnCompletedCountForThread(t, out, threadID, 1)
 	held, err = srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
@@ -10638,6 +10647,136 @@ func TestSettingsUsageAggregatesAcrossSessions(t *testing.T) {
 	}
 	if result.ModelBreakdowns[1].Provider != "anthropic" {
 		t.Fatalf("expected anthropic second, got %q", result.ModelBreakdowns[1].Provider)
+	}
+}
+
+func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	now := time.Now().UTC()
+
+	// A wuu-engine thread and a claude-engine thread, each with one usage row.
+	wuuSess, err := rt.Sessions.CreateWithMetadata("usage-wuu", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecord(wuuSess.ID, session.HistoryRecord{
+		Role: "meta", Content: "token_usage",
+		Provider: "openai", Model: "gpt-4o",
+		At: now.Add(-time.Hour), InputTokens: 100, OutputTokens: 40,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claudeSess, err := rt.Sessions.CreateWithMetadata("usage-claude", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngine(claudeSess.ID, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngineRef(claudeSess.ID, "sess-bound"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecord(claudeSess.ID, session.HistoryRecord{
+		Role: "meta", Content: "token_usage",
+		Provider: "claude", Model: "",
+		At: now.Add(-time.Hour), InputTokens: 60, OutputTokens: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fake claude ledger: the bound session file must be excluded from
+	// "outside" because the in-Wuu row above already counts it; the free
+	// session file becomes outside usage on its own day.
+	claudeDir := filepath.Join(t.TempDir(), "projects")
+	outsideDay := now.Add(-48 * time.Hour)
+	claudeLine := func(sessionID string, at time.Time, input, output int) string {
+		line, err := json.Marshal(map[string]any{
+			"type": "assistant", "timestamp": at.Format(time.RFC3339Nano), "sessionId": sessionID,
+			"message": map[string]any{"model": "claude-sonnet-4-5", "usage": map[string]any{
+				"input_tokens": input, "output_tokens": output,
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(line)
+	}
+	for name, lines := range map[string][]string{
+		"sess-bound.jsonl": {claudeLine("sess-bound", outsideDay, 999, 999)},
+		"sess-free.jsonl":  {claudeLine("sess-free", outsideDay, 300, 120)},
+	} {
+		path := filepath.Join(claudeDir, "-tmp", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	srv.usageScanner = &engineusage.Scanner{
+		ClaudeDir:  claudeDir,
+		CodexDirs:  []string{filepath.Join(t.TempDir(), "missing")},
+		OpenCodeDB: filepath.Join(t.TempDir(), "missing.db"),
+	}
+	raw, err := json.Marshal(map[string]any{"id": "1", "method": MethodSettingsUsage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+
+	msgs := parseOutput(t, out.String())
+	result := remarshal[SettingsUsageResponse](t, responseByID(t, msgs, "1")["result"])
+
+	breakdowns := make(map[string]SettingsEngineUsage, len(result.EngineBreakdowns))
+	for _, b := range result.EngineBreakdowns {
+		breakdowns[b.Engine] = b
+	}
+	wuu := breakdowns["wuu"]
+	if wuu.Name != "Wuu" || wuu.InWuu.TotalTokens() != 140 || wuu.InWuu.Sessions != 1 {
+		t.Fatalf("wuu breakdown: %+v", wuu)
+	}
+	if wuu.Outside != nil {
+		t.Fatalf("wuu has no local ledger, outside must be nil: %+v", wuu.Outside)
+	}
+	claude := breakdowns["claude"]
+	if claude.Name != "Claude Code" || claude.InWuu.TotalTokens() != 80 || claude.InWuu.Sessions != 1 {
+		t.Fatalf("claude breakdown: %+v", claude)
+	}
+	if claude.Outside == nil || claude.Outside.TotalTokens() != 420 || claude.Outside.Sessions != 1 {
+		t.Fatalf("claude outside should hold only the unbound session: %+v", claude.Outside)
+	}
+
+	// The same outside rows land on the daily series: the bound session's
+	// tokens stay excluded, and the outside-only day keeps in-Wuu fields at
+	// zero rather than inventing activity.
+	daysByDate := make(map[string]SettingsUsageDay, len(result.Days))
+	for _, day := range result.Days {
+		daysByDate[day.Date] = day
+	}
+	outsideDate := outsideDay.Format("2006-01-02")
+	day, ok := daysByDate[outsideDate]
+	if !ok || day.Outside == nil {
+		t.Fatalf("outside day %s missing from daily series: %+v", outsideDate, result.Days)
+	}
+	if day.Outside.TotalTokens() != 420 || day.Outside.Sessions != 1 {
+		t.Fatalf("outside day should hold only the unbound session: %+v", day.Outside)
+	}
+	if day.InputTokens != 0 || day.OutputTokens != 0 || day.Turns != 0 {
+		t.Fatalf("outside-only day must keep in-Wuu fields at zero: %+v", day)
+	}
+	inWuuDate := now.Add(-time.Hour).Format("2006-01-02")
+	if day, ok := daysByDate[inWuuDate]; !ok || day.Outside != nil || day.InputTokens+day.OutputTokens != 220 {
+		t.Fatalf("in-Wuu day %s must keep its own trail untouched: %+v", inWuuDate, day)
+	}
+	for i := 1; i < len(result.Days); i++ {
+		if result.Days[i].Date < result.Days[i-1].Date {
+			t.Fatalf("days must stay date-ascending after merge: %+v", result.Days)
+		}
 	}
 }
 

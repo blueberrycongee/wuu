@@ -31,6 +31,10 @@ var (
 	acpInitializeTimeout = 30 * time.Second
 	acpSessionTimeout    = 120 * time.Second
 	acpCloseTimeout      = 10 * time.Second
+	// Each advertised model's option probe gets a bounded slice of the
+	// discovery budget: a slow or wedged selection only strips that model's
+	// metadata instead of starving the rest of the catalog.
+	acpModelProbeTimeout = 15 * time.Second
 )
 
 // ACP v1's prompt response owns completion for standard agents. Grok also
@@ -147,7 +151,18 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 		if _, ok := known[id]; ok {
 			continue
 		}
-		if err := session.selectModel(ctx, r, session.ID, id); err != nil {
+		probeCtx, probeCancel := context.WithTimeout(ctx, acpModelProbeTimeout)
+		err := session.selectModel(probeCtx, r, session.ID, id)
+		probeCancel()
+		if err != nil {
+			// A probe that only outlived its own slice leaves the advertised
+			// model listed without its option metadata; the rest of the
+			// catalog still gets probed. A refused switch is the agent's own
+			// answer, and an exhausted discovery budget must not let a
+			// capability-depleted catalog cache as ready.
+			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
 			return DiscoveredCatalog{Models: models, Modes: modes}, fmt.Errorf("discover model %q: %w", id, err)
 		}
 		updated := modelsFromACPSession(session)

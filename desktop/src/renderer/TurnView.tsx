@@ -1,6 +1,6 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import type { ConversationTurnSlotContextV1 } from "../../../packages/plugin-sdk/src/ui";
 import type {
   SessionLocatorV1,
@@ -11,7 +11,7 @@ import type {
   Turn,
 } from "../shared/protocol";
 import { OPTIMISTIC_TURN_ID_PREFIX } from "./ComposerMessages";
-import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
+import { buildAssistantTurnDisplay, type AssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
@@ -28,6 +28,7 @@ import {
 import { turnEventForTurn } from "./TurnEvents";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
+import { buildTurnTimeline, displayItemsForSettledSegment } from "./TurnTimeline";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -110,6 +111,20 @@ function workspaceTurnForPresentation(turn: Turn): Turn {
   return items.length === turn.items.length ? turn : { ...turn, items };
 }
 
+type TimelineAssistantShellProps = Omit<ComponentProps<typeof AssistantTurnShell>, "display"> & {
+  display: AssistantTurnDisplay | undefined;
+};
+
+// Keep presentation stabilization per timeline segment. When a completed turn
+// collapses back to one segment, the same segment component keeps its previously
+// presented display, so the assistant article stays mounted and an active text
+// selection or comment survives.
+function TimelineAssistantShell({ turn, display, ...props }: TimelineAssistantShellProps): JSX.Element | null {
+  const presented = useAssistantTurnPresentation(turn.id, display);
+  if (!presented) return null;
+  return <AssistantTurnShell turn={turn} display={presented} {...props} />;
+}
+
 function TurnContent({
   turn,
   threadID,
@@ -185,22 +200,25 @@ function TurnContent({
     item: ThreadItem,
     streaming: boolean,
     pendingCompanionReasoning?: boolean,
+    displayTurn: Turn = turn,
+    isActiveSegment = true,
   ): JSX.Element | null {
     return (
       <ThreadItemView
         key={item.id}
         turnID={turn.id}
-        turnStatus={turn.status}
+        turnStatus={displayTurn.status}
         turnStartedAt={turn.started_at}
-        turnAnswerReadyAt={turn.answer_ready_at ?? turn.completed_at}
+        turnAnswerReadyAt={displayTurn.answer_ready_at ?? displayTurn.completed_at}
         item={item}
         cwd={cwd}
         onOpenFile={onOpenFile}
         streaming={streaming}
         pendingCompanionReasoning={pendingCompanionReasoning}
-        actionableAgentMessageID={actionableAgentMessageID}
-        latestAgentMessageID={latestAgentMessageID}
-        animateCompletionActions={animateCompletionActions}
+        actionableAgentMessageID={isActiveSegment ? actionableAgentMessageID : undefined}
+        latestAgentMessageID={isActiveSegment ? latestAgentMessageID : undefined}
+        animateCompletionActions={isActiveSegment && animateCompletionActions}
+        messageActions={!isActiveSegment && item.type === "agent_message" ? "none" : undefined}
         onStreamFrame={onStreamFrame}
         onForkMessage={onForkMessage}
         onEditMessage={onEditMessage}
@@ -220,15 +238,43 @@ function TurnContent({
   }
 
   const userItems = turn.items.filter((item) => item.type === "user_message");
-  const rawAssistantDisplay = buildAssistantTurnDisplay(
-    turn,
-    actionableAgentMessageID,
-    renderThreadItem,
+  // A turn can contain more than one user message after steering. Keep the
+  // transcript chronological instead of rendering every user bubble first.
+  const timelineItems = turn.items.filter(
+    (item) => item.type !== "user_message" || !isInternalUserNotificationItem(item),
   );
-  const assistantDisplay = useAssistantTurnPresentation(
-    turn.id,
-    rawAssistantDisplay,
-  );
+  const builtTimeline = buildTurnTimeline(timelineItems);
+  const timelineSegments = (builtTimeline.length > 0 ? builtTimeline : [{ userItems: [], assistantItems: [] }]).map((segment, index, all) => {
+    const last = index === all.length - 1;
+    const singleSegment = all.length === 1;
+    const assistantItems = last
+      ? segment.assistantItems
+      : displayItemsForSettledSegment(segment.assistantItems);
+    const segmentTurn: Turn = last && singleSegment
+      ? turn
+      : last
+        ? { ...turn, items: assistantItems }
+        : { ...turn, items: assistantItems, status: "completed" };
+    const interrupted = assistantItems.some(
+      (item) => item.type === "agent_message" && item.cause === "steered_stream_fragment",
+    );
+    const display = last || assistantItems.length > 0
+      ? buildAssistantTurnDisplay(
+          segmentTurn,
+          last ? actionableAgentMessageID : undefined,
+          (item, streaming, pendingCompanionReasoning) =>
+            renderThreadItem(item, streaming && last, pendingCompanionReasoning, segmentTurn, last),
+        )
+      : undefined;
+    return {
+      segment,
+      segmentTurn,
+      display,
+      interrupted,
+      last,
+      key: segment.userItems[0]?.id ?? assistantItems[0]?.id ?? `${turn.id}-segment-${index}`,
+    };
+  });
   const reconnectItems = turn.items.filter((item) => item.type === "stream_reconnect");
   const visibleStreamStatus = isLatestTurn && turn.status === "in_progress" && reconnectItems.length === 0
     ? streamStatus
@@ -238,6 +284,11 @@ function TurnContent({
     if (turn.status === "in_progress") previousStreamStatus.current = visibleStreamStatus;
   }, [turn.status, visibleStreamStatus]);
   const retryMessage = userItems.at(-1);
+  // An interrupted turn that a later turn has already taken over keeps its
+  // partial work behind the fold instead of filling the stream above the
+  // active reply. A still-latest interruption stays open so the reader can
+  // review what was cut off before deciding how to continue.
+  const interruptedSuperseded = turn.status === "interrupted" && isLatestTurn === false;
   const event = turnEventForTurn(turn);
   // A failed reconnect already carries the cause, so the turn event stays
   // empty for it; either way one failure card explains the turn. A stop the
@@ -263,7 +314,10 @@ function TurnContent({
   const shouldContinue = !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)
     && ((Boolean(threadID) && (!engineID || engineID === "wuu")) || !canRewindHistory || turnLeftPartialWork(turn));
   const continueFailedTurn = recoverable && shouldContinue && threadID
-    ? async () => { await application.invoke("conversation.continue", { threadId: threadID, turnId: turn.id, text: t("turnFailure.continuePrompt") }); }
+    ? async () => {
+        const result = await application.invoke("conversation.continue", { threadId: threadID, turnId: turn.id, text: t("turnFailure.continuePrompt") });
+        return result.accepted;
+      }
     : undefined;
   const retryFailedTurn = recoverable && !shouldContinue && retryMessage
     ? () => onSubmitEditMessage(
@@ -315,29 +369,39 @@ function TurnContent({
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {userItems.map((item) => renderThreadItem(item, false))}
-      {assistantDisplay ? (
-        <AssistantTurnShell
-          turn={turn}
-          display={assistantDisplay}
-          cwd={cwd}
-          onOpenFile={onOpenFile}
-          onOpenURL={onOpenURL}
-          actionableAgentMessageID={actionableAgentMessageID}
-          latestAgentMessageID={latestAgentMessageID}
-          animateCompletionActions={animateCompletionActions}
-          onStreamFrame={onStreamFrame}
-          onForkMessage={onForkMessage}
-          onCollapseComplete={onCollapseComplete}
-          onOpenAgent={onOpenAgent}
-          editSummaryCard={
-            !incomplete && runActionAttachedToMessage ? outputSummary : undefined
-          }
-          trailingContent={
-            !incomplete && !runActionAttachedToMessage ? outputSummary : undefined
-          }
-        />
-      ) : null}
+      {timelineSegments.map(({ segment, segmentTurn, display, interrupted, last, key }) => {
+        return (
+          <Fragment key={key}>
+            {segment.userItems.map((item) =>
+              renderThreadItem(item, false, undefined, segmentTurn, last),
+            )}
+            {display ? (
+              <TimelineAssistantShell
+                turn={last ? turn : segmentTurn}
+                display={display}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                onOpenURL={onOpenURL}
+                processLabel={!last && interrupted ? t("turn.steeredInterruption") : undefined}
+                superseded={!last || interruptedSuperseded}
+                actionableAgentMessageID={last ? actionableAgentMessageID : undefined}
+                latestAgentMessageID={last ? latestAgentMessageID : undefined}
+                animateCompletionActions={last && animateCompletionActions}
+                onStreamFrame={onStreamFrame}
+                onForkMessage={onForkMessage}
+                onCollapseComplete={onCollapseComplete}
+                onOpenAgent={onOpenAgent}
+                editSummaryCard={
+                  last && !incomplete && runActionAttachedToMessage ? outputSummary : undefined
+                }
+                trailingContent={
+                  last && !incomplete && !runActionAttachedToMessage ? outputSummary : undefined
+                }
+              />
+            ) : null}
+          </Fragment>
+        );
+      })}
       {/* One element per reconnect item, so a retrying card that gives up
           keeps its node and unfolds into the failure in place. */}
       {reconnectItems.map((item) => item === failedReconnect || item.status === "in_progress" ? (
@@ -345,6 +409,7 @@ function TurnContent({
           key={item.id}
           reconnect={item}
           arriving={animateCompletionActions}
+          latest={Boolean(isLatestTurn)}
           {...(item === failedReconnect ? failureProps : undefined)}
         />
       ) : null)}
@@ -354,7 +419,7 @@ function TurnContent({
         </div>
       ) : null}
       {event && !failedReconnect ? (failureDisplay
-        ? <TurnFailureNotice {...failureProps} arriving={animateCompletionActions} />
+        ? <TurnFailureNotice {...failureProps} latest={Boolean(isLatestTurn)} arriving={animateCompletionActions} />
         : <TurnEventNotice event={event} />) : null}
       {incomplete ? outputSummary : null}
       {/* Include addons in the native turn bounds used by reading anchors. */}

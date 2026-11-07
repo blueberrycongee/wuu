@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
@@ -174,6 +175,8 @@ type threadState struct {
 	SessionControl                 *ThreadSessionControl
 	steerWake                      chan struct{}
 	steerWakeClosed                bool
+	modelPreemptWake               chan struct{}
+	modelPreemptClosed             bool
 	activeSteerDocument            *ActiveDocument
 	activeSteerContextSet          bool
 	steerDocumentOverrides         []activeDocumentOverride
@@ -186,8 +189,11 @@ type threadState struct {
 	frozenTreeContext   []agent.ContextSegment
 	frozenTreeResultIDs []string
 
-	nextItemIndex         int
-	activeAgentItemID     string
+	nextItemIndex     int
+	activeAgentItemID string
+	// preemptingAgentTurnID suppresses late transport events after a steer
+	// closed the visible assistant item. The next model-step admission clears it.
+	preemptingAgentTurnID string
 	agentStream           *agentMessageStream
 	activeReasoningItemID string
 	toolItems             map[string]string
@@ -256,6 +262,9 @@ type Server struct {
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
+	// usageScanner caches engine-ledger scan results across settingsUsage
+	// calls; guarded by settingsUsageMu.
+	usageScanner *engineusage.Scanner
 
 	// clientCalls is the pending table for server-initiated requests over the
 	// negotiated reverse-RPC channel. Keyed by the

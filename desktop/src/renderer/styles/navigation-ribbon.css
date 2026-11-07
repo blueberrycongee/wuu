@@ -60,7 +60,7 @@
   padding-right: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px));
 }
 
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar .sidebar-section-title {
   padding-left: calc(var(--control-size-toolbar) + var(--space-2) + var(--ribbon-restore-space));
 }
 
@@ -98,7 +98,7 @@
   box-shadow: none;
 }
 
-.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-content {
+.navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar > .sidebar-content {
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: var(--space-2);
   width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
@@ -169,11 +169,13 @@
   --conversation-pane-left-radius: var(--conversation-canvas-radius);
 }
 
+/* The title row shares the workbench canvas, but it still needs its closing
+ * edge: it separates the title controls from the reading surface and meets
+ * the navigation divider, so the two columns read as one framed workbench. */
 .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar {
   padding-top: 0;
   padding-right: var(--control-toolbar-inset);
   padding-left: calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
-  box-shadow: none;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel {
@@ -184,7 +186,6 @@
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-tabbar {
   padding: 0 var(--control-toolbar-inset) 0 var(--workspace-row-inset);
-  box-shadow: none;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-panel-sidebar-hit-hole {

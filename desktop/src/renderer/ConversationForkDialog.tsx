@@ -2,7 +2,7 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { Folder, GitBranch, LoaderCircle } from "./WuuIcons";
 import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Modal } from "./Modal";
-import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
+import { showActionErrorToast } from "./Toast";
 import { useI18n } from "./i18n";
 
 export type ForkMode = "local" | "worktree";
@@ -33,7 +33,7 @@ const FORK_OPTIONS: ForkOption[] = [
 // the same working directory ("local") or in a freshly created git
 // worktree ("worktree"). The shared `Modal` chrome handles backdrop,
 // focus, Escape, and backdrop-click dismissal — this component only
-// owns the option list, the busy-state spinner, and the error note.
+// owns the option list, the busy-state spinner, and failure notifications.
 //
 // `onChoose` resolves when the caller has finished starting the fork;
 // the dialog stays open until then so the active spinner / disabled
@@ -52,19 +52,17 @@ export function ConversationForkDialog({
   // Show progress on the selected destination and lock both options and
   // dismissal until the request settles, preventing duplicate forks.
   const [busyMode, setBusyMode] = useState<ForkMode | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const disabled = busyMode !== null;
 
   async function handleChoose(mode: ForkMode): Promise<void> {
     if (busyMode !== null) {
       return;
     }
-    setErrorMessage(undefined);
     setBusyMode(mode);
     try {
       await onChoose(mode);
     } catch (error) {
-      setErrorMessage(desktopApiErrorMessage(error, t("thread.forkFailed")));
+      showActionErrorToast(error, t("thread.forkFailed"));
     } finally {
       // The caller is expected to close the dialog on success, so the
       // setter is only meaningful if the promise resolves inside this
@@ -128,11 +126,6 @@ export function ConversationForkDialog({
           );
         })}
       </div>
-      {errorMessage ? (
-        <div className="environment-dialog-error" role="alert">
-          {errorMessage}
-        </div>
-      ) : null}
     </Modal>
   );
 }

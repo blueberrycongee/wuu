@@ -19,11 +19,8 @@ import {
   activeTodoUpdateForThread,
   activeThreadForState,
   activeTurnIsAnswerReady,
-  activeTurnTokenSpeed,
-  activeTurnTokenSpeedSnapshot,
   applyLoadedRuntimeWithDraftCarry,
-  appendStreamingTokenSample,
-  appendTurnTokenSample,
+  recordTurnTokenUsage,
   conversationPaneThreadsByID,
   conversationSearchContextLabel,
   conversationSearchThreadMeta,
@@ -1222,89 +1219,28 @@ describe("AppState token usage", () => {
     expect(handling).toBe("skip");
   });
 
-  it("derives token speed from cumulative output-token samples", () => {
-    const first = appendTurnTokenSample(
+  it("records cumulative token usage per turn", () => {
+    const state = recordTurnTokenUsage(
       initialState,
       "turn-1",
       "thread-1",
       10,
-      2,
-      0,
-      0,
-      1_000,
-    );
-    const second = appendTurnTokenSample(
-      first,
-      "turn-1",
-      "thread-1",
-      10,
-      22,
       4,
       8,
       2_000,
     );
 
-    expect(activeTurnTokenSpeed(second, "turn-1")).toBe(20);
-    expect(activeTurnTokenSpeedSnapshot(second, "turn-1").source).toBe("real");
-    expect(second.turnTokenUsage["turn-1"].cacheCreationTokens).toBe(4);
-    expect(second.turnTokenUsage["turn-1"].cacheReadTokens).toBe(8);
-  });
-
-  it("derives live token speed from streamed model output deltas", () => {
-    const first = appendStreamingTokenSample(
-      initialState,
-      {
-        thread_id: "thread-1",
-        turn_id: "turn-1",
-        delta: "aaaaaaaa",
-      },
-      1_000,
-    );
-    const second = appendStreamingTokenSample(
-      first,
-      {
-        thread_id: "thread-1",
-        turn_id: "turn-1",
-        delta: "bbbbbbbb",
-      },
-      2_000,
-    );
-
-    expect(activeTurnTokenSpeed(second, "turn-1")).toBe(2);
-    expect(activeTurnTokenSpeedSnapshot(second, "turn-1").source).toBe("estimated");
-    expect(second.turnTokenUsage["turn-1"].outputTokens).toBe(0);
-  });
-
-  it("discards estimated samples when real provider usage arrives", () => {
-    const estimated = appendStreamingTokenSample(
-      initialState,
-      {
-        thread_id: "thread-1",
-        turn_id: "turn-1",
-        delta: "aaaaaaaaaaaaaaaa",
-      },
-      1_000,
-    );
-    const real = appendTurnTokenSample(
-      estimated,
-      "turn-1",
-      "thread-1",
-      10,
-      3,
-      0,
-      0,
-      1_500,
-    );
-
-    expect(activeTurnTokenSpeedSnapshot(real, "turn-1").source).toBe("real");
-    expect(real.turnTokenUsage["turn-1"].samples).toEqual([
-      { tokens: 3, at: 1_500 },
-    ]);
+    expect(state.turnTokenUsage["turn-1"]).toMatchObject({
+      threadID: "thread-1",
+      inputTokens: 10,
+      cacheCreationTokens: 4,
+      cacheReadTokens: 8,
+    });
   });
 
   it("attaches request context diagnostics to the latest context usage", () => {
     const thread = threadWithUserTexts(["hi"]);
-    const stateWithUsage = appendTurnTokenSample(
+    const stateWithUsage = recordTurnTokenUsage(
       {
         ...initialState,
         thread,
@@ -1312,10 +1248,8 @@ describe("AppState token usage", () => {
       "turn-1",
       "thread-1",
       100,
-      10,
       0,
       0,
-      1_000,
       200_000,
       "fake-model",
       12_000,
@@ -1364,11 +1298,10 @@ describe("AppState token usage", () => {
     const totalTurns = RETAINED_TURN_TELEMETRY_LIMIT + 20;
     for (let index = 0; index < totalTurns; index += 1) {
       const turnID = `turn-${index}`;
-      state = appendTurnTokenSample(
+      state = recordTurnTokenUsage(
         state,
         turnID,
         "thread-1",
-        index,
         index,
         0,
         0,
@@ -1989,129 +1922,6 @@ describe("AppState stream cache lifecycle", () => {
     expect(streamTextStore.get(textKey)).toBe("Final answer");
     expect(streamTextStore.has(resultKey)).toBe(true);
     expect(streamTextStore.get(resultKey)).toBe("Tool result");
-  });
-});
-
-describe("turn token speed", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 0));
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("returns 0 when there are no samples", () => {
-    expect(activeTurnTokenSpeed(initialState, "turn-1")).toBe(0);
-  });
-
-  it("returns 0 with fewer than two samples", () => {
-    const state = appendTurnTokenSample(
-      initialState,
-      "turn-1",
-      "thread-1",
-      0,
-      100,
-      0,
-      0,
-      Date.now(),
-    );
-    expect(activeTurnTokenSpeed(state, "turn-1")).toBe(0);
-  });
-
-  it("computes tok/s from the oldest to the newest sample", () => {
-    let state = appendTurnTokenSample(
-      initialState,
-      "turn-1",
-      "thread-1",
-      0,
-      100,
-      0,
-      0,
-      Date.now(),
-    );
-    vi.advanceTimersByTime(500);
-    state = appendTurnTokenSample(
-      state,
-      "turn-1",
-      "thread-1",
-      0,
-      140,
-      0,
-      0,
-      Date.now(),
-    );
-    expect(activeTurnTokenSpeed(state, "turn-1")).toBeCloseTo(80, 0);
-  });
-
-  it("ignores unchanged usage snapshots while tools are running", () => {
-    let state = appendTurnTokenSample(
-      initialState,
-      "turn-1",
-      "thread-1",
-      0,
-      100,
-      0,
-      0,
-      Date.now(),
-    );
-    vi.advanceTimersByTime(500);
-    state = appendTurnTokenSample(
-      state,
-      "turn-1",
-      "thread-1",
-      0,
-      140,
-      0,
-      0,
-      Date.now(),
-    );
-
-    vi.advanceTimersByTime(2500);
-    state = appendTurnTokenSample(
-      state,
-      "turn-1",
-      "thread-1",
-      20,
-      140,
-      0,
-      0,
-      Date.now(),
-    );
-
-    const speed = activeTurnTokenSpeedSnapshot(state, "turn-1");
-    expect(speed.tokensPerSecond).toBeCloseTo(80, 0);
-    expect(speed.sampledAt).toBe(new Date(2026, 0, 1, 0, 0, 0, 500).getTime());
-    expect(state.turnTokenUsage["turn-1"].samples).toEqual([
-      { tokens: 100, at: new Date(2026, 0, 1, 0, 0, 0).getTime() },
-      { tokens: 140, at: new Date(2026, 0, 1, 0, 0, 0, 500).getTime() },
-    ]);
-  });
-
-  it("drops samples older than the 2s window", () => {
-    let state = appendTurnTokenSample(
-      initialState,
-      "turn-1",
-      "thread-1",
-      0,
-      100,
-      0,
-      0,
-      Date.now(),
-    );
-    vi.advanceTimersByTime(2500);
-    state = appendTurnTokenSample(
-      state,
-      "turn-1",
-      "thread-1",
-      0,
-      200,
-      0,
-      0,
-      Date.now(),
-    );
-    expect(state.turnTokenUsage["turn-1"].samples).toHaveLength(1);
-    expect(activeTurnTokenSpeed(state, "turn-1")).toBe(0);
   });
 });
 
@@ -2966,15 +2776,13 @@ describe("latestContextUsageForThread", () => {
 
   it("does not treat raw provider usage as retained context", () => {
     let state = initialState;
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-1",
       "thread-1",
       1_300_000,
       0,
       0,
-      0,
-      1_000,
       1_000_000,
     );
     const t = makeThread({
@@ -3002,15 +2810,13 @@ describe("latestContextUsageForThread", () => {
     // read the retained estimate (context_tokens = res.ContextTokens), never
     // the raw input, and cache_read stays intact for the hit-rate display.
     let state = initialState;
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-1",
       "thread-1",
       132_600, // raw input_tokens (inclusive of cache_read)
-      2_000,
       0,
       113_000, // cache_read preserved
-      1_000,
       1_000_000,
       "minimax-m3",
       88_000, // retained context estimate (res.ContextTokens)
@@ -3031,28 +2837,24 @@ describe("latestContextUsageForThread", () => {
 
   it("returns real usage from the most recent turn that has one", () => {
     let state = initialState;
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-1",
       "thread-1",
       10,
       0,
       0,
-      0,
-      1_000,
       200_000,
       undefined,
       10,
     );
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-2",
       "thread-1",
       20,
       0,
       0,
-      0,
-      2_000,
       200_000,
       undefined,
       20,
@@ -3105,15 +2907,13 @@ describe("latestContextUsageForThread", () => {
     // thread a most-recent turn with no recorded usage, and verifying
     // the selector falls through to the previous one.
     let state = initialState;
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-1",
       "thread-1",
       10,
       0,
       0,
-      0,
-      1_000,
       200_000,
       undefined,
       10,
@@ -3135,15 +2935,13 @@ describe("latestContextUsageForThread", () => {
     // for "model known, no usage yet", not a default that overrides
     // observed values.
     let state = initialState;
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-1",
       "thread-1",
       10,
       0,
       0,
-      0,
-      1_000,
       200_000,
       undefined,
       10,
@@ -3159,15 +2957,13 @@ describe("latestContextUsageForThread", () => {
 
   it("ignores stale usage from a previous model after the thread model changes", () => {
     let state = initialState;
-    state = appendTurnTokenSample(
+    state = recordTurnTokenUsage(
       state,
       "turn-1",
       "thread-1",
       80_000,
       0,
       0,
-      0,
-      1_000,
       200_000,
       "claude-sonnet-4-5",
       80_000,

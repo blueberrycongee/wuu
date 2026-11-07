@@ -245,9 +245,6 @@ export function Composer({
   onQueue,
   onInterrupt,
   telemetryTurnID,
-  tokensPerSecond = 0,
-  tokenSpeedSampledAt,
-  tokenSpeedSource,
   contextUsage,
   queryHistorySessionID,
   skillThreadID,
@@ -373,9 +370,6 @@ export function Composer({
   onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
-  tokensPerSecond?: number;
-  tokenSpeedSampledAt?: number;
-  tokenSpeedSource?: "real" | "estimated" | "none";
   // contextUsage drives the model-adjacent context meter. When the active
   // model has no catalog window yet the AppState selector returns
   // undefined and the meter hides entirely.
@@ -1353,11 +1347,7 @@ export function Composer({
         <ComposerRuntimeMeters
           inToolRail={controlsInRail}
           compact={compactControls}
-          running={running}
           turnID={telemetryTurnID}
-          fallbackTokensPerSecond={tokensPerSecond}
-          fallbackSampledAt={tokenSpeedSampledAt}
-          fallbackSource={tokenSpeedSource}
           fallbackContextUsage={contextUsage}
           activeEngine={activeEngine}
         />
@@ -1454,18 +1444,22 @@ export function Composer({
                           onClick={() => applySlashCommand(command, slashDraft)}
                         >
                           <SlashCommandIcon command={command} />
-                          <span className="composer-plus-menu-item-title slash-command-name">
-                            /{command.name}
+                          <span className="composer-plus-menu-item-title slash-command-title">
+                            {command.kind === "skill" ? command.name : command.title}
                           </span>
-                          {command.disabledReason || command.title ? (
+                          {command.kind === "skill" ? (
+                            <span className={`composer-plus-menu-item-desc ${command.disabledReason ? "slash-command-meta" : "slash-command-summary"}`}>
+                              {command.disabledReason ?? command.description}
+                            </span>
+                          ) : (
                             <span
                               className={`composer-plus-menu-item-desc ${
-                                command.disabledReason ? "slash-command-meta" : "slash-command-summary"
+                                command.disabledReason ? "slash-command-meta" : "slash-command-command"
                               }`}
                             >
-                              {command.disabledReason ?? command.title}
+                              {command.disabledReason ?? `/${command.name}`}
                             </span>
-                          ) : null}
+                          )}
                         </button>
                       </Tooltip>
                     );
