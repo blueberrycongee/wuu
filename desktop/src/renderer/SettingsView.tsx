@@ -1617,7 +1617,6 @@ function SettingsUsagePage({
       <section className="settings-section" aria-labelledby="settings-engine-usage-title">
         <header className="settings-section-header">
           <h2 id="settings-engine-usage-title" className="settings-section-title">{t("settings.usageByEngine")}</h2>
-          <p className="settings-section-description">{t("settings.usageEngineOutsideHint")}</p>
         </header>
         {(usage.engine_breakdowns ?? []).length > 0 ? (
           <div className="settings-group settings-usage-table-wrap">
