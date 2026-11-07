@@ -77,6 +77,7 @@ import { AppearanceTypography } from "./AppearanceTypography";
 import { ShellSkinSettings } from "./background/ShellSkinSettings";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
+import { pluginSourceLabel } from "./SkillsCatalog";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { Switch } from "./ui/Switch";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
@@ -786,7 +787,14 @@ function SettingsViewContent({
             >
               {activePluginSettingsRecord ? (
                 <>
-                  <SettingsPageHeader title={activePluginSettingsRecord.name} />
+                  <SettingsPageHeader
+                    title={activePluginSettingsRecord.name}
+                    description={activePluginSettingsRecord.description}
+                    meta={<>
+                      <span>{pluginSourceLabel(activePluginSettingsRecord, t)}</span>
+                      {activePluginSettingsRecord.developer ? <span>{activePluginSettingsRecord.developer}</span> : null}
+                    </>}
+                  />
                   <PluginSettingsEditor plugin={activePluginSettingsRecord} workspaceRoot={initialized?.workspace_root} />
                 </>
               ) : activeCustomPluginPage ? (

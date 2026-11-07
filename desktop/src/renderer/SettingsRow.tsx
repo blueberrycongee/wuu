@@ -33,3 +33,8 @@ export function SettingsRow({
     </div>
   );
 }
+
+/** A short fact beside a row title, such as the setting's reach or when it applies. */
+export function SettingsBadge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "warning" }): JSX.Element {
+  return <span className="settings-badge" data-tone={tone}>{children}</span>;
+}

@@ -89,7 +89,7 @@
   }
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch) {
+:is(.settings-switch, .plugin-ui-checkbox input) {
   --switch-track-color: var(--switch-track-off);
   --switch-thumb-color: var(--switch-thumb-off);
   --switch-thumb-shadow: var(--switch-thumb-shadow-off);
@@ -110,7 +110,7 @@
   cursor: pointer;
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch)::before {
+:is(.settings-switch, .plugin-ui-checkbox input)::before {
   content: "";
   position: absolute;
   left: calc(50% - var(--switch-track-width) / 2);
@@ -124,8 +124,7 @@
 }
 
 .settings-switch-thumb,
-.plugin-ui-checkbox input::after,
-.plugin-setting-switch::after {
+.plugin-ui-checkbox input::after {
   content: "";
   position: absolute;
   left: calc(50% - var(--switch-track-width) / 2 + var(--switch-thumb-inset));
@@ -142,34 +141,32 @@
 }
 
 .settings-switch[aria-checked="true"],
-.plugin-ui-checkbox input:checked,
-.plugin-setting-switch:checked {
+.plugin-ui-checkbox input:checked {
   --switch-track-color: var(--switch-track-on);
   --switch-thumb-color: var(--switch-thumb-on);
   --switch-thumb-shadow: none;
 }
 
 .settings-switch[aria-checked="true"] .settings-switch-thumb,
-.plugin-ui-checkbox input:checked::after,
-.plugin-setting-switch:checked::after {
+.plugin-ui-checkbox input:checked::after {
   transform: translateX(calc(var(--switch-track-width) - var(--switch-thumb-size) - var(--switch-thumb-inset) * 2));
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):hover:not(:disabled) {
+:is(.settings-switch, .plugin-ui-checkbox input):hover:not(:disabled) {
   --switch-track-color: var(--switch-track-off-hover);
 }
 
-:is(.settings-switch[aria-checked="true"], .plugin-ui-checkbox input:checked, .plugin-setting-switch:checked):hover:not(:disabled) {
+:is(.settings-switch[aria-checked="true"], .plugin-ui-checkbox input:checked):hover:not(:disabled) {
   --switch-track-color: var(--switch-track-on-hover);
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):disabled {
+:is(.settings-switch, .plugin-ui-checkbox input):disabled {
   opacity: 0.55;
   cursor: default;
 }
 
 @media (pointer: coarse) {
-  :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch) {
+  :is(.settings-switch, .plugin-ui-checkbox input) {
     min-height: 44px;
   }
 }

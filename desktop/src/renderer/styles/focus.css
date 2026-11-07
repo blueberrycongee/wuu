@@ -32,11 +32,11 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 /* A switch's target is wider than its track; the ring follows the pill. */
-html[data-focus-modality="keyboard"] :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):focus-visible {
+html[data-focus-modality="keyboard"] :is(.settings-switch, .plugin-ui-checkbox input):focus-visible {
   outline: none;
 }
 
-html[data-focus-modality="keyboard"] :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):focus-visible::before {
+html[data-focus-modality="keyboard"] :is(.settings-switch, .plugin-ui-checkbox input):focus-visible::before {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }

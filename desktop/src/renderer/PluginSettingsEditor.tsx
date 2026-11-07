@@ -9,7 +9,9 @@ import type {
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
-import { SettingsGroup } from "./SettingsSection";
+import { SettingsGroup, SettingsSection } from "./SettingsSection";
+import { SettingsBadge } from "./SettingsRow";
+import { Switch } from "./ui/Switch";
 import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
 import { AlertCircle, AlertTriangle } from "./WuuIcons";
 import type { SettingsControlsConflictV1 as PluginContributionConflict, SettingsControlsDiagnosticV1 as PluginGenerationDiagnostic } from "../../../packages/plugin-sdk/src/ui-settings-controls";
@@ -67,6 +69,9 @@ export function PluginSettingsEditor({
     return null;
   }
 
+  const plainSettings = settings.filter((setting) => setting.type !== "secret");
+  const secretSettings = settings.filter((setting) => setting.type === "secret");
+  const hasNotices = conflicts.length > 0 || runtimeDiagnostics.length > 0 || rendererDiagnostics.length > 0 || Boolean(runtimeDiagnosticError);
   return (
     <section
       className="plugin-settings-editor"
@@ -75,7 +80,7 @@ export function PluginSettingsEditor({
       aria-label={title ?? t("skills.pluginSettingsNamed", { name: plugin.name })}
     >
       {title ? <h3 className="plugin-settings-editor-title">{title}</h3> : null}
-      <SettingsGroup className="plugin-settings-editor-body">
+      {plainSettings.length > 0 || hasNotices ? <SettingsGroup className="plugin-settings-editor-body">
       {conflicts.map((conflict) => (
         <PluginConflictControl key={conflict.key} conflict={conflict} />
       ))}
@@ -90,15 +95,7 @@ export function PluginSettingsEditor({
       {rendererDiagnostics.map((diagnostic, index) => (
         <PluginNotice key={`${diagnostic.message}:${index}`} title={diagnostic.kind === "runtime" ? t("skills.pluginRuntimeRequestFailed") : t("skills.pluginContributionIsolated")} detail={diagnostic.message} />
       ))}
-      {settings.map((setting) => setting.type === "secret" ? (
-        <PluginSecretControl
-          key={setting.id}
-          pluginId={plugin.id}
-          fingerprint={fingerprint}
-          setting={setting}
-          workspaceRoot={workspaceRoot}
-        />
-      ) : (
+      {plainSettings.map((setting) => (
         <PluginSettingControl
           key={setting.id}
           pluginId={plugin.id}
@@ -107,7 +104,22 @@ export function PluginSettingsEditor({
           workspaceRoot={workspaceRoot}
         />
       ))}
-      </SettingsGroup>
+      </SettingsGroup> : null}
+      {secretSettings.length > 0 ? (
+        <SettingsSection title={plainSettings.length > 0 || hasNotices ? t("skills.pluginCredentialsSection") : undefined}>
+          <SettingsGroup>
+            {secretSettings.map((setting) => (
+              <PluginSecretControl
+                key={setting.id}
+                pluginId={plugin.id}
+                fingerprint={fingerprint}
+                setting={setting}
+                workspaceRoot={workspaceRoot}
+              />
+            ))}
+          </SettingsGroup>
+        </SettingsSection>
+      ) : null}
     </section>
   );
 }
@@ -251,8 +263,10 @@ function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: 
       <div className="plugin-setting-heading settings-row-label">
         <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
         {setting.description ? <span className="settings-row-label-description">{setting.description}</span> : null}
-        <span className="settings-row-label-description">{t("skills.pluginSecretStorage")}</span>
-        <span className="settings-row-label-description">{t("skills.pluginSecretOrigins", { origins: (setting.credential_origins ?? []).join(", ") })}</span>
+        <span className="settings-row-label-description">
+          {t("skills.pluginSecretStorage")}
+          {setting.credential_origins?.length ? ` ${t("skills.pluginSecretOrigins", { origins: setting.credential_origins.join(", ") })}` : null}
+        </span>
       </div>
       <div className="plugin-setting-control settings-row-control settings-row-control-block">
         <input id={controlId} className="settings-input" type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} maxLength={16 * 1024}
@@ -263,7 +277,9 @@ function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: 
             if (event.key === "Enter" && draft) { event.preventDefault(); void save(draft); }
           }} />
         <button type="button" className="settings-button" disabled={loadedScope !== scope || loading || saving || !draft} onClick={() => void save(draft)}>{t("common.save")}</button>
-        <button type="button" className="settings-button settings-button-ghost" disabled={loadedScope !== scope || loading || saving || !configured} onClick={() => void save("")}>{t("common.remove")}</button>
+        {configured ? (
+          <button type="button" className="settings-button settings-button-ghost" disabled={loadedScope !== scope || loading || saving} onClick={() => void save("")}>{t("common.remove")}</button>
+        ) : null}
       </div>
       <div id={statusId} className={`plugin-setting-status${error ? " is-error" : ""}`} aria-live="polite">
         {error || (saving ? t("skills.pluginSettingSaving") : loading ? "" : configured ? t("skills.pluginSecretConfigured") : t("skills.pluginSecretMissing"))}
@@ -398,28 +414,33 @@ function PluginSettingControl({
       data-setting-type={setting.type}
     >
       <div className="plugin-setting-heading settings-row-label">
-        <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
+        {/* User scope and live apply are the defaults; only a narrower reach or a
+          * deferred effect is worth a badge. */}
+        {setting.scope === "workspace" || setting.apply === "restart" ? (
+          <span className="settings-row-label-heading">
+            <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
+            <span className="settings-row-badges">
+              {setting.scope === "workspace" ? <SettingsBadge>{t("skills.pluginSettingWorkspace")}</SettingsBadge> : null}
+              {setting.apply === "restart" ? <SettingsBadge>{t("skills.pluginSettingRestart")}</SettingsBadge> : null}
+            </span>
+          </span>
+        ) : (
+          <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
+        )}
         {showDescription ? (
           <span id={descriptionId} className="settings-row-label-description">{setting.description}</span>
-        ) : null}
-        {/* User scope is the default; only a narrower reach is worth saying. */}
-        {setting.scope === "workspace" ? (
-          <span className="settings-row-label-description">{t("skills.pluginSettingWorkspace")}</span>
         ) : null}
       </div>
       <div className="plugin-setting-control settings-row-control">
         {setting.type === "boolean" ? (
-          <input
+          <Switch
             id={controlId}
-            className="plugin-setting-switch"
-            type="checkbox"
-            role="switch"
             checked={Boolean(draftTarget === target ? draft : setting.default)}
             disabled={loadedScope !== scope || loading || saving}
             aria-describedby={describedBy}
-            onChange={(event) => {
+            onClick={() => {
               if (!scope.active || loadedScope !== scope) return;
-              const value = event.currentTarget.checked;
+              const value = !Boolean(draftTarget === target ? draft : setting.default);
               dirty.current = true;
               setDraft(value);
               void save(value);
@@ -471,9 +492,7 @@ function PluginSettingControl({
               {t("skills.pluginSettingRetry")}
             </button>
           </>
-        ) : saving ? t("skills.pluginSettingSaving") : setting.apply === "restart" ? (
-          saved ? t("skills.pluginSettingRestartSaved") : t("skills.pluginSettingRestart")
-        ) : null}
+        ) : saving ? t("skills.pluginSettingSaving") : setting.apply === "restart" && saved ? t("skills.pluginSettingRestartSaved") : null}
       </div>
     </div>
   );

@@ -431,6 +431,23 @@
   line-height: var(--settings-title-line);
 }
 
+/* Facts about the page's subject follow the title in the quiet voice; each
+ * fact is one span, separated by a middle dot. */
+.settings-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-page-meta > * + *::before {
+  content: "\00B7";
+  margin-inline-end: var(--space-2);
+}
+
 .settings-page-description {
   max-width: 62ch;
   margin: 0;
@@ -701,6 +718,38 @@
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
   line-height: 1.4;
+}
+
+/* Badges share the title line and wrap under it when the column is narrow. */
+.settings-row-label-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+  min-width: 0;
+}
+
+.settings-row-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.settings-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.settings-badge[data-tone="warning"] {
+  color: var(--warning);
 }
 
 .settings-row-label-description {

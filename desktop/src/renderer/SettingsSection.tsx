@@ -11,10 +11,13 @@ export const SettingsTitlebarSlot = createContext<HTMLElement | null>(null);
 export function SettingsPageHeader({
   title,
   description,
+  meta,
   actions,
 }: {
   title: string;
   description?: ReactNode;
+  /** Facts about the page's subject (source, author, version), not guidance. */
+  meta?: ReactNode;
   actions?: ReactNode;
 }): JSX.Element {
   const showDescription = Boolean(description) && !isTouchWebShell();
@@ -22,6 +25,7 @@ export function SettingsPageHeader({
     <header className="settings-page-header">
       <div className="settings-page-heading">
         <h1 className="settings-page-title">{title}</h1>
+        {meta ? <div className="settings-page-meta">{meta}</div> : null}
         {showDescription ? <p className="settings-page-description">{description}</p> : null}
       </div>
       {actions ? <div className="settings-page-actions">{actions}</div> : null}
