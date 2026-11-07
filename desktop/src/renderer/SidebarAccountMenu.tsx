@@ -2,7 +2,7 @@ import type { SidebarNavigationService } from "./AppSidebar";
 import { useMemo } from "react";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
-import { SidebarAccountPanel, SidebarAccountTrigger } from "./SidebarAccountParts";
+import { SidebarAccountPanel, SidebarAccountTrigger, SidebarSettingsTrigger } from "./SidebarAccountParts";
 import { useChromeOverlayApi, useChromeOverlay } from "./ChromeOverlay";
 import type { ApplicationDesktopChromeAccountActionV1 as ChromeAccountAction, ApplicationDesktopChromeAccountPanelV1 as ChromeAccountPanel, ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect } from "../../../packages/plugin-sdk/src/ui-desktop";
 import type { AccountView } from "./AccountPanel";
@@ -101,7 +101,6 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
       ...(accountEnabled && phoneNavigation ? [{ action: "devices" as const, label: t("account.computersAndAccount") }] : []),
       { action: "usage", label: t("settings.usage") },
       ...(driver && onOpenAccount ? [{ action: "account" as const, label: t(account.username ? "account.manage" : "account.linkDevices") }] : []),
-      { action: "settings", label: t("sidebar.settings") },
       ...(account.username ? [{ action: "logout" as const, label: t(busy ? "account.busy" : "account.logout"), disabled: busy }] : []),
     ], error, notice: notice ? t("account.localLogout") : undefined,
   };
@@ -132,11 +131,15 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
     if (command.type === "dismiss" && (command.reason === "escape" || command.reason === "tab")) anchor.current?.focus();
   }, () => { setOpen(false); }, true);
 
+  // The settings gear is a one-click entry; the account menu only exists when
+  // it carries account or device destinations the settings pages cannot host.
+  const hasAccountMenu = Boolean((accountEnabled && phoneNavigation) || (driver && onOpenAccount));
   const content = <SidebarAccountPanel panelRef={panel} id={id} model={panelModel} onAction={action} onClose={() => setOpen(false)} trigger={anchor.current}
     onBlur={event => { if (!useNative && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== anchor.current) setOpen(false); }} />;
   return <div className="sidebar-account">
-    <SidebarAccountTrigger model={triggerModel} anchorRef={anchor} controls={open ? id : undefined} onOpen={() => { setOpen(!open); }} />
-    {open && (useNative ? <div aria-hidden="true" style={{ position: "fixed", visibility: "hidden", pointerEvents: "none", width: composerMenuWidth(240),
+    {hasAccountMenu ? <SidebarAccountTrigger model={triggerModel} anchorRef={anchor} controls={open ? id : undefined} onOpen={() => { setOpen(!open); }} /> : null}
+    <SidebarSettingsTrigger label={t("sidebar.settings")} disabled={disabled} onOpen={() => onOpenSettings()} />
+    {open && hasAccountMenu && (useNative ? <div aria-hidden="true" style={{ position: "fixed", visibility: "hidden", pointerEvents: "none", width: composerMenuWidth(240),
       "--floating-menu-available-width": `${composerMenuWidth(240)}px`, "--floating-menu-available-height": "400px" } as React.CSSProperties}>{content}</div>
       : <FloatingMenuPortal anchorRef={anchor} owner="sidebar-account" placement="above" align="left"
         width={composerMenuWidth(240)} matchAnchorWidth={matchTriggerWidth} flip>{content}</FloatingMenuPortal>)}

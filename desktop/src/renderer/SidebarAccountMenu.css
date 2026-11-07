@@ -22,6 +22,10 @@
   text-align: left;
 }
 
+.sidebar-settings-trigger {
+  grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr);
+}
+
 .sidebar-account-trigger:hover,
 .sidebar-account-trigger[aria-expanded="true"] {
   background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));

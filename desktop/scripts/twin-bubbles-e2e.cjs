@@ -817,8 +817,7 @@ async function runDomOnly() {
       await rename('twin');
     });
     await check("DOM: Settings remains reachable and uses the same twin identity", async () => {
-      document.querySelector('.sidebar-account-trigger').click();
-      await wait(window, () => !!document.querySelector('[data-settings-entry="settings"]'), 'account settings action');
+      await wait(window, () => !!document.querySelector('[data-settings-entry="settings"]'), 'settings entry');
       document.querySelector('[data-settings-entry="settings"]').click();
       await wait(window, () => !!document.querySelector('[data-wuu-component="plugin-settings-navigation"] [data-plugin-avatar]'), 'twin Settings identity');
       const mark = document.querySelector('[data-wuu-component="plugin-settings-navigation"] [data-agent-avatar-id]');

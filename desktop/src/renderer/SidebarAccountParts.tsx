@@ -7,12 +7,22 @@ import "./SidebarAccountMenu.css";
 export function SidebarAccountTrigger({ model, anchorRef, controls, onOpen }: {
   model: ChromeAccountTrigger; anchorRef?: Ref<HTMLButtonElement>; controls?: string; onOpen: (button: HTMLButtonElement) => void;
 }): JSX.Element {
-  return <button ref={anchorRef} className="sidebar-account-trigger" type="button" disabled={model.disabled}
+  return <button ref={anchorRef} className="sidebar-account-trigger sidebar-account-menu-trigger" type="button" disabled={model.disabled}
     aria-label={model.label} aria-haspopup="menu" aria-expanded={model.open} aria-controls={controls}
     onClick={event => onOpen(event.currentTarget)} onKeyDown={event => {
       if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); onOpen(event.currentTarget); }
     }}>
-    <span className="sidebar-account-avatar" aria-hidden="true"><Cog size={18} /></span><span className="sidebar-account-name">{model.title}</span><ChevronsUpDown size={14} aria-hidden="true" />
+    <span className="sidebar-account-avatar" aria-hidden="true">{model.initials ?? <UserRound size={18} />}</span><span className="sidebar-account-name">{model.title}</span><ChevronsUpDown size={14} aria-hidden="true" />
+  </button>;
+}
+
+/** One-click Settings entry; account and device actions stay in the account menu. */
+export function SidebarSettingsTrigger({ label, disabled, onOpen }: {
+  label: string; disabled: boolean; onOpen: () => void;
+}): JSX.Element {
+  return <button className="sidebar-account-trigger sidebar-settings-trigger" type="button" disabled={disabled}
+    aria-label={label} data-settings-entry="settings" onClick={onOpen}>
+    <span className="sidebar-account-avatar" aria-hidden="true"><Cog size={18} /></span><span className="sidebar-account-name">{label}</span>
   </button>;
 }
 
@@ -29,8 +39,7 @@ export function SidebarAccountPanel({ model, panelRef, id, onAction, onClose, tr
     </> : null}
     {model.rows.map(row => {
       const Icon = accountIcons[row.action];
-      return <button key={row.action} role="menuitem" className="select-menu-item" data-settings-entry={row.action === "settings" ? "settings" : undefined}
-        data-settings-page={row.action === "providers" ? "providers" : undefined}
+      return <button key={row.action} role="menuitem" className="select-menu-item"
         disabled={row.disabled} onClick={() => onAction(row.action)}><Icon size={18} aria-hidden="true" /><span>{row.label}</span></button>;
     })}
     {model.error && <p className="sidebar-account-message settings-error" role="alert">{model.error}</p>}

@@ -494,12 +494,14 @@ describe("sidebar collapse-state independence", () => {
 
   it("keeps the account control available and dismisses its menu on collapse", async () => {
     installWuuApi();
+    window.wuu.remoteAccount = vi.fn().mockResolvedValue({});
+    window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({});
     await act(async () => {
       root = createRoot(container);
       root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
-    const accountTrigger = () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger");
+    const accountTrigger = () => container.querySelector<HTMLButtonElement>(".sidebar-account-menu-trigger");
     expect(accountTrigger()).not.toBeNull();
     await act(async () => accountTrigger()?.click());
     expect(document.querySelector(".sidebar-account-menu")).not.toBeNull();
@@ -517,15 +519,14 @@ describe("sidebar collapse-state independence", () => {
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
   });
 
-  it("opens Settings on General from the account menu", async () => {
+  it("opens Settings on General from the sidebar gear", async () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
       root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
-    await act(async () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
-    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
     await act(async () => { await import("./SettingsView"); });
     await flushAsync();
     expect(container.querySelector('.settings-page')?.getAttribute('data-wuu-page')).toBe("general");
@@ -554,7 +555,6 @@ describe("sidebar collapse-state independence", () => {
     expect(header()?.getAttribute("aria-expanded")).toBe("false");
 
     for (const theme of [null, "dark", "light"] as const) {
-      await click(container.querySelector(".sidebar-account-trigger"));
       await click(document.querySelector('[data-settings-entry="settings"]'));
       await act(async () => { await import("./SettingsView"); });
       expect(container.querySelector(".settings-embedded")).not.toBeNull();
@@ -610,8 +610,6 @@ describe("sidebar collapse-state independence", () => {
       await act(async () => button!.click());
       await flushAsync();
     };
-    await click('.sidebar-account-trigger');
-    // The account menu is portaled outside the mounted App container.
     await click('[data-settings-entry="settings"]', document);
     await act(async () => { await import("./SettingsView"); });
     await click('.settings-nav [data-wuu-page="providers"]');
@@ -648,8 +646,6 @@ describe("sidebar collapse-state independence", () => {
       await act(async () => button!.click());
       await flushAsync();
     };
-    await click('.sidebar-account-trigger');
-    // The account menu is portaled outside the mounted App container.
     await click('[data-settings-entry="settings"]', document);
     await act(async () => { await import("./SettingsView"); });
     await click('.settings-nav [data-wuu-page="providers"]');

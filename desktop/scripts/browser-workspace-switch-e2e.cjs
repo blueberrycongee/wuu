@@ -308,8 +308,7 @@ async function run() {
     const startedAt = performance.now();
     const start = report.events.length;
     if (target === 'settings') {
-      await click('.sidebar-account-trigger');
-      await click('button[role="menuitem"][data-settings-entry="settings"]');
+      await click('[data-settings-entry="settings"]');
     } else {
       await click(target === 'chat' ? '[data-wuu-component="conversations-section"]' : `[data-ribbon-id="${pages[target].tab}"]`);
     }

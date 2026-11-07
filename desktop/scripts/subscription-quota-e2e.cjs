@@ -275,8 +275,6 @@ async function run() {
   main.setSize(1280, 1000);
   await waitFor(main, () => document.querySelector('.composer textarea'));
   assert.equal(requests.length, 0, 'Ordinary navigation must not request quotas.');
-  await waitFor(main, () => document.querySelector('.sidebar-account-trigger'));
-  await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-entry="settings"]'));
   await click(main, '[data-settings-entry="settings"]');
   await waitFor(main, () => document.querySelector('.settings-nav [data-wuu-page="providers"]'));

@@ -86,7 +86,6 @@ async function settle() {
 async function input() { return evaluate(() => document.querySelector("[data-main-conversation-composer] textarea").value); }
 async function stored(target = win) { return evaluate(key => JSON.parse(sessionStorage.getItem(key) || "null"), key, target); }
 async function inspectSettings() {
-  await click(".sidebar-account-trigger");
   await until(() => Boolean(document.querySelector('[data-settings-entry="settings"]')));
   await click('[data-settings-entry="settings"]');
   await until(() => Boolean(document.querySelector(".settings-nav-item")));

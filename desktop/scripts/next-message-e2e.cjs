@@ -618,8 +618,6 @@ app.whenReady().then(async () => {
       document.documentElement.style.setProperty("--wuu-font-size-ui", "15px");
       if (document.querySelector('[data-wuu-sidebar-mode="collapsed"]')) document.querySelector('[data-wuu-component="sidebar-toggle"]').click();
     });
-    await until(() => Boolean(document.querySelector(".sidebar-account-trigger")));
-    await evaluate(() => document.querySelector(".sidebar-account-trigger").click());
     await until(() => Boolean(document.querySelector('[data-settings-entry="settings"]')));
     await evaluate(() => document.querySelector('[data-settings-entry="settings"]').click());
     const settingsButton = () => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message");
