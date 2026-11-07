@@ -77,7 +77,7 @@ html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-vis
    (ShellCanvasArtwork, which also draws the dot screen) and a veil whose
    opacity follows the active destination's data-canvas. The workbench sheet
    keeps only its frame border/shadow; the sidebar paints the workbench canvas
-   itself. */
+   itself, or a frosted copy of the artwork where transparency is allowed. */
 html[data-shell-placement="canvas"],
 html[data-shell-placement="canvas"] body {
   background: var(--shell-background);
@@ -169,6 +169,55 @@ html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbo
   );
   mask-mode: alpha;
   mask-repeat: no-repeat;
+}
+
+/* Exposure steps down from the frame to the reading surface. The ribbon sits
+   directly on the picture; the docked sidebar is a frosted pane over the same
+   picture, so the two read as one shell; the conversation and workspace keep
+   their paper. The collapsed drawer floats over content and stays opaque. */
+@media screen and (not ((prefers-reduced-transparency: reduce) or (forced-colors: active))) {
+  html[data-shell-placement="frame"] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
+    background: transparent;
+  }
+
+  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane {
+    background-color: var(--workbench-canvas-bg);
+  }
+
+  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
+    background: color-mix(in srgb, var(--workbench-canvas-bg) 64%, transparent);
+  }
+
+  /* Canvas skins blur the window-aligned artwork under the sidebar: the blur
+     drops the dot screen and the veil keeps rows readable. The bleed keeps the
+     blur's transparent fringe outside the clipped pane. */
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
+    --sidebar-frost-bleed: 48px;
+    background: var(--shell-background);
+  }
+
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content > .shell-canvas-artwork {
+    position: absolute;
+    inset: calc(-1 * var(--sidebar-frost-bleed));
+    z-index: -1;
+    display: block;
+    width: calc(100% + 2 * var(--sidebar-frost-bleed));
+    height: calc(100% + 2 * var(--sidebar-frost-bleed));
+    filter: blur(14px) saturate(1.2);
+    clip-path: inset(var(--sidebar-frost-bleed) round var(--conversation-canvas-radius) 0 0 var(--conversation-canvas-radius));
+    pointer-events: none;
+  }
+
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content::after {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: var(--paper);
+    content: "";
+    opacity: 0.62;
+    pointer-events: none;
+  }
 }
 
 /* See-through destinations are screen-only presentation: reduced transparency,

@@ -118,6 +118,7 @@ import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 import { createUIComposition } from "./plugins/ApplicationShell";
 import type { UISlotLayoutProps } from "../../../packages/plugin-sdk/src/ui";
 import { Tooltip } from "./Tooltip";
+import { ShellCanvasArtwork } from "./background/ShellCanvasArtwork";
 import { HoverRevealScopeContext, useRetainHoverOwner } from "./HoverReveal";
 
 /**
@@ -1627,6 +1628,7 @@ export function AppSidebar({
       />
       </HoverRevealScopeContext.Provider>
       <div className="sidebar-content" inert={!sidebarVisible || settingsActive} aria-hidden={settingsActive || undefined}>
+        <ShellCanvasArtwork />
         <div className="traffic-spacer" />
         {pluginCatalogActive ? (
           <nav className="sidebar-section-navigation" aria-label={t("skills.catalogLabel")}>
