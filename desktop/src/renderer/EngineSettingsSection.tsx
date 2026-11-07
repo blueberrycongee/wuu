@@ -54,7 +54,6 @@ function externalState(
 export function EngineSettingsSection({
   result,
   loadError = "",
-  quotaLoading = false,
   quotaFailed = false,
   quotaNow,
   onRefresh,
@@ -67,7 +66,6 @@ export function EngineSettingsSection({
 }: {
   result?: EngineListResult;
   loadError?: string;
-  quotaLoading?: boolean;
   quotaFailed?: boolean;
   quotaNow?: number;
   onRefresh: () => Promise<EngineListResult | undefined>;
@@ -127,10 +125,11 @@ export function EngineSettingsSection({
     }
     return quotaFailed && quota?.status === "available" ? { ...quota, status: "stale" } : quota;
   };
-  const status = (engine: EngineInfo) => !enabled(engine) ? t("settings.engineDisabled")
+  // The list names only states a person must act on; a working engine shows
+  // its usage or nothing. Catalog failures surface on the detail page.
+  const status = (engine: EngineInfo): string | undefined => !enabled(engine) ? t("settings.engineDisabled")
     : !engine.binary_ok ? t("settings.engineNotInstalled")
-      : quotaFor(engine)?.status === "sign_in" ? t("settings.subscriptionSignIn")
-      : engine.error || engine.models_error ? t("settings.subscriptionCatalogFailed") : t("settings.engineReady");
+      : quotaFor(engine)?.status === "sign_in" ? t("connection.notConnected") : undefined;
   const close = () => { setError(""); onCloseEngine(); };
 
 
@@ -164,9 +163,7 @@ export function EngineSettingsSection({
   const modelSource = observedEngine ? subscriptionSources(controls, { engines: [observedEngine] }, [], observedEngine.id)[0] : undefined;
   const displayKey = selected ? `engine:${selected.id}` : "";
   const models = display.orderModels(displayKey, (observedEngine?.models ?? []).map(model => ({ id: model.id, label: model.display_name?.trim() || model.id })));
-  const headerStatus = selected && enabled(selected) && selected.binary_ok && !selected.error && !selected.models_error
-    && quotaFor(selected)?.status !== "sign_in" && modelSource?.login !== "ready"
-    ? t("settings.subscriptionUnknown") : selected ? status(selected) : "";
+  const headerStatus = selected ? status(selected) : undefined;
   const hiddenModels = display.get(displayKey).hiddenModels;
   const updateDisplay = (change: () => void) => {
     try { change(); setError(""); }
@@ -184,7 +181,7 @@ export function EngineSettingsSection({
       suffix={selected.cli_version ? <span className="connection-engine-version">{selected.cli_version}</span> : undefined} />}
     icon={<EngineIcon engine={selected.id} />}
     subtitle={<span className="connection-status-row">{quotaFor(selected)?.plan?.trim() ? <span>{t("connection.subscriptionPlan", { provider: selected.id === "codex" ? "ChatGPT" : selected.id === "claude" ? "Claude" : engineLabel(selected.id, selected), plan: quotaFor(selected)!.plan! })}</span> : null}
-      <span className="connection-status-pill" data-attention={headerStatus !== t("settings.engineReady")}>{headerStatus}</span></span>}
+      {headerStatus ? <span className="connection-status-text">{headerStatus}</span> : null}</span>}
     actions={<>
       {selected.binary_ok && (selected.update_url || selected.install_url) ? <Tooltip asChild content={t("settings.engineUpdateGuideHint")}><button aria-description={t("settings.engineUpdateGuideHint")} className="settings-button" type="button" data-testid="engine-update-guide"
         disabled={busy}
@@ -286,7 +283,7 @@ export function EngineSettingsSection({
               <button type="button"
                 className="connection-summary-row"
                 data-testid={`settings-engine-${engine.id}-status`}
-                aria-label={`${display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))} · ${state}`}
+                aria-label={[display.label(`engine:${engine.id}`, engineLabel(engine.id, engine)), state].filter(Boolean).join(" · ")}
                 aria-describedby={`${usageID}-${engine.id} ${usageID}-${engine.id}-status ${usageID}-${engine.id}-quota`}
                 onClick={() => { setError(""); onSelectEngine(engine.id); }}>
                 <span className="connection-summary-icon" aria-hidden="true"><EngineIcon engine={engine.id} /></span>
@@ -296,11 +293,8 @@ export function EngineSettingsSection({
                     <span className="connection-summary-meta" id={`${usageID}-${engine.id}`}>{quota?.plan?.trim()}</span>
                   </span>
                   <span className="connection-summary-secondary">
-                    <span id={`${usageID}-${engine.id}-status`} className={state === t("settings.engineReady") ? "sr-only" : "connection-summary-status"}
-                      data-attention={state !== t("settings.engineReady") ? "" : undefined}>{state}</span>
-                    <ConnectionUsageSummary compact id={`${usageID}-${engine.id}-quota`} quota={quota}
-                      loading={(quotaLoading || refreshing) && state === t("settings.engineReady")} now={quotaNow}
-                      fallback={state === t("settings.engineReady") ? <span className="connection-summary-status" data-ready>{state}</span> : null} />
+                    {state ? <span id={`${usageID}-${engine.id}-status`} className="connection-summary-status">{state}</span> : null}
+                    <ConnectionUsageSummary compact id={`${usageID}-${engine.id}-quota`} quota={quota} now={quotaNow} />
                   </span>
                 </span>
                 <ChevronRight className="icon" aria-hidden="true" />

@@ -385,7 +385,7 @@ it("does not close retained successor details when old provider removal settles"
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
-it("stops quota loading when successor controls no longer provide engine inventory", async () => {
+it("stops reading quota when successor controls no longer provide engine inventory", async () => {
   const container = document.createElement("div"); document.body.appendChild(container);
   const root = createRoot(container);
   const previous = renewalControls({ listEngines: vi.fn().mockReturnValue(new Promise(() => {})) });
@@ -396,9 +396,7 @@ it("stops quota loading when successor controls no longer provide engine invento
   const render = (controls: ApplicationSettingsControlsV1) => act(async () => root.render(<SettingsControlsProvider controls={controls}><ModelServicesPage {...props} /></SettingsControlsProvider>));
   try {
     await render(previous);
-    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
     await render(next);
     expect(next.listEngines).not.toHaveBeenCalled();
-    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
   } finally { act(() => root.unmount()); container.remove(); }
 });

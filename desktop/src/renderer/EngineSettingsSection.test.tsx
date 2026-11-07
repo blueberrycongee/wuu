@@ -116,7 +116,7 @@ describe("EngineSettingsSection", () => {
     const onRefresh = vi.fn();
     render(inventory, vi.fn(), onRefresh);
 
-    expect(container.querySelector('[data-testid="settings-engine-codex-status"]')?.getAttribute("aria-label")).toContain("已就绪");
+    expect(container.querySelector('[data-testid="settings-engine-codex-status"] .connection-summary-status')).toBeNull();
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
@@ -170,7 +170,7 @@ describe("EngineSettingsSection", () => {
     });
 
     const row = container.querySelector('[data-testid="settings-engine-claude-status"]')!;
-    expect(row.getAttribute("aria-label")).toContain("已就绪");
+    expect(row.querySelector(".connection-summary-status")).toBeNull();
     expect(row.textContent).not.toContain(path);
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-claude-status"]')!.click();

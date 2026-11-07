@@ -687,8 +687,8 @@ describe("SettingsView model services", () => {
 
     const cards = [...document.querySelectorAll('[data-testid="settings-provider-card"]')];
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "DeepSeek", "OpenRouter"]);
-    expect(cards[0]?.textContent).toContain("Ready");
-    expect(cards[2]?.textContent).toContain("API key missing");
+    expect(cards[0]?.querySelector(".connection-summary-status")).toBeNull();
+    expect(cards[2]?.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
     expect(document.querySelector('[data-catalog="deepseek"]')).toBeNull();
     await openProviderCatalog();
     // Connected vendors stay discoverable and can add a separate connection.
@@ -807,11 +807,11 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, initialPage: "providers" });
     await flush();
     const row = document.querySelector('[data-provider="disconnected"]')!;
-    expect(row.querySelector(".connection-summary-status")?.hasAttribute("data-attention")).toBe(true);
+    expect(row.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
     expect(row.querySelector(".connection-usage-summary")).toBeNull();
   });
 
-  it("keeps unavailable quota out of the list without hiding connection status", async () => {
+  it("keeps unavailable quota out of the list without inventing a status", async () => {
     const api = installServicesStub();
     const initialized = servicesInitialized();
     vi.mocked(api.listEngines).mockResolvedValue({ engines: [], subscription_providers: [{
@@ -821,7 +821,7 @@ describe("SettingsView model services", () => {
     await flush();
     const row = document.querySelector('[data-provider="openai-codex"]')!;
     expect(row.querySelector(".connection-usage-summary")).toBeNull();
-    expect(row.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
+    expect(row.querySelector(".connection-summary-status")).toBeNull();
     expect(document.querySelector('[data-testid="settings-model-catalog-refresh"]')).toBeNull();
     expect(document.querySelector('[data-testid="settings-engine-refresh"]')).toBeNull();
   });
@@ -837,7 +837,7 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, initialPage: "providers", locale: "en-US" });
     await flush();
     const row = document.querySelector('[data-provider="openai-codex"]')!;
-    const warnings = row.querySelectorAll('[data-attention]');
+    const warnings = row.querySelectorAll(".connection-summary-status");
     expect(warnings).toHaveLength(1);
     const warning = warnings[0].textContent!;
     expect(warning.length).toBeGreaterThan(0);

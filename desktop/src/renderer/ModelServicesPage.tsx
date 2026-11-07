@@ -370,10 +370,6 @@ export function ModelServicesPage({
     }
   }, [controls, quotaControls, quotaSnapshot]);
   const visibleQuotaSnapshot = quotaControls === controls ? quotaSnapshot : undefined;
-  // A completed read is a known state even when a service has no allowance to
-  // show. Only a first read or a new authority may claim that quota is loading.
-  const quotaSettled = quotaControls === controls && (quotaSnapshot !== undefined || quotaFailed);
-  const quotaPending = ENABLE_SUBSCRIPTIONS && controls.capabilities.engines && !quotaSettled;
   const observedQuota = (quota: SubscriptionQuota | undefined): SubscriptionQuota | undefined =>
     quotaFailed && quota?.status === "available" ? { ...quota, status: "stale" } : quota;
   const overviewProviders = providers.map(provider => {
@@ -442,10 +438,10 @@ export function ModelServicesPage({
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
           aria-label={t("provider.addConnection")}
           onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
-      {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaPending} now={quotaNow}
+      {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} now={quotaNow}
         onOpenService={setOpenService} /> : null}
       {onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
-        result={overviewInventory} quotaFailed={quotaFailed} quotaLoading={quotaPending} quotaNow={quotaNow} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
+        result={overviewInventory} quotaFailed={quotaFailed} quotaNow={quotaNow} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
@@ -651,13 +647,11 @@ function ServicesOverview({
   providers,
   initialized,
   onOpenService,
-  quotaLoading,
   now,
 }: {
   providers: readonly ProviderSummary[];
   initialized?: InitializeResult;
   onOpenService: (name: string) => void;
-  quotaLoading: boolean;
   now: number;
 }): JSX.Element {
   const { t } = useI18n();
@@ -675,8 +669,7 @@ function ServicesOverview({
                 const identity = serviceIdentity(provider, t);
                 const label = display.label(`provider:${provider.name}`, identity.label);
                 const isDefault = provider.name === initialized?.provider;
-                const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
-                const status = attention ?? t("settings.engineReady");
+                const connected = !identity.attention && provider.quota?.status !== "sign_in";
                 const plan = provider.quota?.plan?.trim();
                 return (
                   <div role="listitem" key={provider.name}>
@@ -697,9 +690,8 @@ function ServicesOverview({
                           <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="connection-summary-meta">{plan}</span>
                         </span>
                         <span className="connection-summary-secondary">
-                          <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className={attention ? "connection-summary-status" : "sr-only"} data-attention={attention ? "" : undefined}>{status}</span>
-                          {!attention ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading && identity.subscription} now={now}
-                            fallback={<span className="connection-summary-status" data-ready>{status}</span>} /> : null}
+                          {connected ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} now={now} />
+                            : <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className="connection-summary-status">{t("connection.notConnected")}</span>}
                         </span>
                       </span>
                       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
@@ -775,7 +767,7 @@ function ServiceDetail({
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [fallbackProvider, setFallbackProvider] = useState("");
-  const removable = !provider.auto_discovered && !isCodexType(provider.type);
+  const removable = !provider.auto_discovered;
   const fallbackProviders = (initialized?.providers ?? []).filter((item) => !item.auto_discovered && item.name !== provider.name);
   const fallback = fallbackProviders.find((item) => item.name === fallbackProvider);
   const lastProvider = fallbackProviders.length === 0;
@@ -842,10 +834,10 @@ function ServiceDetail({
     <ConnectionPage title={<ConnectionTitle connectionKey={`provider:${provider.name}`} fallback={identity.label} disabled={disabled} />} icon={<ServiceMark identity={identity} />}
       subtitle={<span className="connection-status-row">
         {provider.quota?.plan ? <span>{t("connection.subscriptionPlan", { provider: identity.label, plan: provider.quota.plan })}</span> : null}
-        <span className="connection-status-pill" data-attention={Boolean(attention)}>{attention || t("settings.subscriptionReady")}</span>
+        {attention ? <span className="connection-status-text">{attention}</span> : null}
       </span>}
       actions={<details className="connection-credential-menu">
-        <summary className="settings-button">{t(direct ? "provider.authSignIn" : isCodexType(provider.type) || isGrokBuildType(provider.type) ? "connection.credentials" : "connection.connectionSettings")}</summary>
+        <summary className="settings-button">{t(!identity.subscription ? "connection.connectionSettings" : attention ? "provider.authSignIn" : "connection.account")}</summary>
         <div className="connection-credential-panel">
       {direct || isCodexType(provider.type) ? <>
         <AccountMethods selected={direct ? "login" : usingLocalCodex ? "local" : undefined} disabled={disabled}
@@ -880,7 +872,7 @@ function ServiceDetail({
       <div className="connection-detail-body">
       {error && !confirmingRemove ? <p className="settings-error" role="alert">{error}</p> : null}
 
-      {ENABLE_SUBSCRIPTIONS && !(isGrokBuildType(provider.type) && attention) && (provider.quota || hasBuiltInSubscriptionControls(provider)) ? <SubscriptionDashboard detailOnly scope={{ kind: "provider", name: provider.name }} providers={[provider]} onProvidersChanged={onProvidersChanged} onInventoryLoaded={onQuotaLoaded} onSelectBuiltinModel={(name, model) => onSave(name, model)} /> : null}
+      {ENABLE_SUBSCRIPTIONS && !attention && (provider.quota || hasBuiltInSubscriptionControls(provider)) ? <SubscriptionDashboard detailOnly scope={{ kind: "provider", name: provider.name }} providers={[provider]} onProvidersChanged={onProvidersChanged} onInventoryLoaded={onQuotaLoaded} onSelectBuiltinModel={(name, model) => onSave(name, model)} /> : null}
 
       <ModelChoices
         provider={provider}
@@ -892,14 +884,12 @@ function ServiceDetail({
         onAdd={(model) => saveConnection({ add_model: model })}
       />
 
-      <details className="connection-engine-advanced">
-        <summary><ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("connection.advanced")}</summary>
-        <p className="settings-muted-line">{t("connection.localPreferences")}</p>
+      {canMakeDefault || removable ? <div className="connection-detail-actions">
         {canMakeDefault ? <button type="button" className="settings-button" data-testid="settings-provider-make-default" disabled={disabled}
           onClick={() => void run(() => onSave(provider.name, provider.model, undefined, undefined, normalizedVariantForProviderModel(currentVariant, provider, provider.model)))}>{t("provider.makeDefault")}</button> : null}
         {removable ? <button type="button" className="settings-button settings-button-danger" data-testid="settings-provider-remove" disabled={disabled}
           onClick={() => { if (inUse) { setError(t("provider.inUse")); return; } setError(""); setFallbackProvider(""); setConfirmingRemove(true); }}>{t("provider.removeAction")}</button> : null}
-      </details>
+      </div> : null}
       {confirmingRemove ? (
         <Modal
           ariaLabel={t("provider.removeTitle", { name: label })}

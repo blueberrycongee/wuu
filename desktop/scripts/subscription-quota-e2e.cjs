@@ -443,9 +443,12 @@ async function run() {
   assert.deepEqual(await evaluate(main, () => [...document.querySelectorAll('[data-provider="personal"] meter')].map(meter => meter.value)), [48, 0], 'Returning from refreshed detail shows the latest remaining allowance.');
   await openProviderDetail(main, 'personal');
   firstStatus = 401;
-  await refresh(main);
+  const beforeSignIn = requests.length;
+  await click(main, '[data-testid="settings-subscriptions"] .settings-section-actions button');
+  while (requests.length === beforeSignIn) await delay(25);
+  // A rejected login leaves one sign-in action instead of an empty allowance section.
+  await waitFor(main, () => !document.querySelector('[data-testid="settings-subscriptions"]'));
   assert.equal(findQuota(await snapshot(main), 'personal').status, 'sign_in');
-  assert.equal(await evaluate(main, selector => document.querySelector(`${selector} meter`) === null, card('personal')), true);
   await capture(main, '04-sign-in.png');
   firstStatus = 503;
   assert.equal(findQuota(await snapshot(main), 'personal').status, 'unavailable', 'Rejected credentials must not resurrect cached quota.');

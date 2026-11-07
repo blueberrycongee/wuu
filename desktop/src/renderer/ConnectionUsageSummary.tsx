@@ -1,23 +1,17 @@
 import { Tooltip } from "./Tooltip";
-import type { ReactNode } from "react";
 import type { SubscriptionQuota } from "../shared/protocol";
 import { useI18n } from "./i18n";
 
 /** A read-only account snapshot. Fetching and cache identity belong to the connection owner. */
-export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.now(), compact = false, fallback }: {
+export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.now(), compact = false }: {
   id?: string;
   compact?: boolean;
-  fallback?: ReactNode;
   quota?: SubscriptionQuota;
   loading?: boolean;
   now?: number;
 }): JSX.Element | null {
   const { t, formatNumber, formatDate } = useI18n();
-  const empty = compact ? <span id={id} className="connection-usage-fallback" aria-busy={loading}>
-    {loading ? <span className="connection-summary-pending">{t("settings.subscriptionRefreshing")}</span>
-      : quota?.status === "unavailable" ? t("settings.subscriptionQuotaUnavailable") : fallback}
-  </span> : null;
-  if (!quota || (quota.status !== "available" && quota.status !== "stale")) return empty;
+  if (!quota || (quota.status !== "available" && quota.status !== "stale")) return null;
 
   const expired = quota.status === "stale" || (quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now);
   const statusKey = quota.status === "stale" ? "settings.subscriptionQuotaRefreshFailed"
@@ -26,7 +20,7 @@ export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.
   const windows = (quota.windows ?? []).filter(window => window.unlimited || window.display?.trim()
     || (typeof window.used_percent === "number" && Number.isFinite(window.used_percent) && window.used_percent >= 0));
   const balances = (quota.balances ?? []).filter(balance => balance.amount.trim() && balance.currency.trim());
-  if (!windows.length && !balances.length) return empty;
+  if (!windows.length && !balances.length) return null;
 
   return <span id={id} className={`connection-usage-summary${compact ? " connection-usage-inline" : ""}`} aria-busy={loading}>
     {statusKey ? <span className={`connection-usage-state${compact ? " sr-only" : ""}`}>{t(compact ? "settings.subscriptionQuotaStale" : statusKey)}</span> : null}
@@ -82,8 +76,8 @@ export function ConnectionUsageSummary({ id, quota, loading = false, now = Date.
         </time></Tooltip> : null}
       </span>;
     })}
-    {balances.length ? <span className="connection-usage-balance">{compact ? <span>{t("settings.subscriptionKindBalance")}</span> : <>{t("settings.subscriptionKindBalance")}{" · "}</>}
-      <span>{balances.map(balance => `${balance.amount} ${balance.currency}`).join(" · ")}</span>
+    {balances.length ? <span className="connection-usage-balance">{t("settings.subscriptionKindBalance")}{" "}
+      <span className="connection-usage-amount">{balances.map(balance => `${balance.amount} ${balance.currency}`).join(" · ")}</span>
     </span> : null}
   </span>;
 }
