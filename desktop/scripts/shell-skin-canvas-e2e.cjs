@@ -390,9 +390,28 @@ async function main() {
     await until(() => evaluate(t => document.documentElement.dataset.theme === t, theme), 'deep-field theme applied');
     await goHome();
     await captureDF(`deep-field-example-${theme}-home`);
+    // A composer menu over the artwork uses the glass tier.
+    if (await evaluate(() => { const b = document.querySelector('[data-main-conversation-composer] button[aria-haspopup="menu"]'); b?.click(); return Boolean(b); })) {
+      await sleep(400);
+      await captureDF(`deep-field-example-${theme}-menu`);
+      await evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+      await evaluate(() => document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })));
+      await sleep(300);
+    }
     await sendTurn(`Say hello for deep-field ${theme}`);
     await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
     await captureDF(`deep-field-example-${theme}-conversation`);
+    // The right panel shares the sidebar's frosted tier.
+    await click('[data-wuu-component="right-sidebar-toggle"]', 'right panel toggle');
+    await until(() => evaluate(() => Boolean(document.querySelector('.workspace-right-panel'))), 'right panel open');
+    await sleep(600);
+    await captureDF(`deep-field-example-${theme}-right-panel`);
+    report.deepField[`rightPanel-${theme}`] = await evaluate(() => {
+      const box = document.querySelector('.workspace-right-panel').getBoundingClientRect();
+      return { x: Math.round(box.left + box.width / 2), y: Math.round(box.bottom - 40) };
+    });
+    await click('[data-wuu-component="right-sidebar-toggle"]', 'right panel toggle');
+    await until(() => evaluate(() => document.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute('aria-pressed') !== 'true'), 'right panel closed');
     await openPluginView(ribbons.automation);
     await captureDF(`deep-field-example-${theme}-automation`);
   }
@@ -498,21 +517,26 @@ async function main() {
   const paneFree = { x: 1350, y: 860 };
   const sidebar = { x: 180, y: 600 };
   const ribbon = { x: 26, y: 300 };
+  // The reduced-transparency capture is the opaque paper reference.
+  const paper = at('deepfield-dark-reduced-transparency', paneFree.x, paneFree.y);
 
   // Canvas skin: sidebar, ribbon and opaque destinations stay on their
   // surfaces; only the pane interior shows artwork.
-  check('deepfield home shows artwork', dist(at('deepfield-dark-home', pane.x, pane.y), at('deepfield-dark-home', sidebar.x, sidebar.y)) > 24,
-    `pane ${at('deepfield-dark-home', pane.x, pane.y)} vs sidebar ${at('deepfield-dark-home', sidebar.x, sidebar.y)}`);
-  check('automation stays opaque', dist(at('deepfield-dark-automation', pane.x, pane.y), at('deepfield-dark-automation', sidebar.x, sidebar.y)) < 12,
-    `pane ${at('deepfield-dark-automation', pane.x, pane.y)} vs sidebar ${at('deepfield-dark-automation', sidebar.x, sidebar.y)}`);
+  check('deepfield home shows artwork', dist(at('deepfield-dark-home', paneFree.x, paneFree.y), paper) > 24,
+    `pane ${at('deepfield-dark-home', paneFree.x, paneFree.y)} vs opaque ${paper}`);
+  check('opaque destinations veil the artwork more than conversations',
+    dist(at('deepfield-dark-automation', paneFree.x, paneFree.y), paper) < dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), paper),
+    `automation ${at('deepfield-dark-automation', paneFree.x, paneFree.y)} conversation ${at('deepfield-dark-conversation', paneFree.x, paneFree.y)} paper ${paper}`);
+  check('sidebar is a translucent panel over the same artwork',
+    dist(at('deepfield-dark-home', sidebar.x, sidebar.y), at('deepfield-dark-reduced-transparency', sidebar.x, sidebar.y)) > 3,
+    `${at('deepfield-dark-home', sidebar.x, sidebar.y)} vs ${at('deepfield-dark-reduced-transparency', sidebar.x, sidebar.y)}`);
   check('default-canvas fixture view stays opaque', dist(at('deepfield-dark-fixture-opaque', pane.x, pane.y), at('deepfield-dark-automation', pane.x, pane.y)) < 4,
     `${at('deepfield-dark-fixture-opaque', pane.x, pane.y)} vs ${at('deepfield-dark-automation', pane.x, pane.y)}`);
   check('transparent fixture view paints like the pane (single painter)',
     dist(at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y), at('deepfield-dark-home', paneFree.x, paneFree.y)) < 6,
     `${at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y)} vs ${at('deepfield-dark-home', paneFree.x, paneFree.y)}`);
-  check('conversation veil sits between transparent and opaque',
-    dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), at('deepfield-dark-home', paneFree.x, paneFree.y)) > 8
-      && dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), at('deepfield-dark-automation', paneFree.x, paneFree.y)) > 8,
+  check('conversations veil the artwork that the home exposes',
+    dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), at('deepfield-dark-home', paneFree.x, paneFree.y)) > 8,
     `${at('deepfield-dark-conversation', paneFree.x, paneFree.y)}`);
   check('ribbon stays on the skin frame color',
     dist(at('deepfield-dark-home', ribbon.x, ribbon.y), at('deepfield-dark-automation', ribbon.x, ribbon.y)) < 4,
@@ -527,8 +551,9 @@ async function main() {
   });
   check('dot screen alternates at pitch', Math.max(...alternations) >= 8, `alternations per row ${JSON.stringify(alternations)}`);
 
-  check('reduced transparency restores the opaque veil',
-    dist(at('deepfield-dark-reduced-transparency', paneFree.x, paneFree.y), at('deepfield-dark-automation', paneFree.x, paneFree.y)) < 6
+  check('reduced transparency restores opaque surfaces',
+    dist(paper, at('default-dark-automation', paneFree.x, paneFree.y)) < 4
+      && dist(at('deepfield-dark-reduced-transparency', sidebar.x, sidebar.y), at('default-dark-automation', sidebar.x, sidebar.y)) < 4
       && dist(at('deepfield-dark-reduced-transparency', paneFree.x, paneFree.y), at('deepfield-dark-reduced-transparency-off', paneFree.x, paneFree.y)) > 8,
     `${at('deepfield-dark-reduced-transparency', paneFree.x, paneFree.y)}`);
 

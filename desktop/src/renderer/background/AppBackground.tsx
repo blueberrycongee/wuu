@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { processBackground } from "./image";
 import { useBackground } from "./useBackground";
-import { publishCanvasArtwork } from "./ShellCanvasArtwork";
+import { ShellCanvasArtwork, type CanvasArtwork } from "./ShellCanvasArtwork";
 import { showsUserImage, useShellSkins, useSkinImage } from "./ShellSkin";
 
 export function AppBackground(): JSX.Element | null {
@@ -43,10 +43,8 @@ export function AppBackground(): JSX.Element | null {
     position === "left" ? 0 : position === "right" ? 1 : 0.5,
     position === "top" ? 0 : position === "bottom" ? 1 : 0.5,
   ] as const, [position]);
-  useEffect(() => {
-    publishCanvasArtwork(canvasSource ? { source: canvasSource, dots: variant?.dots, overlay: variant?.overlay, align } : null);
-    return () => publishCanvasArtwork(null);
-  }, [canvasSource, variant, align]);
+  const canvasArtwork = useMemo<CanvasArtwork | null>(() => canvasSource
+    ? { source: canvasSource, dots: variant?.dots, overlay: variant?.overlay, align } : null, [canvasSource, variant, align]);
   useLayoutEffect(() => {
     const root = document.documentElement;
     const variables: Record<string, string> = {};
@@ -84,6 +82,7 @@ export function AppBackground(): JSX.Element | null {
       delete root.dataset.shellImage;
     };
   }, [enabled, frameURL, variant, mode, placement, skin, align]);
+  if (canvasArtwork) return createPortal(<ShellCanvasArtwork artwork={canvasArtwork} />, document.body);
   return enabled && placement === "frame"
     ? createPortal(<div className="app-background" aria-hidden="true" />, document.body)
     : null;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
 
 export interface CanvasArtwork {
   /** A processed user picture, or a plugin skin image URL. */
@@ -7,18 +7,6 @@ export interface CanvasArtwork {
   overlay?: string;
   /** Cover-crop alignment in [0, 1] on each axis. */
   align: readonly [number, number];
-}
-
-// AppBackground resolves the selected skin; the pane only paints it.
-let published: CanvasArtwork | null = null;
-const listeners = new Set<() => void>();
-export function publishCanvasArtwork(artwork: CanvasArtwork | null): void {
-  published = artwork;
-  for (const listener of listeners) listener();
-}
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
 }
 
 type Picture = { image: CanvasImageSource; width: number; height: number; close?: () => void };
@@ -34,15 +22,14 @@ async function decode(source: Blob | string): Promise<Picture> {
   return { image, width: image.naturalWidth, height: image.naturalHeight };
 }
 
-/** Paints canvas-placement artwork behind the main pane, cropped to the window
-    so it stays still while sidebars resize the pane. A dot screen samples one
-    color per cell on whole device pixels, so every cell has the same footprint. */
-export function ShellCanvasArtwork(): JSX.Element | null {
-  const artwork = useSyncExternalStore(subscribe, () => published);
+/** Paints canvas-placement artwork behind the whole window, cover-cropped to
+    the window. A dot screen samples one color per cell on whole device pixels,
+    so every cell has the same footprint. */
+export function ShellCanvasArtwork({ artwork }: { artwork: CanvasArtwork }): JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
-    if (!canvas || !artwork) return;
+    if (!canvas) return;
     let picture: Picture | undefined;
     let cells: { key: string; canvas: OffscreenCanvas } | undefined;
     let frame = 0;
@@ -131,5 +118,5 @@ export function ShellCanvasArtwork(): JSX.Element | null {
       picture?.close?.();
     };
   }, [artwork]);
-  return artwork ? <canvas ref={ref} className="shell-canvas-artwork" aria-hidden="true" /> : null;
+  return <canvas ref={ref} className="shell-canvas-artwork" aria-hidden="true" />;
 }

@@ -212,7 +212,7 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 主视图可使用 `layout: "user-space"` 隐藏 Coding 工作区面板，同时保留 Wuu 原有导航。此展示提示不授予运行时权限。
 
-主视图还可声明 `canvas`：`"opaque"`（默认）、`"translucent"` 或 `"transparent"`。当所选外壳皮肤把图片铺入画布时，`"opaque"` 保持常规主题画布，`"translucent"` 在遮罩画布下透出图片，`"transparent"` 直接露出图片——此时应把内容放在 `api.ui.Card` 这类宿主卡片上，因为普通文字会直接压在图片上。此选项在 frame 摆放的皮肤下不生效。激活已打开视图时，宿主发布 `workbench.view.activated` 事件，包含 `pluginId` 和 `viewTypeId`；处理器应同时匹配两个标识。
+主视图还可声明 `canvas`：`"opaque"`（默认）、`"translucent"` 或 `"transparent"`。当所选外壳皮肤把图片铺入画布时，`"opaque"` 使用接近不透明的主题画布遮罩，`"translucent"` 在遮罩画布下透出图片，`"transparent"` 直接露出图片——此时应把内容放在 `api.ui.Card` 这类宿主卡片上，因为普通文字会直接压在图片上。此选项在 frame 摆放的皮肤下不生效。激活已打开视图时，宿主发布 `workbench.view.activated` 事件，包含 `pluginId` 和 `viewTypeId`；处理器应同时匹配两个标识。
 
 桌面宿主通过 `api.ui.ConversationMessage` 和 `api.ui.ConversationComposer` 复用 Wuu 原生消息渲染器和输入框，包括原有附件选择、粘贴/拖放、预览与发送/停止控件。调用方提供会话标识、受控草稿、附件与传输回调，并负责请求接纳、错误处理及成功接纳后的草稿清理。发送失败应保留原始文本和附件。未提供原生组件的宿主会明确报告输入框不可用，不会悄悄替换成另一套输入框。
 
