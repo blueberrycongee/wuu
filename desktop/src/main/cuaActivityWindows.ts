@@ -544,13 +544,6 @@ export class ObservationCoordinator {
         this.resetRetryBudget(entry.key);
         this.restack();
         return;
-      case "retry":
-        if (!activityPreviewIsLive(entry.activity)) return;
-        this.resetRetryBudget(entry.key);
-        entry.phase = "failed";
-        this.syncObservation(entry.key);
-        this.restack();
-        return;
       case "user_close":
         this.dismissedCards.add(entry.key);
         this.restack();

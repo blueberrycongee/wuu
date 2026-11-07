@@ -23,8 +23,8 @@ export function browserPiPOverlayHTML(initialLabel: string): string {
 <html><head><meta charset="utf-8" />
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{color-scheme:light;--surface:#f8f8fa;--text:#131314;--muted:#5f5f61;--ui-size:15px;--frost:rgba(180,182,186,.72);--sheen:rgba(255,255,255,.22)}
-:root.dark{color-scheme:dark;--surface:#242426;--text:#f4f4f5;--muted:#b5b5b7;--frost:rgba(78,80,84,.76);--sheen:rgba(255,255,255,.08)}
+:root{color-scheme:light;--surface:#f8f8fa;--text:#131314;--muted:#5f5f61;--ui-size:15px;--glass-base:#b4b6ba;--frost:rgba(180,182,186,.72);--sheen:rgba(255,255,255,.22)}
+:root.dark{color-scheme:dark;--surface:#242426;--text:#f4f4f5;--muted:#b5b5b7;--glass-base:#4e5054;--frost:rgba(78,80,84,.76);--sheen:rgba(255,255,255,.08)}
 ::-webkit-scrollbar{width:0;height:0;display:none}
 html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(0,0,0,0.004);
@@ -35,14 +35,14 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(0,0,0,0.004)}
 #root.dragging{cursor:grabbing}
 #letterbox{position:absolute;inset:0;pointer-events:none;border:solid var(--frost);border-width:0}
-#ph{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .2s ease}
-#ph::before{content:"";position:absolute;inset:0;background:linear-gradient(145deg,var(--sheen),transparent 65%),var(--frost)}
-#ph-content{position:relative;display:grid;place-items:center}
+#ph{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden;transition:opacity .2s ease}
+#ph::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(145deg,var(--sheen),transparent 65%),var(--frost)}
+#ph-frost{display:none;position:absolute;inset:-48px;width:calc(100% + 96px);height:calc(100% + 96px);object-fit:cover;filter:blur(20px);pointer-events:none}
+#root.unavailable #ph{background:var(--glass-base);opacity:1;transition:none}
+#root.unavailable #ph-frost[src]{display:block}
+#root.unavailable :is(#appear,#completion){visibility:hidden}
+#ph-content{position:relative;z-index:2;display:grid;place-items:center}
 #ph-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-#retry{width:32px;height:32px;display:grid;place-items:center;border:1px solid rgba(0,0,0,.1);border-radius:50%;padding:0;color:#27272a;background:rgba(255,255,255,.9);cursor:pointer}
-#retry:hover{background:#fff}
-#retry:active{background:#e4e4e7}
-#retry:focus-visible{outline:2px solid var(--text);outline-offset:3px}
 #ph.preparing::before{animation:ph-breathe 1.6s ease-in-out infinite alternate}
 @keyframes ph-breathe{from{opacity:1}to{opacity:.72}}
 #ph.gone{opacity:0;pointer-events:none}
@@ -80,6 +80,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   opacity:0;pointer-events:none;transition:opacity .12s ease-in-out}
 #root:is(:focus-within,.hovered,.dragging,.resizing,.attention) :is(#actions,#hover-shade){opacity:1}
 #root:is(:focus-within,.hovered,.dragging,.resizing,.attention) #actions{pointer-events:auto}
+/* An unavailable preview is a plain pane of glass: nothing on it responds. */
+#root.unavailable :is(#actions,#hover-shade){opacity:0;pointer-events:none}
 /* A sibling WebContentsView cannot sample the page with backdrop-filter.
    A local scrim keeps the controls legible over browser and native pixels. */
 #actions::before{content:"";position:absolute;inset:-4px -3px;z-index:-1;
@@ -115,7 +117,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 <body>
 <div id="root" role="group">
   <div id="letterbox" aria-hidden="true"></div>
-  <div id="ph"><div id="ph-content"><span id="ph-status" role="status"></span><button id="retry" type="button" hidden>${iconSVG("RefreshCw", 16)}</button></div></div>
+  <div id="ph"><img id="ph-frost" alt="" aria-hidden="true" draggable="false" /><div id="ph-content"><span id="ph-status" role="status"></span></div></div>
   <img id="appear" alt="" aria-hidden="true" draggable="false" hidden />
   <div id="completion" role="status" aria-hidden="true" data-completed="false">
     <div id="completion-mark">
@@ -139,6 +141,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 <script>
 (function(){
   var ph=document.getElementById("ph");
+  var frost=document.getElementById("ph-frost");
+  frost.onerror=function(){frost.removeAttribute("src");};
   var cursor=(${cursorRuntimeSource})();
   var root=document.getElementById("root");
   var completion=document.getElementById("completion");
@@ -156,15 +160,15 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     var recovering=activity.kind==="cua"&&captureBlocked&&!terminal&&activity.controller!=="none";
     var status=recovering?"activityPreviewLoading":captureBlocked?"activityPreviewUnavailable":capturePaused||terminal||activity.controller==="none"?"activityPreviewPaused":"activityPreviewLoading";
     document.getElementById("ph-status").textContent=text(status);
-    var retry=document.getElementById("retry");
-    buttonLabel("retry","activityPreviewRetry");
-    retry.hidden=recovering||!captureBlocked||terminal||activity.controller==="none";
+    var unavailable=status==="activityPreviewUnavailable";
+    root.classList.toggle("unavailable",unavailable);
+    document.getElementById("actions").inert=unavailable;
     ph.classList.toggle("gone",!placeholder);
     ph.classList.toggle("preparing",placeholder&&status==="activityPreviewLoading");
     // States that ask for a decision keep the controls visible.
     var notable=terminal||activity.state==="waiting_confirmation"||
       capturePaused||manual||(activity.controller==="none"&&activity.state!=="starting");
-    root.classList.toggle("attention",Boolean(placeholder||notable));
+    root.classList.toggle("attention",Boolean((placeholder||notable)&&!unavailable));
     root.setAttribute("aria-label",text(activity.kind==="cua"?"activityComputer":"activityBrowser")+(label?": "+label:""));
     document.getElementById("expand").hidden=activity.kind!=="browser";
     var labels={close:"activityHide",expand:"activityExpand"};
@@ -182,10 +186,6 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     if(e.key==="Escape"){e.preventDefault();window.location.href="wuu-pip://close";}
   });
   var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,resizing=false,resizeEdge="",last=null,velocity={x:0,y:0};
-  document.getElementById("retry").addEventListener("click",function(e){
-    e.stopPropagation();
-    window.location.href="wuu-pip://retry";
-  });
   document.getElementById("close").addEventListener("click",function(e){
     e.stopPropagation();
     window.location.href="wuu-pip://close";
@@ -269,6 +269,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   root.addEventListener("pointercancel",endDrag);
   window.wuuPipMount=function(m){
     mounted=!!(m&&m.mounted);
+    if(mounted)frost.removeAttribute("src");
     if(!mounted)cursor.hide();
     render();
   };
@@ -287,7 +288,12 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     if(state.controller!=="agent"||state.state==="stopped")cursor.hide();
     render();
   };
-  window.wuuPipCapture=function(next){capture=next;render();};
+  window.wuuPipFrost=function(src){if(src)frost.src=src;else frost.removeAttribute("src");};
+  window.wuuPipCapture=function(next){
+    capture=next;
+    if(!["blank","suspended","error"].includes(capture.status))frost.removeAttribute("src");
+    render();
+  };
   window.wuuPipHover=function(point){
     root.classList.toggle("hovered",!!point);
     ["close","desktop","expand"].forEach(function(id){
