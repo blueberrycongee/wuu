@@ -237,6 +237,41 @@ describe("review fixes", () => {
     expect(items.map((i) => i.id).sort()).toEqual(["i-local", "i-snap"]);
   });
 
+  it("a snapshot missing a locally-known item keeps it at its server position", () => {
+    const store = seeded();
+    for (const item of [
+      { id: "turn-1-item-1", type: "user_message", text: "A" },
+      { id: "turn-1-item-2", type: "agent_message", text: "partial" },
+      { id: "turn-1-item-3", type: "user_message", text: "B" },
+      { id: "turn-1-item-4", type: "agent_message", text: "answer to B" },
+    ]) {
+      store.applyNotification("item/completed", { thread_id: "t1", turn_id: "turn-1", item });
+    }
+    // A snapshot that legitimately omits a locally-known row (paged or
+    // conversation views drop folded rows) must not push that row below the
+    // answer that chronologically followed the interruption.
+    store.applyNotification("turn/completed", {
+      thread_id: "t1",
+      turn: {
+        id: "turn-1",
+        items: [
+          { id: "turn-1-item-1", type: "user_message", text: "A" },
+          { id: "turn-1-item-2", type: "agent_message", text: "partial" },
+          { id: "turn-1-item-4", type: "agent_message", text: "answer to B" },
+        ],
+        items_view: "full",
+        status: "completed",
+      },
+    });
+    const items = store.getSnapshot().threads[0].turns[0].items;
+    expect(items.map((i) => i.id)).toEqual([
+      "turn-1-item-1",
+      "turn-1-item-2",
+      "turn-1-item-3",
+      "turn-1-item-4",
+    ]);
+  });
+
   it("seedLastViewed restores cursors without clobbering newer state", () => {
     const store = new AppStore();
     store.setThreads([
