@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { lstatSync, readlinkSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type {
@@ -27,6 +27,41 @@ const GIT_DIFF_COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
 // for AI commit message generation; the server enforces its own guard too.
 const COMMIT_MESSAGE_DIFF_MAX_BYTES = 150 * 1024;
 
+type ProcessResult = {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+};
+
+// Git and gh run on the Electron main process, which also services every
+// window's IPC and input. They must never block it, so commands are awaited
+// instead of spawned synchronously. stdin is closed like spawnSync's default
+// so `--stdin` commands see EOF.
+function runProcess(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; maxBuffer?: number } = {},
+): Promise<ProcessResult> {
+  return new Promise((resolveResult) => {
+    const child = execFile(
+      command,
+      args,
+      { ...options, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        const code = (error as { code?: unknown } | null)?.code;
+        resolveResult({
+          status: error ? (typeof code === "number" ? code : null) : 0,
+          stdout,
+          stderr,
+          error: error && typeof code !== "number" ? error : undefined,
+        });
+      },
+    );
+    child.stdin?.end();
+  });
+}
+
 // CommitMessageGenerator produces a commit message from the staged change.
 // Injected by the IPC layer so gitService stays free of app-server client
 // wiring; when it throws or returns empty, the commit must not happen.
@@ -43,62 +78,59 @@ export class GitService {
     private readonly generateCommitMessage?: CommitMessageGenerator,
   ) {}
 
-  worktreeRoot(cwd: string): string {
+  worktreeRoot(cwd: string): Promise<string> {
     return gitWorktreeRoot(cwd);
   }
 
-  actionBusy(root?: string): boolean {
+  async actionBusy(root?: string): Promise<boolean> {
     return gitWorkingTreeBusy(
       this.contextForRoot(root).cwd,
       this.getRunningThreadCwds(),
     );
   }
 
-  status(options: GitStatusOptions = {}, root?: string): GitStatusResult {
+  async status(options: GitStatusOptions = {}, root?: string): Promise<GitStatusResult> {
     return gitStatusResult(this.contextForRoot(root), options);
   }
 
-  changes(root?: string): GitChangesResult {
+  async changes(root?: string): Promise<GitChangesResult> {
     return gitChangesResult(this.contextForRoot(root));
   }
 
-  fileDiff(path: string, root?: string): GitFileDiffResult {
+  async fileDiff(path: string, root?: string): Promise<GitFileDiffResult> {
     return gitFileDiffResult(this.contextForRoot(root), path);
   }
 
-  checkoutBranch(branch: string, root?: string): GitStatusResult {
+  async checkoutBranch(branch: string, root?: string): Promise<GitStatusResult> {
     const context = this.contextForRoot(root);
-    this.assertMutationAllowed(context.cwd);
+    await this.assertMutationAllowed(context.cwd);
     return checkoutGitBranch(context, branch);
   }
 
-  createCheckoutBranch(branch: string, root?: string): GitCreateBranchResult {
+  async createCheckoutBranch(branch: string, root?: string): Promise<GitCreateBranchResult> {
     const context = this.contextForRoot(root);
-    this.assertMutationAllowed(context.cwd);
+    await this.assertMutationAllowed(context.cwd);
     return createCheckoutGitBranch(context, branch);
   }
 
-  commit(params: GitCommitParams, root?: string): Promise<GitCommitResult> {
+  async commit(params: GitCommitParams, root?: string): Promise<GitCommitResult> {
     const context = this.contextForRoot(root);
-    this.assertMutationAllowed(context.cwd);
+    await this.assertMutationAllowed(context.cwd);
     return commitGitChanges(context, params);
   }
 
-  // commitMessage generates an AI commit message for the current staged
-  // change without committing — the dialog fills the result into the input
-  // so the user confirms or edits it before the actual commit.
-  commitMessage(
+  async commitMessage(
     params: GitCommitParams,
     root?: string,
   ): Promise<GitCommitMessageResult> {
     const context = this.contextForRoot(root);
-    this.assertMutationAllowed(context.cwd);
+    await this.assertMutationAllowed(context.cwd);
     return generateStagedCommitMessage(context, params, this.generateCommitMessage);
   }
 
-  createPullRequest(params: GitPullRequestParams, root?: string): GitPullRequestResult {
+  async createPullRequest(params: GitPullRequestParams, root?: string): Promise<GitPullRequestResult> {
     const context = this.contextForRoot(root);
-    this.assertMutationAllowed(context.cwd);
+    await this.assertMutationAllowed(context.cwd);
     return createPullRequest(context, params);
   }
 
@@ -119,8 +151,8 @@ export class GitService {
     return { ...context, cwd: normalizedRoot };
   }
 
-  private assertMutationAllowed(cwd: string): void {
-    if (gitWorkingTreeBusy(cwd, this.getRunningThreadCwds())) {
+  private async assertMutationAllowed(cwd: string): Promise<void> {
+    if (await gitWorkingTreeBusy(cwd, this.getRunningThreadCwds())) {
       throw new Error(
         "cannot run Git actions while a thread is running in this working tree",
       );
@@ -128,8 +160,8 @@ export class GitService {
   }
 }
 
-export function gitWorktreeRoot(cwd: string): string {
-  const root = resolveGitWorktreeRoot(cwd);
+export async function gitWorktreeRoot(cwd: string): Promise<string> {
+  const root = await resolveGitWorktreeRoot(cwd);
   if (!root) {
     throw new Error("working directory is not a Git working tree");
   }
@@ -138,13 +170,12 @@ export function gitWorktreeRoot(cwd: string): string {
 
 // Only a confirmed non-repository is safe to ignore when checking other
 // sessions. Missing/inaccessible directories and other Git failures stay locked.
-function resolveGitWorktreeRoot(cwd: string): string | undefined {
+async function resolveGitWorktreeRoot(cwd: string): Promise<string | undefined> {
   if (cwd === "") {
     throw new Error("working directory is required");
   }
-  const result = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+  const result = await runProcess("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
     cwd,
-    encoding: "utf8",
     env: { ...process.env, LC_ALL: "C", LANGUAGE: "C" },
   });
   if (result.error) throw result.error;
@@ -161,13 +192,13 @@ function resolveGitWorktreeRoot(cwd: string): string | undefined {
   return root;
 }
 
-export function gitWorkingTreeBusy(
+export async function gitWorkingTreeBusy(
   cwd: string,
   runningThreadCwds: readonly string[],
-): boolean {
+): Promise<boolean> {
   let targetRoot: string;
   try {
-    targetRoot = gitWorktreeRoot(cwd);
+    targetRoot = await gitWorktreeRoot(cwd);
   } catch {
     return true;
   }
@@ -176,7 +207,7 @@ export function gitWorkingTreeBusy(
   }
   for (const runningCwd of runningThreadCwds) {
     try {
-      const runningRoot = resolveGitWorktreeRoot(runningCwd);
+      const runningRoot = await resolveGitWorktreeRoot(runningCwd);
       if (runningRoot && sameGitWorktreeRoot(targetRoot, runningRoot)) {
         return true;
       }
@@ -198,14 +229,14 @@ type GitStatusOptions = {
   includeRemoteDefaultBranchFallback?: boolean;
 };
 
-function gitStatusResult(
+async function gitStatusResult(
   context: RuntimeContext,
   options: GitStatusOptions = {},
-): GitStatusResult {
+): Promise<GitStatusResult> {
   const root =
-    gitOutput(context.cwd, ["rev-parse", "--show-toplevel"]) ?? context.cwd;
+    await gitOutput(context.cwd, ["rev-parse", "--show-toplevel"]) ?? context.cwd;
   const insideWorkTree =
-    gitOutput(root, ["rev-parse", "--is-inside-work-tree"]) === "true";
+    await gitOutput(root, ["rev-parse", "--is-inside-work-tree"]) === "true";
   if (!insideWorkTree) {
     return {
       is_repo: false,
@@ -215,43 +246,65 @@ function gitStatusResult(
     };
   }
 
-  const branchName = gitOutput(root, ["branch", "--show-current"]);
-  const head = gitOutput(root, ["rev-parse", "--short", "HEAD"]);
+  // The status bar refreshes after every agent turn and file event; issue the
+  // independent read-only queries together instead of one process at a time.
+  const remoteState = (async () => {
+    const upstream = await gitOutput(root, [
+      "rev-parse",
+      "--abbrev-ref",
+      "--symbolic-full-name",
+      "@{u}",
+    ]);
+    const remote = upstream?.split("/")[0] || await firstGitRemote(root);
+    const [[aheadCount, behindCount], defaultBranch] = await Promise.all([
+      upstream ? gitAheadBehind(root) : Promise.resolve<[number, number]>([0, 0]),
+      remote
+        ? gitDefaultBranch(
+            root,
+            remote,
+            Boolean(options.includeRemoteDefaultBranchFallback),
+          )
+        : Promise.resolve(undefined),
+    ]);
+    return { upstream, remote, aheadCount, behindCount, defaultBranch };
+  })();
+  const [
+    branchName,
+    head,
+    branchOutput,
+    porcelain,
+    remoteInfo,
+    ghAvailable,
+    diff,
+    stagedDiff,
+  ] = await Promise.all([
+    gitOutput(root, ["branch", "--show-current"]),
+    gitOutput(root, ["rev-parse", "--short", "HEAD"]),
+    gitRawOutput(root, [
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)%00%(worktreepath)%00",
+      "refs/heads",
+    ]),
+    gitOutput(root, ["status", "--porcelain"]),
+    remoteState,
+    commandAvailable("gh", ["--version"]),
+    gitDiffStats(root, true),
+    gitStagedDiffStats(root),
+  ]);
   const branch = branchName || head;
-  // NUL-delimited fields preserve worktree paths containing tabs or newlines.
-  const branchRecords = gitRawOutput(root, [
-    "for-each-ref",
-    "--sort=-committerdate",
-    "--format=%(refname:short)%00%(worktreepath)%00",
-    "refs/heads",
-  ])?.split("\0\n").filter(Boolean).map((record) => record.split("\0"));
+  const branchRecords = branchOutput
+    ?.split("\0\n").filter(Boolean).map((record) => record.split("\0"));
   const branches = branchRecords?.map(([name]) => name);
   const branchWorktrees = branchRecords
     ?.filter(([, path]) => Boolean(path))
     .map(([name, path]) => ({ branch: name, path }));
-  const porcelain = gitOutput(root, ["status", "--porcelain"]);
   const dirtyCount = porcelain
     ? porcelain.split("\n").filter((line) => line.trim()).length
     : 0;
-  const upstream = gitOutput(root, [
-    "rev-parse",
-    "--abbrev-ref",
-    "--symbolic-full-name",
-    "@{u}",
-  ]);
-  const [aheadCount, behindCount] = upstream ? gitAheadBehind(root) : [0, 0];
-  const remote = upstream?.split("/")[0] || firstGitRemote(root);
-  const defaultBranch = remote
-    ? gitDefaultBranch(
-        root,
-        remote,
-        Boolean(options.includeRemoteDefaultBranchFallback),
-      )
-    : undefined;
-  const ghAvailable = commandAvailable("gh", ["--version"]);
   const prURL =
     options.includePullRequestURL && branchName && ghAvailable
-      ? ghPullRequestURL(root)
+      ? await ghPullRequestURL(root)
       : undefined;
 
   return {
@@ -261,30 +314,29 @@ function gitStatusResult(
     branch_worktrees: branchWorktrees,
     dirty_count: dirtyCount,
     detached: !branchName,
-    diff: gitDiffStats(root, true),
-    staged_diff: gitStagedDiffStats(root),
-    upstream,
-    ahead_count: aheadCount,
-    behind_count: behindCount,
-    remote,
-    default_branch: defaultBranch,
+    diff,
+    staged_diff: stagedDiff,
+    upstream: remoteInfo.upstream,
+    ahead_count: remoteInfo.aheadCount,
+    behind_count: remoteInfo.behindCount,
+    remote: remoteInfo.remote,
+    default_branch: remoteInfo.defaultBranch,
     gh_available: ghAvailable,
     pr_url: prURL,
   };
 }
 
-function gitChangesResult(context: RuntimeContext): GitChangesResult {
+async function gitChangesResult(context: RuntimeContext): Promise<GitChangesResult> {
   const root =
-    gitOutput(context.cwd, ["rev-parse", "--show-toplevel"]) ?? context.cwd;
+    await gitOutput(context.cwd, ["rev-parse", "--show-toplevel"]) ?? context.cwd;
   const insideWorkTree =
-    gitOutput(root, ["rev-parse", "--is-inside-work-tree"]) === "true";
+    await gitOutput(root, ["rev-parse", "--is-inside-work-tree"]) === "true";
   if (!insideWorkTree) {
     return { is_repo: false, files: [] };
   }
 
-  const base = gitDiffBase(root);
-  const filesByPath = new Map<string, GitChangeFile>();
-  for (const file of parseGitNameStatus(
+  const base = await gitDiffBase(root);
+  const [nameStatus, numstat, untracked] = await Promise.all([
     gitRawOutput(root, [
       "diff",
       "--name-status",
@@ -292,15 +344,16 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
       "--find-renames",
       base,
       "--",
-    ]) ?? "",
-  )) {
+    ]),
+    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", base, "--"]),
+    listUntrackedGitFiles(root),
+  ]);
+  const filesByPath = new Map<string, GitChangeFile>();
+  for (const file of parseGitNameStatus(nameStatus ?? "")) {
     filesByPath.set(file.path, file);
   }
 
-  for (const file of parseGitNumstatFiles(
-    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", base, "--"]) ??
-      "",
-  )) {
+  for (const file of parseGitNumstatFiles(numstat ?? "")) {
     const existing = filesByPath.get(file.path);
     filesByPath.set(file.path, {
       ...file,
@@ -311,7 +364,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
     });
   }
 
-  for (const path of listUntrackedGitFiles(root)) {
+  for (const path of untracked) {
     const stats = untrackedGitFileStats(root, path);
     filesByPath.set(path, {
       path,
@@ -331,20 +384,20 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
   };
 }
 
-function gitFileDiffResult(
+async function gitFileDiffResult(
   context: RuntimeContext,
   path: string,
-): GitFileDiffResult {
+): Promise<GitFileDiffResult> {
   const root =
-    gitOutput(context.cwd, ["rev-parse", "--show-toplevel"]) ?? context.cwd;
+    await gitOutput(context.cwd, ["rev-parse", "--show-toplevel"]) ?? context.cwd;
   const insideWorkTree =
-    gitOutput(root, ["rev-parse", "--is-inside-work-tree"]) === "true";
+    await gitOutput(root, ["rev-parse", "--is-inside-work-tree"]) === "true";
   const { relativePath, absolutePath } = resolveGitRelativePath(root, path);
   if (!insideWorkTree) {
     return emptyGitFileDiffResult(relativePath, false);
   }
 
-  const change = gitChangesResult(context).files.find(
+  const change = (await gitChangesResult(context)).files.find(
     (file) => file.path === relativePath,
   ) ?? {
     path: relativePath,
@@ -357,7 +410,7 @@ function gitFileDiffResult(
     return gitNewFileDiffResult(absolutePath, change);
   }
 
-  if (change.status === "unknown" && gitPathIgnored(root, relativePath)) {
+  if (change.status === "unknown" && await gitPathIgnored(root, relativePath)) {
     const stats = untrackedGitFileStats(root, relativePath);
     return gitNewFileDiffResult(absolutePath, {
       ...change,
@@ -367,8 +420,8 @@ function gitFileDiffResult(
     });
   }
 
-  const base = gitDiffBase(root);
-  const rawPatch = gitDiffOutput(
+  const base = await gitDiffBase(root);
+  const rawPatch = await gitDiffOutput(
     root,
     base,
     change.old_path ? [change.old_path, relativePath] : [relativePath],
@@ -380,7 +433,7 @@ function gitFileDiffResult(
   const binary = Boolean(change.binary);
   const originalText = binary
     ? undefined
-    : change.status === "added" ? "" : gitRevisionFileText(root, base, change.old_path ?? change.path);
+    : change.status === "added" ? "" : await gitRevisionFileText(root, base, change.old_path ?? change.path);
   const modifiedText = binary
     ? undefined
     : change.status === "deleted" ? "" : readWorkingTreeFileText(absolutePath);
@@ -401,11 +454,11 @@ function gitFileDiffResult(
   };
 }
 
-function checkoutGitBranch(
+async function checkoutGitBranch(
   context: RuntimeContext,
   branch: string,
-): GitStatusResult {
-  const current = gitStatusResult(context);
+): Promise<GitStatusResult> {
+  const current = await gitStatusResult(context);
   const target = branch.trim();
   if (!current.is_repo) {
     throw new Error("current workspace is not a git repository");
@@ -413,39 +466,39 @@ function checkoutGitBranch(
   if (!target || !current.branches?.includes(target)) {
     throw new Error("branch not found");
   }
-  gitRun(context.cwd, ["checkout", target]);
-  return gitStatusResult(context);
+  await gitRun(context.cwd, ["checkout", target]);
+  return await gitStatusResult(context);
 }
 
-function createCheckoutGitBranch(
+async function createCheckoutGitBranch(
   context: RuntimeContext,
   branch: string,
-): GitCreateBranchResult {
-  const current = gitStatusResult(context);
+): Promise<GitCreateBranchResult> {
+  const current = await gitStatusResult(context);
   const target = branch.trim();
   if (!current.is_repo) {
     throw new Error("current workspace is not a git repository");
   }
-  validateGitBranchName(context.cwd, target);
+  await validateGitBranchName(context.cwd, target);
   if (current.branches?.includes(target)) {
     throw new Error("branch already exists");
   }
-  gitRun(context.cwd, ["checkout", "-b", target]);
-  return { status: gitStatusResult(context) };
+  await gitRun(context.cwd, ["checkout", "-b", target]);
+  return { status: await gitStatusResult(context) };
 }
 
 async function commitGitChanges(
   context: RuntimeContext,
   params: GitCommitParams,
 ): Promise<GitCommitResult> {
-  const current = gitStatusResult(context);
+  const current = await gitStatusResult(context);
   if (!current.is_repo) {
     throw new Error("current workspace is not a git repository");
   }
   if (params.include_unstaged !== false) {
-    gitRun(context.cwd, ["add", "-A"]);
+    await gitRun(context.cwd, ["add", "-A"]);
   }
-  const stagedDiff = gitStagedDiffStats(context.cwd);
+  const stagedDiff = await gitStagedDiffStats(context.cwd);
   if (stagedDiff.files === 0) {
     throw new Error("there are no staged changes to commit");
   }
@@ -455,10 +508,10 @@ async function commitGitChanges(
   if (!message) {
     throw new Error("commit message is required");
   }
-  gitRun(context.cwd, ["commit", "-m", message]);
-  const commit = gitOutput(context.cwd, ["rev-parse", "--short", "HEAD"]) ?? "";
+  await gitRun(context.cwd, ["commit", "-m", message]);
+  const commit = await gitOutput(context.cwd, ["rev-parse", "--short", "HEAD"]) ?? "";
   return {
-    status: gitStatusResult(context),
+    status: await gitStatusResult(context),
     commit,
     message,
   };
@@ -473,14 +526,14 @@ async function generateStagedCommitMessage(
   params: GitCommitParams,
   generateCommitMessage?: CommitMessageGenerator,
 ): Promise<GitCommitMessageResult> {
-  const current = gitStatusResult(context);
+  const current = await gitStatusResult(context);
   if (!current.is_repo) {
     throw new Error("current workspace is not a git repository");
   }
   if (params.include_unstaged !== false) {
-    gitRun(context.cwd, ["add", "-A"]);
+    await gitRun(context.cwd, ["add", "-A"]);
   }
-  const stagedDiff = gitStagedDiffStats(context.cwd);
+  const stagedDiff = await gitStagedDiffStats(context.cwd);
   if (stagedDiff.files === 0) {
     throw new Error("there are no staged changes to commit");
   }
@@ -500,11 +553,11 @@ async function generateAICommitMessage(
     throw new Error("AI commit message generation is not available");
   }
   const files = (
-    gitRawOutput(context.cwd, ["diff", "--cached", "--name-only", "-z", "--"]) ?? ""
+    await gitRawOutput(context.cwd, ["diff", "--cached", "--name-only", "-z", "--"]) ?? ""
   )
     .split("\0")
     .filter(Boolean);
-  const diff = gitStagedDiffForPrompt(context.cwd);
+  const diff = await gitStagedDiffForPrompt(context.cwd);
   let generated: string;
   try {
     generated = await generateCommitMessage(context, { diff, files });
@@ -526,19 +579,18 @@ async function generateAICommitMessage(
 // COMMIT_MESSAGE_DIFF_MAX_BYTES; when the diff overflows the command buffer
 // entirely (giant binary drops, huge generated files), it degrades to the
 // --stat summary so the model still sees the shape of the change.
-function gitStagedDiffForPrompt(cwd: string): string {
-  const result = spawnSync(
+async function gitStagedDiffForPrompt(cwd: string): Promise<string> {
+  const result = await runProcess(
     "git",
     ["-C", cwd, "diff", "--cached", "--no-ext-diff", "--find-renames", "--"],
     {
       cwd,
-      encoding: "utf8",
       env: process.env,
       maxBuffer: GIT_DIFF_COMMAND_MAX_BUFFER,
     },
   );
   if (result.status !== 0 || result.error) {
-    const stat = gitOutput(cwd, ["diff", "--cached", "--stat", "--"]);
+    const stat = await gitOutput(cwd, ["diff", "--cached", "--stat", "--"]);
     if (!stat) {
       throw new Error("failed to read staged changes");
     }
@@ -547,11 +599,11 @@ function gitStagedDiffForPrompt(cwd: string): string {
   return truncateTextBytes(result.stdout, COMMIT_MESSAGE_DIFF_MAX_BYTES).text;
 }
 
-function createPullRequest(
+async function createPullRequest(
   context: RuntimeContext,
   params: GitPullRequestParams,
-): GitPullRequestResult {
-  const status = gitStatusResult(context, {
+): Promise<GitPullRequestResult> {
+  const status = await gitStatusResult(context, {
     includePullRequestURL: true,
     includeRemoteDefaultBranchFallback: true,
   });
@@ -561,7 +613,7 @@ function createPullRequest(
   if (!status.gh_available) {
     throw new Error("GitHub CLI is not available");
   }
-  const branch = gitOutput(context.cwd, ["branch", "--show-current"]);
+  const branch = await gitOutput(context.cwd, ["branch", "--show-current"]);
   if (!branch) {
     throw new Error("pull requests require a named branch");
   }
@@ -581,7 +633,7 @@ function createPullRequest(
 
   if (!status.upstream) {
     const remote = status.remote || "origin";
-    gitRun(context.cwd, ["push", "-u", remote, branch]);
+    await gitRun(context.cwd, ["push", "-u", remote, branch]);
   }
 
   const args = ["pr", "create"];
@@ -595,13 +647,13 @@ function createPullRequest(
   } else {
     args.push("--fill");
   }
-  const url = ghOutput(context.cwd, args);
+  const url = await ghOutput(context.cwd, args);
   if (!url) {
     throw new Error("GitHub CLI did not return a pull request URL");
   }
   return {
     status: {
-      ...gitStatusResult(context, { includeRemoteDefaultBranchFallback: true }),
+      ...(await gitStatusResult(context, { includeRemoteDefaultBranchFallback: true })),
       pr_url: url,
     },
     url,
@@ -609,16 +661,15 @@ function createPullRequest(
   };
 }
 
-function validateGitBranchName(cwd: string, branch: string): void {
+async function validateGitBranchName(cwd: string, branch: string): Promise<void> {
   if (!branch) {
     throw new Error("branch name is required");
   }
-  const result = spawnSync(
+  const result = await runProcess(
     "git",
     ["-C", cwd, "check-ref-format", "--branch", branch],
     {
       cwd,
-      encoding: "utf8",
       env: { ...process.env, LC_ALL: "C" },
     },
   );
@@ -627,10 +678,9 @@ function validateGitBranchName(cwd: string, branch: string): void {
   }
 }
 
-function gitRun(cwd: string, args: string[]): string {
-  const result = spawnSync("git", ["-C", cwd, ...args], {
+async function gitRun(cwd: string, args: string[]): Promise<string> {
+  const result = await runProcess("git", ["-C", cwd, ...args], {
     cwd,
-    encoding: "utf8",
     // Renderer error classification must not depend on the host's locale.
     env: { ...process.env, LC_ALL: "C" },
   });
@@ -644,14 +694,13 @@ function gitRun(cwd: string, args: string[]): string {
   return result.stdout.trim();
 }
 
-function gitOutput(cwd: string, args: string[]): string | undefined {
-  return gitRawOutput(cwd, args)?.trim() || undefined;
+async function gitOutput(cwd: string, args: string[]): Promise<string | undefined> {
+  return (await gitRawOutput(cwd, args))?.trim() || undefined;
 }
 
-function gitRawOutput(cwd: string, args: string[]): string | undefined {
-  const result = spawnSync("git", ["-C", cwd, ...args], {
+async function gitRawOutput(cwd: string, args: string[]): Promise<string | undefined> {
+  const result = await runProcess("git", ["-C", cwd, ...args], {
     cwd,
-    encoding: "utf8",
     env: process.env,
   });
   if (result.status !== 0) {
@@ -664,21 +713,22 @@ function emptyGitDiffStats(): GitDiffStats {
   return { files: 0, additions: 0, deletions: 0 };
 }
 
-function gitDiffBase(cwd: string): string {
+async function gitDiffBase(cwd: string): Promise<string> {
   // Before the first commit, compare with the empty tree in this repository's
   // object format. Hashing empty stdin does not write an object or change the index.
-  return gitOutput(cwd, ["rev-parse", "--verify", "HEAD"]) ??
-    gitRun(cwd, ["hash-object", "-t", "tree", "--stdin"]);
+  return await gitOutput(cwd, ["rev-parse", "--verify", "HEAD"]) ??
+    await gitRun(cwd, ["hash-object", "-t", "tree", "--stdin"]);
 }
 
-function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
+async function gitDiffStats(cwd: string, includeUntracked: boolean): Promise<GitDiffStats> {
+  const base = await gitDiffBase(cwd);
   const stats = parseGitNumstat(
-    gitRawOutput(cwd, ["diff", "--numstat", "-z", gitDiffBase(cwd), "--"]) ?? "",
+    await gitRawOutput(cwd, ["diff", "--numstat", "-z", base, "--"]) ?? "",
   );
   if (!includeUntracked) {
     return stats;
   }
-  const untracked = listUntrackedGitFiles(cwd);
+  const untracked = await listUntrackedGitFiles(cwd);
   if (!untracked.length) {
     return stats;
   }
@@ -693,14 +743,14 @@ function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
   };
 }
 
-function gitStagedDiffStats(cwd: string): GitDiffStats {
+async function gitStagedDiffStats(cwd: string): Promise<GitDiffStats> {
   return parseGitNumstat(
-    gitRawOutput(cwd, ["diff", "--cached", "--numstat", "-z", "--"]) ?? "",
+    await gitRawOutput(cwd, ["diff", "--cached", "--numstat", "-z", "--"]) ?? "",
   );
 }
 
-function gitDiffOutput(cwd: string, base: string, relativePaths: string[]): string {
-  const result = spawnSync(
+async function gitDiffOutput(cwd: string, base: string, relativePaths: string[]): Promise<string> {
+  const result = await runProcess(
     "git",
     [
       "--literal-pathspecs",
@@ -716,7 +766,6 @@ function gitDiffOutput(cwd: string, base: string, relativePaths: string[]): stri
     ],
     {
       cwd,
-      encoding: "utf8",
       env: process.env,
       maxBuffer: GIT_DIFF_COMMAND_MAX_BUFFER,
     },
@@ -803,9 +852,9 @@ function gitChangeStatus(statusCode: string): GitChangeFile["status"] {
   }
 }
 
-function listUntrackedGitFiles(cwd: string): string[] {
+async function listUntrackedGitFiles(cwd: string): Promise<string[]> {
   return (
-    gitRawOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]) ?? ""
+    await gitRawOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]) ?? ""
   ).split("\0").filter(Boolean);
 }
 
@@ -872,18 +921,17 @@ function gitNewFileDiffResult(
   }
 }
 
-function gitRevisionFileText(
+async function gitRevisionFileText(
   root: string,
   revision: string,
   relativePath: string,
-): string | undefined {
+): Promise<string | undefined> {
   // Unlike git show, cat-file blob cannot render a gitlink as commit text.
-  const result = spawnSync(
+  const result = await runProcess(
     "git",
     ["-C", root, "cat-file", "blob", `${revision}:${relativePath}`],
     {
       cwd: root,
-      encoding: "utf8",
       env: process.env,
       maxBuffer: GIT_DIFF_COMMAND_MAX_BUFFER,
     },
@@ -923,13 +971,12 @@ function readWorkingTreeFileText(absolutePath: string): string | undefined {
   }
 }
 
-function gitPathIgnored(root: string, relativePath: string): boolean {
-  const result = spawnSync(
+async function gitPathIgnored(root: string, relativePath: string): Promise<boolean> {
+  const result = await runProcess(
     "git",
     ["-C", root, "check-ignore", "--quiet", "--", relativePath],
     {
       cwd: root,
-      encoding: "utf8",
       env: process.env,
     },
   );
@@ -1034,8 +1081,8 @@ function countTextFileLines(filePath: string): number {
   }
 }
 
-function gitAheadBehind(cwd: string): [number, number] {
-  const output = gitOutput(cwd, [
+async function gitAheadBehind(cwd: string): Promise<[number, number]> {
+  const output = await gitOutput(cwd, [
     "rev-list",
     "--left-right",
     "--count",
@@ -1047,19 +1094,19 @@ function gitAheadBehind(cwd: string): [number, number] {
   return [ahead, behind];
 }
 
-function firstGitRemote(cwd: string): string | undefined {
-  return gitOutput(cwd, ["remote"])
+async function firstGitRemote(cwd: string): Promise<string | undefined> {
+  return (await gitOutput(cwd, ["remote"]))
     ?.split("\n")
     .map((item) => item.trim())
     .find(Boolean);
 }
 
-function gitDefaultBranch(
+async function gitDefaultBranch(
   cwd: string,
   remote: string,
   includeRemoteFallback = false,
-): string | undefined {
-  const symbolic = gitOutput(cwd, [
+): Promise<string | undefined> {
+  const symbolic = await gitOutput(cwd, [
     "symbolic-ref",
     "--short",
     `refs/remotes/${remote}/HEAD`,
@@ -1070,7 +1117,7 @@ function gitDefaultBranch(
   if (!includeRemoteFallback) {
     return undefined;
   }
-  return gitOutput(cwd, ["remote", "show", remote])
+  return (await gitOutput(cwd, ["remote", "show", remote]))
     ?.split("\n")
     .map((line) => line.trim())
     .find((line) => line.startsWith("HEAD branch:"))
@@ -1078,18 +1125,16 @@ function gitDefaultBranch(
     .trim();
 }
 
-function commandAvailable(command: string, args: string[]): boolean {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
+async function commandAvailable(command: string, args: string[]): Promise<boolean> {
+  const result = await runProcess(command, args, {
     env: process.env,
   });
   return result.status === 0;
 }
 
-function ghOutput(cwd: string, args: string[]): string | undefined {
-  const result = spawnSync("gh", args, {
+async function ghOutput(cwd: string, args: string[]): Promise<string | undefined> {
+  const result = await runProcess("gh", args, {
     cwd,
-    encoding: "utf8",
     env: process.env,
   });
   if (result.status !== 0) {
@@ -1105,6 +1150,6 @@ function ghOutput(cwd: string, args: string[]): string | undefined {
   return result.stdout.trim() || undefined;
 }
 
-function ghPullRequestURL(cwd: string): string | undefined {
-  return ghOutput(cwd, ["pr", "view", "--json", "url", "--jq", ".url"]);
+async function ghPullRequestURL(cwd: string): Promise<string | undefined> {
+  return await ghOutput(cwd, ["pr", "view", "--json", "url", "--jq", ".url"]);
 }
