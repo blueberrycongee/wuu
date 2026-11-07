@@ -29,6 +29,7 @@ import type {
   ComposerInlineCompletionRefresh,
   PluginUIKit,
   PluginUIAvatarProps,
+  PluginUIModelPickerProps,
   PluginConversationComponents,
   PluginCommandPresentation,
   PluginCommandActionContext,
@@ -382,6 +383,7 @@ export interface PluginHostOptions {
   activationTimeoutMs?: number;
   conversationComponents?: PluginConversationComponents;
   avatarComponent?: React.ComponentType<PluginUIAvatarProps>;
+  modelPickerComponent?: React.ComponentType<PluginUIModelPickerProps>;
   styleContainer?: HTMLElement | (() => HTMLElement | null);
   invokeRuntime?: (request: Readonly<{
     pluginId: string;
@@ -629,7 +631,7 @@ export class PluginHost {
     this.reportActivation = options.reportActivation;
     this.application = options.application;
     this.react = options.react;
-    this.ui = createPluginUIKit(options.react, options.renderConversationContent, options.conversationComponents, options.avatarComponent);
+    this.ui = createPluginUIKit(options.react, options.renderConversationContent, options.conversationComponents, options.avatarComponent, options.modelPickerComponent);
     this.styleContainer = options.styleContainer;
     this.runtimeInvoker = options.invokeRuntime;
     this.workspaceLister = options.listWorkspaces;

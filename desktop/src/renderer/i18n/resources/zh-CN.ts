@@ -1507,6 +1507,8 @@ export const zhCN = {
   "runtime.selectModel": "选择模型",
   "runtime.noMatchingModels": "没有匹配的模型",
   "runtime.reasoningEffort": "思考强度",
+  "plugins.modelPicker.aliases": "别名",
+  "plugins.modelPicker.unavailable": "{model} · {provider}（不可用）",
   "runtime.loadingCodexModels": "正在加载 Codex 模型",
   "runtime.codexLoginUnavailable": "无法读取 Codex 登录态",
   "runtime.noModels": "没有可用模型",

@@ -1510,6 +1510,8 @@ export const enUS = {
   "runtime.selectModel": "Select model",
   "runtime.noMatchingModels": "No matching models",
   "runtime.reasoningEffort": "Reasoning effort",
+  "plugins.modelPicker.aliases": "Aliases",
+  "plugins.modelPicker.unavailable": "{model} · {provider} (unavailable)",
   "runtime.loadingCodexModels": "Loading Codex models",
   "runtime.codexLoginUnavailable": "Could not read Codex login status",
   "runtime.noModels": "No models available",

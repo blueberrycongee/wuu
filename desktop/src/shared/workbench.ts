@@ -242,6 +242,29 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
   active?: boolean;
 }
 
+export interface PluginUIModelPickerModel {
+  readonly provider: string;
+  readonly model: string;
+  readonly label: string;
+  readonly variants: readonly string[];
+}
+
+/** A configured model with an optional reasoning level ("" is the model default), or a named alias. */
+export type PluginUIModelPickerValue =
+  | { readonly provider: string; readonly model: string; readonly variant?: string }
+  | { readonly alias: string };
+
+/** Native model and reasoning-level menus fed by the caller's model list, such as host.settings.listAvailableModels(). */
+export interface PluginUIModelPickerProps {
+  models: readonly PluginUIModelPickerModel[];
+  /** Offered after the models; an alias keeps its own level. */
+  aliases?: Readonly<Record<string, SettingsModelAliasV1>>;
+  value?: PluginUIModelPickerValue;
+  onChange(value: PluginUIModelPickerValue): void;
+  disabled?: boolean;
+  className?: string;
+}
+
 /** Decorative host identity. Static is the default; ambient preserves its configured appearance. */
 export interface PluginUIAvatarProps {
   /** Optional mascot-v1:shape:accessory:hue style. Omit for the host brand identity. */
@@ -387,9 +410,10 @@ export interface PluginUIKit {
   readonly LoadingState: React.ComponentType<PluginUILoadingStateProps>;
   readonly ErrorState: React.ComponentType<PluginUIErrorStateProps>;
   readonly LiveDuration: React.ComponentType<PluginUILiveDurationProps>;
+  readonly ModelPicker: React.ComponentType<PluginUIModelPickerProps>;
 }
 
-export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents, avatarComponent?: React.ComponentType<PluginUIAvatarProps>): Omit<PluginUIKit, "WebPage"> {
+export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents, avatarComponent?: React.ComponentType<PluginUIAvatarProps>, modelPickerComponent?: React.ComponentType<PluginUIModelPickerProps>): Omit<PluginUIKit, "WebPage"> {
   function StaticAvatar({ size = 24, className }: PluginUIAvatarProps): React.ReactNode {
     // Lightweight hosts without the desktop renderer keep an existing static agent mark.
     return react.createElement("svg", {
@@ -647,6 +671,7 @@ export function createPluginUIKit(react: typeof React, renderConversationContent
     LoadingState,
     ErrorState,
     LiveDuration,
+    ModelPicker: modelPickerComponent ?? (() => { throw new Error("Native model picker is unavailable in this host"); }),
   });
 }
 
