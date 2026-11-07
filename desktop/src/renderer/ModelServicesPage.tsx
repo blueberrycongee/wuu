@@ -47,6 +47,7 @@ import { hasBuiltInSubscriptionControls } from "./SubscriptionSources";
 import { ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { CatalogSearchField } from "./CatalogSearchField";
 import { EngineSettingsSection } from "./EngineSettingsSection";
+import { EmptyStateIllustration } from "./EmptyStateIllustration";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { isTouchWebShell } from "./ComposerFocus";
@@ -412,7 +413,10 @@ export function ModelServicesPage({
 
   const defaultProvider = providers.find((provider) => provider.name === initialized?.provider);
   const defaultUsable = Boolean(defaultProvider && !serviceIdentity(defaultProvider, t).attention);
-
+  // With neither a model service nor an external engine there is no row to
+  // read, so the page becomes one first-run state instead of two empty groups.
+  const noConnections = initialized !== undefined && overviewInventory !== undefined
+    && overviewProviders.length === 0 && overviewInventory.engines.length === 0;
 
   return (
     <div className="model-services" data-testid="settings-providers" ref={rootRef}>
@@ -421,12 +425,19 @@ export function ModelServicesPage({
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
           aria-label={t("provider.addConnection")}
           onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
-      {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaLoading} now={quotaNow}
+      {!noConnections && !adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaLoading} now={quotaNow}
         onOpenService={setOpenService} /> : null}
-      {onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
+      {!noConnections && onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
         result={overviewInventory} quotaFailed={quotaFailed} quotaLoading={quotaLoading} quotaNow={quotaNow} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
+      {noConnections && !adding && !detailProvider && !selectedEngine ? (
+        <div className="model-services-empty" data-wuu-component="model-services-empty">
+          <EmptyStateIllustration name="connection" />
+          <h2 className="sr-only">{t("provider.connectionsEmptyTitle")}</h2>
+          <p className="sr-only">{t("provider.connectionsEmptyDescription")}</p>
+        </div>
+      ) : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
         <ServiceConnector key={methodOrigin?.name ?? "catalog"} workspaceRoot={initialized?.workspace_root} providers={providers} running={running} catalog={catalog}
           defaultOn={!defaultUsable} onSave={onSave} onProvidersChanged={onProvidersChanged} catalogDialog inline

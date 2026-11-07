@@ -5,6 +5,25 @@
   display: contents;
 }
 
+/* The first-run connection page has no rows to read, so it centers the
+ * connection artwork. */
+.model-services-empty {
+  position: relative;
+  display: grid;
+  flex: 1 0 auto;
+  min-height: 360px;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+
+.model-services-empty h2,
+.model-services-empty p {
+  margin: 0;
+}
+
 /* Connection targets are already laid out when navigation paints them. */
 .settings-page[data-wuu-page="providers"] {
   animation: none;

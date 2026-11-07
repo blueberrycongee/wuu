@@ -21,6 +21,7 @@ import "../../src/renderer/styles.css";
 const params = new URLSearchParams(location.search);
 const empty = params.has("empty");
 const long = params.has("long");
+const catalogSection = params.get("section") === "plugins" ? "plugins" : params.get("section") === "skills" ? "skills" : undefined;
 const artwork = import.meta.glob<string>([
   "../../../internal/plugin/bundled/*/icon.webp",
   "../../../internal/plugin/bundled/account-connectors/assets/*.svg",
@@ -218,9 +219,10 @@ function Fixture(): JSX.Element {
   }, [plugins]);
   return (
     <div className="scroll-region skills-scroll-region" style={{ height: "100vh" }}>
-      <div className="scroll-region-content">
+      <div className="scroll-region-content" style={{ height: "100%" }}>
         <SkillsCatalog
           application={application}
+          section={catalogSection}
         />
       </div>
     </div>

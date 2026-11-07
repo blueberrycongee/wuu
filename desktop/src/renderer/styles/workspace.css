@@ -1279,9 +1279,10 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
   will-change: auto;
 }
 
-/* The panel's one empty state: the missing thing, a reason only when the
- * title does not say it, and at most one action. */
+/* The panel's one empty state: an illustration when available, otherwise the
+ * missing thing and at most one action. */
 .workspace-panel-empty {
+  position: relative;
   display: grid;
   height: 100%;
   min-height: 160px;
@@ -1296,6 +1297,7 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
 .workspace-panel-empty strong {
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .workspace-panel-empty span {

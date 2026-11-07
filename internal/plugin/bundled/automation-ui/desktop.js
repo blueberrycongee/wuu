@@ -6,6 +6,13 @@ export async function activate(api) {
   const requestScheduler = (method, input, options) => api.invokeService({
     service: "automation.scheduler", method: "request", params: { method, input },
   }, options);
+  // The catalog bundle is a single file; keep its empty-state artwork inline
+  // so the plugin never resolves a host-relative asset path.
+  const EMPTY_ART_LIGHT = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiB2aWV3Qm94PSIwIDAgMTkyIDE5MiIgZmlsbD0ibm9uZSI+CiAgPGcgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxnIHN0cm9rZT0iIzM1MzYzNyIgc3Ryb2tlLXdpZHRoPSI0Ij4KICAgICAgPHBhdGggZD0iTTcwIDYyVjQ0TTEyMiA2MlY0NCIvPgogICAgPC9nPgogICAgPHJlY3QgeD0iNDQiIHk9IjUyIiB3aWR0aD0iMTA0IiBoZWlnaHQ9IjEwMCIgcng9IjE0IiBmaWxsPSIjRkZGRkZGIiBzdHJva2U9IiMzNTM2MzciIHN0cm9rZS13aWR0aD0iMy4yIi8+CiAgICA8cGF0aCBkPSJNNDQgNzZoMTA0IiBzdHJva2U9IiMzNTM2MzciIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iLjU1Ii8+CiAgICA8ZyBmaWxsPSIjQjBCMEIwIj4KICAgICAgPGNpcmNsZSBjeD0iNjkiIGN5PSI5NiIgcj0iNSIvPgogICAgICA8Y2lyY2xlIGN4PSI5NiIgY3k9Ijk2IiByPSI1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjEyMyIgY3k9Ijk2IiByPSI1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjY5IiBjeT0iMTE4IiByPSI1Ii8+CiAgICAgIDxjaXJjbGUgY3g9Ijk2IiBjeT0iMTE4IiByPSI1Ii8+CiAgICA8L2c+CiAgICA8Y2lyY2xlIGN4PSIxNDAiIGN5PSIxNDAiIHI9IjIzIiBmaWxsPSIjRkZGRkZGIiBzdHJva2U9IiMzNTM2MzciIHN0cm9rZS13aWR0aD0iMy4yIi8+CiAgICA8cGF0aCBkPSJNMTMzIDEzMWwxNyA5LTE3IDlaIiBmaWxsPSIjRDk5QzgyIiBzdHJva2U9IiNEOTlDODIiIHN0cm9rZS13aWR0aD0iMyIvPgogIDwvZz4KPC9zdmc+Cg==";
+  const EMPTY_ART_DARK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiB2aWV3Qm94PSIwIDAgMTkyIDE5MiIgZmlsbD0ibm9uZSI+CiAgPGcgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxnIHN0cm9rZT0iI0QwRDFENCIgc3Ryb2tlLXdpZHRoPSI0Ij4KICAgICAgPHBhdGggZD0iTTcwIDYyVjQ0TTEyMiA2MlY0NCIvPgogICAgPC9nPgogICAgPHJlY3QgeD0iNDQiIHk9IjUyIiB3aWR0aD0iMTA0IiBoZWlnaHQ9IjEwMCIgcng9IjE0IiBmaWxsPSIjMkEyQjJFIiBzdHJva2U9IiNEMEQxRDQiIHN0cm9rZS13aWR0aD0iMy4yIi8+CiAgICA8cGF0aCBkPSJNNDQgNzZoMTA0IiBzdHJva2U9IiNEMEQxRDQiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iLjU1Ii8+CiAgICA8ZyBmaWxsPSIjOEE4QjkwIj4KICAgICAgPGNpcmNsZSBjeD0iNjkiIGN5PSI5NiIgcj0iNSIvPgogICAgICA8Y2lyY2xlIGN4PSI5NiIgY3k9Ijk2IiByPSI1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjEyMyIgY3k9Ijk2IiByPSI1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjY5IiBjeT0iMTE4IiByPSI1Ii8+CiAgICAgIDxjaXJjbGUgY3g9Ijk2IiBjeT0iMTE4IiByPSI1Ii8+CiAgICA8L2c+CiAgICA8Y2lyY2xlIGN4PSIxNDAiIGN5PSIxNDAiIHI9IjIzIiBmaWxsPSIjMkEyQjJFIiBzdHJva2U9IiNEMEQxRDQiIHN0cm9rZS13aWR0aD0iMy4yIi8+CiAgICA8cGF0aCBkPSJNMTMzIDEzMWwxNyA5LTE3IDlaIiBmaWxsPSIjQzk4RTcyIiBzdHJva2U9IiNDOThFNzIiIHN0cm9rZS13aWR0aD0iMyIvPgogIDwvZz4KPC9zdmc+Cg==";
+  const emptyArt = () => h("span", { className: "plugin-automation-empty-art", "aria-hidden": "true" },
+    h("img", { src: EMPTY_ART_LIGHT, alt: "" }),
+    h("img", { src: EMPTY_ART_DARK, alt: "" }));
 
   api.registerLocale({ id: "automation-en", locale: "en-US", entries: {
     "automation.save": "Save changes", "automation.saved": "Saved", "automation.unsaved": "Unsaved changes",
@@ -142,6 +149,13 @@ export async function activate(api) {
     .plugin-automation-sidebar .plugin-automation-sidebar-item:focus-visible { outline-offset:-2px; }
     .plugin-automation-sidebar-item:disabled { cursor:default; opacity:0.52; }
     .plugin-automation-empty, .plugin-automation-state { flex:1 1 auto; min-height:180px; }
+    .plugin-automation-empty-wrap { position:relative; flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:280px; padding:var(--space-8) var(--space-4); text-align:center; }
+    .plugin-automation-empty-wrap .plugin-automation-empty { position:absolute; width:1px; height:1px; min-height:0; flex:none; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; padding:0; border:0; }
+    .plugin-automation-empty-art { display:inline-grid; width:160px; height:160px; flex:none; place-items:center; pointer-events:none; user-select:none; }
+    .plugin-automation-empty-art img { grid-area:1 / 1; width:100%; height:100%; object-fit:contain; }
+    .plugin-automation-empty-art img + img { display:none; }
+    :root[data-theme="dark"] .plugin-automation-empty-art img:first-child { display:none; }
+    :root[data-theme="dark"] .plugin-automation-empty-art img + img { display:block; }
     .plugin-automation-unavailable { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; color:var(--ink-muted); overflow-wrap:anywhere; }
     .plugin-automation-unavailable details { flex-basis:100%; }
     .plugin-automation-unavailable pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
@@ -866,9 +880,13 @@ export async function activate(api) {
             workspaceError ? h("details", null, h("summary", null, tr("automation.details")), h("pre", null, workspaceError)) : null) : null,
           workspaceError ? null
             : !workspacesLoaded || (workspace && !loaded) ? h(LoadingState, { className: "plugin-automation-state", title: tr("automation.loading") })
-            : !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.noWorkspace"), description: tr("automation.workspaceNone") })
+            : !workspace ? h("div", { className: "plugin-automation-empty-wrap" },
+              emptyArt(),
+              h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.noWorkspace"), description: tr("automation.workspaceNone") }))
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
-            : !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.emptyHelp") })
+            : !scheduled.length && !finished.length ? h("div", { className: "plugin-automation-empty-wrap" },
+              emptyArt(),
+              h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.emptyHelp") }))
             : h(React.Fragment, null,
               scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false))) : null,
               finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),

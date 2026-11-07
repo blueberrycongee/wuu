@@ -27,6 +27,7 @@ import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryReco
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 
 import { CatalogSearchField } from "./CatalogSearchField";
+import { EmptyStateIllustration } from "./EmptyStateIllustration";
 import { DefaultExtensionIcon } from "./DefaultExtensionIcon";
 import { confirmAction } from "./ConfirmDialog";
 import { extensionPackageApproval, pluginToggle } from "./extensionPackageState";
@@ -624,9 +625,16 @@ function SkillsCatalogView({
       ) : null}
 
       {!state.loading && (activeTab === "plugins" ? visiblePlugins.length === 0 : visibleSkills.length === 0 && !state.error) ? (
-        <p className="settings-group-empty">
-          {filter.trim() ? t("skills.noMatches") : activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")}
-        </p>
+        filter.trim() ? (
+          <p className="settings-group-empty">{t("skills.noMatches")}</p>
+        ) : (
+          <div className="catalog-empty settings-group-empty" data-wuu-component="catalog-empty">
+            <EmptyStateIllustration name="plugins" />
+            <span className="sr-only" role="status">
+              {activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")} {t("skills.catalogEmptyDescription")}
+            </span>
+          </div>
+        )
       ) : null}
 
       {packageActionMenu ? (
