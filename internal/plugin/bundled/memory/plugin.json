@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "memory",
   "name": "Memory",
-  "description": "Durable user memory notebook and management view.",
+  "description": "Durable user memory notebook and viewer.",
   "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "defaultEnabled": false,
@@ -12,7 +12,7 @@
   "desktop": { "entry": "desktop.js" },
   "contributes": {
     "settingsPages": [
-      { "id": "memory", "title": "Memory", "description": "Review and manage durable memory", "view": "memory.settings", "icon": { "path": "icon.webp" }, "order": 30 }
+      { "id": "memory", "title": "Memory", "description": "Review durable memory", "view": "memory.settings", "icon": { "path": "icon.webp" }, "order": 30 }
     ]
   },
   "interface": { "displayName": "Memory", "shortDescription": "Remember durable preferences, feedback, references, and lessons.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },

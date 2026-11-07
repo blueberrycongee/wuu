@@ -4,13 +4,13 @@ In Coding, the optional Memory plugin keeps information that should remain usefu
 
 ## User notebook
 
-Enable Memory in **Extensions**, then open its settings page under **Settings → Extensions**. You can inspect the notebook's source files or ask the memory manager to add, correct, or remove information. The manager reports the files it changed; inspect those files when the exact result matters.
+Enable Memory in **Extensions**, then open its settings page under **Settings → Extensions**. The page lists the notebook's source files so you can review what is saved. To add, correct, or remove a memory, ask the agent in any Coding conversation.
 
 The notebook lives in `memory/` under Wuu's home directory, normally `~/.wuu`. `MEMORY.md` is its index, while individual Markdown files hold the actual memories. Saving or forgetting a topic requires updating both the topic file and its index entry. The plugin supplies `memory_list`, `memory_read`, `memory_write`, and `memory_delete` for these operations.
 
 Each topic file starts with frontmatter: `name`, `description`, `type` (`user`, `feedback`, `reference`, or `lesson`), and optionally `verified` (the `YYYY-MM-DD` date it was last confirmed against evidence) and `sources` (comma-separated references such as `session:<id>`). Memory counts how often agents read each topic with `memory_read`, across workspaces; [Dream](dream.md) uses the counts to decide which unverified notes to check first.
 
-The plugin includes a bounded version of the index in the agent's context so it can find relevant topics. It does not load every topic file into every request. The source files are the record of what is saved. Reading them does not require a model call; managing memory through conversation does.
+The plugin includes a bounded version of the index in the agent's context so it can find relevant topics. It does not load every topic file into every request. The source files are the record of what is saved. Opening the page does not require a model call.
 
 ## Workspace memory
 

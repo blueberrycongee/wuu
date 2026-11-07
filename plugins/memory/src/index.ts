@@ -1,5 +1,4 @@
-import { randomBytes } from "node:crypto";
-import { lstat, mkdir, readdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
   requireKernelService, FILE_LOCK_SERVICE,
@@ -13,25 +12,12 @@ import { runSessionMemory, sessionMemorySchema } from "./workspace-memory.js";
 
 const CAPABILITY_PROMPT = "agent.system_prompt.section";
 const CAPABILITY_CLIENT = "plugin.client.request";
-const CAPABILITY_LIFECYCLE = "agent.turn.lifecycle";
 const SESSION_MEMORY_SERVICE = "memory.session";
 const NOTEBOOK_MEMORY_SERVICE = "memory.notebook";
 const READ_STATS_KEY = "notebook.reads";
 
-interface Job {
-  id: string;
-  kind: string;
-  request_id: string;
-  session_id: string;
-  state: string;
-  output?: string;
-  error?: string;
-  changed_files?: { path: string; action: string }[];
-  created_at: string;
-}
 interface FileInfo extends Frontmatter { name: string; content: string }
 type ReadStats = Record<string, { reads: number; last_read_at: string }>;
-interface FileStamp { size: bigint; modified: bigint }
 
 function object(value: unknown): Record<string, unknown> {
   if (value == null) return {};
@@ -58,8 +44,6 @@ class MemoryPlugin implements RuntimePlugin {
   private notebook = "";
   private workspaceStateDir = "";
   private available = true;
-  private readonly jobs = new Map<string, Job>();
-  private readonly jobSnapshots = new Map<string, Map<string, FileStamp>>();
   private readStatsWrites: Promise<void> = Promise.resolve();
 
   initialize(params: RuntimeInitializeParams, host: RuntimeHost): RuntimeInitializeResult {
@@ -82,10 +66,9 @@ class MemoryPlugin implements RuntimePlugin {
       capabilities: [
         { id: CAPABILITY_PROMPT, kind: "transform", version: 1 },
         { id: CAPABILITY_CLIENT, kind: "decision", version: 1 },
-        { id: CAPABILITY_LIFECYCLE, kind: "observe", version: 1, error_policy: "isolate" },
       ],
       required_services: [
-        ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.compare_exchange"] as const).map(requireKernelService),
+        ...(["host.storage.get", "host.storage.compare_exchange"] as const).map(requireKernelService),
         { name: FILE_LOCK_SERVICE, major_version: 1, required: true },
       ],
       provided_services: [{
@@ -147,7 +130,6 @@ class MemoryPlugin implements RuntimePlugin {
         const input = object(call.input);
         return { output: { result: await this.clientRequest(string(input.method), input.input, host) } };
       }
-      case CAPABILITY_LIFECYCLE: await this.settle(object(call.input)); return { output: {} };
       default: throw new Error(`unknown memory capability ${JSON.stringify(call.capability)}`);
     }
   }
@@ -165,64 +147,7 @@ class MemoryPlugin implements RuntimePlugin {
   private async clientRequest(method: string, raw: unknown, host: RuntimeHost): Promise<unknown> {
     switch (method.trim()) {
       case "memory.read": return { index_raw: await this.readFileOptional(INDEX_FILE), files: await this.readNotebook() };
-      case "memory.job.get": {
-        const id = string(object(raw).id);
-        const job = this.jobs.get(id.trim());
-        if (!job) throw new Error(`memory job ${JSON.stringify(id)} not found`);
-        return { ...job };
-      }
-      case "memory.chat.start": {
-        const message = string(object(raw).message).trim();
-        if (!message) throw new Error("memory chat message is required");
-        return this.startJob("chat", "Manage the user's durable memory according to this request:\n\n" + message + "\n\nInspect existing files first. Use memory_write and memory_delete as needed, keeping MEMORY.md as a one-line index rather than a content file. Do not save secrets, raw transcripts, temporary task state, commit ids, or repository-derived facts. Finish with a concise explanation of exactly what changed.", host);
-      }
       default: throw new Error(`unknown memory client method ${JSON.stringify(method)}`);
-    }
-  }
-
-  private async startJob(kind: string, prompt: string, host: RuntimeHost): Promise<Job> {
-    const id = "memory-" + randomBytes(10).toString("hex");
-    const created = await host.call("host.session.create", { request_id: id + ":session", name: "Memory " + kind, visibility: "plugin", context_source: "fresh", workspace: "shared" });
-    const entry: Job = { id, kind, request_id: id + ":turn", session_id: created.session_id, state: "starting", created_at: new Date().toISOString() };
-    if (kind === "chat") this.jobSnapshots.set(id, await this.snapshotFiles());
-    this.jobs.set(id, entry);
-    try {
-      const sent = await host.call("host.session.send", { request_id: entry.request_id, session_id: entry.session_id, input: { prompt }, cause: "memory." + kind });
-      // A terminal lifecycle notification must not be undone by a late send acknowledgement.
-      if (entry.state === "starting") entry.state = sent.state;
-    } catch (error) {
-      entry.state = "failed";
-      entry.error = error instanceof Error ? error.message : String(error);
-      throw error;
-    }
-    return { ...entry };
-  }
-
-  private async settle(input: Record<string, unknown>): Promise<void> {
-    const state = string(input.state);
-    if (!["completed", "failed", "interrupted", "discarded"].includes(state)) return;
-    const requestId = string(input.request_id);
-    for (const entry of this.jobs.values()) {
-      if (entry.request_id !== requestId) continue;
-      entry.state = state;
-      const output = string(input.final_output).trim();
-      const error = string(input.error).trim();
-      if (output) entry.output = output; else delete entry.output;
-      if (error) entry.error = error; else delete entry.error;
-      if (entry.kind === "chat") {
-        const before = this.jobSnapshots.get(entry.id) ?? new Map<string, FileStamp>();
-        const after = await this.snapshotFiles();
-        const changed: { path: string; action: string }[] = [];
-        for (const [path, current] of after) {
-          const previous = before.get(path);
-          if (previous?.size === current.size && previous.modified === current.modified) continue;
-          changed.push({ path, action: previous ? "modified" : "created" });
-        }
-        for (const path of before.keys()) if (!after.has(path)) changed.push({ path, action: "deleted" });
-        changed.sort((a, b) => compareNames(a.path, b.path));
-        if (changed.length) entry.changed_files = changed; else delete entry.changed_files;
-      }
-      return;
     }
   }
 
@@ -295,17 +220,6 @@ class MemoryPlugin implements RuntimePlugin {
       files.push({ ...frontmatter(content), name: entry.name, content });
     }
     return files.sort((a, b) => compareNames(a.name, b.name));
-  }
-
-  private async snapshotFiles(): Promise<Map<string, FileStamp>> {
-    const out = new Map<string, FileStamp>();
-    const entries = await readdir(this.notebook, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (entry.isDirectory() || !entry.name.endsWith(".md")) continue;
-      const info = await lstat(join(this.notebook, entry.name), { bigint: true }).catch(() => undefined);
-      if (info) out.set(entry.name, { size: info.size, modified: info.mtimeNs });
-    }
-    return out;
   }
 }
 
