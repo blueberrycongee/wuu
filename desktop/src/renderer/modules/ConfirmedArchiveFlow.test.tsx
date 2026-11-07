@@ -113,3 +113,35 @@ it.each(["running", "completed while confirming", "switched draft", "retired pro
     await host.unloadAndWait("navigation"); await host.unloadAndWait("business");
   }
 });
+
+// Engine sessions carry no title, only a generated preview; the archive toast
+// must announce the same name the sidebar row shows.
+it("announces an engine session archive with its preview title", async () => {
+  const context = { kind: "no_project" as const, cwd: "/fixture" };
+  const thread: Thread = { id: "engine-target", cwd: context.cwd, title: "", preview: "Engine session summary", engine_id: "codex", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [{ id: "turn", status: "completed", items_view: "full", items: [{ id: "answer", type: "agent_message", text: "Done" }] }] };
+  const initialized = { provider: "fixture", model: "fixture", providers: [], extension_inventory: [] };
+  const archive = vi.fn().mockResolvedValue({ thread: { ...thread, archived: true, status: "idle" } });
+  window.wuu = { listProjects: vi.fn().mockResolvedValue({ projects: [], active_context: context }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+    listAllThreads: vi.fn().mockResolvedValue({ threads: [thread] }), getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
+    archiveThread: archive,
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: context, projects: [], thread, threads: [thread], initialized: initialized as never, status: "ready" });
+  const host = new PluginHost({ react: React });
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let application!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "navigation", generation: "one", register: api => { application = api.application; } });
+  const element = document.createElement("div"); document.body.append(element);
+  const root = createRoot(element);
+  try {
+    await act(async () => root.render(<DefaultNavigationSurface application={application} slots={{ Slot: () => null }} />));
+    await act(async () => element.querySelector<HTMLButtonElement>("[data-archive-target]")!.click());
+    expect(archive).toHaveBeenCalledExactlyOnceWith(thread.id, true);
+    expect(document.querySelector<HTMLElement>("[role=status].archive-tip strong")?.textContent).toBe("Engine session summary");
+  } finally {
+    act(() => root.unmount()); element.remove();
+    await host.unloadAndWait("navigation"); await host.unloadAndWait("business");
+  }
+});

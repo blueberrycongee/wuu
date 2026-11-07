@@ -5,6 +5,7 @@ import type { ApplicationPresentationAPI, ApplicationServiceV1, ApplicationSnaps
 import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
 import { threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
+import { threadDisplayTitle } from "../ThreadTitles";
 import type { DesktopProject } from "../../shared/protocol";
 import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../../shared/PluginLifecycle";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
@@ -185,7 +186,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       if (request === archiveRequest.current) setArchiveTip({ id: ++archiveTipID.current, thread, error: error instanceof Error ? error.message : String(error) });
     } finally { if (pendingArchiveThreads.current.get(thread.id) === request) pendingArchiveThreads.current.delete(thread.id); }
   };
-  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={archiveTip.thread.title?.trim() || t("app.thisConversation")} errorMessage={archiveTip.error} pending={archiveTip.pending}
+  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={threadDisplayTitle(archiveTip.thread, rows, t("app.thisConversation"))} errorMessage={archiveTip.error} pending={archiveTip.pending}
     onDismiss={() => setArchiveTip(undefined)} onViewArchive={() => { setArchiveTip(undefined); run(application.invoke("settings.open", { pageId: "archive" })); }}
     onForceArchive={archiveTip.forceRetryable ? () => run(archiveThread(archiveTip.thread, true)) : undefined} /></UILayerPortal>}<AppSidebar {...layout} navigation={navigation} initialized={view.initialized}
     activeContextKind={view.activeContextKind} activeSessionTabID={snapshot.tabs.activeTabId} selectedWorkspaceID={view.selectedWorkspaceId}
