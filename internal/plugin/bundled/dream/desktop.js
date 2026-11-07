@@ -11,6 +11,8 @@ export async function activate(api) {
     "dream.model": "Model alias", "dream.modelDefault": "Default model",
     "dream.save": "Save changes", "dream.saved": "Saved", "dream.run": "Run now", "dream.activity": "Activity",
     "dream.candidates": "Pending sessions", "dream.status": "Last status", "dream.summary": "Last report",
+    "dream.loadFailed": "Could not load Dream settings. Try again.", "dream.retry": "Try again",
+    "dream.saveFailed": "Could not save Dream settings. Try again.", "dream.runFailed": "Could not start Dream. Try again.",
     "dream.status.running": "Running", "dream.status.completed": "Completed",
     "dream.status.failed": "Failed", "dream.status.skipped": "Skipped"
   }});
@@ -23,6 +25,8 @@ export async function activate(api) {
     "dream.model": "模型别名", "dream.modelDefault": "默认模型",
     "dream.save": "保存更改", "dream.saved": "已保存", "dream.run": "立即运行", "dream.activity": "运行情况",
     "dream.candidates": "待整理会话", "dream.status": "上次状态", "dream.summary": "上次报告",
+    "dream.loadFailed": "无法加载 Dream 设置，请重试。", "dream.retry": "重试",
+    "dream.saveFailed": "无法保存 Dream 设置，请重试。", "dream.runFailed": "无法启动 Dream，请重试。",
     "dream.status.running": "运行中", "dream.status.completed": "已完成",
     "dream.status.failed": "运行失败", "dream.status.skipped": "已跳过"
   }});
@@ -45,7 +49,7 @@ export async function activate(api) {
     .plugin-dream-status-dot[data-tone="ok"] { background:var(--success); }
     .plugin-dream-status-dot[data-tone="bad"] { background:var(--danger); }
     .plugin-dream-status-dot[data-tone="busy"] { background:var(--warning); }
-    .plugin-dream-error { color:var(--danger); font-size:var(--font-sm); }
+    .plugin-dream-load-failed { display:flex; flex-direction:column; align-items:flex-start; gap:var(--space-2); color:var(--ink-soft); font-size:var(--font-ui); }
     .plugin-dream-loading { color:var(--ink-tertiary); font-size:var(--font-ui); }
     @container settings-page (max-width:480px) {
       .plugin-dream-row { grid-template-columns:minmax(0,1fr); gap:var(--space-2); }
@@ -60,23 +64,32 @@ export async function activate(api) {
     const [draft, setDraft] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
     const [savedTick, setSavedTick] = React.useState(0);
-    const [error, setError] = React.useState("");
+    const [loadFailed, setLoadFailed] = React.useState(false);
+    const notify = React.useCallback((key, reason) => {
+      console.error(`dream ${key}:`, reason);
+      if (!api.signal.aborted) api.showNotice({ message: tr(`dream.${key}`), tone: "error", key: `dream-${key}` });
+    }, [tr]);
     const refresh = React.useCallback(async () => {
-      const value = await api.invokeRuntime("dream.get", {});
-      setState(value);
-      setDraft(value.settings);
-    }, []);
-    React.useEffect(() => { void refresh().catch((reason) => setError(String(reason))); }, [refresh]);
+      setLoadFailed(false);
+      try {
+        const value = await api.invokeRuntime("dream.get", {});
+        setState(value);
+        setDraft(value.settings);
+      } catch (reason) { setLoadFailed(true); notify("loadFailed", reason); }
+    }, [notify]);
+    React.useEffect(() => { void refresh(); }, [refresh]);
     const act = async (method, input, { markSaved = false } = {}) => {
-      setBusy(true); setError("");
+      setBusy(true);
       try {
         const value = await api.invokeRuntime(method, input);
         setState(value);
         setDraft(value.settings);
         if (markSaved) setSavedTick((tick) => tick + 1);
-      } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+      } catch (reason) { notify(method === "dream.run" ? "runFailed" : "saveFailed", reason); } finally { setBusy(false); }
     };
-    if (!draft) return h(Page, { className: "plugin-dream" }, h("div", { className: error ? "plugin-dream-error" : "plugin-dream-loading", role: error ? "alert" : "status" }, error || "…"));
+    if (!draft) return h(Page, { className: "plugin-dream" }, loadFailed
+      ? h("div", { className: "plugin-dream-load-failed" }, tr("dream.loadFailed"), h(Button, { onClick: () => void refresh() }, tr("dream.retry")))
+      : h("div", { className: "plugin-dream-loading", role: "status" }, "…"));
     const number = (event) => Number.parseInt(event.target.value, 10) || 0;
     const candidateCount = Object.keys(state?.candidates || {}).length;
     const status = state?.last_status || "—";
@@ -94,8 +107,7 @@ export async function activate(api) {
       h(Row, { className: "plugin-dream-actions" },
         h(Button, { variant: "primary", disabled: busy, onClick: () => void act("dream.update", draft, { markSaved: true }) }, tr("dream.save")),
         h(Button, { disabled: busy || !draft.enabled || candidateCount === 0, onClick: () => void act("dream.run", {}) }, tr("dream.run")),
-        savedTick ? h("span", { className: "plugin-dream-saved", role: "status" }, tr("dream.saved")) : null,
-        error ? h("span", { className: "plugin-dream-error", role: "alert" }, error) : null),
+        savedTick ? h("span", { className: "plugin-dream-saved", role: "status" }, tr("dream.saved")) : null),
       h(Section, { title: tr("dream.activity") }, h("div", { className: "plugin-dream-stats" },
         h("div", { className: "plugin-dream-stat" },
           h("span", { className: "plugin-dream-stat-label" }, tr("dream.candidates")),

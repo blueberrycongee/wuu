@@ -11,7 +11,8 @@ export async function activate(api) {
     "memory.message": "What should the Agent remember, correct, or forget?", "memory.send": "Send",
     "memory.changed": "Changed files", "memory.failed": "Memory task failed",
     "memory.thinking": "Updating memory…",
-    "memory.loadFailed": "Memory overview could not be generated. Try again.", "memory.errorDetails": "Error details"
+    "memory.loadFailed": "Memory overview could not be generated. Try again.",
+    "memory.readFailed": "Could not read memory files. Try again.", "memory.updateFailed": "Could not update memory. Try again."
   }});
   api.registerLocale({ id: "memory-zh", locale: "zh-CN", entries: {
     "memory.overview": "概览", "memory.refresh": "重新生成", "memory.refreshing": "正在生成…",
@@ -21,7 +22,8 @@ export async function activate(api) {
     "memory.message": "希望 Agent 记住、修正或忘记什么？", "memory.send": "发送",
     "memory.changed": "变更文件", "memory.failed": "记忆任务失败",
     "memory.thinking": "正在更新记忆…",
-    "memory.loadFailed": "暂时无法生成记忆概览，请重试。", "memory.errorDetails": "错误详情"
+    "memory.loadFailed": "暂时无法生成记忆概览，请重试。",
+    "memory.readFailed": "无法读取记忆文件，请重试。", "memory.updateFailed": "无法更新记忆，请重试。"
   }});
   api.registerStyle({ id: "memory-settings", css: `
     .plugin-memory { min-width:0; }
@@ -68,9 +70,6 @@ export async function activate(api) {
     .plugin-memory-file-desc { overflow:hidden; color:var(--ink-tertiary); font-size:var(--font-sm); text-overflow:ellipsis; white-space:nowrap; }
     .plugin-memory-file pre { max-height:300px; margin:var(--space-3) 0 0; padding:var(--compact-padding-block) var(--compact-padding-inline); overflow:auto; border:1px solid var(--hairline); border-radius:var(--radius-sm); background:var(--surface-1); color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere; font:var(--font-sm)/1.6 var(--wuu-font-family-mono, ui-monospace, monospace); }
 
-    .plugin-memory-error { display:grid; gap:var(--space-1); padding:var(--compact-padding-block) var(--compact-padding-inline); border-radius:var(--radius-sm); background:var(--danger-soft); color:var(--ink); font-size:var(--font-ui); overflow-wrap:anywhere; }
-    .plugin-memory-error summary { cursor:pointer; color:var(--ink-soft); font-size:var(--font-sm); }
-    .plugin-memory-error pre { max-height:160px; margin:var(--space-1) 0 0; overflow:auto; white-space:pre-wrap; color:var(--ink-soft); font:var(--font-sm)/1.5 var(--wuu-font-family-mono, ui-monospace, monospace); }
   ` });
 
   const terminalStates = new Set(["completed", "failed", "interrupted", "discarded"]);
@@ -125,15 +124,19 @@ export async function activate(api) {
     const [messages, setMessages] = React.useState([]);
     const [busy, setBusy] = React.useState(false);
     const [chatBusy, setChatBusy] = React.useState(false);
-    const [error, setError] = React.useState("");
+    const [overviewFailed, setOverviewFailed] = React.useState(false);
+    const notify = React.useCallback((key, reason) => {
+      console.error(`memory ${key}:`, reason);
+      if (!api.signal.aborted) api.showNotice({ message: tr(`memory.${key}`), tone: "error", key: `memory-${key}` });
+    }, [tr]);
     const started = React.useRef(false);
 
     const refreshRaw = React.useCallback(async () => {
       try {
         const value = await api.invokeRuntime("memory.read", {});
         setRaw({ index_raw: typeof value?.index_raw === "string" ? value.index_raw : "", files: Array.isArray(value?.files) ? value.files : [] });
-      } catch (reason) { setError(String(reason)); }
-    }, []);
+      } catch (reason) { notify("readFailed", reason); }
+    }, [notify]);
     const waitForJob = React.useCallback(async (id) => {
       for (;;) {
         const value = await api.invokeRuntime("memory.job.get", { id });
@@ -142,15 +145,15 @@ export async function activate(api) {
       }
     }, []);
     const refreshOverview = React.useCallback(async () => {
-      setBusy(true); setError("");
+      setBusy(true); setOverviewFailed(false);
       try {
         const startedJob = await api.invokeRuntime("memory.overview.start", {});
         const result = await waitForJob(startedJob.id);
         if (result.state !== "completed") throw new Error(result.error || tr("memory.failed"));
         setOverview(result.output || tr("memory.empty"));
         await refreshRaw();
-      } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
-    }, [refreshRaw, tr, waitForJob]);
+      } catch (reason) { setOverviewFailed(true); notify("loadFailed", reason); } finally { setBusy(false); }
+    }, [notify, refreshRaw, tr, waitForJob]);
     React.useEffect(() => {
       if (started.current) return;
       started.current = true;
@@ -163,15 +166,23 @@ export async function activate(api) {
     const send = async () => {
       const message = draft.trim();
       if (!message || chatBusy) return;
-      setDraft(""); setMessages((current) => [...current, { role: "user", text: message }]); setChatBusy(true); setError("");
+      const entry = { role: "user", text: message };
+      setDraft(""); setMessages((current) => [...current, entry]); setChatBusy(true);
       try {
         const startedJob = await api.invokeRuntime("memory.chat.start", { message });
         const result = await waitForJob(startedJob.id);
         if (result.state !== "completed") throw new Error(result.error || tr("memory.failed"));
         setMessages((current) => [...current, { role: "assistant", text: result.output || "", changed: result.changed_files || [] }]);
-        await refreshRaw();
-        await refreshOverview();
-      } catch (reason) { setError(String(reason)); } finally { setChatBusy(false); }
+      } catch (reason) {
+        setMessages((current) => current.filter((item) => item !== entry));
+        setDraft((current) => current || message);
+        notify("updateFailed", reason);
+        setChatBusy(false);
+        return;
+      }
+      setChatBusy(false);
+      await refreshRaw();
+      await refreshOverview();
     };
 
     const files = [];
@@ -179,7 +190,7 @@ export async function activate(api) {
     files.push(...raw.files);
     return h(Page, { className: "plugin-memory" }, h(Stack, { gap: "large" },
       h(Section, { title: tr("memory.overview") },
-        busy && !overview ? h(OverviewSkeleton) : h(OverviewProse, { text: overview || tr("memory.empty") }),
+        busy && !overview ? h(OverviewSkeleton) : overview || !overviewFailed ? h(OverviewProse, { text: overview || tr("memory.empty") }) : null,
         h(Row, { className: "plugin-memory-overview-actions" },
           h(Button, { variant: "ghost", disabled: busy, onClick: () => { void refreshRaw(); void refreshOverview(); } },
             tr(busy ? "memory.refreshing" : "memory.refresh")))),
@@ -197,7 +208,6 @@ export async function activate(api) {
         h(Row, { className: "plugin-memory-composer" },
           h(TextArea, { label: tr("memory.message"), placeholder: tr("memory.message"), value: draft, disabled: chatBusy, onChange: (event) => setDraft(event.target.value), onKeyDown: (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void send(); } }),
           h(Button, { variant: "primary", disabled: chatBusy || !draft.trim(), onClick: () => void send() }, tr("memory.send"))))),
-      error ? h("div", { className: "plugin-memory-error", role: "alert" }, h("strong", null, tr("memory.loadFailed")), h("details", null, h("summary", null, tr("memory.errorDetails")), h("pre", null, error))) : null,
       h(Section, { title: tr("memory.raw") },
         files.length ? h("div", { className: "plugin-memory-files" }, files.map((file) => h("details", { className: "plugin-memory-file", key: file.name },
           h("summary", { className: "plugin-memory-file-head" },
