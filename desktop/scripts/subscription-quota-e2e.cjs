@@ -340,9 +340,12 @@ async function run() {
       && [...team.querySelectorAll('p.settings-muted-line')].some(line => line.textContent.trim() && !line.textContent.includes('team-with-a-long-account-name@example.test'));
   }), true, 'Team connection keeps its own unknown allowance without borrowing personal usage.');
   await capture(main, '01-team-account-light.png');
-  await openProviderDetail(main, 'deepseek');
-  assert.equal(await evaluate(main, selector => Boolean(document.querySelector(`${selector} .select-menu`)), card('deepseek')), false);
-  assert.equal(await evaluate(main, selector => document.querySelector(selector).textContent.includes('12.3400 USD'), card('deepseek')), true, 'The observed balance remains visible in connection detail.');
+  await click(main, '[data-testid="settings-provider-back"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-card"][data-provider="deepseek"]')?.textContent.includes('12.3400 USD'));
+  await click(main, '[data-testid="settings-provider-card"][data-provider="deepseek"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-back"]'));
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('[data-testid="settings-subscriptions"]'))), false,
+    'A bare balance stays on its connection row instead of repeating in connection detail.');
   await openProviderDetail(main, 'personal');
   const resetTimes = await evaluate(main, selector => [...document.querySelectorAll(`${selector} time.connection-usage-reset`)].map(time => ({
     datetime: time.dateTime, exact: time.getAttribute('aria-label'),
@@ -382,23 +385,14 @@ async function run() {
   await capture(main, '01-accounts-light.png');
 
   const beforeMenuRequests = requests.length;
-  assert.equal(await evaluate(main, () => document.querySelector('details.connection-credential-menu').open), false);
-  await evaluate(main, () => document.querySelector('details.connection-credential-menu > summary').focus());
-  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
-  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-  await waitFor(main, () => document.querySelector('details.connection-credential-menu')?.open === true);
   assert.deepEqual(await evaluate(main, () => ['settings-auth-method-local', 'settings-check-codex-login'].map(id => {
-    const action = document.querySelector(`details.connection-credential-menu [data-testid="${id}"]`);
+    const action = document.querySelector(`[data-testid="settings-provider-connection"] [data-testid="${id}"]`);
     const rect = action?.getBoundingClientRect();
     return Boolean(action && !action.disabled && rect.width > 0 && rect.height > 0);
-  })), [true, true], 'Credential disclosure keeps local credential reuse and login checking available.');
+  })), [true, true], 'The connection section keeps local credential reuse and login checking available.');
+  await evaluate(main, () => document.querySelector('[data-testid="settings-provider-connection"]').scrollIntoView({ block: 'start' }));
   await capture(main, '01-account-actions-light.png');
-  assert.equal(await evaluate(main, () => document.activeElement === document.querySelector('details.connection-credential-menu > summary')), true);
-  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
-  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-  await waitFor(main, () => document.querySelector('details.connection-credential-menu')?.open === false);
-  assert.equal(await evaluate(main, () => document.activeElement === document.querySelector('details.connection-credential-menu > summary')), true);
-  assert.equal(requests.length, beforeMenuRequests, 'Opening and dismissing credential actions must not read quota or start authentication.');
+  assert.equal(requests.length, beforeMenuRequests, 'Showing credential actions must not read quota or start authentication.');
 
   const layouts = [];
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1280, 760]) {
@@ -443,9 +437,12 @@ async function run() {
   assert.deepEqual(await evaluate(main, () => [...document.querySelectorAll('[data-provider="personal"] meter')].map(meter => meter.value)), [48, 0], 'Returning from refreshed detail shows the latest remaining allowance.');
   await openProviderDetail(main, 'personal');
   firstStatus = 401;
-  await refresh(main);
+  const beforeSignIn = requests.length;
+  await click(main, '[data-testid="settings-subscriptions"] .settings-section-actions button');
+  while (requests.length === beforeSignIn) await delay(25);
+  // A rejected login leaves one sign-in action instead of an empty allowance section.
+  await waitFor(main, () => !document.querySelector('[data-testid="settings-subscriptions"]'));
   assert.equal(findQuota(await snapshot(main), 'personal').status, 'sign_in');
-  assert.equal(await evaluate(main, selector => document.querySelector(`${selector} meter`) === null, card('personal')), true);
   await capture(main, '04-sign-in.png');
   firstStatus = 503;
   assert.equal(findQuota(await snapshot(main), 'personal').status, 'unavailable', 'Rejected credentials must not resurrect cached quota.');

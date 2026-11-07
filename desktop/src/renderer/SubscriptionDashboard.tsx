@@ -41,7 +41,7 @@ export function SubscriptionDashboard({
   onProvidersChanged?: (providers: ProviderSummary[]) => void;
   providers?: readonly ProviderSummary[];
   onSelectBuiltinModel: (provider: string, model: string) => Promise<void>;
-}): JSX.Element {
+}): JSX.Element | null {
   const controls = useSettingsControls();
   const lifetime = useMemo(() => ({ active: true }), [controls]);
   useEffect(() => {
@@ -192,6 +192,11 @@ export function SubscriptionDashboard({
     }
   }
 
+  // The connection list already shows a bare balance; the detail page adds a
+  // section only for windows, account identity, reset credits, or a problem.
+  if (detailOnly && !error && sources.length && sources.every(({ quota }) => quota?.status === "available"
+    && !quota.windows?.length && !!quota.balances?.length && !quota.account?.label && quota.reset_credits === undefined
+    && !(quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now))) return null;
   if (detailOnly) return <SettingsSection testID="settings-subscriptions" ariaBusy={refreshing} title={t("connection.subscriptionQuota")}
     actions={<Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("settings.subscriptionRefresh")} disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion(value => value + 1)}><RefreshCw className="icon" /></button></Tooltip>}>
     <div className="settings-group connection-detail-quota" aria-busy={refreshing}>

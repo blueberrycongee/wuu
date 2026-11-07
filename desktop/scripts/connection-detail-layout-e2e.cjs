@@ -71,10 +71,7 @@ const geometry = () => evaluate(() => {
   };
   const scroll = document.querySelector('.settings-scroll');
   const page = document.querySelector('.connection-page');
-  const mark = page.querySelector('.connection-page-watermark');
-  const style = getComputedStyle(mark);
-  const panel = page.querySelector('.connection-credential-panel, .connection-credential-entry > .connection-credential-menu');
-  const enabledHeading = page.querySelector('.connection-model-table-heading > :nth-child(3), .connection-model-head > :nth-child(3)');
+  const panel = page.querySelector('[data-testid="settings-provider-connection"] .settings-group, .connection-credential-entry > .connection-credential-menu');
   // Text ranges reveal glyphs overflowing a squeezed label's own layout box.
   const textRects = node => {
     if (!node || !panel || !panel.getClientRects().length) return [];
@@ -102,15 +99,11 @@ const geometry = () => evaluate(() => {
     scroll: { ...rect(scroll), clientWidth: scroll.clientWidth, scrollWidth: scroll.scrollWidth, scrollLeft: scroll.scrollLeft },
     document: { clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth, scrollLeft: document.scrollingElement.scrollLeft },
     page: rect(page),
-    watermark: { ...rect(mark), opacity: Number(style.opacity), visible: style.display !== 'none' && style.visibility !== 'hidden' },
-    enabledColumn: enabledHeading ? rect(enabledHeading) : null,
     rows: [...page.querySelectorAll('.connection-model-row')].filter(row => row.querySelector('[role="switch"]')).map(row => ({
-      id: row.querySelector('.connection-model-id').textContent,
-      name: rect(row.querySelector('.model-choice-main, .connection-model-name')),
-      modelID: rect(row.querySelector('.connection-model-id')),
+      model: row.textContent.trim(),
+      row: rect(row),
+      text: rect(row.querySelector('.connection-model-text')),
       enabled: rect(row.querySelector('[role="switch"]')),
-      order: rect(row.querySelector('.connection-model-order')),
-      orderButtons: [...row.querySelectorAll('.connection-model-order button')].map(rect),
     })),
     panel: panel && panel.getClientRects().length ? { ...rect(panel), clientWidth: panel.clientWidth, scrollWidth: panel.scrollWidth } : null,
     credentialRows: [...(panel?.querySelectorAll('.settings-row') || [])].map(row => ({
@@ -128,24 +121,14 @@ function assertLayout(measured) {
     `Connection page must fit its settings scrollport: ${context}`);
   assert.ok(measured.page.left >= -1 && measured.page.right <= measured.viewport.width + 1,
     `Connection page must fit the viewport: ${context}`);
-  const mark = measured.watermark;
-  assert.ok(mark.visible && mark.opacity > 0 && mark.width >= 300 && mark.height >= 300,
-    `Large decorative watermark must remain rendered: ${context}`);
   assert.ok(measured.rows.length > 0, `Expected model rows: ${context}`);
+  const trailing = measured.rows[0].enabled.right;
   for (const row of measured.rows) {
-    assert.ok(Math.abs(row.enabled.centerY - row.name.centerY) <= 2 && Math.abs(row.enabled.centerY - row.modelID.centerY) <= 2,
+    assert.ok(Math.abs(row.enabled.centerY - row.row.centerY) <= 2 && Math.abs(row.text.centerY - row.row.centerY) <= 2,
       `Model switch must share its name/ID row: ${JSON.stringify(row)}`);
-    assert.ok(row.modelID.right <= row.enabled.left + 1 && row.enabled.right <= row.order.left + 1,
-      `Model switch must sit between ID and ordering controls: ${JSON.stringify(row)}`);
-    if (measured.enabledColumn) {
-      const centerX = (row.enabled.left + row.enabled.right) / 2;
-      assert.ok(centerX >= measured.enabledColumn.left - 1 && centerX <= measured.enabledColumn.right + 1,
-        `Model switch must align with the enabled header: ${JSON.stringify(row)}`);
-    }
-    assert.ok(row.orderButtons.length > 0 && row.orderButtons.every(button =>
-      button.left >= row.order.left - 1 && button.right <= measured.page.right + 1 &&
-      Math.abs(button.centerY - row.enabled.centerY) <= 2),
-    `Ordering controls must remain on the model row and inside the page: ${JSON.stringify(row)}`);
+    assert.ok(row.text.right <= row.enabled.left + 1 && row.enabled.right <= row.row.right + 1 && row.enabled.right <= measured.page.right + 1,
+      `Model switch must trail the model text inside the row: ${JSON.stringify(row)}`);
+    assert.ok(Math.abs(row.enabled.right - trailing) <= 1, `Model switches must share one trailing edge: ${JSON.stringify(row)}`);
   }
   if (measured.panel) {
     assert.ok(measured.panel.left >= Math.max(0, measured.scroll.left) - 1 &&
@@ -204,25 +187,30 @@ app.whenReady().then(async () => {
       await waitFor(({ selector, before }) => document.querySelector(selector)?.getAttribute('aria-checked') === before,
         { selector: toggle, before: scenario.toggleBefore });
 
-      const entry = '.connection-credential-menu > summary, [data-testid="engine-auth-entry"]';
+      // Provider credentials are inline in the detail body; engine credentials open from their entry.
+      const entry = detail === 'provider' ? '[data-testid="settings-provider-connection"]' : '[data-testid="engine-auth-entry"]';
       scenario.hasCredentials = await evaluate(selector => Boolean(document.querySelector(selector)), entry);
-      assert.ok(scenario.hasCredentials, 'Provider and engine fixtures must expose their credentials entry');
+      assert.ok(scenario.hasCredentials, 'Provider and engine fixtures must expose their credentials');
       if (scenario.hasCredentials) {
-        await click(entry);
-        await waitFor(() => Boolean(document.querySelector('details.connection-credential-menu[open], [data-testid="engine-auth-entry"][aria-expanded="true"]')));
+        if (detail === 'engine') {
+          await click(entry);
+          await waitFor(() => Boolean(document.querySelector('[data-testid="engine-auth-entry"][aria-expanded="true"]')));
+        }
         scenario.credentials = await geometry();
         await capture('credentials');
         assert.ok(scenario.credentials.panel, 'Opening credentials must reveal a panel');
         assertLayout(scenario.credentials);
-        const control = '.connection-credential-panel button:not(:disabled), .connection-credential-entry > .connection-credential-menu button:not(:disabled)';
+        const control = '[data-testid="settings-provider-connection"] button:not(:disabled), .connection-credential-entry > .connection-credential-menu button:not(:disabled)';
         assert.ok((await target(control)).reachable, 'Credentials controls must remain reachable');
         assert.equal(await evaluate(selector => {
           const node = document.querySelector(selector);
           node.focus({ preventScroll: true });
           return document.activeElement === node;
         }, control), true, 'Credentials controls must accept focus');
-        await click(entry);
-        await waitFor(() => !document.querySelector('details.connection-credential-menu[open], [data-testid="engine-auth-entry"][aria-expanded="true"]'));
+        if (detail === 'engine') {
+          await click(entry);
+          await waitFor(() => !document.querySelector('[data-testid="engine-auth-entry"][aria-expanded="true"]'));
+        }
       }
       await click('.connection-page-back');
       await waitFor(() => !document.querySelector('.connection-page'));

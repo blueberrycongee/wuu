@@ -522,6 +522,12 @@ async function flush(): Promise<void> {
   });
 }
 
+function openModelMenu(model?: string): void {
+  const row = document.querySelector(model ? `[data-testid="settings-provider-model"][data-model="${model}"]` : '[data-testid="settings-provider-model"]');
+  expect(row).not.toBeNull();
+  act(() => { row!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })); });
+}
+
 function click(element: Element | null | undefined): void {
   if (!element) throw new Error("missing element");
   act(() => {
@@ -592,7 +598,7 @@ describe("SettingsView model services", () => {
     await flush();
     expect(document.querySelector('[data-testid="settings-provider-back"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="settings-auth-method-login"]')?.getAttribute("aria-pressed")).toBe("true");
-    expect(document.querySelector('[data-testid="settings-provider-model"][data-model="official-model"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector('[data-testid="settings-provider-model"][data-model="official-model"]')?.hasAttribute("data-current")).toBe(true);
     expect(api.startChatGPTLogin).not.toHaveBeenCalled();
     expect(api.useCodexCredentials).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
@@ -687,8 +693,8 @@ describe("SettingsView model services", () => {
 
     const cards = [...document.querySelectorAll('[data-testid="settings-provider-card"]')];
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "DeepSeek", "OpenRouter"]);
-    expect(cards[0]?.textContent).toContain("Ready");
-    expect(cards[2]?.textContent).toContain("API key missing");
+    expect(cards[0]?.querySelector(".connection-summary-status")).toBeNull();
+    expect(cards[2]?.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
     expect(document.querySelector('[data-catalog="deepseek"]')).toBeNull();
     await openProviderCatalog();
     // Connected vendors stay discoverable and can add a separate connection.
@@ -746,7 +752,7 @@ describe("SettingsView model services", () => {
     expect(inventory.engines.find(item => item.id === "codex")?.enabled).toBe(true);
   });
 
-  it("keeps a plain API account balance available when opening its connection details", async () => {
+  it("keeps a plain API account balance on its row without repeating it in the connection details", async () => {
     const api = installServicesStub();
     const initialized = servicesInitialized();
     const provider = { name: "balance-api", type: "openai", model: "model", api_key_configured: true, base_url: "https://api.deepseek.com" };
@@ -758,8 +764,10 @@ describe("SettingsView model services", () => {
     await flush();
     click(document.querySelector('[data-provider="balance-api"]'));
     await flush();
-    expect(document.querySelector('[data-testid="settings-subscriptions"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="subscription-builtin-balance-api"]')?.textContent).toContain("12.3400");
+    expect(document.querySelector('[data-testid="settings-subscriptions"]')).toBeNull();
+    click(document.querySelector('[data-testid="settings-provider-back"]'));
+    await flush();
+    expect(document.querySelector('[data-provider="balance-api"]')?.textContent).toContain("12.3400");
     expect(initialized.providers[0]).not.toHaveProperty("quota");
   });
 
@@ -807,11 +815,11 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, initialPage: "providers" });
     await flush();
     const row = document.querySelector('[data-provider="disconnected"]')!;
-    expect(row.querySelector(".connection-summary-status")?.hasAttribute("data-attention")).toBe(true);
+    expect(row.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
     expect(row.querySelector(".connection-usage-summary")).toBeNull();
   });
 
-  it("keeps unavailable quota out of the list without hiding connection status", async () => {
+  it("keeps unavailable quota out of the list without inventing a status", async () => {
     const api = installServicesStub();
     const initialized = servicesInitialized();
     vi.mocked(api.listEngines).mockResolvedValue({ engines: [], subscription_providers: [{
@@ -821,7 +829,7 @@ describe("SettingsView model services", () => {
     await flush();
     const row = document.querySelector('[data-provider="openai-codex"]')!;
     expect(row.querySelector(".connection-usage-summary")).toBeNull();
-    expect(row.querySelector(".connection-summary-status")?.textContent).toBeTruthy();
+    expect(row.querySelector(".connection-summary-status")).toBeNull();
     expect(document.querySelector('[data-testid="settings-model-catalog-refresh"]')).toBeNull();
     expect(document.querySelector('[data-testid="settings-engine-refresh"]')).toBeNull();
   });
@@ -837,7 +845,7 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, initialPage: "providers", locale: "en-US" });
     await flush();
     const row = document.querySelector('[data-provider="openai-codex"]')!;
-    const warnings = row.querySelectorAll('[data-attention]');
+    const warnings = row.querySelectorAll(".connection-summary-status");
     expect(warnings).toHaveLength(1);
     const warning = warnings[0].textContent!;
     expect(warning.length).toBeGreaterThan(0);
@@ -880,11 +888,7 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
     await flush();
     click(document.querySelector('[data-provider="deepseek"]'));
-    const modelActions = document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-flash"]')!;
-    expect(modelActions.getAttribute("aria-haspopup")).toBe("menu");
-    expect(modelActions.getAttribute("aria-label")?.trim()).toBeTruthy();
-    modelActions.focus();
-    click(modelActions);
+    openModelMenu("deepseek-v4-flash");
     expect(onSave).not.toHaveBeenCalled();
     click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     expect(document.querySelector('.model-remove-dialog')).not.toBeNull();
@@ -940,23 +944,21 @@ describe("SettingsView model services", () => {
     expect(document.querySelector('[data-testid="settings-provider-key-input"]')).toBeNull();
   });
 
-  it("chooses a service model in place and makes the service default only on request", async () => {
+  it("makes a service model the default only on request", async () => {
     installServicesStub();
     const onSave = vi.fn(async () => {});
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
     await flush();
     click(document.querySelector('[data-provider="deepseek"]'));
 
+    click(document.querySelector('[data-testid="settings-provider-model"][data-model="deepseek-v4-flash"]'));
+    expect(onSave).not.toHaveBeenCalled();
+    openModelMenu("deepseek-v4-flash");
     await act(async () => {
-      document.querySelector<HTMLButtonElement>('[data-model="deepseek-v4-flash"]')!.click();
-    });
-    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { keep_selection: true });
-
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')!.click();
+      document.querySelector<HTMLButtonElement>('[role="menuitem"]:not([data-tone])')!.click();
     });
     // The default carries the model and a variant the model accepts.
-    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, undefined, "");
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, undefined, "");
   });
 
   it("removes and restores model choices with an explicit replacement for selected models", async () => {
@@ -967,11 +969,7 @@ describe("SettingsView model services", () => {
     await flush();
     click(document.querySelector('[data-provider="deepseek"]'));
 
-    const modelActions = document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-flash"]')!;
-    expect(modelActions.getAttribute("aria-haspopup")).toBe("menu");
-    expect(modelActions.getAttribute("aria-label")?.trim()).toBeTruthy();
-    modelActions.focus();
-    click(modelActions);
+    openModelMenu("deepseek-v4-flash");
     expect(onSave).not.toHaveBeenCalled();
     click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     expect(onSave).not.toHaveBeenCalled();
@@ -980,11 +978,10 @@ describe("SettingsView model services", () => {
     });
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true }, undefined);
 
-    click(document.querySelector('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-pro"]'));
+    // A connection that is not the default falls back to another of its models without asking.
+    openModelMenu("deepseek-v4-pro");
     click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
-    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
-    click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
-    click(document.querySelector('[data-value="deepseek-v4-flash"]'));
+    expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')).toBeNull();
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
     });
@@ -992,8 +989,9 @@ describe("SettingsView model services", () => {
 
     // Removing the workspace default model atomically saves the chosen replacement.
     renderSettings({ initialized: { ...initialized, provider: "deepseek", model: "deepseek-v4-pro" }, initialPage: "providers", onSave });
-    click(document.querySelector('[data-testid="settings-provider-model-actions"][data-model="deepseek-v4-pro"]'));
+    openModelMenu("deepseek-v4-pro");
     click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
     click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
     click(document.querySelector('[data-value="deepseek-v4-flash"]'));
     onSave.mockRejectedValueOnce(new Error("Unable to save model choices"));
@@ -1015,7 +1013,7 @@ describe("SettingsView model services", () => {
     // The last model cannot disappear while the provider still needs a selection.
     const sole = initialized.providers!.find((provider) => provider.name === "deepseek")!;
     renderSettings({ initialized: { ...initialized, provider: "deepseek", model: sole.model, providers: [{ ...sole, models: [{ id: sole.model }] }] }, initialPage: "providers", onSave });
-    click(document.querySelector('[data-testid="settings-provider-model-actions"]'));
+    openModelMenu();
     click(document.querySelector('[role="menuitem"][data-tone="danger"]'));
     expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')).toBeNull();
     expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
