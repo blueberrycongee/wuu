@@ -1548,10 +1548,15 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return nil
 	case "thread/recovery/dismiss":
 		return s.handleRestartRecoveryDismiss(req)
-	case MethodThreadSearch:
-		return s.handleThreadSearch(req)
-	case MethodThreadPreview:
-		return s.handleThreadPreview(req)
+	case MethodThreadSearch, MethodThreadPreview:
+		// Search scans every persisted transcript and preview loads a full one.
+		// The sidebar issues both while the user types or hovers, so they must
+		// not hold Stop, sends, or conversation switches behind disk reads.
+		handle := s.handleThreadSearch
+		if req.Method == MethodThreadPreview {
+			handle = s.handleThreadPreview
+		}
+		return s.dispatchOffIngress(ctx, req, func() error { return handle(req) })
 	case "session/share/preview", "session/share/create", "session/share/read", "session/share/attachment/read", "session/share/revoke":
 		return s.handleSessionShare(ctx, req)
 	case "thread/textSnapshot":
@@ -1685,19 +1690,20 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodMCPAuthCancel:
 		return s.handleMCPAuthCancel(ctx, req)
 	case MethodMCPConnect:
-		return s.handleMCPConnect(ctx, req)
+		// Connector handshakes and OAuth exchanges wait on remote servers.
+		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPConnect(ctx, req) })
 	case MethodMCPDisconnect:
 		return s.handleMCPDisconnect(req)
 	case MethodMCPRefresh:
-		return s.handleMCPRefresh(ctx, req)
+		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPRefresh(ctx, req) })
 	case MethodMCPAuthStart:
-		return s.handleMCPAuthStart(ctx, req)
+		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPAuthStart(ctx, req) })
 	case MethodMCPIdentityRefresh:
-		return s.handleMCPIdentityRefresh(ctx, req)
+		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPIdentityRefresh(ctx, req) })
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:
-		return s.handleMCPAuthFinish(ctx, req)
+		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPAuthFinish(ctx, req) })
 	case MethodMCPAuthRemove:
 		return s.handleMCPAuthRemove(ctx, req)
 	case MethodActivityList:
@@ -1752,6 +1758,23 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	default:
 		return s.writeResponse(req.ID, nil, fmt.Errorf("unknown method %q", req.Method))
 	}
+}
+
+// dispatchOffIngress runs a handler that can wait on disk or network outside
+// the ordered stdio reader. Unordered callers (in-process transports and
+// tests) keep synchronous completion. Response writes are independently locked.
+func (s *Server) dispatchOffIngress(ctx context.Context, req Request, handle func() error) error {
+	if _, ordered := ctx.Value(stdioResumeDispatchKey{}).(bool); !ordered {
+		return handle()
+	}
+	if !s.startBackground(func() {
+		if err := handle(); err != nil {
+			log.Printf("wuu: %s: %v", req.Method, err)
+		}
+	}) {
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	return nil
 }
 
 func (s *Server) thread(id string) *threadState {

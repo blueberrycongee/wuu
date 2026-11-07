@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -372,4 +373,42 @@ func TestThreadSearchPersistedHistoryRefreshesAcrossQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	search("4", "fresh append", 1)
+}
+
+func TestThreadSearchDoesNotBlockStdioIngress(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	callPluginPackageRPC(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
+	srv.mu.Lock()
+	live := srv.threads[threadID]
+	srv.mu.Unlock()
+	// Holding the live thread stalls search while it collects sources, the
+	// same way a slow transcript read would.
+	live.mu.Lock()
+	locked := true
+	t.Cleanup(func() {
+		if locked {
+			live.mu.Unlock()
+		}
+	})
+	scannerDone := make(chan error, 1)
+	go func() {
+		scannerDone <- runStdioScanner(context.Background(), srv, strings.NewReader("{\"id\":\"search\",\"method\":\"thread/search\",\"params\":{\"query\":\"needle\"}}\n"))
+	}()
+	select {
+	case err := <-scannerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("thread/search blocked the stdio scanner")
+	}
+	live.mu.Unlock()
+	locked = false
+	if response := waitForResponseByID(t, out, "search"); response["error"] != nil {
+		t.Fatalf("search failed: %+v", response)
+	}
 }
