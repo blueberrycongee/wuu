@@ -85,8 +85,38 @@ async function focusedComposer() {
     return input && !input.disabled && !input.closest("[inert]") && document.hasFocus() && document.activeElement === input;
   }), "native click focuses the composer");
 }
+// The production shell no longer presents the account menu: the settings gear
+// is a one-click entry and the menu only exists in development builds. The
+// fixture owns the public chromeOverlay bridge directly, so the full native
+// transport (prepare, paint, commands, fencing, retirement) is still exercised
+// against the real shipping overlay renderer.
+async function presentMenu() {
+  await evaluate(win.webContents, () => {
+    if (!window.__menu) {
+      window.__menu = { token: "", generation: 1, open: false, events: [] };
+      window.wuu.chromeOverlay.onEvent(event => {
+        if (event.token !== window.__menu.token) return;
+        window.__menu.events.push(event);
+        if (event.command.type === "dismiss") window.__menu.open = false;
+      });
+    }
+    const token = crypto.randomUUID();
+    window.__menu.token = token;
+    window.__menu.open = true;
+    window.__menu.events = [];
+    void window.wuu.chromeOverlay.show({ version: 1, token, generation: window.__menu.generation, focus: true,
+      bounds: { x: 8, y: innerHeight - 156, width: 240, height: 140 },
+      appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale: "en-US",
+        fontFamily: getComputedStyle(document.documentElement).fontFamily, variables: {} },
+      model: { kind: "account", panel: { label: "Account menu",
+        rows: [{ action: "usage", label: "Usage" }, { action: "settings", label: "Settings" }] } } });
+  });
+}
+async function hideMenu() {
+  await evaluate(win.webContents, () => window.wuu.chromeOverlay.hide(window.__menu.token, window.__menu.generation));
+}
 async function openMenu() {
-  await click(win.webContents, ".sidebar-account-trigger");
+  await presentMenu();
   const view = await until(() => { const view = menuView(); return view?.getVisible() && view.webContents.isFocused() && view; }, "native menu painted and focused");
   const bounds = view.getBounds(), [width, height] = win.getContentSize();
   assert.ok(bounds.width > 0 && bounds.height > 0 && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width && bounds.y + bounds.height <= height,
@@ -128,7 +158,7 @@ async function capture(name, view) {
   }
 }
 async function closed() {
-  await until(async () => !menuView()?.getVisible() && await evaluate(win.webContents, () => document.querySelector(".sidebar-account-trigger")?.getAttribute("aria-expanded") === "false"), "menu dismissed in native and renderer state");
+  await until(async () => !menuView()?.getVisible() && await evaluate(win.webContents, () => window.__menu.open === false), "menu dismissed in native and renderer state");
 }
 // The floating Settings panel is modal: its scrim swallows workbench clicks,
 // so leave through its own dismissal affordances instead of a ribbon item.
@@ -216,7 +246,7 @@ async function run() {
     win.setContentSize(1180, 820);
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     win.show(); win.focus();
-    await until(() => evaluate(win.webContents, () => Boolean(document.querySelector("textarea") && document.querySelector(".sidebar-account-trigger:not(:disabled)"))), "shipping default shell initialized");
+    await until(() => evaluate(win.webContents, () => Boolean(document.querySelector("textarea") && document.querySelector('[data-settings-entry="settings"]:not(:disabled)'))), "shipping default shell initialized");
     await evaluate(win.webContents, () => document.fonts.ready.then(() => undefined));
     if (await evaluate(win.webContents, () => document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed"))) {
       await click(win.webContents, ".section-sidebar-toggle");
@@ -254,11 +284,14 @@ async function run() {
     const opened = await openMenu(); scenario.menu = { bounds: opened.bounds, rows: opened.rows };
     await capture(name, opened.view);
     key(opened.view.webContents, "Escape"); await closed();
-    assert.ok(await evaluate(win.webContents, () => document.activeElement?.matches(".sidebar-account-trigger")), "Escape restores trigger focus");
+    assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Escape restores pre-menu focus");
     await openMenu(); await click(win.webContents, "textarea"); await closed(); await focusedComposer();
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Outside click retains composer focus");
     const settingsMenu = await openMenu();
-    await click(settingsMenu.view.webContents, '[data-settings-entry="settings"]'); await closed();
+    await click(settingsMenu.view.webContents, '[role="menuitem"]:last-of-type');
+    await until(() => evaluate(win.webContents, () => window.__menu.events.some(event => event.command.type === "account-action" && event.command.action === "settings")), "menu action reaches the owner through the bridge");
+    await hideMenu(); await closed();
+    await click(win.webContents, '[data-settings-entry="settings"]');
     await until(() => evaluate(win.webContents, () => {
       const e = document.querySelector(".settings-main"), r = e?.getBoundingClientRect();
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
@@ -275,7 +308,7 @@ async function run() {
   }
   for (const cancel of ["escape", "outside"]) {
     holdLayout = true; heldLayout = undefined;
-    await click(win.webContents, ".sidebar-account-trigger");
+    await presentMenu();
     await until(() => heldLayout && menuView()?.getVisible(), "native preparation awaits renderer layout");
     const preparing = menuView(), pending = heldLayout.state;
     assert.ok(win.webContents.isFocused() && !preparing.webContents.isFocused(), "Owner retains keyboard focus during native preparation");
@@ -285,11 +318,13 @@ async function run() {
     });
     assert.deepEqual(hidden, { inert: true, visibility: "hidden" }, "Prepared content is not shown or interactive before layout");
     const event = { sender: preparing.webContents, senderFrame: preparing.webContents.mainFrame };
-    host.command(event, { token: pending.token, generation: pending.generation, command: { type: "account-action", action: "providers" } });
-    assert.equal(await evaluate(win.webContents, () => Boolean(document.querySelector(".settings-shell"))), false, "Preparation cannot invoke a menu business action");
+    host.command(event, { token: pending.token, generation: pending.generation, command: { type: "account-action", action: "settings" } });
+    assert.equal(await evaluate(win.webContents, () => !document.querySelector(".settings-shell") && !window.__menu.events.some(event => event.command.type === "account-action")), true, "Preparation cannot invoke a menu business action");
     fs.writeFileSync(path.join(output, `preparing-${cancel}-shell.png`), (await win.webContents.capturePage()).toPNG());
-    if (cancel === "escape") key(win.webContents, "Escape");
-    else await click(win.webContents, "textarea");
+    // A real owner dismisses on Escape or outside pointer input; the fixture
+    // plays that role through the same hide path either way.
+    if (cancel === "outside") await click(win.webContents, "textarea");
+    await hideMenu();
     await closed();
     host.prepared(event, pending.token, pending.generation);
     host.painted(event, pending.token, pending.generation, pending.bounds);
@@ -302,7 +337,7 @@ async function run() {
   // Reproduce a loaded renderer that never acknowledges its first presentation.
   // Only transport delivery is interrupted; the shipping UI and host are intact.
   dropPaint = true;
-  await click(win.webContents, ".sidebar-account-trigger");
+  await presentMenu();
   const stalled = await until(() => menuView(), "unpresented native opening");
   const stalledContents = stalled.webContents;
   await until(() => failures.length === 1, "missing first paint reports failure within the opening budget");

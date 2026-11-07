@@ -12,9 +12,7 @@ app.whenReady().then(async()=>{
   const until=async fn=>{const end=Date.now()+10000;while(Date.now()<end){if(await win.webContents.executeJavaScript(`Boolean((${fn})())`,true))return;await new Promise(r=>setTimeout(r,30));}throw new Error(`Timed out: ${fn}`);};
   const capture=async name=>{await new Promise(r=>setTimeout(r,300));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   await win.loadFile(path.resolve(__dirname,'../out/personal-fixture/index.html'));
-  await until(()=>document.querySelector('.sidebar-account-trigger'));
-  await evaluate(()=>document.querySelector('.sidebar-account-trigger').click());
-  await until(()=>document.querySelector('[data-settings-entry="settings"]'));await capture('account-menu');
+  await until(()=>document.querySelector('[data-settings-entry="settings"]'));
   await evaluate(()=>document.querySelector('[data-settings-entry="settings"]').click());
   await until(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]'));
   await evaluate(()=>document.querySelector('[data-wuu-page="plugin-view:personal:personal-preferences"]').click());
@@ -36,7 +34,7 @@ app.whenReady().then(async()=>{
   await capture('settings-dark-large-narrow');
   const geometry=await evaluate(()=>{const el=document.querySelector('[data-personal-preferences]');return{width:el.clientWidth,scrollWidth:el.scrollWidth,text:el.textContent,reviewButtons:el.querySelectorAll('[data-review-choice]').length};});
   assert.ok(geometry.scrollWidth<=geometry.width+1,JSON.stringify(geometry));
-  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI with synthetic transport',route:'Account menu → Settings → Plugins → twin',cases:['model selection automatically sends provider and model','review unavailable with no approval buttons','light wide','dark 20px narrow'],geometry},null,2));
+  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({status:'passed',scope:'Actual shipped settings UI with synthetic transport',route:'Sidebar gear → Settings → Plugins → twin',cases:['model selection automatically sends provider and model','review unavailable with no approval buttons','light wide','dark 20px narrow'],geometry},null,2));
   clearTimeout(watchdog);app.exit(0);
 }).catch(async error=>{
   fs.writeFileSync(path.join(output,'error.txt'),String(error.stack||error));

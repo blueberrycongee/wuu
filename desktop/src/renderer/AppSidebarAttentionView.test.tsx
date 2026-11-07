@@ -236,15 +236,10 @@ describe("sidebar attention view", () => {
     act(() => bell!.click());
     expect(attentionView()).not.toBeNull();
 
-    const accountTrigger = container.querySelector<HTMLButtonElement>(".sidebar-account-trigger");
-    expect(accountTrigger?.disabled).toBe(false);
-    act(() => accountTrigger!.click());
-    const settingsItem = document.querySelector<HTMLButtonElement>(
-      '[role="menuitem"][data-settings-entry="settings"]',
-    );
-    expect(settingsItem).not.toBeNull();
+    const settingsEntry = container.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]');
+    expect(settingsEntry?.disabled).toBe(false);
     // The settings page is a lazy import behind Suspense, so let it resolve.
-    await act(async () => settingsItem!.click());
+    await act(async () => settingsEntry!.click());
     await flushAsync();
     // Settings overlays the workbench; the conversation stays mounted but inert.
     expect(settingsView()).not.toBeNull();

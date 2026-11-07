@@ -1035,8 +1035,7 @@ describe("main composer focus continuity", () => {
     });
     await flushAsync();
 
-    await act(async () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
-    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
     await vi.waitFor(async () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
