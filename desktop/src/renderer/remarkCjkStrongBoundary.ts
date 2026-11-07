@@ -142,6 +142,55 @@ function repairBoldAutolinkPair(children: MdastNode[], index: number): MdastNode
   return replacements;
 }
 
+/**
+ * `**label https://url**（下文` breaks differently: the closing `**` is glued
+ * to the following CJK text, so the autolink tokenizer swallows it into the
+ * link token before emphasis resolution ever sees it.
+ * remarkCjkAutolinkBoundary later strips it back out into a text node that
+ * starts with `**`, leaving a three-node shape — a text node ending in
+ * `**head`, the bare autolink, and a text node starting with `**`. The
+ * opener and closer are re-paired so the head and the link sit inside one
+ * `strong`.
+ */
+const BOLD_AUTOLINK_HEAD = /\*\*([^*]*)$/u;
+
+function repairBoldAutolinkSandwich(children: MdastNode[], index: number): MdastNode[] | undefined {
+  const text = children[index];
+  const link = children[index + 1];
+  const closer = children[index + 2];
+  if (
+    text?.type !== "text" || typeof text.value !== "string"
+    || link?.type !== "link"
+    || closer?.type !== "text" || typeof closer.value !== "string"
+    || !closer.value.startsWith("**")
+  ) {
+    return undefined;
+  }
+  const match = BOLD_AUTOLINK_HEAD.exec(text.value);
+  if (!match) {
+    return undefined;
+  }
+  const head = match[1];
+  // `** url**…` — an all-whitespace head was never meant to open emphasis.
+  if (head && !/\S/u.test(head)) {
+    return undefined;
+  }
+  const prefix = text.value.slice(0, match.index);
+  const tail = closer.value.slice(2);
+  const replacements: MdastNode[] = [];
+  if (prefix) {
+    replacements.push({ type: "text", value: prefix });
+  }
+  replacements.push({
+    type: "strong",
+    children: head ? [{ type: "text", value: head }, link] : [link],
+  });
+  if (tail) {
+    replacements.push({ type: "text", value: tail });
+  }
+  return replacements;
+}
+
 function visit(parent: MdastNode, source: string): void {
   const children = parent.children;
   if (!children) {
@@ -152,6 +201,15 @@ function visit(parent: MdastNode, source: string): void {
     if (replacements) {
       children.splice(index, 1, ...replacements);
       index += replacements.length - 1;
+      continue;
+    }
+    // The three-node sandwich is checked first: when it matches, the pair
+    // repair would wrap only the head text and leave the link's closing
+    // `**` orphaned.
+    const sandwichRepair = repairBoldAutolinkSandwich(children, index);
+    if (sandwichRepair) {
+      children.splice(index, 3, ...sandwichRepair);
+      index += sandwichRepair.length - 1;
       continue;
     }
     const pairRepair = repairBoldAutolinkPair(children, index);
