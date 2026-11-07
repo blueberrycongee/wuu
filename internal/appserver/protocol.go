@@ -803,20 +803,23 @@ type ExtensionThemeDescriptor struct {
 }
 
 type ExtensionSkinDescriptor struct {
-	ID    string               `json:"id"`
-	Name  string               `json:"name"`
-	Light ExtensionSkinVariant `json:"light"`
-	Dark  ExtensionSkinVariant `json:"dark"`
+	ID        string               `json:"id"`
+	Name      string               `json:"name"`
+	Placement string               `json:"placement,omitempty"`
+	Light     ExtensionSkinVariant `json:"light"`
+	Dark      ExtensionSkinVariant `json:"dark"`
 }
 
 type ExtensionSkinVariant struct {
-	Background string `json:"background"`
-	Foreground string `json:"foreground"`
-	Image      string `json:"image,omitempty"`
-	Position   string `json:"position,omitempty"`
-	Overlay    string `json:"overlay,omitempty"`
-	Hover      string `json:"hover,omitempty"`
-	Active     string `json:"active,omitempty"`
+	Background string                  `json:"background"`
+	Foreground string                  `json:"foreground"`
+	Image      string                  `json:"image,omitempty"`
+	Position   string                  `json:"position,omitempty"`
+	Overlay    string                  `json:"overlay,omitempty"`
+	Hover      string                  `json:"hover,omitempty"`
+	Active     string                  `json:"active,omitempty"`
+	Veil       *float64                `json:"veil,omitempty"`
+	Dots       *pluginpkg.SkinDotsSpec `json:"dots,omitempty"`
 }
 
 type ExtensionSettingType string

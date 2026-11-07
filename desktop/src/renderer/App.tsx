@@ -1001,6 +1001,13 @@ export function App({ application, slots, shellPluginId }: {
     !workspaceToolsCoverConversation &&
     !settingsOpen &&
     !showingPrimaryPluginView;
+  // How much canvas-placement skin artwork shows through the main pane.
+  // Non-canvas skins ignore this attribute entirely.
+  const paneCanvas: "opaque" | "translucent" | "transparent" = showingPrimaryPluginView
+    ? (primaryPageView.canvas ?? "opaque")
+    : conversationVisible
+      ? (emptyConversation ? "transparent" : "translucent")
+      : "opaque";
 
   useEffect(() => {
     // Delivered snapshots may belong to either visible conversation pane.
@@ -1690,6 +1697,7 @@ export function App({ application, slots, shellPluginId }: {
         data-workbench-layout={userSpaceViewActive ? "user-space" : undefined}
         data-primary-plugin-web-page={showingPluginWebPage ? "" : undefined}
         data-native-section={showingManagementCatalog ? "catalog" : "conversations"}
+        data-canvas={paneCanvas}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
         }`}

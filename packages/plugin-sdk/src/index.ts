@@ -125,6 +125,10 @@ export type PluginManifestIcon =
 export interface ViewTypeDefinition {
   /** Presentation-only user-space shell; never grants data or tool authority. */
   readonly layout?: "user-space";
+  /** How much skin artwork shows behind this view when the selected skin
+     places artwork in the canvas. Default opaque. Transparent views should
+     put content on host cards. */
+  readonly canvas?: "opaque" | "translucent" | "transparent";
   id: ViewTypeId;
   title: string;
   icon?: PublicIconName;

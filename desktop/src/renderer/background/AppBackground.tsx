@@ -32,6 +32,9 @@ export function AppBackground(): JSX.Element | null {
   }, [selected, preferences?.image, mode]);
   const url = skin ? pluginImage.url : selected === "custom" ? localURL : "";
   const enabled = Boolean(skin || url);
+  // Canvas placement moves the artwork behind the main pane; the custom image
+  // and every skin without a placement keep decorating only the frame.
+  const placement = skin?.placement === "canvas" ? "canvas" : "frame";
   useLayoutEffect(() => {
     const root = document.documentElement;
     const variables: Record<string, string> = {};
@@ -48,11 +51,22 @@ export function AppBackground(): JSX.Element | null {
       const position = variant?.position ?? "center";
       variables["--shell-image-align-x"] = position === "left" ? "0" : position === "right" ? "1" : "0.5";
       variables["--shell-image-align-y"] = position === "top" ? "0" : position === "bottom" ? "1" : "0.5";
+      if (placement === "canvas") {
+        variables["--shell-veil"] = String(variant?.veil ?? 0.86);
+        if (variant?.dots) {
+          variables["--shell-dots-pitch"] = `${variant.dots.pitch}px`;
+          variables["--shell-dots-size"] = `${variant.dots.size}px`;
+        }
+      }
     }
     for (const [name, value] of Object.entries(variables)) root.style.setProperty(name, value);
     root.toggleAttribute("data-shell-skin", enabled);
-    // The chrome overlay receives this URL separately from CSS values.
-    if (url) root.dataset.shellImage = url;
+    if (enabled) root.dataset.shellPlacement = placement;
+    else delete root.dataset.shellPlacement;
+    root.toggleAttribute("data-shell-dots", enabled && Boolean(variant?.dots));
+    // The chrome overlay receives this URL separately from CSS values. Canvas
+    // artwork lives inside the pane, so the frame keeps a solid fill there.
+    if (url && placement === "frame") root.dataset.shellImage = url;
     else delete root.dataset.shellImage;
     const image = new Image();
     image.onload = () => root.style.setProperty("--shell-image-ratio", String(image.naturalWidth / image.naturalHeight));
@@ -61,8 +75,12 @@ export function AppBackground(): JSX.Element | null {
       image.onload = null;
       for (const name of Object.keys(variables)) root.style.removeProperty(name);
       root.removeAttribute("data-shell-skin");
+      root.removeAttribute("data-shell-dots");
+      delete root.dataset.shellPlacement;
       delete root.dataset.shellImage;
     };
-  }, [enabled, url, variant, mode]);
-  return enabled ? createPortal(<div className="app-background" aria-hidden="true" />, document.body) : null;
+  }, [enabled, url, variant, mode, placement]);
+  return enabled && placement === "frame"
+    ? createPortal(<div className="app-background" aria-hidden="true" />, document.body)
+    : null;
 }

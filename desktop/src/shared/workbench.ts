@@ -105,6 +105,10 @@ export interface ViewTypeDefinition {
   persistence?: ViewPersistence;
   /** Presentation only: hide Coding workspace panels, retaining the normal Wuu navigation. Grants no runtime authority. */
   layout?: "user-space";
+  /** How much skin artwork shows behind this view when the selected skin
+     places artwork in the canvas. Default opaque. Transparent views should
+     put content on host cards. */
+  canvas?: "opaque" | "translucent" | "transparent";
   /** React component that receives host context and renders the view. */
   render: React.ComponentType<ViewRenderProps>;
 }

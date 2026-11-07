@@ -522,6 +522,11 @@ export interface ExtensionThemeDescriptor {
   syntax?: Record<string, string>;
 }
 
+export interface ExtensionSkinDots {
+  pitch: number;
+  size: number;
+}
+
 export interface ExtensionSkinVariant {
   background: string;
   foreground: string;
@@ -530,11 +535,14 @@ export interface ExtensionSkinVariant {
   overlay?: string;
   hover?: string;
   active?: string;
+  veil?: number;
+  dots?: ExtensionSkinDots;
 }
 
 export interface ExtensionSkinDescriptor {
   id: string;
   name: string;
+  placement?: "frame" | "canvas";
   light: ExtensionSkinVariant;
   dark: ExtensionSkinVariant;
 }

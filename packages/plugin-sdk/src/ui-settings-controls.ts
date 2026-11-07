@@ -610,6 +610,7 @@ export interface SettingsShellSkinV1 {
  readonly pluginId: string;
  readonly fingerprint: string;
  readonly pluginName: string;
+ readonly placement?: "frame" | "canvas";
  readonly light: SettingsSkinVariantV1;
  readonly dark: SettingsSkinVariantV1;
 }
@@ -621,4 +622,6 @@ export interface SettingsSkinVariantV1 {
  readonly overlay?: string;
  readonly hover?: string;
  readonly active?: string;
+ readonly veil?: number;
+ readonly dots?: { readonly pitch: number; readonly size: number };
 }
