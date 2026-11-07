@@ -311,7 +311,13 @@ async function acceptance(): Promise<void> {
   await waitFor('preview resize gesture started', () => overlay.executeJavaScript("document.getElementById('root').classList.contains('resizing')"));
   overlay.sendInputEvent({ type: 'mouseMove', x: 251, y: 231, globalX: beforeResize.x + 251, globalY: beforeResize.y + 231, modifiers: ['leftbuttondown'] });
   await waitFor('dark preview chrome', () => overlay.executeJavaScript("document.documentElement.classList.contains('dark')"));
-  await waitFor('small preview bounds', () => { const bounds = pip.getBounds(); return bounds.width === 260 && bounds.height === 240; });
+  const smallPreviewSize = { width: Math.round(240 * initialObservation.screenshot.width / initialObservation.screenshot.height), height: 240 };
+  await waitFor('aspect-locked small preview bounds', () => {
+    const bounds = pip.getBounds();
+    return bounds.width === smallPreviewSize.width && bounds.height === smallPreviewSize.height;
+  });
+  assert.equal(pip.getBounds().x, beforeResize.x, 'Southeast resize anchors the opposite horizontal edge');
+  assert.equal(pip.getBounds().y, beforeResize.y, 'Southeast resize anchors the opposite vertical edge');
   overlay.sendInputEvent({ type: 'mouseUp', x: 251, y: 231, globalX: beforeResize.x + 251, globalY: beforeResize.y + 231, button: 'left', clickCount: 1 });
   await waitFor('preview resize gesture ended', () => overlay.executeJavaScript("!document.getElementById('root').classList.contains('resizing')"));
   results.smallPreviewBounds = pip.getBounds();
