@@ -1,5 +1,5 @@
 import type * as React from "react";
-import type { PluginUIButtonProps } from "../../../packages/plugin-sdk/src/index";
+import type { PluginUIButtonProps, PluginUICheckboxProps, PluginUIContainerProps, PluginUISectionProps, PluginUISelectProps } from "../../../packages/plugin-sdk/src/index";
 
 export type ReviewStatus = "proposed" | "ready" | "awaiting_confirmation" | "approved" | "blocked" | "denied" | "revoked" | "expired" | "stale" | "executing" | "succeeded" | "uncertain";
 export type ReviewRecord = {
@@ -115,6 +115,13 @@ function ruleDescription(rule: Pick<ReviewRule, "operation" | "target" | "descri
   if (["bash", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "在相同位置重复这条完全相同的操作前，每次先问我。" : "以后允许在相同位置，使用相同权限重复这条完全相同的操作。";
   return rule.description;
 }
+// Settings rows carry the decision in their own control, so the label names only the action.
+function ruleSubject(rule: Pick<ReviewRule, "operation" | "target" | "description">, locale: string): string {
+  const zh = locale.startsWith("zh");
+  if (rule.operation === "write_file" || rule.operation === "edit_file") return `${zh ? "修改" : "Edit"} ${rule.target.split(/[\\/]/).pop()}`;
+  if (zh && ["bash", "process_start"].includes(rule.operation)) return "在相同位置重复这条操作";
+  return rule.description;
+}
 const systemReasonsZH: Record<string, string> = {
   "Review what will happen before allowing this action": "请确认这项操作和你想做的一致。",
   "Original authenticated user request is unavailable; confirm this exact action manually": "暂时无法核对你最初的要求，请确认这项具体操作。",
@@ -159,37 +166,31 @@ export function reviewReason(reason: string, locale: string): string {
   return reason;
 }
 type UI = {
-  Button: React.ComponentType<React.ButtonHTMLAttributes<HTMLButtonElement> & Pick<PluginUIButtonProps,"variant"> & { "data-review-choice"?: string; "data-review-refresh"?: boolean; "data-review-rule-ask"?: string; "data-review-rule-delete"?: string }>;
-  EmptyState: React.ComponentType<{title:React.ReactNode;description?:React.ReactNode}>;
-  Section: React.ComponentType<{title?:React.ReactNode;description?:React.ReactNode;children?:React.ReactNode}>;
+  Button: React.ComponentType<React.ButtonHTMLAttributes<HTMLButtonElement> & Pick<PluginUIButtonProps,"variant"> & { "data-review-choice"?: string; "data-review-refresh"?: boolean; "data-review-rule-delete"?: string }>;
+  Card: React.ComponentType<PluginUIContainerProps>;
+  Checkbox: React.ComponentType<PluginUICheckboxProps>;
+  Section: React.ComponentType<PluginUISectionProps>;
+  Select: React.ComponentType<PluginUISelectProps>;
 };
 
 const copy = {
   en: {
-    title: "Approvals and rules", description: "Choose what Personal can do for you.",
-    mode: "Automatic review", scope: "Applies to this Personal space, including its background tasks.",
-    enabled: "On", disabled: "Off", enable: "Turn on automatic review", disable: "Turn off automatic review", manual: "Actions without a saved permission ask you first.", coverage: "Covered actions", fileWrite: "Create or replace a Personal file", fileEdit: "Edit a Personal file", excluded: "Account connections and new permissions still need their own confirmation.", noCoverage: "No action handlers registered", policy: "Policy version", receipt: "Execution receipt", recentResults: "Recent action results",
-    automatic: "Actions covered by a current, specific instruction can proceed after review. Missing or unclear authorization asks you first.",
+    mode: "Auto Review", modeHelp: "Actions that match your request run without asking.", 
+    receipt: "Execution receipt", recentResults: "Recent action results",
     pending: "Waiting for you", recent: "Recent activity", refresh: "Refresh", approve: "Allow once", reject: "Don’t allow", revoke: "Withdraw approval", withdraw: "Withdraw action",
     account: "Account", target: "Destination", effect: "Effect", task: "Task version", parameters: "Technical details", expires: "Expires", digest: "Action digest",
-    noActions: "No actions to review", noActionsBody: "Actions needing your decision will appear here.",
-    unavailable: "Not connected", working: "Saving…", failed: "Could not save. Refresh to check the current state.", invalidData: "Action data could not be verified. Refresh to check the saved state.",
-    single: "Allow once applies only to the action shown. Saved rules can be changed or removed here.",
-    remember: "Handle this automatically…", ruleTitle: "Remember this permission?", ruleScope: "This exact scope applies to future tasks in this Personal space.", saveRule: "Save and allow once", cancel: "Cancel", ruleSaved: "Rule saved. This action still needs your decision.", ruleSaveFailed: "The rule save could not be confirmed. Refresh to check it; you can then allow just this action.", rules: "Saved rules", noRules: "No saved rules yet.", askRule: "Always ask first", allowRule: "Allow automatically", pauseRule: "Pause", resumeRule: "Enable", deleteRule: "Remove", pausedRule: "Paused", rulesPriority: "“Always ask first” takes priority over automatic review and other permissions.", changes: "View changes", before: "Before", after: "After", newContent: "Content to save", replaceAll: "Replace every matching occurrence", ruleDetails: "Exact permission scope", originalUnavailable: "The full original content is not included in this request. Replacing the file overwrites its current contents.", writeTitle: "Save this file?", replaceTitle: "Replace this file?", editTitle: "Update this file?", commandTitle: "Run this task step?", commandBody: "Personal wants to run a program. Review its exact command and working folder in the details before allowing it.", reason: "Why confirmation is needed", pendingCount: "waiting for you", fromRequest: "From your request: ", noExpiry: "Until this task changes or you cancel",
+    working: "Saving…", failed: "Could not save. Refresh to check the current state.", invalidData: "Action data could not be verified. Refresh to check the saved state.",
+    remember: "Handle this automatically…", ruleTitle: "Remember this permission?", ruleScope: "This exact scope applies to future tasks in this Personal space.", saveRule: "Save and allow once", cancel: "Cancel", ruleSaved: "Rule saved. This action still needs your decision.", ruleSaveFailed: "The rule save could not be confirmed. Refresh to check it; you can then allow just this action.", rules: "Saved rules", askRule: "Always ask first", allowRule: "Allow automatically", deleteRule: "Remove", pausedRule: "Paused", changes: "View changes", before: "Before", after: "After", newContent: "Content to save", replaceAll: "Replace every matching occurrence", ruleDetails: "Exact permission scope", originalUnavailable: "The full original content is not included in this request. Replacing the file overwrites its current contents.", writeTitle: "Save this file?", replaceTitle: "Replace this file?", editTitle: "Update this file?", commandTitle: "Run this task step?", commandBody: "Personal wants to run a program. Review its exact command and working folder in the details before allowing it.", reason: "Why confirmation is needed", pendingCount: "waiting for you", fromRequest: "From your request: ", noExpiry: "Until this task changes or you cancel",
     states: { proposed:"Awaiting review",ready:"Authorized · awaiting execution",awaiting_confirmation:"Needs your decision",approved:"Allowed once · waiting to start",blocked:"Review unavailable · not executed",denied:"Denied · not executed",revoked:"Withdrawn · not executed",expired:"Expired · not executed",stale:"Task changed · not executed",executing:"Started · result pending",succeeded:"Completed",uncertain:"Result unknown · will not retry" },
     effects: { internal_bookkeeping:"Internal bookkeeping",read_only:"Read only",data_write:"Changes data",external_write:"Sends outside twin",sensitive_authority:"Account or lasting authority",unknown:"Unknown effect" },
   },
   zh: {
-    title:"审批与规则",description:"决定 Personal 可以替你做哪些事。",
-    mode:"自动审核",scope:"适用于当前 Personal 空间，包括后台任务。",
-    enabled:"已开启",disabled:"未开启",enable:"开启自动审核",disable:"关闭自动审核",manual:"没有已保存许可的操作，会先请你确认。",coverage:"覆盖动作",fileWrite:"创建或替换 Personal 文件",fileEdit:"修改 Personal 文件",excluded:"连接账号与新增权限仍需单独确认。",noCoverage:"尚未注册动作执行器",policy:"策略版本",receipt:"执行回执",recentResults:"最近动作结果",
-    automatic:"已有明确且有效授权的动作，经审核后继续。授权缺失或不清楚时，再请你确认。",
+    mode:"自动审核",modeHelp:"符合你要求的操作直接执行，不再逐一询问。",
+    receipt:"执行回执",recentResults:"最近动作结果",
     pending:"等你决定",recent:"最近记录",refresh:"刷新",approve:"允许这次",reject:"不允许",revoke:"撤回批准",withdraw:"撤回动作",
     account:"账号",target:"目标",effect:"影响",task:"需求版本",parameters:"技术详情",expires:"有效期至",digest:"动作摘要",
-    noActions:"没有待审批动作",noActionsBody:"需要你决定的动作会显示在这里。",
-    unavailable:"尚未接入",working:"正在保存…",failed:"保存失败，请刷新核对当前状态。",invalidData:"动作数据格式无法验证，请刷新核对保存状态。",
-    single:"“允许这次”只适用于眼前的操作。保存的规则可以随时在这里修改或移除。",
-    remember:"以后自动处理…",ruleTitle:"记住这项许可？",ruleScope:"仅对下列范围生效，适用于此 Personal 空间今后的任务。",saveRule:"保存并允许这次",cancel:"取消",ruleSaved:"规则已保存；这次操作仍需要你的决定。",ruleSaveFailed:"未能确认规则是否保存。请刷新核对，之后也可以只允许这次操作。",rules:"已保存的规则",noRules:"还没有保存规则。",askRule:"每次先问我",allowRule:"自动允许",pauseRule:"暂停",resumeRule:"启用",deleteRule:"移除",pausedRule:"已暂停",rulesPriority:"“每次先问我”优先于自动审核和其他许可。",changes:"查看修改内容",before:"修改前",after:"修改后",newContent:"将保存的内容",replaceAll:"替换每一处匹配的内容",ruleDetails:"查看许可范围",originalUnavailable:"这次请求没有包含完整原文。替换文件会覆盖它现有的内容。",writeTitle:"保存这个文件？",replaceTitle:"替换这个文件？",editTitle:"修改这个文件？",commandTitle:"执行这一步操作？",commandBody:"运行一段程序，可能在已授权范围内读取或修改文件。请确认这符合当前任务。",reason:"为什么需要确认",pendingCount:"项等你确认",fromRequest:"来自你的请求：",noExpiry:"直到任务变化或你取消",
+    working:"正在保存…",failed:"保存失败，请刷新核对当前状态。",invalidData:"动作数据格式无法验证，请刷新核对保存状态。",
+    remember:"以后自动处理…",ruleTitle:"记住这项许可？",ruleScope:"仅对下列范围生效，适用于此 Personal 空间今后的任务。",saveRule:"保存并允许这次",cancel:"取消",ruleSaved:"规则已保存；这次操作仍需要你的决定。",ruleSaveFailed:"未能确认规则是否保存。请刷新核对，之后也可以只允许这次操作。",rules:"已保存的规则",askRule:"每次先问我",allowRule:"自动允许",deleteRule:"移除",pausedRule:"已暂停",changes:"查看修改内容",before:"修改前",after:"修改后",newContent:"将保存的内容",replaceAll:"替换每一处匹配的内容",ruleDetails:"查看许可范围",originalUnavailable:"这次请求没有包含完整原文。替换文件会覆盖它现有的内容。",writeTitle:"保存这个文件？",replaceTitle:"替换这个文件？",editTitle:"修改这个文件？",commandTitle:"执行这一步操作？",commandBody:"运行一段程序，可能在已授权范围内读取或修改文件。请确认这符合当前任务。",reason:"为什么需要确认",pendingCount:"项等你确认",fromRequest:"来自你的请求：",noExpiry:"直到任务变化或你取消",
     states:{proposed:"等待审核",ready:"授权匹配，等待执行",awaiting_confirmation:"需要你确认",approved:"已允许这次，等待开始",blocked:"审核不可用，未执行",denied:"已拒绝，未执行",revoked:"已撤回，未执行",expired:"已过期，未执行",stale:"任务已变化，未执行",executing:"已经开始，等待结果",succeeded:"已完成",uncertain:"结果未知，不会自动重试"},
     effects:{internal_bookkeeping:"内部记账",read_only:"只读",data_write:"修改数据",external_write:"向外发送",sensitive_authority:"账号或长期权限",unknown:"未知影响"},
   },
@@ -198,7 +199,6 @@ const copy = {
 export const personalReviewStyles = `
 .personal-review { font:inherit;color:var(--ink);min-width:0; }
 .personal-review p { margin:0;line-height:1.6; }
-.personal-review-overview { display:grid;gap:var(--space-3);padding-bottom:var(--space-5); }
 .personal-review-heading { display:flex;align-items:center;justify-content:space-between;gap:var(--space-4); }
 .personal-review-heading h3 { margin:0;font:inherit;font-weight:600; }
 .personal-review-muted { color:var(--ink-muted); }
@@ -215,20 +215,25 @@ export const personalReviewStyles = `
 .personal-review-parameters pre { white-space:pre-wrap;overflow-wrap:anywhere;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3);background:var(--surface-2);border-radius:var(--radius-sm,6px); }
 .personal-review-actions { display:flex;gap:var(--space-3);flex-wrap:wrap;margin-top:var(--space-4); }
 .personal-review-error { color:var(--danger-text,var(--ink));margin-top:var(--space-3)!important; }
-.personal-review-conversation .personal-review-overview { padding-bottom:0; }
 .personal-review-conversation { margin:var(--space-5) 0; }
 .personal-review-history { margin-top:var(--space-5); }
 .personal-review-history>summary { cursor:pointer;color:var(--ink-muted); }
-.personal-review-coverage { margin:0;padding-inline-start:1.3em;overflow-wrap:anywhere; }
 .personal-review-consequence { margin-top:var(--space-3)!important;overflow-wrap:anywhere; }
 .personal-review-rule-preview { margin-top:var(--space-4);padding:var(--space-4);background:var(--surface-2);border-radius:var(--radius-md,8px); }
 .personal-review-rule-preview h5 { margin:0 0 var(--space-3);font:inherit;font-weight:600; }
-.personal-review-rules { margin:var(--space-5) 0; }
-.personal-review-rules h3 { font:inherit;font-weight:600; }
-.personal-review-rule { padding:var(--space-4) 0;border-bottom:1px solid var(--hairline);overflow-wrap:anywhere; }
+.personal-review-settings { display:flex;flex-direction:column; }
+.personal-review-settings>.plugin-ui-section { margin-top:var(--settings-gap,var(--space-8)); }
+.personal-review-settings .plugin-ui-card>p[role="alert"] { padding-block:var(--settings-row-pad-block,var(--space-3));color:var(--danger-text,var(--ink));font-size:var(--font-sm); }
+.personal-review-settings .plugin-ui-card>.personal-review-item { padding:var(--space-1) 0;border-top:0; }
+.personal-review-settings .personal-review-parameters summary { color:var(--ink-soft);font-size:var(--font-sm); }
+.personal-review-rule { display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-2); }
+.personal-review-rule>.plugin-ui-field { flex:1 1 10em;min-width:0; }
+.personal-review-rule .plugin-ui-field-label { overflow-wrap:anywhere; }
+.personal-review-failure { display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-top:var(--space-3); }
+.personal-review-failure .personal-review-error { margin-top:0!important; }
+.personal-review-notice { margin-top:var(--space-3)!important;color:var(--ink-muted); }
 .personal-review-diff { display:grid;gap:var(--space-3); }
 .personal-review-diff pre { margin:0; }
-.personal-review-footnote { margin-top:var(--space-5)!important;color:var(--ink-muted); }
 @media(max-width:480px){.personal-review-fields { grid-template-columns:1fr;gap:var(--space-1); }.personal-review-fields dd { margin-bottom:var(--space-2); }.personal-review-actions>* { flex:0 1 auto;white-space:nowrap; }}
 `;
 
@@ -236,7 +241,7 @@ export const personalReviewStyles = `
 // factory can be mounted inside personal.preferences without a new navigation API.
 export function createPersonalReviewPanel(react: typeof React, ui: UI) {
   const h = react.createElement;
-  return function PersonalReviewPanel({ service, locale = "en", variant = "settings" }: { service: ReviewService; locale?: string; variant?: "settings" | "conversation" }): React.ReactNode {
+  return function PersonalReviewPanel({ service, locale = "en", variant = "settings", leading }: { service: ReviewService; locale?: string; variant?: "settings" | "conversation"; leading?: React.ReactNode }): React.ReactNode {
     const conversation = variant === "conversation";
     const words = locale.startsWith("zh") ? copy.zh : copy.en;
     const hadActions = react.useRef(false);
@@ -377,27 +382,29 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
     // Chat only carries decisions that still need the owner. Completed action
     // history remains in Personal settings instead of trailing every reply.
     if (conversation && !pending.length && (!error || !hadActions.current)) return null;
-    const showOverview = !conversation || pending.length > 0 || Boolean(error) || unverified;
-    return h("div",{className:`personal-review${conversation ? " personal-review-conversation" : ""}`,"data-personal-action-review":true,"data-review-variant":variant},h("style",null,personalReviewStyles),
-      h(ui.Section,{title:conversation ? undefined : words.title,description:conversation ? undefined : words.description},
-        showOverview && h("div",{className:"personal-review-overview"},h("div",{className:"personal-review-heading"},h("h3",null,conversation ? (pending.some(record=>record.status === "awaiting_confirmation") ? `${pending.filter(record=>record.status === "awaiting_confirmation").length} ${words.pendingCount}` : words.recentResults) : words.mode),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
-          !conversation && h(react.Fragment,null,h("p",{className:"personal-review-muted"},words.scope),
-            settings && h(react.Fragment,null,
-              service.settings && h(ui.Button,{variant:"secondary",role:"switch","aria-checked":settings.auto_review_enabled,"aria-label":words.mode,disabled:Boolean(busy)||unverified||(!settings.auto_review_enabled&&settings.scope.length===0),onClick:()=>void changeSettings()},busy==="settings"?words.working:settings.auto_review_enabled?words.disable:words.enable),
-              h("p",{role:"status"},`${words.mode}: ${settings.auto_review_enabled ? words.enabled : words.disabled}`),
-              h("p",{className:"personal-review-muted"},settings.auto_review_enabled ? words.automatic : words.manual),
-              h("details",null,h("summary",null,words.coverage),settings.scope.length ? h("ul",{className:"personal-review-coverage"},settings.scope.map(operation=>h("li",{key:operation},operation === "write_file" ? words.fileWrite : operation === "edit_file" ? words.fileEdit : operation))) : h("p",null,words.noCoverage),h("p",{className:"personal-review-muted"},words.excluded),h("p",{className:"personal-review-muted"},`${words.policy}: ${settings.policy_version}`))))),
+    const failureRow = error && h("div",{className:"personal-review-failure"},h("p",{role:"alert",className:"personal-review-error"},error),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh));
+    if (conversation) {
+      const awaiting = pending.filter(record=>record.status === "awaiting_confirmation").length;
+      return h("div",{className:"personal-review personal-review-conversation","data-personal-action-review":true,"data-review-variant":variant},h("style",null,personalReviewStyles),
+        h("div",{className:"personal-review-heading"},h("h3",null,awaiting ? `${awaiting} ${words.pendingCount}` : words.recentResults),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
         notice && h("p",{role:"status"},notice),
-        !conversation && rules && h("section",{className:"personal-review-rules","aria-label":words.rules},h("h3",null,words.rules),h("p",{className:"personal-review-muted"},words.rulesPriority),
-          !rules.rules.length && h("p",{className:"personal-review-muted"},words.noRules),
-          rules.rules.map(rule=>h("div",{key:rule.id,className:"personal-review-rule","data-review-rule":rule.id},h("p",null,ruleDescription(rule,locale)),h("details",{className:"personal-review-parameters"},h("summary",null,words.ruleDetails),h("p",null,rule.target),h("p",null,rule.description)),h("p",{className:"personal-review-muted"},!rule.enabled ? words.pausedRule : rule.decision === "ask" ? words.askRule : words.allowRule),
-            h("div",{className:"personal-review-actions"},h(ui.Button,{variant:"secondary",disabled:Boolean(busy)||unverified,"data-review-rule-ask":rule.id,onClick:()=>void changeRule({action:"update",expected_revision:rules.revision,id:rule.id,decision:rule.decision === "ask" ? "allow" : "ask",enabled:rule.enabled})},rule.decision === "ask" ? words.allowRule : words.askRule),h(ui.Button,{variant:"ghost",disabled:Boolean(busy)||unverified,onClick:()=>void changeRule({action:"update",expected_revision:rules.revision,id:rule.id,decision:rule.decision,enabled:!rule.enabled})},rule.enabled ? words.pauseRule : words.resumeRule),h(ui.Button,{variant:"ghost",disabled:Boolean(busy)||unverified,"data-review-rule-delete":rule.id,onClick:()=>void changeRule({action:"delete",expected_revision:rules.revision,id:rule.id})},words.deleteRule))))),
         error && h("p",{role:"alert",className:"personal-review-error"},error),
-        !snapshot && !error && h("p",{role:"status"},"…"),
-        !conversation && snapshot?.kind === "unavailable" && h(ui.EmptyState,{title:words.unavailable,description:snapshot.reason}),
-        !conversation && snapshot?.kind === "ready" && !records.length && h(ui.EmptyState,{title:words.noActions,description:words.noActionsBody}),
-        pending.length>0 && h("section",{className:"personal-review-list","aria-label":words.pending},pending.map(renderRecord)),
-        !conversation && history.length>0 && h("section",{className:"personal-review-list","aria-label":words.recent},h("h3",null,words.recent),history.map(renderRecord)),
-        snapshot?.kind === "ready" && !conversation && h("p",{className:"personal-review-footnote"},words.single)));
+        pending.length>0 && h("section",{className:"personal-review-list","aria-label":words.pending},pending.map(renderRecord)));
+    }
+    const ruleChoice = (rule: ReviewRule) => !rule.enabled ? "paused" : rule.decision;
+    const changeRuleChoice = (rule: ReviewRule, choice: string) => rules && void changeRule({action:"update",expected_revision:rules.revision,id:rule.id,decision:choice === "paused" ? rule.decision : choice === "ask" ? "ask" : "allow",enabled:choice !== "paused"});
+    return h("div",{className:"personal-review personal-review-settings","data-personal-action-review":true,"data-review-variant":variant},h("style",null,personalReviewStyles),
+      h(ui.Card,null,leading,
+        settings && service.settings ? h(ui.Checkbox,{label:words.mode,description:words.modeHelp,role:"switch","aria-checked":settings.auto_review_enabled,checked:settings.auto_review_enabled,disabled:Boolean(busy)||unverified||(!settings.auto_review_enabled&&settings.scope.length===0),onChange:()=>void changeSettings()})
+          : h(ui.Checkbox,{label:words.mode,description:snapshot?.kind === "unavailable" ? snapshot.reason : undefined,checked:false,disabled:true})),
+      failureRow,
+      notice && h("p",{role:"status",className:"personal-review-notice"},notice),
+      rules && rules.rules.length>0 && h(ui.Section,{title:words.rules,"aria-label":words.rules},h(ui.Card,null,
+        rules.rules.map(rule=>h("div",{key:rule.id,className:"personal-review-rule","data-review-rule":rule.id},
+          h(ui.Select,{label:ruleSubject(rule,locale),title:rule.target,value:ruleChoice(rule),disabled:Boolean(busy)||unverified,"data-review-rule-choice":rule.id,onChange:(event: React.ChangeEvent<HTMLSelectElement>)=>changeRuleChoice(rule,event.target.value)},
+            h("option",{value:"allow"},words.allowRule),h("option",{value:"ask"},words.askRule),h("option",{value:"paused"},words.pausedRule)),
+          h(ui.Button,{variant:"ghost",disabled:Boolean(busy)||unverified,"data-review-rule-delete":rule.id,onClick:()=>void changeRule({action:"delete",expected_revision:rules.revision,id:rule.id})},words.deleteRule))))),
+      pending.length>0 && h(ui.Section,{title:words.pending},pending.map(record=>h(ui.Card,{key:record.action.id},renderRecord(record)))),
+      history.length>0 && h(ui.Section,{title:words.recent},history.map(record=>h(ui.Card,{key:record.action.id},renderRecord(record)))));
   };
 }

@@ -53,7 +53,7 @@ describe("Personal action approval component",()=>{
     const rule={id:"rule-1",description:"Allow this destination",operation:"synthetic.send",target:"reader@example.invalid",decision:"allow",enabled:true,created_at:"2026-11-01T00:00:00Z",updated_at:"2026-11-01T00:00:00Z"};
     const rules=vi.fn(async command=>command?.action==="delete"?{schema:"personal-review-rules.v1",revision:4,rules:[]}:{schema:"personal-review-rules.v1",revision:command?3:2,rules:[{...rule,decision:command?"ask":"allow"}]});
     await render({list:async()=>ready(),resolve:async()=>ready(),revoke:async()=>ready(),rules});
-    await React.act(async()=>button('[data-review-rule-ask="rule-1"]').click());
+    await React.act(async()=>{const select=container.querySelector<HTMLSelectElement>('[data-review-rule-choice="rule-1"]')!;select.value="ask";select.dispatchEvent(new Event("change",{bubbles:true}));});
     expect(rules).toHaveBeenLastCalledWith({action:"update",expected_revision:2,id:"rule-1",decision:"ask",enabled:true});
     await React.act(async()=>button('[data-review-rule-delete="rule-1"]').click());
     expect(rules).toHaveBeenLastCalledWith({action:"delete",expected_revision:3,id:"rule-1"});
@@ -126,7 +126,6 @@ describe("Personal action approval component",()=>{
     expect(toggle.getAttribute("aria-checked")).toBe("false");expect(toggle.disabled).toBe(true);
     const saved=structuredClone(snapshot);saved.settings!.auto_review_enabled=true;saved.settings!.revision++;
     await React.act(async()=>save?.(saved));expect(button('[role="switch"]').getAttribute("aria-checked")).toBe("true");
-    expect(container.textContent).toContain("synthetic.send");
   });
   it("locks all mutations after a lost acknowledgement until a read verifies the state",async()=>{
     const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
