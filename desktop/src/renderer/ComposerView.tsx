@@ -1,3 +1,4 @@
+import { ComposerSlashMenu } from "./ComposerSlashMenu";
 import { ComposerInput, composerInputElement, type ComposerInputHandle } from "./ComposerInput";
 import { useComposerPluginMenu } from "./ComposerPluginMenu";
 import { pluginReferenceParts } from "./ComposerPluginReferences";
@@ -104,7 +105,6 @@ import {
   RuntimePicker,
   RuntimeModelMenu,
   runtimePanelWidth,
-  SlashCommandIcon,
   permissionModeFromSummary,
   permissionModeOption
 } from "./ComposerRuntimeMenus";
@@ -1406,69 +1406,9 @@ export function Composer({
             width={commandMenuWidth}
             matchAnchorWidth
           >
-            <div
-              className="composer-context-menu composer-plus-menu slash-command-menu"
-              id={slashMenuID}
-              role="listbox"
-              aria-label={t("composer.slashCommands")}
-              style={{ "--composer-menu-width": `${commandMenuWidth}px` } as CSSProperties}
-            >
-              {visibleSlashCommands.length > 0 ? (
-                <div className="slash-command-list composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
-                  {visibleSlashCommands.map((command, index) => {
-                    const selected = index === selectedSlashIndex;
-                    const optionID = `${slashMenuID}-${command.id}`;
-                    return (
-                      <Tooltip
-                        content={
-                          command.disabledReason || command.kind === "skill"
-                            ? undefined
-                            : command.description
-                        }
-                        key={command.id}
-                      >
-                        <button
-                          className={`slash-command-item${selected ? " selected" : ""}`}
-                          data-command-name={command.name}
-                          id={optionID}
-                          role="option"
-                          type="button"
-                          aria-selected={selected}
-                          disabled={Boolean(command.disabledReason)}
-                          onMouseEnter={() => {
-                            if (!command.disabledReason) {
-                              setSelectedSlashIndex(index);
-                            }
-                          }}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => applySlashCommand(command, slashDraft)}
-                        >
-                          <SlashCommandIcon command={command} />
-                          <span className="composer-plus-menu-item-title slash-command-title">
-                            {command.kind === "skill" ? command.name : command.title}
-                          </span>
-                          {command.kind === "skill" ? (
-                            <span className={`composer-plus-menu-item-desc ${command.disabledReason ? "slash-command-meta" : "slash-command-summary"}`}>
-                              {command.disabledReason ?? command.description}
-                            </span>
-                          ) : (
-                            <span
-                              className={`composer-plus-menu-item-desc ${
-                                command.disabledReason ? "slash-command-meta" : "slash-command-command"
-                              }`}
-                            >
-                              {command.disabledReason ?? `/${command.name}`}
-                            </span>
-                          )}
-                        </button>
-                      </Tooltip>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="slash-command-empty">{t("composer.noMatchingCommand", { query: slashQuery })}</div>
-              )}
-            </div>
+            <ComposerSlashMenu id={slashMenuID} width={commandMenuWidth} commands={visibleSlashCommands}
+              selectedIndex={selectedSlashIndex} onSelectIndex={setSelectedSlashIndex}
+              onSelect={command => applySlashCommand(command, slashDraft)} query={slashQuery} />
           </FloatingMenuPortal>
         ) : null}
         <ComposerQueueStrip

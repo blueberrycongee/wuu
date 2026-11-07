@@ -359,6 +359,25 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 		if delegated && params.TurnID != "" && (result.Turn == nil || result.Turn.RequestID != delegatedScope.RunID || result.Turn.TurnID != params.TurnID) {
 			return pluginhost.SessionInspectResult{}, false, errors.New("execution authorization does not cover this turn")
 		}
+		if params.IncludeSkills {
+			metadata, found, err := binding.Sessions.Find(params.SessionID)
+			if err != nil {
+				return result, terminal, err
+			}
+			if !found || metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) {
+				return result, terminal, errors.New("skill discovery requires an owned session")
+			}
+			catalog, _, err := s.currentSkillCatalog(ctx, params.SessionID, true)
+			if err != nil {
+				return result, terminal, err
+			}
+			result.Skills = make([]pluginhost.SessionSkill, 0, len(catalog))
+			for _, item := range catalog {
+				if item.UserInvocable {
+					result.Skills = append(result.Skills, pluginhost.SessionSkill{Name: item.Name, Source: item.Source, Path: item.Path, Description: item.Description, ArgumentHint: item.ArgumentHint, UserInvocable: item.UserInvocable, DisableModelInvoke: item.DisableModelInvoke})
+				}
+			}
+		}
 		if params.IncludeProgress {
 			turnID := ""
 			if result.Turn != nil {
@@ -930,7 +949,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		}
 	}
 	params.Cause = strings.TrimSpace(params.Cause)
-	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.ResumeReceiptID == "") {
+	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.Input.AttachmentHandoff == nil && params.ResumeReceiptID == "") {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
 	}
 	if (len(params.Input.Attachments) > 0 || len(params.Input.ContentParts) > 0) && params.UserInputRequestID == "" {
@@ -942,7 +961,10 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if params.ResumeAccepted != (params.ResumeReceiptID != "") {
 		return pluginhost.SessionSendResult{}, errors.New("resume_accepted and resume_receipt_id must be provided together")
 	}
-	var clientAttachments []runtime.ClientInputAttachment
+	clientAttachments, handoffErr := validateAttachmentHandoff(params)
+	if handoffErr != nil {
+		return pluginhost.SessionSendResult{}, handoffErr
+	}
 	if params.ResumeReceiptID != "" {
 		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || len(params.Input.ContentParts) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools || params.ToolPolicy != nil {
 			return pluginhost.SessionSendResult{}, errors.New("resume must reference only the immutable accepted input")
@@ -1130,6 +1152,17 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	msg, err := literalUserMessageFromPrompt(params.Input.Prompt, images, files)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
+	}
+	// Only authenticated owner input invokes a skill. Plugin wakeups stay literal.
+	if params.UserInputRequestID != "" {
+		content, selected, err := s.renderExplicitSkillPrompt(ctx, params.SessionID, params.Input.Prompt)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if selected {
+			msg.Content = content
+			msg.DisplayContent = params.Input.Prompt
+		}
 	}
 	if len(clientAttachments) > 0 && !durableClient {
 		msg, err = s.persistInputWorkingCopies(ctx, params.SessionID, msg, received, false)

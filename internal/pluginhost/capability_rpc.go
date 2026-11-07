@@ -215,19 +215,20 @@ const (
 
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
-	HostServiceSessionCreate          HostServiceMethod = "host.session.create"
-	HostServiceSessionControl         HostServiceMethod = "host.session.control"
-	HostServiceSessionModel           HostServiceMethod = "host.session.model"
-	HostServiceSessionSend            HostServiceMethod = "host.session.send"
-	HostServiceSessionList            HostServiceMethod = "host.session.list"
-	HostServiceSessionCancel          HostServiceMethod = "host.session.cancel"
-	HostServiceSessionInspect         HostServiceMethod = "host.session.inspect"
-	HostServiceExecutionAuthorization HostServiceMethod = "host.execution.authorization"
-	HostServicePersonal               HostServiceMethod = "host.personal"
-	HostServiceSessionContext         HostServiceMethod = "host.session.context"
-	HostServiceSessionHistoryRead     HostServiceMethod = "host.session.history.read"
-	HostServiceSessionHistorySearch   HostServiceMethod = "host.session.history.search"
-	HostServiceSessionAttachmentRead  HostServiceMethod = "host.session.attachment.read"
+	HostServiceSessionCreate             HostServiceMethod = "host.session.create"
+	HostServiceSessionControl            HostServiceMethod = "host.session.control"
+	HostServiceSessionModel              HostServiceMethod = "host.session.model"
+	HostServiceSessionSend               HostServiceMethod = "host.session.send"
+	HostServiceSessionList               HostServiceMethod = "host.session.list"
+	HostServiceSessionCancel             HostServiceMethod = "host.session.cancel"
+	HostServiceSessionInspect            HostServiceMethod = "host.session.inspect"
+	HostServiceExecutionAuthorization    HostServiceMethod = "host.execution.authorization"
+	HostServicePersonal                  HostServiceMethod = "host.personal"
+	HostServiceSessionContext            HostServiceMethod = "host.session.context"
+	HostServiceSessionHistoryRead        HostServiceMethod = "host.session.history.read"
+	HostServiceSessionHistorySearch      HostServiceMethod = "host.session.history.search"
+	HostServiceSessionAttachmentSnapshot HostServiceMethod = "host.session.attachment.snapshot"
+	HostServiceSessionAttachmentRead     HostServiceMethod = "host.session.attachment.read"
 
 	// Workspaces. These methods operate only on an isolated workspace owned by
 	// a plugin-created session; callers never supply filesystem paths.
@@ -381,11 +382,33 @@ type SessionInputAttachment struct {
 	MediaType string `json:"media_type"`
 }
 
+// SessionAttachmentHandoff carries agent-supplied bytes, never a human-input
+// proof. Source is provenance asserted by the authenticated sender, not authority
+// to read the source session. The envelope binds bytes to one destination/run.
+type SessionHandoffAttachment struct {
+	SHA256    string `json:"sha256"`
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+type SessionAttachmentHandoff struct {
+	Version     int                        `json:"version"`
+	SessionID   string                     `json:"session_id"`
+	RequestID   string                     `json:"request_id"`
+	Source      providers.MessageRef       `json:"source"`
+	Attachments []SessionHandoffAttachment `json:"attachments"`
+}
+
+// Match the client attachment budget while keeping base64 envelopes within the
+// 64 MiB RPC frame limit. Source snapshots use separate bounded document chunks.
+const MaxSessionHandoffBytes = 20 * 1024 * 1024
+
 type SessionInput struct {
-	ContentParts  []providers.MessageContentPart `json:"content_parts,omitempty"`
-	Attachments   []SessionInputAttachment       `json:"attachments,omitempty"`
-	Prompt        string                         `json:"prompt"`
-	ContextBlocks []SessionContextBlock          `json:"context_blocks,omitempty"`
+	AttachmentHandoff *SessionAttachmentHandoff      `json:"attachment_handoff,omitempty"`
+	ContentParts      []providers.MessageContentPart `json:"content_parts,omitempty"`
+	Attachments       []SessionInputAttachment       `json:"attachments,omitempty"`
+	Prompt            string                         `json:"prompt"`
+	ContextBlocks     []SessionContextBlock          `json:"context_blocks,omitempty"`
 }
 
 type SessionInputPresentation struct {
@@ -495,6 +518,7 @@ type SessionInspectParams struct {
 	// Requires an explicit request ID. Progress is an optional display snapshot,
 	// not a delivery receipt, event stream or durable execution result.
 	IncludeProgress bool `json:"include_progress,omitempty"`
+	IncludeSkills   bool `json:"include_skills,omitempty"`
 }
 
 // SessionControlParams coordinates automatic execution without changing Owner
@@ -520,7 +544,18 @@ type SessionAcceptedInput struct {
 	Attachments []SessionInputAttachment     `json:"attachments,omitempty"`
 }
 
+type SessionSkill struct {
+	Name               string `json:"name"`
+	Source             string `json:"source"`
+	Path               string `json:"path,omitempty"`
+	Description        string `json:"description,omitempty"`
+	ArgumentHint       string `json:"argument_hint,omitempty"`
+	UserInvocable      bool   `json:"user_invocable"`
+	DisableModelInvoke bool   `json:"disable_model_invoke"`
+}
+
 type SessionInspectResult struct {
+	Skills        []SessionSkill        `json:"skills,omitempty"`
 	AcceptedInput *SessionAcceptedInput `json:"accepted_input,omitempty"`
 
 	Receipt       *providers.ClientInputReceipt `json:"receipt,omitempty"`

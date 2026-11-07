@@ -357,7 +357,17 @@ export interface PluginUIConversationAttachmentProps {
   onLoad(): void | Promise<string | void>;
 }
 
+export type PluginUIConversationCommand = {
+  id: string;
+  name: string;
+  description: string;
+} & ({ kind: "skill"; skill: import("./ui-catalog.js").CatalogSkillV1 } | { kind: "action"; onSelect(): void | Promise<void> });
+
 export interface PluginUIConversationComposerProps {
+  commands?: readonly PluginUIConversationCommand[];
+  commandsLoading?: boolean;
+  commandsError?: string;
+  onRefreshCommands?(): void;
  replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
   conversationId: string;
   /** Discover connectors in this independent conversation's host. */
@@ -699,6 +709,13 @@ export interface ClientInputAttachment {
  readonly media_type: string;
  readonly data: string;
 }
+/** Agent-supplied bytes; source is provenance, never permission or human input. */
+export interface SessionAttachmentHandoff {
+ version: 1; session_id: string; request_id: string; source: MessageRef;
+ attachments: Array<SessionInputAttachment & {data: string}>;
+}
+/** Aggregate decoded-byte limit, matching the client attachment budget. */
+export const MAX_SESSION_HANDOFF_BYTES = 20 * 1024 * 1024;
 export interface SessionInputAttachment { sha256: string; filename: string; media_type: string }
 export interface SessionHistoryAttachment { kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string }
 /** Renderer request envelope. Major version comes from required_services;
@@ -814,6 +831,7 @@ export const HOST_SERVICE_METHODS = [
   "host.session.control",
   "host.session.model",
   "host.session.attachment.read",
+  "host.session.attachment.snapshot",
   "host.session.history.read",
   "host.session.history.search",
   "host.workspace.status",
@@ -858,6 +876,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.control": "host.session.control",
   "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
+  "host.session.attachment.snapshot": "host.session.attachment.snapshot",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -1613,6 +1632,7 @@ export interface HostServiceContracts {
       session_id: string;
       input: {
         prompt: string;
+        attachment_handoff?: SessionAttachmentHandoff;
         content_parts?: readonly import("./ui-submission.js").ApplicationSubmissionContentPartV1[];
         attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
@@ -1670,11 +1690,14 @@ export interface HostServiceContracts {
       /** Requires explicit request_id and session.progress.v1 host feature.
        * Samples current display progress without subscribing or changing work. */
       include_progress?: boolean;
+      /** Discover user-invocable skills in an owned session, never the active Coding workspace. */
+      include_skills?: boolean;
     };
     result: {
       receipt?: ClientInputReceipt;
       accepted_input?: AcceptedClientInputView;
       pending_inputs?: AcceptedClientInputView[];
+      skills?: import("./ui-catalog.js").CatalogSkillV1[];
       session: {
         session_id: string;
         /** Present only when the calling plugin owns this session. */
@@ -1709,8 +1732,12 @@ export interface HostServiceContracts {
       progress?: SessionProgressSnapshotV1;
     };
   };
+  "host.session.attachment.snapshot": {
+    params: Omit<HostServiceContracts["host.session.attachment.read"]["params"], "offset" | "snapshot_id">;
+    result: { snapshot_id: string; attachment: SessionHistoryAttachment };
+  };
   "host.session.attachment.read": {
-    params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; seq: number; kind: "image" | "file" | "artifact"; index: number; sha256: string; offset?: number };
+    params: { snapshot_id?: string; execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; seq: number; kind: "image" | "file" | "artifact"; index: number; sha256: string; offset?: number };
     /** Offset/total count base64 characters, chunks are at most 128 KiB. */
     result: { data: string; offset: number; total: number; content_type: string; name: string; sha256: string };
   };

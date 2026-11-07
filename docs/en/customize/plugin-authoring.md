@@ -505,6 +505,43 @@ the outer send reports `host_error` instead. Generic `service_unavailable`, othe
 errors, and timeouts do not prove non-admission; retain the request identity and
 reconcile its receipt before replacing it.
 
+`host.session.send.input.attachment_handoff` is an additive v1 envelope for
+agent-supplied bytes: `{version:1, session_id, request_id, source:{session_id,seq},
+attachments:[{sha256,filename,media_type,data}]}`. `data` is standard base64;
+at most 16 nonempty files and 20 MiB decoded bytes are accepted. Destination
+and request IDs must match the send. It cannot combine with human input proofs,
+receipt resume, ordinary attachment references, or steering. Normal send grants,
+private-session ownership and receiver policy still apply. Source is asserted
+provenance from the authenticated sender, not proof of human authorship or a
+capability to read another session. Producers must use authorized source reads.
+The receiver verifies digests and safe filenames before writing target working
+copies and retains plugin-origin/read-only message provenance. Check the source
+host feature `session-attachment-handoff.v1`; older receivers reject the new
+field. Route receipts include the full envelope in their intent digest, so changed
+bytes cannot replay under the same operation ID.
+
+`host.session.attachment.snapshot` accepts the same source reference as attachment
+read (without offset or snapshot ID) and returns `{snapshot_id, attachment}`.
+It uses authorized visible history, freezes verified bytes in the selected
+`state.documents` provider, and publishes a manifest only after all 512 KiB
+base64 chunks commit. Repeated calls reuse the same source/plugin/user-space key;
+a partial commit or lost reply can be retried without replacing existing chunks.
+Pass `snapshot_id` and the original source reference to attachment read to recover
+128 KiB ranges without rereading the original message. Every range rechecks current
+session visibility and the complete binding and verifies the stored chunk digest.
+The snapshot service is a mutation and is unavailable during preparation. Check
+`session-attachment-snapshot.v1` before creating snapshots.
+
+Snapshot chunks are separate from plugin settings' 1 MiB value budget. Payload
+storage is approximately 4/3 of raw bytes plus a small manifest, with no payload
+copies in task revisions or route outboxes. Snapshots, including incomplete chunks,
+follow workspace-state retention; removal of source access prevents further reads.
+The final send remains a bounded in-memory envelope: 20 MiB decoded is about
+26.7 MiB base64 within the 64 MiB RPC frame limit. It is not an unbounded network
+stream; serialization and target normalization also allocate proportional to file
+size. Larger requests fail explicitly. Older receivers reject unsupported fields
+or their smaller size limit before admission.
+
 `host.session.send` accepts optional `disable_tools: true` for a tool-free turn. This removes every model-visible tool and rejects tool execution, including code-mode dispatch; it never changes later turns or grants permissions. Omitted or false preserves normal behavior. Restricted turns cannot use `if_running: "steer"` or external agent engines: unsupported requests fail before admission. `tool_policy: { allow?: string[], deny?: string[] }` adds an attenuation-only policy for one isolated turn. Omitted `allow` retains the ordinary surface minus `deny`; explicit `allow: []` denies every tool. The host intersects this policy with existing session restrictions, checks actual and discovered tool execution, and restores the ordinary surface after success, failure or interruption. It never changes persistent session settings. Check the `session-turn-tool-policy.v1` host feature before relying on this contract.
 
 A turn carrying `tool_policy` is a separate execution boundary: it cannot steer another turn, and incoming plugin or completion input is queued separately. Human `turn/steer` receives `isolated_turn_requires_queue` only when the input has not been admitted; the Desktop queues the same original input and client ID on the same captured connection for that exact refusal. Other errors and uncertain responses are not retried this way. Already-held input must use its existing resume flow. Owner interruption remains available. When allowing `run_code`, its embedded catalog and search/describe text can still describe tools excluded by the turn policy; actual nested calls remain checked. Use a direct-tool-only allowlist for a review that must not advertise unrelated bindings. Tool names restrict the surface, not task authority: the receiving plugin must still validate the exact task, run, revision and tool arguments.
@@ -522,6 +559,12 @@ A completed turn may have an empty `final_output`: normal provider completion do
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
 
 Subagent and Peers qualify tool-call identities with the host-supplied session, tool, call ID, turn ID and step index when available; transport execution IDs do not define retries. Calls without turn and step metadata retain their legacy mapping. Persisted requests continue recovery using their stored IDs; missing historical turn/step identity is not inferred. Peers' existing content-duplicate and uncertain-send matching remain separate policies.
+
+#### Owned session skills
+
+`host.session.inspect` accepts `include_skills: true` for a session owned by the calling plugin. `skills` lists the current user-invocable catalog, with name, source, path, description and invocation metadata. This option never grants access to another plugin's session or the selected Coding workspace. Omitted or empty `skills` means no available skills. A fresh request refreshes the catalog.
+
+Authenticated `host.session.send` user input can carry the same explicit `/skill` identity as the Coding composer. The host validates and expands it before acceptance, freezes the content for queue/recovery, and retains the original draft as display text. Plugin-origin messages do not invoke slash commands.
 
 #### Live session progress
 

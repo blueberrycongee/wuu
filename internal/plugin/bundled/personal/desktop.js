@@ -2357,6 +2357,30 @@ var personalDesktop = (() => {
       const historyRecovery = React.useRef({ complete: false, endSeq: void 0 });
       currentAgent.current = agent;
       const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
+      const [commandState, setCommandState] = React.useState({ session: "", skills: [], loading: false, error: "" });
+      const commandRequest = React.useRef(0);
+      const refreshCommands = React.useCallback(() => {
+        if (!conversationID || !agent) return;
+        const request = ++commandRequest.current;
+        setCommandState({ session: conversationID, skills: [], loading: true, error: "" });
+        call("agents.skills", { agent_id: agent.agent_id }).then((result) => {
+          if (!Array.isArray(result?.skills)) throw new Error("Skill catalog is unavailable");
+          if (request === commandRequest.current && !api.signal.aborted) setCommandState({ session: conversationID, skills: result.skills, loading: false, error: "" });
+        }).catch((error2) => {
+          if (request === commandRequest.current && !api.signal.aborted) setCommandState({ session: conversationID, skills: [], loading: false, error: error2 instanceof Error ? error2.message : String(error2) });
+        });
+      }, [conversationID, agent?.agent_id]);
+      React.useEffect(() => {
+        refreshCommands();
+        return () => {
+          commandRequest.current++;
+        };
+      }, [refreshCommands]);
+      const commands = [
+        { id: "settings", name: "settings", description: t("settings"), kind: "action", onSelect: () => api.application.invoke("settings.open", { pageId: `plugin-view:${api.pluginId}:personal-preferences` }) },
+        ...(commandState.session === conversationID ? commandState.skills : []).filter((skill) => skill.user_invocable).map((skill) => ({ id: `skill:${skill.source}:${skill.path || skill.name}`, name: skill.name, description: skill.description || skill.name, kind: "skill", skill }))
+      ];
+      const commandProps = { commands, commandsLoading: commandState.loading, commandsError: commandState.error, onRefreshCommands: refreshCommands };
       const stream = streamFor(conversationID), running = stream.running, activeTurnID = stream.activeTurnID, queuedCount = draft.queueIds.size, liveMessages = [...stream.items.values()], liveTools = [...stream.tools.values()], stopState = draft.stopState;
       const task = tasks.find((item) => item.task_id === selection?.taskId);
       const artifactOutputs = records.flatMap((record) => (record.attachments || []).filter((attachment) => attachment.kind === "artifact").map((attachment) => ({ seq: record.seq, at: record.at, attachment })));
@@ -3152,7 +3176,7 @@ var personalDesktop = (() => {
           showJumpToLatest: false,
           searchLabel: "",
           searchContent: null,
-          composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { sessionScope: route, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, replySelection.key, void 0, contentParts), onStop: stopReply }))
+          composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { ...commandProps, sessionScope: route, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, replySelection.key, void 0, contentParts), onStop: stopReply }))
         },
         replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
         replyRecords.map((record) => renderReplyMessage(record)),
@@ -3186,6 +3210,7 @@ var personalDesktop = (() => {
             searchLabel: t("historySearch"),
             searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
             composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, {
+              ...commandProps,
               sessionScope: route,
               conversationId: conversationID,
               prompt: draft.prompt,

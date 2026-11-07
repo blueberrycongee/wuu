@@ -1935,6 +1935,23 @@ jobs:
           # Verify immutable inputs after BOTH acceptance lanes have stopped.
           shasum -a 256 --check desktop/out/personal-desktop-acceptance/inputs.sha256 || status=1
           exit "$status"
+      - name: Verify Twin commands against the Personal runtime
+        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          npm --prefix desktop run build:core
+          desktop/node_modules/.bin/electron desktop/scripts/personal-commands-e2e.cjs
+      - name: Upload Twin command evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-commands-macos-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            desktop/out/personal-commands-e2e/*.json
+            desktop/out/personal-commands-e2e/*.png
+            desktop/out/personal-commands-e2e/*.log
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Exercise error feedback after prerequisite failure
         id: error-feedback-components
         if: ${{ !cancelled() && steps.install-focused-dependencies.outcome == 'success' && (steps.build-focused-renderer.outcome != 'success' || steps.build-personal-fixture.outcome != 'success' || steps.install-personal-chromium.outcome != 'success') }}

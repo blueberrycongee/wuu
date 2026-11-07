@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -5,6 +6,21 @@ import { expect, it, vi } from 'vitest';
 import { AppServerClientPool } from './appServerClients';
 import { RegisteredSessionTransport } from './registeredSessionTransport';
 import type { ServerEvent, RuntimeContext } from '../shared/protocol';
+
+// A valid, uncompressed multi-page PDF exercises sizes beyond both the former
+// handoff limit and plugin settings' single-value budget, without a binary fixture.
+function handoffPDF(): Buffer {
+ const pages=192,objects:string[]=['<< /Type /Catalog /Pages 2 0 R >>',`<< /Type /Pages /Count ${pages} /Kids [${Array.from({length:pages},(_,i)=>`${4+i*2} 0 R`).join(' ')}] >>`,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+ for(let page=1;page<=pages;page++){
+  const content='BT /F1 8 Tf 36 760 Td 7 TL\n'+Array.from({length:100},(_,row)=>`(Attachment handoff report page ${page} row ${row+1}: verify bytes, scope and recovery.) Tj T*`).join('\n')+'\nET\n';
+  objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5+(page-1)*2} 0 R >>`,`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`);
+ }
+ let text='%PDF-1.4\n',offsets:number[]=[];
+ for(const [index,object] of objects.entries()){offsets.push(Buffer.byteLength(text));text+=`${index+1} 0 obj\n${object}\nendobj\n`;}
+ const xref=Buffer.byteLength(text);
+ text+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n${offsets.map(offset=>`${String(offset).padStart(10,'0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+ return Buffer.from(text);
+}
 
 // Exercise actual pool registration and JSONL generation routing. Refusal and
 // response loss must never create a replacement target or borrow pipe ownership.
@@ -106,7 +122,12 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
    ({task}=await client('tasks.create',{agent_id:agent.agent_id,request_id:'actual-personal-task',title:'Use existing Coding session',goal:'Read existing work and report the result',existing_session:locator}));
    evidence.checks.push('startup Code Mode task uses actual owner client/grant path; no unsupported subprocess is executed');
   }else{
-  await pool.requestInContext<any>(source,'plugin/client/request',{...descriptor,user_space_id:'local',product_domain:'personal',method:'agents.send',input:{agent_id:agent.agent_id,request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.'},user_input:{request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.'}});
+  const bytes=handoffPDF(),sha256=createHash('sha256').update(bytes).digest('hex');
+  expect(bytes.length).toBeGreaterThan(1024*1024);
+  evidence.pdf={bytes:bytes.length,sha256,pages:192};
+  if(process.env.WUU_REGISTERED_SESSION_EVIDENCE)await writeFile(process.env.WUU_REGISTERED_SESSION_EVIDENCE+'.pdf',bytes);
+  const attachment={sha256,filename:'handoff.pdf',media_type:'application/pdf'};
+  await pool.requestInContext<any>(source,'plugin/client/request',{...descriptor,user_space_id:'local',product_domain:'personal',method:'agents.send',input:{agent_id:agent.agent_id,request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.',attachments:[attachment]},user_input:{request_id:'discover-existing',prompt:'Use my existing Coding workspace to read the existing work and return its result here.',attachments:[{...attachment,data:bytes.toString('base64')}]}});
   let rawCatalog='';for(let attempt=0;attempt<50&&!rawCatalog;attempt++){try{rawCatalog=await readFile(join(root,'personal.json.catalog'),'utf8');}catch{await new Promise(resolve=>setTimeout(resolve,100));}}
   const findCatalog=(value:any):any=>{if(typeof value==='string'){try{return findCatalog(JSON.parse(value));}catch{return undefined;}}if(value&&typeof value==='object'){if(Array.isArray(value.targets))return value;for(const entry of Object.values(value)){const result=findCatalog(entry);if(result)return result;}}};
   const catalog=findCatalog(JSON.parse(rawCatalog));expect(catalog).toBeDefined();
@@ -115,7 +136,7 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
   evidence.checks.push(`actual Personal list_sessions discovers named ${routeKind} target through selected catalog`);
   let createdReceipt='';for(let attempt=0;attempt<100&&!createdReceipt;attempt++){try{createdReceipt=await readFile(join(root,'personal.json.created'),'utf8');}catch{await new Promise(resolve=>setTimeout(resolve,100));}}expect(createdReceipt).toContain('actual-personal-task');
   for(let attempt=0;attempt<50&&!task?.execution?.existing_session;attempt++){const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.request_id==='actual-personal-task');if(!task?.execution?.existing_session)await new Promise(resolve=>setTimeout(resolve,100));}
-  expect(task).toBeDefined();expect(task.source.message_binding).toBe('host_turn');expect(task.source.original_text).toBe('Use my existing Coding workspace to read the existing work and return its result here.');
+  expect(task).toBeDefined();expect(task.error,JSON.stringify(task)).toBeUndefined();expect(task.source.message_binding).toBe('host_turn');expect(task.source.original_text).toBe('Use my existing Coding workspace to read the existing work and return its result here.');
   evidence.checks.push('same Personal conversation invokes actual create_task tool with observed catalog locator and original human request provenance');
   expect(task.execution.existing_session).toMatchObject(locator);evidence.checks.push(`generated Personal task selected exact existing ${routeKind} target`);
   if(!queued)await vi.waitFor(()=>expect(events.some(event=>event.kind==='notification'&&event.message.method==='turn/completed'&&(event.message.params as any)?.thread_id===agent.main_session_id)).toBe(true),{timeout:10000});
@@ -134,6 +155,7 @@ it.skipIf(!process.env.WUU_REGISTERED_SESSION_TEST_BINARY).each(['owner-local','
   // Observe only: the real background outbox must wake, decide, and deliver.
   for(let attempt=0;attempt<600 && !(task.state==='completed'&&task.delivery?.status==='delivered');attempt++){const listed=await client('tasks.list',{agent_id:agent.agent_id});task=listed.tasks.find((entry:any)=>entry.task_id===task.task_id);if(task.delivery?.status==='failed')break;if(!(task.state==='completed'&&task.delivery?.status==='delivered'))await new Promise(resolve=>setTimeout(resolve,200));}
   expect(task.state,JSON.stringify(task)).toBe('completed');expect(task.delivery.status).toBe('delivered');
+  if(!ptc){const files=await pool.requestInContext<any[]>(target,'fixture/attachments',{});expect(files.length).toBeGreaterThan(0);for(const file of files){expect(file.sha256).toBe(evidence.pdf.sha256);expect(file.bytes).toBe(evidence.pdf.bytes);expect(file.media_type).toBe('application/pdf');expect(file.origin).toBe('plugin');expect(file.read_only).toBe(true);}evidence.checks.push('multi-page PDF above 1 MiB traverses actual Personal source, snapshot chunks, desktop routing and target working-copy persistence with exact digest');}
   expect(task.result.origin).toBe('controller_review');expect(task.result.summary).toContain('Controller reviewed');
   expect(task.requirements_revision).toBe(revision);expect(task.authorization).toEqual(rootAuthorization);expect(task.execution.existing_session).toMatchObject(locator);
   const reviews=JSON.parse(await readFile(join(root,'personal.json.reviews'),'utf8'));expect(reviews).toHaveLength(followup?2:1);

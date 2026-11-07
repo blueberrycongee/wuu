@@ -450,6 +450,12 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 `host.session.list` 的 owned 结果，以及调用插件所拥有会话的 `host.session.inspect` 结果，在可用时包含 `creation_request_id`。该字段是原始 `host.session.create` 请求 ID，在首个轮次开始前也可返回，因此插件能发现已被接纳但响应丢失的创建请求。shared 列表和对其他所有者会话的检查不返回此字段。它仅用于请求关联，不授予会话控制权限。
 
+`host.session.send.input.attachment_handoff` 提供附加的 v1 Agent 字节信封：`{version:1, session_id, request_id, source:{session_id,seq}, attachments:[{sha256,filename,media_type,data}]}`。`data` 为标准 base64，最多 16 个非空文件、解码后合计 20 MiB。目标和请求 ID 必须与发送一致，不能与真人输入证明、回执恢复、普通附件引用或 steering 混用。原有发送授权、私有会话归属及接收端策略继续生效。来源是已认证发送方提供的出处信息，不是真人署名证明或读取其他会话的凭据；发送方必须通过已授权的源读取获取文件。接收端校验摘要和安全文件名后写入目标工作副本，并保留插件来源、只读消息标记。发送宿主通过 `session-attachment-handoff.v1` 特性声明支持；旧接收端拒绝新字段。路由回执摘要覆盖整个信封，因此同一操作 ID 不能重放改变后的字节。
+
+`host.session.attachment.snapshot` 接受与附件读取相同的源引用（不含 offset 或 snapshot_id），返回 `{snapshot_id, attachment}`。它通过已授权的可见历史读取并冻结字节，使用选定的 `state.documents` 提供者，以 512 KiB base64 分块持久化，全部分块提交后才发布清单。源消息、插件和用户空间相同的重试复用已有分块，可恢复部分提交或响应丢失。向附件读取传入 `snapshot_id` 和原源引用即可按 128 KiB 范围恢复，不再重复读取原消息；每次读取重新校验当前会话可见性、完整绑定和分块摘要。快照创建是写操作，准备阶段不可调用；调用前检查 `session-attachment-snapshot.v1`。
+
+分块不占用插件设置的 1 MiB 单值预算。字节存储约为原始数据的 4/3 加少量清单，任务修订和路由发件箱不重复保存字节。快照及未完成分块随工作区状态保留；源访问权限撤销后不能继续读取。最终发送仍是有上限的内存信封：20 MiB 原始数据约为 26.7 MiB base64，低于 64 MiB RPC 帧上限。它不是无限制的网络流，序列化和目标规范化的内存开销也随文件大小增加。超限请求明确失败；旧接收端在执行前拒绝不支持的字段或超过旧版上限的请求。
+
 对于 `host.session.send`，`session_send_unavailable` 表示宿主没有发送处理器，
 本次调用未被分派。服务恢复后，显式重试可以释放这条未被接受的请求身份。
 该错误码仅保留给此边界：已调用的处理器返回同码（包括嵌套调用返回）时，
@@ -473,6 +479,12 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到后续轮次，空闲会话仍会被自动唤醒。返回 `running` 和 `steered: true` 时，输入可能尚未被消费，不代表已持久送达。Peers 会保留待送达状态，直到持久记录确认送达；重启丢失的输入使用同一请求 ID 重试。
 
 Subagent 和 Peers 在信息可用时，用宿主提供的会话、工具、调用 ID、回合 ID 与步骤索引共同标识工具调用；传输执行 ID 不决定重试身份。缺少回合和步骤元数据的调用保留原有映射。已持久化的请求继续使用其保存的 ID 恢复，不推断过去未保存的回合或步骤身份。Peers 原有的内容去重与不确定发送匹配仍是独立策略。
+
+#### 自有会话技能
+
+`host.session.inspect` 可对调用插件拥有的会话传入 `include_skills: true`。返回的 `skills` 包含当前可由用户调用的技能目录，以及名称、来源、路径、描述和调用元数据。该选项不授予其他插件会话或当前 Coding 工作区的访问权。字段缺失或空数组表示没有可用技能；新请求会刷新目录。
+
+经过身份校验的 `host.session.send` 用户输入可携带与 Coding 输入框相同的显式 `/skill` 身份。宿主在接纳前校验并展开技能，为排队和恢复保存内容，同时保留原草稿作为显示文本。插件来源的消息不会触发斜杠命令。
 
 #### 会话实时进度
 

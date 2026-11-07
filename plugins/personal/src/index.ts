@@ -17,7 +17,7 @@ import {
   type HostServiceContracts, type JSONSchemaObject, type KernelHostServiceMethod,
   type RuntimeHost, type RuntimeInitializeParams, type RuntimeLifecycleContext,
   type RuntimeExecutionContext, type RuntimePlugin, type ServiceInvokeParams, type ToolExecuteParams,
-  type ApplicationSubmissionContentPartV1, type ToolExecuteResult, type TurnLifecycleInput, type SessionInputAttachment, type MessageRef, type MessageRelation,
+  type ApplicationSubmissionContentPartV1, type ToolExecuteResult, type TurnLifecycleInput, MAX_SESSION_HANDOFF_BYTES, type SessionAttachmentHandoff, type SessionInputAttachment, type MessageRef, type MessageRelation,
 } from "@wuu/plugin-sdk";
 
 const reactionGuidance = "Choose an emoji-only reaction when a simple acknowledgment, thanks, or shared progress genuinely needs no substantive response; you need not react to every message. When the user asks a question, seeks help, needs an explanation, or needs a meaningful action/status response, answer substantively: an emoji must not replace the answer or the authorized work. After an emoji-only acknowledgment, do not add a redundant 'Got it' or equivalent. A reaction does not prove work is complete: never use ✅ or another emoji to imply an unperformed or unverified action succeeded. Reactions are not approval or authorization.";
@@ -88,6 +88,10 @@ interface Execution {
   status: "pending" | "submitted" | "unknown"; finished_state?: string; cancel_pending?: boolean; cancel_error?: string; session_id?: string; turn_id?: string; queue_id?: string;
   control_call_ids?: string[]; dispatch_pending?: boolean;
 }
+interface AttachmentSnapshotRecord {
+ source: MessageRef;
+ attachments: Array<{sha256:string;filename:string;media_type:string;data?:string;snapshot_id?:string;size?:number;kind?:"image"|"file"|"artifact";index?:number}>;
+}
 interface TaskLink { task_id: string; requirements_revision: number; execution_session_id?: string; question_request_id?: string }
 interface InputReceipt extends Versioned { fingerprint: string }
 interface Evidence { seq?: number; action_id?: string; action_digest?: string; description: string; session_id: string }
@@ -97,12 +101,13 @@ interface CompletionIntent {
   evidence: Array<{ seq?: number; tool_call_id?: string; action_id?: string; description: string }>;
 }
 export interface PersonalTask extends Versioned {
+  attachment_access?: {request_id:string;session_id:string;snapshot:string;authorization?:PersonalAuthorization};
   existing_session?: SessionLocatorV1;
   authorization?: PersonalAuthorization; authorization_request?: PersonalAuthorizationIntent; authorization_state?: "needs_authorization";
   task_id: string; agent_id: string; user_space_id: string; request_id: string;
   title: string; goal: string; routine_id?: string; routine_revision?: number; requirements_revision: number;
-  source: { session_id: string; message_seq?: number; message_binding?: "host_turn"; original_text?: string }; authorization_refs: string[];
-  requirements: Array<{ revision: number; goal: string; authorization_refs: string[]; changed_at: string }>;
+  source: { session_id: string; message_seq?: number; message_binding?: "host_turn"; original_text?: string; attachment_snapshot?: string }; attachment_snapshot?: string; handoff_context?: string; authorization_refs: string[];
+  requirements: Array<{ revision: number; goal: string; source?: PersonalTask["source"]; attachment_snapshot?: string; authorization_refs: string[]; changed_at: string }>;
   state: "queued" | "running" | "waiting_user" | "waiting_external" | "awaiting_review" | "completed" | "failed" | "stopped";
   execution: Execution; previous_executions: Execution[]; previous_deliveries?: Execution[];
   input_mutations?: Array<{ key: string; fingerprint: string; requirements_revision: number }>;
@@ -128,7 +133,7 @@ interface NegativeFeedback extends Versioned {
 interface FeedbackBarrier extends Versioned { message_seq: number }
 interface ReactionFeed extends Versioned { messages: Array<{ seq: number }> }
 interface Settings extends Versioned { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean; notification_batch_seconds?: number }
-const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "model.get", "model.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop"];
+const methodNames = ["actions.resume", "actions.sync","agents.list", "agents.ensure_default", "agents.open", "agents.skills", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "model.get", "model.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop"];
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle", "agent.request.transform"];
@@ -186,7 +191,7 @@ export class PersonalPlugin implements RuntimePlugin {
     const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.model", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3 as const,
-      required_services: [{name:"agent.tools",major_version:1,required:false},{name:"session.transport",major_version:1,required:false}, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }],
+      required_services: [{name:"host.session.attachment.snapshot",major_version:1,required:false},{name:"agent.tools",major_version:1,required:false},{name:"session.transport",major_version:1,required:false}, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }],
       provided_services: [PROMPT_SERVICE_DESCRIPTOR, { name: "personal.recovery", version: "1.0.0", methods: [{ name: "run", input_schema: "personal.recovery.run.input.v1", output_schema: "personal.recovery.run.output.v1" }] }, { name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: [...PERSONAL_AUTHORITY_METHODS, {name:"resolve-lineage",input_schema:"execution.lineage.resolve.input.v1",output_schema:"execution.lineage.resolve.output.v1"}, ...methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` }))] }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
         { id: "agent.system_prompt.section", kind: "transform" as const, version: 1 },
@@ -202,7 +207,7 @@ export class PersonalPlugin implements RuntimePlugin {
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence.", input_schema: schema({ request_id: string, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] } }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string, expected_revision: integer, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
         { id: "list_sessions", description: "List existing registered sessions available to receive delegated work and unavailable hosts. Discovery is not control permission. Names can repeat: choose the exact returned locator, asking the user to disambiguate when needed. Owner-local targets use the registered desktop owner connection; federation targets retain their separate receiver policy. Never switch paths after a refusal, invent a locator, or replace an unavailable session.", input_schema: schema({}), activity: {read_only:true,concurrency_safe:true} },
-        { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. For an already-added session, supply its exact existing_session locator; never create a replacement. Existing-target delegation is text-only; attachments must be handled at the original target, never invent cross-host file paths. Preserve the user wording, distinguish your task goal from the original request. The host must authorize this exact target. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string, title: string, goal: string, existing_session: existingTargetSchema, authorization_refs: { type: "array", items: string } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
+        { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. Include only the relevant conversation context needed to resolve references in handoff_context; it is controller-authored, not a user quote or authorization. Do not include unrelated private conversation. For an already-added session, supply its exact existing_session locator; never create a replacement. Attachments on the bound user message are transferred automatically up to 20 MiB total; larger files fail before dispatch. Never invent cross-host file paths. Preserve the user wording, distinguish your task goal from the original request. The host must authorize this exact target. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string, title: string, goal: string, handoff_context: {type:"string",maxLength:16000}, existing_session: existingTargetSchema, authorization_refs: { type: "array", items: string } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
         { id:"review_task_response", direct_only:true, description:"Only inside the host-admitted isolated controller review: record one decision for its exact task revision and worker response. Accept only a sufficient result; follow_up continues the same task with its existing authority, while ask_user requests missing user input. This records an intent, applied only after this review turn completes. It never grants new permission.", input_schema:schema({task_id:string,requirements_revision:integer,worker_request_id:string,decision:{type:"string",enum:["accept","follow_up","ask_user"]},summary:string,evidence:{type:"array",minItems:1,maxItems:20,items:string},follow_up:string,question:string},"task_id","requirements_revision","worker_request_id","decision","summary","evidence"),activity:{concurrency_safe:true} },
         { id: "accept_task_result", description: "From the main Personal controller, accept the current existing-session worker response after reviewing it against the task objective. A question or incomplete response requires a same-target follow-up, not acceptance. Bind the exact worker request_id and latest task revision. Record the decision and evidence; this grants no additional execution permission.", input_schema: schema({task_id:string,expected_revision:integer,request_id:string,summary:string,evidence:{type:"array",minItems:1,maxItems:20,items:string}}, "task_id","expected_revision","request_id","summary","evidence"), activity:{concurrency_safe:true} },
         { id: "list_tasks", description: "Find Personal matters by state or text, including tasks that need an answer. Independent goals use independent tasks; additions or corrections update the existing task.", input_schema: schema({ query: string, state: string }), activity: { read_only: true, concurrency_safe: true } },
@@ -388,6 +393,9 @@ export class PersonalPlugin implements RuntimePlugin {
       let admitted = task?.execution;
       let priorDispatchUncertain = false;
       const {execution_authorization: _authorization, ...routeInput} = params;
+      // Bytes live in their immutable snapshot, not duplicated in every task run.
+      const {attachment_handoff, ...cachedInput} = routeInput.input;
+      routeInput.input = cachedInput;
       if (task) {
         if (!await this.routines.canExecute(task)) throw new Error("owning routine no longer permits this task revision");
         // The agent send queue may outlive a task stop or requirements edit.
@@ -402,7 +410,7 @@ export class PersonalPlugin implements RuntimePlugin {
       }
       if (task?.execution.existing_session) {
         try {
-          return await this.routeExecution<HostServiceContracts["host.session.send"]["result"]>(admitted!, {version:1,operation:"send",operation_id:admitted!.request_id,locator:task.execution.existing_session,params:admitted!.route_input!});
+          return await this.routeExecution<HostServiceContracts["host.session.send"]["result"]>(admitted!, {version:1,operation:"send",operation_id:admitted!.request_id,locator:task.execution.existing_session,params:{...admitted!.route_input!,input:{...admitted!.route_input!.input,...(attachment_handoff ? {attachment_handoff} : {})}}});
         } catch (error) {
           // A failed retry cannot erase a previous admitted or uncertain send.
           // Capture this inside the serialized send queue, not its stale caller.
@@ -740,29 +748,92 @@ export class PersonalPlugin implements RuntimePlugin {
     }
     return links;
   }
+  private async captureTaskSource(source: MessageRef): Promise<PersonalTask["source"]> {
+    const page = await this.host.call("host.session.history.read", {session_id:source.session_id,start_seq:source.seq,end_seq:source.seq,limit:1});
+    const record = page.records?.find(record => record.seq === source.seq);
+    if (!record || record.role !== "user" || record.origin && record.origin !== "user" || record.hidden || record.read_only || record.truncated) throw new Error("Original user request is unavailable; delegation was not sent");
+    const captured: PersonalTask["source"] = {session_id:source.session_id,message_seq:source.seq,message_binding:"host_turn",original_text:record.content || record.display_content || ""};
+    if (!record.attachments?.length) return captured;
+    if (record.attachments.length > 16 || record.attachments.some(a => !Number.isSafeInteger(a.size) || a.size <= 0) || record.attachments.reduce((total,a)=>total+a.size,0) > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 20 MiB or 16 files; nothing was sent");
+    const policy = await executionGrants(this.host).describe();
+    if (!policy.host_features?.includes("session-attachment-snapshot.v1")) throw new Error("Host does not support durable attachment snapshots; nothing was sent");
+    const attachments: AttachmentSnapshotRecord["attachments"] = [];
+    for (const meta of record.attachments) {
+      const snapshot = await this.host.call("host.session.attachment.snapshot", {session_id:source.session_id,seq:source.seq,kind:meta.kind,index:meta.index,sha256:meta.sha256});
+      if (!snapshot.snapshot_id || !isDeepStrictEqual(snapshot.attachment,meta)) throw new Error("Attachment changed or is unavailable; nothing was sent");
+      attachments.push({sha256:meta.sha256,filename:meta.name,media_type:meta.mime_type,size:meta.size,kind:meta.kind,index:meta.index,snapshot_id:snapshot.snapshot_id});
+    }
+    const value = JSON.stringify({source,attachments}), key = createHash("sha256").update(value).digest("hex");
+    const saved = await this.host.call("host.storage.compare_exchange", {scope:"user",key:this.key("attachment-handoff",key),expected:null,value});
+    if (!saved.swapped && saved.value !== value) throw new Error("Attachment snapshot conflict; nothing was sent");
+    captured.attachment_snapshot = key;
+    return captured;
+  }
+  private async taskAttachmentHandoff(task: PersonalTask): Promise<SessionAttachmentHandoff | undefined> {
+    const key = task.attachment_snapshot ?? task.source.attachment_snapshot;
+    if (!key) return undefined;
+    const policy = await executionGrants(this.host).describe();
+    if (!policy.host_features?.includes("session-attachment-handoff.v1")) throw Object.assign(new Error("Host does not support attachment handoff; nothing was sent"), {code:"session_operation_not_executed"});
+    const {raw,value} = await this.read<AttachmentSnapshotRecord>("attachment-handoff",key);
+    if (!raw || !value || createHash("sha256").update(raw).digest("hex") !== key) throw new Error("Persisted attachment snapshot is unavailable or changed; nothing was sent");
+    if (value.attachments.some(file => file.snapshot_id)) {
+      const request_id = `personal-attachment-${id(task.task_id,String(task.requirements_revision),key,JSON.stringify(task.authorization?.reference))}`;
+      if (task.attachment_access?.request_id !== request_id) {
+        task = await this.change<PersonalTask>("task",task.task_id,current => {
+          if (!current || current.requirements_revision !== task.requirements_revision) throw new Error("Task changed before attachment access");
+          return {...current,attachment_access:{request_id,session_id:value.source.session_id,snapshot:key}};
+        });
+      }
+      if (!authorizationCurrent(task.attachment_access?.authorization)) {
+        const authorization = await issueAuthorization(this.host,{request_id,expires_at:task.authorization!.expires_at,kind:"exact-run",task_id:task.task_id,session_id:value.source.session_id,parent:task.authorization!.reference,requested_actions:["user/session/attachment.read"]});
+        task = await this.change<PersonalTask>("task",task.task_id,current => {
+          if (!current || current.attachment_access?.request_id !== request_id) throw new Error("Task changed before attachment access");
+          return {...current,attachment_access:{...current.attachment_access,authorization}};
+        });
+      }
+    }
+    const attachments: SessionAttachmentHandoff["attachments"] = [];
+    let size = 0;
+    for (const file of value.attachments) {
+      let data = file.data; // Previously saved inline v1 snapshots remain recoverable.
+      if (data === undefined) {
+        if (!file.snapshot_id || !file.kind || file.index === undefined || !Number.isSafeInteger(file.size) || file.size! <= 0 || size + file.size! > MAX_SESSION_HANDOFF_BYTES) throw new Error("Invalid attachment snapshot manifest; nothing was sent");
+        const parts: string[] = [], hash = createHash("sha256");
+        const total = Math.ceil(file.size! / 3) * 4;
+        let offset = 0, decoded = 0;
+        while (offset < total) {
+          const part = await this.host.call("host.session.attachment.read", {execution_authorization:task.attachment_access!.authorization!.reference,session_id:value.source.session_id,seq:value.source.seq,kind:file.kind,index:file.index,sha256:file.sha256,snapshot_id:file.snapshot_id,offset});
+          if (part.offset !== offset || part.total !== total || part.sha256 !== file.sha256 || part.name !== file.filename || part.content_type !== file.media_type || !part.data.length || offset + part.data.length > total) throw new Error("Attachment snapshot is unavailable or changed; nothing was sent");
+          const bytes = Buffer.from(part.data,"base64");
+          if (bytes.toString("base64") !== part.data) throw new Error("Invalid attachment snapshot bytes; nothing was sent");
+          hash.update(bytes); decoded += bytes.length; parts.push(part.data); offset += part.data.length;
+        }
+        if (decoded !== file.size || hash.digest("hex") !== file.sha256) throw new Error("Attachment digest mismatch; nothing was sent");
+        size += decoded; data = parts.join("");
+      } else {
+        size += Buffer.byteLength(data,"base64");
+        if (size > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 20 MiB; nothing was sent");
+      }
+      attachments.push({sha256:file.sha256,filename:file.filename,media_type:file.media_type,data});
+    }
+    return {version:1,session_id:task.execution.session_id!,request_id:task.execution.request_id,source:value.source,attachments};
+  }
   private async createTask(input: Record<string, unknown>, agent: NamedAgent, sourceSession?: string, routineID?: string, routineRevision?: number, sourceMessage?: MessageRef) {
     const requestID = text(input, "request_id", true), taskID = `task-${id(this.space, agent.agent_id, requestID)}`;
     const title = text(input, "title", true), goal = text(input, "goal", true), authorization = this.authorizations(input);
+    const handoffContext = text(input, "handoff_context");
+    if (handoffContext.length > 16000) throw new Error("handoff_context exceeds 16000 characters");
     const target = input.existing_session === undefined ? undefined : existingSessionTarget(input.existing_session);
     if (target) await this.requireExistingSessionRouting();
-    let originalText: string | undefined;
-    let attachmentTransferUnavailable = false;
-    if (target) {
-      if (input.attachments !== undefined) attachmentTransferUnavailable = true;
-      if (sourceMessage) {
-        const page = await this.host.call("host.session.history.read", {session_id:sourceMessage.session_id,start_seq:sourceMessage.seq,end_seq:sourceMessage.seq,limit:1});
-        const record = page.records?.find(record => record.seq === sourceMessage.seq);
-        if (!record || record.role !== "user" || record.origin && record.origin !== "user" || record.hidden || record.read_only || record.truncated) throw new Error("Original user request is unavailable; existing-session delegation was not sent");
-        if (record.attachments?.length) attachmentTransferUnavailable = true;
-        originalText = record.content || record.display_content || "";
-      }
-    }
+    if (input.attachments !== undefined) throw new Error("Attachments require a host-bound source message");
+    const existing = (await this.read<PersonalTask>("task",taskID)).value;
+    const source = existing?.source ?? (sourceMessage ? await this.captureTaskSource(sourceMessage) : {session_id:sourceSession || agent.main_session_id});
     const controller = target ? (await this.main()).main_session_id : undefined;
     let task = await this.change<PersonalTask>("task", taskID, current => {
-      if (current) { if (!isDeepStrictEqual(current.existing_session, target) || current.request_id !== requestID || (current.requirements_revision === 1 && (current.goal !== goal || current.title !== title))) throw new Error("request_id_conflict"); return current; }
+      if (current) { if (!isDeepStrictEqual(current.existing_session, target) || current.request_id !== requestID || (current.requirements_revision === 1 && (current.goal !== goal || current.title !== title || (current.handoff_context || "") !== handoffContext))) throw new Error("request_id_conflict"); return current; }
       return { ...(target ? {existing_session: target} : {}), task_id: taskID, agent_id: agent.agent_id, user_space_id: this.space, request_id: requestID, title, goal, routine_id: routineID, routine_revision: routineRevision,
-        requirements_revision: 1, source: { session_id: sourceSession || agent.main_session_id, ...(sourceMessage ? { message_seq: sourceMessage.seq, message_binding: "host_turn" as const, ...(originalText !== undefined ? {original_text:originalText} : {}) } : {}) },
-        authorization_refs: authorization, requirements: [{ revision: 1, goal, authorization_refs: authorization, changed_at: now() }], state: "queued", execution: { ...this.execution(taskID, 1), ...(target ? {existing_session: target, controller_session_id: controller, session_id: target.session_id, ...(attachmentTransferUnavailable ? {attachment_transfer_unavailable:true} : {})} : {}) }, previous_executions: [], cancel_requested: false, reconciliation_required: false, revision: 0, created_at: now(), updated_at: now() };
+        requirements_revision: 1, attachment_snapshot:source.attachment_snapshot, source,
+        ...(handoffContext ? {handoff_context:handoffContext} : {}), authorization_refs: authorization, requirements: [{ revision: 1, goal, source, attachment_snapshot:source.attachment_snapshot, authorization_refs: authorization, changed_at: now() }], state: "queued", execution: { ...this.execution(taskID, 1), ...(target ? {existing_session: target, controller_session_id: controller, session_id: target.session_id} : {}) }, previous_executions: [], cancel_requested: false, reconciliation_required: false, revision: 0, created_at: now(), updated_at: now() };
     });
     if (!authorizationCurrent(task.authorization)) task = await this.authorizeTask(task, await this.routines.authorizationFor(task));
     return { task: task.execution.status === "pending" && !terminalTask(task) ? await this.dispatch(task) : task };
@@ -776,7 +847,7 @@ export class PersonalPlugin implements RuntimePlugin {
         return current.authorization_request?.request_id === request_id ? current : {...current,authorization_request:{request_id,expires_at}};
       });
     }
-    const authorization = await issueAuthorization(this.host,{request_id,expires_at:task.authorization_request!.expires_at,kind:"task-lineage",task_id:task.task_id,session_id:(await this.main()).main_session_id,max_depth:2,parent:parent?.reference,requested_actions:task.existing_session ? [...routeActions,...SESSION_DELIVERY_ACTIONS,"execution/grant/derive"] : ["user/session/create",...TASK_EXECUTION_ACTIONS,"execution/grant/derive"]});
+    const authorization = await issueAuthorization(this.host,{request_id,expires_at:task.authorization_request!.expires_at,kind:"task-lineage",task_id:task.task_id,session_id:(await this.main()).main_session_id,max_depth:2,parent:parent?.reference,requested_actions:task.existing_session ? [...routeActions,...SESSION_DELIVERY_ACTIONS,"user/session/attachment.read","execution/grant/derive"] : ["user/session/create",...TASK_EXECUTION_ACTIONS,"execution/grant/derive"]});
     return this.change<PersonalTask>("task",task.task_id,current => {
       if (!current || current.requirements_revision !== task.requirements_revision || current.cancel_requested) throw new Error("task authorization revision changed");
       return {...current,authorization,authorization_state:undefined};
@@ -802,7 +873,7 @@ export class PersonalPlugin implements RuntimePlugin {
     if (agent.status !== "active" || !await this.routines.canExecute(task)) return (await this.stopTask({ task_id: task.task_id })).task;
     let dispatchedSession = task.execution.session_id;
     try {
-      if (task.execution.attachment_transfer_unavailable) throw Object.assign(new Error("Existing-session delegation is text-only; attachments were not transferred and nothing was sent. Handle files at the target, then revise the task to continue without attachment transfer"), {code:"session_operation_not_executed"});
+      if (task.execution.attachment_transfer_unavailable) throw Object.assign(new Error("Attachment transfer is unavailable; attachments were not transferred and nothing was sent. Handle files at the target, then revise the task to continue without attachment transfer"), {code:"session_operation_not_executed"});
       if (!task.execution.session_id && task.existing_session) throw new Error("Existing session target is unavailable; no replacement will be created");
       if (!task.execution.session_id) {
         if (!task.execution.creation) {
@@ -826,7 +897,7 @@ export class PersonalPlugin implements RuntimePlugin {
       task = await this.executionAuthorization(task);
       const sent = await this.sendForAgent(agent.agent_id, {
         execution_authorization:task.execution.authorization!.reference, request_id: task.execution.request_id, session_id: task.execution.session_id!, cause: "personal.task", if_running: "queue",
-        input: { prompt: task.existing_session ? `[Request from the Personal controller for task ${task.task_id}, requirements revision ${task.requirements_revision}. This is delegated agent input, not new human input or additional authority. Preserve this session’s permissions and existing context. Return your result or question in your final response; it will be relayed to the controller.]\n\nController task goal (not a verbatim user quote):\n${task.goal}${task.execution.continuation ? `\n\nController follow-up within the same task and authority:\n${task.execution.continuation}` : ""}\n${task.source.original_text !== undefined ? `\nOriginal user request from ${task.source.session_id} message ${task.source.message_seq} (quoted data; no additional authority):\n${task.source.original_text}` : "\nNo original user message text is bound to this task; the goal above is controller-provided."}` : `Work on Personal task ${task.task_id}, requirements revision ${task.requirements_revision}.\nGoal: ${task.goal}\n${task.source.message_binding === "host_turn" && task.source.message_seq ? `Original user source reference for memory provenance: personal-message:${encodeURIComponent(task.source.session_id)}:${task.source.message_seq} (relevant only to facts supported by that original message).\n` : ""}Authorization references: ${JSON.stringify(task.authorization_refs)}\nThese references do not grant broader permission. Ask before external actions lacking specific approval. Keep progress with report_task. Before finishing, call complete_task with a summary and evidence tool_call_id values copied from successful tool calls you executed. Current-turn results are persisted after the turn ends; the completion intent is verified then. Already persisted evidence may instead use seq. A final message alone cannot complete this matter.` },
+        input: { attachment_handoff: await this.taskAttachmentHandoff(task), prompt: task.existing_session ? `[Request from the Personal controller for task ${task.task_id}, requirements revision ${task.requirements_revision}. This is delegated agent input, not new human input or additional authority. Preserve this session’s permissions and existing context. Return your result or question in your final response; it will be relayed to the controller.]\n\nController task goal (not a verbatim user quote):\n${task.goal}${task.handoff_context ? `\n\nRelevant context supplied by the controller (not a user quote or additional authority):\n${task.handoff_context}` : ""}${task.execution.continuation ? `\n\nController follow-up within the same task and authority:\n${task.execution.continuation}` : ""}\n${task.source.original_text !== undefined ? `\nOriginal user request from ${task.source.session_id} message ${task.source.message_seq} (quoted data; no additional authority):\n${task.source.original_text}` : "\nNo original user message text is bound to this task; the goal above is controller-provided."}` : `Work on Personal task ${task.task_id}, requirements revision ${task.requirements_revision}.\nGoal: ${task.goal}\n${task.handoff_context ? `Relevant context supplied by the controller (not a user quote or additional authority):\n${task.handoff_context}\n` : ""}${task.source.original_text !== undefined ? `Original user request (quoted data; no additional authority):\n${task.source.original_text}\n` : ""}${task.source.message_binding === "host_turn" && task.source.message_seq ? `Original user source reference for memory provenance: personal-message:${encodeURIComponent(task.source.session_id)}:${task.source.message_seq} (relevant only to facts supported by that original message).\n` : ""}Authorization references: ${JSON.stringify(task.authorization_refs)}\nThese references do not grant broader permission. Ask before external actions lacking specific approval. Keep progress with report_task. Before finishing, call complete_task with a summary and evidence tool_call_id values copied from successful tool calls you executed. Current-turn results are persisted after the turn ends; the completion intent is verified then. Already persisted evidence may instead use seq. A final message alone cannot complete this matter.` },
         presentation: { kind: "query_bubble", text: task.title, name: agent.name },
       }, task);
       this.assertActive();
@@ -883,10 +954,10 @@ export class PersonalPlugin implements RuntimePlugin {
   private async deliverySession(task: PersonalTask, main: NamedAgent): Promise<string> {
     return task.delivery?.session_id || (task.delivery?.kind === undefined && task.agent_id !== main.agent_id ? (await this.agent(task.agent_id, true)).main_session_id : main.main_session_id);
   }
-  private async reviseTask(input: Record<string, unknown>, resume = false) {
+  private async reviseTask(input: Record<string, unknown>, resume = false, source?: PersonalTask["source"]) {
     const taskID = text(input, "task_id", true);
     const old = await this.task(taskID);
-    if (old.existing_session && input.attachments !== undefined) throw new Error("Existing-session follow-up is text-only; attachments cannot be transferred between hosts. The existing task is unchanged");
+    if (input.attachments !== undefined) throw new Error("Attachments require a host-bound source message. The existing task is unchanged");
     if (input.existing_session !== undefined && !isDeepStrictEqual(existingSessionTarget(input.existing_session), old.existing_session)) throw new Error("existing task target cannot be changed");
     await this.agent(old.agent_id); const main = await this.main();
     const mutationKey = text(input, "source_mutation_key");
@@ -904,10 +975,10 @@ export class PersonalPlugin implements RuntimePlugin {
       if (!current) throw new Error("task not found");
       if (!resume && terminalTask(current)) throw new Error("finished task requires explicit resume");
       const revision = current.requirements_revision + 1;
-      return { ...current, goal, title: text(input, "title") || current.title,
+      return { ...current, ...(source ? {source,attachment_snapshot:source.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot} : {}), goal, title: text(input, "title") || current.title,
         authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), requirements_revision: revision,
         input_mutations: [...current.input_mutations ?? [], ...(mutationKey ? [{ key: mutationKey, fingerprint, requirements_revision: revision }] : [])],
-        requirements: [...current.requirements, { revision, goal, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
+        requirements: [...current.requirements.map(item=>({...item,source:item.source ?? current.source})), { revision, goal, source:source ?? current.source, attachment_snapshot:source?.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
         previous_executions: [...current.previous_executions, { ...current.execution, cancel_pending: Boolean(current.execution.session_id && !current.execution.finished_state && !(current.execution.existing_session && current.execution.status === "pending" && !current.execution.dispatch_pending)) }], execution: { ...this.execution(taskID, revision), ...(current.existing_session ? {existing_session: current.existing_session, controller_session_id: current.execution.controller_session_id, session_id: current.existing_session.session_id} : {}) }, state: "queued", cancel_requested: false,
         previous_deliveries: [...current.previous_deliveries ?? [], ...(current.delivery && ["pending", "submitted"].includes(current.delivery.status) ? [{ controller_review:current.delivery.kind === "review", authorization:current.delivery.authorization, request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])],
         reconciliation_required: false, waiting_reason: undefined, question: undefined, result: undefined, worker_result: undefined, controller_decision: undefined, completion_intent: undefined, delivery: undefined, error: undefined, progress: undefined };
@@ -1439,16 +1510,15 @@ export class PersonalPlugin implements RuntimePlugin {
         const mutationKey = call.source_message && ["update_task", "resume_task"].includes(call.tool_id) ? `${call.source_message.session_id}:${call.source_message.seq}:${call.tool_id}` : "";
         // A successful retry is checked before stale-question validation. It must not apply twice.
         const alreadyApplied = Boolean(mutationKey && target.input_mutations?.some(item => item.key === mutationKey));
-        if (!alreadyApplied && target.existing_session && mutationKey && call.source_message) {
+        let followupSource: PersonalTask["source"] | undefined;
+        if (!alreadyApplied && mutationKey && call.source_message) {
           if (call.source_message.session_id !== sessionID || call.source_message.seq < 1) throw new Error("invalid trusted source message");
-          const page = await this.host.call("host.session.history.read", {session_id:sessionID,start_seq:call.source_message.seq,end_seq:call.source_message.seq,limit:1});
-          const record = page.records?.find(record => record.seq === call.source_message!.seq);
-          if (!record || record.role !== "user" || record.origin && record.origin !== "user" || record.hidden || record.read_only || record.truncated) throw new Error("Original follow-up request is unavailable; the existing task is unchanged");
-          if (record.attachments?.length) throw new Error("Existing-session follow-up is text-only; attachments cannot be transferred between hosts. The existing task is unchanged");
+          followupSource = await this.captureTaskSource(call.source_message);
         }
         const links = await this.relationTargets(call.message_relation, agent, !alreadyApplied);
         if (links.length && !links.some(link => link.task_id === target.task_id)) throw new Error("task target conflicts with the user's explicit relation");
         if (!alreadyApplied && call.tool_id === "resume_task" && target.waiting_reason === "user" && links.length && !links.some(link => link.task_id === target.task_id && link.requirements_revision === target.requirements_revision)) throw new Error("stale task question revision");
+        if (["update_task","resume_task"].includes(call.tool_id)) return result(await this.reviseTask({...input,...(mutationKey ? {source_mutation_key:mutationKey} : {})},call.tool_id === "resume_task",followupSource));
         return result(await this.request(call.tool_id === "update_task" ? "tasks.update" : call.tool_id === "resume_task" ? "tasks.resume" : call.tool_id === "retry_task_delivery" ? "tasks.reconcile" : "tasks.stop", { ...input, ...(mutationKey ? { source_mutation_key: mutationKey } : {}), ...(call.tool_id === "retry_task_delivery" ? { retry_delivery: true } : {}) }, call.tool_id === "retry_task_delivery" ? executionHost : undefined, execution, false, call.tool_id === "retry_task_delivery" && Boolean(call.source_message && call.source_message.session_id === sessionID && call.source_message.seq > 0)));
       }
       case "report_task": return result(await this.report(input, sessionID, false, call));
@@ -1622,10 +1692,17 @@ export class PersonalPlugin implements RuntimePlugin {
         if(!owning || !authorizationCurrent(owning.authorization) || !sameAuthorization(owning.authorization.reference,input.parent.reference) || input.parent.scope.task_id!==owning.routine_id || input.parent.scope.revision!==owning.config_revision || task.routine_revision!==owning.config_revision) throw new Error("unverified parent-child task lineage");
       }
     }
+    const attachmentAccess = input.kind === "exact-run" && task.attachment_access?.request_id === input.request_id && task.attachment_access?.session_id === sessionID;
+    if (attachmentAccess) {
+      const snapshot = task.attachment_snapshot ?? task.source.attachment_snapshot;
+      const saved = snapshot ? (await this.read<AttachmentSnapshotRecord>("attachment-handoff",snapshot)).value : undefined;
+      if (!saved || task.attachment_access!.snapshot !== snapshot || saved.source.session_id !== sessionID || terminalTask(task)) throw new Error("Attachment access is outside task scope");
+    }
     let runID="", revision=task.requirements_revision;
     let authorization=task.authorization;
     if(input.kind==="exact-run") {
-      if(!sessionID && !task.execution.session_id && input.request_id===task.execution.create_request_id) {
+      if(attachmentAccess) {runID=input.request_id!;authorization=task.attachment_access!.authorization;}
+      else if(!sessionID && !task.execution.session_id && input.request_id===task.execution.create_request_id) {
         if(!task.execution.creation || !input.creation || !isDeepStrictEqual(task.execution.creation,input.creation)) throw new Error("pending task creation intent changed");
         runID=task.execution.request_id;
       }
@@ -1636,9 +1713,9 @@ export class PersonalPlugin implements RuntimePlugin {
     } else if(sessionID!==main.main_session_id) throw new Error("task root authority requires bound main session");
     if(input.reference && !sameAuthorization(authorization?.reference,input.reference)) throw new Error("stored execution authorization changed");
     const requirements=task.requirements.find(value=>value.revision===revision);if(!requirements)throw new Error("unknown requirements revision");
-    const context_digest=createHash("sha256").update(JSON.stringify({task_id:task.task_id,revision,goal:requirements.goal,source:task.source,authorization_refs:requirements.authorization_refs,routine_id:task.routine_id,routine_revision:task.routine_revision})).digest("hex");
+    const context_digest=createHash("sha256").update(JSON.stringify({task_id:task.task_id,revision,goal:requirements.goal,source:requirements.source ?? task.source,...(requirements.attachment_snapshot ? {attachment_snapshot:requirements.attachment_snapshot} : {}),authorization_refs:requirements.authorization_refs,routine_id:task.routine_id,routine_revision:task.routine_revision})).digest("hex");
     if(!task.existing_session && input.parent?.scope.task_id===task.task_id && input.parent.scope.context_digest!==context_digest) throw new Error("parent task context changed");
-    return {...(task.existing_session ? {route:{locator:task.existing_session,operations:["send","inspect","cancel"] as const}} : {}),...(!sessionID ? {creation:task.execution.creation} : {}),parent_task_id:input.parent?.scope.task_id ?? "",parent_revision:input.parent?.scope.revision ?? 0,task_id:task.task_id,run_id:runID,session_id:sessionID,revision,context_digest};
+    return {...(task.existing_session && !attachmentAccess ? {route:{locator:task.existing_session,operations:["send","inspect","cancel"] as const}} : {}),...(!sessionID ? {creation:task.execution.creation} : {}),parent_task_id:input.parent?.scope.task_id ?? "",parent_revision:input.parent?.scope.revision ?? 0,task_id:task.task_id,run_id:runID,session_id:sessionID,revision,context_digest};
   }
   private async history(sessionID: string, input: Record<string, unknown>, snapshot?: number) {
     const limit = input.limit === undefined ? 50 : Math.max(1, Math.min(50, number(input, "limit")));
@@ -1720,6 +1797,12 @@ export class PersonalPlugin implements RuntimePlugin {
         if (!ownerClient) throw new Error("message receipts require the authenticated client capability");
         const agent = await this.conversation(input, true);
         return this.host.call("host.session.inspect", { session_id: agent.main_session_id });
+      }
+      case "agents.skills": {
+        if (!ownerClient || !clientHost) throw new Error("skill discovery requires the authenticated owner client");
+        const agent = await this.conversation(input, true);
+        const result = await clientHost.call("host.session.inspect", { session_id: agent.main_session_id, include_skills: true });
+        return { skills: result.skills ?? [] };
       }
       case "agents.messages.status":
       case "agents.messages.resume":

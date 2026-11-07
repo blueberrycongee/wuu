@@ -38,6 +38,7 @@
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
+    "test:e2e:personal-commands": "npm run build:core && node scripts/build-personal-fixture.cjs && electron scripts/personal-commands-e2e.cjs",
     "test:e2e:conversation-restoration": "electron scripts/conversation-restoration-e2e.cjs",
     "test:e2e:draft-recovery": "electron scripts/draft-recovery-e2e.cjs",
     "test:e2e:restart-recovery": "electron scripts/restart-recovery-e2e.cjs",
