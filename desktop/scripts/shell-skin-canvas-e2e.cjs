@@ -11,7 +11,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { app } = require('electron');
+const { app, nativeImage } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
 const repository = path.dirname(desktop);
@@ -98,18 +98,61 @@ async function capture(name) {
   const scale = image.getSize().width / win.getContentSize()[0];
   const bitmap = image.toBitmap();
   pixels.set(name, { scale, width: image.getSize().width, height: image.getSize().height,
-    at(x, y) {
+    pixel(x, y) {
       const i = (Math.round(y * scale) * this.width + Math.round(x * scale)) * 4;
       return [bitmap[i], bitmap[i + 1], bitmap[i + 2]];
     },
+    // Mean over one 4px cell so dot-screen samples do not depend on phase.
+    at(x, y) {
+      const sum = [0, 0, 0], step = 1 / scale, count = Math.round(4 * scale) ** 2;
+      for (let dy = 0; dy < 4; dy += step) for (let dx = 0; dx < 4; dx += step) {
+        const [b, g, r] = this.pixel(x + dx, y + dy); sum[0] += b; sum[1] += g; sum[2] += r;
+      }
+      return sum.map(v => Math.round(v / count));
+    },
     row(x0, y, count) {
       const out = [];
-      for (let x = x0; x < x0 + count; x++) out.push(this.at(x, y));
+      for (let x = x0; x < x0 + count; x++) out.push(this.pixel(x, y));
       return out;
     } });
   report.captures.push({ file: `${name}.png`, phase, canvas: await evaluate(() => document.querySelector('.conversation-pane')?.dataset.canvas) });
 }
 const at = (name, x, y) => pixels.get(name).at(x, y);
+// Average window color in a 16px square at a client point. Plugin skin images
+// taint the artwork canvas, so read the composited page instead.
+async function artworkSample(x, y) {
+  const image = await win.webContents.capturePage({ x, y, width: 16, height: 16 });
+  const bitmap = image.toBitmap(), sum = [0, 0, 0];
+  for (let i = 0; i < bitmap.length; i += 4) { sum[0] += bitmap[i + 2]; sum[1] += bitmap[i + 1]; sum[2] += bitmap[i]; }
+  return sum.map(v => Math.round(v / (bitmap.length / 4)));
+}
+// A user picture: horizontal magenta-to-cyan gradient with a bright band.
+function fixturePicture() {
+  const width = 1600, height = 1000, bitmap = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const t = x / (width - 1), band = Math.max(0, 1 - Math.abs(y - height * 0.62) / 90);
+    const i = (y * width + x) * 4;
+    bitmap[i] = Math.min(255, 170 * (1 - t) + 255 * t * 0.9 + 200 * band); // B
+    bitmap[i + 1] = Math.min(255, 200 * t + 160 * band); // G
+    bitmap[i + 2] = Math.min(255, 255 * (1 - t) + 200 * band); // R
+    bitmap[i + 3] = 255;
+  }
+  return nativeImage.createFromBitmap(bitmap, { width, height }).toPNG();
+}
+async function chooseBackgroundFile(file) {
+  const send = (method, params) => win.webContents.debugger.sendCommand(method, params);
+  const { root } = await send('DOM.getDocument', { depth: 0 });
+  const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: '.background-file-picker input[type=file]' });
+  assert.ok(nodeId, 'background file input must exist');
+  await send('DOM.setFileInputFiles', { nodeId, files: [file] });
+}
+const backgroundRemove = () => evaluate(() => {
+  const button = document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button');
+  if (button) button.click();
+  return Boolean(button);
+});
+const backgroundSaved = () => evaluate(() => Boolean(document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button'))
+  && !document.querySelector('.background-file-picker.disabled'));
 const dist = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
 
 const composer = '[data-main-conversation-composer] textarea';
@@ -261,8 +304,7 @@ async function main() {
     win.webContents.reload();
     await shellReady();
     if (skin.placement === 'canvas') {
-      await until(() => evaluate(() => document.documentElement.dataset.shellPlacement === 'canvas'
-        && document.documentElement.hasAttribute('data-shell-dots')), 'canvas placement applied', 30000);
+      await until(() => evaluate(() => document.documentElement.dataset.shellPlacement === 'canvas'), 'canvas placement applied', 30000);
       const afterRibbon = await evaluate(() => [...document.querySelectorAll('[data-ribbon-id]')].map(n => n.dataset.ribbonId));
       ribbons.fixtureOpaque = afterRibbon.find(id => id.includes('opaque-nav')) || ribbons.fixtureOpaque;
       ribbons.fixtureClear = afterRibbon.find(id => id.includes('clear-nav')) || ribbons.fixtureClear;
@@ -332,10 +374,9 @@ async function main() {
   fs.mkdirSync(deepFieldDir, { recursive: true });
   const captureDF = async name => {
     win.webContents.focus();
-    const image = await win.webContents.capturePage();
-    fs.writeFileSync(path.join(deepFieldDir, `${name}.png`), image.toPNG());
-    report.captures.push({ name, file: `../deep-field/${name}.png` });
-    return image;
+    await capture(name);
+    fs.renameSync(path.join(output, `${name}.png`), path.join(deepFieldDir, `${name}.png`));
+    report.captures[report.captures.length - 1].file = `../deep-field/${name}.png`;
   };
   const priorThemeKeys = await evaluate(() => ({
     dark: window.localStorage.getItem('wuu.extension-theme.dark'),
@@ -462,6 +503,68 @@ async function main() {
   await evaluate(() => document.documentElement.style.setProperty('--wuu-font-size-ui', '20px'));
   await captureDF('deep-field-example-dark-home-font20');
   await evaluate(() => document.documentElement.style.removeProperty('--wuu-font-size-ui'));
+
+  // Your own picture through the real Appearance file input. Deep Field
+  // accepts it, so the skin stays selected and paints the picture as cells;
+  // Remove returns to the bundled artwork.
+  phase = 'deep-field-user-image';
+  const picture = path.join(run, 'picture.png');
+  fs.writeFileSync(picture, fixturePicture());
+  const userImage = report.deepField.userImage = {};
+  const paneFreeSample = { x: 1350, y: 860 };
+  await goHome();
+  await settle();
+  userImage.bundled = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+  await openSettingsAppearance();
+  await chooseBackgroundFile(picture);
+  await until(backgroundSaved, 'picture saved', 30000);
+  userImage.selectedAfterImport = await evaluate(() => window.localStorage.getItem('wuu.shell-skin'));
+  userImage.noteWithAcceptingSkin = await evaluate(() => document.querySelector('.background-file-picker').closest('.settings-row').querySelector('.settings-row-label-description')?.textContent ?? null);
+  await closeSettings();
+  await goHome();
+  await until(async () => {
+    const sample = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+    return sample && sample[2] > sample[0] + 30;
+  }, 'picture painted in the canvas', 30000);
+  userImage.picture = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+  await captureDF('deep-field-example-dark-user-image');
+  await evaluate(t => window.wuu.setThemePreference(t), 'light');
+  await until(() => evaluate(() => document.documentElement.dataset.theme === 'light'), 'light theme');
+  await sleep(1000);
+  await captureDF('deep-field-example-light-user-image');
+  await evaluate(t => window.wuu.setThemePreference(t), 'dark');
+  await until(() => evaluate(() => document.documentElement.dataset.theme === 'dark'), 'dark theme');
+  win.setContentSize(900, HEIGHT);
+  await sleep(500);
+  await captureDF('deep-field-example-dark-user-image-w900');
+  win.setContentSize(WIDTH, HEIGHT);
+  await openSettingsAppearance();
+  assert.ok(await backgroundRemove(), 'background remove button');
+  await until(async () => !(await evaluate(() => Boolean(document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button')))), 'picture removed');
+  await closeSettings();
+  await goHome();
+  await until(async () => {
+    const sample = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+    return sample && dist(sample, userImage.bundled) < 12;
+  }, 'bundled artwork restored', 30000);
+  userImage.restored = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+  // A skin with its own artwork says so, and choosing a picture there
+  // switches to the default frame, which shows it.
+  await selectDeepFieldSkin(frame('tide'));
+  await openSettingsAppearance();
+  await chooseBackgroundFile(picture);
+  await until(backgroundSaved, 'picture saved under tide', 30000);
+  userImage.selectedAfterTideImport = await evaluate(() => window.localStorage.getItem('wuu.shell-skin'));
+  await until(() => evaluate(() => Boolean(document.documentElement.dataset.shellImage)), 'default frame shows the picture', 30000);
+  userImage.defaultFramePlacement = await evaluate(() => document.documentElement.dataset.shellPlacement ?? null);
+  await selectDeepFieldSkin(frame('tide'));
+  await until(() => evaluate(() => Boolean(document.querySelector('.background-file-picker').closest('.settings-row').querySelector('.settings-row-label-description'))), 'own-artwork note');
+  userImage.noteWithTide = await evaluate(() => document.querySelector('.background-file-picker').closest('.settings-row').querySelector('.settings-row-label-description').textContent);
+  await capture('tide-dark-settings-picture-note');
+  assert.ok(await backgroundRemove(), 'background remove button');
+  await until(async () => !(await evaluate(() => Boolean(document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button')))), 'picture removed');
+  await closeSettings();
+  await selectDeepFieldSkin(deepField('deep-field'));
   // Disable through the real CLI path: default frame + default welcome return.
   const disabled = spawnSync(core, ['plugin', 'disable', 'deep-field'], { env: process.env, encoding: 'utf8', timeout: 30000 });
   fs.appendFileSync(path.join(output, 'plugin-install.log'), `disable deep-field\n${disabled.stdout}\n${disabled.stderr}\n`);
@@ -514,9 +617,12 @@ async function main() {
 
   // Dot screen: neighboring pixels at pitch spacing alternate between the gap
   // color and the artwork inside the transparent pane.
-  const row = pixels.get('deepfield-dark-home').row(390, 500, 32);
-  const alternations = row.slice(1).filter((px, i) => dist(px, row[i]) > 4).length;
-  check('dot screen alternates at pitch', alternations >= 8, `row ${JSON.stringify(row)} alternations=${alternations}`);
+  // One of the rows within a pitch crosses the cells rather than a gap row.
+  const alternations = [500, 501, 502, 503].map(y => {
+    const row = pixels.get('deepfield-dark-home').row(390, y, 32);
+    return row.slice(1).filter((px, i) => dist(px, row[i]) > 4).length;
+  });
+  check('dot screen alternates at pitch', Math.max(...alternations) >= 8, `alternations per row ${JSON.stringify(alternations)}`);
 
   check('reduced transparency restores the opaque veil',
     dist(at('deepfield-dark-reduced-transparency', paneFree.x, paneFree.y), at('deepfield-dark-automation', paneFree.x, paneFree.y)) < 6
@@ -571,6 +677,14 @@ async function main() {
     (report.deepField['welcome-dark']?.untitledRows ?? 1) === 0
       && (report.deepField['welcome-dark']?.rows ?? 0) <= 3,
     JSON.stringify(report.deepField['welcome-dark']));
+  const pictureReport = report.deepField.userImage;
+  check('deep-field keeps its skin selected when the user picks a picture',
+    pictureReport.selectedAfterImport === deepField('deep-field') && !pictureReport.noteWithAcceptingSkin, JSON.stringify(pictureReport));
+  check('deep-field paints the user picture, then restores its artwork on remove',
+    pictureReport.picture && dist(pictureReport.picture, pictureReport.bundled) > 40 && dist(pictureReport.restored, pictureReport.bundled) < 12, JSON.stringify(pictureReport));
+  check('a skin with its own artwork notes it and an import switches to the default frame',
+    /Tide/.test(pictureReport.noteWithTide || '') && pictureReport.selectedAfterTideImport === 'default' && pictureReport.defaultFramePlacement === 'frame',
+    JSON.stringify(pictureReport));
   check('deep-field session row activates the thread', Boolean(report.deepField.clickedThread), report.deepField.clickedThread);
   check('disabling deep-field restores default frame and welcome',
     report.deepField.afterDisable?.placement !== 'canvas'
@@ -583,7 +697,7 @@ async function main() {
   server.close(); app.quit();
 }
 
-const watchdog = setTimeout(() => { report.status = 'failed'; report.errors.push({ phase, message: 'watchdog timeout' }); save(); app.exit(1); }, 300000);
+const watchdog = setTimeout(() => { report.status = 'failed'; report.errors.push({ phase, message: 'watchdog timeout' }); save(); app.exit(1); }, 480000);
 main().catch(async error => {
   report.status = 'failed'; report.errors.push({ phase, message: error.stack || String(error) });
   if (win && !win.isDestroyed()) { try { fs.writeFileSync(path.join(output, 'failure.png'), (await win.webContents.capturePage()).toPNG()); } catch {} }

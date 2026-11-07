@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "deep-field",
   "name": "Deep Field",
-  "description": "Canvas-placement shell skin with a host dot screen, paired opaque themes, and a dashboard-style welcome.",
+  "description": "Canvas-placement shell skin that renders your background image (or its own artwork) as a pixel screen, with paired themes and a dashboard-style welcome.",
   "icon": "sparkles",
   "version": "1.0.0",
   "author": {
@@ -21,7 +21,7 @@
   },
   "interface": {
     "displayName": "Deep Field",
-    "shortDescription": "Dot-matrix canvas artwork, paired themes, and a welcome dashboard.",
+    "shortDescription": "Pixel-screen canvas artwork from your own image, paired themes, and a welcome dashboard.",
     "developerName": "Wuu",
     "category": "Appearance",
     "capabilities": [
@@ -34,6 +34,7 @@
         "id": "deep-field",
         "name": "Deep Field",
         "placement": "canvas",
+        "userImage": true,
         "light": {
           "background": "#f3f4f6",
           "foreground": "#17181b",
@@ -43,7 +44,8 @@
           "veil": 0.88,
           "dots": {
             "pitch": 4,
-            "size": 2.4
+            "size": 3,
+            "shape": "square"
           }
         },
         "dark": {
@@ -55,7 +57,8 @@
           "veil": 0.84,
           "dots": {
             "pitch": 4,
-            "size": 2.6
+            "size": 3,
+            "shape": "square"
           }
         }
       }
