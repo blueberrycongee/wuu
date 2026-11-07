@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"io"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -287,5 +289,54 @@ func TestSessionFederationSharedDiscoveryKeepsResourceFiltering(t *testing.T) {
 	}
 	if len(result.Sessions) != 0 {
 		t.Fatalf("default discovery stopped being owned-only: %+v", result)
+	}
+}
+
+func TestSessionFederationAttachmentHandoff(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("received")})
+	out := &lockedBuffer{}
+	identity, _ := principal.Authenticated(principal.Identity{Kind: "agent", Issuer: "fixture", Tenant: "cloud", Subject: "personal"})
+	ctx := principal.WithContext(context.Background(), identity)
+	s := New(rt, out, WithAccessPolicy(access.PolicyFunc(func(_ context.Context, r access.Request) (access.Decision, error) {
+		return access.Decision{Allow: strings.HasPrefix(r.Action, "session/federation.")}, nil
+	})), WithSessionFederation(SessionFederationConfig{HostID: "laptop", Models: map[string][]string{"fake-provider": {"fake-model"}}, ToolAllow: []string{"read"}}))
+	defer s.Close()
+	created, err := s.dispatchSessionFederation(ctx, pluginhost.SessionRouteRequest{Version: 1, Operation: "create", OperationID: "attachment-target", Locator: pluginhost.SessionLocatorV1{Version: 1, ExecutionHost: "laptop"}, Params: json.RawMessage(`{"visibility":"user","context_source":"fresh","provider":"fake-provider","model":"fake-model"}`)})
+	if err != nil || created.Error != nil {
+		t.Fatalf("create: %+v %v", created, err)
+	}
+	file := pluginhost.SessionHandoffAttachment{SHA256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881", Filename: "x.txt", MediaType: "text/plain", Data: "eA=="}
+	p := pluginhost.SessionSendParams{SessionID: created.Locator.SessionID, RequestID: "file-run", Input: pluginhost.SessionInput{Prompt: "read the attached file", AttachmentHandoff: &pluginhost.SessionAttachmentHandoff{Version: 1, SessionID: created.Locator.SessionID, RequestID: "file-run", Source: providers.MessageRef{SessionID: "source-main", Seq: 7}, Attachments: []pluginhost.SessionHandoffAttachment{file}}}}
+	raw, _ := json.Marshal(p)
+	route := pluginhost.SessionRouteRequest{Version: 1, Operation: "send", OperationID: "file-run", Locator: created.Locator, Params: raw}
+	first, err := s.dispatchSessionFederation(ctx, route)
+	if err != nil || first.Error != nil {
+		t.Fatalf("send: %+v %v", first, err)
+	}
+	inspectParams, _ := json.Marshal(pluginhost.SessionInspectParams{SessionID: created.Locator.SessionID, RequestID: "file-run", Wait: "terminal", TimeoutMS: 2000})
+	inspected, inspectErr := s.dispatchSessionFederation(ctx, pluginhost.SessionRouteRequest{Version: 1, Operation: "inspect", OperationID: "inspect-file-run", Locator: created.Locator, Params: inspectParams})
+	if inspectErr != nil || inspected.Error != nil {
+		t.Fatalf("inspect: %+v %v", inspected, inspectErr)
+	}
+	history, err := loadChatMessages(rt.Sessions, created.Locator.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range history {
+		if len(m.Files) > 0 {
+			found = true
+			b, e := os.ReadFile(m.Files[0].LocalPath)
+			if e != nil || string(b) != "x" || m.Origin == "user" {
+				t.Fatalf("wrong file: %q %v", b, e)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("federated attachment missing")
+	}
+	replay, err := s.dispatchSessionFederation(ctx, route)
+	if err != nil || string(first.Result) != string(replay.Result) {
+		t.Fatalf("replayed effect: %+v %v", replay, err)
 	}
 }
