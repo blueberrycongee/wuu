@@ -176,7 +176,7 @@ export function EngineSettingsSection({
     setAccountRevision(value => value + 1);
   };
 
-  if (selected) return <ConnectionPage key={selected.id}
+  if (selected) return <ConnectionPage key={selected.id} backLabel={t(embedded ? "settings.providers" : "settings.agents")}
     title={<ConnectionTitle connectionKey={displayKey} fallback={engineLabel(selected.id, selected)} disabled={busy}
       suffix={selected.cli_version ? <span className="connection-engine-version">{selected.cli_version}</span> : undefined} />}
     icon={<EngineIcon engine={selected.id} />}

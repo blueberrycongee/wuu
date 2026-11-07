@@ -690,7 +690,7 @@
 .connection-page-heading { min-width: 0; }
 .connection-page-body, .connection-detail-body { display: flex; flex-direction: column; gap: var(--settings-gap); min-width: 0; }
 .connection-page-footer { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.connection-page-back { align-self: start; }
+.connection-page-back { align-self: start; margin-inline-start: calc(var(--control-padding-inline) * -1); }
 .connection-page .model-browse-list { overflow: visible; margin: 0; padding: 0; }
 .connection-page .model-service-tiles { grid-template-columns: minmax(0, 1fr); gap: 0; }
 .connection-page .model-service-tile { margin: 0; padding: var(--settings-row-pad-block) 0; border-radius: 0; border-bottom: 1px solid var(--hairline-soft); }
@@ -825,7 +825,7 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 }
 
 /* One content column keeps actions attached to their connection and section. */
-.connection-page { width: 100%; align-self: flex-start; gap: var(--settings-gap); --connection-model-order-width: calc(14px + 2 * max(28px, var(--control-field-height))); }
+.connection-page { width: 100%; align-self: flex-start; gap: var(--settings-gap); --connection-model-order-width: calc(2 * max(28px, var(--control-field-height))); }
 .connection-page-header { flex-wrap: wrap; align-items: center; row-gap: var(--space-2); }
 .connection-page-heading { flex: 1 1 180px; }
 .connection-page-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-inline-start: auto; }
@@ -835,9 +835,8 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-page .model-choice-selected { flex: 0 0 auto; width: 16px; height: 16px; }
 .connection-page .model-choice-main { padding-inline-start: 0; }
 @media (hover: hover) and (pointer: fine) {
-  .connection-page .model-choice-action { opacity: 0; }
-  .connection-page .model-choice:hover .model-choice-action,
-  .connection-page .model-choice:focus-within .model-choice-action,
+  .connection-page :is(.model-choice-action, .connection-model-order) { opacity: 0; }
+  .connection-page .model-choice:is(:hover, :focus-within) :is(.model-choice-action, .connection-model-order),
   .connection-page .model-choice-action[aria-expanded="true"] { opacity: 1; }
 }
 .connection-status-row, .connection-login { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
@@ -878,7 +877,6 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-page .connection-model-row > span.connection-model-enabled { display: flex; align-items: center; justify-content: flex-end; }
 .connection-page .connection-model-row > .connection-model-order { order: 0; grid-column: 4; grid-row: 1; }
 .connection-model-order { display: flex; align-items: center; gap: 0; color: var(--ink-tertiary); }
-.connection-model-order > .icon { width: 14px; flex: 0 0 14px; }
 .connection-model-order button { width: max(28px, var(--control-field-height)); flex: 0 0 auto; padding: 4px; min-width: 28px; min-height: 28px; }
 .connection-page .connection-model-row > .model-choice-action { grid-column: 5; grid-row: 1; margin: 0; justify-self: end; }
 .connection-engine-advanced > :not(summary) { margin-top: var(--space-3); }

@@ -31,7 +31,6 @@ import type {
 import {
   ArrowUp,
   ArrowDown,
-  GripHorizontal,
   AlertTriangle,
   Check,
   ChevronRight,
@@ -433,11 +432,11 @@ export function ModelServicesPage({
 
   return (
     <div className="model-services" data-testid="settings-providers" ref={rootRef}>
-      <SettingsPageHeader title={t("settings.providers")} actions={!adding && !detailProvider && !selectedEngine ?
+      {!detailProvider && !selectedEngine ? <SettingsPageHeader title={t("settings.providers")} actions={!adding ?
         <button type="button" className="settings-button settings-button-ghost"
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
           aria-label={t("provider.addConnection")}
-          onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
+          onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} /> : null}
       {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} now={quotaNow}
         onOpenService={setOpenService} /> : null}
       {onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
@@ -868,7 +867,7 @@ function ServiceDetail({
 
         </div>
       </details>}
-      closeDisabled={busy || authBusy} onClose={onBack} backTestId="settings-provider-back">
+      closeDisabled={busy || authBusy} onClose={onBack} backTestId="settings-provider-back" backLabel={t("settings.providers")}>
       <div className="connection-detail-body">
       {error && !confirmingRemove ? <p className="settings-error" role="alert">{error}</p> : null}
 
@@ -1322,7 +1321,6 @@ function ModelChoices({
               <Switch className="connection-model-enabled" aria-label={`${t("connection.enabled")} ${name}`} checked={!preferences.get(preferenceKey).hiddenModels.includes(model.id)} disabled={disabled || selected}
                 onClick={() => updatePreference(() => preferences.setModelVisible(preferenceKey, model.id, preferences.get(preferenceKey).hiddenModels.includes(model.id)))} />
               <span className="connection-model-order">
-                <GripHorizontal className="icon" aria-hidden="true" />
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveUp", { name })} disabled={disabled || models[0]?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, -1))}><ArrowUp className="icon" /></button>
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveDown", { name })} disabled={disabled || models.at(-1)?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, 1))}><ArrowDown className="icon" /></button>
               </span>
