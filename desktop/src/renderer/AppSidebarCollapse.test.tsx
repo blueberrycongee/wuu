@@ -494,6 +494,8 @@ describe("sidebar collapse-state independence", () => {
 
   it("keeps the settings gear available across collapse", async () => {
     installWuuApi();
+    window.wuu.remoteAccount = vi.fn().mockResolvedValue({});
+    window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({});
     await act(async () => {
       root = createRoot(container);
       root.render(await createDefaultApplicationTestView());

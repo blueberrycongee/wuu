@@ -18,7 +18,7 @@ var (
 	ErrThreadMismatch = errors.New("activity belongs to another thread")
 	ErrControlRevoked = errors.New("activity control revoked")
 	ErrStopped        = errors.New("activity is stopped")
-	ErrTargetBusy     = errors.New("activity target is controlled by another thread")
+	ErrTargetBusy     = errors.New("activity target is controlled by another thread; wait for it to release the target or ask the user to take over that activity")
 )
 
 type registryEntry struct {

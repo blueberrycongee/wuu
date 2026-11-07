@@ -53,6 +53,7 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
       </DesktopControlsProvider>,
     ));
     expect(container.querySelectorAll(".sidebar-account-trigger")).toHaveLength(1);
+    expect(container.querySelector(".sidebar-account-menu-trigger")).toBeNull();
     await act(async () => container!.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
     expect(onOpenSettings).toHaveBeenCalledWith();
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
