@@ -6,7 +6,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "desktop_dock" | "promote" | "drag_start" | "shown" | "completion_expired" | "retry";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "desktop_dock" | "promote" | "drag_start" | "shown" | "completion_expired";
   desktop?: boolean;
   x?: number;
   y?: number;

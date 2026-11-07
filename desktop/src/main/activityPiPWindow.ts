@@ -136,6 +136,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private pendingRetarget = false;
   private appearance: ActivityPreviewAppearance | undefined;
   private captureState: Pick<CUANativePiPEvent, "status" | "message"> = { status: "healthy" };
+  private frostSnapshot: string | undefined;
+  private frostCapture: Promise<void> | undefined;
+  private frostRevision = 0;
   private stopCallbacks: Array<() => void> = [];
   // Resting corner inside the conversation column. A release may change it;
   // later column resizes keep the card on that same corner.
@@ -217,7 +220,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         if (rawURL === "wuu-pip://close") this.deps.sink.onEvent({ event: "user_close" });
         if (rawURL === "wuu-pip://desktop") this.setDesktopDock(!this.desktopDocked);
         if (rawURL === "wuu-pip://expand") this.deps.sink.onEvent({ event: "expand" });
-        if (rawURL === "wuu-pip://retry") this.deps.sink.onEvent({ event: "retry" });
       }
     });
     const initialLabel = this.activity.target ?? "";
@@ -368,9 +370,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setAppearance(dark: boolean, preferences?: ActivityPreviewAppearance): void {
     this.dark = dark;
     if (preferences) this.appearance = preferences;
-    if (process.platform === "linux") {
-      this.win?.setBackgroundColor?.(this.appearance?.surface ?? (dark ? "#242426" : "#f8f8fa"));
-    }
+    this.win?.setBackgroundColor?.(dark ? "#4e5054" : "#b4b6ba");
     this.execute(`window.wuuPipAppearance?.(${JSON.stringify({ dark, ...this.appearance })})`);
   }
 
@@ -543,8 +543,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   suspendContent(message: string): void {
     this.pendingRetarget = false;
-    this.stopContent();
+    const content = this.content, generation = this.contentGeneration, revision = this.frostRevision;
+    const captured = this.captureFrost();
     this.setCaptureStatus({ status: "error", message });
+    void captured.then(() => {
+      if (this.content === content && this.contentGeneration === generation && this.frostRevision === revision) this.stopContent();
+    });
   }
 
   animateInteraction(interaction: Interaction): void {
@@ -629,6 +633,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       },
       setMounted: (mounted) => {
         if (!current()) return;
+        if (mounted) this.clearFrost();
         if (this.mounted === mounted) return;
         this.mounted = mounted;
         this.syncOverlayMode();
@@ -1417,11 +1422,46 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.captureState = status;
     this.execute(`window.wuuPipCapture?.(${JSON.stringify(status)})`);
     if (status.status === "error" || status.status === "blank" || status.status === "suspended") {
+      void this.captureFrost();
+      if (this.frostSnapshot) this.execute(`window.wuuPipFrost?.(${JSON.stringify(this.frostSnapshot)})`);
       this.showPlaceholder = true;
       clearTimeout(this.placeholderTimer);
       this.placeholderTimer = undefined;
       this.applyVisibility();
-    }
+    } else this.clearFrost();
+  }
+
+  private clearFrost(): void {
+    this.frostRevision++;
+    this.frostSnapshot = undefined;
+    this.frostCapture = undefined;
+    this.execute("window.wuuPipFrost?.(null)");
+  }
+
+  private captureFrost(): Promise<void> {
+    if (this.frostCapture) return this.frostCapture;
+    const revision = this.frostRevision;
+    this.frostCapture = new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (src?: string): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (!this.stopped && revision === this.frostRevision && src) {
+          this.frostSnapshot = src;
+          this.execute(`window.wuuPipFrost?.(${JSON.stringify(src)})`);
+        }
+        resolve();
+      };
+      const timer = setTimeout(() => finish(), SNAPSHOT_WAIT_MS);
+      timer.unref?.();
+      try {
+        const snapshot = this.content?.snapshot?.();
+        if (snapshot) void snapshot.then(finish, () => finish());
+        else finish();
+      } catch { finish(); }
+    });
+    return this.frostCapture;
   }
 
   private pushActivityState(): void {
@@ -1461,7 +1501,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       // even without shadows. A translucent host removes those insets; the
       // configured background still paints an opaque card inside its shape.
       transparent: shapeLinuxWindow,
-      backgroundColor: "#f4f4f5",
+      backgroundColor: this.dark ? "#4e5054" : "#b4b6ba",
       // On X11 Electron's client-side shadow adds a rectangular frame even to
       // frameless windows. The Linux host uses one explicit rounded shape.
       hasShadow: !shapeLinuxWindow,
