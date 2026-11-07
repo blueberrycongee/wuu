@@ -50,8 +50,10 @@
   pointer-events: auto;
 }
 
-/* Keep the header readable beneath the two controls, including at large fonts. */
-.rich-table-wrap > .rich-table-scroll th:last-child {
+/* Keep the header readable beneath the two controls, including at large
+ * fonts. A right-aligned final header stays flush with the numbers in its
+ * column instead of trading that edge for the control reserve. */
+.rich-table-wrap > .rich-table-scroll th:last-child:not([style*="text-align: right"]) {
   padding-inline-end: calc(2 * var(--control-size-roomy) + 3 * var(--space-1));
 }
 

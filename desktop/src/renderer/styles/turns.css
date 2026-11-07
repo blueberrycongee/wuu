@@ -105,6 +105,10 @@
 .turn {
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
+  /* content-visibility's paint containment clips at the turn box, including
+   * on-screen turns during a window resize; answer tables may extend past
+   * it (message-reading.css). */
+  overflow-clip-margin: var(--conversation-table-outset);
   display: flex;
   flex-direction: column;
   gap: var(--conversation-turn-item-gap);
@@ -4109,7 +4113,12 @@
 
 .rich-table-wrap th,
 .rich-table-wrap td {
-  padding: 10px var(--space-3);
+  /* Lines inside a cell belong together more than neighboring rows do: a
+   * tighter leading and a text-scaled block padding keep each cell reading
+   * as one unit. */
+  padding-block: round(nearest, 0.7em, 1px);
+  padding-inline: var(--space-3);
+  line-height: round(nearest, 1.45em, 2px);
   text-align: left;
   vertical-align: top;
   border: 0;

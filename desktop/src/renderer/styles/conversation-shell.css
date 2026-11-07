@@ -90,6 +90,9 @@
      Message cards and prose share the base measure. The draft's additional
      horizontal room is derived from it in session.css. */
   container-type: inline-size;
+  /* Answer tables may outgrow the reading column by this much on each side;
+   * .turn's clip margin reads the same token. */
+  --conversation-table-outset: 120px;
   --conversation-message-max-width: var(--session-composer-width);
   --conversation-message-max-inline: 90%;
   --conversation-split-message-max-width: 760px;
