@@ -801,7 +801,7 @@ function WorkspacePanelContent({
       aria-hidden={!open || covered}
       inert={!open || covered}
     >
-      <ShellCanvasArtwork frosted />
+      <ShellCanvasArtwork />
       <div className="workspace-panel-tabbar" data-wuu-component="workspace-panel-header">
         <slots.Slot
           name="wuu.default-preview/workspace.header"

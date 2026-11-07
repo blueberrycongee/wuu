@@ -36,10 +36,8 @@ async function decode(source: Blob | string): Promise<Picture> {
 
 /** Paints canvas-placement artwork behind the main pane, cropped to the window
     so it stays still while sidebars resize the pane. A dot screen samples one
-    color per cell on whole device pixels, so every cell has the same footprint.
-    Frosted copies skip the screen: blurring sparse cells would leave almost no
-    color behind. */
-export function ShellCanvasArtwork({ frosted = false }: { frosted?: boolean }): JSX.Element | null {
+    color per cell on whole device pixels, so every cell has the same footprint. */
+export function ShellCanvasArtwork(): JSX.Element | null {
   const artwork = useSyncExternalStore(subscribe, () => published);
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -69,7 +67,7 @@ export function ShellCanvasArtwork({ frosted = false }: { frosted?: boolean }): 
       const offsetX = -Math.round(rect.left * ratio), offsetY = -Math.round(rect.top * ratio);
       context.globalCompositeOperation = "source-over";
       context.clearRect(0, 0, width, height);
-      const dots = frosted ? undefined : artwork.dots;
+      const dots = artwork.dots;
       const pitch = dots ? Math.max(2, Math.round(dots.pitch * ratio)) : 1;
       if (!dots) {
         context.imageSmoothingEnabled = true;
@@ -124,20 +122,19 @@ export function ShellCanvasArtwork({ frosted = false }: { frosted?: boolean }): 
       schedule();
     });
     try { observer.observe(canvas, { box: "device-pixel-content-box" }); } catch { observer.observe(canvas); }
+    // A docked panel opens by moving into view at its final size, which the
+    // ResizeObserver never reports; the change in visibility does.
+    const visibility = new IntersectionObserver(schedule, { threshold: [0, 0.25, 0.5, 0.75, 1] });
+    visibility.observe(canvas);
     window.addEventListener("resize", schedule);
-    // Panels slide in with transforms that keep the canvas size, so the
-    // ResizeObserver misses the move; repaint once the motion settles.
-    window.addEventListener("transitionend", schedule, true);
-    window.addEventListener("animationend", schedule, true);
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      visibility.disconnect();
       window.removeEventListener("resize", schedule);
-      window.removeEventListener("transitionend", schedule, true);
-      window.removeEventListener("animationend", schedule, true);
       picture?.close?.();
     };
-  }, [artwork, frosted]);
+  }, [artwork]);
   return artwork ? <canvas ref={ref} className="shell-canvas-artwork" aria-hidden="true" /> : null;
 }

@@ -171,12 +171,18 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
   mask-repeat: no-repeat;
 }
 
-/* Exposure steps down from the frame to the reading surface: the ribbon sits
-   directly on the picture, the docked sidebar is the thinnest frost, the docked
-   workspace panel a denser one, and the conversation the densest veil so prose
-   stays readable. Floating surfaces (tool rail, composer) carry their own glass.
-   The collapsed drawer and sheet-mode panel float over content and stay opaque. */
+/* Exposure follows each surface's role, not its position. Navigation panes
+   (docked sidebar, docked workspace panel) share one material so the window
+   stays symmetric; the conversation veils only as much as prose needs; floating
+   surfaces (tool rail, composer) carry their own glass. Canvas skins keep their
+   own texture on every pane. The collapsed drawer and sheet-mode panel float
+   over content and stay opaque. */
 @media screen and (not ((prefers-reduced-transparency: reduce) or (forced-colors: active))) {
+  .navigation-ribbon-layout:has(.sidebar-ribbon) {
+    --shell-pane-fill: 64%;
+    --shell-pane-veil: 0.72;
+  }
+
   html[data-shell-placement="frame"] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
     background: transparent;
   }
@@ -205,7 +211,7 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
   }
 
   html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) {
-    background: color-mix(in srgb, var(--workbench-canvas-bg) 78%, transparent);
+    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-pane-fill), transparent);
   }
 
   html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-tool-rail {
@@ -215,26 +221,24 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
   }
 
   html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
-    background: color-mix(in srgb, var(--workbench-canvas-bg) 64%, transparent);
+    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-pane-fill), transparent);
   }
 
-  /* Canvas skins blur the window-aligned artwork under the sidebar: the blur
-     drops the dot screen and the veil keeps rows readable. The bleed keeps the
-     blur's transparent fringe outside the clipped pane. */
+  /* Canvas skins continue the window-aligned artwork, screen included, under
+     both navigation panes; a denser veil than the conversation's keeps rows
+     readable. */
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content {
-    --sidebar-frost-bleed: 48px;
     background: var(--shell-background);
   }
 
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon):not(.sidebar-collapsed) .sidebar > .sidebar-content > .shell-canvas-artwork {
     position: absolute;
-    inset: calc(-1 * var(--sidebar-frost-bleed));
+    inset: 0;
     z-index: -1;
     display: block;
-    width: calc(100% + 2 * var(--sidebar-frost-bleed));
-    height: calc(100% + 2 * var(--sidebar-frost-bleed));
-    filter: blur(14px) saturate(1.2);
-    clip-path: inset(var(--sidebar-frost-bleed) round var(--conversation-canvas-radius) 0 0 var(--conversation-canvas-radius));
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
     pointer-events: none;
   }
 
@@ -245,23 +249,21 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
     border-radius: inherit;
     background: var(--paper);
     content: "";
-    opacity: 0.62;
+    opacity: var(--shell-pane-veil);
     pointer-events: none;
   }
 
-  /* The panel's own clip already rounds and trims the blur fringe. */
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) {
     background: var(--shell-background);
   }
 
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-right-panel:not([data-sheet]) > .shell-canvas-artwork {
     position: absolute;
-    inset: -48px;
+    inset: 0;
     z-index: -1;
     display: block;
-    width: calc(100% + 96px);
-    height: calc(100% + 96px);
-    filter: blur(14px) saturate(1.2);
+    width: 100%;
+    height: 100%;
     pointer-events: none;
   }
 
@@ -271,7 +273,7 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
     z-index: -1;
     background: var(--paper);
     content: "";
-    opacity: 0.74;
+    opacity: var(--shell-pane-veil);
     pointer-events: none;
   }
 }
