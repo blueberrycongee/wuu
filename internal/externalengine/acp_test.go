@@ -59,11 +59,26 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ref != "native-session" || result.Result.Content != "Hello world" || len(result.Result.NewMessages) != 1 {
+	if ref != "native-session" || result.Result.Content != "Hello world" {
 		t.Fatalf("ref=%q result=%+v", ref, result)
 	}
-	if result.Result.NewMessages[0].ReasoningContent != "Thinking" {
-		t.Fatalf("missing reasoning: %+v", result)
+	// The persisted transcript must keep the live item order: text and
+	// reasoning before the tool call, the tool result, then the reply.
+	messages := result.Result.NewMessages
+	if len(messages) != 3 {
+		t.Fatalf("flattened transcript: %+v", messages)
+	}
+	if messages[0].Role != "assistant" || messages[0].Content != "Hello " || messages[0].ReasoningContent != "Thinking" {
+		t.Fatalf("first message = %+v", messages[0])
+	}
+	if len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].ID != "read-1" || messages[0].ToolCalls[0].Name != "Read file" {
+		t.Fatalf("tool calls = %+v", messages[0].ToolCalls)
+	}
+	if messages[1].Role != "tool" || messages[1].ToolCallID != "read-1" || messages[1].Content != "file contents" {
+		t.Fatalf("tool result = %+v", messages[1])
+	}
+	if messages[2].Role != "assistant" || messages[2].Content != "world" || len(messages[2].ToolCalls) != 0 {
+		t.Fatalf("final message = %+v", messages[2])
 	}
 	var starts, ends, done int
 	for _, event := range events {
@@ -105,7 +120,7 @@ func TestACPRichMediaFlowsIntoImagesAndToolResultDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Result.NewMessages) != 1 || len(result.Result.NewMessages[0].Images) != 1 {
+	if len(result.Result.NewMessages) != 3 || len(result.Result.NewMessages[0].Images) != 1 {
 		t.Fatalf("assistant images = %+v", result.Result.NewMessages)
 	}
 	image := result.Result.NewMessages[0].Images[0]

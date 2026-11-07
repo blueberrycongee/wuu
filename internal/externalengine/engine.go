@@ -93,10 +93,17 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 		err = fmt.Errorf("unsupported engine protocol %q", s.engine.entry.Protocol)
 	}
 	result := t.result()
-	if len(result.NewMessages) > 0 && len(result.NewMessages[len(result.NewMessages)-1].Images) > 0 {
+	var lastImages []providers.InputImage
+	for i := len(result.NewMessages) - 1; i >= 0; i-- {
+		if result.NewMessages[i].Role == "assistant" {
+			lastImages = result.NewMessages[i].Images
+			break
+		}
+	}
+	if len(lastImages) > 0 {
 		// Images collected during the turn surface live through the same
 		// item.Images path the persisted history projection uses.
-		message := providers.ChatMessage{Role: "assistant", Content: t.messageText.String(), Images: result.NewMessages[len(result.NewMessages)-1].Images}
+		message := providers.ChatMessage{Role: "assistant", Content: t.messageText.String(), Images: lastImages}
 		t.emit(providers.StreamEvent{Type: providers.EventMessage, Message: &message})
 	}
 	if err != nil {
@@ -159,24 +166,40 @@ func latestUserMessage(history []providers.ChatMessage) providers.ChatMessage {
 type turn struct {
 	engine         string
 	sink           agentengine.EventSink
-	text, thinking strings.Builder
 	messageText    strings.Builder
 	diagBuf        strings.Builder
 	reconnecting   bool
 	retryCount     int
 	apiError       string
 	terminatedErr  string
+	blocks         []turnBlock
+	calls          map[string]*turnCall
 	tools          map[string]*providers.ToolCall
 	acpToolKinds   map[string]string
 	acpToolDetails map[string]*toolresult.Result
-	completed      map[string]bool
-	images         []providers.InputImage
 	usage          providers.TokenUsage
 	stopReason     string
 }
 
+// turnBlock is one persisted assistant message together with the tool calls
+// that followed it, keeping the live transcript order when history reloads.
+type turnBlock struct {
+	text, thinking strings.Builder
+	images         []providers.InputImage
+	calls          []*turnCall
+}
+
+// turnCall is the durable record of one external tool call: the request plus
+// its terminal output once the agent reports completion.
+type turnCall struct {
+	call   providers.ToolCall
+	output string
+	detail *toolresult.Result
+	done   bool
+}
+
 func newTurn(engine string, sink agentengine.EventSink) *turn {
-	return &turn{engine: engine, sink: sink, tools: make(map[string]*providers.ToolCall), completed: make(map[string]bool)}
+	return &turn{engine: engine, sink: sink, calls: make(map[string]*turnCall), tools: make(map[string]*providers.ToolCall)}
 }
 
 func (t *turn) emit(event providers.StreamEvent) {
@@ -189,14 +212,25 @@ func (t *turn) content(text string, thinking bool) {
 		t.clearReconnect()
 	}
 	kind := providers.EventContentDelta
+	block := t.openTextBlock()
 	if thinking {
-		t.thinking.WriteString(text)
+		block.thinking.WriteString(text)
 		kind = providers.EventThinkingDelta
 	} else {
-		t.text.WriteString(text)
+		block.text.WriteString(text)
 		t.messageText.WriteString(text)
 	}
 	t.emit(providers.StreamEvent{Type: kind, Content: text})
+}
+
+// openTextBlock returns the assistant block still collecting output. A block
+// closes once a tool call starts after it, so later text lands in a new block
+// and the persisted transcript keeps the live item order.
+func (t *turn) openTextBlock() *turnBlock {
+	if n := len(t.blocks); n == 0 || len(t.blocks[n-1].calls) > 0 {
+		t.blocks = append(t.blocks, turnBlock{})
+	}
+	return &t.blocks[len(t.blocks)-1]
 }
 
 func (t *turn) startReconnect(attempt int, reason string, retryIn time.Duration) {
@@ -259,20 +293,32 @@ func (t *turn) image(image providers.InputImage) {
 	if image.Data == "" {
 		return
 	}
-	t.images = append(t.images, image)
+	block := t.openTextBlock()
+	block.images = append(block.images, image)
 	t.emit(providers.StreamEvent{Type: providers.EventImage, Image: &image})
 }
 
 func (t *turn) tool(id, name, args, status, output string, detail *toolresult.Result) {
-	if id == "" || t.completed[id] {
+	if id == "" {
+		return
+	}
+	tc, exists := t.calls[id]
+	if exists && tc.done {
 		return
 	}
 	t.clearReconnect()
-	call, exists := t.tools[id]
 	if !exists {
-		call = &providers.ToolCall{ID: id, Name: name, Arguments: args}
-		t.tools[id] = call
+		tc = &turnCall{call: providers.ToolCall{ID: id, Name: name, Arguments: args}}
+		t.calls[id] = tc
+		t.tools[id] = &tc.call
+		if len(t.blocks) == 0 {
+			t.blocks = append(t.blocks, turnBlock{})
+		}
+		block := &t.blocks[len(t.blocks)-1]
+		block.calls = append(block.calls, tc)
+		t.messageText.Reset()
 	}
+	call := &tc.call
 	if name != "" {
 		call.Name = name
 	}
@@ -286,7 +332,6 @@ func (t *turn) tool(id, name, args, status, output string, detail *toolresult.Re
 	kind := providers.EventToolUseDelta
 	if !exists {
 		kind = providers.EventToolUseStart
-		t.messageText.Reset()
 	}
 	t.emit(providers.StreamEvent{Type: kind, ToolCall: &copy})
 	if status == "completed" || status == "failed" {
@@ -298,17 +343,51 @@ func (t *turn) tool(id, name, args, status, output string, detail *toolresult.Re
 			value := detail.Clone()
 			cloned = &value
 		}
+		tc.output = output
+		tc.detail = cloned
+		tc.done = true
 		t.emit(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &copy, ToolResult: output, ToolResultDetail: cloned})
-		t.completed[id] = true
 		delete(t.tools, id)
 	}
 }
 
 func (t *turn) result() agent.LoopResult {
-	r := agent.LoopResult{Content: t.text.String(), StopReason: t.stopReason, FinishReason: providers.FinishReasonStop,
+	r := agent.LoopResult{StopReason: t.stopReason, FinishReason: providers.FinishReasonStop,
 		InputTokens: t.usage.InputTokens, OutputTokens: t.usage.OutputTokens, CacheReadTokens: t.usage.CacheReadTokens, CacheCreationTokens: t.usage.CacheCreationTokens}
-	if t.text.Len() > 0 || t.thinking.Len() > 0 || len(t.images) > 0 {
-		r.NewMessages = []providers.ChatMessage{{Role: "assistant", Content: t.text.String(), ReasoningContent: t.thinking.String(), Images: append([]providers.InputImage(nil), t.images...)}}
+	for i := range t.blocks {
+		block := &t.blocks[i]
+		msg := providers.ChatMessage{
+			Role:             "assistant",
+			Content:          block.text.String(),
+			ReasoningContent: block.thinking.String(),
+			Images:           append([]providers.InputImage(nil), block.images...),
+		}
+		for _, tc := range block.calls {
+			msg.ToolCalls = append(msg.ToolCalls, tc.call)
+		}
+		if msg.Content == "" && msg.ReasoningContent == "" && len(msg.Images) == 0 && len(msg.ToolCalls) == 0 {
+			continue
+		}
+		r.Content += msg.Content
+		r.NewMessages = append(r.NewMessages, msg)
+		for _, tc := range block.calls {
+			if !tc.done {
+				continue
+			}
+			result := providers.ChatMessage{Role: "tool", Name: tc.call.Name, ToolCallID: tc.call.ID, Content: tc.output}
+			if tc.detail != nil {
+				cloned := tc.detail.Clone()
+				result.ToolResult = &cloned
+			}
+			r.NewMessages = append(r.NewMessages, result)
+		}
+	}
+	for i := len(r.NewMessages) - 1; i >= 0; i-- {
+		if r.NewMessages[i].Role == "assistant" {
+			r.NewMessages[i].FinishReason = r.FinishReason
+			r.NewMessages[i].StopReason = r.StopReason
+			break
+		}
 	}
 	return r
 }
