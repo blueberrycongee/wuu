@@ -265,6 +265,17 @@ async function run() {
   assert.equal(confirmed[0].error, undefined, `confirmed archive must succeed: ${confirmed[0].error}`);
   await until(() => evaluate(() => Boolean(document.querySelector('[role=status] .archive-tip-action'))), 'archive success notice');
   await capture('success-notice');
+  report.successNoticeLayout = await evaluate(() => {
+    const message = document.querySelector('[role=status] .archive-tip-message');
+    const strong = message?.querySelector('strong');
+    const suffix = message?.lastElementChild;
+    if (!message || !strong || !suffix || suffix === strong) return;
+    return { narrow: matchMedia('(max-width: 480px)').matches, tipRight: message.closest('.archive-tip')?.getBoundingClientRect().right, viewportWidth: innerWidth, messageRight: message.getBoundingClientRect().right, suffixRight: suffix.getBoundingClientRect().right, strongScrollWidth: strong.scrollWidth, strongClientWidth: strong.clientWidth };
+  }); save();
+  assert.ok(report.successNoticeLayout, 'success notice shows the generated title structure');
+  assert.ok(report.successNoticeLayout.strongScrollWidth > report.successNoticeLayout.strongClientWidth, 'long generated title is actually ellipsized');
+  if (report.successNoticeLayout.narrow) assert.ok(report.successNoticeLayout.tipRight <= report.successNoticeLayout.viewportWidth, 'viewport-capped toast stays inside the window');
+  else assert.ok(Math.abs(report.successNoticeLayout.messageRight - report.successNoticeLayout.suffixRight) <= 2, `archived suffix reaches the message edge without intrinsic-size slack: ${JSON.stringify(report.successNoticeLayout)}`);
   holdTerminal = false; for (const send of held.splice(0)) send();
   await until(() => evaluate(() => !document.querySelector('.thread-row-action.archive')), 'the only submitted source stays out of active sidebar');
   if (mode === 'workspace-switched') assert.equal(await evaluate(selector => [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().height)?.value, composer), 'Unrelated destination draft must survive.', 'unrelated destination draft preserved');
