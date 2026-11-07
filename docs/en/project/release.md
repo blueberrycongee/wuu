@@ -50,7 +50,7 @@ Run `node scripts/release-version.mjs notes <version>` to inspect the exact vers
 
 ## Product versions and compatibility
 
-Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
+Product releases use `YYYY.MMDD.P`: the UTC release year; the UTC month and day packed as `month * 100 + day` (`1108` is November 8); and a same-day release index starting at `0`, allowing up to ten final releases per UTC day. Releases before this scheme used `YYYY.M.D`; published tags are never reused. A prerelease can use a suffix such as `2026.1108.0-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
 
 Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. When promoting a prerelease, copy its reviewed notes to the final version's file and incorporate changes since the candidate before running `release-prepare`. The command never creates, merges, or rewrites notes automatically; it requires the exact target version's file.
 
@@ -207,7 +207,7 @@ build; ticket validation and Gatekeeper assessment must still pass.
 
 Use the Release workflow's manual dispatch with an empty `release_tag` for
 verification without publication. To finish an existing tag with newer release
-tooling, dispatch from `main` with `release_tag=vYYYY.M.D`. The tag must resolve
+tooling, dispatch from `main` with `release_tag=vYYYY.MMDD.P` (legacy releases keep their original `vYYYY.M.D` tag). The tag must resolve
 to a commit on main, and its product versions must match. Product sources stay at
 the tag; release tooling is checked out separately, so no source overlay dirties
 the packaged core. Evidence records the product commit, not the tooling commit.

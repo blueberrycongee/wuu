@@ -271,6 +271,9 @@ function makeSink(): ObservationPiPEventSink & {
 function makeCuaSurface(opts?: {
   bounds?: Rectangle;
   desktopFrame?: Rectangle | ((bounds: Rectangle) => Rectangle);
+  snapshot?: () => Promise<string | undefined>;
+  onStop?: () => void;
+  onContext?: (context: ActivityPiPContentContext) => void;
 }): {
   surface: ActivityPiPSurface;
   win: FakePipWindow;
@@ -300,13 +303,15 @@ function makeCuaSurface(opts?: {
       : opts?.desktopFrame ?? { x: 0, y: 0, width: 1440, height: 900 },
     createContent: (_activity, context) => {
       contentContext = context;
+      opts?.onContext?.(context);
       context.setViewport({ width: 800, height: 600 });
       context.setMounted(true);
       return {
         start: () => undefined,
         setVisible: () => undefined,
         layout: () => undefined,
-        stop: (onStopped: () => void) => onStopped(),
+        snapshot: opts?.snapshot,
+        stop: (onStopped: () => void) => { opts?.onStop?.(); onStopped(); },
       };
     },
   });
@@ -469,6 +474,58 @@ describe("ActivityPiPSurface desktop docking", () => {
     const before = { ...win.bounds };
     viewport(600, 800);
     expect(win.bounds).toEqual({ x: before.x + before.width - 240, y: before.y + before.height - 320, width: 240, height: 320 });
+    surface.stop();
+  });
+
+  it("captures the unavailable frame before tearing content down", async () => {
+    let resolve!: (src: string) => void;
+    const onStop = vi.fn();
+    const snapshot = vi.fn(() => new Promise<string>(done => { resolve = done; }));
+    const { surface, overlay } = makeCuaSurface({ snapshot, onStop });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(onStop).not.toHaveBeenCalled();
+    resolve("data:image/png;base64,last-frame");
+    await settle();
+    expect(overlay.executed).toContain('window.wuuPipFrost?.("data:image/png;base64,last-frame")');
+    expect(onStop).toHaveBeenCalledOnce();
+    surface.stop();
+  });
+
+  it.each(["missing", "rejected", "stalled"])("still retires unavailable content when its snapshot is %s", async (failure) => {
+    const onStop = vi.fn();
+    const snapshot = failure === "missing" ? undefined : failure === "rejected"
+      ? () => Promise.reject(new Error("Capture closed")) : () => new Promise<string>(() => undefined);
+    const { surface, overlay } = makeCuaSurface({ snapshot, onStop });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    vi.advanceTimersByTime(150);
+    await settle();
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(overlay.executed.filter(code => code.startsWith("window.wuuPipFrost?.(") && !code.endsWith("(null)"))).toEqual([]);
+    surface.stop();
+  });
+
+  it.each(["retarget", "healthy", "mounted"])("does not restore a stale frosted frame or stop a preview recovered via %s", async (recovery) => {
+    let resolve!: (src: string) => void;
+    let context!: ActivityPiPContentContext;
+    const onStop = vi.fn();
+    const { surface, overlay, sink } = makeCuaSurface({
+      snapshot: () => new Promise<string>(done => { resolve = done; }), onStop,
+      onContext: value => { context = value; },
+    });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    if (recovery === "retarget") surface.retarget({ ...makeActivity(), kind: "cua", target: "replacement" }, sink);
+    if (recovery === "healthy") context.onEvent({ event: "capture_status", status: "healthy" });
+    if (recovery === "mounted") context.setMounted(true);
+    surface.setVisible(true);
+    const stops = onStop.mock.calls.length;
+    resolve("data:image/png;base64,stale-frame");
+    await settle();
+    expect(overlay.executed).not.toContain('window.wuuPipFrost?.("data:image/png;base64,stale-frame")');
+    expect(onStop).toHaveBeenCalledTimes(stops);
     surface.stop();
   });
 

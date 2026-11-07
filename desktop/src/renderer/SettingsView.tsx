@@ -1018,8 +1018,8 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl inventory={inventory} />
         <SettingsGroup>
-          <ContentThemeControl inventory={inventory} />
           {isTouchWebShell() ? null : <ShellSkinSettings />}
+          <ContentThemeControl inventory={inventory} />
         </SettingsGroup>
       </SettingsSection>
       <AppearanceTypography section="text" />

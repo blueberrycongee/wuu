@@ -28,7 +28,7 @@ This example needs both declared files. Omit `runtime` for a desktop-only or dec
 | `schema_version` | Package schema, currently `1` |
 | `id` | Stable package identity; keep it unchanged across updates |
 | `version` | Plugin's version, separate from Wuu's product version |
-| `minimum_wuu_version` | Minimum Wuu CalVer, such as `2026.9.1`; not a substitute for service/API compatibility |
+| `minimum_wuu_version` | Minimum Wuu CalVer, such as `2026.1108.0`; not a substitute for service/API compatibility |
 | `platforms` | Optional supported host platforms |
 | `requires` | Legacy required package IDs, without version constraints |
 | `dependencies` | Package relationships as `{ id, version?, optional? }`; required dependencies must be available and match the version constraint |

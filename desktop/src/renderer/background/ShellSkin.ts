@@ -29,6 +29,12 @@ export function syncShellSkins(inventory: readonly ExtensionInventoryRecord[] | 
   publish();
 }
 
+/** The default frame, an unavailable selection (which renders as the default),
+    and skins that opt in show the user's Background image as their artwork. */
+export function showsUserImage(skin: AvailableShellSkin | undefined): boolean {
+  return !skin || skin.userImage === true;
+}
+
 export function selectShellSkin(key: string): void {
   window.localStorage.setItem(selectionKey, key);
   publish();

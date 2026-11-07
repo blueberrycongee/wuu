@@ -4,7 +4,7 @@ import { currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { processBackground } from "./image";
 import { useBackground } from "./useBackground";
 import { publishCanvasArtwork } from "./ShellCanvasArtwork";
-import { useShellSkins, useSkinImage } from "./ShellSkin";
+import { showsUserImage, useShellSkins, useSkinImage } from "./ShellSkin";
 
 export function AppBackground(): JSX.Element | null {
   const { preferences } = useBackground();
@@ -13,9 +13,7 @@ export function AppBackground(): JSX.Element | null {
   const skin = skins.find(candidate => candidate.key === selected);
   const variant = skin?.[mode];
   const placement = skin?.placement === "canvas" ? "canvas" : "frame";
-  // The default frame, and every skin that accepts it, shows the user's
-  // picture in place of its own artwork.
-  const picture = (!skin || skin.userImage) && preferences ? preferences.image : null;
+  const picture = showsUserImage(skin) && preferences ? preferences.image : null;
   const pluginImage = useSkinImage(picture ? undefined : skin, mode);
   const [processed, setProcessed] = useState<{ blob: Blob; url: string } | null>(null);
   useEffect(() => {

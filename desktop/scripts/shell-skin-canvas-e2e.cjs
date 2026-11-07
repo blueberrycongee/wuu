@@ -171,9 +171,7 @@ async function goHome() {
     await until(() => evaluate(() => !document.querySelector('[data-primary-plugin-view]') && Boolean(document.querySelector('.primary-nav .nav-item'))), 'conversations section');
   }
   await click('.primary-nav .nav-item');
-  // The welcome slot is replaceable: accept either the default empty home or
-  // a contributed welcome (deep-field renders .deep-field-welcome instead).
-  await until(() => evaluate(() => Boolean(document.querySelector('.empty-home, .deep-field-welcome'))), 'empty home');
+  await until(() => evaluate(() => Boolean(document.querySelector('.empty-home'))), 'empty home');
 }
 async function openPluginView(ribbonId) {
   await evaluate(id => [...document.querySelectorAll('[data-ribbon-id]')].find(n => n.dataset.ribbonId === id).click(), ribbonId);
@@ -367,8 +365,8 @@ async function main() {
   await goHome();
   await capture('default-dark-home-restored');
 
-  // Deep Field example: canvas skin + paired themes through the persisted
-  // extension-theme mechanism, captures in a sibling directory.
+  // Deep Field example: a declarative canvas skin. It styles the frame and
+  // the background only; the welcome and content colors stay native.
   phase = 'deep-field-example';
   const deepFieldDir = path.join(path.dirname(output), 'deep-field');
   fs.mkdirSync(deepFieldDir, { recursive: true });
@@ -378,85 +376,19 @@ async function main() {
     fs.renameSync(path.join(output, `${name}.png`), path.join(deepFieldDir, `${name}.png`));
     report.captures[report.captures.length - 1].file = `../deep-field/${name}.png`;
   };
-  const priorThemeKeys = await evaluate(() => ({
-    dark: window.localStorage.getItem('wuu.extension-theme.dark'),
-    light: window.localStorage.getItem('wuu.extension-theme.light'),
-  }));
-  // Seed threads with title shapes that broke layout: a very long CJK title
-  // and a long space-free URL. Then verify the native welcome is untouched
-  // while the default skin is selected, and that selecting the deep-field
-  // skin installs the welcome live (and back).
-  await sendTurn('帮我梳理一下这个仓库里所有和外壳皮肤、画布摆放、点阵蒙版、玻璃材质、半透明遮罩、主题令牌、插件贡献、生命周期治理以及渲染器组合模型相关的实现细节和调用链，输出一份带章节目录的完整中文说明文档，并给出每一步对应的源码文件路径和关键符号名');
-  await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
-  await goHome();
-  await sendTurn('https://example.com/some/extremely/long/path/that/has/no/spaces/and/keeps/going/and/going/and/going/and/going/and/going/and/going/and/going/and/going/to/overflow/the/card/edge/definitely/without/fail');
-  await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
-  await goHome();
-  report.deepField = report.deepField || {};
-  report.deepField.nativeWelcome = await evaluate(() => ({
-    replaced: Boolean(document.querySelector('.deep-field-welcome')),
-    emptyHome: Boolean(document.querySelector('.empty-home')),
-  }));
-  // Select/deselect without reload: the app publishes shell-skin changes
-  // through the storage event the plugin subscribes to.
-  const selectDeepFieldSkin = key => evaluate(k => {
+  const selectSkin = key => evaluate(k => {
     window.localStorage.setItem('wuu.shell-skin', k);
     window.dispatchEvent(new StorageEvent('storage', { key: 'wuu.shell-skin' }));
   }, key);
-  await evaluate(keys => {
-    window.localStorage.setItem('wuu.extension-theme.dark', keys.dark);
-    window.localStorage.setItem('wuu.extension-theme.light', keys.light);
-  }, { dark: 'deep-field:deep-field', light: 'deep-field:deep-field-light' });
-  await selectDeepFieldSkin(deepField('deep-field'));
-  await until(() => evaluate(() => Boolean(document.querySelector('.deep-field-welcome'))), 'welcome installs on skin select', 15000);
-  report.deepField.liveInstall = true;
-  await selectDeepFieldSkin('default');
-  await until(() => evaluate(() => !document.querySelector('.deep-field-welcome') && Boolean(document.querySelector('.empty-home'))), 'welcome removes on skin deselect', 15000);
-  report.deepField.liveRemove = true;
-  await selectDeepFieldSkin(deepField('deep-field'));
-  await until(() => evaluate(() => Boolean(document.querySelector('.deep-field-welcome'))), 'welcome reinstalls', 15000);
+  report.deepField = {};
+  await selectSkin(deepField('deep-field'));
   await until(() => evaluate(() => document.documentElement.dataset.shellPlacement === 'canvas'), 'deep-field canvas placement', 30000);
-  // Each measured layout needs a long-title row on screen; the newest thread
-  // is always listed, so send a long-title turn immediately before measuring.
-  const seedLongTitle = async tag => {
-    await goHome();
-    await sendTurn(`${'长'.repeat(30)}${tag} https://example.com/${'segment/'.repeat(24)}end`);
-    await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
-    await goHome();
-  };
+  await goHome();
+  report.deepField.nativeWelcome = await evaluate(() => Boolean(document.querySelector('.empty-home')));
   for (const theme of ['light', 'dark']) {
     await evaluate(t => window.wuu.setThemePreference(t), theme);
     await until(() => evaluate(t => document.documentElement.dataset.theme === t, theme), 'deep-field theme applied');
-    await seedLongTitle(`${theme} measurement`);
-    report.deepField = report.deepField || {};
-    report.deepField[`welcome-${theme}`] = await evaluate(() => ({
-      welcome: Boolean(document.querySelector('.deep-field-welcome')),
-      sessionsCard: Boolean(document.querySelector('.deep-field-card')),
-      usageCard: Boolean(document.querySelector('.empty-home-overview')),
-      rows: document.querySelectorAll('.deep-field-session').length,
-      untitledRows: [...document.querySelectorAll('.deep-field-session-title')]
-        .filter(n => /Untitled|未命名/.test(n.textContent)).length,
-    }));
-    report.deepField[`layout-${theme}`] = await evaluate(() => {
-      const card = document.querySelector('.deep-field-card');
-      if (!card) return { card: false, rows: 0 };
-      const contentRight = card.getBoundingClientRect().right - (parseFloat(getComputedStyle(card).paddingRight) || 0);
-      return {
-        card: true,
-        contentRight,
-        rows: [...document.querySelectorAll('.deep-field-session')].map(row => {
-          const title = row.querySelector('.deep-field-session-title');
-          const time = row.querySelector('.deep-field-session-time');
-          return {
-            rowRight: row.getBoundingClientRect().right,
-            timeRight: time.getBoundingClientRect().right,
-            ellipsized: title.scrollWidth > title.clientWidth,
-            text: title.textContent.slice(0, 60),
-            scroll: title.scrollWidth,
-          };
-        }),
-      };
-    });
+    await goHome();
     await captureDF(`deep-field-example-${theme}-home`);
     await sendTurn(`Say hello for deep-field ${theme}`);
     await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
@@ -464,49 +396,39 @@ async function main() {
     await openPluginView(ribbons.automation);
     await captureDF(`deep-field-example-${theme}-automation`);
   }
-  // Session row click activates the thread.
-  await evaluate(t => window.wuu.setThemePreference(t), 'dark');
   await goHome();
-  const clicked = await evaluate(() => {
-    const row = document.querySelector('.deep-field-session[data-deep-field-thread]');
-    if (!row) return null;
-    row.click();
-    return row.dataset.deepFieldThread;
-  });
-  assert.ok(clicked, 'deep-field welcome must list a recent session row');
-  await until(() => evaluate(() => !document.querySelector('.deep-field-welcome')), 'thread activated from session row', 15000);
-  report.deepField.clickedThread = clicked;
-  // Variants: 900px wide and UI font 20.
-  await seedLongTitle('nine hundred pixel measurement');
   win.setContentSize(900, HEIGHT);
-  await settle();
-  report.deepField['layout-w900'] = await evaluate(() => {
-    const card = document.querySelector('.deep-field-card');
-    if (!card) return { card: false, rows: [] };
-    const contentRight = card.getBoundingClientRect().right - (parseFloat(getComputedStyle(card).paddingRight) || 0);
-    return {
-      card: true,
-      contentRight,
-      rows: [...document.querySelectorAll('.deep-field-session')].map(row => {
-        const title = row.querySelector('.deep-field-session-title');
-        const time = row.querySelector('.deep-field-session-time');
-        return {
-          rowRight: row.getBoundingClientRect().right,
-          timeRight: time.getBoundingClientRect().right,
-          ellipsized: title.scrollWidth > title.clientWidth,
-        };
-      }),
-    };
-  });
   await captureDF('deep-field-example-dark-home-w900');
   win.setContentSize(WIDTH, HEIGHT);
   await evaluate(() => document.documentElement.style.setProperty('--wuu-font-size-ui', '20px'));
   await captureDF('deep-field-example-dark-home-font20');
   await evaluate(() => document.documentElement.style.removeProperty('--wuu-font-size-ui'));
 
-  // Your own picture through the real Appearance file input. Deep Field
-  // accepts it, so the skin stays selected and paints the picture as cells;
-  // Remove returns to the bundled artwork.
+  // Appearance offers the picture only under skins that can show it, and
+  // describes where it goes.
+  const pictureRow = () => evaluate(() => {
+    const picker = document.querySelector('.background-file-picker');
+    return picker ? picker.closest('.settings-row').querySelector('.settings-row-label-description')?.textContent ?? '' : null;
+  });
+  const rows = report.deepField.pictureRow = {};
+  await openSettingsAppearance();
+  rows.order = await evaluate(() => [...document.querySelectorAll('.settings-page[data-wuu-page="appearance"] .settings-row')].map(row =>
+    row.querySelector('.shell-skin-options') ? 'skin' : row.querySelector('.background-file-picker') ? 'picture' : row.querySelector('.settings-palette-trigger') ? 'palette' : null).filter(Boolean));
+  rows.deepField = await pictureRow();
+  await captureDF('deep-field-example-dark-settings');
+  await selectSkin(frame('tide'));
+  await until(async () => (await pictureRow()) === null, 'picture row hidden under tide');
+  rows.tide = await pictureRow();
+  await capture('tide-dark-settings-appearance-picture');
+  await selectSkin('default');
+  await until(async () => typeof (await pictureRow()) === 'string', 'picture row under default');
+  rows.default = await pictureRow();
+  await selectSkin(deepField('deep-field'));
+  await until(async () => typeof (await pictureRow()) === 'string', 'picture row under deep-field');
+  await closeSettings();
+
+  // Your own picture through the real Appearance file input: Deep Field
+  // paints it as cells; Remove returns to the bundled artwork.
   phase = 'deep-field-user-image';
   const picture = path.join(run, 'picture.png');
   fs.writeFileSync(picture, fixturePicture());
@@ -519,7 +441,6 @@ async function main() {
   await chooseBackgroundFile(picture);
   await until(backgroundSaved, 'picture saved', 30000);
   userImage.selectedAfterImport = await evaluate(() => window.localStorage.getItem('wuu.shell-skin'));
-  userImage.noteWithAcceptingSkin = await evaluate(() => document.querySelector('.background-file-picker').closest('.settings-row').querySelector('.settings-row-label-description')?.textContent ?? null);
   await closeSettings();
   await goHome();
   await until(async () => {
@@ -534,10 +455,17 @@ async function main() {
   await captureDF('deep-field-example-light-user-image');
   await evaluate(t => window.wuu.setThemePreference(t), 'dark');
   await until(() => evaluate(() => document.documentElement.dataset.theme === 'dark'), 'dark theme');
-  win.setContentSize(900, HEIGHT);
+  // A fixed-artwork skin keeps its artwork and the saved picture.
+  await selectSkin(frame('tide'));
+  await until(() => evaluate(() => !document.documentElement.dataset.shellPlacement || document.documentElement.dataset.shellPlacement === 'frame'), 'tide frame');
+  await goHome();
   await sleep(500);
-  await captureDF('deep-field-example-dark-user-image-w900');
-  win.setContentSize(WIDTH, HEIGHT);
+  await capture('tide-dark-home-with-picture');
+  await selectSkin(deepField('deep-field'));
+  await until(async () => {
+    const sample = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+    return sample && dist(sample, userImage.picture) < 12;
+  }, 'picture returns with deep-field', 30000);
   await openSettingsAppearance();
   assert.ok(await backgroundRemove(), 'background remove button');
   await until(async () => !(await evaluate(() => Boolean(document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button')))), 'picture removed');
@@ -548,24 +476,7 @@ async function main() {
     return sample && dist(sample, userImage.bundled) < 12;
   }, 'bundled artwork restored', 30000);
   userImage.restored = await artworkSample(paneFreeSample.x, paneFreeSample.y);
-  // A skin with its own artwork says so, and choosing a picture there
-  // switches to the default frame, which shows it.
-  await selectDeepFieldSkin(frame('tide'));
-  await openSettingsAppearance();
-  await chooseBackgroundFile(picture);
-  await until(backgroundSaved, 'picture saved under tide', 30000);
-  userImage.selectedAfterTideImport = await evaluate(() => window.localStorage.getItem('wuu.shell-skin'));
-  await until(() => evaluate(() => Boolean(document.documentElement.dataset.shellImage)), 'default frame shows the picture', 30000);
-  userImage.defaultFramePlacement = await evaluate(() => document.documentElement.dataset.shellPlacement ?? null);
-  await selectDeepFieldSkin(frame('tide'));
-  await until(() => evaluate(() => Boolean(document.querySelector('.background-file-picker').closest('.settings-row').querySelector('.settings-row-label-description'))), 'own-artwork note');
-  userImage.noteWithTide = await evaluate(() => document.querySelector('.background-file-picker').closest('.settings-row').querySelector('.settings-row-label-description').textContent);
-  await capture('tide-dark-settings-picture-note');
-  assert.ok(await backgroundRemove(), 'background remove button');
-  await until(async () => !(await evaluate(() => Boolean(document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button')))), 'picture removed');
-  await closeSettings();
-  await selectDeepFieldSkin(deepField('deep-field'));
-  // Disable through the real CLI path: default frame + default welcome return.
+  // Disable through the real CLI path: the default frame returns.
   const disabled = spawnSync(core, ['plugin', 'disable', 'deep-field'], { env: process.env, encoding: 'utf8', timeout: 30000 });
   fs.appendFileSync(path.join(output, 'plugin-install.log'), `disable deep-field\n${disabled.stdout}\n${disabled.stderr}\n`);
   assert.equal(disabled.status, 0, 'plugin disable must succeed');
@@ -577,16 +488,8 @@ async function main() {
   await goHome();
   report.deepField.afterDisable = await evaluate(() => ({
     placement: document.documentElement.dataset.shellPlacement ?? null,
-    skin: document.documentElement.hasAttribute('data-shell-skin'),
-    welcomeReplaced: Boolean(document.querySelector('.deep-field-welcome')),
     emptyHome: Boolean(document.querySelector('.empty-home')),
   }));
-  await evaluate(keys => {
-    if (keys.dark === null) window.localStorage.removeItem('wuu.extension-theme.dark');
-    else window.localStorage.setItem('wuu.extension-theme.dark', keys.dark);
-    if (keys.light === null) window.localStorage.removeItem('wuu.extension-theme.light');
-    else window.localStorage.setItem('wuu.extension-theme.light', keys.light);
-  }, priorThemeKeys);
 
   phase = 'checks';
   const pane = { x: 720, y: 500 };
@@ -642,55 +545,25 @@ async function main() {
       && dist(at('tide-dark-automation', sidebar.x, sidebar.y), at('default-dark-automation', sidebar.x, sidebar.y)) < 1,
     `tide ${at('tide-dark-automation', pane.x, pane.y)} vs default ${at('default-dark-automation', pane.x, pane.y)}`);
 
-  // Deep Field example: welcome replacement rendered, session row activated a
-  // thread, and disabling the plugin restored the default frame + welcome.
-  check('deep-field welcome renders both cards',
-    report.deepField['welcome-dark']?.welcome && report.deepField['welcome-dark']?.sessionsCard
-      && report.deepField['welcome-light']?.welcome && report.deepField['welcome-light']?.sessionsCard,
-    JSON.stringify({ dark: report.deepField['welcome-dark'], light: report.deepField['welcome-light'] }));
-  // Usage data is optional in the fixture; when present both cards must
-  // render, and when absent the sessions card still renders alone.
-  check('deep-field welcome pairs usage card when present',
-    ['welcome-dark', 'welcome-light'].every(key => {
-      const welcome = report.deepField[key];
-      return welcome?.sessionsCard === true && (welcome?.usageCard !== true || welcome?.welcome === true);
-    }),
-    JSON.stringify({ dark: report.deepField['welcome-dark'], light: report.deepField['welcome-light'] }));
-  check('deep-field welcome is gated on its own skin',
-    report.deepField.nativeWelcome?.replaced === false && report.deepField.nativeWelcome?.emptyHome === true
-      && report.deepField.liveInstall === true && report.deepField.liveRemove === true,
-    JSON.stringify(report.deepField.nativeWelcome));
-  check('deep-field session rows stay inside the card',
-    ['layout-light', 'layout-dark', 'layout-w900'].every(key => {
-      const layout = report.deepField[key];
-      return layout?.card && layout.rows.every(row =>
-        row.rowRight <= layout.contentRight + 1 && row.timeRight <= layout.contentRight + 1);
-    }),
-    JSON.stringify({ light: report.deepField['layout-light'], dark: report.deepField['layout-dark'], w900: report.deepField['layout-w900'] }));
-  // Each measured layout is seeded with a fresh long-title thread right
-  // before measurement, so every layout must show an ellipsized row.
-  check('deep-field long titles are ellipsized',
-    ['layout-light', 'layout-dark', 'layout-w900'].every(key =>
-      (report.deepField[key]?.rows ?? []).some(row => row.ellipsized)),
-    JSON.stringify({ light: report.deepField['layout-light'], dark: report.deepField['layout-dark'], w900: report.deepField['layout-w900'] }));
-  check('deep-field lists no draft or child threads',
-    (report.deepField['welcome-dark']?.untitledRows ?? 1) === 0
-      && (report.deepField['welcome-dark']?.rows ?? 0) <= 3,
-    JSON.stringify(report.deepField['welcome-dark']));
-  const pictureReport = report.deepField.userImage;
+  const deepFieldReport = report.deepField, pictureReport = deepFieldReport.userImage, rowReport = deepFieldReport.pictureRow;
+  check('deep-field keeps the native welcome', deepFieldReport.nativeWelcome === true, JSON.stringify(deepFieldReport.nativeWelcome));
+  check('appearance offers the picture only under skins that show it',
+    typeof rowReport.deepField === 'string' && rowReport.deepField.includes('Deep Field')
+      && rowReport.tide === null && typeof rowReport.default === 'string' && rowReport.default !== rowReport.deepField,
+    JSON.stringify(rowReport));
+  check('appearance lists the skin before the palette',
+    rowReport.order.join() === 'skin,picture,palette' || rowReport.order.join() === 'skin,picture',
+    JSON.stringify(rowReport.order));
   check('deep-field keeps its skin selected when the user picks a picture',
-    pictureReport.selectedAfterImport === deepField('deep-field') && !pictureReport.noteWithAcceptingSkin, JSON.stringify(pictureReport));
+    pictureReport.selectedAfterImport === deepField('deep-field'), JSON.stringify(pictureReport));
   check('deep-field paints the user picture, then restores its artwork on remove',
     pictureReport.picture && dist(pictureReport.picture, pictureReport.bundled) > 40 && dist(pictureReport.restored, pictureReport.bundled) < 12, JSON.stringify(pictureReport));
-  check('a skin with its own artwork notes it and an import switches to the default frame',
-    /Tide/.test(pictureReport.noteWithTide || '') && pictureReport.selectedAfterTideImport === 'default' && pictureReport.defaultFramePlacement === 'frame',
-    JSON.stringify(pictureReport));
-  check('deep-field session row activates the thread', Boolean(report.deepField.clickedThread), report.deepField.clickedThread);
-  check('disabling deep-field restores default frame and welcome',
-    report.deepField.afterDisable?.placement !== 'canvas'
-      && report.deepField.afterDisable?.welcomeReplaced === false
-      && report.deepField.afterDisable?.emptyHome === true,
-    JSON.stringify(report.deepField.afterDisable));
+  check('a fixed-artwork skin keeps its own artwork while a picture is saved',
+    dist(at('tide-dark-home-with-picture', ribbon.x, ribbon.y), at('tide-dark-home', ribbon.x, ribbon.y)) < 4,
+    `${at('tide-dark-home-with-picture', ribbon.x, ribbon.y)} vs ${at('tide-dark-home', ribbon.x, ribbon.y)}`);
+  check('disabling deep-field restores the default frame',
+    deepFieldReport.afterDisable?.placement !== 'canvas' && deepFieldReport.afterDisable?.emptyHome === true,
+    JSON.stringify(deepFieldReport.afterDisable));
 
   report.status = 'passed'; save();
   console.log(`PASS shell-skin canvas; evidence ${output}`);
