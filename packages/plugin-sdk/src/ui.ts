@@ -103,7 +103,7 @@ export interface ApplicationSnapshotV1 {
     readonly loading: boolean;
     readonly error?: string;
   };
-  /** Unfinished work awaiting a user choice after a restart. Reading it never resumes execution. */
+  /** Conversations interrupted by the last exit and awaiting a user choice after restart. Reading it never resumes execution. */
   readonly restartRecovery?: readonly {
     readonly threadId: string;
     readonly title: string;

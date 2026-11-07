@@ -93,6 +93,9 @@ const OWNED_CLEANUP_TIMEOUT_MS = 5000;
 
 export type AppServerBindingOptions = { localOnly?: boolean };
 
+/** A deliberate shutdown may still preserve interrupted turns for a later boot. */
+export type AppServerShutdownOptions = { reason?: "update" };
+
 export class AppServerClientPool {
   private closing = false;
   private readonly ownedCleanups = new Map<PooledAppServerClient, Set<() => Promise<void>>>();
@@ -305,7 +308,7 @@ export class AppServerClientPool {
     return request;
   }
 
-  private disposeAfterOwnedCleanup(client: PooledAppServerClient): Promise<void> {
+  private disposeAfterOwnedCleanup(client: PooledAppServerClient, shutdown: AppServerShutdownOptions = {}): Promise<void> {
     const previous=this.disposal.get(client);if(previous)return previous;
     const releases=[...(this.ownedCleanups.get(client)??[])];
     const done=(async()=>{
@@ -315,7 +318,7 @@ export class AppServerClientPool {
           Promise.allSettled(releases.map(release=>release())),
           new Promise<void>(resolve=>{timer=setTimeout(resolve,OWNED_CLEANUP_TIMEOUT_MS);}),
         ]);
-      } finally {if(timer)clearTimeout(timer);this.ownedCleanups.delete(client);await client.dispose();}
+      } finally {if(timer)clearTimeout(timer);this.ownedCleanups.delete(client);await client.dispose(shutdown);}
     })();
     this.disposal.set(client,done);void done.finally(()=>this.disposal.delete(client)).catch(()=>{});return done;
   }
@@ -472,12 +475,12 @@ export class AppServerClientPool {
       .join("|");
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(shutdown: AppServerShutdownOptions = {}): Promise<void> {
     this.closing = true;
     const stopping: Promise<void>[] = [...this.disposal.values()];
     const workdirs = new Set<string>();
     for (const client of this.allClients()) {
-      stopping.push(this.disposeAfterOwnedCleanup(client));
+      stopping.push(this.disposeAfterOwnedCleanup(client, shutdown));
       workdirs.add(client.workdir);
     }
     for (const workdir of workdirs) this.clientTorndownHandler?.(workdir);
@@ -831,12 +834,12 @@ export class AppServerClient {
 
   private shutdownPromise: Promise<void> | undefined;
 
-  shutdown(): Promise<void> {
+  shutdown(shutdown: AppServerShutdownOptions = {}): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     const child = this.child;
     if (!child) return Promise.resolve();
     this.shutdownPromise = shutdownChild(child, () => {
-      this.write({ id: "shutdown", method: "shutdown" });
+      this.write({ id: "shutdown", method: "shutdown", params: shutdown.reason ? { reason: shutdown.reason } : undefined });
     });
     // Idle eviction also uses dispose without awaiting it. Keep failures visible
     // without producing unhandled promise rejections in those callers.
@@ -844,7 +847,7 @@ export class AppServerClient {
     return this.shutdownPromise;
   }
 
-  dispose(): Promise<void> {
+  dispose(shutdown: AppServerShutdownOptions = {}): Promise<void> {
     this.disposing = true;
     for (const pending of this.pending.values()) {
       pending.reject(pending.method === "thread/archive"
@@ -852,7 +855,7 @@ export class AppServerClient {
         : new Error("app-server stopped"));
     }
     this.pending.clear();
-    return this.shutdown();
+    return this.shutdown(shutdown);
   }
 
   touch(): void {

@@ -170,6 +170,35 @@ describe("AppServerClientPool Activity routing", () => {
   });
 });
 
+describe("AppServerClientPool shutdown", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("forwards the update restart reason through pooled shutdown", async () => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const context = { kind: "no_project" as const, cwd: join(tmpdir(), "update-restart-shutdown") };
+    const child = new FakeAppServerChild();
+    const requests: Array<{ method: string; params?: { reason?: string } }> = [];
+    child.stdin.on("data", data => {
+      for (const line of String(data).trim().split("\n")) {
+        if (line) requests.push(JSON.parse(line));
+      }
+    });
+    const pool = new AppServerClientPool(() => context, () => context.cwd, () => {}, () => child.asChildProcess());
+    pool.prewarmContexts([context]);
+    const stopping = pool.shutdown({ reason: "update" });
+    try {
+      await vi.waitFor(() => {
+        expect(requests.find(request => request.method === "shutdown")).toMatchObject({
+          params: { reason: "update" },
+        });
+      });
+    } finally {
+      child.emit("exit", 0, null);
+    }
+    await stopping;
+  });
+});
+
 describe("AppServerClientPool admission", () => {
   afterEach(() => vi.unstubAllEnvs());
 

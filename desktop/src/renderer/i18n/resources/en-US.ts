@@ -1,11 +1,11 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
-  "restartRecovery.description": "Conversations interrupted by an unexpected exit: {count}.",
+  "restartRecovery.description": "Conversations interrupted by an unexpected exit or update restart: {count}.",
   "restartRecovery.defer": "Not now",
   "restartRecovery.continue": "Continue all",
   "restartRecovery.applying": "Applying…",
-  "restartRecovery.loadFailed": "Could not load unfinished tasks. Reopen Wuu to try again.",
+  "restartRecovery.loadFailed": "Could not load interrupted conversations. Reopen Wuu to try again.",
   "restartRecovery.actionFailed": "Some conversations could not be resumed. Please try again.",
   "composer.plugins": "Plugins",
   "composer.pluginsLoading": "Loading plugins…",

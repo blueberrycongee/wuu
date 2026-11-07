@@ -46,6 +46,19 @@ var (
 	errExecutionRunChanged = errors.New("thread execution belongs to a different Run")
 )
 
+// shutdownMode distinguishes an abrupt close from an orderly quit and an
+// update restart. Only an abrupt close or update restart offers interrupted
+// turns for continuation after the next boot.
+type shutdownMode uint32
+
+const (
+	shutdownNone shutdownMode = iota
+	shutdownOrdinary
+	shutdownForUpdate
+
+	shutdownReasonUpdate = "update"
+)
+
 type threadTurnCompletion struct {
 	turnID        string
 	done          chan struct{}
@@ -363,7 +376,7 @@ type Server struct {
 	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
-	shutdownRequested            atomic.Bool
+	shutdownState                atomic.Uint32
 	pluginGenerationMutation     atomic.Bool
 	pluginGenerationRefreshing   atomic.Bool
 	pluginAdditivePreparation    atomic.Pointer[pluginAdditivePreparation]
@@ -1697,7 +1710,23 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodActivityStop:
 		return s.handleActivityStop(req)
 	case MethodShutdown:
-		s.shutdownRequested.Store(true)
+		var params struct {
+			Reason string `json:"reason,omitempty"`
+		}
+		// Shutdown params are additive. Ignore unknown fields so a caller can still
+		// stop the server when it sends newer metadata.
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("invalid params: %w", err))
+			}
+		}
+		mode := shutdownOrdinary
+		if params.Reason == shutdownReasonUpdate {
+			mode = shutdownForUpdate
+		}
+		// Publish the complete shutdown intent before Close cancels turns, so
+		// their terminal writes observe one consistent recovery policy.
+		s.shutdownState.Store(uint32(mode))
 		if err := s.writeResponse(req.ID, OKResult{OK: true}, nil); err != nil {
 			return err
 		}
