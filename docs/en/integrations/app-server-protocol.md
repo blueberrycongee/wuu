@@ -428,6 +428,13 @@ preference. Do not infer an installed program or authenticated account from the
 preference alone.
 
 `engine/list` accepts `{ "cwd": "/absolute/session/directory", "refresh_models": true }`.
+It also accepts `{ "include_models": false }` to return engine descriptors and
+settings without starting native model discovery. Every entry then reports
+`models_status: "deferred"`; the omitted catalog is neither empty nor unsupported.
+Clients can use this availability response for engine selection and thread
+creation, including native defaults and already known selections, then request
+the full catalog separately. Omitting `include_models` preserves full discovery.
+
 `cwd` defaults to the runtime root; pass the actual conversation/worktree directory
 when it differs. Refresh also rescans desktop installation and login-shell paths,
 reapplies persisted engine enable/disable choices to the live runtime, and bypasses
@@ -441,7 +448,8 @@ Claude also includes login status. The context is rechecked before publishing.
 Keychain-only and remote account changes require refresh or expiry.
 
 `models_status` distinguishes `ready`, authoritative `empty`, `unsupported`,
-`partial`, `error`, and `stale`. `partial` means some model probes failed;
+`partial`, `error`, `stale`, and the lightweight-response `deferred` described
+above. `partial` means some model probes failed;
 `stale` retains previously successful data only for the same context.
 `models_error` describes failed, partial or stale discovery. An authoritative empty
 result replaces previous models. A missing catalog never falls back to Wuu's

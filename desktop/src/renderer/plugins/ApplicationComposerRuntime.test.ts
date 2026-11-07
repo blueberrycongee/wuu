@@ -3,6 +3,7 @@ import { initialState, type AppState } from "../AppState";
 import type { EngineListResult, InitializeResult, Thread } from "../../shared/protocol";
 import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { ApplicationComposerRuntime } from "./ApplicationComposerRuntime";
+import { writeDraftEngineMemory } from "../DraftEngineMemory";
 
 vi.mock("../Toast", () => ({ showErrorToast: vi.fn() }));
 const original = window.wuu;
@@ -209,6 +210,58 @@ it("projects submission parameters from the same owner without leaking builtin c
 });
 
 
+it("publishes engine availability before the full model catalog settles", async () => {
+  const pending: Array<(result: EngineListResult) => void> = [];
+  window.wuu = { listEngines: vi.fn(() => new Promise<EngineListResult>(resolve => pending.push(resolve))) } as unknown as typeof window.wuu;
+  writeDraftEngineMemory({ engine: "devin", model: "remembered-model", effort: "high", speed: "fast", model_options: { mode: "smart" } });
+  const h = fixture();
+  const refresh = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  await vi.waitFor(() => expect(window.wuu.listEngines).toHaveBeenCalledTimes(1));
+  expect(window.wuu.listEngines).toHaveBeenNthCalledWith(1, { cwd: "/one", include_models: false }, context);
+
+  pending[0]({ settings: { default_engine: "devin" }, engines: [{ id: "devin", enabled: true, binary_ok: true, models_status: "deferred" }] });
+  await vi.waitFor(() => expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({
+    pending: false,
+    params: { engine: "devin", model: "remembered-model", effort: "high", speed: "fast", model_options: { mode: "smart" }, permission_mode: "unconfined" },
+  }));
+  await vi.waitFor(() => expect(window.wuu.listEngines).toHaveBeenCalledTimes(2));
+  expect(window.wuu.listEngines).toHaveBeenNthCalledWith(2, { cwd: "/one" }, context);
+  let settled = false;
+  void refresh.then(() => { settled = true; });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  pending[1]({ settings: { default_engine: "devin" }, engines: [{ id: "devin", enabled: true, binary_ok: true,
+    models: [{ id: "remembered-model", supported_efforts: ["high"] }], models_status: "ready" }] });
+  await refresh;
+  expect(h.view().engines[0].models?.map(model => model.id)).toEqual(["remembered-model"]);
+  expect(h.runtime.getSubmissionRuntime("draft-a").params).toMatchObject({ engine: "devin", model: "remembered-model", effort: "high" });
+});
+
+
+it("retries a deferred catalog after background discovery fails without relocking submission", async () => {
+  const pending: Array<{ resolve(result: EngineListResult): void; reject(error: Error): void }> = [];
+  window.wuu = { listEngines: vi.fn(() => new Promise<EngineListResult>((resolve, reject) => pending.push({ resolve, reject }))) } as unknown as typeof window.wuu;
+  const h = fixture();
+  const availability: EngineListResult = { settings: { default_engine: "devin" }, engines: [{ id: "devin", enabled: true, binary_ok: true, models_status: "deferred" }] };
+  const refresh = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  pending[0].resolve(availability);
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  await vi.waitFor(() => expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(false));
+  pending[1].reject(new Error("catalog unavailable"));
+  await expect(refresh).rejects.toThrow("catalog unavailable");
+  expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(false);
+
+  const retry = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  await vi.waitFor(() => expect(window.wuu.listEngines).toHaveBeenCalledTimes(3));
+  expect(window.wuu.listEngines).toHaveBeenNthCalledWith(3, { cwd: "/one" }, context);
+  pending[2].resolve({ ...availability, engines: [{ ...availability.engines[0], models: [{ id: "native-default" }], models_status: "ready" }] });
+  await retry;
+  expect(h.view().engines[0].models?.map(model => model.id)).toEqual(["native-default"]);
+});
+
+
 it("captures workspace defaults before asynchronous engine discovery", async () => {
   const h = fixture();
   let finish!: (value: EngineListResult) => void;
@@ -325,7 +378,7 @@ it("fences cached inventory and in-flight catalogs across a provider generation 
   vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false }] });
   await h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
   expect(h.runtime.getSubmissionRuntime("draft-a")).toMatchObject({ pending: false, requiresHostModel: false });
-  expect(window.wuu.listEngines).toHaveBeenCalledTimes(2);
+  expect(window.wuu.listEngines).toHaveBeenCalledTimes(4);
 });
 
 it("keeps permission policy independent of a replacement's host-model requirement", async () => {

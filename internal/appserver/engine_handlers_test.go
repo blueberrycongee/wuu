@@ -75,7 +75,9 @@ func TestEngineInventorySelectedHostModelRequirement(t *testing.T) {
 
 type engineRequirementFixture struct {
 	embeddedModelConsumer
-	value string
+	value         string
+	modelsStarted chan struct{}
+	releaseModels chan struct{}
 }
 
 func (*engineRequirementFixture) ID() string { return "fixture.engine-requirement" }
@@ -92,7 +94,7 @@ func (*engineRequirementFixture) ProvidedServices() []pluginhost.ServiceDescript
 	}
 	return []pluginhost.ServiceDescriptor{{Name: "engine.wuu", Version: "1.0.0", Methods: methods}}
 }
-func (p *engineRequirementFixture) InvokeService(_ context.Context, in pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (p *engineRequirementFixture) InvokeService(ctx context.Context, in pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	switch in.Method {
 	case "descriptor":
 		value := map[string]any{"id": "wuu", "version": "1.0.0", "enabled": true}
@@ -103,9 +105,78 @@ func (p *engineRequirementFixture) InvokeService(_ context.Context, in pluginhos
 	case "describe":
 		return json.RawMessage(`{"binary_ok":true,"enabled":true}`), nil
 	case "models":
+		if p.modelsStarted != nil {
+			close(p.modelsStarted)
+			select {
+			case <-p.releaseModels:
+				return json.RawMessage(`{"models":[{"id":"native-default"}],"status":"ready"}`), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
 		return json.RawMessage(`{"models":[]}`), nil
 	default:
 		return nil, fmt.Errorf("unexpected engine method %s", in.Method)
+	}
+}
+
+func TestEngineListCanSkipModelDiscovery(t *testing.T) {
+	provider := &engineRequirementFixture{value: "omitted", modelsStarted: make(chan struct{}), releaseModels: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(provider.releaseModels) }) }
+	t.Cleanup(release)
+	factory := runtime.NativeProviderFactory{ID: provider.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}
+	cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{"wuu.engines.native": false, provider.ID(): true}, Services: []composition.Binding{{Service: "engine.wuu", Major: 1, Provider: provider.ID()}}}}}}
+	rt := newEngineAdminRuntimeAt(t, t.TempDir(), cfg, factory)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+
+	fast := make(chan error, 1)
+	go func() {
+		fast <- srv.handleEngineList(Request{ID: json.RawMessage(`"fast"`), Params: json.RawMessage(`{"include_models":false}`)})
+	}()
+	select {
+	case err := <-fast:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-provider.modelsStarted:
+		t.Fatal("lightweight inventory waited for model discovery")
+	case <-time.After(5 * time.Second):
+		t.Fatal("lightweight inventory did not return")
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "fast")
+	if response["error"] != nil {
+		t.Fatalf("lightweight engine/list: %+v", response["error"])
+	}
+	result := remarshal[EngineListResult](t, response["result"])
+	if len(result.Engines) != 1 || !result.Engines[0].BinaryOK || result.Engines[0].ModelsStatus != "deferred" || len(result.Engines[0].Models) != 0 {
+		t.Fatalf("lightweight inventory = %+v", result.Engines)
+	}
+
+	legacy := make(chan error, 1)
+	go func() { legacy <- srv.handleEngineList(Request{ID: json.RawMessage(`"legacy"`)}) }()
+	select {
+	case <-provider.modelsStarted:
+	case err := <-legacy:
+		t.Fatalf("default engine/list returned before model discovery: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("default engine/list did not start model discovery")
+	}
+	release()
+	select {
+	case err := <-legacy:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("default engine/list did not finish")
+	}
+	response = responseByID(t, parseOutput(t, out.String()), "legacy")
+	result = remarshal[EngineListResult](t, response["result"])
+	if len(result.Engines) != 1 || result.Engines[0].ModelsStatus != "ready" || len(result.Engines[0].Models) != 1 || result.Engines[0].Models[0].ID != "native-default" {
+		t.Fatalf("default inventory lost its catalog: %+v", result.Engines)
 	}
 }
 
