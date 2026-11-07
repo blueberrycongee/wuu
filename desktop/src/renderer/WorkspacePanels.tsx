@@ -82,6 +82,7 @@ import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
 import { translateCurrent, useI18n } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
 import { Tooltip } from "./Tooltip";
+import { ShellCanvasArtwork } from "./background/ShellCanvasArtwork";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
 import { PluginIcon } from "./PublicIcon";
@@ -800,6 +801,7 @@ function WorkspacePanelContent({
       aria-hidden={!open || covered}
       inert={!open || covered}
     >
+      <ShellCanvasArtwork frosted />
       <div className="workspace-panel-tabbar" data-wuu-component="workspace-panel-header">
         <slots.Slot
           name="wuu.default-preview/workspace.header"

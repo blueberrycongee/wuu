@@ -1628,7 +1628,7 @@ export function AppSidebar({
       />
       </HoverRevealScopeContext.Provider>
       <div className="sidebar-content" inert={!sidebarVisible || settingsActive} aria-hidden={settingsActive || undefined}>
-        <ShellCanvasArtwork />
+        <ShellCanvasArtwork frosted />
         <div className="traffic-spacer" />
         {pluginCatalogActive ? (
           <nav className="sidebar-section-navigation" aria-label={t("skills.catalogLabel")}>
