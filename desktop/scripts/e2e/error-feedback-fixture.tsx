@@ -70,6 +70,9 @@ fixture.feedback = {
   actionFailure: () => showActionErrorToast("Synthetic repeated action failure"),
   render: (scene: string) => {
     clearToasts();
+    // A remote sample starts with a fresh settings authority: the first read is
+    // genuinely unknown, while the same mount still covers a cached refresh
+    // failure after a successful read.
     if (scene === "owned-notices") showToast({ message: "Global feedback first" });
     root.render(<I18nProvider><WuuUIRoot><div className="settings-scroll" style={{ height: "100%" }}><main style={{ padding: 32, width: "100%", maxWidth: 900, margin: "0 auto", flexShrink: 0 }}>
       <p>Synthetic error feedback acceptance · no live account</p>
@@ -81,7 +84,7 @@ fixture.feedback = {
         </div>
         <ScopedToast message="Composer feedback second" tone="error" dedupeKey="fixture-composer" />
         <ScopedToast message="Settings feedback third" dedupeKey="fixture-settings" />
-      </> : scene === "selected-surface" ? <SelectedSurfaceScene /> : scene === "remote" ? <SettingsControlsProvider controls={controls}><SettingsRemotePageContainer /></SettingsControlsProvider> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
+      </> : scene === "selected-surface" ? <SelectedSurfaceScene /> : scene === "remote" ? <SettingsControlsProvider controls={createApplicationSettingsControls()}><SettingsRemotePageContainer /></SettingsControlsProvider> : scene === "settings" ? <SettingsControlsProvider controls={controls}>
         <ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={async () => { throw new Error("The fixture never saves"); }} onClose={() => {}} onConnected={() => {}} />
       </SettingsControlsProvider> : scene === "rich" ? <BrowserControlsProvider service={browser}><ImagePreviewProvider>
         <div id="fixture-prose"><RichContent text="Read [the reference](https://example.invalid/reference) before continuing." /></div>
