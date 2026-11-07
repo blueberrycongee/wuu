@@ -20,7 +20,8 @@ function rpc(method,params={}) {
  const id=++serial;
  return new Promise((resolve,reject)=>{waiting.set(id,{resolve,reject});core.stdin.write(JSON.stringify({id,method,params})+'\n');});
 }
-const evaluate=fn=>win.webContents.executeJavaScript(`(${fn})()`,true);
+const COMPOSER_INPUT='[data-wuu-component="composer-input"]';
+const evaluate=fn=>win.webContents.executeJavaScript(`(()=>{const COMPOSER_INPUT=${JSON.stringify(COMPOSER_INPUT)};const composerText=node=>node.tagName==='TEXTAREA'?node.value:node.textContent;return (${fn})()})()`,true);
 async function until(fn) {
  const deadline=Date.now()+20000;
  while(Date.now()<deadline){if(await evaluate(fn))return;await new Promise(resolve=>setTimeout(resolve,30));}
@@ -28,7 +29,14 @@ async function until(fn) {
 }
 async function fill(value) {
  win.focus();win.webContents.focus();
- await win.webContents.executeJavaScript(`(()=>{const input=(document.querySelector('.mosaic-replies')||document.querySelector('.mosaic-main')).querySelector('textarea');input.focus();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`,true);
+ await win.webContents.executeJavaScript(`(()=>{const input=(document.querySelector('.mosaic-replies')||document.querySelector('.mosaic-main')).querySelector('${COMPOSER_INPUT}');input.focus();
+ if(input.tagName==='TEXTAREA'){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));}
+ else{document.execCommand('selectAll');for(const [index,segment] of ${JSON.stringify(value)}.split('\\n').entries()){if(index)document.execCommand('insertLineBreak');document.execCommand('insertText',false,segment);}}})()`,true);
+ await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
+}
+async function appendText(value) {
+ win.focus();win.webContents.focus();
+ await win.webContents.executeJavaScript(`(()=>{const input=(document.querySelector('.mosaic-replies')||document.querySelector('.mosaic-main')).querySelector('${COMPOSER_INPUT}');input.focus();const selection=getSelection();selection.selectAllChildren(input);selection.collapseToEnd();for(const [index,segment] of ${JSON.stringify(value)}.split('\\n').entries()){if(index)document.execCommand('insertLineBreak');document.execCommand('insertText',false,segment);}})()`,true);
  await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
 }
 async function key(keyCode,modifiers=[]) {win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));}
@@ -78,7 +86,7 @@ async function open(query={}){
  await win.loadFile(path.resolve(__dirname,'../out/personal-fixture/index.html'),{query:{commands:'1',...query}});
  await until(()=>window.mosaicFixture?.application.getSnapshot().phase==='ready'&&document.querySelector('[data-wuu-component="plugin-navigation-item"][aria-label="twin"]'));
  await evaluate(()=>window.mosaicFixture.openPersonal());
- await until(()=>document.querySelector('.mosaic-main textarea')&&!document.querySelector('.mosaic-main textarea').disabled);
+ await until(()=>{const input=document.querySelector('.mosaic-main '+COMPOSER_INPUT);return input&&(input.tagName==='TEXTAREA'?input.disabled===false:input.isContentEditable);});
 }
 app.whenReady().then(async()=>{
  await initialize();
@@ -89,15 +97,15 @@ app.whenReady().then(async()=>{
  assert.equal(await evaluate(()=>!!document.querySelector('[data-command-name="coding-secret"]')),false);
  await capture('wide-light-menu');
  await fill('/fixture');await until(()=>document.querySelectorAll('.slash-command-item').length===1);
- await evaluate(()=>{const input=document.querySelector('.mosaic-main textarea');input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:229,bubbles:true,isComposing:true}));});
- assert.equal(await evaluate(()=>document.querySelector('.mosaic-main textarea').value),'/fixture');
+ await evaluate(()=>{const input=document.querySelector('.mosaic-main '+COMPOSER_INPUT);input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:229,bubbles:true,isComposing:true}));});
+ assert.equal(await evaluate(()=>composerText(document.querySelector('.mosaic-main '+COMPOSER_INPUT))),'/fixture');
  assert.equal(report.requests.filter(r=>r.method==='agents.send').length,0);
- await evaluate(()=>document.querySelector('.mosaic-main textarea').dispatchEvent(new CompositionEvent('compositionend',{bubbles:true})));
+ await evaluate(()=>document.querySelector('.mosaic-main '+COMPOSER_INPUT).dispatchEvent(new CompositionEvent('compositionend',{bubbles:true})));
  await key('ArrowDown');await key('Tab');
- await until(()=>document.querySelector('.mosaic-main textarea').value.startsWith('/skill '));
- const selected=await evaluate(()=>document.querySelector('.mosaic-main textarea').value);
+ await until(()=>{const input=document.querySelector('.mosaic-main '+COMPOSER_INPUT);const token=input?.querySelector('[data-skill-token]')?.dataset.skillToken;return token?token.startsWith('/skill '):composerText(input).startsWith('/skill ');});
+ const selected=await evaluate(()=>{const input=document.querySelector('.mosaic-main '+COMPOSER_INPUT);return input.querySelector('[data-skill-token]')?.dataset.skillToken??composerText(input);});
  assert.equal(JSON.parse(selected.split('\n')[0].slice(7)).name,'fixture-note');
- await fill(selected+'中文验证');
+ await appendText('中文验证');
  await evaluate(()=>{const input=document.querySelector('.mosaic-main input[type=file]');const transfer=new DataTransfer();transfer.items.add(new File(['attached fixture context'],'context.txt',{type:'text/plain'}));input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));});
  await until(()=>document.querySelector('.mosaic-main').textContent.includes('context.txt'));
  await until(()=>document.querySelector('.mosaic-main .composer-send-button:not(:disabled)'));await evaluate(()=>document.querySelector('.mosaic-main .composer-send-button').click());
@@ -105,7 +113,7 @@ app.whenReady().then(async()=>{
  const sent=modelRequests.find(body=>JSON.stringify(body.messages).includes('PERSONAL_SKILL_DISPATCH_SENTINEL'));
  assert(sent,'selected skill never reached model');assert(JSON.stringify(sent.messages).includes('中文验证'));assert(!JSON.stringify(sent.messages).includes('CODING_PRIVATE_SENTINEL'));
  report.cases.push('Owned skill identity resolves into real model input; Coding skill excluded; keyboard/IME and attached file retained');
- await evaluate(()=>document.querySelector('.mosaic-main [data-action="reply-message"]').click());await until(()=>document.querySelector('.mosaic-replies textarea'));
+ await evaluate(()=>document.querySelector('.mosaic-main [data-action="reply-message"]').click());await until(()=>document.querySelector('.mosaic-replies '+COMPOSER_INPUT));
  await fill('/fixture');await until(()=>document.querySelector('[data-command-name="fixture-note"]'));await key('Enter');await key('Enter');
  await until(()=>document.querySelector('.mosaic-replies').textContent.includes('Fixture completed.'));
  assert(report.requests.filter(r=>r.method==='agents.send').at(-1).input.relation?.reply_to);
@@ -113,20 +121,20 @@ app.whenReady().then(async()=>{
  await evaluate(()=>document.querySelector('[data-action="close-replies"]').click());await until(()=>!document.querySelector('.mosaic-replies'));
  for(const value of ['/not-a-command hello','/tmp/example.txt','//comment','/settings\nordinary multiline','/handoff\nordinary multiline']){
   await fill(value);await key('Escape');await until(()=>document.querySelector('.mosaic-main .composer-send-button:not(:disabled)'));await evaluate(()=>document.querySelector('.mosaic-main .composer-send-button').click());
-  await until(()=>document.querySelector('.mosaic-main textarea').value==='');
+  await until(()=>composerText(document.querySelector('.mosaic-main '+COMPOSER_INPUT))==='');
   assert.equal(report.requests.filter(r=>r.method==='agents.send').at(-1).input.prompt,value);
  }
  report.cases.push('Unknown commands, paths, escaped slashes and multiline text remain literal');
  await fill('/fixture');await key('Escape');assert.equal(await evaluate(()=>!!document.querySelector('.slash-command-menu')),false);
- await fill('draft retained across reload');await new Promise(resolve=>{win.webContents.once('did-finish-load',resolve);win.reload();});await until(()=>document.querySelector('.mosaic-main textarea')?.value==='draft retained across reload'&&!document.querySelector('.mosaic-main textarea').disabled);
+ await fill('draft retained across reload');await new Promise(resolve=>{win.webContents.once('did-finish-load',resolve);win.reload();});await until(()=>{const input=document.querySelector('.mosaic-main '+COMPOSER_INPUT);return input&&composerText(input)==='draft retained across reload'&&(input.tagName==='TEXTAREA'?input.disabled===false:input.isContentEditable);});
  await fill('/settings');await until(()=>document.querySelector('[data-command-name="settings"]'));const sendsBefore=report.requests.filter(r=>r.method==='agents.send').length;await key('Enter');await until(()=>document.querySelector('[data-personal-preferences]'));
  assert.equal(report.requests.filter(r=>r.method==='agents.send').length,sendsBefore);report.cases.push('Settings opens its existing panel without a model message; draft survives reload');
  for(const [theme,width,font] of [['dark',620,'20'],['light',1100,'15']]){win.setSize(width,850);await open({theme,font});await fill('/');await until(()=>document.querySelector('[data-command-name="fixture-note"]'));const box=await evaluate(()=>{const r=document.querySelector('.slash-command-menu').getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth};});assert(box.left>=0&&box.right<=box.width,JSON.stringify(box));await capture(`${theme}-${width}-menu`);}
- catalogFault=true;await open();await fill('/fixture');await until(()=>document.querySelector('.slash-command-menu [role=alert]'));await capture('catalog-failure');await key('Enter');assert.equal(await evaluate(()=>document.querySelector('.mosaic-main textarea').value),'/fixture');catalogFault=false;await evaluate(()=>document.querySelector('.slash-command-menu [role=alert] button').click());await until(()=>document.querySelector('[data-command-name="fixture-note"]'));
+ catalogFault=true;await open();await fill('/fixture');await until(()=>document.querySelector('.slash-command-menu [role=alert]'));await capture('catalog-failure');await key('Enter');assert.equal(await evaluate(()=>composerText(document.querySelector('.mosaic-main '+COMPOSER_INPUT))),'/fixture');catalogFault=false;await evaluate(()=>document.querySelector('.slash-command-menu [role=alert] button').click());await until(()=>document.querySelector('[data-command-name="fixture-note"]'));
  report.cases.push('Catalog failure preserves draft and supports retry; wide/light and narrow/dark/large text menu fits viewport');
  report.status='passed';
 }).catch(error=>{report.status='failed';report.error=error.stack;console.error(error);}).finally(async()=>{
- if(win&&!win.isDestroyed()&&report.status==='failed'){report.dom=await evaluate(()=>({active:document.activeElement?.tagName,inputs:[...document.querySelectorAll('textarea')].map(n=>n.outerHTML),menus:[...document.querySelectorAll('[role=listbox]')].map(n=>n.outerHTML)})).catch(()=>null);await capture('failure').catch(()=>{});}
+ if(win&&!win.isDestroyed()&&report.status==='failed'){report.dom=await evaluate(()=>({active:document.activeElement?.tagName,inputs:[...document.querySelectorAll('textarea,[data-wuu-component=composer-input]')].map(n=>n.outerHTML),menus:[...document.querySelectorAll('[role=listbox]')].map(n=>n.outerHTML)})).catch(()=>null);await capture('failure').catch(()=>{});}
  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));
  fs.writeFileSync(path.join(output,'model-requests.json'),JSON.stringify(modelRequests,null,2));
  console.log(JSON.stringify({status:report.status,cases:report.cases,error:report.error,report:path.join(output,'report.json')}));core?.kill();provider?.close();app.exit(report.status==='passed'?0:1);
