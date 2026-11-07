@@ -7,8 +7,9 @@ and light themes, and a dashboard-style welcome view with recent sessions.
     wuu plugin install ./examples/plugins/deep-field
 
 Select **Settings → Appearance → Deep Field** as the shell skin, and the
-matching **Deep Field** / **Deep Field Light** themes. With no skin selected,
-everything is unchanged.
+matching **Deep Field** / **Deep Field Light** themes. The welcome dashboard
+appears only while the Deep Field skin is selected; with any other skin (or no
+skin) the native welcome is unchanged.
 
 ## What this demonstrates
 
@@ -18,9 +19,11 @@ everything is unchanged.
 - `contributes.themes` — opaque dark and light theme tokens that pair with the
   skin; the host derives translucency from canvas placement, not from theme
   colors.
-- `registerUIContribution` on the `wuu.default-conversation/welcome` slot — a
-  custom dashboard arranging `context.greeting` and `context.usage` next to an
-  `api.ui.Card` listing recent conversations (`api.showNotice` on failures,
-  `api.registerLocale` for copy).
+- `registerUIContribution` on the `wuu.default-conversation/welcome` slot —
+  installed only while this skin is selected (via
+  `settingsControls.subscribeShellSkins`) — a custom dashboard arranging
+  `context.greeting` and `context.usage` next to an `api.ui.Card` listing
+  recent conversations (`api.showNotice` on failures, `api.registerLocale`
+  for copy).
 - Disabling the plugin restores the default frame artwork and the default
   welcome; nothing leaves residue behind.

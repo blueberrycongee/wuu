@@ -341,26 +341,81 @@ async function main() {
     dark: window.localStorage.getItem('wuu.extension-theme.dark'),
     light: window.localStorage.getItem('wuu.extension-theme.light'),
   }));
-  // Persist skin + themes via the same localStorage keys the app uses, reload.
+  // Seed threads with title shapes that broke layout: a very long CJK title
+  // and a long space-free URL. Then verify the native welcome is untouched
+  // while the default skin is selected, and that selecting the deep-field
+  // skin installs the welcome live (and back).
+  await sendTurn('帮我梳理一下这个仓库里所有和外壳皮肤、画布摆放、点阵蒙版、玻璃材质、半透明遮罩、主题令牌、插件贡献、生命周期治理以及渲染器组合模型相关的实现细节和调用链，输出一份带章节目录的完整中文说明文档，并给出每一步对应的源码文件路径和关键符号名');
+  await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
+  await goHome();
+  await sendTurn('https://example.com/some/extremely/long/path/that/has/no/spaces/and/keeps/going/and/going/and/going/and/going/and/going/and/going/and/going/and/going/to/overflow/the/card/edge/definitely/without/fail');
+  await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
+  await goHome();
+  report.deepField = report.deepField || {};
+  report.deepField.nativeWelcome = await evaluate(() => ({
+    replaced: Boolean(document.querySelector('.deep-field-welcome')),
+    emptyHome: Boolean(document.querySelector('.empty-home')),
+  }));
+  // Select/deselect without reload: the app publishes shell-skin changes
+  // through the storage event the plugin subscribes to.
+  const selectDeepFieldSkin = key => evaluate(k => {
+    window.localStorage.setItem('wuu.shell-skin', k);
+    window.dispatchEvent(new StorageEvent('storage', { key: 'wuu.shell-skin' }));
+  }, key);
   await evaluate(keys => {
-    window.localStorage.setItem('wuu.shell-skin', keys.skin);
     window.localStorage.setItem('wuu.extension-theme.dark', keys.dark);
     window.localStorage.setItem('wuu.extension-theme.light', keys.light);
-  }, { skin: deepField('deep-field'), dark: `deep-field:deep-field`, light: `deep-field:deep-field-light` });
-  win.webContents.reload();
-  await shellReady();
+  }, { dark: 'deep-field:deep-field', light: 'deep-field:deep-field-light' });
+  await selectDeepFieldSkin(deepField('deep-field'));
+  await until(() => evaluate(() => Boolean(document.querySelector('.deep-field-welcome'))), 'welcome installs on skin select', 15000);
+  report.deepField.liveInstall = true;
+  await selectDeepFieldSkin('default');
+  await until(() => evaluate(() => !document.querySelector('.deep-field-welcome') && Boolean(document.querySelector('.empty-home'))), 'welcome removes on skin deselect', 15000);
+  report.deepField.liveRemove = true;
+  await selectDeepFieldSkin(deepField('deep-field'));
+  await until(() => evaluate(() => Boolean(document.querySelector('.deep-field-welcome'))), 'welcome reinstalls', 15000);
   await until(() => evaluate(() => document.documentElement.dataset.shellPlacement === 'canvas'), 'deep-field canvas placement', 30000);
+  // Each measured layout needs a long-title row on screen; the newest thread
+  // is always listed, so send a long-title turn immediately before measuring.
+  const seedLongTitle = async tag => {
+    await goHome();
+    await sendTurn(`${'长'.repeat(30)}${tag} https://example.com/${'segment/'.repeat(24)}end`);
+    await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
+    await goHome();
+  };
   for (const theme of ['light', 'dark']) {
     await evaluate(t => window.wuu.setThemePreference(t), theme);
     await until(() => evaluate(t => document.documentElement.dataset.theme === t, theme), 'deep-field theme applied');
-    await goHome();
+    await seedLongTitle(`${theme} measurement`);
     report.deepField = report.deepField || {};
     report.deepField[`welcome-${theme}`] = await evaluate(() => ({
       welcome: Boolean(document.querySelector('.deep-field-welcome')),
       sessionsCard: Boolean(document.querySelector('.deep-field-card')),
       usageCard: Boolean(document.querySelector('.empty-home-overview')),
-      singleColumn: Boolean(document.querySelector('.deep-field-grid[data-single]')),
+      rows: document.querySelectorAll('.deep-field-session').length,
+      untitledRows: [...document.querySelectorAll('.deep-field-session-title')]
+        .filter(n => /Untitled|未命名/.test(n.textContent)).length,
     }));
+    report.deepField[`layout-${theme}`] = await evaluate(() => {
+      const card = document.querySelector('.deep-field-card');
+      if (!card) return { card: false, rows: 0 };
+      const contentRight = card.getBoundingClientRect().right - (parseFloat(getComputedStyle(card).paddingRight) || 0);
+      return {
+        card: true,
+        contentRight,
+        rows: [...document.querySelectorAll('.deep-field-session')].map(row => {
+          const title = row.querySelector('.deep-field-session-title');
+          const time = row.querySelector('.deep-field-session-time');
+          return {
+            rowRight: row.getBoundingClientRect().right,
+            timeRight: time.getBoundingClientRect().right,
+            ellipsized: title.scrollWidth > title.clientWidth,
+            text: title.textContent.slice(0, 60),
+            scroll: title.scrollWidth,
+          };
+        }),
+      };
+    });
     await captureDF(`deep-field-example-${theme}-home`);
     await sendTurn(`Say hello for deep-field ${theme}`);
     await until(() => evaluate(reply => document.body.innerText.includes(reply), REPLY), 'fixture reply', 60000);
@@ -381,8 +436,27 @@ async function main() {
   await until(() => evaluate(() => !document.querySelector('.deep-field-welcome')), 'thread activated from session row', 15000);
   report.deepField.clickedThread = clicked;
   // Variants: 900px wide and UI font 20.
-  await goHome();
+  await seedLongTitle('nine hundred pixel measurement');
   win.setContentSize(900, HEIGHT);
+  await settle();
+  report.deepField['layout-w900'] = await evaluate(() => {
+    const card = document.querySelector('.deep-field-card');
+    if (!card) return { card: false, rows: [] };
+    const contentRight = card.getBoundingClientRect().right - (parseFloat(getComputedStyle(card).paddingRight) || 0);
+    return {
+      card: true,
+      contentRight,
+      rows: [...document.querySelectorAll('.deep-field-session')].map(row => {
+        const title = row.querySelector('.deep-field-session-title');
+        const time = row.querySelector('.deep-field-session-time');
+        return {
+          rowRight: row.getBoundingClientRect().right,
+          timeRight: time.getBoundingClientRect().right,
+          ellipsized: title.scrollWidth > title.clientWidth,
+        };
+      }),
+    };
+  });
   await captureDF('deep-field-example-dark-home-w900');
   win.setContentSize(WIDTH, HEIGHT);
   await evaluate(() => document.documentElement.style.setProperty('--wuu-font-size-ui', '20px'));
@@ -468,8 +542,34 @@ async function main() {
     report.deepField['welcome-dark']?.welcome && report.deepField['welcome-dark']?.sessionsCard
       && report.deepField['welcome-light']?.welcome && report.deepField['welcome-light']?.sessionsCard,
     JSON.stringify({ dark: report.deepField['welcome-dark'], light: report.deepField['welcome-light'] }));
+  // Usage data is optional in the fixture; when present both cards must
+  // render, and when absent the sessions card still renders alone.
   check('deep-field welcome pairs usage card when present',
-    !report.deepField['welcome-dark']?.usageCard || !report.deepField['welcome-dark']?.singleColumn,
+    ['welcome-dark', 'welcome-light'].every(key => {
+      const welcome = report.deepField[key];
+      return welcome?.sessionsCard === true && (welcome?.usageCard !== true || welcome?.welcome === true);
+    }),
+    JSON.stringify({ dark: report.deepField['welcome-dark'], light: report.deepField['welcome-light'] }));
+  check('deep-field welcome is gated on its own skin',
+    report.deepField.nativeWelcome?.replaced === false && report.deepField.nativeWelcome?.emptyHome === true
+      && report.deepField.liveInstall === true && report.deepField.liveRemove === true,
+    JSON.stringify(report.deepField.nativeWelcome));
+  check('deep-field session rows stay inside the card',
+    ['layout-light', 'layout-dark', 'layout-w900'].every(key => {
+      const layout = report.deepField[key];
+      return layout?.card && layout.rows.every(row =>
+        row.rowRight <= layout.contentRight + 1 && row.timeRight <= layout.contentRight + 1);
+    }),
+    JSON.stringify({ light: report.deepField['layout-light'], dark: report.deepField['layout-dark'], w900: report.deepField['layout-w900'] }));
+  // Each measured layout is seeded with a fresh long-title thread right
+  // before measurement, so every layout must show an ellipsized row.
+  check('deep-field long titles are ellipsized',
+    ['layout-light', 'layout-dark', 'layout-w900'].every(key =>
+      (report.deepField[key]?.rows ?? []).some(row => row.ellipsized)),
+    JSON.stringify({ light: report.deepField['layout-light'], dark: report.deepField['layout-dark'], w900: report.deepField['layout-w900'] }));
+  check('deep-field lists no draft or child threads',
+    (report.deepField['welcome-dark']?.untitledRows ?? 1) === 0
+      && (report.deepField['welcome-dark']?.rows ?? 0) <= 3,
     JSON.stringify(report.deepField['welcome-dark']));
   check('deep-field session row activates the thread', Boolean(report.deepField.clickedThread), report.deepField.clickedThread);
   check('disabling deep-field restores default frame and welcome',
