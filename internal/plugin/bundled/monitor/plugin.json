@@ -8,5 +8,6 @@
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "2026.10.19",
   "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js", "required_services": [{ "name": "ui.application", "major_version": 1, "required": false }] },
   "interface": { "displayName": "Monitor", "shortDescription": "Follow background events without blocking the conversation.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Read", "Write"] }
 }

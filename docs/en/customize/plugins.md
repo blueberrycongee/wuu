@@ -86,6 +86,7 @@ when every check passes. Scripts should print relevant changes to stdout and dia
 can wake the conversation or steer its current turn. Monitor events are observations,
 so they do not answer a question that is waiting for you.
 
+While watches remain active after a turn finishes, a mascot row below the latest turn shows what is still being monitored and disappears when they end.
 Monitor has no dedicated desktop panel. Ask the agent to inspect or stop a watch;
 `monitor_tasks` lists its status and reads retained output. Explicit stops tell the
 agent not to restart the watch unless asked. New event deliveries, including monitor
