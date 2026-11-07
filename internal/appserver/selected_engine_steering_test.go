@@ -146,6 +146,25 @@ func TestSelectedHostLoopSteeringHasOneOwner(t *testing.T) {
 	if items[3].Type != ThreadItemAgentMessage || items[3].Text != "done" || !items[3].Terminal {
 		t.Fatalf("successor answer missing: %+v", items[3])
 	}
+	// Reload must reproduce the live layout exactly: the interrupted fragment
+	// stays visible before the steer, and the successor answer stays after it.
+	persisted, err := loadPersistedMessages(rt.Sessions, threadID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded []ThreadItem
+	for _, turn := range turnsFromPersistedHistory(threadID, persisted, time.Now().UTC(), nil) {
+		reloaded = append(reloaded, turn.Items...)
+	}
+	if len(reloaded) != len(items) {
+		t.Fatalf("reloaded items = %+v, want the live layout %+v", reloaded, items)
+	}
+	for i := range items {
+		live, restored := items[i], reloaded[i]
+		if restored.Type != live.Type || restored.Text != live.Text || restored.Cause != live.Cause || restored.Terminal != live.Terminal {
+			t.Fatalf("item %d moved or changed across reload: live=%+v restored=%+v", i, live, restored)
+		}
+	}
 	th.mu.Lock()
 	count := 0
 	for _, msg := range th.History {

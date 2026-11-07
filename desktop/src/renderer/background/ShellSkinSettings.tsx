@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
 import { BackgroundSettings } from "./BackgroundSettings";
-import { useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
+import { showsUserImage, useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
 
 function SkinChip({ skin, mode, selected, choose, title }: {
   skin?: AvailableShellSkin; mode: "light" | "dark"; selected: boolean; choose: () => void;
@@ -37,10 +37,11 @@ export function ShellSkinSettings(): JSX.Element {
   const choose = (key: string) => {
     try { controls.selectShellSkin(key); setError(false); } catch { setError(true); }
   };
-  const unavailable = selected !== "default" && !skins.some(skin => skin.key === selected);
+  const skin = skins.find(candidate => candidate.key === selected);
+  const unavailable = selected !== "default" && !skin;
   return <>
     {(skins.length > 0 || unavailable) && (
-      <SettingsRow title={t("settings.shellSkin")}>
+      <SettingsRow title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")}>
         <div className="theme-segmented shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
           <SkinChip mode={mode} selected={selected === "default"} choose={() => choose("default")} title={t("settings.skinDefault")} />
           {skins.map(skin => <SkinChip key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
@@ -49,6 +50,7 @@ export function ShellSkinSettings(): JSX.Element {
     )}
     {unavailable && <p className="settings-description" role="status">{t("settings.skinUnavailable")}</p>}
     {error && <p role="alert">{t("settings.saveFailed")}</p>}
-    <BackgroundSettings />
+    {/* The picture is the selected skin's artwork, so only skins that can show it offer it. */}
+    {showsUserImage(skin) && <BackgroundSettings canvasSkin={skin?.placement === "canvas" ? skin.name : undefined} />}
   </>;
 }

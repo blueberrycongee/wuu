@@ -11,6 +11,25 @@ import type { Thread, ThreadItem, Turn } from "@wuu/protocol";
 
 import { isVisibleThread } from "./threads";
 
+/** Server item ids end in "-item-N"; that suffix is the chronological order.
+ *  Mirrored from the desktop TurnOrdering: merge paths append surviving rows
+ *  to the tail, so a snapshot missing a locally-known item must not reorder it
+ *  below later content. Rows without the suffix keep their arrival order. */
+function turnItemOrder(id: string): number | undefined {
+  const match = id.match(/-item-(\d+)$/);
+  if (!match) return undefined;
+  const order = Number.parseInt(match[1], 10);
+  return Number.isFinite(order) ? order : undefined;
+}
+
+function orderedTurnItems(items: ThreadItem[]): ThreadItem[] {
+  const indexed = items.map((item, index) => ({ item, index, order: turnItemOrder(item.id) }));
+  if (indexed.some((entry) => entry.order === undefined)) return items.slice();
+  return indexed
+    .sort((left, right) => (left.order ?? left.index) - (right.order ?? right.index) || left.index - right.index)
+    .map((entry) => entry.item);
+}
+
 export type ConnectionPhase = "idle" | "connecting" | "attached" | "reconnecting";
 
 export type PendingSend = {
@@ -343,7 +362,7 @@ export class AppStore {
     } else {
       items.push(item);
     }
-    turns[index] = { ...turn, items };
+    turns[index] = { ...turn, items: orderedTurnItems(items) };
     this.threads.set(threadId, { ...thread, turns });
     this.bump();
   }
@@ -377,7 +396,7 @@ export class AppStore {
     for (const item of existing.items ?? []) {
       if (!seen.has(item.id)) merged.push(item);
     }
-    return { ...incoming, items: merged };
+    return { ...incoming, items: orderedTurnItems(merged) };
   }
 
   /** Snapshot upsert that never lets a shorter completed snapshot truncate

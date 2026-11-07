@@ -14,6 +14,7 @@ import {
 } from "./browserPiPWindow";
 import type { ObservationPiPEventSink } from "./cuaActivityWindows";
 import { ActivityPiPSurface } from "./activityPiPWindow";
+import type { ActivityPiPContentContext } from "./activityPiPContent";
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 // Cards animate in and out on timers; assertions about resting state run once
@@ -270,16 +271,21 @@ function makeSink(): ObservationPiPEventSink & {
 function makeCuaSurface(opts?: {
   bounds?: Rectangle;
   desktopFrame?: Rectangle | ((bounds: Rectangle) => Rectangle);
+  snapshot?: () => Promise<string | undefined>;
+  onStop?: () => void;
+  onContext?: (context: ActivityPiPContentContext) => void;
 }): {
   surface: ActivityPiPSurface;
   win: FakePipWindow;
   overlay: FakeOverlay;
   sink: ReturnType<typeof makeSink>;
+  viewport: (width: number, height: number) => void;
 } {
   const sink = makeSink();
   const bounds = opts?.bounds ?? { x: 100, y: 100, width: 260, height: 170 };
   const win = new FakePipWindow(bounds);
   const overlay = new FakeOverlay();
+  let contentContext: ActivityPiPContentContext;
   const surface = new ActivityPiPSurface({
     activity: {
       ...makeActivity(), kind: "cua", plugin_id: "cua-mac", target: "com.apple.TextEdit",
@@ -296,17 +302,20 @@ function makeCuaSurface(opts?: {
       ? opts.desktopFrame(bounds)
       : opts?.desktopFrame ?? { x: 0, y: 0, width: 1440, height: 900 },
     createContent: (_activity, context) => {
+      contentContext = context;
+      opts?.onContext?.(context);
       context.setViewport({ width: 800, height: 600 });
       context.setMounted(true);
       return {
         start: () => undefined,
         setVisible: () => undefined,
         layout: () => undefined,
-        stop: (onStopped: () => void) => onStopped(),
+        snapshot: opts?.snapshot,
+        stop: (onStopped: () => void) => { opts?.onStop?.(); onStopped(); },
       };
     },
   });
-  return { surface, win, overlay, sink };
+  return { surface, win, overlay, sink, viewport: (width, height) => contentContext.setViewport({ width, height }) };
 }
 
 function makeSurface(opts?: {
@@ -409,6 +418,117 @@ describe("ActivityPiPSurface desktop docking", () => {
     surface.stop();
   });
 
+  it.each(["top-left", "top-right", "bottom-left", "bottom-right"] as const)("follows native viewport aspect at the %s corner, including trailing cards", (alignment) => {
+    const layout = { host: { x: 0, y: 0, width: 800, height: 600 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 1200, height: 800 } };
+    const lead = makeCuaSurface();
+    const tail = makeCuaSurface();
+    for (const item of [lead, tail]) { item.surface.start(); item.surface.setHostLayout(layout); }
+    lead.surface.setStackPosition(0, { frame: lead.win.bounds, alignment, dragging: false });
+    tail.surface.setStackPosition(1, lead.surface.stackLead());
+    const before = { ...lead.win.bounds };
+    lead.viewport(600, 800);
+    const after = lead.win.bounds;
+    expect(after.width).toBe(240);
+    expect(after.height).toBe(320);
+    expect(after.x + (alignment.endsWith("right") ? after.width : 0)).toBe(before.x + (alignment.endsWith("right") ? before.width : 0));
+    expect(after.y + (alignment.startsWith("bottom") ? after.height : 0)).toBe(before.y + (alignment.startsWith("bottom") ? before.height : 0));
+    tail.surface.setStackPosition(1, lead.surface.stackLead());
+    expect(tail.win.bounds.width / tail.win.bounds.height).toBeCloseTo(.75);
+    const tailBefore = { ...tail.win.bounds };
+    tail.viewport(600, 800);
+    expect(tail.win.bounds.width / tail.win.bounds.height).toBeCloseTo(.75);
+    expect(Math.max(tail.win.bounds.width, tail.win.bounds.height)).toBe(320);
+    expect(tail.win.bounds.x + (alignment.endsWith("right") ? tail.win.bounds.width : 0)).toBe(tailBefore.x + (alignment.endsWith("right") ? tailBefore.width : 0));
+    expect(tail.win.bounds.y + (alignment.startsWith("bottom") ? tail.win.bounds.height : 0)).toBe(tailBefore.y + (alignment.startsWith("bottom") ? tailBefore.height : 0));
+    tail.surface.setStackPosition(1, lead.surface.stackLead());
+    expect(tail.win.bounds.width / tail.win.bounds.height).toBeCloseTo(.75);
+    const stable = { ...lead.win.bounds };
+    lead.viewport(603, 800);
+    expect(lead.win.bounds).toEqual(stable);
+    lead.surface.stop(); tail.surface.stop();
+  });
+
+  it.each(["drag", "resize"])("defers native aspect changes until an active %s ends", (gesture) => {
+    const { surface, win, overlay, viewport } = makeCuaSurface();
+    surface.start();
+    surface.setHostLayout({ host: { x: 0, y: 0, width: 800, height: 600 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 1200, height: 800 } });
+    const before = { ...win.bounds };
+    const query = gesture === "resize" ? "&edge=nw" : "&vx=0&vy=0";
+    overlay.navigate(`wuu-pip://${gesture}?phase=start&x=0&y=0${query}`);
+    viewport(600, 800);
+    viewport(800, 800);
+    surface.setStackPosition(1, { frame: { x: 24, y: 24, width: 200, height: 200 }, alignment: "top-left", dragging: false });
+    expect(win.bounds).toEqual(before);
+    overlay.navigate(`wuu-pip://${gesture}?phase=end&x=0&y=0${query}`);
+    finishMotion();
+    expect(win.bounds.width).toBe(win.bounds.height);
+    viewport(800, 600);
+    expect(win.bounds.width / win.bounds.height).toBeCloseTo(4 / 3);
+    surface.stop();
+  });
+
+  it("reshapes a desktop-docked native card at its display corner", async () => {
+    const { surface, win, overlay, viewport } = makeCuaSurface();
+    surface.start(); surface.setVisible(true); await settle(); finishMotion();
+    overlay.navigate("wuu-pip://desktop"); finishMotion();
+    const before = { ...win.bounds };
+    viewport(600, 800);
+    expect(win.bounds).toEqual({ x: before.x + before.width - 240, y: before.y + before.height - 320, width: 240, height: 320 });
+    surface.stop();
+  });
+
+  it("captures the unavailable frame before tearing content down", async () => {
+    let resolve!: (src: string) => void;
+    const onStop = vi.fn();
+    const snapshot = vi.fn(() => new Promise<string>(done => { resolve = done; }));
+    const { surface, overlay } = makeCuaSurface({ snapshot, onStop });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(onStop).not.toHaveBeenCalled();
+    resolve("data:image/png;base64,last-frame");
+    await settle();
+    expect(overlay.executed).toContain('window.wuuPipFrost?.("data:image/png;base64,last-frame")');
+    expect(onStop).toHaveBeenCalledOnce();
+    surface.stop();
+  });
+
+  it.each(["missing", "rejected", "stalled"])("still retires unavailable content when its snapshot is %s", async (failure) => {
+    const onStop = vi.fn();
+    const snapshot = failure === "missing" ? undefined : failure === "rejected"
+      ? () => Promise.reject(new Error("Capture closed")) : () => new Promise<string>(() => undefined);
+    const { surface, overlay } = makeCuaSurface({ snapshot, onStop });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    vi.advanceTimersByTime(150);
+    await settle();
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(overlay.executed.filter(code => code.startsWith("window.wuuPipFrost?.(") && !code.endsWith("(null)"))).toEqual([]);
+    surface.stop();
+  });
+
+  it.each(["retarget", "healthy", "mounted"])("does not restore a stale frosted frame or stop a preview recovered via %s", async (recovery) => {
+    let resolve!: (src: string) => void;
+    let context!: ActivityPiPContentContext;
+    const onStop = vi.fn();
+    const { surface, overlay, sink } = makeCuaSurface({
+      snapshot: () => new Promise<string>(done => { resolve = done; }), onStop,
+      onContext: value => { context = value; },
+    });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    if (recovery === "retarget") surface.retarget({ ...makeActivity(), kind: "cua", target: "replacement" }, sink);
+    if (recovery === "healthy") context.onEvent({ event: "capture_status", status: "healthy" });
+    if (recovery === "mounted") context.setMounted(true);
+    surface.setVisible(true);
+    const stops = onStop.mock.calls.length;
+    resolve("data:image/png;base64,stale-frame");
+    await settle();
+    expect(overlay.executed).not.toContain('window.wuuPipFrost?.("data:image/png;base64,stale-frame")');
+    expect(onStop).toHaveBeenCalledTimes(stops);
+    surface.stop();
+  });
+
   it("fits an oversized card when it is moved to a smaller display", async () => {
     const large = { x: 0, y: 0, width: 2000, height: 1200 };
     const small = { x: -1366, y: 0, width: 1366, height: 768 };
@@ -423,18 +543,18 @@ describe("ActivityPiPSurface desktop docking", () => {
     finishMotion();
     expect(win.getBounds()).toEqual({ x: 1656, y: 936, width: 320, height: 240 });
 
-    overlay.navigate("wuu-pip://resize?phase=start&edge=se&x=1976&y=1176");
-    overlay.navigate("wuu-pip://resize?phase=end&edge=se&x=3256&y=1936");
+    overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=1656&y=936");
+    overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=376&y=176");
     finishMotion();
-    expect(win.getBounds().width).toBe(1600);
-    expect(win.getBounds().height).toBe(1000);
+    expect(win.getBounds().width).toBe(1536);
+    expect(win.getBounds().height).toBe(1152);
 
     overlay.navigate("wuu-pip://drag?phase=start&x=500&y=500&vx=0&vy=0");
     overlay.navigate("wuu-pip://drag?phase=move&x=-500&y=300&vx=0&vy=0");
     overlay.navigate("wuu-pip://drag?phase=end&x=-500&y=300&vx=0&vy=0");
     finishMotion();
     const bounds = win.getBounds();
-    expect(bounds).toMatchObject({ width: 1318, height: 720 });
+    expect(bounds).toMatchObject({ width: 960, height: 720 });
     expect(bounds.x).toBeGreaterThanOrEqual(small.x);
     expect(bounds.y).toBeGreaterThanOrEqual(small.y);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(small.x + small.width);
@@ -891,17 +1011,17 @@ describe("BrowserPiPSurface", () => {
     host.relayouts.length = 0;
     overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=0&y=0");
     overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=-40&y=-30");
-    expect(win.bounds).toMatchObject({ x: 416, y: 386, width: 360, height: 190 });
-    expect(host.relayouts.at(-1)?.zoom).toBeCloseTo(0.36);
-    expect(host.relayouts.at(-1)?.rect.width).toBeCloseTo(360);
-    expect(host.relayouts.at(-1)?.rect.height).toBeCloseTo(180);
+    expect(win.bounds).toMatchObject({ x: 396, y: 386, width: 380, height: 190 });
+    expect(host.relayouts.at(-1)?.zoom).toBeCloseTo(0.38);
+    expect(host.relayouts.at(-1)?.rect.width).toBeCloseTo(380);
+    expect(host.relayouts.at(-1)?.rect.height).toBeCloseTo(190);
     expect(win.added.at(-1)).toBe(overlay);
     surface.setHostLayout({
       host: { x: 0, y: 0, width: 800, height: 600 },
       obstacles: [],
       visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
     });
-    expect(win.bounds).toMatchObject({ width: 360, height: 190 });
+    expect(win.bounds).toMatchObject({ width: 380, height: 190 });
     surface.stop();
   });
 

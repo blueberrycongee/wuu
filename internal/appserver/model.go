@@ -1139,6 +1139,7 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 		item.FinishReason = string(msg.FinishReason)
 		item.StopReason = msg.StopReason
 		item.Truncated = msg.Truncated
+		item.Cause = strings.TrimSpace(msg.Cause)
 		th.upsertItemLocked(turnID, item, now)
 		if terminal {
 			turn := th.ensureTurnLocked(turnID, now)
@@ -1885,6 +1886,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					FinishReason: string(msg.FinishReason),
 					StopReason:   msg.StopReason,
 					Truncated:    msg.Truncated,
+					Cause:        strings.TrimSpace(msg.Cause),
 				}, historyIndex, true)
 			}
 			if msg.FinishReason != "" || msg.StopReason != "" || msg.Truncated {
@@ -2041,6 +2043,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 				FinishReason: string(msg.FinishReason),
 				StopReason:   msg.StopReason,
 				Truncated:    msg.Truncated,
+				Cause:        strings.TrimSpace(msg.Cause),
 			}
 		}
 		if strings.TrimSpace(msg.ReasoningContent) != "" {

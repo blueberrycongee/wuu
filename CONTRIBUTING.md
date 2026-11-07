@@ -94,7 +94,8 @@ snapshot generated theme matrices, or quote prompt phrasing.
 - Do not edit product package versions by hand. After writing the release notes,
   synchronize `VERSION` and product metadata with
   `make release-prepare RELEASE_VERSION=<version>`.
-- Product releases use UTC CalVer `YYYY.M.D`, without leading zeros for month or day.
+- Product releases use UTC CalVer `YYYY.MMDD.P`: the UTC year, the month and day
+  packed as `month * 100 + day`, and a same-day release index starting at 0.
   Check API, protocol, configuration, and storage compatibility separately; product
   version increments do not express compatibility.
 - Only maintainers create release tags. See [the release guide](docs/en/project/release.md).
