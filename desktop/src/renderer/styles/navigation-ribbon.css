@@ -238,6 +238,12 @@
   left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
 }
 
+/* The restore affordance only exists while the ribbon is hidden: keep its
+   ink at the engaged panel toggle's weight instead of the quiet action gray. */
+.navigation-ribbon-layout:has(.sidebar-ribbon) .ribbon-restore-toggle {
+  color: var(--ink);
+}
+
 .section-sidebar-toggle *,
 .ribbon-restore-toggle * {
   -webkit-app-region: no-drag;
