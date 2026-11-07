@@ -372,6 +372,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		return processServiceSnapshot(p)
 	}
 	var input struct {
+		Stream    string                        `json:"stream,omitempty"`
 		ProcessID string                        `json:"process_id"`
 		Offset    int64                         `json:"offset_bytes,omitempty"`
 		MaxBytes  int                           `json:"max_bytes,omitempty"`
@@ -455,7 +456,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		readCtx, cancel := context.WithCancel(ctx)
 		stop := context.AfterFunc(generation, cancel)
 		defer func() { stop(); cancel() }()
-		out, err := p.manager.ReadOutputSnapshot(readCtx, p.processID, proc.OutputReadOptions{OffsetBytes: &input.Offset, MaxBytes: input.MaxBytes, Wait: time.Duration(input.WaitMS) * time.Millisecond})
+		out, err := p.manager.ReadOutputSnapshot(readCtx, p.processID, proc.OutputReadOptions{Stream: input.Stream, OffsetBytes: &input.Offset, MaxBytes: input.MaxBytes, Wait: time.Duration(input.WaitMS) * time.Millisecond})
 		if err != nil {
 			return nil, err
 		}
@@ -473,12 +474,13 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		}
 		status := processServiceStatus(p, &out.Process)
 		return marshalServiceResult(struct {
+			Stream     string `json:"stream,omitempty"`
 			Process    any    `json:"process"`
 			Output     string `json:"output"`
 			NextOffset int64  `json:"next_offset"`
 			TotalBytes int64  `json:"total_bytes"`
 			Truncated  bool   `json:"truncated"`
-		}{status, tools.RedactToolOutput(out.Output), out.EndOffset, out.TotalBytes, out.Truncated})
+		}{out.Stream, status, tools.RedactToolOutput(out.Output), out.EndOffset, out.TotalBytes, out.Truncated})
 	default:
 		return nil, serviceError("method_not_found", fmt.Sprintf("unknown process method %q", params.Method))
 	}

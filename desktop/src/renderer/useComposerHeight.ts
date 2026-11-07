@@ -1,16 +1,17 @@
+import { composerInputElement, type ComposerInputHandle } from "./ComposerInput";
 import { useCallback, useLayoutEffect, type RefObject } from "react";
 
 // Measure the live textarea, not the deferred draft in the surrounding composer.
 // This also counts soft wraps and preserves the browser's IME/selection state.
-export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, value: string): void {
+export function useComposerHeight(ref: RefObject<ComposerInputHandle | null>, value: string): void {
   const resize = useCallback(() => {
-    const input = ref.current;
+    const input = ref.current ? composerInputElement(ref.current) : null;
     const composer = input?.closest<HTMLElement>(".composer");
     const stack = input?.closest<HTMLElement>(".composer-stack");
     if (!input || !composer || !stack) return;
     // An empty conversation draft has no text to wrap. Let the stylesheet
     // size it so window resizing does not repeatedly force layout.
-    if (!input.value && !stack.dataset.documentComposer) {
+    if (!ref.current?.value && !stack.dataset.documentComposer) {
       if (stack.dataset.multiline !== undefined) delete stack.dataset.multiline;
       if (input.style.height) input.style.removeProperty("height");
       if (input.style.getPropertyValue("--composer-chrome-height")) {
@@ -36,6 +37,7 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, va
     // capsule without clearing the draft.
     delete stack.dataset.multiline;
     input.style.height = "0px";
+    const collapsedComposerHeight = composer.offsetHeight;
     if (input.scrollHeight > input.offsetHeight + 1) {
       stack.dataset.multiline = "true";
     }
@@ -46,21 +48,22 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, va
     const style = getComputedStyle(input);
     const borderHeight = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
     const maximum = Math.max(baseInputHeight, parseFloat(style.maxHeight));
-    const desired = input.value || stack.dataset.documentComposer
+    const desired = ref.current?.value || stack.dataset.documentComposer
       ? input.scrollHeight + borderHeight
       : baseInputHeight;
     input.style.height = `${Math.max(baseInputHeight, Math.min(maximum, desired))}px`;
     input.scrollTop = scrollTop;
 
     // Grow upward without moving the send controls or the conversation's scroll
-    // anchor. Put the offset on the common ancestor of the frame and queue tray.
-    stack.style.setProperty("--composer-input-growth", `${Math.max(0, composer.offsetHeight - baseComposerHeight)}px`);
+    // anchor. Include the toolbar row added by multiline layout in that growth.
+    // Put the offset on the common ancestor of the frame and queue tray.
+    stack.style.setProperty("--composer-input-growth", `${Math.max(0, composer.offsetHeight - collapsedComposerHeight)}px`);
   }, [ref]);
 
   // Run after every local value commit, including history, paste, and send-clear.
   useLayoutEffect(resize, [resize, value]);
   useLayoutEffect(() => {
-    const input = ref.current;
+    const input = ref.current ? composerInputElement(ref.current) : null;
     if (!input) return;
     // Resizing an observed ancestor inside its delivery can invalidate another
     // observer's measurements. Coalesce layout notifications into the next frame.

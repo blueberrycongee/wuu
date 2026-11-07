@@ -32,8 +32,6 @@ const (
 	SurfaceWorker SurfaceKind = iota
 	// SurfaceMain is the ordinary project main-session surface.
 	SurfaceMain
-	// SurfaceProjectSession adds project communication to an ordinary session.
-	SurfaceProjectSession
 )
 
 // Compiler compiles a model profile into a built-in tool surface. Plugin-owned
@@ -70,9 +68,6 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	b.addVisible("present_artifact", capability.CapabilityArtifactPresent)
 	if kind != SurfaceWorker {
 		addContextWindowTools(b)
-	}
-	if kind == SurfaceProjectSession {
-		b.addVisible("session", capability.CapabilityProjectSessions)
 	}
 	b.sortCaps()
 	return b.surface
@@ -181,7 +176,7 @@ func addSearchTools(b *surfaceBuilder) {
 func addBashFirstTools(b *surfaceBuilder, p Profile) {
 	if p.Execution.AllowDirectShell {
 		b.addVisible("bash", capability.CapabilityCommandBash)
-		b.addVisible("process", capability.CapabilityCommandBackground)
+		b.addVisibleCapability(capability.CapabilityCommandBackground)
 	}
 }
 

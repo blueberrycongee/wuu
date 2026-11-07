@@ -60,3 +60,25 @@ export function reconcileThreadOrder(threads: ThreadSummary[], storedOrder: stri
     .filter((id) => !knownIDs.has(id));
   return [...newIDs, ...known];
 }
+
+export type ThreadArrivalOrder = { ids: string[]; newestCreatedAt: number };
+
+/** Keep presented positions; distinguish newly created sessions from late history. */
+export function reconcileThreadArrivalOrder(
+  threads: readonly Pick<ThreadSummary, "id" | "created_at">[],
+  previous: ThreadArrivalOrder,
+): ThreadArrivalOrder {
+  const known = new Set(previous.ids);
+  const arrivals: string[] = [];
+  const history: string[] = [];
+  let newestCreatedAt = previous.newestCreatedAt;
+  for (const thread of threads) {
+    const createdAt = Date.parse(thread.created_at) || 0;
+    newestCreatedAt = Math.max(newestCreatedAt, createdAt);
+    if (known.has(thread.id)) continue;
+    known.add(thread.id);
+    (previous.ids.length === 0 || createdAt > previous.newestCreatedAt ? arrivals : history).push(thread.id);
+  }
+  if (arrivals.length === 0 && history.length === 0 && newestCreatedAt === previous.newestCreatedAt) return previous;
+  return { ids: [...arrivals, ...previous.ids, ...history], newestCreatedAt };
+}

@@ -8,7 +8,7 @@ import (
 )
 
 // ConfigureExternalCapabilities limits a private toolkit to workspace discovery,
-// the embedded browser and locally bound CUA MCP servers. It preserves permission and tool
+// the embedded browser, CUA and explicitly referenced MCP servers. It preserves permission and tool
 // policy gates while removing native-worker and provider presentation state.
 // Call before publishing the toolkit to an external engine.
 func (t *Toolkit) ConfigureExternalCapabilities() {
@@ -20,11 +20,26 @@ func (t *Toolkit) ConfigureExternalCapabilities() {
 	t.env.ProcessMgr = nil
 	t.env.ExecutionEnvironment = nil
 	t.env.PluginManager = nil
-	t.env.ProjectSessions = nil
 	t.ConfigurePTC(nil, config.PTCConfig{})
 	t.SetToolSearchEnabled(false)
 	t.SetNativeDeferredToolDiscovery(false)
 	t.SetActiveProfile(modelprofile.Profile{}, true)
+}
+
+// SetConversationTools admits host-resolved user references to this thread's
+// external-engine bridge. The caller validates their identity before execution.
+func (t *Toolkit) SetConversationTools(names, pluginTools []string) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.conversationMCPServers = make(map[string]bool, len(names))
+	for _, name := range names {
+		t.env.conversationMCPServers[name] = true
+	}
+	t.env.conversationPluginTools = make(map[string]bool, len(pluginTools))
+	for _, name := range pluginTools {
+		t.env.conversationPluginTools[name] = true
+	}
 }
 
 // ExternalCapabilityDefinitions returns the directly callable workspace discovery,
@@ -42,6 +57,9 @@ func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 	if catalog := t.registry.Lookup("list_workspaces"); catalog != nil && !t.IsToolDisabled(catalog.Name()) {
 		definitions = append(definitions, catalog.Definition())
 	}
+	if present := t.registry.Lookup("present_artifact"); present != nil && !t.IsToolDisabled(present.Name()) {
+		definitions = append(definitions, present.Definition())
+	}
 	for _, tool := range t.mcpToolsSnapshot() {
 		if t.externalCapabilityAllowed(tool.Name()) && !t.IsToolDisabled(tool.Name()) {
 			definitions = append(definitions, tool.Definition())
@@ -51,13 +69,13 @@ func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 }
 
 func (t *Toolkit) externalCapabilityAllowed(name string) bool {
-	if name == browserToolName || name == "list_workspaces" {
+	if name == browserToolName || name == "list_workspaces" || name == "present_artifact" || t.env.conversationPluginTools[name] {
 		return true
 	}
 	for _, tool := range t.mcpToolsSnapshot() {
 		if tool.Name() == name {
 			binding, bound := t.mcpActivityBindings[tool.ServerName()]
-			return bound && binding.Kind == activity.KindCUA
+			return bound && binding.Kind == activity.KindCUA || t.env.conversationMCPServers[tool.ServerName()]
 		}
 	}
 	return false

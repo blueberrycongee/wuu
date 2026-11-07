@@ -31,6 +31,11 @@ const EnableCUAMacEnv = "WUU_ENABLE_CUA_MAC"
 // EnableCUALinuxEnv gates the bundled X11 Computer Use plugin.
 const EnableCUALinuxEnv = "WUU_ENABLE_CUA_LINUX"
 
+// personalProductBuild is cleared by release builds. The Personal plugin and its
+// calendar companion remain available in source builds while their settings and
+// workflows are still under development.
+var personalProductBuild = "1"
+
 type DiscoverOptions struct {
 	ExcludeDev bool
 	GOOS       string
@@ -102,6 +107,8 @@ func discoverBundled(wuuHome string, options DiscoverOptions) []Plugin {
 func bundledPluginEnabled(item Plugin, lookupEnv func(string) (string, bool)) bool {
 	var key string
 	switch item.ID {
+	case "personal", "personal-calendar":
+		return personalProductBuild != "0"
 	case "cua-mac":
 		key = EnableCUAMacEnv
 	case "cua-linux":

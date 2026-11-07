@@ -62,11 +62,10 @@
 }
 
 .rich-image-unavailable {
-  display: grid;
-  place-items: center;
-  padding: var(--space-3);
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
+  width: min(100%, 560px);
+  aspect-ratio: 5 / 2;
+  background: var(--surface-2);
+  cursor: default;
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
@@ -250,6 +249,28 @@
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap :is(th, td):last-child {
   padding-inline-end: 0;
+}
+
+/* A table wider than the reading column grows symmetrically past it, up to
+ * --conversation-table-outset per side, and stops short of the pane edges
+ * (100cqi) by the session padding, the floating tool rail and a reading gap;
+ * that reserve also covers the scroll region's gutters, whose leftward
+ * overflow would clip unscrollably. Narrower tables still fill the column;
+ * beyond the cap a table scrolls in its wrap. Only direct blocks of the
+ * final answer qualify: the process fold clips overflow, nested tables keep
+ * their indent, and an open environment panel floats in this margin. */
+.conversation-pane:not(.environment-panel-visible)
+  .turn-answer-body .agent-block
+  :is(.rich-content, .streaming-markdown-block) > .rich-table-wrap {
+  /* An overflowing item centered in a flex column extends both sides equally. */
+  align-self: center;
+  width: max-content;
+  min-width: 100%;
+  max-width: max(100%, min(
+    100% + 2 * var(--conversation-table-outset),
+    100cqi - 2 * (var(--session-outer-padding-inline) +
+      var(--workspace-tool-rail-inset, var(--environment-panel-edge-gap)) + var(--space-6))
+  ));
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading {

@@ -14,10 +14,6 @@ import (
 
 const threadExecutionLeaseDirName = ".turn-locks"
 
-// ErrProjectWorkerCapacity means another managed worker must release execution
-// ownership before a new worker can be admitted. The caller may retry.
-var ErrProjectWorkerCapacity = errors.New("project worker admission capacity is full")
-
 // ThreadExecutionActive reports whether any app-server currently owns the
 // durable thread. It intentionally exposes only coarse availability, not owner
 // identity or detailed execution phase.

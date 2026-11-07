@@ -381,7 +381,7 @@ func TestManagerDisconnectPreservesOAuthAuthenticationState(t *testing.T) {
 }
 
 func TestManagerRevokeFencesPendingConnectionsAndPreservesOtherServers(t *testing.T) {
-	for _, action := range []string{"revoke", "disconnect", "connect", "refresh"} {
+	for _, action := range []string{"revoke", "retire", "disconnect", "connect", "refresh"} {
 		for _, blockedMethod := range []string{"initialize", "tools/list"} {
 			t.Run(action+"/"+blockedMethod, func(t *testing.T) {
 				started := make(chan struct{})
@@ -440,6 +440,9 @@ func TestManagerRevokeFencesPendingConnectionsAndPreservesOtherServers(t *testin
 				case "revoke":
 					stopErr = manager.Revoke(retired.Name)
 					wantErr = ErrServerRevoked
+				case "retire":
+					stopErr = manager.Retire(retired.Name)
+					wantErr = ErrServerRevoked
 				case "disconnect":
 					stopErr = manager.Disconnect(retired.Name)
 				case "connect":
@@ -458,7 +461,7 @@ func TestManagerRevokeFencesPendingConnectionsAndPreservesOtherServers(t *testin
 				case <-time.After(2 * time.Second):
 					t.Fatalf("%s did not cancel the pending connection", action)
 				}
-				if action != "revoke" {
+				if action != "revoke" && action != "retire" {
 					wantState := MCPServerStateConnected
 					if action == "disconnect" {
 						wantState = MCPServerStateStopped

@@ -76,6 +76,12 @@ literal code, escaped currency, and unsupported commands. Switch to
 store, then compare both themes at 15px/20px and 1000px/420px. Wide display formulas
 should scroll within their own region without widening the message.
 
+Use `?surface=rich&stream=table` for long, empty, and image-bearing tables.
+Check hover and keyboard actions, copying, horizontal scrolling, and expanded
+reading in both themes and at 15px/20px and 1280px/420px. Opening an embedded
+image from an expanded table should return to that table on Escape; closing
+the table should restore focus to its expand button.
+
 The image surface (`?surface=images`) includes a user attachment, a tool image,
 and landscape, portrait, and panoramic Markdown images. Inspect the preview
 sizes, text-to-image gaps, narrow-window fit, and click/keyboard enlargement

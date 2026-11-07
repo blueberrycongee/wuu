@@ -164,6 +164,7 @@ func cloneRunnerModelConfiguration(r *StreamRunner) *StreamRunner {
 		CompactOnly:                 r.CompactOnly,
 		StreamingToolExecution:      r.StreamingToolExecution,
 		ToolWaitInterrupt:           r.ToolWaitInterrupt,
+		ModelInterrupt:              r.ModelInterrupt,
 		BeforeStep:                  r.BeforeStep,
 		BeforeModelStep:             r.BeforeModelStep,
 		StepPolicy:                  r.StepPolicy,

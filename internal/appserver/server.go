@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
@@ -43,6 +44,19 @@ var (
 	errServerClosed        = errors.New("app-server is closed")
 	errShutdown            = errors.New("app-server shutdown requested")
 	errExecutionRunChanged = errors.New("thread execution belongs to a different Run")
+)
+
+// shutdownMode distinguishes an abrupt close from an orderly quit and an
+// update restart. Only an abrupt close or update restart offers interrupted
+// turns for continuation after the next boot.
+type shutdownMode uint32
+
+const (
+	shutdownNone shutdownMode = iota
+	shutdownOrdinary
+	shutdownForUpdate
+
+	shutdownReasonUpdate = "update"
 )
 
 type threadTurnCompletion struct {
@@ -71,12 +85,9 @@ type threadState struct {
 	// Instructions are create-time session instructions appended to every
 	// refreshed runtime system prompt.
 	Instructions string
-	// ProjectID is the coordinator of a project's managed session.
-	ProjectID   string
-	ProjectRole string
-	ParentID    string
-	AgentPath   string
-	History     []providers.ChatMessage
+	ParentID     string
+	AgentPath    string
+	History      []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.
@@ -164,6 +175,8 @@ type threadState struct {
 	SessionControl                 *ThreadSessionControl
 	steerWake                      chan struct{}
 	steerWakeClosed                bool
+	modelPreemptWake               chan struct{}
+	modelPreemptClosed             bool
 	activeSteerDocument            *ActiveDocument
 	activeSteerContextSet          bool
 	steerDocumentOverrides         []activeDocumentOverride
@@ -176,8 +189,17 @@ type threadState struct {
 	frozenTreeContext   []agent.ContextSegment
 	frozenTreeResultIDs []string
 
-	nextItemIndex         int
-	activeAgentItemID     string
+	nextItemIndex     int
+	activeAgentItemID string
+	// externalArtifactTurnID and externalArtifactText remember how much
+	// assistant text was already written before external artifact rows. The
+	// final engine message is split at that boundary so replay preserves the
+	// live text/artifact/text order.
+	externalArtifactTurnID string
+	externalArtifactText   string
+	// preemptingAgentTurnID suppresses late transport events after a steer
+	// closed the visible assistant item. The next model-step admission clears it.
+	preemptingAgentTurnID string
 	agentStream           *agentMessageStream
 	activeReasoningItemID string
 	toolItems             map[string]string
@@ -246,6 +268,9 @@ type Server struct {
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
+	// usageScanner caches engine-ledger scan results across settingsUsage
+	// calls; guarded by settingsUsageMu.
+	usageScanner *engineusage.Scanner
 
 	// clientCalls is the pending table for server-initiated requests over the
 	// negotiated reverse-RPC channel. Keyed by the
@@ -260,7 +285,7 @@ type Server struct {
 	deferredNotificationContent atomic.Bool
 	rendererClients             rendererClientScope
 	desktopSessionTransport     *desktopSessionTransportBridge
-	projectRegistration         *projectServerRegistration
+	managedSessionRegistration  *managedSessionRegistration
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
 	// methods. The desktop main pipeline leaves it nil so the methods
@@ -351,6 +376,7 @@ type Server struct {
 	packageDownloadCancel        context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
+	shutdownState                atomic.Uint32
 	pluginGenerationMutation     atomic.Bool
 	pluginGenerationRefreshing   atomic.Bool
 	pluginAdditivePreparation    atomic.Pointer[pluginAdditivePreparation]
@@ -360,6 +386,7 @@ type Server struct {
 	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configNonCatalogFingerprint  string
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
@@ -368,6 +395,8 @@ type Server struct {
 	refreshConfigForTest         func() error
 	presenceLease                *session.AppServerPresenceLease
 	bootOwner                    bool
+	recoveryBootAt               time.Time
+	previousRecoveryBootAt       time.Time
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
@@ -480,6 +509,10 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 			return s
 		}
 	}
+	if err := s.initializeRestartRecovery(binding, bootOwner); err != nil {
+		s.startupErr = err
+		return s
+	}
 	if bootOwner {
 		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
 			s.startupErr = err
@@ -519,6 +552,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 				return s.controlPluginSession(binding, ctx, pluginID, p)
 			},
 		)
+		unbindModel := rt.PluginSessionRouter.BindModel(s.pluginSessionModel)
 		unbindAuthorization := rt.PluginSessionRouter.BindExecutionAuthorization(rt.HandleExecutionAuthorization)
 		unbindSessionAccess := rt.PluginSessionRouter.BindSessionResourceAccess(func(ctx context.Context, pluginID, sessionID string, reference *pluginhost.ExecutionAuthorizationReference, operation string) (context.Context, error) {
 			if strings.HasPrefix(operation, "personal/") {
@@ -548,7 +582,14 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		})
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
 		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient(); unbindAuthorization(); unbindSessionAccess() }
+		s.pluginTurnUnbind = func() {
+			unbindTurns()
+			unbindModel()
+			unbindProcesses()
+			unbindClient()
+			unbindAuthorization()
+			unbindSessionAccess()
+		}
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
@@ -848,9 +889,12 @@ func (s *Server) Close() {
 		if s.sessionOperationCancel != nil {
 			s.sessionOperationCancel()
 		}
+		if s.rt != nil {
+			s.rt.DrainCanceledMCPAuth()
+		}
 		s.cancelPluginClientRequests()
 		s.cancelArtifactReads()
-		s.closeProjectInboxDrains()
+		s.managedSessionRegistration.Close()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
 			s.storageMaintenanceCancel()
@@ -1468,12 +1512,43 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleSideThreadInterrupt(req)
 	case MethodSideThreadReset:
 		return s.handleSideThreadReset(req)
-	case MethodThreadList:
-		return s.handleThreadList(req)
-	case MethodThreadListAll:
-		return s.handleThreadListAll(req)
-	case MethodThreadListArchived:
-		return s.handleThreadListArchived(req)
+	case MethodThreadList, MethodThreadListAll, MethodThreadListArchived:
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer binding.Close()
+		handle := s.handleThreadList
+		if req.Method == MethodThreadListAll {
+			handle = s.handleThreadListAll
+		} else if req.Method == MethodThreadListArchived {
+			handle = s.handleThreadListArchived
+		}
+		if _, ordered := ctx.Value(stdioResumeDispatchKey{}).(bool); !ordered {
+			return handle(binding, req)
+		}
+		// Catalogs may inspect thousands of persisted sessions. Keep ingress
+		// available for foreground reads and Stop while retaining the selected
+		// state until this catalog finishes, including during graph replacement.
+		if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
+			if err := handle(binding, req); err != nil {
+				log.Printf("wuu: %s: %v", req.Method, err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case "thread/recovery/list":
+		if !s.startBackground(func() {
+			if err := s.handleRestartRecoveryList(ctx, req); err != nil {
+				log.Printf("wuu: thread/recovery/list: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case "thread/recovery/dismiss":
+		return s.handleRestartRecoveryDismiss(req)
 	case MethodThreadSearch:
 		return s.handleThreadSearch(req)
 	case MethodThreadPreview:
@@ -1482,20 +1557,7 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleSessionShare(ctx, req)
 	case "thread/textSnapshot":
 		return s.handleThreadTextSnapshot(req)
-	case "thread/control/return":
-		return s.handleThreadControl(ctx, req)
-	case "thread/control/take":
-		return s.handleThreadTakeControl(req)
-	case MethodProjectWork, MethodProjectSession:
-		binding, err := s.rt.RetainState()
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		defer binding.Close()
-		if req.Method == MethodProjectWork {
-			return s.handleProjectWork(binding, req)
-		}
-		return s.handleProjectSession(binding, req)
+
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:
@@ -1631,6 +1693,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleMCPRefresh(ctx, req)
 	case MethodMCPAuthStart:
 		return s.handleMCPAuthStart(ctx, req)
+	case MethodMCPIdentityRefresh:
+		return s.handleMCPIdentityRefresh(ctx, req)
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:
@@ -1646,6 +1710,23 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 	case MethodActivityStop:
 		return s.handleActivityStop(req)
 	case MethodShutdown:
+		var params struct {
+			Reason string `json:"reason,omitempty"`
+		}
+		// Shutdown params are additive. Ignore unknown fields so a caller can still
+		// stop the server when it sends newer metadata.
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("invalid params: %w", err))
+			}
+		}
+		mode := shutdownOrdinary
+		if params.Reason == shutdownReasonUpdate {
+			mode = shutdownForUpdate
+		}
+		// Publish the complete shutdown intent before Close cancels turns, so
+		// their terminal writes observe one consistent recovery policy.
+		s.shutdownState.Store(uint32(mode))
 		if err := s.writeResponse(req.ID, OKResult{OK: true}, nil); err != nil {
 			return err
 		}

@@ -60,7 +60,10 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = node.getBoundingClientRect();
       const point = { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
-      node.addEventListener('click', event => { if (window.__presentationProbe) window.__presentationProbe.trusted.push(event.isTrusted); }, { once: true });
+      node.addEventListener('click', event => {
+        const probe = window.__presentationProbe;
+        if (probe) { probe.trusted.push(event.isTrusted); probe.clicks.push({ at: performance.now() - probe.started, selector, text }); }
+      }, { once: true });
       const style = getComputedStyle(node);
       return { point, beforeHover: { hit: node.contains(document.elementFromPoint(point.x, point.y)),
         pointerEvents: style.pointerEvents, opacity: style.opacity, inert: !!node.closest('[inert]'),
@@ -83,7 +86,7 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
     await waitFor(win, index => document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id') === `switch-thread-${index}`, index);
   };
   async function openRelatedSplit() {
-    const selector = '.cached-conversation-pane[data-active="true"] .session-message-source';
+    const selector = '.cached-conversation-pane[data-active="true"] .message-action-button:is([aria-label="Open related session"], [aria-label="打开关联会话"])';
     for (let attempt = 0; attempt < 20; attempt++) {
       const position = await evaluate(win, selector => {
         const node = document.querySelector(selector), viewport = node?.closest('.scroll-region');
@@ -144,7 +147,7 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
       // Paused decorative/snapshot animations do not finish; they are not a
       // paint-settling deadline and must not deadlock the next native gesture.
       await Promise.all(document.getAnimations().filter(animation => animation.playState !== 'paused' && Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
-      const probe = window.__presentationProbe = { name, frames: [], trusted: [], active: true, started: performance.now() };
+      const probe = window.__presentationProbe = { name, frames: [], trusted: [], clicks: [], active: true, started: performance.now() };
       const instances = new WeakMap(); let nextInstance = 0;
       const selectors = { shell: '.app-shell', sidebar: '.sidebar', titlebar: '.conversation-pane > .titlebar', composer: '[data-main-conversation-composer="dock"]', composerFooter: '[data-main-conversation-composer="dock"] .composer-footer-shell', splitPrimaryComposer: '.conversation-split-pane:first-of-type .composer', splitSecondaryComposer: '.conversation-split-pane:last-of-type .composer', status: '.conversation-status-cluster', toolRail: '[data-wuu-component="workspace-tool-rail"]' };
       const bounds = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
@@ -211,6 +214,8 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
             }])),
         };
         probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, composerGeometry, railControls, loading, animations, rasterChrome,
+          activeTabID: nodes.shell?.dataset.activeSessionTabId,
+          draftOwner: nodes.composer?.querySelector('[data-composer-owner-tab-id]')?.dataset.composerOwnerTabId,
           frame: native ? document.documentElement.getAttribute('data-wuu-compositor-frame') : image?.getAttribute('data-wuu-presentation-frame'), rootInert: !!document.querySelector('.app-shell')?.closest('[inert]'),
           imageAnimations: image?.getAnimations().length || 0, imageOpacity: imageStyle?.opacity, imageTransform: imageStyle?.transform, imageWidth: imageStyle?.width, imageHeight: imageStyle?.height,
           fullscreenLoading: !!document.querySelector('.view-switch-loading'), recovery: !!document.querySelector('[data-wuu-component="launch-view"]') });
@@ -222,7 +227,7 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
   async function end(name, allowRecovery = false, expectedDraft = '') {
     await ready(); await frames();
     await win.webContents.debugger.sendCommand('Page.stopScreencast'); scenario = undefined;
-    const result = await evaluate(win, () => { const probe = window.__presentationProbe; probe.active = false; return { name: probe.name, started: probe.started, timeOrigin: performance.timeOrigin, frames: probe.frames, trusted: probe.trusted }; });
+    const result = await evaluate(win, () => { const probe = window.__presentationProbe; probe.active = false; return { name: probe.name, started: probe.started, timeOrigin: performance.timeOrigin, frames: probe.frames, trusted: probe.trusted, clicks: probe.clicks }; });
     result.allowRecovery = allowRecovery;
     result.footer = await evaluate(win, () => {
       const composer = document.querySelector('[data-main-conversation-composer="dock"]');
@@ -265,11 +270,19 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
       assert(result.frames.every(frame => frame.frame !== 'full' && !frame.recovery && !frame.fullscreenLoading), `${name}: stable presentation used whole-window replacement`);
     }
     const geometry = {};
+    const restoresWorkspaceDraft = /-browser-via-conversations-workspace$/.test(name);
+    const destinationOwner = result.frames.at(-1).draftOwner;
     for (const frame of result.frames) {
       // A full retained frame covers a genuinely inert successor while its
       // selected surfaces finish their first layout. Track chrome only from
       // its first live frame; an unmasked or interactive owner gets no grace.
       const liveChrome = frame.frame !== 'full' || !frame.rootInert;
+      if (restoresWorkspaceDraft && liveChrome && frame.chrome.composer) {
+        assert(frame.draftOwner, `${name}: live composer has no draft owner`);
+        assert.equal(frame.draftOwner, frame.activeTabID, `${name}: live composer belongs to a retired tab`);
+        const expected = frame.draftOwner === destinationOwner ? expectedDraft : '';
+        assert.equal(frame.composerGeometry.valueLength, expected.length, `${name}: first live owner frame has the wrong draft`);
+      }
       for (const [key, rect] of Object.entries(liveChrome ? frame.chrome : {})) {
         // A successor may legitimately use different chrome geometry, but
         // it must stay fixed from the first frame in which it is live.
@@ -277,7 +290,10 @@ module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
         // controls. Geometry remains fixed within each declared layout, not each
         // arbitrary control mutation. Ordinary session cases get no such change.
         const layout = key === 'toolRail' && /-split-session$|-browser-via-conversations-workspace$/.test(name) ? frame.layout : '';
-        const identity = `${key}:${rect.instance}:${layout}`; geometry[identity] ||= rect;
+        // This journey first reveals an empty draft, then opens another owner's
+        // saved multiline draft. Retained DOM identity is not draft ownership.
+        const owner = restoresWorkspaceDraft && (key === 'composer' || key === 'composerFooter') ? frame.draftOwner : '';
+        const identity = `${key}:${rect.instance}:${layout}:${owner}`; geometry[identity] ||= rect;
         for (const axis of ['x', 'y', 'width', 'height']) assert(Math.abs(rect[axis] - geometry[identity][axis]) <= 1,
           `${name}: ${key} ${axis} shifted within its live owner (${geometry[identity][axis]} → ${rect[axis]})`);
         assert.equal(rect.opacity, '1', `${name}: ${key} faded`);

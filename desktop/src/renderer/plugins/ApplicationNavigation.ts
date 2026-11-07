@@ -2,7 +2,7 @@ import type { SetStateAction } from "react";
 import type { ApplicationNavigationActionMapV1 as Actions, ApplicationNavigationViewV1, NavigationReadonly } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { DesktopProject, Thread } from "../../shared/protocol";
 import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
-import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
+import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, reconcileSidebarThreadList, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
 import { createRibbonBrowserState } from "../RibbonBrowserState";
 import { parseSessionOrganization } from "../SessionOrganization";
 import { loadThreadListRefresh, resumeThreadForRefresh } from "../RuntimeLoadState";
@@ -17,7 +17,7 @@ import { visibleWorkbenchView } from "./Workbench";
 import type { ThreadMutationActions } from "../ThreadMutationActions";
 
 const actions = new Set<keyof Actions>([
-  "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread", "navigation.adopt-thread",
+  "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread",
   "navigation.create-folder", "navigation.rename-folder", "navigation.delete-folder", "navigation.reorder-folders", "navigation.move-to-folder",
   "navigation.close-plugin", "navigation.reveal-region", "navigation.open-plugin", "navigation.show-native", "navigation.show-search", "navigation.show-account", "navigation.focus-workspace", "navigation.focus-composer",
   "navigation.reveal-thread", "navigation.open-external", "navigation.load-icon", "navigation.account-status", "navigation.account-logout", "navigation.install-update",
@@ -43,6 +43,9 @@ export class ApplicationNavigation {
   private composerFocusRequest?: { id: number; tabId: string };
   private snapshot?: ApplicationNavigationViewV1;
   private snapshotKey = "";
+  private threadInputs: readonly unknown[] = [];
+  private threadRows: NavigationReadonly<ThreadSummary[]> = [];
+  private threadRowsKey = "";
   private folderRevision = 0;
   private runningThreadIds: ReadonlySet<string> = new Set();
   private folderQueue: Promise<unknown> = Promise.resolve();
@@ -75,7 +78,14 @@ export class ApplicationNavigation {
       const previous = rows.get(thread.id);
       rows.set(thread.id, previous ? mergeSidebarThread(previous, thread) : thread);
     }
-    return [...rows.values()];
+    // Archive and rollback update the catalog before closing the open pane.
+    // The pane's snapshot must not override the catalog's visibility decision.
+    const catalog = new Map(state.threads.map(thread => [thread.id, thread]));
+    return [...rows.values()].map(thread => {
+      const listed = catalog.get(thread.id);
+      return listed && Boolean(listed.archived) !== Boolean(thread.archived)
+        ? { ...thread, archived: listed.archived } : thread;
+    });
   }
   private thread(id: string): ThreadSummary {
     const thread = summarizeThreadsForSidebar(this.threads()).find(row => row.id === id);
@@ -87,8 +97,21 @@ export class ApplicationNavigation {
     const workbench = this.host.getWorkbench().getSnapshot();
     const active = visibleWorkbenchView(workbench, "primary");
     const browser = this.browser.getSnapshot();
-    const threads = this.threads().filter(row => !row.ephemeral);
-    const rows = summarizeThreadsForSidebar(threads, presentationRunningThreadIDs(threads, this.runningThreadIds));
+    const cache = this.host.sidebarCache.getSnapshot();
+    const inputs = [cache.workspaceThreadsByWorkspaceID, state.threads, state.thread, state.secondaryThread, this.runningThreadIds];
+    if (inputs.some((input, index) => input !== this.threadInputs[index])) {
+      this.threadInputs = inputs;
+      const threads = this.threads().filter(row => !row.ephemeral);
+      const rows = summarizeThreadsForSidebar(threads, presentationRunningThreadIDs(threads, this.runningThreadIds));
+      const key = JSON.stringify(rows);
+      // History deltas and composer changes often leave navigation unchanged.
+      // Retain the frozen projection so every sidebar consumer can reuse it.
+      if (key !== this.threadRowsKey) {
+        this.threadRowsKey = key;
+        this.threadRows = immutable(rows);
+      }
+    }
+    const rows = this.threadRows;
     const view = {
       initialized: Boolean(state.initialized), activeContextKind: state.activeContext?.kind, selectedWorkspaceId: state.activeProjectId,
       workspaces: state.projects, threads: rows,
@@ -96,7 +119,7 @@ export class ApplicationNavigation {
       pendingConversations: this.host.getPendingDraftTabIds().flatMap(id => { const tab = state.sessionTabs.find(tab => tab.id === id); return tab && tab.kind !== "skills" ? [{ id, title: tab.prompt, context: tab.context }] : []; }),
       lastViewedTurnByThreadId: state.lastViewedTurnByThreadID, folders: this.folders,
       plugins: (state.initialized?.extension_inventory ?? []).filter(row => row.kind === "plugin" || row.kind === "skill").map(row => ({
-        id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",
+        id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, family: row.family, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",
       })),
       destinations: primaryViewNavigation(this.host.getContributions().getNavigationEntries(), workbench),
       regionVisibilityRequest: this.regionVisibilityRequest,
@@ -104,18 +127,19 @@ export class ApplicationNavigation {
         || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, viewTypeId: active.view.viewTypeId, context: active.view.context, pluginId: active.view.pluginId, title: active.definition.title, layout: active.definition.layout, webPage: workbench.webPageViewIds.includes(active.view.id) },
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
-      projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
+      accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
       update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < this.host.getWebWorkspace().limits.tabs, canReopenTab: Boolean(browser.canReopenTab) },
       activeWebsiteId: this.activeWebsiteId && browser?.tabs?.some(row => row.id === this.activeWebsiteId) ? this.activeWebsiteId : undefined,
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
     };
-    const key = JSON.stringify(view);
-    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.activePluginView?.context !== active?.view.context) {
+    const key = JSON.stringify({ ...view, threads: undefined });
+    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.threads !== rows || this.snapshot.activePluginView?.context !== active?.view.context) {
       this.snapshotKey = key;
       // Page-local stores use the workbench's frozen context as their instance key.
       // Copy data rows, but retain that object for the page and its contextual UI.
       this.snapshot = Object.freeze({
-        ...immutable({ ...view, activePluginView: undefined }),
+        ...immutable({ ...view, threads: undefined, activePluginView: undefined }),
+        threads: rows,
         activePluginView: view.activePluginView && Object.freeze(view.activePluginView),
       }) as ApplicationNavigationViewV1;
     }
@@ -169,6 +193,14 @@ export class ApplicationNavigation {
     };
     off.push(this.host.subscribeState(reconcileForeground));
     reconcileForeground();
+    const refreshThreadList = async (captured: AppState) => {
+      const requested = this.host.sidebarCache.getSnapshot().workspaceThreadsByWorkspaceID;
+      const rows = await loadThreadListRefresh(captured);
+      if (!active || this.host.getState().activeContext !== captured.activeContext) return;
+      this.host.sidebarCache.cacheSidebarThreads(rows, { projects: requested });
+      this.host.updateState(current => (!captured.initialized || current.initialized) && current.activeContext === captured.activeContext
+        ? reconcileListedThreadState(current, reconcileSidebarThreadList(captured.threads, current.threads, rows)) : current);
+    };
     let lastRefreshAt = 0;
     const refreshThreads = async () => {
       const captured = this.host.getState();
@@ -176,11 +208,7 @@ export class ApplicationNavigation {
       if (!captured.initialized || now - lastRefreshAt < 10_000) return;
       lastRefreshAt = now;
       try {
-        const rows = await loadThreadListRefresh(captured);
-        if (!active || this.host.getState().activeContext !== captured.activeContext) return;
-        this.host.sidebarCache.cacheSidebarThreads(rows);
-        this.host.updateState(current => current.initialized && current.activeContext === captured.activeContext
-          ? reconcileListedThreadState(current, rows) : current);
+        await refreshThreadList(captured);
       } catch {
         // Another focus event or heartbeat retries shared-store pickup.
       }
@@ -203,11 +231,7 @@ export class ApplicationNavigation {
       changed();
       const captured = this.host.getState();
       if (this.threads().some(thread => isThreadRunning(thread) && !this.runningThreadIds.has(thread.id))) {
-        void loadThreadListRefresh(captured).then(rows => {
-          if (!active) return;
-          this.host.sidebarCache.cacheSidebarThreads(rows);
-          this.host.updateState(state => state.activeContext === captured.activeContext ? reconcileListedThreadState(state, rows) : state);
-        }).catch(() => {});
+        void refreshThreadList(captured).catch(() => {});
       }
     };
     if (window.wuu.onRunningThreadsChanged) off.push(window.wuu.onRunningThreadsChanged(items => { runningEvent = true; applyRunning(items); }));
@@ -270,11 +294,6 @@ export class ApplicationNavigation {
         result = await this.host.mutationActions(signal).archiveThread(this.thread(threadId), { force }); break;
       }
       case "navigation.delete-thread": await this.host.mutationActions().deleteThread(this.thread((input as Actions["navigation.delete-thread"]["input"]).threadId)); break;
-      case "navigation.adopt-thread": {
-        const { threadId, projectId } = input as Actions["navigation.adopt-thread"]["input"];
-        const response = await window.wuu.projectSession!({ action: "adopt", project_id: projectId, session_id: threadId });
-        this.host.sidebarCache.updateCachedSidebarThread(response.thread); break;
-      }
       case "navigation.create-folder": {
         const { name, threadId } = input as Actions["navigation.create-folder"]["input"];
         const { group } = await window.wuu.createSessionFolder(name);

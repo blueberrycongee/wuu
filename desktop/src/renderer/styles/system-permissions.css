@@ -6,10 +6,14 @@
   font-size: var(--font-sm);
 }
 
+/* The list is a settings card; each slot is one of its rows. */
 .system-permission-list {
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--hairline-soft);
+  border: 1px solid var(--settings-card-border);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
+  padding-inline: var(--settings-card-pad-inline);
 }
 
 .system-permission-slot,
@@ -18,8 +22,8 @@
   min-width: 0;
 }
 
-.system-permission-slot {
-  border-bottom: 1px solid var(--hairline-soft);
+.system-permission-slot + .system-permission-slot {
+  border-top: 1px solid var(--settings-divider);
 }
 
 /* Visibility preserves the entire card's footprint throughout the transfer. */
@@ -29,9 +33,10 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
-  padding: var(--settings-row-pad-block, 12px) 0;
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
+  padding: var(--settings-row-pad-block) 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -43,16 +48,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--hairline-soft);
-  background: var(--surface-1);
-  color: var(--ink-soft);
-}
-
-.system-permission-row[data-permission="screen"] .system-permission-symbol {
-  background: var(--surface-1);
+  width: var(--control-size-inline);
+  height: var(--control-size-inline);
+  border-radius: var(--radius-xs);
+  background: var(--ink-overlay-6);
   color: var(--ink-soft);
 }
 
@@ -90,22 +89,12 @@
   justify-content: flex-end;
 }
 
-.system-permission-enable.settings-button {
-  min-height: var(--control-field-height, 32px);
-  padding: 0 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  background: var(--control-secondary-bg);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-}
-
 .system-permission-granted {
   display: inline-flex;
-  min-height: var(--control-field-height, 32px);
+  min-height: var(--control-field-height);
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--success);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
@@ -139,9 +128,9 @@
 
 .system-permissions-error {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: var(--control-size-inline) minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-2) 12px;
+  gap: var(--space-2) var(--space-3);
   padding-inline: 0;
 }
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 platform="${1:-all}"
-case "$platform" in ios|android|all) ;; *) echo "Usage: bash clients/native/verify.sh [ios|android|all]" >&2; exit 2 ;; esac
+case "$platform" in ios|ios-core|android|all) ;; *) echo "Usage: bash clients/native/verify.sh [ios|ios-core|android|all]" >&2; exit 2 ;; esac
 
 if [[ "${WUU_NATIVE_PRIVATE_DATABASE:-}" != 1 ]]; then
     export WUU_NATIVE_PRIVATE_DATABASE=1
@@ -21,8 +21,12 @@ if [[ "${WUU_NATIVE_SKIP_GO_TESTS:-0}" != 1 ]]; then
     go test ./internal/remote/host -run 'Test(FilterMobileChat|MobileChat|MobileActivity)' -count=1
 fi
 
-if [[ "$platform" == ios || "$platform" == all ]]; then
+if [[ "$platform" == ios || "$platform" == ios-core || "$platform" == all ]]; then
     NSUnbufferedIO=YES swift test --package-path clients/native/ios
+fi
+# CI builds the simulator and device app in independent jobs. Standalone ios/all
+# verification still includes the simulator build after the integration tests.
+if [[ "$platform" == ios || "$platform" == all ]]; then
     xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
         -sdk iphonesimulator -derivedDataPath clients/native/ios/.build-xcode \
         CODE_SIGNING_ALLOWED=NO build

@@ -257,7 +257,7 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 		_ = srv.refreshPluginGenerationIfChanged()
 		thread := &threadState{ID: "waiting-for-recovery", state: testRuntimeState(t, rt)}
 		thread.mu.Lock()
-		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread, 0)
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
 		thread.mu.Unlock()
 		if err != nil || acquired {
 			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
@@ -550,7 +550,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 				t.Fatal("worker did not start")
 			}
 			th.mu.Lock()
-			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th)
 			if admissionErr == nil && acquired {
 				th.releaseThreadExecutionLeaseLocked()
 			}
@@ -904,7 +904,7 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 					t.Fatal(err)
 				}
 				th.mu.Lock()
-				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 				if acquired {
 					th.releaseThreadExecutionLeaseLocked()
 				}
@@ -1004,8 +1004,11 @@ func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
 				client := &fakeClient{response: providers.ChatResponse{Content: "answer"}, onChat: func(call int, _ providers.ChatRequest) {
 					if call == 1 {
 						close(entered)
-						<-release
 					}
+					// Human steering preempts the in-flight request, so later
+					// calls carry the drained steers. Hold every call or the
+					// turn would complete and start draining queued input.
+					<-release
 				}}
 				rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
 				publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
@@ -1039,22 +1042,44 @@ func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
 					}
 					return response
 				}
+				queueID := "guide-queue"
 				if mode == "steer" {
 					check("guide-cancel", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "cancel this guide", ClientID: "guide-cancel"})
-					if result := remarshal[OKResult](t, check("unsteer", MethodTurnUnsteer, TurnUnsteerParams{ThreadID: threadID, SteerID: "guide-cancel"})["result"]); !result.OK {
-						t.Fatal("guide could not be removed")
-					}
 					check("guide-queue", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "convert this guide", ClientID: "guide-queue"})
-					if result := remarshal[TurnRequeueResult](t, check("requeue", MethodTurnRequeue, TurnRequeueParams{ThreadID: threadID, SteerID: "guide-queue"})["result"]); !result.OK || result.State != "queued" {
-						t.Fatalf("guide could not be queued: %+v", result)
+					// Human steering preempts the in-flight model call, so
+					// delivery drains both steers into the next request while
+					// the blocked calls keep the turn running. Poll the live
+					// state instead of racing that drain with unsteer/requeue.
+					waitPluginGenerationWatchTest(t, func() bool {
+						original.mu.Lock()
+						defer original.mu.Unlock()
+						for _, pending := range original.pendingSteers {
+							if pending.ClientID == "guide-cancel" || pending.ClientID == "guide-queue" {
+								return false
+							}
+						}
+						return true
+					})
+					if result := remarshal[TurnRequeueResult](t, check("requeue", MethodTurnRequeue, TurnRequeueParams{ThreadID: threadID, SteerID: "guide-queue"})["result"]); result.OK || result.State != "consumed" {
+						t.Fatalf("delivered guide reported %+v, want consumed", result)
 					}
-				} else {
-					check("queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queue this message", ClientID: "guide-queue"})
+					// A durable unsteer would cancel a held-work row that the
+					// pending history archive still expects; ephemeral threads
+					// have no row, so the consumed steer reports OK=false.
+					if ephemeral {
+						if result := remarshal[OKResult](t, check("unsteer", MethodTurnUnsteer, TurnUnsteerParams{ThreadID: threadID, SteerID: "guide-cancel"})["result"]); result.OK {
+							t.Fatal("delivered guide could be removed")
+						}
+					}
+					// The steer client_id is already accepted, so the queued
+					// input exercised below needs its own identifier.
+					queueID = "queue-entry"
 				}
-				if result := remarshal[TurnUpdateQueuedResult](t, check("edit", MethodTurnUpdateQueued, TurnUpdateQueuedParams{ThreadID: threadID, QueueID: "guide-queue", Prompt: "edited queued message"})["result"]); !result.OK {
+				check("queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queue this message", ClientID: queueID})
+				if result := remarshal[TurnUpdateQueuedResult](t, check("edit", MethodTurnUpdateQueued, TurnUpdateQueuedParams{ThreadID: threadID, QueueID: queueID, Prompt: "edited queued message"})["result"]); !result.OK {
 					t.Fatal("queued input could not be edited")
 				}
-				if result := remarshal[OKResult](t, check("dequeue", MethodTurnDequeue, TurnDequeueParams{ThreadID: threadID, QueueID: "guide-queue"})["result"]); !result.OK {
+				if result := remarshal[OKResult](t, check("dequeue", MethodTurnDequeue, TurnDequeueParams{ThreadID: threadID, QueueID: queueID})["result"]); !result.OK {
 					t.Fatal("queued input could not be removed")
 				}
 				if current := srv.thread(threadID); current != original {
@@ -1065,6 +1090,64 @@ func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestPluginReloadRetainsRunningTurnDuringAdmission(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	client := &fakeClient{response: providers.ChatResponse{Content: "answer"}, onChat: func(call int, _ providers.ChatRequest) {
+		if call == 1 {
+			close(entered)
+			<-release
+		}
+	}}
+	rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
+	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer func() { unblock(); srv.Close(); _, _ = rt.Cleanup() }()
+	dispatchPayload(t, srv, "create", MethodThreadStart, ThreadStartParams{})
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+	dispatchPayload(t, srv, "start", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+	if response := responseByID(t, parseOutput(t, out.String()), "start"); response["error"] != nil {
+		t.Fatalf("start: %+v", response)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first model call did not start")
+	}
+
+	running := srv.thread(threadID)
+	running.mu.Lock()
+	originalState := running.state
+	hasLease := running.executionLease != nil
+	running.mu.Unlock()
+	if !threadIsRunning(running) || !hasLease {
+		t.Fatal("fixture did not retain the running turn")
+	}
+
+	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read updated fixture")
+	if originalState.Sessions == rt.Sessions {
+		t.Fatal("fixture did not replace the session authority")
+	}
+
+	retained, admitted, err := srv.retainThreadAdmissionState(threadID)
+	if err != nil {
+		t.Fatalf("running local turn was rejected as an external owner: %v", err)
+	}
+	defer retained.Close()
+	if admitted != running || retained.Sessions != originalState.Sessions {
+		t.Fatal("admission replaced the running turn's state graph")
+	}
+	if current := srv.thread(threadID); current != running {
+		t.Fatal("admission replaced the running turn's projection")
+	}
+
+	unblock()
+	waitForReloadTurnCompletions(t, out, threadID, 1)
 }
 
 func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {

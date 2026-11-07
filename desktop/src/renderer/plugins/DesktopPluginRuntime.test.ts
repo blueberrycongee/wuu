@@ -67,7 +67,7 @@ describe("DesktopPluginRuntime", () => {
     } finally { release(); act(() => root.unmount()); await runtime.shutdown(); host.unload("fixture"); errors.mockRestore(); }
   });
   it("preserves message relations in the authenticated renderer input receipt", async () => {
-    const request = vi.fn().mockResolvedValue({ result: { state: "accepted" } });
+    const request = vi.fn().mockResolvedValue({ ok: true, value: { result: { state: "accepted" } } });
     window.wuu = { ...originalWuu, requestPluginRuntime: request, reportPluginDesktopActivation: vi.fn(async () => {}), cancelPluginRuntime: vi.fn().mockResolvedValue({}) };
     const relation = { reply_to: { session_id: "main", seq: 7 }, metadata: { task_links: [{ task_id: "task-a", requirements_revision: 2 }] } };
     try {
@@ -357,7 +357,7 @@ describe("DesktopPluginRuntime", () => {
     window.wuu.requestPluginRuntime = request;
     window.wuu.cancelPluginRuntime = cancel;
     let finish!: (value: { result: unknown }) => void;
-    request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    request.mockImplementationOnce(() => new Promise(resolve => { finish = value => resolve({ ok: true, value }); }));
     const handles: PluginGenerationApi[] = [];
     const runtime = new DesktopPluginRuntime(desktopPluginHost, async () => ({ activate: (api: PluginGenerationApi) => { handles.push(api); } }));
     const call = (api: PluginGenerationApi, signal?: AbortSignal) => kind === "runtime"
@@ -379,7 +379,7 @@ describe("DesktopPluginRuntime", () => {
       finish({ result: "old result" });
       await expect(pending).rejects.toThrow();
       await expect(call(handles[0])).rejects.toThrow("no longer active");
-      request.mockResolvedValueOnce({ result: "new result" });
+      request.mockResolvedValueOnce({ ok: true, value: { result: "new result" } });
       const controller = new AbortController();
       await expect(call(handles[1], controller.signal)).resolves.toBe("new result");
       expect(request.mock.calls[1][0]).toMatchObject({ graph_generation: "second" });
@@ -1021,3 +1021,19 @@ function dependencyPlugin(id: string, requires: string[] = []): ExtensionInvento
   const plugin = inventoryPlugin();
   return { ...plugin, id: `user:${id}`, provenance: { ...plugin.provenance, plugin_id: id }, requires };
 }
+
+
+it("preserves host service codes and decodes only the transport envelope", async () => {
+  const request = vi.fn().mockResolvedValueOnce({ ok: false, error: { code: "service_optional_absent", message: "No configured provider" } })
+    .mockResolvedValueOnce({ ok: true, value: { result: { ok: false, error: { code: "service_optional_absent" } } } });
+  window.wuu = { ...originalWuu, requestPluginRuntime: request, reportPluginDesktopActivation: vi.fn(async () => {}), cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) };
+  let api!: PluginGenerationApi;
+  installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: "fixture" }));
+  const runtime = new DesktopPluginRuntime(desktopPluginHost, async () => ({ activate: (value: PluginGenerationApi) => { api = value; } }));
+  await runtime.sync([{ ...inventoryPlugin(), graph_generation: "structured-service-graph" }]);
+  try {
+    const call = () => api.invokeService({ service: "goal.control", method: "request" });
+    await expect(call()).rejects.toMatchObject({ code: "service_optional_absent", message: "No configured provider" });
+    await expect(call()).resolves.toEqual({ ok: false, error: { code: "service_optional_absent" } });
+  } finally { await runtime.sync([]); }
+});

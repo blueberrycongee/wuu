@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
@@ -47,12 +48,19 @@ func (p *personalActions) describeCommand(raw json.RawMessage) (personalreview.S
 	if err := decodePersonalAction(raw, &a); err != nil {
 		return personalreview.Summary{}, err
 	}
-	if (a.Operation != "bash" && a.Operation != "process" && a.Operation != "process_start") || a.EnvironmentDigest == "" || !filepath.IsAbs(a.CWD) || len(a.Arguments) > 32*1024 {
+	if (a.Operation != "bash" && a.Operation != "process_start") || a.EnvironmentDigest == "" || !filepath.IsAbs(a.CWD) || len(a.Arguments) > 32*1024 {
 		return personalreview.Summary{}, errors.New("unsupported Personal command action")
 	}
+	var instruction struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(a.Arguments, &instruction); err != nil {
+		return personalreview.Summary{}, errors.New("invalid Personal command action")
+	}
+	control := a.Operation == "bash" && strings.TrimSpace(instruction.Action) != "" && strings.TrimSpace(instruction.Action) != "run"
 	title := "Run a command"
 	consequence := "Runs the displayed command in this folder. It may change files or contact services. This approval covers only this invocation."
-	if a.Operation == "process" {
+	if control {
 		title = "Control a running task"
 		consequence = "Sends the displayed input or control instruction to this running task. Starting it earlier does not authorize this instruction."
 	}
@@ -90,7 +98,7 @@ func (p *personalActions) commandRuleScope(raw json.RawMessage) (personalreview.
 		return personalreview.RuleScope{}, err
 	}
 	description := "Run only this exact command in " + a.CWD + ": " + a.ResolvedCommand
-	if a.Operation == "process" {
+	if a.Operation == "bash" && strings.TrimSpace(instruction.Action) != "" && strings.TrimSpace(instruction.Action) != "run" {
 		description = "Apply only this exact instruction to process " + instruction.ProcessID + ": " + string(a.Arguments)
 	}
 	return personalreview.RuleScope{Key: personalHash(key), Description: description + " (same execution environment and permissions)"}, nil
@@ -224,7 +232,7 @@ func (s *Server) personalCommandGate(ctx context.Context, kit *tools.Toolkit, ca
 }
 
 func (p *personalActions) registerCommandOperations(operations map[string]personalreview.Operation) {
-	for _, name := range []string{"bash", "process", "process_start"} {
+	for _, name := range []string{"bash", "process_start"} {
 		operations[name] = personalreview.Operation{Version: "personal-local-command.v1", Effect: personalreview.ExternalWrite, Describe: p.describeCommand, Execute: p.executeCommand, RuleScope: p.commandRuleScope}
 	}
 }

@@ -1,5 +1,5 @@
 import type { PluginUIAvatarProps } from "../shared/workbench";
-import { AgentAvatarMark, serializeAgentAvatarConfig } from "./AgentAvatarMark";
+import { AgentAvatarMark, parseAgentAvatarConfig, serializeAgentAvatarConfig } from "./AgentAvatarMark";
 import "./styles/plugin-avatar.css";
 
 const PLUGIN_AVATAR_IDENTITY = {
@@ -10,6 +10,7 @@ const PLUGIN_AVATAR_IDENTITY = {
 /** The public mascot icon and plugin identity surfaces share one authored character. */
 export function PluginAvatar({
   size,
+  avatarKey,
   status = "idle",
   motion = "static",
   className,
@@ -19,12 +20,17 @@ export function PluginAvatar({
       className={`plugin-ui-avatar${className ? ` ${className}` : ""}`}
       data-wuu-component="plugin-ui-avatar"
       data-plugin-avatar=""
+      data-plugin-avatar-motion={motion}
+      data-plugin-avatar-scale={size === undefined || size <= 24 ? "compact" : "full"}
       data-icon="mascot"
       aria-hidden="true"
       style={size === undefined ? undefined : { width: size, height: size }}
     >
+      {/* New artwork needs fresh SVG paint/projection state when motion is reduced. */}
       <AgentAvatarMark
-        {...PLUGIN_AVATAR_IDENTITY}
+        key={avatarKey}
+        seed={PLUGIN_AVATAR_IDENTITY.seed}
+        avatarKey={avatarKey && parseAgentAvatarConfig(avatarKey) ? avatarKey : PLUGIN_AVATAR_IDENTITY.avatarKey}
         status={status}
         motion={motion === "ambient" ? "expressive" : "static"}
         disableMorph

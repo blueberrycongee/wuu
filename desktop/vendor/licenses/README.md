@@ -13,3 +13,6 @@ package includes its own license. These files are included in the renderer's
     https://github.com/remarkjs/remark-math/blob/88a9497e1ede93b958237c85edbf5651faeca7af/license
 - `cordis-MIT.txt`: cordis 4.0.0-rc.8 (tag `v4.0.0-rc.8`):
   https://github.com/cordiverse/cordis/blob/f46ae95e039f156b966e1e0f7e8d1af91e73e9db/LICENSE
+- `lru_map-MIT.txt`: the MIT license section of lru_map 0.4.1's README
+  (the npm release includes the README but no separate LICENSE file):
+  https://github.com/rsms/js-lru/blob/77c51e90dbcf4ffc0d27e6bc04a012a6b54a05e1/README.md#mit-license

@@ -46,7 +46,7 @@ func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) 
 		Version:           "1",
 		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
-			userHostContextCapability, "native-tool-loop",
+			userHostContextCapability, "native-tool-loop", "conversation-plugins",
 			"native-session-resume",
 			"canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection",
 		},

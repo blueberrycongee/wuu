@@ -227,7 +227,7 @@ child-graph invocation. See [composition boundaries](../customize/plugin-composi
 
 ### Scoped Personal connectors
 
-The Personal local host now exposes Gmail, Notion, Drive, GitHub, Google Calendar,
+The Personal local host now exposes Gmail, Notion, Drive, Google Calendar,
 and isolated Slack/Feishu adapters through `host.personal`. They are not Coding
 or MCP tools. Connection metadata, allowed resources, read/write scopes and
 account identity are separate; an installed adapter is not a connected account.
@@ -252,9 +252,7 @@ Gmail supports thread search/read, attachments, draft creation and sending.
 Notion search/read/query and report append are limited to selected resources.
 Drive `drive.file` access means selected/shared files, not unrestricted Drive
 search; Docs export is text and PDF is a managed attachment, not claimed PDF text
-extraction. GitHub tracking is read-only PRs, issues, check runs and releases in
-selected repositories; app/OAuth permissions must not be confused with these
-local operation limits. Calendar create/reschedule/cancel requires explicit
+extraction. Calendar create/reschedule/cancel requires explicit
 notification behavior; editing existing events requires their current ETag.
 Slack and Feishu search/mentions filter a bounded page from selected channels,
 not an organization-wide index. Continue provider cursors for later pages.

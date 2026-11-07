@@ -1,3 +1,4 @@
+import type { ComposerInputHandle } from "./ComposerInput";
 import { FileText } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
@@ -11,7 +12,6 @@ import { clipboardAttachmentFiles } from "./ComposerMessages";
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import type { MessageContentPart } from "../shared/protocol";
 import { translateCurrent as translate, useI18n } from "./i18n";
-import { TruncatedText } from "./TruncatedText";
 import { buildFileSelectionPart } from "./FileSelectionParts";
 
 export type CollapsedComposerPromptBlock = {
@@ -161,7 +161,7 @@ export function CollapsedComposerPromptCard({
     <ComposerDocumentCard
       className="composer-collapsed-prompt-card"
       icon={<FileText className="icon" />}
-      title={<TruncatedText as="strong" className="composer-document-card-title" text={title} />}
+      title={<strong className="composer-document-card-title">{title}</strong>}
       meta={lines > 1
         ? t("composer.pastedTextLines", { count: formatNumber(lines) })
         : t("composer.pastedTextCharacters", { count: formatNumber(text.length) })}
@@ -174,6 +174,7 @@ export function CollapsedComposerPromptCard({
 }
 
 export type CollapsedComposerPromptPasteOptions = {
+  input?: ComposerInputHandle | null;
   readOnly: boolean;
   fileAttachmentsEnabled: boolean;
   onPasteAttachmentFiles: (files: File[]) => void;
@@ -209,7 +210,7 @@ export function useCollapsedComposerPrompt({
   prefix: string;
   visiblePrompt: string;
   handlePaste: (
-    event: ReactClipboardEvent<HTMLTextAreaElement>,
+    event: ReactClipboardEvent<HTMLElement>,
     options: CollapsedComposerPromptPasteOptions
   ) => void;
   revealBlock: (index: number) => void;
@@ -280,7 +281,7 @@ export function useCollapsedComposerPrompt({
   }, [localBlocks.length, prefix, prompt, storageKey]);
 
   function handlePaste(
-    event: ReactClipboardEvent<HTMLTextAreaElement>,
+    event: ReactClipboardEvent<HTMLElement>,
     options: CollapsedComposerPromptPasteOptions
   ): void {
     if (options.readOnly) {
@@ -300,9 +301,11 @@ export function useCollapsedComposerPrompt({
       return;
     }
 
-    const selectionStart = event.currentTarget.selectionStart ?? 0;
-    const selectionEnd = event.currentTarget.selectionEnd ?? 0;
-    const visibleValue = event.currentTarget.value;
+    const input = options.input ?? (event.currentTarget instanceof HTMLTextAreaElement ? event.currentTarget : null);
+    if (!input) return;
+    const selectionStart = input.selectionStart;
+    const selectionEnd = input.selectionEnd;
+    const visibleValue = input.value;
     event.preventDefault();
     options.onFold?.();
     const nextBlock = {

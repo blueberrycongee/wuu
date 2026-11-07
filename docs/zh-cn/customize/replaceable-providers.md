@@ -22,7 +22,6 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 | `state.artifacts@1` | `wuu.artifacts.local` | `artifactStore`、`ARTIFACT_STORE_DESCRIPTOR` |
 | `host.data.query@2` | `wuu.index.trace` | `dataIndex`、`queryData`、`DATA_QUERY_DESCRIPTOR` |
 | `security.authorize@1` | `wuu.permissions.default` | `authorize`、`AUTHORIZATION_SERVICE_DESCRIPTOR` |
-| `project.coordination@1` | `wuu.project-coordination` | `projectCoordination`、`PROJECT_COORDINATION_DESCRIPTOR` |
 | `host.managed-session@1` | `wuu.managed-sessions` | `managedSessions`、`MANAGED_SESSION_DESCRIPTOR` |
 | `ui.shell@1` | `wuu.default-shell` 或渲染器插件 | `APPLICATION_SHELL_SERVICE`、`ApplicationGenerationAPI` |
 
@@ -99,20 +98,13 @@ generation 和已配置的委托目标。续调不能改写请求、改选目标
 取消、所有者及委托者
 移除、暂停后的权限撤销，以及暂停在续调前发生的 generation 替换。报告与日志保存在 `.tmp/e2e/service-continuation/`。
 
-在启用 `project_agent` 的开发构建中，[项目装饰器](../../../examples/plugins/project-decorator.ts)
-只修改指令，并启用 `concurrentServices`，因为托管会话创建可能在返回前重入协调服务。
-将其选为 `project.coordination@1` 提供者，再把它的同服务依赖绑定到
-`wuu.project-coordination`（或另一个委托提供者）。原生协调器处于所选协调服务委托链中时，
-仍拥有自己的调度器，也支持多层装饰器；无关服务依赖不会启动协调调度。移除或禁用
-所选装饰器不会回退到原生协调器。停止自主派发后，已获准入的回合仍保留原服务图。
-
 每个组合中的 `state.documents@1` 只有一个逻辑数据集和权限边界。局部路由可以连接
 被选中 provider 的适配链，普通消费者不能绕过该边界直接选择基础实现。
 独立数据集应使用隔离的[运行时组合](plugin-compositions.md)。整块替换 provider
 和经验证的状态迁移要求不变。
 
 安装仓库依赖后运行 `node scripts/provider-delegation-e2e.mjs`。它使用打包后的公共 SDK
-编译独立适配插件，验证原生和外部委托链、持久设置、项目委托调度、保留回合结算、拒绝及清理路径，并将
+编译独立适配插件，验证原生和外部委托链、持久设置、拒绝及清理路径，并将
 `report.json`、`verification.log` 写入 `.tmp/e2e/provider-delegation/`。
 
 
@@ -592,28 +584,11 @@ export async function recordTurn(host: RuntimeHost, batch: DataAppendTurn) {
 
 查询结果和追加回执都可包含 `diagnostic_path`。它只是导出元数据，不是访问权限或备用数据源。旧 JSONL 导入和诊断导出由选中的原生提供者拥有；使用外部索引不会触发原生文件读写。导出失败不能撤销已确认的追加。禁用选中索引会停止其行为，不会自动启用原生存储。延迟完成的回合应一直保留获准执行时的 generation，直到追加结束。
 
-## Project 协调协议
+## 托管会话协议
 
-`project.coordination@1` 承载业务策略，`host.managed-session@1` 承载执行机制。原生协调器只在启用 Project Agent 功能的构建中选用；托管会话机制独立支持普通托管会话。默认协调器声明 `state.documents@1`、`host.managed-session@1` 和 `host.background@1`；每个消费者使用自己捕获的服务图身份。
+`host.managed-session@1` 通过消费者捕获的服务图身份提供会话执行机制。
 
-`projectCoordination(host)` 为 `session`、`work`、`membership`、`enqueue` 和 `admission` 提供类型化调用。`ProjectSessionRequest` 与 `ProjectWorkRequest` 保留既有动作词汇。Session/work/membership 的结果随动作变化，因此在调用者验证前明确保留为 `unknown`。完整服务描述还包括下列提供者回调：
-
-| 方法 | 输入与结果 |
-| --- | --- |
-| `session`、`work` | 带 `actor_id`、可选 `call_id` 和 `session` 或 `work` 的命令 envelope。结果取决于动作。 |
-| `membership` | `project_id`、`session_id`、`action: "adopt" \| "release"`。 |
-| `admission` | 空请求，返回 `{ max_parallel }`。容量约束仍由宿主 membership/lease 事务执行。 |
-| `enqueue` | 项目、会话和客户端 ID，cause、content、wake。记录输入与实际投递是两件事。 |
-| `work-list`、`member-work`、`coordinator` | 项目查询 envelope；成员查询还含 `session_id`。分别返回工作列表、`{ work, found }`、`{ project, found }`。 |
-| `inbox`、`schedule`、`recover`、`capacity` | 会话/项目 envelope；capacity 还接收 `action` 并返回布尔值。没有项目参数的 recover 扫描协调器 inbox。 |
-| `create`、`turn`、`user-input` | 命令 envelope 中包含原生 thread-start 选择、turn 完成或聊天消息数据；不是普通 `host.session.*` 请求结构。 |
-| `instructions`、`tool-config` | 直接传序列化 `session.Session`，**不套命令 envelope**；返回指令文本或 `{ allow?, deny? }`。 |
-| `tool-policy`、`tool-validate` | `{ member, call, read_only, policy }`，使用原生 session 与工具调用数据。`ProjectToolPolicy` 标识写 lease 和工作 revision；取得 OS lease 后再次验证。 |
-| `scheduler` | 仅所有者可调用的长期后台回调。注册表认证调用者；设置领域 ID 不能启动它。 |
-
-原生回调结构由[协调分发器](../../../internal/appserver/project_provider.go)和[工具策略协议](../../../internal/appserver/project_work_tools.go)定义。SDK 帮助客户端覆盖常用业务命令，不复制全部原生 session/turn 记录。替换提供者必须处理消费者实际调用的方法，保留取消与结构化错误，并在清理结束前保留依赖。停止调度会取消计时器和等待，不会把已获准入的前台工作改路由到新提供者。
-
-`managedSessions(host).create(input)` 复用公共会话创建字段，新增 `owner`、`source`、可选角色、显式会话 ID、共享工作区会话 ID 和初始 inbox 输入。显式身份与初始输入一同提交。`submit` 返回 `{ admitted, capacity_full }`：容量已满是需要处理的结果，不表示消息已经执行。`allow_start: false` 只尝试 steering。`interrupt` 指向宿主工作区内已存在的会话。
+`managedSessions(host).create(input)` 复用公共会话创建字段，新增 `owner`、`source`、可选角色、显式会话 ID、共享工作区会话 ID 和初始 inbox 输入。显式身份与初始输入一同提交。`submit` 返回 `{ admitted, capacity_full }`，表示输入是否已获准执行。原生提供者为保持传输兼容保留 `capacity_full: false`，不再应用 Project Agent 的 worker 数量限制。`allow_start: false` 只尝试 steering。`interrupt` 指向宿主工作区内已存在的会话。
 
 SDK 通过 `ManagedSessionTextMessage` 支持文本提交。其 `Role`、`Content`、`ClientID` 和来源字段保留当前 Go wire 大小写，`display_content` 则有显式 JSON 标签。`ManagedSessionInbox` 同样使用 `ClientID`、`SessionID`、`Content`、`Wake` 和 `Controls`。不要替换为模型请求的 snake_case 消息类型。Control revision 阻止接管或释放后的旧指令执行，execution ID 来自宿主认证的回调。
 
@@ -799,9 +774,11 @@ SDK 替换，并用假 CLI 生命周期测试验证进程和持久化取消行�
 
 移除 UI 包不会移除运行时的数据、工具或正在进行的工作。替换 UI 只需安装一个
 声明相同服务依赖的独立桌面包，不需要导入旧 UI 或运行时源码。也可以选择兼容
-的运行时而不复制呈现代码。UI 依赖为可选：运行时禁用或不可用时显示明确的
-服务错误并禁用修改，而不是导致应用崩溃或暗中换用内置调度器；后续成功读取
-会恢复控件。cron 工具要求调度服务可用，绝不在本地偷偷调度。
+的运行时而不复制呈现代码。UI 依赖为可选。`goal-ui` 仅在宿主报告
+`service_optional_absent` 时隐藏控件：可选依赖没有提供者，也没有显式绑定；
+清单变化后会再次读取。显式选择不可用、提供者有歧义、主版本不匹配或提供者
+执行失败仍会显示错误，均不会选择后备实现。其他不可用 UI 依赖保留服务错误
+并禁用修改；后续成功读取会恢复控件。cron 工具要求调度服务可用，绝不在本地偷偷调度。
 
 SDK 导出 `GOAL_CONTROL_SERVICE_DESCRIPTOR`、`GoalControlRequestV1`、
 `GoalControlResultV1` 和 `GoalSnapshotV1`。在 `desktop.required_services`

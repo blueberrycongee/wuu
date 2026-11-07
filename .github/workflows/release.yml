@@ -107,6 +107,10 @@ jobs:
         run: |
           node --test ../../release-tools/scripts/release-version.test.mjs
           node ../scripts/release-version.mjs check "$RELEASE_TAG"
+      - name: Install ripgrep for search tests
+        run: |
+          node scripts/fetch-ripgrep.cjs
+          echo "$PWD/build/tools" >> "$GITHUB_PATH"
       - name: Install release credentials
         env:
           WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
@@ -116,11 +120,17 @@ jobs:
           node ../../release-tools/desktop/scripts/install-notary-key.cjs
           node ../../release-tools/desktop/scripts/import-release-signing.cjs
       - name: Check and test Go packages
-        run: make -C .. check-go test-go-uncached
+        run: |
+          # macOS exposes temporary paths through /var -> /private/var. Some
+          # path-containment tests compare unresolved test roots, so give the
+          # suite a canonical TMPDIR before running it.
+          export TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"
+          make -C .. check-go test-go-uncached
       - name: Install
         run: |
           npm ci
           npm ci --prefix ../plugins
+          npm ci --prefix ../packages/plugin-sdk
           npm ci --prefix ../clients/core
           npm ci --prefix ../clients/mobile-web
           node node_modules/electron/install.js

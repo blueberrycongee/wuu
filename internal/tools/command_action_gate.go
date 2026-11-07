@@ -55,17 +55,22 @@ func commandWorkingDirectory(ctx context.Context, requested string) string {
 }
 
 func commandMutation(call providers.ToolCall) bool {
-	if call.Name == "bash" || call.Name == "process_start" {
+	if call.Name == "process_start" {
 		return true
 	}
-	if call.Name != "process" {
+	if call.Name != "bash" {
 		return false
 	}
-	var args processArgs
+	var args bashArgs
 	if decodeArgs(call.Arguments, &args) != nil {
 		return true
 	}
-	return args.Action != processActionList && args.Action != processActionRead
+	switch strings.TrimSpace(args.Action) {
+	case processActionList, processActionRead:
+		return false
+	default:
+		return true
+	}
 }
 
 func (t *Toolkit) commandCall(call providers.ToolCall) (providers.ToolCall, Tool, error) {
@@ -110,56 +115,57 @@ func (t *Toolkit) PrepareCommandAction(ctx context.Context, call providers.ToolC
 		if err = args.validate(); err != nil {
 			return CommandAction{}, err
 		}
-		cwd, err = resolveShellWorkingDir(ctx, t.env, args.CWD)
-		if err != nil {
-			return CommandAction{}, err
-		}
-		resolvedCommand = args.Command
-		if call.Name == "bash" && !args.RunInBackground && bashCommandLooksLikeVerification(args.Command) {
-			resolved, err := resolveRunTestCommand(cwd, args.Command)
+		action := strings.TrimSpace(args.Action)
+		if action != "" && action != "run" {
+			// Process control shares bash's schema. Starting a process never
+			// authorizes later input, so bind the exact instruction.
+			if action == processActionWrite {
+				raw, _ := json.Marshal(bashArgs{Command: args.Input})
+				input := providers.ToolCall{Name: "bash", Arguments: string(raw)}
+				if reason := approvefor.HardDenyReason(approvefor.Request{PermissionMode: "standard", Tool: approvefor.Tool{Name: "bash", Kind: "shell"}, Arguments: input.Arguments, CWD: t.RootDir(), ReferencedPaths: reviewShellPaths(input, t.RootDir())}); reason != "" {
+					return CommandAction{}, errors.New(reason)
+				}
+			}
+			if len(t.env.ProtectedPaths) > 0 {
+				return CommandAction{}, errors.New("managed processes cannot prove protected read/write enforcement")
+			}
+			manager, err := t.env.ProcessManager()
 			if err != nil {
 				return CommandAction{}, err
 			}
-			resolvedCommand = resolved.Command
-		}
-		if (args.RunInBackground || call.Name == "process_start") && len(t.env.ProtectedPaths) > 0 {
-			return CommandAction{}, errors.New("protected read/write policy does not support background processes")
-		}
-	} else {
-		var args processArgs
-		if err = decodeArgs(call.Arguments, &args); err != nil {
-			return CommandAction{}, err
-		}
-		if args.Action == processActionWrite {
-			raw, _ := json.Marshal(bashArgs{Command: args.Input})
-			input := providers.ToolCall{Name: "bash", Arguments: string(raw)}
-			if reason := approvefor.HardDenyReason(approvefor.Request{PermissionMode: "standard", Tool: approvefor.Tool{Name: "bash", Kind: "shell"}, Arguments: input.Arguments, CWD: t.RootDir(), ReferencedPaths: reviewShellPaths(input, t.RootDir())}); reason != "" {
-				return CommandAction{}, errors.New(reason)
+			process, err := manager.Get(args.ProcessID)
+			if err != nil {
+				return CommandAction{}, err
+			}
+			if process.RootThreadID != processRootThreadID(t.env) || process.OwnerID != defaultProcessOwnerID(t.env) || !processIsLive(process.Status) {
+				return CommandAction{}, errors.New("reviewed process is not live in this execution")
+			}
+			if action == processActionWrite && !manager.InputAvailable(process.ID) {
+				return CommandAction{}, errors.New("reviewed process input is unavailable")
+			}
+			cwd = process.CWD
+			raw, _ := json.Marshal(struct {
+				ID, Generation, Start, Owner, Thread string
+				PID                                  int
+			}{process.ID, process.HostGenerationID, process.ProcessStartTime, process.OwnerID, process.RootThreadID, process.PID})
+			identity = sha256Hex(raw)
+		} else {
+			cwd, err = resolveShellWorkingDir(ctx, t.env, args.CWD)
+			if err != nil {
+				return CommandAction{}, err
+			}
+			resolvedCommand = args.Command
+			if call.Name == "bash" && !args.RunInBackground && bashCommandLooksLikeVerification(args.Command) {
+				resolved, err := resolveRunTestCommand(cwd, args.Command)
+				if err != nil {
+					return CommandAction{}, err
+				}
+				resolvedCommand = resolved.Command
+			}
+			if (args.RunInBackground || call.Name == "process_start") && len(t.env.ProtectedPaths) > 0 {
+				return CommandAction{}, errors.New("protected read/write policy does not support background processes")
 			}
 		}
-		if len(t.env.ProtectedPaths) > 0 {
-			return CommandAction{}, errors.New("managed processes cannot prove protected read/write enforcement")
-		}
-		manager, err := t.env.ProcessManager()
-		if err != nil {
-			return CommandAction{}, err
-		}
-		process, err := manager.Get(args.ProcessID)
-		if err != nil {
-			return CommandAction{}, err
-		}
-		if process.RootThreadID != processRootThreadID(t.env) || process.OwnerID != defaultProcessOwnerID(t.env) || !processIsLive(process.Status) {
-			return CommandAction{}, errors.New("reviewed process is not live in this execution")
-		}
-		if args.Action == processActionWrite && !manager.InputAvailable(process.ID) {
-			return CommandAction{}, errors.New("reviewed process input is unavailable")
-		}
-		cwd = process.CWD
-		raw, _ := json.Marshal(struct {
-			ID, Generation, Start, Owner, Thread string
-			PID                                  int
-		}{process.ID, process.HostGenerationID, process.ProcessStartTime, process.OwnerID, process.RootThreadID, process.PID})
-		identity = sha256Hex(raw)
 	}
 	// Bind resolved paths as well as the lexical directory; a replaced symlink
 	// cannot redirect a pending command into another workspace.

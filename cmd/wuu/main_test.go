@@ -1559,6 +1559,18 @@ func TestResolveContextWindow_UnknownWithoutProviderMetadata(t *testing.T) {
 	}
 }
 
+func TestCaptureStdoutDrainsLargeOutput(t *testing.T) {
+	want := strings.Repeat("plugin-list-entry\n", 1<<16)
+	got := captureStdout(t, func() {
+		if _, err := io.WriteString(os.Stdout, want); err != nil {
+			t.Fatalf("write captured output: %v", err)
+		}
+	})
+	if got != strings.TrimSpace(want) {
+		t.Fatalf("captured %d bytes, want %d", len(got), len(strings.TrimSpace(want)))
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -1573,15 +1585,22 @@ func captureStdout(t *testing.T, fn func()) string {
 	defer func() {
 		os.Stdout = oldStdout
 	}()
+	defer w.Close()
+
+	// Drain while the callback writes: CLI JSON can exceed the pipe capacity.
+	var buf bytes.Buffer
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&buf, r)
+		readDone <- err
+	}()
 
 	fn()
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("close stdout writer: %v", err)
 	}
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
+	if err := <-readDone; err != nil {
 		t.Fatalf("read stdout: %v", err)
 	}
 

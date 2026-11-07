@@ -95,6 +95,13 @@ func (e *streamableHTTPError) Error() string {
 	return msg
 }
 
+func (e *streamableHTTPError) Unwrap() error {
+	if e.status == http.StatusUnauthorized {
+		return ErrOAuthRequired
+	}
+	return nil
+}
+
 // fallbackToSSE reports whether the failure indicates the endpoint is not a
 // streamable HTTP server. The spec's backwards-compatibility rule is "fails
 // with an HTTP 4xx status code (e.g., 405 Method Not Allowed or 404 Not

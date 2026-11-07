@@ -52,6 +52,11 @@ func PrepareMessagesForProviderRequestWithPolicy(provider, model string, msgs []
 // IncompleteStreamFragment is a display-only assistant fragment from a failed attempt.
 const IncompleteStreamFragment = "incomplete_stream_fragment"
 
+// SteeredStreamFragment is a visible assistant fragment stopped by newly
+// accepted user input. It remains part of provider history so the successor
+// model round can see what the interrupted response had already said.
+const SteeredStreamFragment = "steered_stream_fragment"
+
 func ResolveProviderHistory(msgs []ChatMessage, provider, scope string) []ChatMessage {
 	provider = strings.TrimSpace(provider)
 	scope = strings.TrimSpace(scope)
@@ -134,6 +139,7 @@ func dropForeignProviderModelState(provider, model string, msgs []ChatMessage) [
 			call := &msgs[i].ToolCalls[j]
 			if foreignMessage || providerStateOriginMismatch(currentProvider, currentModel, call.ProviderItemProvider, call.ProviderItemModel) {
 				call.ProviderItemID = ""
+				call.ThoughtSignature = ""
 			}
 		}
 	}

@@ -1,7 +1,7 @@
 import { Tooltip } from "./Tooltip";
-import { showErrorToast } from "./Toast";
+import { showActionErrorToast } from "./Toast";
 import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
-import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
 import { isUnchangedContextCompaction, type TurnEventDisplay } from "./TurnEvents";
 import { userFacingErrorForMessage, type UserFacingErrorDisplay, type UserFacingErrorTone } from "./UserFacingErrors";
@@ -15,6 +15,8 @@ import {
   isFailedCompactNotice, normalizeContextCompactionText, parseContextCompactionNotice,
 } from "./ContextCompaction";
 import { CollapsibleDetails } from "./CollapsibleMotion";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { useExitPresence } from "./useExitPresence";
 import type { TurnStreamStatus } from "./AppState";
 import type { SettingsPage } from "./SettingsView";
 
@@ -284,6 +286,7 @@ export function TurnFailureNotice({
   error,
   reconnect,
   arriving = false,
+  latest = false,
   onRetry,
   onContinue,
   onOpenSettings,
@@ -295,12 +298,14 @@ export function TurnFailureNotice({
   reconnect?: ThreadItem;
   /** The failure happened in front of the reader rather than in history. */
   arriving?: boolean;
+  /** This is the thread's latest turn and has not been succeeded yet. */
+  latest?: boolean;
   /** Sends the turn's message again; offered when the turn left nothing. */
   onRetry?: () => void | Promise<void>;
   /** Picks up after the partial reply the turn left, keeping it. */
-  onContinue?: () => void | Promise<void>;
+  onContinue?: () => boolean | Promise<boolean>;
   onOpenSettings?: () => void;
-}): JSX.Element {
+}): JSX.Element | null {
   const retrying = reconnect?.status === "in_progress";
   const countdown = useRetryCountdown(retrying ? reconnect?.retry_at_ms : undefined);
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
@@ -332,6 +337,18 @@ export function TurnFailureNotice({
   const continues = recover !== undefined && recover === onContinue;
   const [recoverPending, setRecoverPending] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const wasLatest = useRef(latest);
+  useEffect(() => {
+    // A send starts the next turn without using this card's action. Retire
+    // the card once it stops being the thread's latest turn; restored history
+    // mounts with latest already false and stays readable.
+    if (wasLatest.current && !latest) setLeaving(true);
+    wasLatest.current = latest;
+  }, [latest]);
+  const [present, release] = useExitPresence(!leaving, () =>
+    prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280) + 32,
+  );
   const detailsID = useId();
   const diagnostic = retrying ? "" : message?.trim() ?? "";
   const facts = retrying
@@ -343,85 +360,102 @@ export function TurnFailureNotice({
     if (!recover || recoverPending) return;
     setRecoverPending(true);
     try {
-      await recover();
+      const accepted = await recover();
+      // Continuing starts a new turn while the failed turn stays in history;
+      // once that turn is accepted, this card has said everything it can.
+      if (continues && accepted === true) setLeaving(true);
     } catch (recoverError) {
-      showErrorToast(recoverError);
+      showActionErrorToast(recoverError);
     } finally {
       setRecoverPending(false);
     }
   }
 
+  if (!present) return null;
   const Icon = retrying ? TriangleAlert : CircleAlert;
   return (
-    <aside
-      data-recovery-state={recoveryState}
-      className={`turn-notice turn-failure${retrying ? " is-retrying" : ""}${arriving ? " is-arriving" : ""}`}
-      role={retrying ? "status" : "alert"}
-      aria-label={title}
+    <div
+      className={`turn-failure-presence${leaving ? " is-leaving" : ""}`}
+      aria-hidden={leaving || undefined}
+      inert={leaving}
+      onTransitionEnd={(transitionEvent) => {
+        if (leaving && transitionEvent.target === transitionEvent.currentTarget && transitionEvent.propertyName === "grid-template-rows") {
+          release();
+        }
+      }}
     >
-      <Icon key={retrying ? "retrying" : "failed"} size={16} aria-hidden="true" className="turn-failure-icon" />
-      <div className="turn-failure-main">
-        <div className="turn-failure-line">
-          <p className="turn-failure-message">
-            <span className="turn-failure-title">{title}</span>
-            {body ? <span className="turn-failure-body">{body}</span> : null}
-            {body && hasDetails ? " " : null}
+      <div className="turn-failure-presence-body">
+        <aside
+          data-recovery-state={recoveryState}
+          className={`turn-notice turn-failure${retrying ? " is-retrying" : ""}${arriving ? " is-arriving" : ""}`}
+          role={retrying ? "status" : "alert"}
+          aria-label={title}
+        >
+          <Icon key={retrying ? "retrying" : "failed"} size={16} aria-hidden="true" className="turn-failure-icon" />
+          <div className="turn-failure-main">
+            <div className="turn-failure-line">
+              <p className="turn-failure-message">
+                <span className="turn-failure-title">{title}</span>
+                {body ? <span className="turn-failure-body">{body}</span> : null}
+                {body && hasDetails ? " " : null}
+                {hasDetails ? (
+                  <button
+                    type="button"
+                    className="turn-failure-details-toggle"
+                    aria-expanded={detailsOpen}
+                    aria-controls={detailsID}
+                    onClick={() => setDetailsOpen((open) => !open)}
+                  >
+                    {t("turnFailure.details")}
+                    <ChevronRight className="turn-failure-details-chevron icon-xs" aria-hidden="true" />
+                  </button>
+                ) : null}
+              </p>
+              {retrying ? (
+                <div className="turn-failure-recovery">
+                  <span
+                    key="countdown"
+                    className="turn-failure-pill turn-failure-countdown"
+                    style={{ "--retry-progress": countdown.progress } as CSSProperties}
+                    role={countdown.waiting ? "progressbar" : undefined}
+                    aria-label={countdown.text}
+                    aria-valuemin={countdown.waiting ? 0 : undefined}
+                    aria-valuemax={countdown.waiting ? 100 : undefined}
+                    aria-valuenow={countdown.waiting ? Math.round(countdown.progress * 100) : undefined}
+                  >
+                    {countdown.text}
+                  </span>
+                </div>
+              ) : recover || openSettings ? (
+                <div className="turn-failure-recovery">
+                  {recover ? (
+                    <Tooltip asChild content={continues ? t("turnFailure.continueHint") : undefined}><button aria-description={continues ? t("turnFailure.continueHint") : undefined}
+                      type="button"
+                      className="turn-failure-pill turn-failure-action"
+                      disabled={recoverPending}
+                      onClick={() => void runRecover()}
+                    >
+                      {continues ? t("turnFailure.continue") : t(recoverPending ? "appState.retryNow" : "appState.retryAction")}
+                    </button></Tooltip>
+                  ) : null}
+                  {openSettings ? (
+                    <button type="button" className="turn-failure-pill turn-failure-action is-primary" onClick={openSettings}>
+                      {t("turnFailure.openSettings")}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             {hasDetails ? (
-              <button
-                type="button"
-                className="turn-failure-details-toggle"
-                aria-expanded={detailsOpen}
-                aria-controls={detailsID}
-                onClick={() => setDetailsOpen((open) => !open)}
-              >
-                {t("turnFailure.details")}
-                <ChevronRight className="turn-failure-details-chevron icon-xs" aria-hidden="true" />
-              </button>
+              <CollapsibleDetails id={detailsID} expanded={detailsOpen} className="turn-failure-details">
+                {facts.length > 0 ? <p className="turn-failure-facts">{facts.join(" · ")}</p> : null}
+                {diagnostic ? <p className="turn-failure-diagnostic">{diagnostic}</p> : null}
+              </CollapsibleDetails>
             ) : null}
-          </p>
-          {retrying ? (
-            <div className="turn-failure-recovery">
-              <span
-                key="countdown"
-                className="turn-failure-pill turn-failure-countdown"
-                style={{ "--retry-progress": countdown.progress } as CSSProperties}
-                role={countdown.waiting ? "progressbar" : undefined}
-                aria-label={countdown.text}
-                aria-valuemin={countdown.waiting ? 0 : undefined}
-                aria-valuemax={countdown.waiting ? 100 : undefined}
-                aria-valuenow={countdown.waiting ? Math.round(countdown.progress * 100) : undefined}
-              >
-                {countdown.text}
-              </span>
-            </div>
-          ) : recover || openSettings ? (
-            <div className="turn-failure-recovery">
-              {recover ? (
-                <Tooltip asChild content={continues ? t("turnFailure.continueHint") : undefined}><button aria-description={continues ? t("turnFailure.continueHint") : undefined}
-                  type="button"
-                  className="turn-failure-pill turn-failure-action"
-                  disabled={recoverPending}
-                  onClick={() => void runRecover()}
-                >
-                  {continues ? t("turnFailure.continue") : t(recoverPending ? "appState.retryNow" : "appState.retryAction")}
-                </button></Tooltip>
-              ) : null}
-              {openSettings ? (
-                <button type="button" className="turn-failure-pill turn-failure-action is-primary" onClick={openSettings}>
-                  {t("turnFailure.openSettings")}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        {hasDetails ? (
-          <CollapsibleDetails id={detailsID} expanded={detailsOpen} className="turn-failure-details">
-            {facts.length > 0 ? <p className="turn-failure-facts">{facts.join(" · ")}</p> : null}
-            {diagnostic ? <p className="turn-failure-diagnostic">{diagnostic}</p> : null}
-          </CollapsibleDetails>
-        ) : null}
+          </div>
+        </aside>
       </div>
-    </aside>
+    </div>
   );
 }
 

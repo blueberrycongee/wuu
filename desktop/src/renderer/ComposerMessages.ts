@@ -1,3 +1,4 @@
+import { pluginReferenceDraft } from "./ComposerPluginReferences";
 import { fileSelectionLocation } from "./PdfSelection";
 import { beginLocalTurnTiming, bindLocalTurnTiming, forgetLocalTurnTiming, localTurnTiming } from "./LocalTurnTiming";
 import type { ClipboardEvent as ReactClipboardEvent } from "react";
@@ -130,7 +131,7 @@ export type QueuedComposerMessage = {
   operationState?: "preparing" | "sending" | "switching";
 };
 
-export function clipboardAttachmentFiles(event: ReactClipboardEvent<HTMLTextAreaElement>): File[] {
+export function clipboardAttachmentFiles(event: ReactClipboardEvent<HTMLElement>): File[] {
   const items = Array.from(event.clipboardData?.items ?? []);
   const files: File[] = [];
   for (const item of items) {
@@ -379,6 +380,7 @@ export function createComposerMessage(
 }
 
 export function cloneMessageContentPart(part: MessageContentPart): MessageContentPart {
+  if (part.type === "plugin_reference") return { ...part, plugin: { ...part.plugin } };
   if (part.type === "response_selection") return { ...part, selection: { ...part.selection, source: { ...part.selection.source } } };
   if (part.type === "file_selection") return { ...part, source: { ...part.source, ...(part.source.pdf ? { pdf: { ...part.source.pdf } } : {}) } };
   return { ...part };
@@ -390,7 +392,7 @@ export function composerContextFromMessage(text: string, contentParts?: MessageC
     ? [{ ...part.selection, source: { ...part.selection.source } }] : []) ?? [];
   const promptParts = contentParts?.filter((part) => part.type !== "response_selection");
   return {
-    prompt: selections.length ? promptParts!.map((part) => part.text).join("") : text,
+    prompt: pluginReferenceDraft(selections.length ? promptParts!.map((part) => part.text).join("") : text, promptParts),
     selections,
     contentParts: promptParts,
   };
@@ -432,9 +434,8 @@ export function queuedMessagePreview(message: QueuedComposerMessage): string {
 
 /**
  * The untrimmed single-line form of a queued message (text plus image/file
- * annotations). This is the hover-reveal companion to the 48-char inline
- * preview: when the two differ, the queue UI offers the full text via
- * tooltip instead of pretending the preview says everything.
+ * annotations), shown in the expanded queue. The collapsed summary uses
+ * the shorter queuedMessagePreview.
  */
 export function queuedMessageFullPreview(message: QueuedComposerMessage): string {
   const displayText = message.contentParts?.some((part) => part.type === "file_selection")

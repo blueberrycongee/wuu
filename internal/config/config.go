@@ -78,6 +78,7 @@ type MCPServerConfig struct {
 	Enabled       *bool                      `json:"enabled,omitempty"`
 	ToolOverrides map[string]MCPToolOverride `json:"tool_overrides,omitempty"`
 	ToolTimeoutMS mcpconfig.ToolTimeoutMS    `json:"tool_timeout_ms,omitempty"`
+	Connector     *MCPConnectorDescriptor    `json:"connector,omitempty"`
 }
 
 // definesServer reports whether the entry says how to reach a server, as
@@ -316,9 +317,6 @@ type AgentConfig struct {
 	// MaxParallel limits concurrently executing anonymous workers. Queued
 	// workers do not count toward the limit. Zero selects the default.
 	MaxParallel int `json:"max_parallel,omitempty"`
-	// ProjectMaxParallel limits new managed-worker admissions per project.
-	// Lead and side sessions are excluded. Zero inherits MaxParallelValue.
-	ProjectMaxParallel int `json:"project_max_parallel,omitempty"`
 	// Temperature overrides model/provider sampling when greater than zero.
 	// Zero means Auto: omit the request field and let the provider or model
 	// compatibility layer choose.
@@ -353,9 +351,6 @@ type AgentConfig struct {
 	// unlike model_roles entries, aliases never inherit from the active main
 	// selection. Project layers cannot define aliases.
 	ModelAliases map[string]ModelRoleConfig `json:"model_aliases,omitempty"`
-	// ProjectModels selects defaults for newly created project members. Empty
-	// selections inherit the lead; existing sessions retain their saved model.
-	ProjectModels ProjectModelsConfig `json:"project_models,omitempty"`
 	// DisableAutoCompact turns off the proactive auto-compact pass
 	// that fires when the conversation reaches the model's usable input
 	// window after reserving output headroom. The reactive overflow
@@ -382,14 +377,6 @@ type AgentConfig struct {
 	// user-facing contract is still unclear: the main agent loses some
 	// direct write tools but not every mutating capability.
 	ExperimentalCoordinatorMode bool `json:"experimental_coordinator_mode,omitempty"`
-}
-
-// ProjectMaxParallelValue resolves the per-project worker admission limit.
-func (a AgentConfig) ProjectMaxParallelValue() int {
-	if a.ProjectMaxParallel == 0 {
-		return a.MaxParallelValue()
-	}
-	return a.ProjectMaxParallel
 }
 
 // MaxParallelValue resolves the configured worker concurrency limit.
@@ -424,13 +411,6 @@ type ModelRoleConfig struct {
 	Variant  string `json:"variant,omitempty"`
 }
 
-type ProjectModelsConfig struct {
-	TechnicalLead ModelRoleConfig `json:"technical_lead,omitempty"`
-	Executor      ModelRoleConfig `json:"executor,omitempty"`
-	Side          ModelRoleConfig `json:"side,omitempty"`
-	Worker        ModelRoleConfig `json:"worker,omitempty"`
-}
-
 type AdvancedRuntimeUpdate struct {
 	MaxSteps                *int
 	MaxContextTokens        *int
@@ -444,7 +424,6 @@ type AdvancedRuntimeUpdate struct {
 	// values. Settings uses this to add, edit, and delete aliases in one call.
 	ModelAliases      map[string]*ModelRoleConfig
 	VerificationModel *ModelRoleConfig
-	ProjectModels     *ProjectModelsConfig
 }
 
 type GeneralSettingsUpdate struct {
@@ -627,6 +606,8 @@ func stripLegacyConfigKeys(data []byte) []byte {
 	}
 	if agent, _ := raw["agent"].(map[string]any); agent != nil {
 		for _, key := range []string{
+			"project_models",
+			"project_max_parallel",
 			"tool_policy",
 			"permission_rules",
 			"permission_profile",
@@ -758,6 +739,9 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, server := range c.MCPServers {
+		if err := server.Connector.Validate(); err != nil {
+			return fmt.Errorf("mcp_servers.%s.connector: %w", name, err)
+		}
 		if _, err := server.ToolTimeoutMS.Duration(); err != nil {
 			return fmt.Errorf("mcp_servers.%s: %w", name, err)
 		}
@@ -857,9 +841,6 @@ func (c Config) Validate() error {
 	if c.Agent.MaxSteps < 0 {
 		return errors.New("agent.max_steps cannot be negative (use 0 for unlimited)")
 	}
-	if c.Agent.ProjectMaxParallel < 0 {
-		return errors.New("agent.project_max_parallel cannot be negative (use 0 to inherit agent.max_parallel)")
-	}
 	if c.Agent.MaxParallel < 0 {
 		return errors.New("agent.max_parallel cannot be negative (use 0 for default)")
 	}
@@ -896,13 +877,6 @@ func (c Config) Validate() error {
 	}
 	if err := validateModelAliasesConfig(c); err != nil {
 		return err
-	}
-	for role, selection := range map[string]ModelRoleConfig{"technical_lead": c.Agent.ProjectModels.TechnicalLead, "executor": c.Agent.ProjectModels.Executor, "side": c.Agent.ProjectModels.Side, "worker": c.Agent.ProjectModels.Worker} {
-		if selection != (ModelRoleConfig{}) {
-			if err := validateConfiguredModelSelection(c, "agent.project_models."+role, selection); err != nil {
-				return err
-			}
-		}
 	}
 
 	return nil

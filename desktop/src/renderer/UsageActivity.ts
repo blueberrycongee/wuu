@@ -70,11 +70,18 @@ function usageHeatmapLevel(day: SettingsUsageDay, activeTotals: number[]): numbe
 }
 
 export function usageTokenTotal(day: SettingsUsageDay): number {
+  const outside = day.outside;
   return (
     Math.max(0, day.input_tokens) +
     Math.max(0, day.output_tokens) +
     Math.max(0, day.cache_creation_tokens) +
-    Math.max(0, day.cache_read_tokens)
+    Math.max(0, day.cache_read_tokens) +
+    (outside
+      ? Math.max(0, outside.input_tokens) +
+        Math.max(0, outside.output_tokens) +
+        Math.max(0, outside.cache_creation_tokens) +
+        Math.max(0, outside.cache_read_tokens)
+      : 0)
   );
 }
 

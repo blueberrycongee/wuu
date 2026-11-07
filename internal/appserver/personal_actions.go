@@ -615,7 +615,7 @@ func (p *personalActions) execute(ctx context.Context, action personalreview.Act
 	return json.Marshal(map[string]any{"receipt": map[string]any{"operation": a.Operation, "target": a.Target, "status": "succeeded", "action_id": action.ID}, "tool_result": result})
 }
 func (p *personalActions) review(ctx context.Context, input personalreview.ReviewInput) (approvefor.Decision, error) {
-	if input.Action.Operation == "bash" || input.Action.Operation == "process" || input.Action.Operation == "process_start" {
+	if input.Action.Operation == "bash" || input.Action.Operation == "process_start" {
 		return p.reviewCommand(ctx, input)
 	}
 	var a tools.FileAction
@@ -821,7 +821,7 @@ func (p *personalActions) Call(ctx context.Context, operation string, raw json.R
 	if err != nil {
 		return nil, err
 	}
-	settings.Scope = []string{"write_file", "edit_file", "bash", "process", "process_start", "connectors"}
+	settings.Scope = []string{"write_file", "edit_file", "bash", "process_start", "connectors"}
 	view.Settings = &settings
 	return json.Marshal(view)
 }

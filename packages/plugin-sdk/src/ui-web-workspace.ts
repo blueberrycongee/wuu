@@ -57,7 +57,8 @@ type WebWorkspaceTooltip = {
   y: number;
   width: number;
   height: number;
-  style: { fontFamily: string; fontSize: string; fontWeight: string; fontStyle: string; color: string; backgroundColor: string; border: string; borderRadius: string; padding: string; lineHeight: string };
+  /** maxWidth keeps the shell's wrapping cap when the native renderer resolves another font. */
+  style: { fontFamily: string; fontSize: string; fontWeight: string; fontStyle: string; color: string; backgroundColor: string; border: string; borderRadius: string; padding: string; lineHeight: string; maxWidth?: string };
 };
 
 type WebWorkspacePopoverBounds = { x: number; y: number; width: number; height: number; focus: boolean };
@@ -67,6 +68,8 @@ type WebWorkspaceHistoryEntry = {
   url: string;
   title: string;
   visitedAt: number;
+  /** Decayed visit frequency at visitedAt; absent on older records or providers. */
+  visitScore?: number;
 };
 
 type WebWorkspaceBookmark = {

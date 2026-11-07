@@ -1,11 +1,12 @@
-import type { ApplicationPreviewContentV1, PreviewContentOptionsV1, PreviewFileTargetV1 } from "../../../../packages/plugin-sdk/src/ui-preview-content";
+import type { ApplicationPreviewContentV1, PreviewContentOptionsV1, PreviewFileTargetV1, PreviewFileSaveV1, PreviewFileChangeV1 } from "../../../../packages/plugin-sdk/src/ui-preview-content";
 import { resolvePreviewResourceURL } from "../PreviewResourceURL";
 import type { WuuDesktopApi } from "../../shared/protocol";
 
-type PreviewHost = Pick<WuuDesktopApi, "listWorkspaceDirectory" | "readWorkspaceFile" | "revealWorkspaceItem" | "showWorkspaceItemMenu" | "exportWorkspaceFile" | "unsupportedMethods" | "platform">;
+type PreviewHost = Pick<WuuDesktopApi, "listWorkspaceDirectory" | "readWorkspaceFile" | "revealWorkspaceItem" | "showWorkspaceItemMenu" | "exportWorkspaceFile" | "unsupportedMethods" | "platform"> & Partial<Pick<WuuDesktopApi, "writeWorkspaceFile" | "watchWorkspaceFile">>;
 
 export class ApplicationPreviewContent implements ApplicationPreviewContentV1 {
   private disposed = false;
+  private readonly watches = new Set<() => void>();
   readonly capabilities: ApplicationPreviewContentV1["capabilities"];
 
   constructor(private readonly api: PreviewHost,
@@ -14,10 +15,15 @@ export class ApplicationPreviewContent implements ApplicationPreviewContentV1 {
       nativeItemMenu: api.platform === "darwin" && !api.unsupportedMethods?.includes("showWorkspaceItemMenu"),
       revealItem: !api.unsupportedMethods?.includes("revealWorkspaceItem"),
       exportFile: Boolean(api.exportWorkspaceFile) && !api.unsupportedMethods?.includes("exportWorkspaceFile"),
+      saveFile: Boolean(api.writeWorkspaceFile) && !api.unsupportedMethods?.includes("writeWorkspaceFile"),
+      watch: Boolean(api.watchWorkspaceFile) && !api.unsupportedMethods?.includes("watchWorkspaceFile"),
     });
   }
 
-  dispose(): void { this.disposed = true; }
+  dispose(): void {
+    this.disposed = true;
+    for (const stop of this.watches) stop();
+  }
 
   private async run<T>(operation: () => Promise<T>, options?: PreviewContentOptionsV1): Promise<T> {
     if (this.disposed || options?.signal?.aborted) throw new DOMException("Preview content operation cancelled", "AbortError");
@@ -48,6 +54,43 @@ export class ApplicationPreviewContent implements ApplicationPreviewContentV1 {
 
   readFile({ root, path }: PreviewFileTargetV1, options?: PreviewContentOptionsV1) {
     return this.run(async () => Object.freeze({ ...await this.api.readWorkspaceFile(path, root) }), options);
+  }
+
+  saveFile({ root, ...params }: PreviewFileSaveV1, options?: PreviewContentOptionsV1) {
+    return this.run(async () => {
+      if (!this.capabilities.saveFile || !this.api.writeWorkspaceFile) throw new Error("File saving unavailable");
+      const result = await this.api.writeWorkspaceFile(params, root);
+      return Object.freeze({ ...result, file: Object.freeze({ ...result.file }) });
+    }, options);
+  }
+
+  async watch({ root, path }: PreviewFileTargetV1, listener: (change: PreviewFileChangeV1) => void,
+    options?: PreviewContentOptionsV1): Promise<() => void> {
+    if (this.disposed || options?.signal?.aborted) throw new DOMException("File watch cancelled", "AbortError");
+    if (!this.capabilities.watch || !this.api.watchWorkspaceFile) throw new Error("File observation unavailable");
+    let release: (() => void) | undefined;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      release?.();
+      this.watches.delete(stop);
+      options?.signal?.removeEventListener("abort", stop);
+    };
+    this.watches.add(stop);
+    options?.signal?.addEventListener("abort", stop, { once: true });
+    try {
+      release = await this.api.watchWorkspaceFile(path, root, change => {
+        if (stopped) return;
+        if (change.type === "error") stop();
+        listener(Object.freeze({ ...change, root, path }));
+      });
+      if (stopped) {
+        release();
+        throw new DOMException("File watch cancelled", "AbortError");
+      }
+      return stop;
+    } catch (error) { stop(); throw error; }
   }
 
   revealItem(target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) {

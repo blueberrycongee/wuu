@@ -301,12 +301,17 @@ async function submit(text, answer) {
   await wait(text => [...document.querySelectorAll('.session-flow')].some(node => node.textContent.includes(text)), answer);
   await wait(() => !document.querySelector('.composer-stop-button'));
 }
-const pluginSwitch = '[data-plugin="generative-ui"] [role="switch"]';
-async function catalog() {
+const pluginSwitch = '.plugin-page-controls [role="switch"]';
+async function pluginDetails() {
   await wait(() => document.querySelector('[data-ribbon-id="catalog"]'));
   await click('[data-ribbon-id="catalog"]');
+  await wait(() => document.querySelector('[data-testid="plugin-page-back"]') || document.querySelector('[data-tab="plugins"]'));
+  // Navigation can restore the previously selected plugin detail page.
+  await evaluate(() => document.querySelector('[data-testid="plugin-page-back"]')?.click());
   await wait(() => document.querySelector('[data-tab="plugins"]'));
   await click('[data-tab="plugins"]');
+  await wait(() => document.querySelector('[data-plugin="generative-ui"] .catalog-row-open'));
+  await click('[data-plugin="generative-ui"] .catalog-row-open');
   await wait(selector => document.querySelector(selector), pluginSwitch);
 }
 async function conversation() {
@@ -365,15 +370,15 @@ async function run() {
   assert.ok(initialization.result.extension_inventory.some(record => record.kind === 'plugin' && record.provenance?.plugin_id === 'generative-ui'), 'Real initialization must expose the disabled bundled plugin');
   assert.ok(processes.length > 0 && processes.every(entry => entry.nodeExecutable === process.execPath), 'Desktop supplies its Electron Node runtime through the public plugin host contract');
   await submit('GENUI_DEFAULT_OFF', 'Default-off discovery verified.');
-  await catalog();
+  await pluginDetails();
   assert.equal(await evaluate(selector => document.querySelector(selector).getAttribute('aria-checked'), pluginSwitch), 'false');
-  await capture('01-default-disabled.png', '[data-plugin="generative-ui"]');
+  await capture('01-default-disabled.png', '.plugin-page');
   pass('manifest default is off in real catalog and provider tool discovery');
   await click(pluginSwitch);
   await wait(selector => document.querySelector(selector)?.getAttribute('aria-checked') === 'true' && !document.querySelector(selector).disabled, pluginSwitch);
   assert.ok(rpc.some(entry => entry.channel === 'wuu:extension-package-update' && entry.completed && entry.args[0]?.action === 'enable'));
   await assertNoErrorNotice('Enabling the plugin');
-  await capture('02-user-enabled.png', '[data-plugin="generative-ui"]');
+  await capture('02-user-enabled.png', '.plugin-page');
   await conversation();
   const stopStreamRecording = recordFrames('streaming-frames');
   await beginTurn('GENUI_ENABLED');
@@ -462,7 +467,7 @@ async function run() {
   assert.ok(stoppedTurn.items.every(item => !(item.result_detail?.content || []).some(part => part.type === 'resource')),
     'Reloaded interrupted history contains no published speculative UI resource');
   pass('stopping an incomplete UI closes inference without persisting or enabling speculative output', { interruptedTurn: stoppedTurn.id });
-  await catalog(); await click(pluginSwitch);
+  await pluginDetails(); await click(pluginSwitch);
   await wait(selector => document.querySelector(selector)?.getAttribute('aria-checked') === 'false' && !document.querySelector(selector).disabled, pluginSwitch);
   await conversation();
   await wait(() => !document.querySelector('[data-wuu-component="generated-ui"]') && [...document.querySelectorAll('.session-flow')].some(node => node.textContent.includes('![never-load]')));
@@ -473,7 +478,7 @@ async function run() {
   pass('user disablement removes renderer and tool discovery while preserving literal historical fallback');
   // Re-enable the same historical widget without rerunning the model/tool.
   const calls = requests.length;
-  await catalog(); await click(pluginSwitch);
+  await pluginDetails(); await click(pluginSwitch);
   await wait(selector => document.querySelector(selector)?.getAttribute('aria-checked') === 'true' && !document.querySelector(selector).disabled, pluginSwitch);
   await conversation();
   await wait(() => document.querySelector('[data-genui-block="draft"] input')?.value === 'Persisted via production storage');
@@ -485,6 +490,9 @@ async function run() {
   const sendAction = 'button[data-genui-node="root/send"]';
   await wait(selector => document.querySelector(selector) && !document.querySelector(selector).matches(':disabled'), sendAction);
   const actionOrigin = rpc.filter(entry => entry.channel === 'wuu:turn-start').at(-1).args[0];
+  const actionTurn = await evaluate(async id => (await window.wuu.resumeThread(id)).thread.turns.at(-1).id, actionOrigin);
+  // Rendered answer text and an enabled artifact can precede turn completion.
+  await wait(id => document.querySelector(`[data-turn-id="${CSS.escape(id)}"]`)?.dataset.turnStatus === 'completed', actionTurn);
   const actionHistory = await evaluate(id => window.wuu.resumeThread(id), actionOrigin);
   const sourceTurn = actionHistory.thread.turns.at(-1);
   const sourceItem = sourceTurn.items.find(item => item.result_detail?.content?.some(part => part.type === 'resource' && part.name === actionSpec.title));
@@ -622,8 +630,7 @@ async function run() {
   await trustedType('input[data-genui-node="root/ownerInput"]', 'Edited retained renderer');
   const retainedWrite = await until(() => rpc.slice(beforeFailedEdit).find(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0].value.includes('Edited retained renderer')), 'retained renderer storage written');
   assert.notEqual(retainedWrite.args[0].fingerprint, prior.args[0].fingerprint, 'State uses the currently approved same-source package');
-  await catalog();
-  await click('[data-plugin="generative-ui"] .catalog-row-open');
+  await pluginDetails();
   await wait(message => [...document.querySelectorAll('[data-wuu-component="plugin-settings"] .plugin-notice')].some(notice => notice.textContent.includes(message)), registrationFailure.args[0].message, 'real failed replacement remains visible in plugin diagnostics');
   await capture('11-app-failed-replacement.png', '[data-wuu-component="plugin-settings"]');
   await click('[data-testid="plugin-page-back"]');
@@ -647,7 +654,7 @@ async function run() {
   assert.match(oldActionError, /no longer active/);
   assert.ok(!rpc.slice(beforeRetired).some(entry => ['wuu:plugin-storage-set', 'wuu:turn-start'].includes(entry.channel)), 'Retired storage and action handles never reach IPC');
   await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
-  await catalog(); await click(pluginSwitch);
+  await pluginDetails(); await click(pluginSwitch);
   await wait(selector => document.querySelector(selector)?.getAttribute('aria-checked') === 'false' && !document.querySelector(selector).disabled, pluginSwitch);
   const beforeDisabled = rpc.length;
   assert.match(await evaluate(async () => {

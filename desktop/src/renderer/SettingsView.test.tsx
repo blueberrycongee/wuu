@@ -119,31 +119,6 @@ function emptyCodexPetsSnapshot(overrides: Partial<CodexPetsSnapshot> = {}): Cod
   };
 }
 
-// Protect the user-facing save boundary: changing one role preserves the other
-// and cannot change the lead conversation selection.
-it("saves technical lead selection without changing executor or coordinator", async () => {
-  installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-  const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-  renderSettings({
-    initialized: baseInitialized({
-      features: { project_agent: true },
-      project_models: { technical_lead: { provider: "fake", model: "side-model", effort: "high" }, executor: { provider: "fake", model: "worker-model" } },
-      providers: [{ name: "fake", type: "openai-compatible", model: "fake-model", models: [{ id: "side-model" }, { id: "next-side" }, { id: "worker-model" }] }],
-    }),
-    initialPage: "advanced", onAdvancedSave, locale: "en-US",
-  });
-  await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-technical_lead-model"]')?.click(); });
-  const option = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("side-model"));
-  expect(option).toBeDefined();
-  await act(async () => { option?.click(); });
-  expect(onAdvancedSave).not.toHaveBeenCalled();
-  await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-technical_lead-model"]')?.click(); });
-  const replacement = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("next-side"));
-  expect(replacement).toBeDefined();
-  await act(async () => { replacement?.click(); });
-  expect(onAdvancedSave).toHaveBeenCalledWith({ project_models: { technical_lead: { provider: "fake", model: "next-side" }, executor: { provider: "fake", model: "worker-model" } } });
-});
-
 function readyEngineInventory(): EngineListResult {
   return {
     engines: [
@@ -486,17 +461,17 @@ describe("SettingsView shell", () => {
     const scroll = container.querySelector<HTMLElement>(".settings-scroll")!;
     const providersPage = container.querySelector<HTMLElement>(".settings-page")!;
     scroll.scrollTop = 420;
-    const runtimeButton = Array.from(
+    const generalButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"),
-    ).find((button) => button.textContent?.includes("内置 Agent"));
+    ).find((button) => button.textContent?.includes("常规"));
 
     act(() => {
-      runtimeButton?.click();
+      generalButton?.click();
     });
 
     expect(scroll.scrollTop).toBe(0);
     expect(container.querySelector(".settings-page")).not.toBe(providersPage);
-    expect(container.querySelector(".settings-page-title")?.textContent).toBe("内置 Agent");
+    expect(container.querySelector(".settings-page-title")?.textContent).toBe("常规");
   });
 });
 
@@ -1162,229 +1137,33 @@ describe("SettingsView model services", () => {
   });
 });
 
-describe("SettingsView advanced settings", () => {
-  it.each(["50.0", "050", "50.5"])("acknowledges saved numeric draft %s and accepts later authoritative updates", async (draft) => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
-    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-    const settings = { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false };
-    const initialized = baseInitialized({ advanced_settings: settings });
-    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
-    renderSettings(props);
-    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
-    act(() => { input.focus(); setInputValue(input, draft); });
-    await act(async () => { input.blur(); });
-    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { ...settings, compact_threshold_pct: Number(draft) / 100 } } });
-    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { ...settings, compact_threshold_pct: 0.7 } } });
-    expect(input.value).toBe("70");
-  });
-
-  it("preserves a newer uncommitted numeric draft when a saved response refreshes settings", async () => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
-    let complete!: () => void;
-    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { complete = done; })).mockResolvedValue(undefined);
-    const initialized = baseInitialized();
-    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
-    renderSettings(props);
-    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
-    act(() => { input.focus(); setInputValue(input, "50"); });
-    act(() => { input.blur(); });
-    act(() => { input.focus(); setInputValue(input, "60"); });
-    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false, compact_threshold_pct: 0.5, compact_keep_recent_tokens: 12345 } } });
-    await act(async () => { complete(); });
-    expect(input.value).toBe("60");
-    expect(container.querySelectorAll<HTMLInputElement>(".settings-input-num")[1].value).toBe("12345");
-    await act(async () => { input.blur(); });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ compact_threshold_pct: 0.6 });
-    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
-  });
-
-  it("preserves the newer auto-compaction choice when an earlier save refreshes settings", async () => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
-    let complete!: () => void;
-    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { complete = done; })).mockResolvedValue(undefined);
-    const initialized = baseInitialized();
-    const props = { initialized, page: "advanced" as const, controls, onAdvancedSave };
-    renderSettings(props);
-    act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
-    await act(async () => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
-    renderSettings({ ...props, initialized: { ...initialized, advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: true } } });
-    await act(async () => { complete(); });
-    expect(container.querySelector(".settings-switch")!.getAttribute("aria-checked")).toBe("true");
-  });
-
-
-  it.each(["page", "newer toggle"] as const)("retires auto-compaction rollback after a %s", async (replacement) => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
-    let reject!: (error: Error) => void;
-    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
-    const props = { initialized: baseInitialized(), page: "advanced" as const, controls, onAdvancedSave };
-    renderSettings(props);
-    act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
-    if (replacement === "page") {
-      renderSettings({ ...props, page: "general" });
-      renderSettings(props);
-    } else {
-      act(() => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
-      await act(async () => { container.querySelector<HTMLButtonElement>(".settings-switch")!.click(); });
-    }
-    await act(async () => { reject(new Error("retired toggle failed")); });
-    expect(container.querySelector(".settings-switch")!.getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent).not.toContain("retired toggle failed");
-  });
-
-  it("commits focused Enter once and allows retry after a failed save", async () => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    let reject!: (error: Error) => void;
-    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
-    renderSettings({ initialized: baseInitialized(), initialPage: "advanced", onAdvancedSave });
-    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
-    act(() => { input.focus(); setInputValue(input, "50"); });
-    act(() => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
-    expect(onAdvancedSave).toHaveBeenCalledTimes(1);
-    await act(async () => { reject(new Error("retry this save")); });
-    expect(container.textContent).toContain("retry this save");
-    act(() => { input.focus(); input.blur(); });
-    await act(async () => { await Promise.resolve(); });
-    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
-    expect(container.textContent).not.toContain("retry this save");
-  });
-
-  it.each(["page", "controls"] as const)("retires numeric save feedback on %s replacement without losing the draft", async (replacement) => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    const controls = createApplicationSettingsControls({ host: registry, controller: workbench });
-    let reject!: (error: Error) => void;
-    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
-    const props = { initialized: baseInitialized(), page: "advanced" as const, controls, onAdvancedSave };
-    renderSettings(props);
-    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
-    act(() => { input.focus(); setInputValue(input, "50"); });
-    act(() => { input.blur(); });
-    const next = replacement === "controls" ? { ...props, controls: createApplicationSettingsControls({ host: registry, controller: workbench }) } : props;
-    if (replacement === "page") renderSettings({ ...props, page: "general" });
-    renderSettings(next);
-    await act(async () => { reject(new Error("retired save failed")); });
-    expect(container.textContent).not.toContain("retired save failed");
-    const restored = container.querySelector<HTMLInputElement>(".settings-input-num")!;
-    expect(restored.value).toBe("50");
-    act(() => { restored.focus(); restored.blur(); });
-    await act(async () => { await Promise.resolve(); });
-    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
-  });
-
-  it.each(["resolve", "reject"] as const)("ignores an older numeric save that settles by %s after the newer save", async (settlement) => {
-    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
-    let resolve!: () => void;
-    let reject!: (error: Error) => void;
-    const onAdvancedSave = vi.fn().mockImplementationOnce(() => new Promise<void>((done, fail) => { resolve = done; reject = fail; })).mockResolvedValue(undefined);
-    renderSettings({ initialized: baseInitialized(), initialPage: "advanced", onAdvancedSave });
-    const input = container.querySelector<HTMLInputElement>(".settings-input-num")!;
-    act(() => { input.focus(); setInputValue(input, "50"); });
-    act(() => { input.blur(); });
-    act(() => { input.focus(); setInputValue(input, "60"); });
-    await act(async () => { input.blur(); });
-    await act(async () => { if (settlement === "resolve") resolve(); else reject(new Error("older save failed")); });
-    expect(input.value).toBe("60");
-    expect(container.textContent).not.toContain("older save failed");
-    act(() => { input.focus(); input.blur(); });
-    expect(onAdvancedSave).toHaveBeenCalledTimes(2);
-  });
-
-
-  it("renders compaction controls and saves each field on commit", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-    const { rootText } = renderSettings({
-      initialPage: "advanced",
-      initialized: baseInitialized({
-        provider: "openrouter",
-        model: "openai/gpt-5.5",
-        advanced_settings: {
-          max_steps: 0,
-          max_context_tokens: 0,
-          temperature: 0,
-          disable_auto_compact: false,
-          compact_keep_recent_tokens: 20000,
-          context_window_tokens: 400000,
-          context_window_source: "provider_input_limit",
-          output_reserve_tokens: 128000,
-          compact_threshold_tokens: 272000,
-        },
-      }),
-      onAdvancedSave,
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(container.querySelector("[data-testid=\"settings-advanced\"]")).not.toBeNull();
-    expect(rootText()).toContain("压缩触发阈值");
-    expect(rootText()).toContain("保留最近上下文");
-    expect(rootText()).toContain("当前服务上下文上限");
-    expect(rootText()).toContain("来自当前通道输入上限");
-    expect(rootText()).toContain("400,000");
-    // Instant-apply: no draft form, no Save button inside the numeric advanced card.
-    expect(
-      Array.from(container.querySelectorAll("[data-testid=\"settings-advanced\"] button")).some((button) =>
-        button.textContent?.includes("保存"),
-      ),
-    ).toBe(false);
-
-    const inputs = Array.from(container.querySelectorAll<HTMLInputElement>(".settings-page input"));
-    expect(inputs.length).toBeGreaterThanOrEqual(4);
-    const [compactThreshold, compactKeepRecent, providerContextWindow, maxContextTokens] = inputs;
-    const commit = async (input: Element) => {
-      await act(async () => {
-        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-        await Promise.resolve();
-      });
-    };
-
-    await act(async () => {
-      setInputValue(compactThreshold, "50");
-      compactThreshold.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ compact_threshold_pct: 0.5 });
-
-    await act(async () => {
-      setInputValue(compactKeepRecent, "30000");
-    });
-    await commit(compactKeepRecent);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ compact_keep_recent_tokens: 30000 });
-
-    await act(async () => {
-      setInputValue(providerContextWindow, "512000");
-    });
-    await commit(providerContextWindow);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ provider_context_window: 512000 });
-
-    await act(async () => {
-      setInputValue(maxContextTokens, "256000");
-    });
-    await commit(maxContextTokens);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ max_context_tokens: 256000 });
-
-    // Blurring an untouched field does not round-trip the same value.
-    const callsBefore = onAdvancedSave.mock.calls.length;
-    await commit(maxContextTokens);
-    expect(onAdvancedSave.mock.calls.length).toBe(callsBefore);
-
-    const switchButton = container.querySelector(".settings-switch") as HTMLButtonElement;
-    await act(async () => {
-      switchButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ disable_auto_compact: true });
-  });
-});
-
 describe("SettingsView general settings", () => {
+  it("redirects saved built-in agent links to General without changing configuration", () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" } });
+    const onPageChange = vi.fn();
+    const onAdvancedSave = vi.fn();
+    const onGeneralSave = vi.fn();
+    renderSettings({ initialized: baseInitialized(), page: "advanced", onPageChange, onAdvancedSave, onGeneralSave });
+    expect(container.querySelector(".settings-page")?.getAttribute("data-wuu-page")).toBe("general");
+    expect(container.querySelector('[data-testid="settings-git-attribution"]')).not.toBeNull();
+    expect(onPageChange).toHaveBeenCalledWith("general");
+    expect(isSettingsPageAvailable("advanced")).toBe(false);
+    expect(onAdvancedSave).not.toHaveBeenCalled();
+    expect(onGeneralSave).not.toHaveBeenCalled();
+  });
+
+  it("finds commit attribution on General through settings search", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" } });
+    renderSettings({ initialized: baseInitialized(), initialPage: "providers", locale: "en-US" });
+    await flush();
+    const search = container.querySelector<HTMLInputElement>('.settings-search input')!;
+    act(() => setInputValue(search, "git"));
+    const general = container.querySelector('.settings-nav [data-wuu-page="general"]');
+    expect(general).not.toBeNull();
+    click(general);
+    expect(container.querySelector('[data-testid="settings-git-attribution"]')).not.toBeNull();
+  });
+
   it("shows a rejected attribution save locally and allows retry without changing the switch", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -1401,7 +1180,7 @@ describe("SettingsView general settings", () => {
       initialized: baseInitialized({
         general_settings: { git_attribution_enabled: true, mcp_server_enabled: {} },
       }),
-      initialPage: "advanced",
+      initialPage: "general",
       onGeneralSave,
     });
     const attributionSwitch = container.querySelector<HTMLButtonElement>(
@@ -1410,6 +1189,8 @@ describe("SettingsView general settings", () => {
 
     await act(async () => { attributionSwitch.click(); });
     expect(attributionSwitch.disabled).toBe(true);
+    await act(async () => { attributionSwitch.click(); });
+    expect(onGeneralSave).toHaveBeenCalledTimes(1);
     await act(async () => { rejectSave(failure); });
 
     const generalSection = container.querySelector('[data-testid="settings-git"]')!;
@@ -1439,7 +1220,7 @@ describe("SettingsView general settings", () => {
           mcp_server_enabled: {},
         },
       }),
-      initialPage: "advanced",
+      initialPage: "general",
       onGeneralSave,
     });
     await act(async () => {
@@ -1625,6 +1406,37 @@ describe("SettingsView general settings", () => {
 });
 
 describe("SettingsView About section", () => {
+  it("keeps the last permission state while returning to General and refreshes it", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    try {
+      installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01T00:00:00Z" } });
+      let finishRefresh!: (value: { available: boolean; screen: boolean; accessibility: boolean }) => void;
+      const refresh = new Promise<{ available: boolean; screen: boolean; accessibility: boolean }>(resolve => { finishRefresh = resolve; });
+      const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+      const getSystemPermissions = vi.fn().mockResolvedValueOnce({ available: true, screen: true, accessibility: true }).mockReturnValueOnce(refresh);
+      const controls = { ...base, capabilities: { ...base.capabilities, systemPermissions: true }, getSystemPermissions };
+      renderSettings({ initialized: baseInitialized(), controls });
+      await act(async () => { await Promise.resolve(); });
+      expect(container.querySelectorAll('[data-permission][data-granted="true"]')).toHaveLength(2);
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="appearance"]')!.click(); });
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="general"]')!.click(); });
+      expect(getSystemPermissions).toHaveBeenCalledTimes(2);
+      expect(container.querySelectorAll('[data-permission][data-granted="true"]')).toHaveLength(2);
+      await act(async () => { finishRefresh({ available: true, screen: false, accessibility: true }); await refresh; });
+      expect(container.querySelector('[data-permission="screen"]')?.hasAttribute("data-granted")).toBe(false);
+      expect(container.querySelector('[data-permission="accessibility"]')?.hasAttribute("data-granted")).toBe(true);
+      getSystemPermissions.mockRejectedValueOnce(new Error("permission read failed"));
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(container.querySelector('[data-testid="system-permissions"] [role="alert"]')).not.toBeNull();
+      getSystemPermissions.mockReturnValueOnce(new Promise(() => {}));
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="appearance"]')!.click(); });
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[data-wuu-page="general"]')!.click(); });
+      expect(container.querySelectorAll('[data-permission][data-granted="true"]')).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("includes core version in the copied version info when initialized", async () => {
     installBuildInfoStub({
       core: {
@@ -2079,6 +1891,13 @@ describe("SettingsView About section", () => {
           sessions: 1,
         },
       ],
+      engine_breakdowns: [
+        {
+          engine: "wuu",
+          name: "Wuu",
+          in_wuu: { input_tokens: 1000, output_tokens: 200, cache_creation_tokens: 20, cache_read_tokens: 50, sessions: 1 },
+        },
+      ],
       skill_usage: [
         { name: "review", count: 4 },
         { name: "docs", count: 2 },
@@ -2135,7 +1954,9 @@ describe("SettingsView About section", () => {
     expect(
       trend?.querySelector<HTMLElement>(`[aria-label^="${heatmapDates.at(-1)}"]`)?.getAttribute("aria-label"),
     ).toContain("总计 470k");
-    const modelRows = container.querySelectorAll(".settings-usage-table tbody tr");
+    const modelRows = container.querySelectorAll(
+      'section[aria-labelledby="settings-model-usage-title"] .settings-usage-table tbody tr',
+    );
     expect(modelRows).toHaveLength(1);
     expect(modelRows[0]?.textContent).toContain("fake-model");
     // A model's share keeps its token total in a hover tooltip.

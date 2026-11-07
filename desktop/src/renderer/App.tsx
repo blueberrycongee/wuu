@@ -1,5 +1,6 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
+import { RestartRecovery } from "./RestartRecoveryNotice";
 import { AccountScreen } from "./AccountScreen";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
@@ -67,6 +68,7 @@ import {
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { threadHasConversationMedia } from "./ConversationMediaSettle";
 import { UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ConversationPresentationLoading, type ConversationPresentationRegion, useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
 import { createEnvironmentPanelActions } from "./EnvironmentActions";
@@ -88,9 +90,6 @@ import { useApplicationNavigationState } from "./modules/ApplicationNavigationSt
 import { motionDurationMs } from "./motion";
 import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
-import { ProjectActionsProvider } from "./ProjectActions";
-import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
-import { ProjectStatusCapsule } from "./ProjectViews";
 import {
   pullRequestUnavailableReason
 } from "./RuntimeHelpers";
@@ -191,7 +190,6 @@ export function App({ application, slots, shellPluginId }: {
       ? { kind: "project", project_id: workspaceSnapshot.activeWorkspaceId, cwd: workspaceSnapshot.activeRoot }
       : { kind: "no_project", cwd: workspaceSnapshot.activeRoot }
     : undefined, [workspaceSnapshot.activeRoot, workspaceSnapshot.activeWorkspaceId]);
-  const projectAgentEnabled = configuration?.features?.project_agent === true;
   // Conversation notices share the latest settings navigation callback.
   useEffect(() => {
     const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
@@ -417,11 +415,6 @@ export function App({ application, slots, shellPluginId }: {
   }, [application]);
   const onboardingComplete = useSyncExternalStore(application.onboarding.subscribe, () => application.onboarding.getSnapshot().completed);
 
-  const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
-  const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
-    void application.invoke("settings.open", { pageId }).catch(showErrorToast);
-  }, [application]);
-
   const {
     workspaceViewTabs,
     workspaceConversationOpen,
@@ -432,7 +425,6 @@ export function App({ application, slots, shellPluginId }: {
     ensureWorkspaceToolTab,
     openWorkspaceTool,
     openWorkspaceArtifactTab,
-    syncWorkspaceProjectTab,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
@@ -747,7 +739,7 @@ export function App({ application, slots, shellPluginId }: {
   // A visible agent browser view is a main-owned WebContentsView that floats
   // above the DOM; any full-window overlay would occlude it, so we tell main to
   // hide the view while one is open. This covers the common full-window
-  // surfaces: settings (which replaces the whole app), the commit / PR
+  // surfaces: settings (a modal panel over the workbench), the commit / PR
   // dialogs, the fork dialog, and the conversation search overlay. TODO: other
   // ad-hoc modals/portals (e.g. participant panels) are not yet
   // enumerated here; extend this predicate as more full-window overlays land.
@@ -1122,8 +1114,15 @@ export function App({ application, slots, shellPluginId }: {
     // its static chrome without displaying a message overlay on that route.
     enabled: initialized && application.getSnapshot().phase !== "error",
   });
+  const activeThreadHasMedia = useMemo(
+    () => pendingViewSwitch?.kind === "thread" && pendingViewSwitch.targetID === activeThreadID
+      ? threadHasConversationMedia(activeThread)
+      : false,
+    [activeThread, activeThreadID, pendingViewSwitch?.kind, pendingViewSwitch?.targetID],
+  );
   useConversationSwitchReady({
     visible: conversationVisible,
+    mediaExpected: activeThreadHasMedia,
     pendingViewSwitch,
     activeThreadID,
     viewportRef: conversationScrollRef,
@@ -1531,20 +1530,6 @@ export function App({ application, slots, shellPluginId }: {
     if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
   }
 
-  const selectedProjectID = activeThread && isProjectCoordinator(activeThread)
-    ? activeThread.id
-    : activeThread?.source === PROJECT_SESSION_SOURCE ? activeThread.project_id : undefined;
-  const selectedProject = sidebarThreads.find((thread) => thread.id === selectedProjectID);
-  const selectedProjectTitle = selectedProject ? baseThreadTitle(selectedProject) : selectedProjectID;
-  useEffect(() => {
-    syncWorkspaceProjectTab(selectedProjectID && selectedProjectTitle
-      ? { id: selectedProjectID, title: selectedProjectTitle }
-      : undefined);
-  }, [selectedProjectID, selectedProjectTitle, syncWorkspaceProjectTab]);
-  const activeProjectSessions = useMemo(
-    () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
-    [activeThread, sidebarThreads],
-  );
   useEffect(() => { scheduleStreamScroll(); }, [conversationDetails, scheduleStreamScroll]);
 
   async function submitContextChat(text: string, page: PageContextSnapshot, context: RuntimeContext, sessionId?: string): Promise<{ sessionId: string; sent: boolean }> {
@@ -1600,7 +1585,6 @@ export function App({ application, slots, shellPluginId }: {
         ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
         : application.getSnapshot().drafts.activeTabId }}>
       <ImagePreviewProvider>
-      <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
       <ArtifactInteractionProvider application={application}>
@@ -1610,6 +1594,7 @@ export function App({ application, slots, shellPluginId }: {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
+          data-active-session-tab-id={tabs.activeTabId}
           data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
           data-settings-open={settingsOpen ? "" : undefined}
           data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
@@ -1734,7 +1719,9 @@ export function App({ application, slots, shellPluginId }: {
                 <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
-            <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            {!showingManagementCatalog || showingPrimaryPluginView ? (
+              <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            ) : null}
           </div>
           <ConversationTitleActions
             thread={activeThread}
@@ -1825,13 +1812,11 @@ export function App({ application, slots, shellPluginId }: {
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
               scopeKey={activeThreadID}
+              suspended={viewSwitchPending}
               onJump={jumpConversationToLatest}
               inline
             />
           ) : null}
-          hostStatus={projectAgentEnabled && activeProjectSessions.length > 0 && activeThread ? (
-            <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
-          ) : undefined}
           threadId={activeThreadID}
         />
       </main>
@@ -1875,6 +1860,7 @@ export function App({ application, slots, shellPluginId }: {
       )}
       </>
 
+      {!poppedOutMode && initialized && onboardingComplete && <RestartRecovery application={application} />}
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={gitStatus}
@@ -1949,7 +1935,6 @@ export function App({ application, slots, shellPluginId }: {
     </ArtifactInteractionProvider>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
-    </ProjectActionsProvider>
     </ImagePreviewProvider>
     </FileSelectionProvider>
     </SideConversationAvailableContext.Provider>

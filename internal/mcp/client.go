@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/mcpconfig"
 )
 
@@ -25,10 +26,13 @@ const (
 
 // ServerConfig describes one MCP server connection.
 type ServerConfig struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
-	URL     string   `json:"url,omitempty"`
+	// Identity declarations are admitted only from active trusted packages.
+	IdentityProbe  *config.MCPIdentityProbe `json:"-"`
+	IdentitySource string                   `json:"-"`
+	Name           string                   `json:"name"`
+	Command        string                   `json:"command,omitempty"`
+	Args           []string                 `json:"args,omitempty"`
+	URL            string                   `json:"url,omitempty"`
 	// Transport selects the wire protocol for URL servers: "http" (streamable
 	// HTTP, aliases "streamable-http"/"streamable_http") or "sse" (legacy
 	// HTTP+SSE). Empty means auto: try streamable HTTP first and fall back to
@@ -106,6 +110,8 @@ type Client struct {
 	connectionErr            error
 	connectionClosedNotified bool
 	closed                   bool
+	retired                  bool
+	activeCalls              int
 	controlNotifications     map[context.Context]func() bool
 	closeOnce                sync.Once
 	closeErr                 error
@@ -536,6 +542,23 @@ func (c *Client) ToolTimeout() time.Duration {
 // CallTool invokes a tool with the server budget or earlier caller deadline.
 // Expiry is returned to the caller; the tool is never replayed on timeout.
 func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMessage) (*CallToolResult, error) {
+	c.mu.Lock()
+	if c.retired || c.closed {
+		c.mu.Unlock()
+		return nil, ErrServerRevoked
+	}
+	c.activeCalls++
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.activeCalls--
+		closeAfterCall := c.retired && c.activeCalls == 0
+		c.mu.Unlock()
+		if closeAfterCall {
+			_ = c.Close()
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(ctx, c.ToolTimeout())
 	defer cancel()
 	params := CallToolParams{Name: name, Arguments: arguments}
@@ -551,6 +574,19 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 		return nil, fmt.Errorf("decode tools/call: %w", err)
 	}
 	return &result, nil
+}
+
+// retire fences new tool calls and closes the transport after accepted calls
+// settle under their existing timeout. Close still forces shutdown when needed.
+func (c *Client) retire() error {
+	c.mu.Lock()
+	c.retired = true
+	idle := c.activeCalls == 0
+	c.mu.Unlock()
+	if idle {
+		return c.Close()
+	}
+	return nil
 }
 
 // Close shuts down the client.

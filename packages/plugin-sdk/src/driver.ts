@@ -82,6 +82,9 @@ export interface DriverModelRound {
   readonly tool_batch_id?: string;
   /** Some tool work began, even if the model operation later failed. */
   readonly tool_work_started?: boolean;
+  /** Newly admitted user input stopped this successful round; keep the
+   * visible partial messages and continue the same turn with that input. */
+  readonly preempted?: boolean;
   readonly usage?: {
     readonly input_tokens: number;
     readonly output_tokens: number;

@@ -17,6 +17,16 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
+// newTestRuntime redirects HOME, so record Playwright's default browser cache
+// before tests run and pass it to the browser process explicitly.
+var playwrightBrowserCache = func() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "ms-playwright")
+}()
+
 // The rendered production contribution talks to a real UserHost and executes a
 // real shell effect in a temporary workspace. Navigation and model are fixtures.
 func TestPersonalApprovalBrowserToNativeEffect(t *testing.T) {
@@ -97,6 +107,10 @@ func TestPersonalApprovalBrowserToNativeEffect(t *testing.T) {
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", filepath.Join(root, "desktop/scripts/personal-approval-native-e2e.cjs"), server.URL, output)
 	command.Dir = root
+	command.Env = os.Environ()
+	if os.Getenv("PLAYWRIGHT_BROWSERS_PATH") == "" && playwrightBrowserCache != "" {
+		command.Env = append(command.Env, "PLAYWRIGHT_BROWSERS_PATH="+playwrightBrowserCache)
+	}
 	combined, err := command.CombinedOutput()
 	if writeErr := os.WriteFile(filepath.Join(output, "browser.log"), combined, 0600); writeErr != nil {
 		t.Fatal(writeErr)

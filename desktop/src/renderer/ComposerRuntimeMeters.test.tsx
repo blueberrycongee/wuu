@@ -36,7 +36,6 @@ function renderMeters(activeEngine?: string): void {
     }
     root.render(
       <ComposerRuntimeMeters
-        running={false}
         fallbackContextUsage={usage}
         activeEngine={activeEngine}
       />,

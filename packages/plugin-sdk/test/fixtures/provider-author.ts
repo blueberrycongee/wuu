@@ -1,10 +1,10 @@
 import {
   type PersonalExecutionFacts, PERSONAL_AUTHORITY_METHODS,
   type RuntimePlugin, credentialStore, configurationStore, pluginSettingsStore,
-  artifactStore, dataIndex, queryData, authorize, acquireAuthorization, releaseAuthorization, authorizationServiceDescriptor, managedSessions, projectCoordination,
+  artifactStore, dataIndex, queryData, authorize, acquireAuthorization, releaseAuthorization, authorizationServiceDescriptor, managedSessions,
   CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR, PROCESS_SANDBOX_SERVICE_DESCRIPTOR, type ProcessSandboxRequest, type ProcessSandboxResult,
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
-  MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR,
+  MANAGED_SESSION_DESCRIPTOR,
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
   type StateExportPage, type StateExportPageRequest,
   type PluginGenerationApi, type DataLatestContextResult, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
@@ -45,10 +45,10 @@ void desktopConsumer;
 // Compile against the package entry, including descriptors needed by providers.
 const descriptors = [authorizationServiceDescriptor({effect_fence:true}), EXECUTION_AUTHORIZATION_DESCRIPTOR, CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR, PROCESS_SANDBOX_SERVICE_DESCRIPTOR,
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
-  MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR];
+  MANAGED_SESSION_DESCRIPTOR];
 const create: ManagedSessionCreate = {
   request_id: 'create-1', visibility: 'plugin', context_source: 'fresh',
-  owner: 'coordinator', source: 'project', session_id: 'worker',
+  owner: 'plugin:fixture', source: 'plugin:fixture', session_id: 'worker',
   initial_input: { ClientID: 'initial-1', SessionID: 'worker', Content: 'inspect', Wake: true },
 };
 const invalidCAS: CredentialCompareExchange = {
@@ -154,8 +154,7 @@ export default {
       kind: 'handoff', intent: launch.launch_intent, prompt: launch.launch_prompt,
     }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
-    const admission = await projectCoordination(host).admission();
     const executionFacts: PersonalExecutionFacts = {session_id:'packed-session',agent_id:'packed-agent',main_session_id:'packed-session',active:true};
-    return {executionFacts,authorityMethods:PERSONAL_AUTHORITY_METHODS,effectFence,stewardship:params.storage_stewardship,grantPolicy:policy,serviceAdmission:params.admission,inspection,settingsInspection,granted,checked,revoked,grantUncertain,protectedPathsEnforced,absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,transferUnsupported,transferUncertain,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    return {executionFacts,authorityMethods:PERSONAL_AUTHORITY_METHODS,effectFence,stewardship:params.storage_stewardship,grantPolicy:policy,serviceAdmission:params.admission,inspection,settingsInspection,granted,checked,revoked,grantUncertain,protectedPathsEnforced,absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,transferUnsupported,transferUncertain,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;

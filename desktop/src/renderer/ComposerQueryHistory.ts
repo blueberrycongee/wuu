@@ -1,3 +1,4 @@
+import type { ComposerInputHandle } from "./ComposerInput";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
@@ -5,11 +6,11 @@ import {
   useRef
 } from "react";
 
-function textareaSelectionAtStart(textarea: HTMLTextAreaElement): boolean {
+function textareaSelectionAtStart(textarea: ComposerInputHandle): boolean {
   return textarea.selectionStart === 0 && textarea.selectionEnd === 0;
 }
 
-function textareaSelectionAtEnd(textarea: HTMLTextAreaElement): boolean {
+function textareaSelectionAtEnd(textarea: ComposerInputHandle): boolean {
   const end = textarea.value.length;
   return textarea.selectionStart === end && textarea.selectionEnd === end;
 }
@@ -27,10 +28,10 @@ export function useComposerQueryHistory({
   queryHistory?: string[];
   queryHistorySessionID?: string;
   setPrompt: (value: string) => void;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  textareaRef: RefObject<ComposerInputHandle | null>;
 }): {
   resetQueryHistoryNavigation: () => void;
-  handleQueryHistoryKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => boolean;
+  handleQueryHistoryKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => boolean;
 } {
   const draftRef = useRef("");
   const indexRef = useRef<number | null>(null);
@@ -81,12 +82,12 @@ export function useComposerQueryHistory({
     return true;
   }
 
-  function handleQueryHistoryKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
-    if (disabled || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+  function handleQueryHistoryKeyDown(event: ReactKeyboardEvent<HTMLElement>): boolean {
+    if (!textareaRef.current || disabled || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
       return false;
     }
     if (event.key === "ArrowUp") {
-      if (indexRef.current === null && !textareaSelectionAtStart(event.currentTarget)) {
+      if (indexRef.current === null && !textareaSelectionAtStart(textareaRef.current!)) {
         return false;
       }
       if (navigateQueryHistory(-1)) {
@@ -95,7 +96,7 @@ export function useComposerQueryHistory({
       }
     }
     if (event.key === "ArrowDown") {
-      if (indexRef.current === null || !textareaSelectionAtEnd(event.currentTarget)) {
+      if (indexRef.current === null || !textareaSelectionAtEnd(textareaRef.current!)) {
         return false;
       }
       if (navigateQueryHistory(1)) {

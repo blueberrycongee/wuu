@@ -11,6 +11,86 @@ import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/u
 const hosts: PluginHost[] = [];
 afterEach(async () => { for (const host of hosts.splice(0)) { await host.unloadAndWait("shell"); await host.unloadAndWait("business"); } vi.restoreAllMocks(); });
 
+it.each(["commit", "failure", "cancel", "source-change", "context-change", "resource-change", "removed", "navigation-ABA", "catalog-ABA", "expired", "already-enabled"])("hands off one connector login only after its own config receipt (%s)", async outcome => {
+  let context = { kind: "no_project" as const, cwd: "/fixture" };
+  let graph = "graph-one", fingerprint = "source-one", enabled = outcome === "already-enabled";
+  let resource = "https://library.example.test/mcp", active = true;
+  let resolve!: (result: unknown) => void, reject!: (error: Error) => void;
+  const saved = new Promise((yes, no) => { resolve = yes; reject = no; });
+  const server = () => ({ name: "plugin.library.account", plugin_id: "library", plugin_active: active, configurable: true,
+    configuration_enabled: enabled, resource_url: resource, state: "disabled", connected: false, tool_count: 0,
+    connector: { title: "Library" } });
+  const inventory = () => [{ id: "plugin:user:library", kind: "plugin", name: "Library", fingerprint, graph_generation: graph,
+    enabled: true, state: "active", provenance: { source: "user", scope: "user", plugin_id: "library", path: "/plugins/library/plugin.json" } }];
+  window.wuu = { listProjects: vi.fn(async () => ({ projects: [], active_context: context })), onServerEvent: () => () => {},
+    listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), listMCPServers: vi.fn(async () => ({ servers: [server()] })),
+    readMCPDefinition: vi.fn(async () => ({ config: { enabled }, revision: "original-revision" })),
+    configureMCPServers: vi.fn(() => saved), startMCPLogin: vi.fn().mockResolvedValue({ login_id: "fixture-login" }),
+    cancelMCPLogin: vi.fn().mockResolvedValue({ ok: true }),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async () => ({ activeContext: context, projects: [], threads: [],
+    initialized: { provider: "fixture", model: "fixture", providers: [], extension_inventory: inventory() } as never, status: "ready" }));
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  let app!: ApplicationServiceV1;
+  const replace = async (generation: string) => {
+    await host.selectApplicationBinding({ pluginId: "business", generation, id: "ui.application" });
+    await host.activateGeneration({ pluginId: "business", generation, register });
+    await host.activateGeneration({ pluginId: "shell", generation, register: api => { app = api.application; } });
+  };
+  await replace("one");
+  if (outcome === "catalog-ABA") await app.invoke("catalog.select-plugin", { pluginId: "library" });
+  const original = app.settingsControls;
+  const requesting = original.requestMCPConnectorLogin!(server().name).catch(() => undefined);
+  if (outcome === "already-enabled") {
+    // A failed previous login can leave the preference enabled. No synthetic
+    // config write or graph change is needed to retry authorization.
+    await vi.waitFor(() => expect(window.wuu.readMCPDefinition).toHaveBeenCalledOnce());
+    expect(window.wuu.configureMCPServers).not.toHaveBeenCalled();
+    await requesting;
+    const claims = await Promise.all([original.takeMCPConnectorLogin!(), original.takeMCPConnectorLogin!()]);
+    expect(claims.filter(Boolean)).toHaveLength(2);
+    await Promise.all([original.startMCPConnectorLogin!(), original.startMCPConnectorLogin!()]);
+    expect(window.wuu.startMCPLogin).toHaveBeenCalledOnce();
+    original.cancelMCPConnectorLogin!();
+    return;
+  }
+  await vi.waitFor(() => expect(window.wuu.configureMCPServers).toHaveBeenCalledOnce());
+  expect(window.wuu.startMCPLogin).not.toHaveBeenCalled();
+  graph = "graph-two";
+  await replace("two");
+  const obsoleteClaim = app.settingsControls.takeMCPConnectorLogin!().catch(() => undefined);
+  // The write is still pending while a second graph replaces the first successor.
+  graph = "graph-three";
+  if (outcome === "source-change") fingerprint = "replacement-source";
+  if (outcome === "context-change") context = { ...context, cwd: "/other" };
+  if (outcome === "resource-change") resource = "https://replacement.example.test/mcp";
+  if (outcome === "removed") active = false;
+  await replace("three");
+  if (outcome === "cancel") app.settingsControls.cancelMCPConnectorLogin!();
+  if (outcome === "navigation-ABA") {
+    await app.invoke("settings.open", { pageId: "appearance" });
+    await app.invoke("settings.close", {});
+  }
+  if (outcome === "catalog-ABA") {
+    await app.invoke("catalog.select-plugin", { pluginId: "" });
+    await app.invoke("catalog.select-plugin", { pluginId: "library" });
+  }
+  if (outcome === "expired") vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_001);
+  const claims = [app.settingsControls.takeMCPConnectorLogin!(), app.settingsControls.takeMCPConnectorLogin!()];
+  if (outcome === "failure") reject(new Error("configuration conflict"));
+  else { enabled = true; resolve({ servers: [server()] }); }
+  await requesting;
+  expect(await obsoleteClaim).toBeUndefined();
+  const results = await Promise.all(claims);
+  expect(results.filter(Boolean)).toHaveLength(outcome === "commit" ? 2 : 0);
+  if (outcome === "commit") expect(results.find(Boolean)?.name).toBe(server().name);
+  expect((await app.settingsControls.takeMCPConnectorLogin!())?.name).toBe(outcome === "commit" ? server().name : undefined);
+  expect(window.wuu.startMCPLogin).toHaveBeenCalledTimes(outcome === "commit" ? 1 : 0);
+  app.settingsControls.cancelMCPConnectorLogin!();
+  expect(window.wuu.configureMCPServers).toHaveBeenCalledExactlyOnceWith({ servers: { [server().name]: { enabled: true } }, revision: "original-revision" });
+});
+
 // Public boundary failure cases: no host controller, dormant unselected package,
 // stopped checkpoint carries unsent text, and disable retires captured handles.
 it("loads the default business through registration, transfers unsent drafts, and disables without a fallback", async () => {
@@ -725,4 +805,53 @@ it("does not load an obsolete workspace or attach it to a newer request intent",
   expect(app.getSnapshot().drafts.primary.text).toBe("new C edit");
   expect(window.wuu.selectProject).toHaveBeenCalledTimes(2);
   expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
+});
+
+it.each(["retained", "removed", "replaced", "deleted", "archived", "moved"])("preserves only authorized sidebar identities across workspace provider handoff (%s)", async boundary => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const destination = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, destination].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  const thread = { id: "running-source", cwd: "/a", workspace_id: "a", preview: "Start the synthetic running task", status: "in_progress" as const, model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [{ id: "held-turn", status: "in_progress" as const, started_at: "", items_view: "full" as const, items: [{ id: "private-message", type: "user_message" as const, text: "private history" }] }] };
+  const initialized = { provider: "fixture", model: "fixture", providers: [], extension_inventory: [] } as never;
+  window.wuu = { listProjects: vi.fn().mockResolvedValue({ projects, active_context: source }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+    listAllThreads: vi.fn().mockResolvedValue({ threads: [{ ...thread, preview: "", status: "idle", turns: [] }] }),
+    getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
+  } as unknown as WuuDesktopApi;
+  const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: source, projects, threads: [thread], initialized, status: "ready" });
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+  const loadedProjects = boundary === "removed" ? projects.slice(1) : boundary === "replaced"
+    ? projects.map(project => project.id === "a" ? { ...project, path: "/replacement" } : project) : projects;
+  const loadedContext = boundary === "deleted" || boundary === "archived" ? source : destination;
+  const freshThreads = boundary === "archived" ? [{ ...thread, archived: true }]
+    : boundary === "moved" ? [{ ...thread, workspace_id: "b", cwd: "/b", title: "Moved conversation", title_revision: 2 }] : [];
+  load.mockResolvedValue({ activeContext: loadedContext, projects: loadedProjects, threads: freshThreads, initialized, status: "ready" });
+  vi.mocked(window.wuu.listProjects).mockResolvedValue({ projects: loadedProjects, active_context: loadedContext });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+  await host.activateGeneration({ pluginId: "business", generation: "two", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  if (boundary === "moved") {
+    expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining(
+      { id: thread.id, workspace_id: "b", cwd: "/b", title: "Moved conversation", title_revision: 2 },
+    )]));
+    return;
+  }
+  if (boundary !== "retained") {
+    expect(app.getSnapshot().navigationWorkspace.threads).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id })]));
+    return;
+  }
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+  await app.invoke("navigation.refresh", {});
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
+  // This writer knows the source only through its sidebar cache, not active runtime state.
+  await host.selectApplicationBinding({ pluginId: "business", generation: "three", id: "ui.application" });
+  await host.activateGeneration({ pluginId: "business", generation: "three", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "three", register: api => { app = api.application; } });
+  expect(app.getSnapshot().navigationWorkspace.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: thread.id, preview: thread.preview })]));
 });

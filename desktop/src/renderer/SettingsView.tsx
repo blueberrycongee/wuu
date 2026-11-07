@@ -8,10 +8,8 @@ import {
   BarChart3,
   Bot,
   Check,
-  ChevronRight,
   Copy,
   Folder,
-  Gauge,
   Globe,
   KeyRound,
   LayoutDashboard,
@@ -32,9 +30,9 @@ import type {
   EngineListResult,
   ExtensionInventoryRecord,
   EngineUpdateParams,
-  ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
+  SystemPermissionsState,
 } from "../shared/protocol";
 import {
   type CSSProperties,
@@ -53,7 +51,7 @@ import { isConfigurablePlugin } from "./SettingsPageAvailability";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState, type SidebarDrawerPhase } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
-import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import { SelectMenu } from "./SelectMenu";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -77,10 +75,10 @@ export type ArchivedSessionView = {
 };
 import { AppearanceTypography } from "./AppearanceTypography";
 import { ShellSkinSettings } from "./background/ShellSkinSettings";
-import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
-import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
+import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
+import { Switch } from "./ui/Switch";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
 import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
@@ -90,7 +88,7 @@ import { ModelServicesPage } from "./ModelServicesPage";
 import { SettingsRemotePageContainer } from "./SettingsRemotePageContainer";
 import { ContentThemeControl, ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
-import { formatCurrentNumber, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import {
@@ -109,7 +107,6 @@ type NativeSettingsPage =
   | "providers"
   | "agents"
   | "subscriptions"
-  | "advanced"
   | "general"
   | "appearance"
   | "browser"
@@ -120,16 +117,17 @@ type NativeSettingsPage =
 
 export type SettingsPage =
   | NativeSettingsPage
+  // Legacy links resolve to General after the built-in agent page was removed.
+  | "advanced"
   | `plugin-settings:${string}`
   | `plugin-view:${string}:${string}`;
 
 // Page ids are part of the plugin settings snapshot, so they stay stable when
-// labels or grouping change ("advanced" is the runtime page).
+// labels or grouping change.
 const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
   providers: KeyRound,
   agents: Bot,
   subscriptions: LayoutDashboard,
-  advanced: Gauge,
   general: Settings,
   appearance: Monitor,
   browser: Globe,
@@ -140,13 +138,12 @@ const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
 };
 
 // Page-level discovery for the rail search. The terms cover the setting names
-// inside each page, not only the page title, so "font" or "context" still
+// inside each page, not only the page title, so "font" or "Git" still
 // finds the right page.
 const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0]> = {
   providers: "settings.searchKeywords.providers",
   agents: "settings.searchKeywords.agents",
   subscriptions: "settings.searchKeywords.subscriptions",
-  advanced: "settings.searchKeywords.advanced",
   general: "settings.searchKeywords.general",
   appearance: "settings.searchKeywords.appearance",
   browser: "settings.searchKeywords.browser",
@@ -157,8 +154,7 @@ const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0
 };
 
 // App-level preferences stay at the top of the rail; less frequent setup follows
-// under labeled groups. Page IDs stay flat for plugin snapshots and deep links
-// ("advanced" is still the built-in agent page).
+// under labeled groups. Page IDs stay flat for plugin snapshots and deep links.
 type NativeSettingsGroup = {
   id: string;
   labelKey?: Parameters<Translate>[0];
@@ -181,7 +177,6 @@ function nativeSettingsGroups(browserSettingsAllowed: boolean, capabilities: imp
       labelKey: "settings.navModelsAgentsTools",
       pages: [
         "providers",
-        "advanced",
       ],
     },
     {
@@ -202,6 +197,7 @@ const COPY_RESET_MS = 1500;
 function SettingsViewContent({
   browserSettingsAllowed = true,
   embedded = false,
+  floating = false,
   embeddedDrawerPhase,
   onSidebarPointerEnter,
   onSidebarPointerLeave,
@@ -253,6 +249,7 @@ function SettingsViewContent({
 }: {
   browserSettingsAllowed?: boolean;
   embedded?: boolean;
+  floating?: boolean;
   embeddedDrawerPhase?: SidebarDrawerPhase;
   onSidebarPointerEnter?: () => void;
   onSidebarPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -309,6 +306,9 @@ function SettingsViewContent({
     [runningProviderNames],
   );
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
+  // The page subtree remounts on navigation. Keep the last permission read
+  // so returning to General does not blank the rows before the refresh lands.
+  const permissionStateCache = useMemo<RefObject<SystemPermissionsState | undefined>>(() => ({ current: undefined }), [controls]);
   const [localPage, setActivePage] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities),
   );
@@ -338,6 +338,7 @@ function SettingsViewContent({
         const entry = (provider.models ?? []).find((candidate) => candidate.id === model);
         return {
           provider: provider.name, model, label: entry?.display_name || model,
+          supportsTools: entry?.capabilities?.tools,
           variants: (entry?.variants?.length ? entry.variants.map((variant) => variant.id) : entry?.supported_efforts ?? []).filter(Boolean),
         };
       }),
@@ -356,37 +357,9 @@ function SettingsViewContent({
     });
   }, [initialized?.model_aliases, initialized?.providers, onAdvancedSave]);
   const [mcpStatus, setMCPStatus] = useState({ busy: false, hasError: false });
-  const [autoCompactDraft, setAutoCompactDraft] = useState(true);
-  const [compactThresholdDraft, setCompactThresholdDraft] = useState("");
-  const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
-  const [providerContextWindowDraft, setProviderContextWindowDraft] = useState("");
-  const [maxContextTokensDraft, setMaxContextTokensDraft] = useState("");
-  // Runtime errors stay beside the field that failed to validate or save.
-  const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   const [titlebarSlot, setTitlebarSlot] = useState<HTMLDivElement | null>(null);
-  // Last persisted draft of each numeric advanced field, recorded when
-  // initialized state syncs in and after every successful commit. Blurring
-  // an untouched field is a no-op instead of a redundant IPC round-trip.
-  const advancedCommittedRef = useRef<Record<string, string>>({});
-  const advancedDraftEditsRef = useRef(new Map<AdvancedField, string>());
-  useLayoutEffect(() => {
-    advancedDraftEditsRef.current.clear();
-  }, [initialized?.provider, initialized?.model]);
-
-  // Drafts survive navigation, but pending feedback belongs to the page and
-  // controls that initiated the save. Each field's latest request owns its result.
-  const advancedOwner = useMemo(() => ({
-    active: true,
-    requests: new Map<AdvancedField, { draft: string }>(),
-  }), [controls, activePage, initialized?.provider, initialized?.model]);
-  useLayoutEffect(() => {
-    advancedOwner.active = true;
-    setAdvancedError(null);
-    return () => { advancedOwner.active = false; };
-  }, [advancedOwner]);
-
   useEffect(() => {
     setActivePage(availableSettingsPage(initialPage, browserSettingsAllowed, controls.capabilities));
   }, [initialPage, browserSettingsAllowed]);
@@ -428,36 +401,6 @@ function SettingsViewContent({
   }, [controls]);
 
   const core = initialized?.core;
-  useEffect(() => {
-    const advanced = initialized?.advanced_settings;
-    const synced = {
-      compactThreshold: formatPercentDraft(advanced?.compact_threshold_pct),
-      compactKeepRecent: formatOptionalNumberDraft(advanced?.compact_keep_recent_tokens),
-      providerContextWindow: formatOptionalNumberDraft(advanced?.provider_context_window),
-      maxContextTokens: formatOptionalNumberDraft(advanced?.max_context_tokens),
-    };
-    // A save refreshes the whole settings snapshot, not just its own field.
-    // Keep newer local edits until that snapshot acknowledges their value.
-    const reconcileDraft = (field: AdvancedField, persisted: string): string => {
-      const edited = advancedDraftEditsRef.current.get(field);
-      const acknowledged = field === "autoCompact"
-        ? edited === persisted
-        : field === "compactThreshold"
-          ? Number(edited) / 100 === (advanced?.compact_threshold_pct ?? 0)
-          : Number(edited) === Number(persisted);
-      if (edited !== undefined && !acknowledged) return edited;
-      advancedDraftEditsRef.current.delete(field);
-      return persisted;
-    };
-    setAutoCompactDraft(reconcileDraft("autoCompact", String(!(advanced?.disable_auto_compact ?? false))) === "true");
-    setCompactThresholdDraft(reconcileDraft("compactThreshold", synced.compactThreshold));
-    setCompactKeepRecentDraft(reconcileDraft("compactKeepRecent", synced.compactKeepRecent));
-    setProviderContextWindowDraft(reconcileDraft("providerContextWindow", synced.providerContextWindow));
-    setMaxContextTokensDraft(reconcileDraft("maxContextTokens", synced.maxContextTokens));
-    advancedCommittedRef.current = synced;
-    setAdvancedError(null);
-  }, [initialized?.advanced_settings, initialized?.provider, initialized?.model]);
-
   async function copyVersionInfo(): Promise<void> {
     if (!desktopBuild || copyState === "copying") {
       return;
@@ -492,104 +435,6 @@ function SettingsViewContent({
     }
   }
 
-  // Instant-apply: the switch persists immediately (rolling back on
-  // failure); numeric drafts persist on blur/Enter after per-field
-  // validation. No Save button, no "saved" confirmation — the control
-  // staying put is the confirmation, consistent with the MCP toggles.
-  function toggleAutoCompact(): void {
-    if (!advancedOwner.active) return;
-    const next = !autoCompactDraft;
-    const request = { draft: String(next) };
-    advancedOwner.requests.set("autoCompact", request);
-    advancedDraftEditsRef.current.set("autoCompact", String(next));
-    setAutoCompactDraft(next);
-    setAdvancedError(null);
-    const ownsResult = () => advancedOwner.active && advancedOwner.requests.get("autoCompact") === request;
-    void onAdvancedSave({ disable_auto_compact: !next }).catch((saveError: unknown) => {
-      if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
-        advancedDraftEditsRef.current.set("autoCompact", String(!next));
-        setAutoCompactDraft(!next);
-        setAdvancedError({ field: "autoCompact", message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
-      }
-    }).finally(() => {
-      if (ownsResult()) advancedOwner.requests.delete("autoCompact");
-    });
-  }
-
-  async function commitAdvancedField(field: AdvancedNumericField): Promise<void> {
-    const drafts: Record<AdvancedNumericField, string> = {
-      compactThreshold: compactThresholdDraft,
-      compactKeepRecent: compactKeepRecentDraft,
-      providerContextWindow: providerContextWindowDraft,
-      maxContextTokens: maxContextTokensDraft,
-    };
-    const draft = drafts[field];
-    const pending = advancedOwner.requests.get(field);
-    if (!advancedOwner.active || pending?.draft === draft
-      || (!pending && advancedCommittedRef.current[field] === draft)) {
-      return;
-    }
-    let update: RuntimeAdvancedSettingsUpdate | undefined;
-    let validationError = "";
-    switch (field) {
-      case "compactThreshold": {
-        const parsed = parseOptionalNumber(draft, t("settings.compactThreshold"), t);
-        if (parsed.error) {
-          validationError = parsed.error;
-        } else if (parsed.value >= 100) {
-          validationError = t("validation.compactThreshold");
-        } else {
-          update = { compact_threshold_pct: parsed.value > 0 ? parsed.value / 100 : 0 };
-        }
-        break;
-      }
-      case "compactKeepRecent": {
-        const parsed = parseOptionalInteger(draft, t("settings.keepRecentContext"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { compact_keep_recent_tokens: parsed.value };
-        break;
-      }
-      case "providerContextWindow": {
-        const parsed = parseOptionalInteger(draft, t("settings.providerContextLimit"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { provider_context_window: parsed.value };
-        break;
-      }
-      case "maxContextTokens": {
-        const parsed = parseOptionalInteger(draft, t("settings.unknownModelLimit"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { max_context_tokens: parsed.value };
-        break;
-      }
-    }
-    if (validationError || !update) {
-      setAdvancedError(validationError ? { field, message: validationError } : null);
-      return;
-    }
-    setAdvancedError(null);
-    const request = { draft };
-    advancedOwner.requests.set(field, request);
-    const ownsResult = () => advancedOwner.active && advancedOwner.requests.get(field) === request;
-    try {
-      await onAdvancedSave(update);
-      if (ownsResult()) advancedCommittedRef.current[field] = draft;
-    } catch (saveError) {
-      if (ownsResult() && !isPluginLifecycleCancellation(saveError)) {
-        setAdvancedError({ field, message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
-      }
-    } finally {
-      if (ownsResult()) advancedOwner.requests.delete(field);
-    }
-  }
-
-  const shellStyle = {
-    // Same variables as the main app shell (`--sidebar-width` collapses to 0,
-    // `--sidebar-open-width` remembers the open width for the hover drawer)
-    // so sidebar.css and settings.css read one vocabulary for both shells.
-    "--sidebar-width": `${sidebarCollapsed ? 0 : sidebarWidth}px`,
-    "--sidebar-open-width": `${sidebarWidth}px`
-  } as CSSProperties;
-
   // Mirror the main view's sidebar collapse/hover logic so the settings shell
   // behaves the same way: a persistent `sidebarCollapsed` flag hides the rail
   // and only the left-edge hover zone can reopen it as a drawer overlay.
@@ -607,26 +452,36 @@ function SettingsViewContent({
     scheduleSidebarDrawerCloseFromPointerLeave
   } = useSidebarDrawerState({
     appShellRef: effectiveShellRef,
-    sidebarCollapsed: !embedded && sidebarCollapsed,
+    // A floating settings panel always keeps its own navigation visible; the
+    // outer window's rail state must not turn the panel rail into a drawer.
+    sidebarCollapsed: !embedded && !floating && sidebarCollapsed,
     resizingSidebar,
     motionMs: sidebarDrawerExitMs,
     dockingMotionMs: sidebarMotionMs,
     closeOnWindowResize: true
   });
-  const sidebarDrawerPhase = embedded ? embeddedDrawerPhase : standaloneDrawerPhase;
-  const shellClassName = `settings-shell${embedded ? " settings-embedded" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
-    sidebarCollapsed ? " sidebar-collapsed" : ""
+  const sidebarDrawerPhase = floating ? "closed" : embedded ? embeddedDrawerPhase : standaloneDrawerPhase;
+  const railCollapsed = floating ? false : sidebarCollapsed;
+  const shellStyle = {
+    // Same variables as the main app shell (`--sidebar-width` collapses to 0,
+    // `--sidebar-open-width` remembers the open width for the hover drawer)
+    // so sidebar.css and settings.css read one vocabulary for both shells.
+    "--sidebar-width": `${floating ? 248 : railCollapsed ? 0 : sidebarWidth}px`,
+    "--sidebar-open-width": `${floating ? 248 : sidebarWidth}px`
+  } as CSSProperties;
+  const shellClassName = `settings-shell${embedded ? " settings-embedded" : ""}${floating ? " settings-floating" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
+    railCollapsed ? " sidebar-collapsed" : ""
   }${
-    sidebarCollapsed && sidebarDrawerPhase === "open" ? " sidebar-drawer-open" : ""
+    railCollapsed && sidebarDrawerPhase === "open" ? " sidebar-drawer-open" : ""
   }${
-    sidebarCollapsed && sidebarDrawerPhase === "closing"
+    railCollapsed && sidebarDrawerPhase === "closing"
       ? " sidebar-drawer-closing"
       : ""
   }${
-    !sidebarCollapsed && sidebarDrawerPhase === "docking"
+    !railCollapsed && sidebarDrawerPhase === "docking"
       ? " sidebar-drawer-docking"
       : ""
-  }${sidebarAnimating ? " sidebar-animating" : ""}`;
+  }${sidebarAnimating && !floating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
   const nativeGroups = nativeSettingsGroups(browserSettingsAllowed, controls.capabilities);
@@ -684,6 +539,67 @@ function SettingsViewContent({
     onPageChange?.(next);
   }
 
+  // The floating panel is a modal surface. Capture the opener, move focus into
+  // the active destination, and return focus when the panel leaves. This also
+  // keeps keyboard users inside the panel while its scrim covers the app.
+  const floatingOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!floating) return;
+    const shell = effectiveShellRef.current;
+    if (!shell) return;
+    const opener = document.activeElement;
+    floatingOpenerRef.current = opener instanceof HTMLElement ? opener : null;
+    const focusTarget = shell.querySelector<HTMLElement>(".settings-nav-item.active") ?? shell;
+    const frame = window.requestAnimationFrame(() => focusTarget.focus({ preventScroll: true }));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const previous = floatingOpenerRef.current;
+      floatingOpenerRef.current = null;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [floating]);
+
+  function handleFloatingKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (!floating) return;
+    if (event.key === "Escape") {
+      if (event.defaultPrevented) return;
+      const shell = effectiveShellRef.current;
+      if (!shell) return;
+      // Let menus and nested dialogs consume Escape first. Their state is
+      // rendered in the same panel or in the shared overlay portal.
+      if (shell.querySelector('[role="dialog"], .select-menu-panel, [data-floating-menu-owner]')) return;
+      if ([...document.querySelectorAll('[aria-modal="true"]')].some(
+        (element) => element !== shell && !shell.contains(element),
+      )) return;
+      event.preventDefault();
+      onBack();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const shell = effectiveShellRef.current;
+    if (!shell) return;
+    if ([...document.querySelectorAll('[aria-modal="true"]')].some(
+      (element) => element !== shell && !shell.contains(element),
+    )) return;
+    const focusable = [...shell.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => element.getAttribute("aria-hidden") !== "true" && !element.closest("[inert]"));
+    if (focusable.length === 0) {
+      event.preventDefault();
+      shell.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === shell)) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+
   const sidebarToggle = (
     <button
       type="button"
@@ -701,8 +617,21 @@ function SettingsViewContent({
   );
 
   const nativeSettings = (
-    <div ref={effectiveShellRef} className={shellClassName} style={shellStyle} data-wuu-component="settings-shell">
-      {!embedded ? <div
+    <div
+      ref={effectiveShellRef}
+      className={shellClassName}
+      style={shellStyle}
+      data-wuu-component="settings-shell"
+      {...(floating ? {
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": t("settings.navigation"),
+        "data-settings-floating": "",
+        tabIndex: -1,
+        onKeyDown: handleFloatingKeyDown,
+      } : {})}
+    >
+      {!embedded && !floating ? <div
         ref={sidebarHoverZoneRef}
         className="sidebar-hover-zone"
         aria-hidden="true"
@@ -712,9 +641,9 @@ function SettingsViewContent({
       <aside
         className="settings-sidebar"
         data-wuu-component="settings-sidebar"
-        inert={embedded && sidebarCollapsed && sidebarDrawerPhase !== "open"}
-        onPointerEnter={embedded ? onSidebarPointerEnter : openSidebarDrawer}
-        onPointerLeave={embedded ? onSidebarPointerLeave : (event) =>
+        inert={embedded && !floating && sidebarCollapsed && sidebarDrawerPhase !== "open"}
+        onPointerEnter={floating ? undefined : embedded ? onSidebarPointerEnter : openSidebarDrawer}
+        onPointerLeave={floating ? undefined : embedded ? onSidebarPointerLeave : (event) =>
           scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
         }
       >
@@ -724,9 +653,9 @@ function SettingsViewContent({
           * 淡出/位移也复用 sidebar.css 里同一组规则。
           */}
         <div className="sidebar-content">
-          {!embedded ? <div className="traffic-spacer">{!sidebarCollapsed ? sidebarToggle : null}</div> : null}
-          {embedded ? <h2 className="sidebar-section-title settings-navigation-title">{t("settings.navigation")}</h2> : null}
-          {!embedded ? <button className="settings-back-button" type="button" onClick={onBack}>
+          {!embedded && !floating ? <div className="traffic-spacer">{!railCollapsed ? sidebarToggle : null}</div> : null}
+          {embedded || floating ? <h2 className="sidebar-section-title settings-navigation-title">{t("settings.navigation")}</h2> : null}
+          {!embedded && !floating ? <button className="settings-back-button" type="button" onClick={onBack}>
             <ArrowLeft className="icon" />
             <span>{t("settings.backToApp")}</span>
           </button> : null}
@@ -812,7 +741,7 @@ function SettingsViewContent({
           </nav>
         </div>
       </aside>
-      {sidebarCollapsed || embedded ? null : (
+      {railCollapsed || embedded || floating ? null : (
         <div
           className="sidebar-resizer"
           role="separator"
@@ -832,11 +761,21 @@ function SettingsViewContent({
       <main className="settings-main" data-wuu-component="settings-content">
         <SettingsTitlebarSlot.Provider value={titlebarSlot}>
           <div className="settings-titlebar">
-            {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
+            {isTouchWebShell() && !floating && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
             {/* Match the main shell's docked/collapsed slots. Keep the collapsed
              * toggle inside the drag strip so native hit testing honors no-drag. */}
-            {sidebarCollapsed && !embedded ? sidebarToggle : null}
+            {railCollapsed && !embedded && !floating ? sidebarToggle : null}
             <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
+            {floating ? (
+              <button
+                type="button"
+                className="icon-button settings-close-button"
+                aria-label={t("settings.close")}
+                onClick={onBack}
+              >
+                <X className="icon-lg" />
+              </button>
+            ) : null}
           </div>
           <div ref={settingsScrollRef} className="settings-scroll">
             <div
@@ -870,35 +809,12 @@ function SettingsViewContent({
                   onProvidersChanged={onProvidersChanged}
                   onProviderModelsChanged={onProviderModelsChanged}
                 />
-              ) : activePage === "advanced" ? (
-                <SettingsRuntimePage
-                  initialized={initialized}
-                  running={running}
-                  autoCompact={autoCompactDraft}
-                  compactThreshold={compactThresholdDraft}
-                  compactKeepRecent={compactKeepRecentDraft}
-                  providerContextWindow={providerContextWindowDraft}
-                  providerContextWindowCurrent={formatOptionalTokenCount(
-                    initialized?.advanced_settings?.context_window_tokens,
-                  )}
-                  providerContextWindowSource={advancedContextSourceLabel(
-                    initialized?.advanced_settings?.context_window_source,
-                    t,
-                  )}
-                  maxContextTokens={maxContextTokensDraft}
-                  error={advancedError}
-                  onAutoCompactToggle={toggleAutoCompact}
-                  onCompactThresholdChange={(value) => { advancedDraftEditsRef.current.set("compactThreshold", value); setCompactThresholdDraft(value); }}
-                  onCompactKeepRecentChange={(value) => { advancedDraftEditsRef.current.set("compactKeepRecent", value); setCompactKeepRecentDraft(value); }}
-                  onProviderContextWindowChange={(value) => { advancedDraftEditsRef.current.set("providerContextWindow", value); setProviderContextWindowDraft(value); }}
-                  onMaxContextTokensChange={(value) => { advancedDraftEditsRef.current.set("maxContextTokens", value); setMaxContextTokensDraft(value); }}
-                  onCommitField={commitAdvancedField}
-                  onGeneralSave={onGeneralSave}
-                  onAdvancedSave={onAdvancedSave}
-                />
               ) : activePage === "general" ? (
                 <SettingsGeneralPage
+                  initialized={initialized}
+                  onGeneralSave={onGeneralSave}
                   desktopBuild={desktopBuild}
+                  permissionStateCache={permissionStateCache}
                   copyState={copyState}
                   onCopyVersion={copyVersionInfo}
                 />
@@ -948,7 +864,7 @@ function SettingsViewContent({
   );
   return <>{controls.renderPresentation({initialized,activePageId:activePage,availablePages,runningProviderNames,
     busy:running || usageLoading || codexPetsLoading || (activePage === "mcp" && mcpStatus.busy),
-    hasError:Boolean(advancedError || usageError || (activePage === "mcp" && mcpStatus.hasError) || codexPetsError),fallback:nativeSettings,
+    hasError:Boolean(usageError || (activePage === "mcp" && mcpStatus.hasError) || codexPetsError),fallback:nativeSettings,
     onOpenPage:pageId=>selectPage(pageId as SettingsPage),onAdvancedSave,onGeneralSave,onRefresh:onRefreshModelCatalog})}</>;
 }
 
@@ -986,105 +902,28 @@ function SettingsNavItem({
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Runtime page ("advanced" page id)                                          */
+/*  General page                                                               */
 /* -------------------------------------------------------------------------- */
 
-type AdvancedNumericField =
-  | "compactThreshold"
-  | "compactKeepRecent"
-  | "providerContextWindow"
-  | "maxContextTokens";
-
-type AdvancedField = AdvancedNumericField | "autoCompact";
-
-function SettingsRuntimePage({
+function SettingsGeneralPage({
   initialized,
-  running,
-  autoCompact,
-  compactThreshold,
-  compactKeepRecent,
-  providerContextWindow,
-  providerContextWindowCurrent,
-  providerContextWindowSource,
-  maxContextTokens,
-  error,
-  onAutoCompactToggle,
-  onCompactThresholdChange,
-  onCompactKeepRecentChange,
-  onProviderContextWindowChange,
-  onMaxContextTokensChange,
-  onCommitField,
   onGeneralSave,
-  onAdvancedSave
+  permissionStateCache,
+  desktopBuild,
+  copyState,
+  onCopyVersion
 }: {
   initialized: InitializeResult | undefined;
-  running: boolean;
-  autoCompact: boolean;
-  compactThreshold: string;
-  compactKeepRecent: string;
-  providerContextWindow: string;
-  providerContextWindowCurrent: string;
-  providerContextWindowSource: string;
-  maxContextTokens: string;
-  error: { field: AdvancedField; message: string } | null;
-  onAutoCompactToggle: () => void;
-  onCompactThresholdChange: (value: string) => void;
-  onCompactKeepRecentChange: (value: string) => void;
-  onProviderContextWindowChange: (value: string) => void;
-  onMaxContextTokensChange: (value: string) => void;
-  onCommitField: (field: AdvancedNumericField) => void;
+  permissionStateCache: RefObject<SystemPermissionsState | undefined>;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
-  onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
+  desktopBuild: DesktopBuildInfo | undefined;
+  copyState: CopyState;
+  onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const ptc = initialized?.general_settings?.ptc ?? { enabled: true };
-  const [ptcBusy, setPTCBusy] = useState(false);
-  const [ptcError, setPTCError] = useState("");
-  const [projectModelsBusy, setProjectModelsBusy] = useState(false);
-  const [projectModelsError, setProjectModelsError] = useState<{ role: "technical_lead" | "executor"; message: string }>();
-  const projectModels = initialized?.project_models ?? {};
-  const projectModelOptions: SelectMenuOption[] = [{ value: "", label: t("settings.projectModelInherit") }];
-  for (const provider of initialized?.providers ?? []) {
-    const models = provider.models ?? [];
-    for (const id of new Set([provider.model, ...models.map((model) => model.id)].filter(Boolean))) {
-      const model = models.find((model) => model.id === id);
-      projectModelOptions.push({
-        value: JSON.stringify([provider.name, id]),
-        label: `${provider.name} / ${model?.display_name || id}`,
-        hint: model?.display_name && model.display_name !== id ? id : undefined,
-      });
-    }
-  }
-  for (const selection of [projectModels.technical_lead, projectModels.executor]) {
-    if (!selection?.provider || !selection.model) continue;
-    const value = JSON.stringify([selection.provider, selection.model]);
-    if (!projectModelOptions.some((option) => option.value === value)) {
-      projectModelOptions.push({ value, label: `${selection.provider} / ${selection.model}` });
-    }
-  }
-  async function saveProjectModel(role: "technical_lead" | "executor", value: string): Promise<void> {
-    const [provider, model] = value ? JSON.parse(value) as [string, string] : ["", ""];
-    const current = projectModels[role];
-    if ((current?.provider ?? "") === provider && (current?.model ?? "") === model) return;
-    const next: ProjectModelsConfig = { ...projectModels, [role]: value ? { provider, model } : {} };
-    setProjectModelsBusy(true);
-    setProjectModelsError(undefined);
-    try { await onAdvancedSave({ project_models: next }); }
-    catch (error) { setProjectModelsError({ role, message: error instanceof Error ? error.message : t("settings.saveFailed") }); }
-    finally { setProjectModelsBusy(false); }
-  }
-  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
-    setPTCBusy(true);
-    setPTCError("");
-    try { await onGeneralSave({ ptc: next }); }
-    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
-    finally { setPTCBusy(false); }
-  }
   const [gitAttributionBusy, setGitAttributionBusy] = useState(false);
   const [gitAttributionError, setGitAttributionError] = useState("");
   const gitAttributionEnabled = initialized?.general_settings?.git_attribution_enabled ?? true;
-  const fieldsDisabled = running || !initialized;
-  const fieldError = (field: AdvancedField): string | undefined => (error?.field === field ? error.message : undefined);
 
   async function toggleGitAttribution(): Promise<void> {
     if (!initialized || gitAttributionBusy) {
@@ -1105,198 +944,6 @@ function SettingsRuntimePage({
     }
   }
 
-  // Enter and blur both commit through onCommitField; the ref-guard inside
-  // makes the blur that follows Enter a no-op, so there is one effective
-  // commit per edit. A unit inside the field replaces a description line
-  // that only named it.
-  const numericInput = (
-    field: AdvancedNumericField,
-    value: string,
-    onChange: (value: string) => void,
-    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal"; unit?: string },
-  ): JSX.Element => {
-    const input = (
-      <input
-        className="settings-input settings-input-num"
-        aria-label={options.label}
-        value={value}
-        aria-invalid={error?.field === field || undefined}
-        inputMode={options.inputMode ?? "numeric"}
-        placeholder={options.placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={() => onCommitField(field)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            onCommitField(field);
-            event.currentTarget.blur();
-          }
-        }}
-        disabled={fieldsDisabled}
-      />
-    );
-    return options.unit ? <SettingsInputUnit unit={options.unit} placeholder={options.placeholder}>{input}</SettingsInputUnit> : input;
-  };
-
-  return (
-    <>
-      <SettingsPageHeader title={t("settings.runtime")} />
-      {initialized?.features?.project_agent && (
-        <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
-          <div className="settings-form"><SettingsGroup>
-            {(["technical_lead", "executor"] as const).map((role) => {
-              const selection = projectModels[role];
-              const value = selection?.provider && selection.model ? JSON.stringify([selection.provider, selection.model]) : "";
-              const label = t(role === "technical_lead" ? "settings.projectTechnicalLeadModel" : "settings.projectExecutorModel");
-              return <SettingsRow key={role} title={label} error={projectModelsError?.role === role ? projectModelsError.message : undefined}>
-                <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label} dataTestid={`project-${role}-model`}
-                  value={value} options={projectModelOptions} searchable flip disabled={running || projectModelsBusy}
-                  onChange={(next) => void saveProjectModel(role, next)} />
-              </SettingsRow>;
-            })}
-          </SettingsGroup></div>
-        </SettingsSection>
-      )}
-      <SettingsSection testID="settings-advanced">
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.autoCompact")}
-            description={t("settings.autoCompactDescription")}
-            error={fieldError("autoCompact")}
-          >
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={autoCompact}
-              disabled={fieldsDisabled}
-              onClick={onAutoCompactToggle}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">{autoCompact ? t("settings.disableAutoCompact") : t("settings.enableAutoCompact")}</span>
-            </button>
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
-      <SettingsSection testID="settings-git">
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.gitAttribution")}
-            hideDescriptionWhenNarrow
-            hint={t("settings.gitAttributionDescription")}
-            error={gitAttributionError}
-          >
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={gitAttributionEnabled}
-              data-testid="settings-git-attribution"
-              disabled={!initialized || gitAttributionBusy}
-              onClick={() => void toggleGitAttribution()}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">
-                {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
-              </span>
-            </button>
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
-      <details
-        className="settings-advanced-disclosure"
-        data-testid="settings-advanced-disclosure"
-        open={Boolean((error && error.field !== "autoCompact") || ptcError) || undefined}
-      >
-        <summary className="settings-advanced-disclosure-summary">
-          <div className="settings-advanced-disclosure-copy">
-            <span className="settings-advanced-disclosure-title">{t("settings.advancedRuntimeTuning")}</span>
-          </div>
-          <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
-        </summary>
-        <div className="settings-advanced-disclosure-body">
-          <SettingsSection title={t("settings.sectionContextWindow")}>
-            <SettingsGroup>
-              <SettingsRow
-                title={t("settings.compactThreshold")}
-                error={fieldError("compactThreshold")}
-              >
-                {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
-                  label: t("settings.compactThreshold"),
-                  placeholder: t("settings.automatic"),
-                  unit: "%",
-                })}
-              </SettingsRow>
-              <SettingsRow
-                title={t("settings.keepRecentContext")}
-                error={fieldError("compactKeepRecent")}
-              >
-                {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
-                  label: t("settings.keepRecentContext"),
-                  placeholder: "20,000",
-                  unit: t("settings.unitTokens"),
-                })}
-              </SettingsRow>
-              <SettingsRow
-                title={t("settings.providerContextLimit")}
-                description={`${providerContextWindowSource}${
-                  providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
-                }`}
-                error={fieldError("providerContextWindow")}
-              >
-                {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
-                  label: t("settings.providerContextLimit"),
-                  placeholder: t("settings.detectAutomatically"),
-                  unit: t("settings.unitTokens"),
-                })}
-              </SettingsRow>
-              <SettingsRow
-                title={t("settings.unknownModelLimit")}
-                hideDescriptionWhenNarrow
-                hint={t("settings.unknownModelLimitDescription")}
-                error={fieldError("maxContextTokens")}
-              >
-                {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
-                  label: t("settings.unknownModelLimit"),
-                  placeholder: t("settings.automatic"),
-                  unit: t("settings.unitTokens"),
-                })}
-              </SettingsRow>
-            </SettingsGroup>
-          </SettingsSection>
-          <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
-          <SettingsSection testID="settings-ptc">
-            <SettingsGroup>
-              <SettingsRow title={t("settings.ptcEnabled")} hideDescriptionWhenNarrow description={t("settings.ptcDescription")}>
-                <button className="settings-switch" type="button" role="switch"
-                  aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
-                  data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
-                  onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
-                  <span className="settings-switch-thumb" aria-hidden="true" />
-                </button>
-              </SettingsRow>
-              {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
-            </SettingsGroup>
-          </SettingsSection>
-        </div>
-      </details>
-    </>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  General page                                                               */
-/* -------------------------------------------------------------------------- */
-
-function SettingsGeneralPage({
-  desktopBuild,
-  copyState,
-  onCopyVersion
-}: {
-  desktopBuild: DesktopBuildInfo | undefined;
-  copyState: CopyState;
-  onCopyVersion: () => Promise<void>;
-}): JSX.Element {
-  const { t } = useI18n();
   return (
     <>
       <SettingsPageHeader title={t("settings.general")} />
@@ -1326,7 +973,26 @@ function SettingsGeneralPage({
       </SettingsSection>
 
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
-      <SystemPermissionsSection />
+      <SystemPermissionsSection stateCache={permissionStateCache} />
+
+      <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.gitAttribution")}
+            hideDescriptionWhenNarrow
+            hint={t("settings.gitAttributionDescription")}
+            error={gitAttributionError}
+          >
+            <Switch
+              checked={gitAttributionEnabled}
+              data-testid="settings-git-attribution"
+              disabled={!initialized || gitAttributionBusy}
+              onClick={() => void toggleGitAttribution()}
+              label={gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
     </>
   );
 }
@@ -1351,12 +1017,10 @@ function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProp
       <SettingsPageHeader title={t("settings.appearance")} />
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl inventory={inventory} />
-        <ContentThemeControl inventory={inventory} />
-        {isTouchWebShell() ? null : (
-          <div className="settings-inline-section-anchor" data-testid="settings-background">
-            <ShellSkinSettings />
-          </div>
-        )}
+        <SettingsGroup>
+          <ContentThemeControl inventory={inventory} />
+          {isTouchWebShell() ? null : <ShellSkinSettings />}
+        </SettingsGroup>
       </SettingsSection>
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
@@ -1449,18 +1113,13 @@ function CodexPetSection({
           >
             <RefreshCw className="icon" aria-hidden="true" />
           </button></Tooltip>
-          <button
-            className="settings-switch"
-            type="button"
-            role="switch"
-            aria-checked={codexPetEnabled}
+          <Switch
+            checked={codexPetEnabled}
             data-testid="settings-codex-pet-enabled"
             disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
             onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
-          >
-            <span className="settings-switch-thumb" aria-hidden="true" />
-            <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
-          </button>
+            label={codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}
+          />
         </SettingsRow>
       </SettingsGroup>
     </SettingsSection>
@@ -1703,6 +1362,8 @@ function SettingsUsagePage({
   const modelTotal = (model: SettingsUsageResponse["model_breakdowns"][number]): number =>
     model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens;
   const allModelTotal = (usage?.model_breakdowns ?? []).reduce((total, model) => total + modelTotal(model), 0);
+  const engineSumTotal = (sum?: { input_tokens: number; output_tokens: number; cache_creation_tokens: number; cache_read_tokens: number }): number =>
+    (sum?.input_tokens ?? 0) + (sum?.output_tokens ?? 0) + (sum?.cache_creation_tokens ?? 0) + (sum?.cache_read_tokens ?? 0);
   const heatmapCols = heatmap.length > 0 ? Math.ceil(heatmap.length / 7) : 12;
 
   // Keep grid height = 7 × cell-size so cells stay square as panel resizes
@@ -1953,6 +1614,71 @@ function SettingsUsagePage({
         )}
       </section>
 
+      <section className="settings-section" aria-labelledby="settings-engine-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-engine-usage-title" className="settings-section-title">{t("settings.usageByEngine")}</h2>
+        </header>
+        {(usage.engine_breakdowns ?? []).length > 0 ? (
+          <div className="settings-group settings-usage-table-wrap">
+            <table className="settings-usage-table settings-engine-usage-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("settings.engine")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageInWuu")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageOutsideWuu")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.usageSessions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(usage.engine_breakdowns ?? []).map((b) => {
+                  const inWuuTotal = engineSumTotal(b.in_wuu);
+                  const outsideTotal = b.outside ? engineSumTotal(b.outside) : undefined;
+                  return (
+                    <tr key={b.engine}>
+                      <td>
+                        <div className="settings-usage-model">
+                          <strong>{b.name || b.engine}</strong>
+                          <small>{b.engine}</small>
+                        </div>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageInWuu")}>
+                        <Tooltip content={formatUsageValue(inWuuTotal)}>
+                          <span className="settings-usage-number">
+                            {formatCompactUsageNumber(inWuuTotal, locale)}
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageOutsideWuu")}>
+                        {outsideTotal === undefined ? (
+                          <Tooltip content={t("settings.usageNoLedger")}>
+                            <span className="settings-usage-number">—</span>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip content={formatUsageValue(outsideTotal)}>
+                            <span className="settings-usage-number">
+                              {formatCompactUsageNumber(outsideTotal, locale)}
+                            </span>
+                          </Tooltip>
+                        )}
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.usageSessions")}>
+                        <span className="settings-usage-number">
+                          {formatCompactUsageNumber((b.in_wuu.sessions ?? 0) + (b.outside?.sessions ?? 0), locale)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="settings-group">
+            <p className="settings-group-empty">{t("settings.noUsage")}</p>
+          </div>
+        )}
+      </section>
+
       <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
         <header className="settings-section-header">
           <h2 id="settings-skill-usage-title" className="settings-section-title">
@@ -2075,8 +1801,6 @@ function settingsPageTitle(page: NativeSettingsPage, t: Translate): string {
       return t("settings.agents");
     case "subscriptions":
       return t("settings.subscriptions");
-    case "advanced":
-      return t("settings.runtime");
     case "general":
       return t("settings.general");
     case "appearance":
@@ -2103,73 +1827,6 @@ function pluginViewSettingsPageId(
   entryId: string,
 ): `plugin-view:${string}:${string}` {
   return `plugin-view:${pluginId}:${entryId}`;
-}
-
-function parseOptionalInteger(raw: string, label: string, t: Translate): { value: number; error?: string } {
-  const parsed = parseOptionalNumber(raw, label, t);
-  if (parsed.error) {
-    return parsed;
-  }
-  if (!Number.isInteger(parsed.value)) {
-    return { value: 0, error: t("validation.integer", { field: label }) };
-  }
-  return parsed;
-}
-
-function parseOptionalNumber(raw: string, label: string, t: Translate): { value: number; error?: string } {
-  const value = raw.trim();
-  if (value === "") {
-    return { value: 0 };
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return { value: 0, error: t("validation.nonNegative", { field: label }) };
-  }
-  return { value: parsed };
-}
-
-function formatPercentDraft(value: number | undefined): string {
-  if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return String(Math.round(value * 100));
-}
-
-function formatOptionalNumberDraft(value: number | undefined): string {
-  if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return String(value);
-}
-
-function advancedContextSourceLabel(source: string | undefined, t: Translate): string {
-  switch (source) {
-    case "provider_context_window":
-      return t("advanced.sourceProviderOverride");
-    case "provider_model_limit":
-      return t("advanced.sourceModelConfig");
-    case "provider_input_limit":
-      return t("advanced.sourceInputLimit");
-    case "agent_max_context_tokens":
-      return t("advanced.sourceManualLimit");
-    case "unknown":
-    case "":
-    case undefined:
-      return t("advanced.sourceUnknown");
-    default:
-      return source;
-  }
-}
-
-function formatTokenCount(value: number): string {
-  return formatCurrentNumber(Math.max(0, value));
-}
-
-function formatOptionalTokenCount(value: number | undefined): string {
-  if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return formatTokenCount(value);
 }
 
 function formatPercent(value: number | undefined): string {
@@ -2207,12 +1864,34 @@ function formatUsageDayTitle(
   if (!hasUsageDayData(day)) {
     return t("settings.noUsageOnDate", { date: day.date });
   }
+  const outsideTotal = outsideDayTotal(day);
+  if (outsideTotal !== undefined) {
+    return t("settings.usageDayWithOutside", {
+      date: day.date,
+      total: formatNumber(usageTokenTotal(day)),
+      inWuu: formatNumber(inWuuDayTotal(day)),
+      outside: formatNumber(outsideTotal),
+    });
+  }
   return t("settings.usageTrendOnDate", {
     date: day.date,
     total: formatNumber(usageTokenTotal(day)),
     input: formatNumber(day.input_tokens + day.cache_read_tokens + day.cache_creation_tokens),
     output: formatNumber(day.output_tokens),
   });
+}
+
+function inWuuDayTotal(day: SettingsUsageDay): number {
+  return day.input_tokens + day.output_tokens + day.cache_creation_tokens + day.cache_read_tokens;
+}
+
+function outsideDayTotal(day: SettingsUsageDay): number | undefined {
+  const outside = day.outside;
+  if (!outside) {
+    return undefined;
+  }
+  const total = outside.input_tokens + outside.output_tokens + outside.cache_creation_tokens + outside.cache_read_tokens;
+  return total > 0 || outside.sessions > 0 ? total : undefined;
 }
 
 function hasUsageDayData(day: SettingsUsageDay): boolean {
@@ -2222,7 +1901,8 @@ function hasUsageDayData(day: SettingsUsageDay): boolean {
     day.cache_creation_tokens > 0 ||
     day.cache_read_tokens > 0 ||
     day.turns > 0 ||
-    day.agents > 0
+    day.agents > 0 ||
+    outsideDayTotal(day) !== undefined
   );
 }
 
@@ -2233,6 +1913,15 @@ function formatHeatmapTitle(
 ): string {
   if (!hasUsageDayData(day)) {
     return t("settings.noUsageOnDate", { date: day.date });
+  }
+  const outsideTotal = outsideDayTotal(day);
+  if (outsideTotal !== undefined) {
+    return t("settings.usageDayWithOutside", {
+      date: day.date,
+      total: formatNumber(usageTokenTotal(day)),
+      inWuu: formatNumber(inWuuDayTotal(day)),
+      outside: formatNumber(outsideTotal),
+    });
   }
   return t("settings.usageOnDate", {
     date: day.date,
@@ -2260,17 +1949,18 @@ function formatBuildDate(iso: string): string {
   return parsed.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
 }
 
-/* -------------------------------------------------------------------------- */
-/*  远程控制                                                                    */
-/* -------------------------------------------------------------------------- */
-
-/** Data wiring for the remote-control page: pulls the snapshot from the
- *  main-process RemoteHostManager, re-pulls on every remote event (pairing
- *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
-function availableSettingsPage(page:SettingsPage|undefined, browserAllowed:boolean, capabilities:import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1):SettingsPage {
- const next=page??"providers";
- if(next==="subscriptions"||next==="agents"||next==="remote"&&!capabilities.remote||next==="browser"&&(!browserAllowed||!capabilities.browser))return "providers";
- return next;
+// Resolve legacy links before rendering or publishing the selected page.
+function availableSettingsPage(
+  page: SettingsPage | undefined,
+  browserAllowed: boolean,
+  capabilities: import("../../../packages/plugin-sdk/src/ui-settings-controls").SettingsControlsCapabilitiesV1,
+): SettingsPage {
+  const next = page ?? "general";
+  if (next === "advanced") return "general";
+  if (next === "subscriptions" || next === "agents"
+    || (next === "remote" && !capabilities.remote)
+    || (next === "browser" && (!browserAllowed || !capabilities.browser))) return "providers";
+  return next;
 }
 
 export function SettingsView({application,...props}:Parameters<typeof SettingsViewContent>[0] & {application:{readonly settingsControls:import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1}}):JSX.Element {

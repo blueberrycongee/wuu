@@ -190,6 +190,11 @@ reconstructs an automatic runnable queue. Live input appears only in
 User-history admission atomically settles the recovery record. Human steering
 checkpoints the unpersisted transcript before the next model request, preserving
 message order and preventing a crash from making dispatched input replayable.
+On the built-in host loop, steering during an active model response closes the
+visible assistant item at that point, persists the prefix as a non-terminal
+steered fragment, admits the user item after it, and continues the same turn
+with the next model request. Steering while tools run is admitted at the next
+model step; tools that already started are not cancelled.
 A concurrent edit or cancellation fences stale admission. Permission selection
 is re-resolved at execution; saved input does not restore old permissions.
 These are local process-crash guarantees, not automatic recovery of uncertain
@@ -379,8 +384,7 @@ model. `remove_model` removes a model choice so catalog refreshes cannot restore
 it; the request must retain or supply a different selected `model`. Existing
 conversation, role, and alias selections retain their model metadata.
 `add_model` restores a removed choice or adds a model ID the catalog does not
-list. Model update and provider removal responses include `model_aliases` and
-`project_models`, including empty values, so clients can clear removed references.
+list. Model update and provider removal responses include `model_aliases`, including empty values, so clients can clear removed references.
 Provider summaries report removed choices as `hidden_models`, and
 `catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
 service.
@@ -424,6 +428,13 @@ preference. Do not infer an installed program or authenticated account from the
 preference alone.
 
 `engine/list` accepts `{ "cwd": "/absolute/session/directory", "refresh_models": true }`.
+It also accepts `{ "include_models": false }` to return engine descriptors and
+settings without starting native model discovery. Every entry then reports
+`models_status: "deferred"`; the omitted catalog is neither empty nor unsupported.
+Clients can use this availability response for engine selection and thread
+creation, including native defaults and already known selections, then request
+the full catalog separately. Omitting `include_models` preserves full discovery.
+
 `cwd` defaults to the runtime root; pass the actual conversation/worktree directory
 when it differs. Refresh also rescans desktop installation and login-shell paths,
 reapplies persisted engine enable/disable choices to the live runtime, and bypasses
@@ -437,7 +448,8 @@ Claude also includes login status. The context is rechecked before publishing.
 Keychain-only and remote account changes require refresh or expiry.
 
 `models_status` distinguishes `ready`, authoritative `empty`, `unsupported`,
-`partial`, `error`, and `stale`. `partial` means some model probes failed;
+`partial`, `error`, `stale`, and the lightweight-response `deferred` described
+above. `partial` means some model probes failed;
 `stale` retains previously successful data only for the same context.
 `models_error` describes failed, partial or stale discovery. An authoritative empty
 result replaces previous models. A missing catalog never falls back to Wuu's
@@ -595,7 +607,16 @@ without records returns zero totals and an empty `days` list. Like
 `local_usage`, these values exclude unreported and external activity and are
 not billing totals. `settings/usage`, the desktop usage page's full snapshot,
 accepts the same optional `timezone`; the desktop sends its own so each daily
-bar lands on the day its calendar draws.
+bar lands on the day its calendar draws. Its `engine_breakdowns` attribute the
+same in-Wuu trail to each thread's bound agent engine and add an `outside`
+side per engine — token totals read from the engine's own local ledger
+(`~/.claude` transcripts, `~/.codex` rollouts, the OpenCode database) minus
+native sessions Wuu already claims, so the two columns never count the same
+work twice. `outside` is absent for engines without a readable local ledger or
+whose ledger failed to scan. The same outside totals also land on
+`days[].outside`, so the trend and heatmap color every day the page counts;
+the in-Wuu token fields, hit rate, turns, and agents on each day stay
+untouched.
 
 ## Notifications
 
@@ -646,9 +667,9 @@ browser surface and makes permission decisions without a client approval exchang
 
 ## Background process triggers
 
-`process/list` accepts `thread_id` and returns only processes owned by that conversation. Each process may include `trigger` with `status` (`waiting`, `received`, `handled`, `cancelled`, or `stopped`), `on_exit`, and optional `recheck_minutes` and `next_recheck_at`. `received` means an event is available for continuation; it does not assert that a new turn has started. Detached processes without scheduled checks or a recorded cancellation omit `trigger`. Clients must tolerate its absence on older hosts.
+`process/list` accepts `thread_id` and returns only processes owned by that conversation. Each process may include `trigger` with `status` (`waiting`, `received`, `handled`, `cancelled`, or `stopped`), `on_exit`. `received` means an event is available for continuation; it does not assert that a new turn has started. Detached processes without a recorded cancellation omit `trigger`. Clients must tolerate its absence on older hosts.
 
-`process/cancel-notifications` accepts `thread_id` and `process_id`, checks ownership, and returns the updated `process`. It durably cancels future exit and recheck notifications without terminating the process. A continuation already admitted may finish. Use `process/stop` separately to stop a task. `process/read` is a read-only view of output and does not acknowledge the model-facing completion.
+`process/cancel-notifications` accepts `thread_id` and `process_id`, checks ownership, and returns the updated `process`. It durably cancels future exit notifications without terminating the process. A continuation already admitted may finish. Use `process/stop` separately to stop a task. `process/read` is a read-only view of output and does not acknowledge the model-facing completion.
 
 ## Hosted processes
 

@@ -2,6 +2,8 @@
 
 Manage standalone [MCP services](mcp.md) in the Plugins catalog. MCP services supplied by a plugin appear on its detail page, with their connection and login controls.
 
+For account authorization, open **Account Connectors** in the catalog. Services start disabled; choose **Connect** on Notion to authorize it in your browser. See [connect an account](mcp.md#connect-an-account).
+
 A Wuu plugin packages agent behavior, desktop UI, or other extension contributions. A package can include tools, skills, hooks, MCP servers, themes, and settings. Enable only code you trust: plugins run with your user authority and are not sandboxed by Wuu.
 
 ## Install a local package
@@ -45,7 +47,7 @@ An optional add-on that fails initialization, preparation, or activation does no
 
 If an operation reports that the change was committed but runtime activation failed, the settings or package change has already taken effect. Read the new inventory's failure diagnostics before retrying; the old runtime is not automatically restored. See the [generation lifecycle](plugin-system.md#runtime-generations).
 
-The detail page distinguishes pending trust, disabled, starting, active, failed, and update states. Read the actual error instead of treating every missing feature as an installation failure. A package may also be blocked by a missing requirement or an incompatible peer package.
+Catalog entries keep their name and description: **+** enables a plugin, and **…** manages an enabled plugin. A family uses **…** when any component is enabled; otherwise **+** opens its component page. Component counts appear on that page. Permission and update decisions remain in plugin details. Runtime failures and dependency diagnostics use shared toast notifications without changing the catalog layout; failed plugins retain a **Retry** action in their details.
 
 If desktop code fails to render, Wuu isolates the failing contribution where possible and keeps plugin management and default-UI recovery available. Disable the suspected plugin and retry with the default interface. The CLI is useful when the desktop contribution itself is broken. Safe mode provides a recovery path after plugin-related startup failure; it does not certify the package as safe to re-enable.
 
@@ -80,14 +82,15 @@ upstream preview and output conventions to the current project and Wuu tools.
 
 The bundled Monitor plugin runs a shell script while the agent continues working.
 Ask it, for example, to watch CI and report a failed check immediately, then finish
-when every check passes. Scripts should print relevant changes; each output batch
+when every check passes. Scripts should print relevant changes to stdout and diagnostics to stderr; each stdout batch
 can wake the conversation or steer its current turn. Monitor events are observations,
 so they do not answer a question that is waiting for you.
 
-Open **Monitors** above the composer to see descriptions, line counts, task IDs,
-status, commands, deadlines and output. The running count remains visible while the
-agent is idle. Expand a task to follow its output or stop its process tree. A manual
-stop tells the agent not to restart that monitor unless you ask.
+Monitor has no dedicated desktop panel. Ask the agent to inspect or stop a watch;
+`monitor_tasks` lists its status and reads retained output. Explicit stops tell the
+agent not to restart the watch unless asked. New event deliveries, including monitor
+completion, stay out of the chat transcript. The agent can report useful progress,
+results or failures; raw events remain in model history and retained monitor output.
 
 `monitor` accepts `command`, `description`, optional `timeout_ms` (up to 10 hours,
 the default), and `persistent`. A persistent watch has no deadline and lasts until
@@ -95,15 +98,18 @@ stopped, its conversation is archived/deleted, or its plugin runtime ends. Watch
 started in a private child conversation pass to its parent when the child finishes.
 `monitor_tasks` lists, reads or stops watches in the current conversation.
 
-Standard output and standard error are combined. Blank lines are ignored, incomplete
+Standard output produces events; standard error is retained as diagnostics and
+included in failure or timeout reports. Read either stream with `monitor_tasks`
+using `stream: "stdout"` (default) or `stream: "stderr"`, with independent byte cursors. Blank lines are ignored, incomplete
 lines flush on exit, and events are batched every 200 ms. Delivery allows a burst of
 10 batches and replenishes one every two seconds. Excess batches are counted; 30
 seconds of sustained overload stops the script. Event lines are shortened to 500
-bytes and batches to 3,000 bytes, while the output viewer uses the retained process
-log. Use line-buffered pipelines and handle transient network failures in scripts.
+bytes and batches to 3,000 bytes, while tool reads use the retained process
+logs. Use line-buffered pipelines and handle transient network failures in scripts.
 
-Shell execution currently requires a local workspace and follows its shell permission
-and sandbox policy. Disabling the plugin or retiring its runtime stops its processes.
+Shell execution uses the conversation's captured local or remote environment and
+its shell permission and sandbox policy. Separate streams require host.process 1.2
+and backend support; unsupported backends fail explicitly. Disabling the plugin or retiring its runtime stops its processes.
 On restart, running records become interrupted and retain their recent output;
 scripts are never automatically restarted. Up to 64 task records are retained.
 

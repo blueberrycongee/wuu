@@ -85,8 +85,7 @@ async function capture(name) {
   await evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
   report.surfaces = win.contentView.children.map(view => ({visible:view.getVisible(),bounds:view.getBounds(),url:view.webContents?.getURL()}));
   report.overlayDOM = await Promise.all(win.contentView.children.filter(view=>view.webContents).map(async view=>({url:view.webContents.getURL(),visible:view.getVisible(),dom:await view.webContents.executeJavaScript('({text:document.body.innerText,visibility:document.visibilityState,ready:document.readyState})')})));
-  report.inputTrace = await evaluate(()=>window.__acceptanceMenuTrace);
-  report.finalAccount = await evaluate(()=>document.querySelector('button[aria-label="Account menu"]')?.outerHTML);
+  report.finalSettings = await evaluate(()=>document.querySelector('[data-settings-entry="settings"]')?.outerHTML);
   report.focus = {window:win.isFocused(),contents:win.webContents.isFocused()};
   const surfaces = [win.webContents, ...visibleContents()];
   for (const [index, contents] of surfaces.entries()) {
@@ -109,7 +108,7 @@ async function run() {
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   const rendererURL = pathToFileURL(path.join(desktop, 'out/renderer/index.html')).href;
   await until(() => win && !win.webContents.isLoadingMainFrame() && win.webContents.getURL() === rendererURL, 'shipping renderer');
-  await until(() => evaluate(() => Boolean(document.querySelector('button[aria-label="Account menu"]:not(:disabled)') && document.querySelector('textarea'))), 'initialized composer and account route');
+  await until(() => evaluate(() => Boolean(document.querySelector('[data-settings-entry="settings"]:not(:disabled)') && document.querySelector('textarea'))), 'initialized composer and settings route');
   win.show(); win.focus();
   for (const theme of menuSmoke ? ['light'] : ['light', 'dark']) for (const size of menuSmoke ? [15] : [15, 20]) for (const width of menuSmoke ? [1280] : [1280, 720]) {
     const name = `${theme}-${size}-${width}`;
@@ -118,7 +117,7 @@ async function run() {
     await evaluate(async ({theme,size}) => { await window.wuu.setThemePreference(theme); await window.wuu.setMessageFlowFontSize(size); }, {theme,size});
     win.setBounds({x:0,y:0,width,height:850});
     if (report.cases.length > 1) win.webContents.reload();
-    await until(() => !win.webContents.isLoadingMainFrame() && evaluate(() => Boolean(document.querySelector('textarea') && document.querySelector('button[aria-label="Account menu"]:not(:disabled)'))), 'initialized appearance');
+    await until(() => !win.webContents.isLoadingMainFrame() && evaluate(() => Boolean(document.querySelector('textarea') && document.querySelector('[data-settings-entry="settings"]:not(:disabled)'))), 'initialized appearance');
     await click('textarea');
     key(win.webContents, 'a', ['control']); key(win.webContents, 'Backspace');
     await until(() => evaluate(() => document.querySelector('textarea').value === ''), 'empty composer');
@@ -129,34 +128,8 @@ async function run() {
     await until(() => evaluate(text => document.querySelector('textarea')?.value === text, draft), 'long draft');
     current.longGeometry = await checkViewport();
     await capture(`${name}-long`);
-    await evaluate(()=>{
-      const trigger=document.querySelector('button[aria-label="Account menu"]');
-      window.__acceptanceMenuTrace=[];
-      window.__acceptanceMenuUnsubscribe?.();
-      window.__acceptanceMenuUnsubscribe=window.wuu.chromeOverlay.onEvent(value=>window.__acceptanceMenuTrace.push({at:Date.now(),event:'public chrome event',value}));
-      for(const event of ['pointerdown','pointerup','click','focusin','focusout']) document.addEventListener(event,e=>window.__acceptanceMenuTrace.push({at:Date.now(),event,target:e.target?.outerHTML?.slice(0,180)}),{capture:true});
-      new MutationObserver(()=>window.__acceptanceMenuTrace.push({at:Date.now(),event:'trigger mutation',connected:trigger.isConnected,expanded:trigger.getAttribute('aria-expanded')})).observe(trigger,{attributes:true});
-    });
-    await click('button[aria-label="Account menu"]');
-    report.afterAccountClick = await evaluate(() => ({focused:document.hasFocus(),trigger:document.querySelector('button[aria-label="Account menu"]')?.outerHTML}));
-    save();
-    const menu = await until(async () => {
-      for (const contents of [win.webContents,...visibleContents()].reverse()) if (await contents.executeJavaScript("(() => { const e=document.querySelector('[role=menuitem][data-settings-page=providers]'); const r=e?.getBoundingClientRect(); return Boolean(r?.width && e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))); })()")) return contents;
-      return null;
-    }, 'native Settings menu item');
-    await capture(`${name}-menu`);
-    key(menu, 'Escape');
-    await until(async () => await evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Account menu') && !visibleContents().some(contents => contents.getURL().includes('surface=account')), 'Escape returns focus to Account menu');
-    current.checks.push('Escape returns focus to the trigger');
-    await click('button[aria-label="Account menu"]');
-    await until(() => visibleContents().some(contents => contents.getURL().includes('surface=account')), 'account reopened and presented');
-    await click('textarea');
-    await until(async () => await evaluate(() => document.querySelector('button[aria-label="Account menu"]')?.getAttribute('aria-expanded') === 'false' && document.activeElement === document.querySelector('textarea')) && !visibleContents().some(contents => contents.getURL().includes('surface=account')), 'outside click closes presented menu and leaves focus in composer');
-    assert.equal(await evaluate(() => document.querySelector('textarea').value), draft);
-    current.checks.push('Presented menu dismisses on outside pointer input without taking composer focus or changing draft');
-    await click('button[aria-label="Account menu"]');
-    await click('[role=menuitem][data-settings-page=providers]');
-    await until(() => evaluate(() => Boolean(document.querySelector('.settings-embedded'))), 'Settings page via current user path');
+    await click('[data-settings-entry="settings"]');
+    await until(() => evaluate(() => Boolean(document.querySelector('.settings-embedded'))), 'Settings page via the sidebar gear');
     current.settingsGeometry = await checkViewport();
     await capture(`${name}-settings`);
     await click('[data-wuu-component="conversations-section"]');

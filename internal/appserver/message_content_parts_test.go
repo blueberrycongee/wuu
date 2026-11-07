@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -224,29 +225,50 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	params["client_id"] = "steer-1"
 	params["expected_turn_id"] = started.Turn.ID
 	rpc("steer", MethodTurnSteer, params)
+	// Human steering now preempts the active response and is admitted to the
+	// current turn before the interrupt can hold it. Verify its durable item
+	// keeps the structured selection, then hold the still-queued message.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		th := srv.thread(threadID)
+		th.mu.Lock()
+		steerItem, found := ThreadItem{}, false
+		for _, turn := range th.Turns {
+			for _, item := range turn.Items {
+				if item.Type == ThreadItemUserMessage && item.SourceID == "steer-1" {
+					steerItem, found = item, true
+				}
+			}
+		}
+		th.mu.Unlock()
+		if found {
+			assertContentPartsWire(t, steerItem.ContentParts, responseSelectionFixture)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("steering selection did not materialize in the active turn")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	rpc("interrupt", MethodTurnInterrupt, map[string]any{"thread_id": threadID})
 	waitForMethod(t, out, NotificationTurnError)
 	held, err := srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(held) != 2 {
-		t.Fatalf("held = %+v", held)
+	if len(held) != 1 || held[0].id != "queue-1" {
+		t.Fatalf("held = %+v, want the still-queued selection", held)
 	}
-	for _, entry := range held {
-		assertContentPartsWire(t, entry.msg.ContentParts, responseSelectionFixture)
-	}
+	assertContentPartsWire(t, held[0].msg.ContentParts, responseSelectionFixture)
 	srv.Close()
 	out = &lockedBuffer{}
 	srv = New(rt, out)
 	t.Cleanup(srv.Close)
 	resumed := remarshal[ThreadResumeResult](t, rpc("resume", MethodThreadResume, ThreadResumeParams{SessionID: threadID}))
-	if len(resumed.HeldUserMessages) != 2 {
+	if len(resumed.HeldUserMessages) != 1 || resumed.HeldUserMessages[0].ID != "queue-1" {
 		t.Fatalf("resumed held = %+v", resumed.HeldUserMessages)
 	}
-	for _, entry := range resumed.HeldUserMessages {
-		assertContentPartsWire(t, entry.ContentParts, responseSelectionFixture)
-	}
+	assertContentPartsWire(t, resumed.HeldUserMessages[0].ContentParts, responseSelectionFixture)
 	delete(params, "client_id")
 	params["queue_id"] = "queue-1"
 	delete(params, "expected_turn_id")
@@ -259,16 +281,23 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundQueue, foundSteer := false, false
 	for _, msg := range history {
-		if msg.ClientID == "queue-1" {
+		switch msg.ClientID {
+		case "queue-1":
 			if msg.Content != prompt {
 				t.Fatalf("released provider text = %q", msg.Content)
 			}
 			assertContentPartsWire(t, msg.ContentParts, responseSelectionFixture)
-			return
+			foundQueue = true
+		case "steer-1":
+			assertContentPartsWire(t, msg.ContentParts, responseSelectionFixture)
+			foundSteer = true
 		}
 	}
-	t.Fatal("released selection absent from durable history")
+	if !foundQueue || !foundSteer {
+		t.Fatalf("durable selections missing: queue=%t steer=%t", foundQueue, foundSteer)
+	}
 }
 
 func TestUserMessageFromPromptRejectsMismatchedContentParts(t *testing.T) {

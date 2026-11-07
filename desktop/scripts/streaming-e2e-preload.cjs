@@ -43,33 +43,14 @@ function mockThread(id, source) {
 
 // Opt-in sidebar overflow for the scroll-fade regression using the same bridge.
 const sidebarSeedTime = Date.now();
-for (let index = 0; index < Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0); index++) {
+const sidebarSeedCount = new URLSearchParams(location.search).has("emptyRecent")
+  ? 0 : Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0);
+for (let index = 0; index < sidebarSeedCount; index++) {
   const thread = mockThread(`sidebar-fade-${index}`);
   thread.preview = `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`;
   thread.created_at = thread.updated_at = new Date(sidebarSeedTime - index * 1000).toISOString();
   threads.set(thread.id, thread);
 }
-
-if (process.env.WUU_PROJECT_PANEL_E2E) {
-  for (const [id, preview, source, projectID] of [
-    ["project-a", "Project Alpha", "project"],
-    ["project-b", "Project Beta", "project"],
-    ["worker-a", "Alpha worker", "project-session", "project-a"],
-    ["worker-b", "Beta worker", "project-session", "project-b"],
-    ["ordinary", "Ordinary conversation"],
-  ]) {
-    threads.set(id, { ...mockThread(id, source), preview, project_id: projectID });
-  }
-}
-
-const projectWorks = new Map(["a", "b"].map((suffix) => ["project-" + suffix, {
-  id: "work-" + suffix, project_id: "project-" + suffix, version: 1, revision: 1,
-  title: suffix === "a" ? "Compatible pagination with existing callers" : "Review migration behavior",
-  brief: "Preserve the public API and leave database indexes unchanged.",
-  acceptance: "Existing callers pass the compatibility suite.", authority: "Local edits and tests only.",
-  phase: "planning", lead_id: "worker-" + suffix, workspace: "worktree", usage: [],
-  lead_dispatch: { session_id: "worker-" + suffix, state: "running", delivery_state: "consumed", turn_id: "brief-turn" },
-}]));
 
 // Only the workspace-tab scenario enables these sanitized in-memory resources.
 const workspaceDemoFiles = {
@@ -93,18 +74,18 @@ function workspaceDemoPath(path) {
   return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
 }
 
+async function catalogThreads() {
+  if (process.env.WUU_RECENT_CATALOG_E2E) {
+    const catalog = await ipcRenderer.invoke("test:recent-catalog");
+    if (catalog) { threads.clear(); for (const thread of catalog) threads.set(thread.id, thread); }
+  }
+  return [...threads.values()];
+}
+
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   acquireArtifactSource: input => ipcRenderer.invoke("test:artifact-acquire",input),
   releaseArtifactSource: id => ipcRenderer.invoke("test:artifact-release",id),
   initialLanguagePreference: process.env.WUU_STREAM_E2E_LOCALE,
-  projectWork: async (params) => {
-    const work = projectWorks.get(params.project_id);
-    if (params.operation === "list") return { project_id: params.project_id, works: work ? [work] : [], usage: [] };
-    if (!work || params.revision !== work.revision) throw new Error("stale work revision");
-    if (params.operation === "stop") { work.phase = "stopped"; work.revision++; }
-    if (params.operation === "resume") { work.phase = "planning"; work.revision++; }
-    return { ...work };
-  },
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
@@ -155,7 +136,6 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
         description: "An installed extension exposed through the public workspace tool contract.",
       }] },
     }] } : {}),
-    features: { project_agent: Boolean(process.env.WUU_PROJECT_PANEL_E2E) },
     provider: "e2e",
     model: "mock-stream",
     workspace_root: cwd,
@@ -231,8 +211,8 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     threads.set(threadId, thread);
     return { thread };
   },
-  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
-  listAllThreads: async () => ({ threads: [...threads.values()] }),
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ? await catalogThreads() : [] }),
+  listAllThreads: async () => ({ threads: await catalogThreads() }),
   getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {

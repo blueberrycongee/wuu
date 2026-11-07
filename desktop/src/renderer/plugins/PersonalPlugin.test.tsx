@@ -40,7 +40,7 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
     if (method === "agents.proposals") return { proposals: [] };
     if (method === "tasks.list") return { tasks: fixtures.tasks ?? [{ task_id: "t1", agent_id: "a-travel", title: "Plan a trip", goal: "Find a route", state: "running", revision: 3, requirements_revision: 1 }] };
     if (method === "memory.query") return { records: fixtures.memories ?? [] };
-    if (method === "settings.get") return { settings: { revision: 1, notifications: true, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" } } };
+    if (method === "model.get") return { provider: "fixture", model: "fixture-model" };
     return (await mutate?.(method, input)) ?? {};
   });
   // Personal hides search; search-contract fixtures opt into the shared surface without changing product defaults.
@@ -133,38 +133,30 @@ it("keeps independent reply targets retryable with their drafts and files across
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Please adjust this");
   expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')?.textContent).toContain("reply.txt");
 });
-it("keeps a newer task reply draft isolated when an earlier message reply settles", async () => {
+it("keeps a newer message reply draft isolated when an earlier message reply settles", async () => {
   let finish!: (value: unknown) => void;
   const pending = new Promise(resolve => { finish = resolve; });
-  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  const ui = await mount(async method => method === "agents.send" ? pending : {}, main, [{ seq: 1, role: "assistant", content: "First topic" }, { seq: 2, role: "assistant", content: "Second topic" }]);
   await ui.edit("Main draft");
   await ui.click('[data-action="reply-message"]'); await ui.edit("First request"); await ui.click('.composer-send-button');
-  await ui.click('[data-action="close-replies"]'); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]'); await ui.edit("New task draft");
+  await ui.click('[data-action="close-replies"]'); await act(async () => ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1].click()); await ui.edit("New message draft");
   await act(async () => { finish({ state: "accepted" }); await pending; });
-  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("New task draft");
-  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain("Plan a trip");
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("New message draft");
+  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain("Second topic");
   await ui.click('.composer-send-button');
   const sends = ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send");
-  expect((sends[1][0].input as any).relation).toEqual({ metadata: { task_links: [{ task_id: "t1", requirements_revision: 1 }] } });
+  expect((sends[1][0].input as any).relation).toEqual({ reply_to: { session_id: "s-private", seq: 2 } });
   await ui.click('[data-action="close-replies"]'); expect(ui.container.querySelector('textarea')!.value).toBe("Main draft");
-});
-it("shows a verified task source once while replying to the current task revision", async () => {
-  const task = { task_id: "t1", title: "Task A", goal: "Current requirements", state: "running", revision: 4, requirements_revision: 2, source: { session_id: "s-private", message_seq: 1, message_binding: "host_turn" }, execution: { session_id: "execution-two" } };
-  const ui = await mount(undefined, main, [{ seq: 1, role: "user", content: "Original request", relation: { metadata: { task_links: [{ task_id: "t1", requirements_revision: 1 }] } } }], { tasks: [task] });
-  await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]');
-  expect(ui.container.querySelectorAll('.mosaic-replies [data-role="user"]')).toHaveLength(1);
-  await ui.edit("Update the task"); await ui.click('.composer-send-button');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { metadata: { task_links: [{ task_id: "t1", requirements_revision: 2, execution_session_id: "execution-two" }] } } }) }));
 });
 it("does not surface an earlier reply failure in a different target's panel", async () => {
   let rejectSend!: (error: Error) => void;
   const pending = new Promise((_resolve, reject) => { rejectSend = reject; });
-  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  const ui = await mount(async method => method === "agents.send" ? pending : {}, main, [{ seq: 1, role: "assistant", content: "First topic" }, { seq: 2, role: "assistant", content: "Second topic" }]);
   await ui.click('[data-action="reply-message"]'); await ui.edit("First request"); await ui.click('.composer-send-button');
-  await ui.click('[data-action="close-replies"]'); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]'); await ui.edit("Task draft");
+  await ui.click('[data-action="close-replies"]'); await act(async () => ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1].click()); await ui.edit("Second reply draft");
   await act(async () => { rejectSend(new Error("Only first reply failed")); await pending.catch(() => {}); });
   expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).toBeNull();
-  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Task draft");
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Second reply draft");
   await ui.click('[data-action="close-replies"]'); await ui.click('[data-action="reply-message"]');
   expect(ui.container.querySelector('.mosaic-replies [data-action="retry-message"]')).not.toBeNull();
 });
@@ -246,12 +238,6 @@ it("offers live replies only after durable identity and carries terminal task re
   await ui.edit("Follow up"); await ui.click('.composer-send-button');
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 9 }, ...relation } }) }));
 });
-it("stops a task with its reviewed revision without stopping the agent's current reply", async () => {
-  const ui = await mount(); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="stop-task"]');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "tasks.stop", input: { task_id: "t1", expected_revision: 3 } }));
-  expect(ui.invoke.mock.calls.some(([request]) => request.method === "agents.stop_reply")).toBe(false);
-});
-
 const fileDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 async function chooseFiles(container: HTMLElement, files: File[]) {
   const input = (container.querySelector('.mosaic-replies') ?? container).querySelector<HTMLInputElement>('input[type="file"]'); expect(input).not.toBeNull();
@@ -359,11 +345,6 @@ it("searches only the main conversation and marks partial history results withou
   expect(document.querySelector('[data-history-search-partial]')).not.toBeNull();
   expect(document.body.textContent).not.toContain("Hidden process data"); expect(document.body.textContent).not.toContain("private-search-session");
   await ui.click('[data-action="close-history-search"]', document); expect(document.body.textContent).not.toContain("Remembered Kyoto");
-});
-it("saves reversible notification grouping without altering reply or quiet-hours settings", async () => {
-  const ui=await mount(async method=>method==="settings.update"?{settings:{revision:2,notifications:true,notification_batch_seconds:300,quiet_hours:{enabled:false,start:"22:00",end:"08:00",timezone:"UTC"}}}:{});
-  await ui.settings(); await changeField(ui.container,'[data-notification-batch]',"300"); await ui.click('[data-action="save-notifications"]');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"settings.update",input:{expected_revision:1,notifications:true,notification_batch_seconds:300,quiet_hours:{enabled:false,start:"22:00",end:"08:00",timezone:"UTC"}}}));
 });
 it("pages timestamp-bounded agent history and reads the original hit by exact owned sequence", async () => {
   const ui = await mount(async (method, input) => method === "agents.search" ? input.cursor ? { matches: [{ seq: 21, role: "user", excerpt: "Kyoto legacy" }], has_more: false } : { matches: [{ seq: 20, role: "assistant", excerpt: "Kyoto excerpt", at: "2026-10-18T09:00:00Z" }], has_more: true, next_cursor: "page-two" } : {}, main,
@@ -1070,18 +1051,15 @@ it("keeps newer quoted drafts and files separate from accepted sends when refres
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Newer reply draft");
 });
 
-it("recovers main, message and task drafts after a fresh plugin generation without sending", async () => {
+it("recovers main and message drafts after a fresh plugin generation without sending", async () => {
   const first = await mount();
   await first.edit("Main recovery");
   await first.click('[data-action="reply-message"]'); await first.edit("Message recovery");
-  await first.click('[data-action="close-replies"]'); await first.click('[data-task-id="t1"]');
-  await first.click('[data-action="reply-task"]'); await first.edit("Task recovery"); first.dispose();
+  first.dispose();
   const next = await mount();
   expect(next.container.querySelector('textarea')!.value).toBe("Main recovery");
   await next.click('[data-action="reply-message"]');
   expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Message recovery");
-  await next.click('[data-action="close-replies"]'); await next.click('[data-task-id="t1"]'); await next.click('[data-action="reply-task"]');
-  expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Task recovery");
   expect(next.invoke.mock.calls.some(([r]) => r.method === "agents.send")).toBe(false);
   next.dispose();
   const other = await mount(undefined, { ...main, main_session_id: "other-session" });
@@ -1298,19 +1276,6 @@ it("restores only related peer Held inputs in a reply and deduplicates history a
  expect(panel().querySelector('[data-receipt-id="receipt-own"]')).toHaveProperty("dataset.receiptState","completed");
 });
 
-it("limits task reply pending receipts to the current task revision and execution", async () => {
- const link={task_id:"t1",requirements_revision:2,execution_session_id:"run-two"};
- const task={task_id:"t1",title:"Current task",goal:"Review",state:"running",revision:3,requirements_revision:2,execution:{session_id:"run-two"}};
- const rows=[{id:"current",link},{id:"old-revision",link:{...link,requirements_revision:1}},{id:"old-execution",link:{...link,execution_session_id:"run-one"}},{id:"other-task",link:{...link,task_id:"t2"}}];
- const ui=await mount(undefined,main,[],{tasks:[task],open:async()=>({agent:main,session:{state:"completed"},pending_inputs:rows.map(({id,link})=>({receipt:receiptFixture(id),prompt:id,relation:{metadata:{task_links:[link]}}}))})});
- await ui.click('[data-task-id="t1"]');await ui.click('[data-action="reply-task"]');
- const panel=ui.container.querySelector('.mosaic-replies')!;
- expect(panel.querySelector('[data-receipt-id="receipt-current"]')).not.toBeNull();
- expect(panel.querySelectorAll('[data-receipt-id]')).toHaveLength(1);
- expect(panel.querySelector('[data-action="retry-message"]')).not.toBeNull();
- expect(panel.querySelector('[data-action="cancel-accepted-input"]')).toBeNull();
-});
-
 it("does not let uncertain draft status failure suppress a peer terminal state or history", async () => {
  const peer=receiptFixture("peer");let refresh=false;
  const ui=await mount(async(method,input)=>{
@@ -1482,68 +1447,18 @@ it("recovers the GenUI error boundary after a corrected same-ID snapshot", async
 
 it("mounts connection and review controls in existing preferences without implying configured authority", async () => {
   const view = await mount(async method => {
-    if (method === "connections.status") return { ok: true, value: { product_domain: "personal", provider: "google-calendar", user_space_id: "local", state: "unavailable", selected_calendars: [], error_code: "oauth_client_not_configured" } };
+    if (method === "connectors.list") return { ok: true, value: { connections: [] } };
+    if (method === "connectors.actions") return { ok: true, value: { actions: [] } };
     if (method === "review.list") return { ok: true, value: { schema: "personal-review.v1", kind: "unavailable", reason: "Production authorization resolver is unavailable" } };
+    if (method === "review.rules") return { ok: true, value: { schema: "personal-review-rules.v1", revision: 1, rules: [] } };
   });
   await view.settings();
   expect(view.container.querySelector('[data-personal-connections]')).not.toBeNull();
   expect(view.container.querySelector('.personal-review')).not.toBeNull();
   expect(view.container.textContent).toContain("Production authorization resolver is unavailable");
   expect(view.container.querySelector('[data-review-choice]')).toBeNull();
-  expect(view.container.querySelector('[data-action="save-notifications"]')).not.toBeNull();
-});
-
-it("keeps the Calendar CAS error and stale result visible through the shipped settings bridge", async () => {
-  let calls=0;
-  const connection={product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"account",connection_id:"connection",selection_revision:"1",state:"connected",selected_calendars:["primary"]};
-  const view=await mount(async(method,input)=>{
-    if(method==="connections.status")return {ok:true,value:connection};
-    if(method==="connections.calendars")return {ok:true,value:[{id:"primary",summary:"Synthetic",timeZone:"UTC"}]};
-    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
-    if(method==="connections.agenda")return {state:++calls===1?"ready":"error",freshness:calls===1?"fresh":"stale",error_code:calls===1?undefined:"provider_unavailable",read_only:true,source:{...(input as object),provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"account",connection_id:"connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"event",status:"confirmed",summary:"Previously fetched appointment",all_day:true}],cancelled_events:[]};
-  });
-  await view.settings();
-  const ask=async()=>{await act(async()=>{view.container.querySelector('form.gcal-agenda-form')!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));await new Promise(resolve=>setTimeout(resolve,0));});};
-  await ask();expect(view.container.textContent).toContain("Previously fetched appointment");
-  await ask();expect(view.container.textContent).toContain("Previously fetched appointment");
-  expect(view.container.querySelector('.gcal-notice[role="alert"]')?.textContent).toContain("过期");
-});
-
-it("keeps old authorization diagnostics separate from the new Calendar connection in shipped settings", async () => {
-  const view=await mount(async method=>{
-    if(method==="connections.status")return {ok:true,value:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"new-account",connection_id:"new-connection",selection_revision:"2",state:"connected",selected_calendars:["new-calendar"],authorization_diagnostics:[{attempt_id:"old-attempt",error_code:"credential_cleanup_failed"}]}};
-    if(method==="connections.calendars")return {ok:true,value:[{id:"new-calendar",summary:"Current calendar",timeZone:"UTC"}]};
-    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
-  });
-  await view.settings();
-  expect(view.container.querySelector('form.gcal-agenda-form')).not.toBeNull();
-  expect(view.container.textContent).toContain("Current calendar");
-  const diagnostic=view.container.querySelector('[data-calendar-attempt-diagnostic="old-attempt"]');
-  expect(diagnostic).not.toBeNull();
-  expect(diagnostic?.getAttribute('role')).toBe('alert');
-  expect(view.container.querySelector('.gcal-connection [role="alert"]')).toBeNull();
-});
-
-it("keeps the current Calendar grant usable when an older authorization promise fails cleanup", async () => {
-  // This test leaves both lifetime signals live; jsdom lacks Chromium's any().
-  const previousAny=Object.getOwnPropertyDescriptor(AbortSignal,'any');
-  Object.defineProperty(AbortSignal,'any',{configurable:true,value:(signals:AbortSignal[])=>signals[0]});
-  cleanups.push(()=>{if(previousAny)Object.defineProperty(AbortSignal,'any',previousAny);else Reflect.deleteProperty(AbortSignal,'any');});
-  let connected=false,finish: ((value:unknown)=>void)|undefined;
-  const view=await mount(async method=>{
-    if(method==="connections.status")return {ok:true,value:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"new-account",connection_id:"new-connection",selection_revision:"2",state:connected?"connected":"unconnected",selected_calendars:connected?["new-calendar"]:[]}};
-    if(method==="connections.calendars")return {ok:true,value:[{id:"new-calendar",summary:"Current calendar",timeZone:"UTC"}]};
-    if(method==="connections.start")return new Promise(resolve=>{finish=resolve;});
-    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
-  });
-  await view.settings();
-  await act(async()=>{Array.from(view.container.querySelectorAll('button')).find(button=>button.textContent==='连接 Google Calendar')!.click();});
-  expect(finish).toBeDefined();
-  await act(async()=>{connected=true;finish!({ok:false,error:{code:'credential_cleanup_failed'}});});
-  expect(view.container.querySelector('form.gcal-agenda-form')).not.toBeNull();
-  const notices=Array.from(view.container.querySelectorAll('.gcal-notice[role="alert"]'));
-  expect(notices.length).toBeGreaterThan(0);
-  expect(notices.every(notice=>!notice.textContent?.includes('连接已停用'))).toBe(true);
+  expect(view.container.querySelector('[data-connector-approve]')).toBeNull();
+  expect(view.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "connectors.list" }));
 });
 
 it("freezes current GenUI input for ordinary chat before autosync finishes and across uncertain retries", async () => {
@@ -1671,4 +1586,25 @@ it("keeps an interrupted shared UI preview read-only and ignores late deltas", a
   expect(captured.host.actions).toEqual([]);
   await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-stop", item_id: "item", delta: "late" });
   expect(captured.metadata.toolInput.argumentsText).toBe("initial");
+});
+
+it("hydrates navigation avatars after activation and retains prior artwork during reload", async () => {
+  let finish!: (value: unknown) => void;
+  let response = Promise.resolve<unknown>({ agents: [{ ...main, avatar_key: "mascot-v1:diamond:leaf:150" }] });
+  const host = new PluginHost({ react: React, invokeRuntime: async () => response });
+  cleanups.push(() => host.unload("personal"));
+  const install = (generation: string) => host.activateGeneration({ pluginId: "personal", generation,
+    contributions: { navigation: [{ id: "personal", view: "personal.home", title: "twin", icon: { name: "mascot" } }] }, register: activate });
+  await install("one");
+  await vi.waitFor(() => expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:diamond:leaf:150"));
+  response = new Promise(resolve => { finish = resolve; });
+  await install("two");
+  expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:diamond:leaf:150");
+  finish({ agents: [{ ...main, revision: 3, avatar_key: "mascot-v1:capsule:beanie:288" }] });
+  await vi.waitFor(() => expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:capsule:beanie:288"));
+  let fail!: (reason: Error) => void;
+  response = new Promise((_, reject) => { fail = reject; });
+  await install("three");
+  await act(async () => { fail(new Error("temporarily offline")); await response.catch(() => {}); });
+  expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:capsule:beanie:288");
 });

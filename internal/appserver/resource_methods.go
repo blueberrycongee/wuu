@@ -5,6 +5,8 @@ import "sort"
 // Resource declarations are explicit protocol registration. A new method must
 // declare its scope before non-owner callers can reach its handler.
 var resourceMethods = map[string]string{
+	"thread/recovery/list":               "global",
+	"thread/recovery/dismiss":            "global",
 	MethodStateInspectionsList:           "global",
 	MethodStateInspectionsReconcile:      "global",
 	"thread/artifact/cancel":             "session",
@@ -48,6 +50,7 @@ var resourceMethods = map[string]string{
 	"mcp/auth/start":                     "global",
 	"mcp/auth/status":                    "global",
 	"mcp/configure":                      "global",
+	"mcp/identity/refresh":               "global",
 	"mcp/connect":                        "global",
 	"mcp/definition/read":                "global",
 	"mcp/disconnect":                     "global",
@@ -77,8 +80,6 @@ var resourceMethods = map[string]string{
 	"process/resize":                     "session",
 	"process/stop":                       "session",
 	"process/write":                      "session",
-	"project/session":                    "session",
-	"project/work":                       "session",
 	"run/interrupt":                      "global",
 	"run/start":                          "session",
 	"session/share/attachment/read":      "session-share",
@@ -108,8 +109,6 @@ var resourceMethods = map[string]string{
 	"thread/compact/start":               "session",
 	"thread/content/read":                "session",
 	"thread/context-composition":         "session",
-	"thread/control/return":              "session",
-	"thread/control/take":                "session",
 	"thread/delete":                      "session",
 	"thread/edit-message":                "session",
 	"thread/fork":                        "session",

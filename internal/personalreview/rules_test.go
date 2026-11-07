@@ -50,7 +50,7 @@ func TestRulesPersistExactScopeAndOwnerChoices(t *testing.T) {
 			}
 			for _, test := range []struct{ space, owner, op, version, key string }{
 				{"space2", "owner", "bash", "1", scope.Key}, {"space", "other", "bash", "1", scope.Key},
-				{"space", "owner", "bash", "2", scope.Key}, {"space", "owner", "process", "1", scope.Key},
+				{"space", "owner", "bash", "2", scope.Key}, {"space", "owner", "process_start", "1", scope.Key},
 				{"space", "owner", "bash", "1", scope.Key + " ; additional operation"},
 			} {
 				got, err := store.MatchRules(ctx, test.space, test.owner, test.op, test.version, RuleScope{Key: test.key})

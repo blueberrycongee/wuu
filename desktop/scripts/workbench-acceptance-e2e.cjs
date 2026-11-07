@@ -208,7 +208,7 @@ const activePane = '.cached-conversation-pane[data-active="true"]';
 const composer = '.conversation-pane .composer textarea';
 const scroller = '.conversation-pane > .scroll-region';
 const conversations = '[data-wuu-component="conversations-section"]';
-const settings = 'button[role="menuitem"][data-settings-page="providers"]';
+const settings = 'button[data-settings-entry="settings"]';
 const plugins = '.sidebar-ribbon button[aria-label="Extensions"]';
 const leftToggle = '.section-sidebar-toggle';
 const rightToggle = '.shell-right-sidebar-toggle';
@@ -297,17 +297,13 @@ async function click(target, label, evidence = true) {
     assert.equal(moved.status, 0, moved.stderr || String(moved.error));
     report.actions.push({ label: `${label}-leave-rail`, atMs: Date.now() - started });
     await settle();
-    const account = win.contentView.children.find(view => view.webContents?.getURL() === 'wuu-chrome://ui/chrome-overlay.html?surface=account');
-    const menuRetains = account?.getVisible() || await evaluate(() => [...document.querySelectorAll('.sidebar-account-menu[role=menu]')].some(node => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== 'hidden'));
-    if (!menuRetains) {
-      await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded !== 'true', undefined, 'Ordinary pointer navigation leaves the hover rail', 4000);
-      const deadline = Date.now() + 4000;
-      while (win.contentView.children.some(view => view.webContents?.getURL() === 'wuu-chrome://ui/chrome-overlay.html?surface=ribbon' && view.getVisible())) {
-        if (Date.now() >= deadline) throw new Error('Native hover rail remains visible after pointer leave');
-        await delay(40);
-      }
-      await settle();
+    await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded !== 'true', undefined, 'Ordinary pointer navigation leaves the hover rail', 4000);
+    const deadline = Date.now() + 4000;
+    while (win.contentView.children.some(view => view.webContents?.getURL() === 'wuu-chrome://ui/chrome-overlay.html?surface=ribbon' && view.getVisible())) {
+      if (Date.now() >= deadline) throw new Error('Native hover rail remains visible after pointer leave');
+      await delay(40);
     }
+    await settle();
   }
 }
 async function fill(target, text) {
@@ -385,7 +381,6 @@ async function goConversations() {
   await waitFor(() => !document.querySelector('.settings-workbench-layer') && !document.querySelector('.catalog-section-pane:not([hidden])'));
 }
 async function goSettings(pageLabel) {
-  await click('.sidebar-account-trigger', 'account-menu');
   await click(settings, 'settings');
   await waitFor(() => document.querySelector('.settings-embedded'));
   if (pageLabel) await click(pick('.settings-nav-item', pageLabel), `settings-${pageLabel}`);
@@ -750,16 +745,18 @@ async function run() {
     return { labels, pages };
   });
 
-  await test('runtime edit commits when leaving through ribbon', async () => {
-    await goSettings('Built-in agent'); await dockSidebar();
-    const field = '[data-testid="settings-advanced"] input';
-    await fill(field, '73');
-    await click(conversations, 'runtime-blur-save-via-ribbon');
+  await test('commit attribution persists when leaving through ribbon', async () => {
+    await goSettings('General'); await dockSidebar();
+    const field = '[data-testid="settings-git-attribution"]';
+    const previous = await evaluate(selector => document.querySelector(selector).getAttribute('aria-checked'), field);
+    await click(field, 'general-attribution-save');
+    await waitFor(({ field, previous }) => document.querySelector(field)?.getAttribute('aria-checked') !== previous, { field, previous });
+    await click(conversations, 'general-leave-via-ribbon');
     await waitFor(() => !document.querySelector('.settings-workbench-layer'));
-    await goSettings('Built-in agent');
-    await waitFor(selector => document.querySelector(selector)?.value === '73', field, 'runtime setting persisted after ribbon navigation');
-    assert.ok(rpc.some(r => r.channel === 'wuu:config-advanced-update' && r.completed), 'Real core settings update completed');
-    await capture('runtime-persisted');
+    await goSettings('General');
+    await waitFor(({ field, previous }) => document.querySelector(field)?.getAttribute('aria-checked') !== previous, { field, previous });
+    assert.ok(rpc.some(r => r.channel === 'wuu:config-general-update' && r.completed), 'Real core settings update completed');
+    await capture('general-attribution-persisted');
   });
 
   await test('provider connect validation and inline cancellation', async () => {

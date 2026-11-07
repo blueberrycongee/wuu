@@ -149,6 +149,10 @@ type StreamRunner struct {
 	// ToolWaitInterrupt supplies a turn-scoped signal to wait-only tools that
 	// can safely return while leaving their underlying work alive.
 	ToolWaitInterrupt func() <-chan struct{}
+	// ModelInterrupt supplies a turn-scoped signal that closes when newly
+	// accepted user input should stop the active model stream. The loop keeps
+	// the visible partial answer and continues with that input in the same turn.
+	ModelInterrupt func() <-chan struct{}
 
 	// BeforeStep, when set, is called at the start of each model
 	// round right before building the provider request. Any returned
@@ -550,6 +554,8 @@ func (r *StreamRunner) pendingToolResultMessages(ctx context.Context, history []
 			calls = append(calls, providers.ToolCall{
 				ID: invocation.ProviderCallID, Name: invocation.ToolName,
 				Kind: invocation.ToolKind, Arguments: invocation.Arguments,
+				ThoughtSignature:     invocation.ThoughtSignature,
+				ProviderItemProvider: invocation.ProviderItemProvider, ProviderItemModel: invocation.ProviderItemModel,
 			})
 			end++
 		}
@@ -1159,6 +1165,9 @@ type streamStep struct {
 	ownToolRuntime          func(*TurnToolRuntime)
 	admitStreamToolCall     func(providers.ToolCall) error
 	streamToolAdmission     func(context.Context, providers.ToolCall) (bool, error)
+	// modelInterrupt closes when accepted user input should stop this model
+	// round. Only the transport is cancelled; the loop owns what happens next.
+	modelInterrupt func() <-chan struct{}
 }
 
 // NewStreamStep returns the shared stream-first model step used by agent loops.
@@ -1174,6 +1183,27 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	req, err = providers.EnsureInferenceExecutionContext(ctx, req, providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)
 	if err != nil {
 		return StepResult{}, err
+	}
+	parentCtx := ctx
+	var preempted atomic.Bool
+	if s.modelInterrupt != nil {
+		if interrupt := s.modelInterrupt(); interrupt != nil {
+			stepCtx, cancelStep := context.WithCancel(ctx)
+			stopWatch := make(chan struct{})
+			defer func() {
+				close(stopWatch)
+				cancelStep()
+			}()
+			go func() {
+				select {
+				case <-interrupt:
+					preempted.Store(true)
+					cancelStep()
+				case <-stopWatch:
+				}
+			}()
+			ctx = stepCtx
+		}
 	}
 	var (
 		contentBuf        strings.Builder
@@ -1316,7 +1346,8 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			ToolRuntime:       asToolBatchRuntime(partialToolRuntime),
 			Usage:             usage,
 		}
-		if journalErr := req.Execution.Complete(outcome, failure); journalErr != nil {
+		journalErr := req.Execution.Complete(outcome, failure)
+		if journalErr != nil {
 			combined := errors.Join(err, fmt.Errorf("complete failed inference operation: %w", journalErr))
 			var recovery *providers.StreamRecoveryError
 			if errors.As(err, &recovery) {
@@ -1325,6 +1356,15 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 				combined = &providers.StreamRecoveryError{Cause: combined, Recovery: info}
 			}
 			err = combined
+		}
+		if preempted.Load() && parentCtx.Err() == nil && journalErr == nil && failure.Category == providers.FailureCanceled {
+			// The user's new input owns the next round. Close the visible item at
+			// this point without publishing a transport failure card or consuming
+			// the turn's recovery budget.
+			if s.onEvent != nil {
+				s.onEvent(providers.StreamEvent{Type: providers.EventModelPreempted})
+			}
+			return partial, ErrModelPreempted
 		}
 		// Let the loop persist complete items and decide whether to resume.
 		// Publishing an error here would leave a failure card on a recovered turn.
@@ -1377,8 +1417,9 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		fbToolCalls := make([]providers.ToolCall, len(resp.ToolCalls))
 		copy(fbToolCalls, resp.ToolCalls)
 		for i := range fbToolCalls {
-			if strings.TrimSpace(fbToolCalls[i].ProviderItemID) != "" {
+			if strings.TrimSpace(fbToolCalls[i].ProviderItemID) != "" || fbToolCalls[i].ThoughtSignature != "" {
 				fbToolCalls[i].ProviderItemProvider = req.Provider
+				fbToolCalls[i].ProviderItemModel = req.Model
 			}
 		}
 		enrichToolCallsDisplay(s.tools, fbToolCalls)
@@ -1461,7 +1502,7 @@ func providerNameForNativeState(providerName, providerItemID, reasoningContent s
 	hasNativeState := strings.TrimSpace(providerItemID) != "" || strings.TrimSpace(reasoningContent) != "" || len(reasoningBlocks) > 0
 	if !hasNativeState {
 		for _, call := range toolCalls {
-			if strings.TrimSpace(call.ProviderItemID) != "" {
+			if strings.TrimSpace(call.ProviderItemID) != "" || call.ThoughtSignature != "" {
 				hasNativeState = true
 				break
 			}
@@ -1719,7 +1760,7 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventToolUseStart:
 				if event.ToolCall != nil {
-					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" {
+					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" || event.ToolCall.ThoughtSignature != "" {
 						event.ToolCall.ProviderItemProvider = req.Provider
 						event.ToolCall.ProviderItemModel = req.Model
 					}
@@ -1729,6 +1770,7 @@ func (s *streamStep) runReliableStream(
 						ProviderItemID:       event.ToolCall.ProviderItemID,
 						ProviderItemProvider: event.ToolCall.ProviderItemProvider,
 						ProviderItemModel:    event.ToolCall.ProviderItemModel,
+						ThoughtSignature:     event.ToolCall.ThoughtSignature,
 						Name:                 event.ToolCall.Name,
 						Arguments:            event.ToolCall.Arguments,
 						Kind:                 event.ToolCall.Kind,
@@ -1756,17 +1798,20 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventToolUseEnd:
 				if event.ToolCall != nil {
-					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" {
+					if strings.TrimSpace(event.ToolCall.ProviderItemID) != "" || event.ToolCall.ThoughtSignature != "" {
 						event.ToolCall.ProviderItemProvider = req.Provider
 						event.ToolCall.ProviderItemModel = req.Model
 					}
 					toolCall := enrichToolCallDisplay(s.tools, *event.ToolCall)
 					for _, tc := range pendingTools {
 						if tc.ID == toolCall.ID {
-							if strings.TrimSpace(toolCall.ProviderItemID) != "" {
+							if strings.TrimSpace(toolCall.ProviderItemID) != "" || toolCall.ThoughtSignature != "" {
 								tc.ProviderItemID = toolCall.ProviderItemID
 								tc.ProviderItemProvider = toolCall.ProviderItemProvider
 								tc.ProviderItemModel = toolCall.ProviderItemModel
+							}
+							if toolCall.ThoughtSignature != "" {
+								tc.ThoughtSignature = toolCall.ThoughtSignature
 							}
 							if strings.TrimSpace(toolCall.Name) != "" {
 								tc.Name = toolCall.Name

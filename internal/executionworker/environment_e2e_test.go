@@ -121,7 +121,7 @@ func testEnvironmentEndToEnd(t *testing.T, profile executionenv.Profile) {
 		t.Fatalf("process panel: %v %+v", err, records)
 	}
 	args, _ := json.Marshal(map[string]string{"action": "stop", "process_id": id})
-	run("process", string(args), "standard")
+	run("bash", string(args), "standard")
 
 	code, err := environment.RunCode(ctx, executionenv.CodeRequest{Actor: "a", PermissionMode: "standard", Program: codemode.RunRequest{
 		Code:  `await tools.write_file({path:"program.txt",content:"program output"}); return await tools.read_file({path:"marker.txt"});`,

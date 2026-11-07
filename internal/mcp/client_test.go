@@ -358,3 +358,53 @@ func (t *scriptedTransport) receiveCount() int {
 	defer t.mu.Unlock()
 	return t.receiveCalls
 }
+
+// Retirement closes admission immediately but lets an accepted request finish.
+func TestClientRetirementDrainsAcceptedCall(t *testing.T) {
+	transport := newScriptedTransport()
+	signal := &sentSignalTransport{Transport: transport, method: "tools/call", sent: make(chan struct{})}
+	client := &Client{name: "docs", transport: signal, inFlight: newInFlight()}
+	client.readLoop = newReadLoop(signal, client.inFlight, client.handleNotification, client.handleRequest, client.handleReadLoopExit)
+	client.readLoop.Start()
+	t.Cleanup(func() { _ = client.Close() })
+	done := make(chan error, 1)
+	go func() { _, err := client.CallTool(context.Background(), "slow", nil); done <- err }()
+	select {
+	case <-signal.sent:
+	case <-time.After(time.Second):
+		t.Fatal("call never started")
+	}
+	if err := client.retire(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CallTool(context.Background(), "later", nil); !errors.Is(err, ErrServerRevoked) {
+		t.Fatalf("new call admitted: %v", err)
+	}
+	select {
+	case <-transport.closed:
+		t.Fatal("accepted call was interrupted")
+	default:
+	}
+	transport.mu.Lock()
+	var id int64
+	for _, req := range transport.sent {
+		if req.Method == "tools/call" {
+			id = req.ID
+		}
+	}
+	transport.mu.Unlock()
+	transport.notify(Response{JSONRPC: "2.0", ID: id, Result: json.RawMessage(`{"content":[]}`)})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("accepted call did not finish")
+	}
+	select {
+	case <-transport.closed:
+	case <-time.After(time.Second):
+		t.Fatal("retired connection leaked")
+	}
+}

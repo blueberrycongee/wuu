@@ -382,7 +382,6 @@
   --composer-surface-bg: var(--surface-raised);
   --composer-textarea-disabled: var(--theme-override-color-text-muted, #6d7471);
   --composer-project-menu-icon: var(--theme-override-color-text-muted, #6b7176);
-  --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
 }
 
 .composer-wrap {
@@ -688,12 +687,12 @@
 }
 
 /* Draw the draft's keyboard ring inside the editor's clipped edge. */
-html[data-focus-modality="keyboard"] .composer-editor:has(> textarea:focus-visible)::after {
+html[data-focus-modality="keyboard"] .composer-editor:has(> :is(textarea, .composer-rich-input):focus-visible)::after {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
+html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-rich-input):focus-visible {
   outline: none;
 }
 
@@ -832,7 +831,7 @@ html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
 .composer-queue-row {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 8px;
   min-height: 36px;
   padding: 4px 8px;
@@ -867,15 +866,14 @@ html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
 
 .composer-queue-preview {
   min-width: 0;
-  overflow: hidden;
   background: transparent;
   border: 0;
   padding: 0;
   color: inherit;
   font: inherit;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
   cursor: text;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -1047,7 +1045,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding: 4px 0 8px;
 }
 
-.composer textarea {
+.composer :is(textarea, .composer-rich-input) {
   /* Keep hints at the same quiet level as aggregated tool-call summaries. */
   --placeholder-ink: var(--ink-quiet);
   display: block;
@@ -1071,15 +1069,41 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   line-height: var(--conversation-reading-line-height);
 }
 
+/* The Chinese placeholder's glyphs sit high beside the centered controls. */
+:lang(zh) .composer :is(textarea, .composer-rich-input) {
+  padding-block: calc(var(--composer-text-padding-block) + 1px)
+    calc(var(--composer-text-padding-block) - 1px);
+}
+
 /* The Plus button's hit box and one grid gap already separate it from the
  * draft. Dropping the textarea's leading inset keeps the visible icon-to-text
  * gap at one card inset instead of adding a second inset inside the field. */
-.composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+.composer-editor:has(> .composer-bar-left .composer-plus-button) > :is(textarea, .composer-rich-input) {
   padding-inline-start: 0;
 }
 
+/* Long drafts own the full row so their scrollbar follows the editor edge,
+ * rather than the inner edge of the send and dictation controls. */
+.composer-stack[data-multiline] .composer-editor:not(.is-dictating) > :is(textarea, .composer-rich-input) {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  padding-inline-start: var(--space-2);
+}
+
+.composer-stack[data-multiline] .composer-editor:not(.is-dictating) > .composer-bar-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.composer-stack[data-multiline] .composer-editor:not(.is-dictating) > .composer-input-actions {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  justify-self: end;
+  justify-content: flex-end;
+}
+
 /* Keep an empty editor's hint on one line in narrow panes. */
-.composer textarea::placeholder {
+.composer :is(textarea, .composer-rich-input)::placeholder {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -1117,7 +1141,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   box-shadow: var(--shadow-tray);
 }
 
-.composer textarea:disabled {
+.composer :is(textarea, .composer-rich-input):disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
 }
@@ -1449,10 +1473,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 /* Waiting for a draft: the same disc, muted, with its arrow still legible so
- * it reads as Send not yet available rather than an empty circle. */
+ * it reads as Send not yet available rather than an empty circle. Reset the
+ * global disabled opacity so this disc matches the voice control exactly. */
 .composer-send-button:disabled {
   cursor: default;
-  color: var(--ink-muted);
+  color: var(--ink-faint);
+  opacity: 1;
 }
 
 .composer-stop-button {
@@ -1824,14 +1850,26 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 /* The plus and slash menus are one compact card above the input: rows of a
  * symbol, the command, and one quieter piece of text on the same line. */
 .composer-context-menu.composer-plus-menu {
-  width: var(--composer-menu-width);
+  display: flex;
+  flex-direction: column;
+  width: var(--floating-menu-available-width, var(--composer-menu-width));
   max-height: min(
     360px,
     var(--floating-menu-available-height, calc(100vh - 180px))
   );
   gap: 0;
   padding: var(--menu-inset);
+  overflow: hidden;
+}
+
+/* Fade only the scrolling choices, keeping the menu surface and entrance intact. */
+.composer-menu-scroll {
+  display: grid;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: var(--scroll-fade-size, var(--menu-inset));
 }
 
 .composer-plus-menu-section {
@@ -1851,7 +1889,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   line-height: var(--line-ui);
   border-radius: var(--radius-xs);
   color: var(--ink);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 
 .composer-plus-menu button > svg {
@@ -1862,28 +1900,19 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   max-width: 100%;
 }
 
+/* In the plus and slash menus the title leads and gives way first, and the
+ * command that runs it trails at the row's end like a shortcut. */
 .composer-plus-menu button .composer-plus-menu-item-desc {
-  flex: 1 1 0%;
+  flex: 0 0 auto;
+  max-width: 50%;
   color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 
-/* In the plus menu the title leads and gives way first, and the command that
- * runs it trails at the row's end like a shortcut. */
-.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-title {
-  flex: 1 1 auto;
-}
-
-.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-desc {
-  flex: 0 0 auto;
-  max-width: 50%;
-}
-
-.composer-menu-note,
 .composer-menu-empty {
   display: grid;
   gap: 4px;
@@ -1891,15 +1920,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
-}
-
-.composer-menu-note strong {
-  color: var(--ink);
-  font-size: var(--font-menu);
-}
-
-.composer-menu-note.warning strong {
-  color: var(--composer-menu-note-warning-strong);
 }
 
 .hero-composer-wrap .composer-project-menu {
@@ -1958,13 +1978,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.branch-worktree-action {
-  display: block;
-  color: var(--ink-soft);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-regular);
 }
 
 .composer-project-menu button svg {
@@ -2347,13 +2360,13 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .composer-editor > textarea {
+  .composer-editor > :is(textarea, .composer-rich-input) {
     grid-column: 1 / -1;
     grid-row: 1;
   }
 
   /* The draft has the full row to itself once the toolbar wraps below. */
-  .composer-editor:has(> .composer-bar-left .composer-plus-button) > textarea {
+  .composer-editor:has(> .composer-bar-left .composer-plus-button) > :is(textarea, .composer-rich-input) {
     padding-inline-start: var(--space-2);
   }
 

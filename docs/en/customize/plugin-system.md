@@ -10,6 +10,8 @@ The desktop host owns windows, application state/actions, input submission, and 
 
 Bundled and external packages use the same runtime and desktop registration contracts. Bundled provenance affects discovery and trust, not the meaning of a tool, capability, or UI registration. A copied package does not become official merely by using a bundled plugin's ID.
 
+The bundled `account-connectors` package is declarative only: it supplies `mcp_servers` with the public [connector metadata](plugin-authoring.md#mcp-connector-cards), not a runtime or a private registry. The package is enabled by default, but all of its servers are disabled until explicitly connected. Disabling it stops its contributions through the ordinary plugin lifecycle.
+
 ## Authoring SDK and process contract
 
 Wuu maintains one official plugin authoring SDK: TypeScript `@wuu/plugin-sdk` in
@@ -20,6 +22,25 @@ does not provide a second official authoring SDK for those processes.
 
 The Go core remains the runtime host. `internal/sdk` is an internal facade for
 embedding the host in Wuu entry points; it is not a plugin authoring API.
+
+## Peer request cards
+
+With Peers enabled, new coordination requests appear as compact cards below the
+source turn in the default desktop conversation. A card opens the peer in the
+main conversation; the header offers a return to the source, preserving its
+unsent draft. Session-message source links also open the main conversation.
+Cards use the same spacing and corner radius as inline error notices and follow
+the UI font preference.
+
+The status belongs to the specific request, not the peer's later activity.
+Archived or missing targets are unavailable; a failed status refresh shows
+“Status unavailable”. Cards refresh while the source conversation is visible
+and are removed when Peers is disabled.
+
+This initial implementation displays requests retained by Peers: at most 64
+records, with settled requests eligible for pruning after seven days or when
+capacity is needed. Older records without a source turn ID have no card. The
+original tool results and session messages remain in conversation history.
 
 ## Bundled TypeScript runtimes
 
@@ -61,6 +82,8 @@ Package relationships do not install dependencies, enable disabled packages, or 
 Without a composition override, the product includes only packages admitted by dependency resolution. Removing or disabling an add-on leaves its required package consumers installed but inactive, with dependency diagnostics; optional and independent packages remain eligible. This does not relax explicit choices: an unavailable module or service provider selected by the user's composition still rejects preparation. Installing or enabling a consumer selected for activation also requires its dependencies to be available.
 
 App-server clients can submit related enable/disable choices together through `extension/package/update` with `{"updates":[{"id":"plugin:user:provider","action":"disable"},{"id":"plugin:user:consumer","action":"disable"}]}`. The host validates the complete selection, prepares one candidate, persists the settings with one compare-and-exchange, then activates that generation. Each entry may include `fingerprint` to reject a stale catalog choice. The array must be nonempty, contain unique package subject IDs, and use only `enable` or `disable`; top-level single-package fields cannot accompany it, even when empty. The original single-package request remains available for trust and pending-package updates. A batch does not grant trust or select dependencies automatically. For selected, trusted packages explicitly enabled by the request, required package and service dependencies must be available during preparation. Validation or preparation failure and a confirmed compare-and-exchange rejection preserve the previous settings and generation. If a write outcome is unknown, reread the configuration before deciding what to do; do not assume rollback or retry automatically. An activation failure after commit reports the committed state as described below.
+
+The runtime carries the admitted package relations into its service lifecycle graph. Matching optional package dependencies order preparation and activation before consumers and cleanup after them, without propagating provider failure. If an optional package edge would form a cycle after service binding, the host omits that ordering edge rather than rejecting the generation. `registry.introspect` reports the accepted graph in `dependencies` and omitted package relations in `dependency_issues` (`optional_missing`, `optional_version_mismatch`, or `optional_cycle`). Package versions remain separate from service major versions; optional package relationships do not grant service access.
 
 ## Runtime generations
 
@@ -270,6 +293,8 @@ Only opted-in next-step executions add `model_step` events and per-step metadata
 Continuation is additive within major 4. `settings().resume_sampling` marks an explicit request to sample after a previously completed response, so a driver must not return that response as the new execution's terminal result. A failed model round can include `completed_messages`: provider-confirmed complete items that remain valid for subsequent requests. Other partial output remains visible in history but is marked as an incomplete stream fragment and excluded from resumed model input.
 
 Model-operation failures return `failure` alongside partial assistant messages and reported usage. The SDK converts it to `DriverModelError`; native drivers receive `FailureError` with the partial `ModelRound`. Failure evidence includes origin, category, provider code, HTTP status, retry delay, context-overflow classification, and the recovery executor's stopping decision and attempt counts when available. A retryable cause does not grant a fresh retry budget. Transport, authorization, and malformed-request errors remain service errors. Direct protocol consumers must inspect `failure`; a response containing partial output does not imply success. Failed responses retain visible text and images in history, while incomplete tool declarations and provider replay state remain only in the failure reply.
+
+`round.preempted` is a successful model round cut short by newly admitted user input. Keep its visible partial messages in history and continue the same turn with that input; do not surface it as a transport failure.
 
 Save intent before calling `modelWithTools()`, since tools may start before the model reply arrives. `round.tool_work_started` reports accepted work even when the model fails. Failed model operations cancel and drain their tools; their batch IDs cannot be reused. Call IDs remain reserved until the next accepted model operation. Successful streaming receipts wait for the original executions rather than issuing them again. Execution cleanup also drains orphaned and nested work before releasing tool providers. A model stream cannot automatically replay after tools have started, including when no durable ledger is configured.
 

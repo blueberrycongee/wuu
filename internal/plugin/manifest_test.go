@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -322,6 +323,81 @@ func TestDesktopServicesAdmitPublicApplicationAndSurfaceProviders(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestLoadManifestPreservesAndValidatesConnectorMetadata(t *testing.T) {
+	for _, referenced := range []bool{false, true} {
+		for _, valid := range []bool{false, true} {
+			t.Run(fmt.Sprintf("referenced=%v/valid=%v", referenced, valid), func(t *testing.T) {
+				root := t.TempDir()
+				descriptor := `{"title":"Documents","description":"Find documents","documentation_url":"https://docs.example.test/setup","setup_required":"Enable the integration."}`
+				if !valid {
+					descriptor = `{"title":"Documents","documentation_url":"javascript:alert(1)"}`
+				}
+				servers := `{"docs":{"url":"https://example.test/mcp","enabled":false,"connector":` + descriptor + `}}`
+				declaration := servers
+				if referenced {
+					writeFile(t, filepath.Join(root, "mcp.json"), `{"mcp_servers":`+servers+`}`)
+					declaration = `"mcp.json"`
+				}
+				path := filepath.Join(root, ManifestFilename)
+				writeFile(t, path, `{"id":"connector-fixture","mcp_servers":`+declaration+`}`)
+				item, err := LoadManifest(path, "user")
+				if (err == nil) != valid {
+					t.Fatalf("LoadManifest() = %v, valid = %v", err, valid)
+				}
+				if !valid {
+					return
+				}
+				data, err := json.Marshal(item)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var restored Plugin
+				if err := json.Unmarshal(data, &restored); err != nil {
+					t.Fatal(err)
+				}
+				connector := restored.MCPServers["docs"].Connector
+				if connector == nil || connector.Title != "Documents" || connector.DocumentationURL != "https://docs.example.test/setup" || connector.SetupRequired != "Enable the integration." {
+					t.Fatalf("metadata lost: %+v", connector)
+				}
+			})
+		}
+	}
+}
+
+// Connector icons are served by the icon reader only when declared, so the
+// manifest must confine them to safe package images.
+func TestLoadManifestConfinesConnectorIcons(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "assets", "brand.svg"), `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>`)
+	writeFile(t, filepath.Join(root, "assets", "script.svg"), `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+	writeFile(t, filepath.Join(root, "assets", "brand.txt"), "text")
+	path := filepath.Join(root, ManifestFilename)
+	declare := func(icon string) (Plugin, error) {
+		writeFile(t, path, `{"id":"connector-fixture","mcp_servers":{"docs":{"url":"https://example.test/mcp","enabled":false,"connector":{"title":"Documents","icon":`+icon+`}}}}`)
+		return LoadManifest(path, "user")
+	}
+	item, err := declare(`{"path":"./assets/brand.svg"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if icon := item.MCPServers["docs"].Connector.Icon; icon == nil || icon.Path != "assets/brand.svg" {
+		t.Fatalf("icon = %+v", icon)
+	}
+	for _, invalid := range []string{
+		`{"path":"../outside.svg"}`,
+		`{"path":"/etc/brand.svg"}`,
+		`{"path":"assets/brand.txt"}`,
+		`{"path":"assets/script.svg"}`,
+		`{"path":"assets/missing.svg"}`,
+		`{"light":"assets/brand.svg"}`,
+		`{"path":"assets/brand.svg","dark":"assets/brand.svg"}`,
+	} {
+		if _, err := declare(invalid); err == nil {
+			t.Fatalf("accepted connector icon %s", invalid)
+		}
 	}
 }
 

@@ -14,7 +14,9 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 var codexRetryFractionPattern = regexp.MustCompile(`\b(\d+)/(\d+)\b`)
@@ -51,6 +53,7 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 		RequiresHostModel: &requiresHostModel,
 		Capabilities: []string{
 			"native-tool-loop",
+			"conversation-plugins",
 			"native-session-resume",
 			"default-permission-unconfined",
 			"active-turn-steering",
@@ -1410,10 +1413,18 @@ func (sub *turnSubscription) emitItem(method string, raw json.RawMessage) {
 		return
 	}
 	delete(sub.tools, item.ID)
+	detail := codexToolResultDetail(item)
+	result := ""
+	if detail != nil {
+		result = detail.TextProjection()
+	} else {
+		result = codexToolResult(item)
+	}
 	sub.emit(providers.StreamEvent{
-		Type:       providers.EventToolUseEnd,
-		ToolCall:   &call,
-		ToolResult: codexToolResult(item),
+		Type:             providers.EventToolUseEnd,
+		ToolCall:         &call,
+		ToolResult:       result,
+		ToolResultDetail: detail,
 	})
 }
 
@@ -1494,6 +1505,37 @@ func codexToolResult(item codexStreamItem) string {
 		result = "completed"
 	}
 	return result
+}
+
+// codexToolResultDetail preserves the native mcpToolCall payload as Wuu's
+// rich result so image/file/resource content renders like an in-process MCP
+// call. Text-only results keep the flat string projection. Invalid results
+// use a bounded diagnostic instead of exposing an unparsed binary payload.
+func codexToolResultDetail(item codexStreamItem) *toolresult.Result {
+	if item.Type != "mcpToolCall" || !rawJSONPresent(item.Result) || rawJSONPresent(item.Error) {
+		return nil
+	}
+	var result mcp.CallToolResult
+	if err := json.Unmarshal(item.Result, &result); err != nil {
+		fallback := toolresult.FromText("MCP result could not be decoded.")
+		return &fallback
+	}
+	rich := len(result.StructuredContent) > 0 || len(result.Meta) > 0
+	for _, content := range result.Content {
+		if content.Type != "" && content.Type != toolresult.ContentTypeText {
+			rich = true
+		}
+	}
+	if !rich {
+		return nil
+	}
+	mapped, err := mcp.MapCallToolResult(&result)
+	if err != nil {
+		fallback := toolresult.FromText("MCP result could not be represented.")
+		fallback.IsError = result.IsError
+		return &fallback
+	}
+	return &mapped
 }
 
 func rawJSONValue(raw json.RawMessage) any {

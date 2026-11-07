@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func testEngine(t *testing.T, scenario string) *Engine {
@@ -58,11 +59,26 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ref != "native-session" || result.Result.Content != "Hello world" || len(result.Result.NewMessages) != 1 {
+	if ref != "native-session" || result.Result.Content != "Hello world" {
 		t.Fatalf("ref=%q result=%+v", ref, result)
 	}
-	if result.Result.NewMessages[0].ReasoningContent != "Thinking" {
-		t.Fatalf("missing reasoning: %+v", result)
+	// The persisted transcript must keep the live item order: text and
+	// reasoning before the tool call, the tool result, then the reply.
+	messages := result.Result.NewMessages
+	if len(messages) != 3 {
+		t.Fatalf("flattened transcript: %+v", messages)
+	}
+	if messages[0].Role != "assistant" || messages[0].Content != "Hello " || messages[0].ReasoningContent != "Thinking" {
+		t.Fatalf("first message = %+v", messages[0])
+	}
+	if len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].ID != "read-1" || messages[0].ToolCalls[0].Name != "Read file" {
+		t.Fatalf("tool calls = %+v", messages[0].ToolCalls)
+	}
+	if messages[1].Role != "tool" || messages[1].ToolCallID != "read-1" || messages[1].Content != "file contents" {
+		t.Fatalf("tool result = %+v", messages[1])
+	}
+	if messages[2].Role != "assistant" || messages[2].Content != "world" || len(messages[2].ToolCalls) != 0 {
+		t.Fatalf("final message = %+v", messages[2])
 	}
 	var starts, ends, done int
 	for _, event := range events {
@@ -89,6 +105,60 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 	result, err = session.RunTurn(ctx, testInput(), nil)
 	if err != nil || result.Result.Content != "Hello world" {
 		t.Fatalf("replay leaked or resume failed: %+v %v", result, err)
+	}
+}
+
+func TestACPRichMediaFlowsIntoImagesAndToolResultDetail(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngine(t, "media").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []providers.StreamEvent
+	result, err := session.RunTurn(ctx, testInput(), func(event providers.StreamEvent) { events = append(events, event) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Result.NewMessages) != 3 || len(result.Result.NewMessages[0].Images) != 1 {
+		t.Fatalf("assistant images = %+v", result.Result.NewMessages)
+	}
+	image := result.Result.NewMessages[0].Images[0]
+	if image.MediaType != "image/png" || image.Data != "aW1hZ2U=" {
+		t.Fatalf("assistant image = %+v", image)
+	}
+	var imageEvents, ends int
+	var detail *toolresult.Result
+	for _, event := range events {
+		switch event.Type {
+		case providers.EventImage:
+			imageEvents++
+		case providers.EventToolUseEnd:
+			ends++
+			if event.ToolCall != nil && event.ToolCall.ID == "shot-1" {
+				detail = event.ToolResultDetail
+			}
+		}
+	}
+	if imageEvents != 1 || ends != 1 {
+		t.Fatalf("imageEvents=%d ends=%d", imageEvents, ends)
+	}
+	if detail == nil {
+		t.Fatal("tool result detail missing")
+	}
+	var sawText, sawImage, sawLink bool
+	for _, part := range detail.Content {
+		switch part.Type {
+		case toolresult.ContentTypeText:
+			sawText = part.Text == "captured"
+		case toolresult.ContentTypeImage:
+			sawImage = part.Data == "aW1hZ2U=" && part.MIMEType == "image/png"
+		case toolresult.ContentTypeResourceLink:
+			sawLink = part.URI == "file:///tmp/report.pdf" && part.Name == "report.pdf"
+		}
+	}
+	if !sawText || !sawImage || !sawLink {
+		t.Fatalf("detail content = %+v", detail.Content)
 	}
 }
 
@@ -741,6 +811,10 @@ func TestACPHelper(t *testing.T) {
 				result = grokACPSessionResult()
 				break
 			}
+			if scenario == "catalog-probe-stall" {
+				result = probeStallSessionResult("model-a")
+				break
+			}
 			if scenario == "unattended-mode" {
 				result = map[string]any{
 					"sessionId": "native-session",
@@ -791,6 +865,22 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
+			if scenario == "catalog-probe-stall" {
+				var params struct {
+					ConfigID string `json:"configId"`
+					Value    string `json:"value"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.ConfigID == "model" && params.Value == "model-b" {
+					// A wedged selection never replies; the probe must give up
+					// on its own slice instead of the whole catalog.
+					continue
+				}
+				if params.ConfigID == "model" {
+					result = probeStallSessionResult(params.Value)
+					break
+				}
+			}
 			if scenario == "boolean-options" {
 				var params struct {
 					ConfigID string `json:"configId"`
@@ -960,6 +1050,18 @@ func TestACPHelper(t *testing.T) {
 				result = map[string]string{"stopReason": "end_turn"}
 				break
 			}
+			if scenario == "media" {
+				update("agent_message_chunk", map[string]any{"content": map[string]string{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}})
+				update("tool_call", map[string]any{"toolCallId": "shot-1", "title": "Screenshot", "status": "in_progress"})
+				update("tool_call_update", map[string]any{"toolCallId": "shot-1", "status": "completed", "content": []any{
+					map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": "captured"}},
+					map[string]any{"type": "content", "content": map[string]string{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}},
+					map[string]any{"type": "content", "content": map[string]string{"type": "resource_link", "uri": "file:///tmp/report.pdf", "name": "report.pdf", "mimeType": "application/pdf"}},
+				}})
+				text("done")
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "eof" {
 				os.Exit(0)
 			}
@@ -1058,6 +1160,30 @@ func grokACPSessionResult() map[string]any {
 					map[string]any{"value": "medium", "name": "Medium"},
 					map[string]any{"value": "high", "name": "High"},
 				},
+			},
+		},
+	}
+}
+
+func probeStallSessionResult(current string) map[string]any {
+	efforts := map[string][]any{
+		"model-a": {map[string]string{"value": "low"}, map[string]string{"value": "high"}},
+		"model-c": {map[string]string{"value": "turbo"}},
+	}
+	return map[string]any{
+		"sessionId": "native-session",
+		"configOptions": []any{
+			map[string]any{
+				"id": "model", "category": "model", "type": "select", "currentValue": current,
+				"options": []any{
+					map[string]string{"value": "model-a", "name": "Model A"},
+					map[string]string{"value": "model-b", "name": "Model B"},
+					map[string]string{"value": "model-c", "name": "Model C"},
+				},
+			},
+			map[string]any{
+				"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": efforts[current][0].(map[string]string)["value"],
+				"options": efforts[current],
 			},
 		},
 	}
@@ -1238,6 +1364,27 @@ func TestACPCatalogReportsSpeedPerModel(t *testing.T) {
 	}
 	if len(catalog.Models) != 2 || !catalog.Models[0].FastMode || catalog.Models[1].FastMode {
 		t.Fatalf("wrong per-model speed capabilities: %+v", catalog.Models)
+	}
+}
+
+func TestACPCatalogKeepsProbingPastAStalledModel(t *testing.T) {
+	previous := acpModelProbeTimeout
+	acpModelProbeTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { acpModelProbeTimeout = previous })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	catalog, err := testEngine(t, "catalog-probe-stall").DiscoverCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 3 {
+		t.Fatalf("stalled probe changed catalog membership: %+v", catalog.Models)
+	}
+	if catalog.Models[1].ID != "model-b" || len(catalog.Models[1].SupportedEfforts) != 0 {
+		t.Fatalf("stalled model lost its listing or was enriched: %+v", catalog.Models[1])
+	}
+	if catalog.Models[2].ID != "model-c" || len(catalog.Models[2].SupportedEfforts) != 1 || catalog.Models[2].SupportedEfforts[0] != "turbo" {
+		t.Fatalf("probe after the stall did not run: %+v", catalog.Models[2])
 	}
 }
 

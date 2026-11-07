@@ -150,11 +150,11 @@ function capture(desktop, lang, temporary) {
 
   // ---- labels ----------------------------------------------------------------
   const L = zh ? {
-    openRight: '打开右侧栏', newPage: '新建页面', account: '账户菜单', settings: '设置', plugins: '插件',
+    openRight: '打开右侧栏', newPage: '新建页面', settings: '设置', plugins: '插件',
     back: '返回应用', closeRight: '关闭右侧栏', newIn: name => `在 ${name} 中新建对话`,
     files: '文件', review: '审查', providers: '模型服务', addProvider: '添加服务',
   } : {
-    openRight: 'Open right sidebar', newPage: 'New page', account: 'Account menu', settings: 'Settings', plugins: 'Plugins',
+    openRight: 'Open right sidebar', newPage: 'New page', settings: 'Settings', plugins: 'Plugins',
     back: 'Back to app', closeRight: 'Close right sidebar', newIn: name => `Start a new conversation in ${name}`,
     files: 'Files', review: 'Review', providers: 'Model providers', addProvider: 'Add a provider',
   };
@@ -540,8 +540,6 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await delay(400);
   };
   const settingsPage = async (win, name) => {
-    await clickLabel(win, L.account);
-    await delay(350);
     await clickLabel(win, L.settings);
     await delay(1000);
     await clickLabel(win, name);

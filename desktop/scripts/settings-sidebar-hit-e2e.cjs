@@ -88,19 +88,70 @@ async function run() {
   win.show();
   win.focus();
   await evaluate(win, () => {
-    const button = document.querySelector(".sidebar-account-trigger");
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error("Settings button not found.");
-    }
-    button.click();
-  });
-  await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-menu")), 3000);
-  await evaluate(win, () => {
-    const button = document.querySelector('[data-settings-page="providers"]');
-    if (!(button instanceof HTMLButtonElement)) throw new Error("Settings menu item not found.");
+    const button = document.querySelector('[data-settings-entry="settings"]');
+    if (!(button instanceof HTMLButtonElement)) throw new Error("Settings entry not found.");
     button.click();
   });
   await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
+  await showProviders(win);
+
+  const floatingSettings = await evaluate(win, () => !!document.querySelector(".settings-shell.settings-floating"));
+  if (floatingSettings) {
+    // The floating panel owns its navigation. The main sidebar toggle must
+    // not turn that navigation into the legacy drawer at narrow widths: the
+    // panel remains a floating card with its side rail at every width.
+    win.setContentSize(700, 820);
+    await waitFor(win, () => innerWidth === 700, 3000);
+    await settleChrome(win);
+    const floating = await evaluate(win, () => {
+      const panel = document.querySelector(".settings-shell.settings-floating").getBoundingClientRect();
+      const style = getComputedStyle(document.querySelector(".settings-shell.settings-floating"));
+      const nav = document.querySelector(".settings-floating .settings-nav");
+      return { panel: panel.toJSON(), nav: getComputedStyle(nav).flexDirection,
+        borderRadius: style.borderTopLeftRadius, border: style.borderTopWidth,
+        viewport: { width: innerWidth, height: innerHeight } };
+    });
+    assert.equal(floating.nav, "column",
+      `Moderately narrow windows keep the floating rail: ${JSON.stringify(floating)}`);
+    assert.ok(parseFloat(floating.borderRadius) > 0 && parseFloat(floating.border) > 0
+      && floating.panel.left > 0 && floating.panel.top > 0,
+      `Moderately narrow windows keep card chrome and scrim margins: ${JSON.stringify(floating)}`);
+    results.push({ scenario: "floating-settings-medium", floating });
+    // There is no compact sheet: a very narrow window keeps the same floating
+    // card, side rail, and scrim margins.
+    win.setContentSize(560, 820);
+    await waitFor(win, () => innerWidth === 560, 3000);
+    await settleChrome(win);
+    const narrow = await evaluate(win, () => {
+      const panel = document.querySelector(".settings-shell.settings-floating").getBoundingClientRect();
+      const nav = document.querySelector(".settings-sidebar").getBoundingClientRect();
+      const close = document.querySelector(".settings-close-button");
+      const closeBox = close.getBoundingClientRect();
+      const closeHit = document.elementFromPoint(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
+      return { panel: panel.toJSON(), nav: nav.toJSON(), close: closeBox.toJSON(),
+        closeHit: close === closeHit || close.contains(closeHit),
+        navDirection: getComputedStyle(document.querySelector(".settings-floating .settings-nav")).flexDirection,
+        borderRadius: getComputedStyle(document.querySelector(".settings-shell.settings-floating")).borderTopLeftRadius,
+        labels: [...document.querySelectorAll(".settings-nav-item .settings-nav-label")].map(label => label.textContent),
+        viewport: { width: innerWidth, height: innerHeight } };
+    });
+    assert.equal(narrow.navDirection, "column", `Narrow windows keep the floating rail: ${JSON.stringify(narrow)}`);
+    assert.ok(parseFloat(narrow.borderRadius) > 0 && narrow.panel.left > 0 && narrow.panel.top > 0,
+      `Narrow windows keep card chrome and scrim margins: ${JSON.stringify(narrow)}`);
+    assert.ok(narrow.nav.width > 0 && narrow.nav.height > 0, `Floating settings navigation stays visible: ${JSON.stringify(narrow)}`);
+    assert.ok(narrow.closeHit, `Floating settings close button owns its hit target: ${JSON.stringify(narrow)}`);
+    assert.ok(narrow.labels.length >= 2, `Floating settings destinations remain readable: ${JSON.stringify(narrow)}`);
+    assert.ok(narrow.panel.top >= 0 && narrow.panel.bottom <= narrow.viewport.height + 0.1,
+      `Floating settings panel stays inside the window: ${JSON.stringify(narrow)}`);
+    results.push({ scenario: "floating-settings-narrow", narrow });
+    saveResults();
+    await evaluate(win, () => document.querySelector(".settings-close-button").click());
+    await waitFor(win, () => !document.querySelector(".app-shell[data-settings-open]"), 3000);
+    console.log(`PASS: floating settings panel keeps its own navigation and local bounds. Evidence: ${evidenceDir}`);
+    win.close();
+    app.quit();
+    return;
+  }
 
   await evaluate(win, () => {
     const button = document.querySelector(".section-sidebar-toggle");
@@ -187,10 +238,10 @@ async function verifyCompactRibbonSettingsResize(win) {
   });
   await loadFile(win, rendererHtml);
   await waitFor(win, () => !!document.querySelector(".conversation-pane"), 5000);
-  await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
-  await waitFor(win, () => !!document.querySelector('[data-settings-page="providers"]'), 3000);
-  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => !!document.querySelector('[data-settings-entry="settings"]'), 3000);
+  await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => !!document.querySelector(".settings-shell"), 3000);
+  await showProviders(win);
   await settleChrome(win);
 
   const before = await settingsResizeGeometry(win);
@@ -296,17 +347,20 @@ async function verifyNarrowSidebarControls(win) {
       }
       assertTopRow(geometry, { page: layout === "drawer" ? "conversation-drawer" : "conversation", layout, font: 20, zoom: 0.75 });
     }
-    await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
-    await waitFor(win, () => !!document.querySelector('[data-settings-page="providers"]'), 3000);
-    await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+    await waitFor(win, () => !!document.querySelector('[data-settings-entry="settings"]'), 3000);
+    await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
     await waitFor(win, () => !!document.querySelector(".settings-shell"), 3000);
+    await showProviders(win);
     await settleChrome(win);
     const geometry = await chromeToggleGeometry(win);
     results.push({ scenario: `sidebar-${totalWidth}-20px-0.75-settings`, geometry });
     saveResults();
     assertTopRow(geometry, { totalWidth, page: "settings", layout: "drawer", font: 20, zoom: 0.75 });
     await capture(win, `sidebar-${totalWidth}-20px-0.75-settings.png`);
-    if (fixturePlatform === "darwin" && totalWidth === 240) await verifyRibbonControlFocus(win, "settings");
+    if (fixturePlatform === "darwin" && totalWidth === 240) {
+      const floatingSettings = await evaluate(win, () => !!document.querySelector(".settings-shell.settings-floating"));
+      if (!floatingSettings) await verifyRibbonControlFocus(win, "settings");
+    }
     await evaluate(win, () => document.querySelector('[data-ribbon-id="conversations"]').click());
     const away = await evaluate(win, () => ({ x: innerWidth - 40, y: innerHeight - 40 }));
     win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(away.x * 0.75), y: Math.round(away.y * 0.75) });
@@ -548,10 +602,9 @@ async function verifyNotificationClick(win, zoom) {
     const input = document.querySelector('.composer textarea');
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Keep notification click draft');
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    document.querySelector('.sidebar-account-trigger').click();
   });
-  await waitFor(win, () => !!document.querySelector('[data-settings-page="providers"]'), 3000);
-  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => !!document.querySelector('[data-settings-entry="settings"]'), 3000);
+  await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
   await waitFor(win, () => !!document.querySelector('.settings-shell'), 3000);
   await evaluate(win, () => {
     const conversations = document.querySelector('[data-ribbon-id="conversations"]');
@@ -625,10 +678,10 @@ async function verifyTitlebarContinuity(win) {
             }
             assert.ok(Math.abs(drawer.titleX - main.titleX) < 0.1, "Opening the drawer must not move the adjacent title");
           }
-          await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
-          await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')), 3000);
-          await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+          await waitFor(win, () => Boolean(document.querySelector('[data-settings-entry="settings"]')), 3000);
+          await evaluate(win, () => document.querySelector('[data-settings-entry="settings"]').click());
           await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
+          await showProviders(win);
           await settleChrome(win);
           const settings = await chromeToggleGeometry(win);
           results.push({ scenario, page: "settings", geometry: settings });
@@ -641,7 +694,8 @@ async function verifyTitlebarContinuity(win) {
             assert.ok(Math.abs(main[key] - settings[key]) < 0.1, `Switching pages moved/resized ${key}: ${context}`);
           }
           assert.equal(settings.icon, main.icon, `Switching pages changed the sidebar glyph: ${context}`);
-          assert.ok(main.hit && settings.hit, `The visible toggle must own its center hit: ${context}`);
+          assert.ok(main.hit && (!settings.floatingSettings || !settings.hit),
+            `The visible toggle owns its center hit outside the floating overlay: ${context}`);
           await evaluate(win, () => document.querySelector('[data-ribbon-id="conversations"]').click());
           await waitFor(win, () => !document.querySelector(".app-shell[data-settings-open]"), 3000);
           // Move the real pointer off the edge, including at zoom levels where
@@ -677,6 +731,7 @@ async function chromeToggleGeometry(win) {
     const glyph = icon.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     const settingsOpen = document.querySelector('.app-shell').hasAttribute('data-settings-open');
+    const floatingSettings = settingsOpen && !!document.querySelector('.settings-shell.settings-floating');
     const chromeHeader = document.querySelector(settingsOpen ? '.settings-titlebar' : '.conversation-pane .titlebar');
     // Settings owns its title/actions in the scrolling reading column, not
     // the window chrome. Keep hit/clipping coverage at their actual location.
@@ -709,7 +764,7 @@ async function chromeToggleGeometry(win) {
     const shellBounds = shellRow.getBoundingClientRect();
     const shellStyle = getComputedStyle(shellRow);
     const shellControls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-right-sidebar-toggle')]
-      .filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
+      .filter(element => !floatingSettings && element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
       .map(element => {
         const box = element.getBoundingClientRect();
         const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
@@ -719,6 +774,11 @@ async function chromeToggleGeometry(win) {
       });
     const shell = document.querySelector('.app-shell');
     const visible = element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true });
+    const settingsSidebar = settingsOpen ? document.querySelector('.settings-sidebar') : null;
+    const settingsSearch = settingsOpen ? document.querySelector('.settings-search') : null;
+    const settingsTitle = settingsOpen ? document.querySelector('.settings-navigation-title') : null;
+    const settingsSidebarBounds = settingsSidebar?.getBoundingClientRect();
+    const settingsTitleBounds = settingsTitle?.getBoundingClientRect();
     const guardElements = [...new Set([
       ...document.querySelectorAll('.section-sidebar-toggle, .sidebar-notifications-button, .sidebar-brand .conversation-search-trigger'),
       ...chromeHeader.querySelectorAll('h1, button'),
@@ -748,6 +808,9 @@ async function chromeToggleGeometry(win) {
       contentAxis: (header.top + parseFloat(headerStyle.paddingTop) + header.bottom - parseFloat(headerStyle.paddingBottom)) / 2,
       shellRow: shellBounds.toJSON(), shellControls,
       shellAxis: (shellBounds.top + parseFloat(shellStyle.paddingTop) + shellBounds.bottom - parseFloat(shellStyle.paddingBottom)) / 2,
+      floatingSettings,
+      navInset: settingsSidebarBounds && settingsSearch ? settingsSearch.getBoundingClientRect().left - settingsSidebarBounds.left : null,
+      titleInset: settingsSidebarBounds && settingsTitleBounds?.width > 0 ? settingsTitleBounds.left - settingsSidebarBounds.left : null,
       viewport: { width: innerWidth, height: innerHeight },
       x: rect.x, y: rect.y, width: rect.width, height: rect.height,
       iconWidth: glyph.width, iconHeight: glyph.height, icon: icon.innerHTML,
@@ -837,11 +900,17 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function showProviders(win) {
+  await waitFor(win, () => Boolean(document.querySelector('.settings-nav [data-wuu-page="providers"]')), 3000);
+  await evaluate(win, () => document.querySelector('.settings-nav [data-wuu-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-testid="settings-connection-add"]')), 3000);
+}
+
 function assertTopRow(geometry, context) {
   const details = JSON.stringify({ ...context, geometry });
   const axis = geometry.contentAxis;
   assert.ok(geometry.peers.length >= 2, `Active page title and actions must remain present: ${details}`);
-  const expectedControls = [...(geometry.toggleState.expectedSuppressed ? [] : ["sidebar-toggle"]),
+  const expectedControls = geometry.floatingSettings ? [] : [...(geometry.toggleState.expectedSuppressed ? [] : ["sidebar-toggle"]),
     ...(context.page === "settings" ? [] : ["right-sidebar-toggle"])];
   assert.deepEqual(geometry.shellControls.map(control => control.target).sort(), expectedControls.sort(),
     `The active surface exposes its sidebar controls: ${details}`);
@@ -854,6 +923,16 @@ function assertTopRow(geometry, context) {
       `Shell controls fit their actual workbench row: ${details}`);
     assert.ok(Math.abs(box.top + box.height / 2 - geometry.shellAxis) < 0.6,
       `Shell controls share their own row, separate from content headings: ${details}`);
+  }
+  if (geometry.floatingSettings) {
+    if (Number.isFinite(geometry.navInset)) {
+      assert.ok(geometry.navInset >= 0 && geometry.navInset <= 24,
+        `Floating settings navigation keeps its local inset: ${details}`);
+    }
+    if (Number.isFinite(geometry.titleInset)) {
+      assert.ok(geometry.titleInset >= 0 && geometry.titleInset <= 32,
+        `Floating settings title keeps its local inset: ${details}`);
+    }
   }
   assertControlSeparation(geometry, context);
   for (const peer of geometry.peers) {
@@ -876,6 +955,7 @@ function assertControlSeparation(geometry, context) {
   assert.equal(geometry.toggleState.inert, geometry.toggleState.expectedSuppressed, `Covered toggle cannot receive keyboard input: ${details}`);
   const targets = geometry.separationTargets;
   for (const target of targets) {
+    if (geometry.floatingSettings && target.target === "sidebar-toggle") continue;
     if (target.button) {
       assert.ok(target.samples.every(sample => ownsHeaderSample(target, sample, geometry.drawerBounds)),
         `Visible controls own their interior, not only their center: ${details}`);

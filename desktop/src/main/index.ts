@@ -1,3 +1,4 @@
+import { encodePluginRuntimeResponse } from "./pluginRuntimeIPC";
 import { DictationService } from "./dictation";
 import { spawn as spawnDictationHelper } from "node:child_process";
 import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
@@ -135,11 +136,6 @@ import type {
   ThreadForkTarget,
   ThreadResumeResult,
   ThreadStartParams,
-  ProjectWorkParams,
-  ProjectWorkList,
-  ProjectWork,
-  ProjectSessionParams,
-  ProjectSessionResult,
   Turn,
   UserQuestionAnswer,
   UserQuestionListResult,
@@ -179,7 +175,7 @@ import type {
   SideThreadSendParams,
   SideThreadSendResult,
 } from "../shared/protocol";
-import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
+import { AppServerClientPool, configurePackagedCUA, type AppServerShutdownOptions } from "./appServerClients";
 import { ChatGPTLoginCoordinator } from "./chatgptLogin";
 import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
@@ -240,6 +236,7 @@ import {
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
+import { registerWorkspaceFileWatches } from "./workspaceFileWatches";
 import { WorkspaceDirectoryReader } from "./workspaceDirectoryReader";
 import createWorkspaceDirectoryWorker from "./workspaceDirectoryWorker?nodeWorker";
 import {
@@ -1564,6 +1561,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
     }
     windowResizeState = false;
     observationCoordinator.setActiveThread(undefined);
+    observationCoordinator.closeDesktopDocked();
     unregisterWindow(windowID);
     mainWindow = null;
   });
@@ -1897,6 +1895,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:git-create-pr", (event, params: GitPullRequestParams, root?: string) =>
     gitServiceForEvent(event).createPullRequest(params ?? {}, root),
   );
+  registerWorkspaceFileWatches(workspaceFilesForEvent);
   ipcMain.handle("wuu:file-tree-list", (event, root?: string) =>
     workspaceFilesForEvent(event).fileTreeList(root),
   );
@@ -2273,10 +2272,11 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; include_models?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
     appServerRequest<EngineListResult>(event, "engine/list", {
       include_quota: options?.include_quota === true,
       include_activity: options?.include_activity,
+      include_models: options?.include_models,
       refresh_models: options?.refresh_models === true,
       cwd: options?.cwd,
     }, context),
@@ -2411,7 +2411,7 @@ app.whenReady().then(async () => {
     }
     return inventory;
   });
-  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
+  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => encodePluginRuntimeResponse(async () => {
     if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
       throw new Error("User host and workspace routes cannot be combined");
     }
@@ -2446,7 +2446,7 @@ app.whenReady().then(async () => {
     return pluginRuntimeRequests.request(owner, request, params, undefined, () => {
       event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
     });
-  });
+  }));
   ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
     pluginRuntimeRequests.cancel(`window:${event.sender.id}`, params));
   ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
@@ -2500,22 +2500,6 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
-  });
-  ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
-  ipcMain.handle("wuu:session-control-take", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/take", params));
-  // A project and its managed sessions live in one workspace; route to the
-  // app-server that owns the named project or session.
-  ipcMain.handle("wuu:project-work", (event, params: ProjectWorkParams) => {
-    const context = windowRegistry.runtimeContextForWindow(event.sender.id);
-    return context
-      ? appServerClientPool.requestForSession<ProjectWorkList | ProjectWork>(context, params.project_id, "project/work", params)
-      : appServerRequest<ProjectWorkList | ProjectWork>(event, "project/work", params);
-  });
-  ipcMain.handle("wuu:project-session", (event, params: ProjectSessionParams) => {
-    const context = windowRegistry.runtimeContextForWindow(event.sender.id);
-    return context
-      ? appServerClientPool.requestForSession<ProjectSessionResult>(context, params.project_id, "project/session", params)
-      : appServerRequest<ProjectSessionResult>(event, "project/session", params);
   });
   ipcMain.handle("wuu:codex-pets-list", () => {
     const snapshot = codexPetsSnapshot();
@@ -2593,6 +2577,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:mcp-auth-status", (event, name: string) =>
     appServerRequest<MCPAuthStatusResult>(event, "mcp/auth/status", { name }),
+  );
+  ipcMain.handle("wuu:mcp-identity-refresh", (event, name: string) =>
+    appServerRequest<MCPAuthStatusResult>(event, "mcp/identity/refresh", { name }),
   );
   ipcMain.handle("wuu:mcp-auth-finish", (event, name: string, state: string, code: string) =>
     appServerRequest<MCPAuthFinishResult>(event, "mcp/auth/finish", { name, state, code }),
@@ -2927,6 +2914,12 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:thread-list-all", (event) =>
     appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
+  );
+  ipcMain.handle("wuu:thread-recovery-list", (event) =>
+    appServerRequest(event, "thread/recovery/list"),
+  );
+  ipcMain.handle("wuu:thread-recovery-dismiss", (event, threadIDs: string[]) =>
+    appServerRequest(event, "thread/recovery/dismiss", { thread_ids: threadIDs }),
   );
   ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
     appServerRequest(event, "thread/search", {
@@ -3298,7 +3291,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:chrome-overlay-show", (event, request: ChromeOverlayRequest) => chromeOverlayHost.show(webWorkspaceSender(event), request));
   ipcMain.handle("wuu:chrome-overlay-hide", (event, token: string, generation: number) => chromeOverlayHost.hide(webWorkspaceSender(event), token, generation));
   ipcMain.handle("wuu:chrome-overlay-ready", event => chromeOverlayHost.ready(event));
-  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number) => chromeOverlayHost.painted(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token: string, generation: number) => chromeOverlayHost.prepared(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number, viewport: { width: number; height: number }) => chromeOverlayHost.painted(event, token, generation, viewport));
   ipcMain.on("wuu:chrome-overlay-command", (event, message) => chromeOverlayHost.command(event, message));
   ipcMain.handle("wuu:web-workspace-tabs-initialize", (event, destinations: WebWorkspaceLegacyDestination[]) =>
     webWorkspaceHost.initializeTabs(webWorkspaceSender(event), destinations));
@@ -3508,7 +3502,7 @@ app.whenReady().then(async () => {
   appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
-  desktopUpdates = installDesktopUpdates(prepareToQuit, state => broadcastToAll("wuu:desktop-update-changed", state), desktopRecovery.menuItem());
+  desktopUpdates = installDesktopUpdates(() => prepareToQuit({ reason: "update" }), state => broadcastToAll("wuu:desktop-update-changed", state), desktopRecovery.menuItem());
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
@@ -3557,10 +3551,11 @@ async function stopRenderer(window: BrowserWindow): Promise<void> {
   }).finally(() => { if (!window.isDestroyed()) window.destroy(); });
 }
 
-function prepareToQuit(): Promise<void> {
+function prepareToQuit(shutdownOptions: AppServerShutdownOptions = {}): Promise<void> {
   if (quitCleanup) return quitCleanup;
   // Publish the shared promise before destroying windows: closing the hidden
-  // host can synchronously re-enter quit through window-all-closed.
+  // host can synchronously re-enter quit through window-all-closed. The first
+  // caller owns the shutdown reason; a later before-quit reuses this promise.
   quitCleanup = Promise.resolve().then(async () => {
     desktopUpdates?.stop();
     const directoryShutdown = Promise.allSettled([workspaceDirectoryReader.close()]);
@@ -3581,7 +3576,7 @@ function prepareToQuit(): Promise<void> {
     // down so no WebContentsView leaks past quit.
     browserHostCoordinator.destroyAll();
     webWorkspaceHost.destroyAll();
-    const shutdown = await Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+    const shutdown = await Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(shutdownOptions), phoneAccess.shutdown()]);
     return [...await directoryShutdown, ...shutdown];
   })
     .then((results) => {

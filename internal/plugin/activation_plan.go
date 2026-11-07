@@ -9,10 +9,12 @@ import (
 type ActivationIssueKind string
 
 const (
-	ActivationIssueMissingRequirement ActivationIssueKind = "missing_requirement"
-	ActivationIssueConflict           ActivationIssueKind = "conflict"
-	ActivationIssueVersionMismatch    ActivationIssueKind = "version_mismatch"
-	ActivationIssueOptionalCycle      ActivationIssueKind = "optional_cycle"
+	ActivationIssueMissingRequirement      ActivationIssueKind = "missing_requirement"
+	ActivationIssueConflict                ActivationIssueKind = "conflict"
+	ActivationIssueVersionMismatch         ActivationIssueKind = "version_mismatch"
+	ActivationIssueOptionalCycle           ActivationIssueKind = "optional_cycle"
+	ActivationIssueOptionalMissing         ActivationIssueKind = "optional_missing"
+	ActivationIssueOptionalVersionMismatch ActivationIssueKind = "optional_version_mismatch"
 )
 
 type ActivationIssue struct {
@@ -130,11 +132,16 @@ func BuildActivationPlan(candidates []Plugin) (ActivationPlan, error) {
 		optional := append([]Dependency(nil), byID[id].Dependencies...)
 		sort.Slice(optional, func(i, j int) bool { return optional[i].ID < optional[j].ID })
 		for _, dependency := range optional {
-			if !dependency.Optional || !available[dependency.ID] {
+			if !dependency.Optional {
+				continue
+			}
+			if !available[dependency.ID] {
+				issues[id] = append(issues[id], ActivationIssue{Kind: ActivationIssueOptionalMissing, RelatedPluginID: dependency.ID})
 				continue
 			}
 			matches, _ := matchesDependencyVersion(byID[dependency.ID].Version, dependency.Version)
 			if !matches {
+				issues[id] = append(issues[id], ActivationIssue{Kind: ActivationIssueOptionalVersionMismatch, RelatedPluginID: dependency.ID})
 				continue
 			}
 			if dependencyReachable(dependencies, dependency.ID, id, map[string]bool{}) {

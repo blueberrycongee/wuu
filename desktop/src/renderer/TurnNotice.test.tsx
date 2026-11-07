@@ -433,12 +433,13 @@ describe("TurnFailureNotice", () => {
 
   it("continues from a partial reply rather than resending the message", async () => {
     const retry = vi.fn();
-    const resume = vi.fn();
+    const resume = vi.fn(async () => true);
     const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={retry} onContinue={resume} />);
     expect(buttons(host).map((button) => button.textContent)).toEqual([t("turnFailure.continue")]);
     await act(async () => { buttons(host)[0].click(); });
     expect(resume).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
+    expect(host.querySelector(".turn-failure-presence.is-leaving")?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("does not offer a retry that would overflow the context again", () => {
@@ -549,4 +550,30 @@ it.each([
     error={stop ? {message:"injected failure", recovery:{attempt_count:2, retry_count:1, max_attempts:2, submission_count:1, stop_reason:stop,
       failure_category:stop === "replay_unsafe" ? "replay_unsafe" : "incomplete_stream"}} : undefined} />);
   expect(host.querySelector("aside")?.getAttribute("data-recovery-state")).toBe(state);
+});
+
+it.each(["retry", "continue"] as const)("reports every explicit %s failure while retaining the failed turn", async action => {
+  const { ToastViewport, clearToasts } = await import("./Toast");
+  clearToasts();
+  const recover = vi.fn(async () => { throw new Error("Recovery transport failed"); });
+  const failed = { message: "Original turn failed" };
+  const host = mount(<>
+    <TurnFailureNotice display={userFacingErrorForMessage(failed, "turn")} error={failed}
+      {...(action === "retry" ? { onRetry: recover } : { onContinue: recover })} />
+    <ToastViewport />
+  </>);
+  const durable = host.querySelector("aside.turn-failure");
+  const button = host.querySelector<HTMLButtonElement>(".turn-failure-action")!;
+  try {
+    await act(async () => button.click());
+    expect(document.querySelector(".archive-tip")?.textContent).toContain("Recovery transport failed");
+    act(() => (document.querySelector(".archive-tip-dismiss") as HTMLButtonElement).click());
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(document.querySelector(".archive-tip")).toBeNull();
+    await act(async () => button.click());
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect(document.querySelector(".archive-tip")?.textContent).toContain("Recovery transport failed");
+    expect(host.querySelector("aside.turn-failure")).toBe(durable);
+    expect(button.disabled).toBe(false);
+  } finally { act(() => clearToasts()); }
 });

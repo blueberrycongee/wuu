@@ -9,6 +9,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 var (
@@ -39,10 +40,18 @@ func forkHistoryAtTargetWithIdentity(history []providers.ChatMessage, sourceThre
 }
 
 func forkPersistedHistoryAtTarget(history []persistedMessage, sourceThreadID string, turns []Turn, targetTurnID, targetItemID string, target ThreadItem) ([]providers.ChatMessage, error) {
+	prefix, err := forkPersistedPrefixAtTarget(history, sourceThreadID, turns, targetTurnID, targetItemID, target)
+	if err != nil {
+		return nil, err
+	}
+	return cloneForkHistory(chatMessagesFromPersistedMessages(prefix)), nil
+}
+
+func forkPersistedPrefixAtTarget(history []persistedMessage, sourceThreadID string, turns []Turn, targetTurnID, targetItemID string, target ThreadItem) ([]persistedMessage, error) {
 	targetTurnID = strings.TrimSpace(targetTurnID)
 	targetItemID = strings.TrimSpace(targetItemID)
 	if targetTurnID == "" && targetItemID == "" {
-		return cloneForkHistory(chatMessagesFromPersistedMessages(history)), nil
+		return history, nil
 	}
 	projection := projectPersistedHistory(sourceThreadID, history, time.Time{}, nil)
 	origin, err := forkOriginAtTarget(projection, turns, targetTurnID, targetItemID, target)
@@ -52,7 +61,68 @@ func forkPersistedHistoryAtTarget(history []persistedMessage, sourceThreadID str
 	if origin.EndIndex < 0 || origin.EndIndex >= len(history) {
 		return nil, errForkTargetNotFound
 	}
-	return cloneForkHistory(chatMessagesFromPersistedMessages(history[:origin.EndIndex+1])), nil
+	return history[:origin.EndIndex+1], nil
+}
+
+type forkDisplayRecord struct {
+	before int
+	record persistedMessage
+}
+
+func forkDisplayRecords(prefix []persistedMessage, history []providers.ChatMessage) []forkDisplayRecord {
+	var display []forkDisplayRecord
+	for _, rec := range prefix {
+		if rec.Role != "meta" || (rec.Content != externalArtifactHistoryRecord && rec.Content != turnContinueHistoryRecord) {
+			continue
+		}
+		before := 0
+		for _, msg := range history {
+			if msg.Seq > 0 && msg.Seq < rec.Seq {
+				before++
+			}
+		}
+		display = append(display, forkDisplayRecord{before: before, record: rec})
+	}
+	return display
+}
+
+func forkInitialRecords(threadID string, history []providers.ChatMessage, display []forkDisplayRecord, now time.Time) ([]session.HistoryRecord, []persistedMessage, error) {
+	var records []persistedMessage
+	displayIndex := 0
+	for i := 0; i <= len(history); i++ {
+		for displayIndex < len(display) && display[displayIndex].before == i {
+			rec := display[displayIndex].record
+			rec.Seq = len(records) + 1
+			records = append(records, rec)
+			displayIndex++
+		}
+		if i == len(history) {
+			break
+		}
+		history[i].Seq = 0
+		if shouldPersistMessage(history[i]) {
+			history[i].Seq = len(records) + 1
+			records = append(records, persistedMessageFromChatMessage(history[i]))
+		}
+	}
+	turns := turnsFromPersistedHistory(threadID, records, now, nil)
+	turnBySeq := make(map[int]string)
+	for _, turn := range turns {
+		for _, item := range turn.Items {
+			turnBySeq[item.Seq] = turn.ID
+		}
+	}
+	out := make([]session.HistoryRecord, 0, len(records))
+	for i := range records {
+		if records[i].Role == "meta" && records[i].Content == externalArtifactHistoryRecord {
+			records[i].ClientID = turnBySeq[records[i].Seq]
+			if records[i].ClientID == "" {
+				return nil, nil, errors.New("cannot associate forked artifact with a turn")
+			}
+		}
+		out = append(out, historyRecordFromPersistedMessage(records[i]))
+	}
+	return out, records, nil
 }
 
 // forkLiveAnswerHistory materializes a branch from a completed final answer
@@ -61,16 +131,28 @@ func forkPersistedHistoryAtTarget(history []persistedMessage, sourceThreadID str
 // as portable call/result pairs before the answer, without retaining execution
 // ledger ownership from the source thread.
 func forkLiveAnswerHistory(baseHistory []providers.ChatMessage, turn Turn, targetItemID string) ([]providers.ChatMessage, error) {
+	history, _, err := forkLiveAnswerHistoryWithDisplay(baseHistory, turn, targetItemID, nil, false)
+	return history, err
+}
+
+func forkLiveAnswerHistoryWithDisplay(baseHistory []providers.ChatMessage, turn Turn, targetItemID string, records []persistedMessage, external bool) ([]providers.ChatMessage, []forkDisplayRecord, error) {
 	targetItemID = strings.TrimSpace(targetItemID)
 	if targetItemID == "" || turn.Status != TurnStatusInProgress {
-		return nil, errForkTargetNotFound
+		return nil, nil, errForkTargetNotFound
 	}
 	history := cloneHistory(baseHistory)
+	var display []forkDisplayRecord
+	byID := make(map[string]persistedMessage)
+	for _, rec := range records {
+		if rec.Role == "meta" && rec.Content == externalArtifactHistoryRecord {
+			byID[rec.ToolCallID] = rec
+		}
+	}
 	found := false
 	for _, item := range turn.Items {
 		if item.ID == targetItemID {
 			if item.Type != ThreadItemAgentMessage || item.Status != ThreadItemStatusCompleted || !item.Terminal || strings.TrimSpace(item.Text) == "" {
-				return nil, errForkTargetNotFound
+				return nil, nil, errForkTargetNotFound
 			}
 			history = append(history, providers.ChatMessage{
 				Role:           "assistant",
@@ -87,8 +169,16 @@ func forkLiveAnswerHistory(baseHistory []providers.ChatMessage, turn Turn, targe
 		if item.Type != ThreadItemToolCall {
 			continue
 		}
+		rec, recorded := byID[item.SourceID]
+		if recorded && rec.Seq > 0 && item.Seq == rec.Seq {
+			display = append(display, forkDisplayRecord{before: len(history), record: rec})
+			continue
+		}
+		if external {
+			return nil, nil, errors.New("cannot verify live external tool item provenance for this fork")
+		}
 		if item.Status != ThreadItemStatusCompleted || strings.TrimSpace(item.SourceID) == "" {
-			return nil, errForkToolResultsNotFound
+			return nil, nil, errForkToolResultsNotFound
 		}
 		history = append(history,
 			providers.ChatMessage{
@@ -110,9 +200,9 @@ func forkLiveAnswerHistory(baseHistory []providers.ChatMessage, turn Turn, targe
 		)
 	}
 	if !found {
-		return nil, errForkTargetNotFound
+		return nil, nil, errForkTargetNotFound
 	}
-	return cloneForkHistory(history), nil
+	return cloneForkHistory(history), display, nil
 }
 
 func forkOriginAtTarget(projection historyProjection, turns []Turn, targetTurnID, targetItemID string, target ThreadItem) (historyItemOrigin, error) {

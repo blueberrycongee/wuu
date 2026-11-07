@@ -31,6 +31,7 @@ Slot 所有者声明并渲染区域；贡献指向明确的所有者。多个内
 | --- | --- |
 | `wuu.default-navigation/sidebar.primary`、`wuu.default-navigation/sidebar.footer` | 侧栏内容和底部 |
 | `wuu.default-shell/workspace.header`、`wuu.default-shell/conversation.header` | 对应的标题区域 |
+| `wuu.default-conversation/welcome`、`welcome.greeting`、`welcome.mascot`、`welcome.usage` | 空会话欢迎页及其独立部分 |
 | `wuu.default-conversation/conversation.turn.after`、`wuu.default-preview/conversation.turn.after` | 每个已展示回合之后；展示已报告的耗时和用量 |
 | `wuu.default-conversation/conversation.tool-activity.after`、`wuu.default-preview/conversation.tool-activity.after` | 已展开的过程详情中，单项工具活动之后 |
 | `wuu.default-conversation/conversation.message.before`、`wuu.default-conversation/conversation.message.after` | 每条消息前后 |
@@ -50,6 +51,28 @@ api.registerUIContribution({
 
 省略 `mode`（或使用 `content`）可提供内容，替换调用方的 fallback。单内容 Slot 在准备阶段拒绝冲突注册，并保留当前 generation。包装按 `order`、插件 ID、贡献 ID 升序组合，后面的包装位于外层。包装渲染失败会报告诊断并保留内层内容。卸载 Slot 所有者会移除该区域；卸载贡献者只移除其贡献。provider 清理会等待已挂载视图释放 effect。由服务图选择的区域继续使用精确的 provider 绑定，并拒绝包装。本地 SDK 预览采用相同的内容／包装顺序与冲突规则；包装渲染失败会记录到浏览器控制台。
 
+### 新对话欢迎页
+
+默认会话 provider 仅在会话为空时渲染 `wuu.default-conversation/welcome`；输入框和消息流位于该 Slot 之外。内容贡献可替换整个欢迎页，也可分别替换 `wuu.default-conversation/welcome.greeting`、`welcome.mascot` 或 `welcome.usage`。返回 `null` 可隐藏某一部分。每个 Slot 只接受一个内容提供方，并遵循上述冲突、包装和卸载规则。
+
+欢迎页的 context 为 `ConversationWelcomeContextV1`：包含三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
+
+例如，以下布局将用量摘要移到问候上方并隐藏吉祥物：
+
+```js
+export function activatePresentation(api) {
+  const h = api.react.createElement;
+  api.registerUIContribution({
+    id: "welcome-layout",
+    target: "wuu.default-conversation/welcome",
+    render: ({ context }) => h("section", { style: { padding: 32, display: "grid", gap: 24 } },
+      context.usage, context.greeting),
+  });
+}
+```
+
+如只需更改问候，目标改为 `wuu.default-conversation/welcome.greeting`；使用相同所有者前缀的 `welcome.mascot` / `welcome.usage` 可分别替换其余部分。替换布局负责自身的响应式样式和无障碍支持。TypeScript 插件可从 `@wuu/plugin-sdk/ui` 导入 `ConversationWelcomeContextV1` 并将欢迎页 context 转换为该类型。
+
 增加指标、注释或上下文操作时，优先使用 `conversation.turn.after` 和 `conversation.tool-activity.after`，不要为了追加内容而包裹原有界面。两个槽位都支持按顺序组合多个插件，在气泡和 IM 样式下使用同一契约。回合追加内容位于原有回合的测量边界内。完整替换 `conversation.turn` 的实现自行拥有其内容，需要自行渲染所需槽位。新增、移除或渲染失败的追加贡献不会重新挂载原有回合和工具详情，保留展开状态与焦点。替换或包裹内容会改变 React 层级，不提供这种状态保留保证。
 
 回合槽位提供 `ConversationTurnSlotContextV1`：可选的 `threadId`、`turnId`，以及冻结的 `snapshot`，包含状态、已报告的时间戳、耗时、Token 用量和用量模型。未知指标仍然缺省，不能当作零。快照仅用于展示，不代表执行操作的权限。工具槽位共用 `ConversationToolActivitySlotContextV1`，包括可选的 `threadId`/`turnId`、`itemId` 和已有的只读 `ToolActivitySnapshot`。预览回合没有持久会话标识时，不得借用当前选中的会话。工具贡献在展开的工具详情中显示，不在紧凑的过程摘要中显示；单个命令或 MCP 工具详情与工具组使用相同槽位。槽位拥有者必须已启用且实际渲染槽位；贡献不会恢复已禁用的提供方。
@@ -64,13 +87,75 @@ api.registerUIContribution({
 
 Slot 所有者可通过 `<Slot layout={Layout} ... />` 传入 React 组件，接收排序后的 `items`（`key`、`pluginId`、`id`、`title`、`node`）及 `context`；使用各项的 `key` 渲染选中的 `node`。贡献可选的 `title` 默认使用 ID。布局可以分组或过滤内容，无需另一套注册表。包装位于布局结果外层，空 Slot 使用 `fallback`。服务图选择的 Slot 直接渲染选中的 provider，忽略自定义布局。
 
-默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal、Monitor 已改用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
+默认输入框用该布局将前两个贡献放入工具栏，其余放入带标题的溢出菜单。行内使用紧凑控件，菜单内容应允许换行。输入框 context 包含 `threadId`、`variant`、`mainConversation`、`running`、`readOnly`、`hasDraft` 和 `attachmentCount`。Goal 使用 `registerUIContribution`，应移除旧 `contributes.slots` 声明。Monitor 不再提供桌面 UI。`application.composerPresentation.getContributions` 及其展示适配类型已删除；自定义输入框应渲染自身声明的 Slot。
 
 `workspace.rail` Slot 由默认预览 provider 提供，在右侧工具栏展开时显示。贡献按垂直方向排列，共享一个工具栏控件的宽度。使用紧凑的读数或控件，并通过无障碍标签提供完整含义。贡献可通过 `application` 观察活动标签，再通过 `application.composerPresentation` 读取对应的会话、轮次和运行状态。
 
 [Token Speed](../../../examples/plugins/token-speed/README.md) 是使用该 Slot 的独立可安装示范插件。它以两秒滑动窗口估算流式文字、推理和工具调用参数的可观察输出速度；不计入隐藏输出，也不等同于模型实际分词。读数使用固定宽度，单位缩写单独占一行，数值以 320 毫秒动画过渡并遵循减少动态效果设置。尚无输出或轮次结束时显示横线，活动输出流暂停后回落到零。无障碍标签和悬停说明会解释估算含义。
 
 在包含此 Slot 的仓库版本中运行 `wuu plugin install ./examples/plugins/token-speed` 安装示例，或运行 `wuu plugin dev ./examples/plugins/token-speed` 启用热更新。禁用插件会移除读数。
+
+## 文件浏览器和编辑器
+
+插件可以用 `registerUIContribution` 指向
+`wuu.default-preview/workspace.file-tree`，单独替换文件树，无需选择新的
+`ui.preview` provider。该插槽接受一个内容贡献，支持包装以及常规的冲突和卸载规则。
+默认预览继续管理标签页、文件阅读器、停靠和尺寸调整；禁用贡献后恢复默认文件树。
+
+`WorkspaceFileTreeContextV1` 从 `@wuu/plugin-sdk` 导出，包含 `root`、
+`selectedFilePath` 和 `visible`。没有 root 表示没有工作目录；区域隐藏时
+`visible` 为 false。隐藏或卸载时应释放视图订阅。每次操作都捕获 root，异步操作完成时
+不要替换为当前选中的工作目录。点击文件可调用
+`application.previewContent.openFile({ root, path })`。
+
+`application.previewContent` 提供目录枚举、有大小限制的文件读取，以及可选的保存和
+变更订阅。调用前同时检查 capability 和方法：旧版或其他 V1 application provider
+可能不提供它们。
+
+```ts
+const files = application.previewContent;
+const target = { root, path: "notes.md" };
+const original = await files.readFile(target);
+if (files.capabilities.saveFile && files.saveFile && !original.binary && !original.truncated) {
+  const result = await files.saveFile({
+    ...target, text: editedText,
+    base_mtime_ms: original.mtime_ms, base_sha256: original.sha256,
+  });
+  // A conflict leaves the file untouched and returns its current contents.
+  // Keep the user's draft and offer an explicit reload or merge.
+  if (result.status === "conflict") showConflict(result.file);
+}
+```
+
+保存复用宿主的路径规则和原子文本文件替换，只更新已有的完整文本文件，不负责新建、
+重命名或删除。版本检查能发现写入前已经观察到的修改，但不是针对任意外部写入者的
+文件系统事务。操作被接纳后，即使取消或传输失败，写入也可能已经完成；重试前应重新读取。
+
+```ts
+const controller = new AbortController();
+if (files.capabilities.watch && files.watch) {
+  const stop = await files.watch(target, change => {
+    if (change.type === "error") showError(change.message);
+    else scheduleReload(target); // Coalesce reads and retain unsaved editor text.
+  }, { signal: controller.signal });
+  await loadInitialState(target); // Subscribe first, then read.
+  // On unmount: stop(), or controller.abort().
+}
+```
+
+默认本地桌面 provider 使用原生文件系统事件，在订阅间共享目录监听句柄，
+并在 40 毫秒窗口内合并突发事件。收到事件后异步重新校验路径；原生订阅空闲时不扫描元数据。
+原生监听不可用时，才通过共享目录定时器每两秒检查一次元数据。它报告已有文件或目录
+直接条目的变化，包括删除和重建。它不递归观察子文件内容，不保证捕获所有短暂变化，
+也不是有序的变更日志。事件保留请求时的 root 和 path；终止性 `error` 会结束订阅。
+退订、取消、插件或 provider 退役、渲染器重新加载及窗口关闭都会释放观察资源。
+远程 Web 和移动端传输目前不提供变更订阅能力。
+
+知识库插件可以在自己的运行时服务中维护编辑器、链接关系、递归索引、文件操作和持久化，
+由桌面模块通过 `invokeService` 或 `invokeRuntime` 调用，见[可替换服务提供者](replaceable-providers.md)。
+受信任的运行时插件可以使用其执行环境的文件系统 API，但它不自动等同于远程会话的
+文件系统；插件需要定义工作目录路由和访问策略。宿主无需为每个领域新增注册系统，
+插件也可以声明自己的版本化服务和子 UI 插槽，供其他插件继续扩展。
 
 ## Presenter 和动作
 
@@ -192,15 +277,19 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 使用 `api.react` 和 `api.ui`，让控件遵循宿主主题、间距和排版。UI 字号与代码字号应分开。只改外观时优先使用声明式主题 token，公开契约见[界面矩阵](theme-surface-matrix.md)。
 
-桌面上的 `api.ui.Avatar` 和公开图标 `mascot` 共用 Wuu 的圆球耳机形象。Avatar 接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留圆球、面部和耳机，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+桌面上的 `api.ui.Avatar` 默认显示与公开图标 `mascot` 相同的 Wuu 圆球耳机形象。它接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。可选的 `avatarKey` 使用 `mascot-v1:shape:accessory:hue` 格式：形状为 `round`、`rounded-square`、`capsule`、`triangle` 或 `diamond`，配饰为 `none`、`beanie`、`hard-hat`、`headset` 或 `leaf`，色相为 0 到 359 的整数，例如 `mascot-v1:diamond:leaf:150`。省略该字段则保持品牌形象。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留配置的形状和配饰，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标，可能忽略样式字段。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+
+桌面 Personal 的资料面板提供“更换样式”，可预览形状、配饰和颜色。保存会将外观写入现有 Personal 身份；取消或关闭编辑器会丢弃修改。“恢复默认”预览原有圆形、耳机和色相 222 的组合，仍需保存才会生效。左侧 Twin 入口、顶栏、资料面板和重命名对话框共用保存的外观，切换页面和重启后仍保持一致。全局品牌与其他插件图标不变，重命名会保留外观。已有身份无需迁移。原生 iOS 和 Android 头像尚未适配此设置。
 
 可以使用选区、尺寸观察器等标准浏览器 API。定位时优先选择公开的 `data-wuu-component`、`data-wuu-slot`、`data-wuu-surface` 锚点，不要依赖私有类名或 React 内部对象；这些锚点也不保证周围 DOM 结构稳定。对于不由 React effect 清理的监听器、观察器、定时器和其他资源，应显式注册清理。
 
 注册项属于插件 generation，卸载时一起移除。原生桌面退出时，Wuu 先卸载 React 消费者、取消待完成的激活、按依赖反序清理插件并发送完激活报告，然后断开 renderer 并停止后端进程。renderer 若在十秒内无法确认清理完成，会被关闭，失败会记录到日志。这种生命周期管理不是安全沙箱，受信任的 renderer 代码和 CSS 仍可能出错。应保留默认界面的恢复路径、处理异步动作错误，并测试禁用和重载，而不只检查初次渲染。包的信任和更新行为见[插件管理](plugins.md)。
 
-### 运行时导航显示名称
+### 运行时显示名称
 
-`api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。入口未声明时返回 `false`；无效标题及已卸载代次的调用会报错。这只是显示覆盖，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。
+`api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口；`api.setViewTitle(id, title)` 更新一个已注册 View 类型的可见标题。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。ID 不存在时返回 `false`；无效标题及已卸载代次的调用会报错。这些覆盖只影响显示，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。
+
+`api.setNavigationAvatar(id, avatarKey)` 使用同一格式的样式键，为自己声明的导航入口设置静态 `Avatar`。个人助手、项目智能体等入口都可使用，不改变全局品牌。加载时传入 `null` 可保留上一代次的头像，冷启动时显示空图标占位；传入 `undefined` 则恢复声明的图标。未声明入口返回 `false`，无效样式和已卸载代次的调用会报错。覆盖仅为当前入口的临时呈现，持久化身份与 revision 顺序仍由插件管理。运行时调用要求代次已激活：订阅贡献变化并通过 `getGenerationActivation` 确认激活后再读取身份，加载或保存后发布。导航提供者可读取入口上的可选 `avatarKey`，其中 `null` 表示加载占位。兼容旧宿主时先检测该方法。
 
 ### 界面焦点与恢复
 

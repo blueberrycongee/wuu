@@ -33,6 +33,8 @@ interface StreamEntry {
   seed: string;
   /** Whether this entry has an actual stream value, not only listeners. */
   hasValue: boolean;
+  /** Whether the displayed value contains non-whitespace, without joining chunks. */
+  hasVisibleText: boolean;
   /** Latest value waiting to be published to subscribers on the next frame. */
   pendingValue: string | undefined;
   /** Changes whenever the accumulated value is replaced instead of appended. */
@@ -89,6 +91,10 @@ class StreamTextStore {
     return this.entries.get(key)?.hasValue ?? false;
   }
 
+  hasVisibleText(key: string): boolean {
+    return this.entries.get(key)?.hasVisibleText ?? false;
+  }
+
   get(key: string): string {
     const entry = this.entries.get(key);
     if (!entry?.hasValue) {
@@ -120,6 +126,7 @@ class StreamTextStore {
       existing.displayValue = undefined;
       existing.seed = value;
       existing.hasValue = true;
+      existing.hasVisibleText = /\S/.test(value);
       existing.replacementVersion = this.nextReplacementVersion++;
       this.changed(key);
       this.notifyValue(existing, value);
@@ -131,6 +138,7 @@ class StreamTextStore {
       displayValue: undefined,
       seed: value,
       hasValue: true,
+      hasVisibleText: /\S/.test(value),
       pendingValue: undefined,
       replacementVersion: this.nextReplacementVersion++,
       valueListeners: new Set()
@@ -158,6 +166,7 @@ class StreamTextStore {
       return;
     }
     entry.value = value;
+    entry.hasVisibleText = /\S/.test(value);
     entry.replacementVersion = this.nextReplacementVersion++;
     this.changed(key);
     this.notifyValue(entry, value);
@@ -203,6 +212,9 @@ class StreamTextStore {
       return;
     }
     entry.hasValue = true;
+    // The first post-reset delta replaces the held display, even when it is
+    // only whitespace. Later deltas need inspect only their own new text.
+    entry.hasVisibleText = (entry.displayValue === undefined && entry.hasVisibleText) || /\S/.test(delta);
     entry.displayValue = undefined;
     (entry.pendingChunks ??= []).push(delta);
     this.changed(key);
@@ -300,6 +312,7 @@ class StreamTextStore {
       displayValue: undefined,
       seed: "",
       hasValue,
+      hasVisibleText: false,
       pendingValue: undefined,
       replacementVersion: 0,
       valueListeners: new Set()

@@ -16,7 +16,7 @@ import type {
 import {
   initialState,
   mergeSidebarThread,
-  reconcileThreadTitle,
+  reconcileSidebarThreadList,
   reduceNotification,
   sortThreads,
   threadBelongsToWorkspace,
@@ -193,29 +193,6 @@ export function mergeSidebarThreadSnapshots(
     return previous;
   }
   return sortThreads([...byID.values()]);
-}
-
-function reconcileSidebarThreadList(
-  requested: Thread[] | undefined,
-  current: Thread[] | undefined,
-  listed: Thread[],
-): Thread[] {
-  // Titles and organization updates do not advance updated_at. Preserve
-  // snapshots changed while this request was in flight rather than using
-  // activity timestamps (or response arrival order) as metadata versions.
-  const before = new Map((requested ?? []).map((thread) => [thread.id, thread]));
-  const now = new Map((current ?? []).map((thread) => [thread.id, thread]));
-  const result = new Map(listed.map((thread) => [thread.id, thread]));
-  for (const id of before.keys()) {
-    if (!now.has(id)) result.delete(id);
-  }
-  for (const [id, thread] of now) {
-    if (before.get(id) !== thread) {
-      const incoming = result.get(id);
-      result.set(id, incoming ? reconcileThreadTitle(incoming, thread) : thread);
-    }
-  }
-  return sortThreads([...result.values()]);
 }
 
 export function threadsForWorkspace(

@@ -1949,7 +1949,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 /* Monaco draws its own scrollbars; the editor theme colours the thumb from the
    scrollbar tokens and keeps it visible, since scroll position is part of what
    an editor shows. Only the thumb's shape needs the product radius. */
-:is(.workspace-monaco-editor, .workspace-monaco-diff-editor) .monaco-scrollable-element > .scrollbar > .slider {
+.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider {
   border-radius: var(--scrollbar-radius);
 }
 
@@ -2261,92 +2261,28 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: var(--space-2) var(--pane-inset);
 }
 
-.workspace-monaco-diff-editor {
+.workspace-diff,
+.workspace-diff-view {
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
+  background: var(--workspace-canvas-bg);
+}
+
+.workspace-diff {
   overflow: hidden;
-  background: var(--workspace-canvas-bg);
 }
 
-.workspace-diff-code-scroll {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
+.workspace-diff-view {
   overflow: auto;
-}
-
-.workspace-diff-code {
-  width: 100%;
-  min-width: 0;
-  min-height: 100%;
-  box-sizing: border-box;
-  border: 0;
-  border-radius: 0;
-  background: var(--workspace-canvas-bg);
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--appearance-code-size);
-  line-height: 1.6;
-  margin: 0;
-  padding: var(--space-3) 0 var(--space-8);
-  white-space: normal;
-}
-
-.workspace-diff-line {
-  display: block;
-  position: relative;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 0 var(--space-5) 0 104px;
-}
-
-.workspace-diff-line.meta {
-  color: var(--ink-soft);
-}
-
-.workspace-diff-line.hunk {
-  background: var(--surface-2);
-  color: var(--ink-soft);
-}
-
-.workspace-diff-line.add {
-  background: color-mix(in srgb, var(--success) 8%, transparent);
-}
-
-.workspace-diff-line.delete {
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
-.workspace-diff-line-number {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 52px;
-  box-sizing: border-box;
-  color: var(--ink-tertiary);
-  padding: 0 10px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-}
-
-.workspace-diff-line-number:first-child {
-  left: 0;
-}
-
-.workspace-diff-line-number:nth-child(2) {
-  left: 52px;
-}
-
-.workspace-diff-line-code {
-  display: block;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding-left: 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  --diffs-header-font-family: var(--appearance-ui-font);
+  --diffs-deletion-color-override: var(--danger);
+  --diffs-addition-color-override: var(--success);
+  --diffs-modified-color-override: var(--info);
+  --diffs-selection-color-override: var(--info);
+  --diffs-bg-selection-override: var(--selection-bg);
+  --diffs-bg-selection-number-override: var(--selection-bg);
 }
 
 /* Change list: files under their folder, one level deep. Rows share the file
@@ -2873,14 +2809,16 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   --runtime-summary-padding-bottom: var(--space-2);
   --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
   --runtime-effort-block: 36px;
-  --runtime-summary-gap: calc(var(--space-1) * 2.5);
+  --runtime-summary-gap: var(--space-2);
+  --runtime-model-group-gap: var(--space-1);
   --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
   --runtime-summary: calc(
     2px + var(--runtime-summary-padding-top) + var(--runtime-summary-padding-bottom)
     + var(--runtime-summary-context, 1) * var(--runtime-context-row)
     + var(--runtime-selection-row)
     + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
-    + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * var(--runtime-summary-gap)
+    + var(--runtime-summary-context, 1) * var(--runtime-summary-gap)
+    + var(--runtime-summary-effort, 0) * var(--runtime-model-group-gap)
   );
   position: relative;
   display: block;
@@ -2931,12 +2869,12 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   will-change: opacity, translate;
 }
 
-/* Discovery notices and empty states have text height, not model-row height. */
-.codex-model-menu.runtime-panel.is-models:has(.composer-menu-note, .composer-menu-empty) {
+/* Empty states have text height, not model-row height. */
+.codex-model-menu.runtime-panel.is-models:has(.composer-menu-empty) {
   height: auto;
 }
 
-.codex-model-menu.runtime-panel.is-models:has(.composer-menu-note, .composer-menu-empty) > .runtime-panel-page {
+.codex-model-menu.runtime-panel.is-models:has(.composer-menu-empty) > .runtime-panel-page {
   position: relative;
   max-height: calc(var(--runtime-max-height) - 2px);
 }
@@ -2987,6 +2925,16 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   justify-content: flex-start;
   gap: var(--runtime-summary-gap);
   padding: var(--runtime-summary-padding-top) var(--space-2) var(--runtime-summary-padding-bottom);
+}
+
+/* The model and its effort control form one group beneath the source path. */
+.runtime-panel-model-group {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--runtime-model-group-gap);
 }
 
 /* Where the model comes from, as a quiet path above it. */
@@ -3085,11 +3033,11 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-tertiary);
 }
 
-/* The thumb stays inside the track at both ends, including its focus ring. */
+/* The track and model button share outer guides; labels and icons keep their
+ * own reading inset. The thumb stays inside the track, including its focus ring. */
 .runtime-panel-effort {
   height: var(--runtime-effort-block);
   flex: 0 0 auto;
-  padding-inline: var(--runtime-content-inset) 0;
 }
 
 /* Focus stays within the painted control edge so keyboard use does not move
@@ -3434,6 +3382,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   width: var(--runtime-context-row);
   height: var(--runtime-context-row);
   flex: 0 0 auto;
+  margin-inline-end: calc(-1 * var(--runtime-content-inset));
   justify-content: center;
   padding: 0;
   border-radius: var(--radius-xs);

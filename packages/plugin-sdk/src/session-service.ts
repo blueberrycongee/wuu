@@ -461,43 +461,7 @@ export interface SessionDomainPluginTurnLifecycleOutboxEntry {
   readonly "UpdatedAt": string;
 }
 
-export interface SessionDomainProjectWork {
-  readonly "acceptance": string;
-  readonly "authority": string;
-  readonly "blocker"?: string;
-  readonly "brief": string;
-  readonly "code_ref"?: string;
-  readonly "created_at": string;
-  readonly "delivery"?: string;
-  readonly "delivery_by"?: string;
-  readonly "evidence"?: string;
-  readonly "executor_id"?: string;
-  readonly "executor_input"?: (SessionDomainProjectWorkInput | null);
-  readonly "executor_model": SessionDomainRuntimeSelection;
-  readonly "id": string;
-  readonly "lead_id": string;
-  readonly "lead_input"?: (SessionDomainProjectWorkInput | null);
-  readonly "lead_model": SessionDomainRuntimeSelection;
-  readonly "phase": string;
-  readonly "project_id": string;
-  readonly "review"?: string;
-  readonly "review_turn_id"?: string;
-  readonly "revision": number;
-  readonly "source_refs"?: string;
-  readonly "submission_turn_id"?: string;
-  readonly "summary"?: string;
-  readonly "title": string;
-  readonly "updated_at": string;
-  readonly "version": number;
-  readonly "workspace": string;
-}
 
-export interface SessionDomainProjectWorkInput {
-  readonly "brief": string;
-  readonly "client_id": string;
-  readonly "revision": number;
-  readonly "sender_id": string;
-}
 
 export interface SessionDomainProviderHistorySnapshot {
   readonly "Checkpoint": (SessionDomainHistoryCheckpoint | null);
@@ -797,7 +761,6 @@ export interface SessionDomainMethods {
   "ListParticipantRuns": { args: readonly [participantID: string, limit: number]; values: readonly [ReadonlyArray<SessionDomainParticipantRun> | null]; };
   "ListParticipants": { args: readonly [kind: SessionDomainKind]; values: readonly [ReadonlyArray<SessionDomainParticipant> | null]; };
   "ListPluginTurnLifecycleOutbox": { args: readonly []; values: readonly [ReadonlyArray<SessionDomainPluginTurnLifecycleOutboxEntry> | null]; };
-  "ListProjectWork": { args: readonly [projectID: string]; values: readonly [ReadonlyArray<SessionDomainProjectWork> | null]; };
   "ListTokenUsage": { args: readonly []; values: readonly [ReadonlyArray<SessionDomainTokenUsageRow> | null]; };
   "LoadActiveHistoryRecords": { args: readonly [id: string, includeMeta: boolean]; values: readonly [ReadonlyArray<SessionDomainHistoryRecord> | null]; };
   "LoadCompactionNote": { args: readonly [sessionID: string, providerKey: string]; values: readonly [SessionDomainCompactionNote, boolean]; };
@@ -816,8 +779,6 @@ export interface SessionDomainMethods {
   "MostRecentForCWD": { args: readonly [cwd: string, workspaceID: string]; values: readonly [string]; };
   "NewInferenceJournalRuntime": { args: readonly [workspaceScope: string]; values: readonly [SessionDomainJournalHandle]; };
   "PendingInbox": { args: readonly [sessionID: string]; values: readonly [ReadonlyArray<SessionDomainInboxMessage> | null]; };
-  "PendingProjectWork": { args: readonly [projectID: string]; values: readonly [ReadonlyArray<SessionDomainProjectWork> | null]; };
-  "ProjectWorkOperation": { args: readonly [operationID: string]; values: readonly [SessionDomainProjectWork, boolean]; };
   "PutContextSeed": { args: readonly [seed: SessionDomainContextSeed]; values: readonly [SessionDomainContextSeed]; };
   "PutPluginTurnLifecycleOutbox": { args: readonly [pluginID: string, requestID: string, payload: unknown]; values: readonly []; };
   "PutSessionLaunch": { args: readonly [record: SessionDomainSessionLaunchRecord]; values: readonly [SessionDomainSessionLaunchRecord]; };
@@ -828,9 +789,7 @@ export interface SessionDomainMethods {
   "ReadActiveHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadPluginGenerationSnapshot": { args: readonly [sessionID: string]; values: readonly [SessionDomainPluginGenerationSnapshot, boolean]; };
-  "ReadProjectWork": { args: readonly [id: string]; values: readonly [SessionDomainProjectWork]; };
   "RebuildSessionIndexes": { args: readonly []; values: readonly []; };
-  "ReconcileProjectWork": { args: readonly [id: string, version: number]; values: readonly []; };
   "ReleaseHeldUserWork": { args: readonly [sessionID: string, id: string]; values: readonly []; };
   "RenameFolder": { args: readonly [id: string, name: string]; values: readonly [SessionDomainOrganizationGroup]; };
   "ReorderFolders": { args: readonly [ids: ReadonlyArray<string> | null]; values: readonly []; };
@@ -843,7 +802,6 @@ export interface SessionDomainMethods {
   "RewriteHistoryRecordsForEngineEdit": { args: readonly [id: string, records: ReadonlyArray<SessionDomainHistoryRecord> | null, fromSeq: number, baselineSeq: number, oldRef: string, newRef: string]; values: readonly []; };
   "SaveDriverCheckpoint": { args: readonly [sessionID: string, record: SessionDomainDriverCheckpointRecord]; values: readonly []; };
   "SaveModelInputReceipt": { args: readonly [sessionID: string, record: SessionDomainModelInputReceiptRecord]; values: readonly []; };
-  "SaveProjectWork": { args: readonly [work: SessionDomainProjectWork, version: number, operationID: string]; values: readonly [SessionDomainProjectWork]; };
   "SaveRequestContextCheckpoint": { args: readonly [sessionID: string, payload: unknown]; values: readonly []; };
   "SearchHistoryPage": { args: readonly [id: string, query: string, beforeSeq: number, limit: number]; values: readonly [SessionDomainHistoryPage]; };
   "SearchHistoryQuery": { args: readonly [query: SessionDomainHistorySearchQuery]; values: readonly [SessionDomainHistoryPage]; };
@@ -851,7 +809,6 @@ export interface SessionDomainMethods {
   "SetEngineRef": { args: readonly [id: string, ref: string]; values: readonly [SessionDomainSession]; };
   "SetHistoryEngineTurnID": { args: readonly [id: string, seq: number, ref: string, turnID: string, pending: boolean]; values: readonly []; };
   "SetModelSelection": { args: readonly [id: string, provider: string, model: string, variant: string]; values: readonly [SessionDomainSession]; };
-  "SetProjectMembership": { args: readonly [id: string, source: string, parentID: string, instructions: string]; values: readonly [SessionDomainSession]; };
   "SetNextStepModelSelection": { args: readonly [id: string, intent: SessionDomainNextStepModelSelection]; values: readonly [SessionDomainSession]; };
   "SetRuntimeSelection": { args: readonly [id: string, selection: SessionDomainRuntimeSelection]; values: readonly [SessionDomainSession]; };
   "SetSource": { args: readonly [id: string, source: string]; values: readonly [SessionDomainSession]; };
@@ -960,7 +917,6 @@ const sessionDomainArity = {
   "ListParticipantRuns": [2, 1],
   "ListParticipants": [1, 1],
   "ListPluginTurnLifecycleOutbox": [0, 1],
-  "ListProjectWork": [1, 1],
   "ListTokenUsage": [0, 1],
   "LoadActiveHistoryRecords": [2, 1],
   "LoadCompactionNote": [2, 2],
@@ -979,8 +935,6 @@ const sessionDomainArity = {
   "MostRecentForCWD": [2, 1],
   "NewInferenceJournalRuntime": [1, 1],
   "PendingInbox": [1, 1],
-  "PendingProjectWork": [1, 1],
-  "ProjectWorkOperation": [1, 2],
   "PutContextSeed": [1, 1],
   "PutPluginTurnLifecycleOutbox": [3, 0],
   "PutSessionLaunch": [1, 1],
@@ -989,9 +943,7 @@ const sessionDomainArity = {
   "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
-  "ReadProjectWork": [1, 1],
   "RebuildSessionIndexes": [0, 0],
-  "ReconcileProjectWork": [2, 0],
   "ReleaseHeldUserWork": [2, 0],
   "RenameFolder": [2, 1],
   "ReorderFolders": [1, 0],
@@ -1004,7 +956,6 @@ const sessionDomainArity = {
   "RewriteHistoryRecordsForEngineEdit": [6, 0],
   "SaveDriverCheckpoint": [2, 0],
   "SaveModelInputReceipt": [2, 0],
-  "SaveProjectWork": [3, 1],
   "SaveRequestContextCheckpoint": [2, 0],
   "SearchHistoryPage": [4, 1],
   "SearchHistoryQuery": [1, 1],
@@ -1012,7 +963,6 @@ const sessionDomainArity = {
   "SetEngineRef": [2, 1],
   "SetHistoryEngineTurnID": [5, 0],
   "SetModelSelection": [4, 1],
-  "SetProjectMembership": [4, 1],
   "SetNextStepModelSelection": [2, 1],
   "SetRuntimeSelection": [2, 1],
   "SetSource": [2, 1],
@@ -1072,9 +1022,9 @@ export type SessionDomainHandlers = {
 /** Process-provider adapter; no default storage or session behavior is supplied.
  * Keep resources in this runtime generation, authenticate each journal handle
  * against context.caller, and drain them in the provider's dispose handler.
- * AdmitThreadExecution receives the requested thread, domain limit, OS-active
- * IDs and the full probed ID set. Atomically reject new unprobed members with
- * session_admission_changed. The host alone owns OS locks and probes.
+ * AdmitThreadExecution snapshots the requested thread reset generation.
+ * Its legacy capacity arguments are ignored and retained for v1 wire compatibility.
+ * The host alone owns OS locks and probes.
  */
 export function sessionDomainProvider(handlers: SessionDomainHandlers) {
   const implemented = Object.keys(handlers) as SessionDomainMethod[];
@@ -1122,7 +1072,6 @@ export const SESSION_DOMAIN_ERRORS = [
   "invalid_response",
   "session_outcome_unknown",
   "session_model_selection_changed",
-  "session_admission_changed",
   "session_not_found",
   "session_not_archived",
   "history_unavailable",
@@ -1134,9 +1083,6 @@ export const SESSION_DOMAIN_ERRORS = [
   "session_launch_conflict",
   "session_launch_not_found",
   "participant_not_found",
-  "project_work_not_found",
-  "project_work_changed",
-  "project_worker_capacity",
   "inspection_active",
   "inspection_unsupported",
   "state_conflict",

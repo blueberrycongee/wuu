@@ -7,7 +7,6 @@ import { activeThreadIDForState, isThreadRunning, sameRuntimeContext, type AppSt
 import type { CodexModelLoadState } from "../ComposerTypes";
 import { createRuntimeSettingsActions } from "../RuntimeSettingsActions";
 import { rememberedEngineRuntime, resolveDraftEngineMemory, writeDraftEngineMemory } from "../DraftEngineMemory";
-import { isProjectCoordinator } from "../ProjectSessions";
 import { engineRequiresHostModel, hasAuthenticatedProvider, providerIsCodex } from "../RuntimeHelpers";
 import { runtimeViewForSession } from "../SessionRuntimeState";
 
@@ -117,15 +116,14 @@ export class ApplicationComposerRuntime {
       speed: configuration.speed ?? "", modelOptions: {}, permissionMode: configuration.permissions?.mode ?? "standard", approveForMe: configuration.permissions?.approve_for_me ?? false };
   }
   private selection(owner: Owner, tab: Tab, thread?: Thread): ApplicationComposerRuntimeSelectionV1 {
-    const project = tab.kind === "draft" && tab.project || thread && isProjectCoordinator(thread);
-    const engine = project ? "wuu" : thread ? thread.engine_id || "wuu" : owner.engine || owner.inventory?.settings?.default_engine || "wuu";
+    const engine = thread ? thread.engine_id || "wuu" : owner.engine || owner.inventory?.settings?.default_engine || "wuu";
     const hostModel = engineRequiresHostModel(engine, owner.inventory?.engines.find(row => row.id === engine));
     const builtin = thread && owner.configuration ? this.builtinSelection(runtimeViewForSession(owner.configuration, thread)!) : owner.builtin;
     const native = thread ? { model: thread.model, effort: thread.model_effort ?? thread.model_variant ?? "", speed: thread.speed, model_options: thread.model_options } : owner.native.get(engine);
     return { engine, provider: builtin?.provider ?? "", model: hostModel ? builtin?.model ?? "" : native?.model ?? "",
       effort: hostModel ? builtin?.effort ?? "" : native?.effort ?? "", variant: hostModel ? builtin?.variant ?? "" : "",
       speed: hostModel ? builtin?.speed ?? "" : native?.speed ?? "", modelOptions: hostModel ? {} : native?.model_options ?? {},
-      permissionMode: project && !thread ? "read_only" : thread?.permission_mode || owner.permission || (engine === "wuu" ? builtin?.permissionMode ?? "standard" : "unconfined"),
+      permissionMode: thread?.permission_mode || owner.permission || (engine === "wuu" ? builtin?.permissionMode ?? "standard" : "unconfined"),
       approveForMe: thread?.approve_for_me ?? owner.approveForMe ?? builtin?.approveForMe ?? false };
   }
   getSnapshot(): ApplicationComposerRuntimeViewV1 {
@@ -139,8 +137,7 @@ export class ApplicationComposerRuntime {
       const defaultModel = models?.find(model => model.is_default);
       const model = selection.model ? models?.find(model => model.id === selection.model) : defaultModel;
       const nativeDefaults = { model: defaultModel?.id ?? "", effort: model?.default_effort ?? "", speed: model?.default_speed ?? "", modelOptions: Object.fromEntries((model?.options ?? []).map(option => [option.id, option.default_value])) };
-      const project = Boolean(tab.kind === "draft" && tab.project || thread && isProjectCoordinator(thread));
-      const worktree = { available: tab.kind === "draft" && !project && Boolean(owner.git?.is_repo), enabled: Boolean(owner.worktree && owner.git?.is_repo), startBranch: owner.worktree?.startBranch ?? "", branches: owner.git?.branches ?? [] };
+      const worktree = { available: tab.kind === "draft" && Boolean(owner.git?.is_repo), enabled: Boolean(owner.worktree && owner.git?.is_repo), startBranch: owner.worktree?.startBranch ?? "", branches: owner.git?.branches ?? [] };
       const sourceProviders = owner.configuration?.providers ?? emptyProviders;
       let providers = this.providerViews.get(sourceProviders);
       if (!providers) { providers = immutable(sourceProviders); this.providerViews.set(sourceProviders, providers); }
@@ -150,15 +147,15 @@ export class ApplicationComposerRuntime {
         owner.providerModelsView = immutable(owner.codex.models.map(model => ({ id: model.slug, label: model.display_name || model.slug, efforts: model.supported_reasoning ?? [], defaultEffort: model.default_reasoning_level ?? "", supportedInAPI: model.supported_in_api })));
       }
       const providerModels = owner.providerModelsView!;
-      const engineSelectionPending = tab.kind === "draft" && !project && !owner.inventory && !owner.explicitEngineAfterDiscoveryFailure && typeof window.wuu.listEngines === "function";
+      const engineSelectionPending = tab.kind === "draft" && !owner.inventory && !owner.explicitEngineAfterDiscoveryFailure && typeof window.wuu.listEngines === "function";
       const selectedEngine = owner.inventory?.engines.find(engine => engine.id === selection.engine);
       const available = Boolean(owner.configuration && (thread || tab.kind === "draft" && (!owner.inventory || selectedEngine?.enabled && selectedEngine.binary_ok)));
       const busy = Boolean(owner.mutations || thread && isThreadRunning(thread) || this.host.isOwnerPending?.(tab.id) || this.host.isNavigationPending());
-      const key = JSON.stringify([selection, nativeDefaults, worktree, available, engineSelectionPending, busy, thread?.read_only, project, owner.engineLoading, owner.engineError, owner.codex.loading, owner.codex.error, owner.selectionError]);
+      const key = JSON.stringify([selection, nativeDefaults, worktree, available, engineSelectionPending, busy, thread?.read_only, owner.engineLoading, owner.engineError, owner.codex.loading, owner.codex.error, owner.selectionError]);
       if (owner.snapshotKey !== key || owner.snapshot?.providers !== providers || owner.snapshot?.engines !== engines || owner.snapshot?.providerModels !== providerModels) {
         owner.snapshotKey = key;
         owner.snapshot = Object.freeze({ ownerTabId: tab.id, threadId: thread?.id, cwd: owner.cwd, available, readOnly: Boolean(thread?.read_only), busy,
-          engineLocked: tab.kind === "thread" || project, engineSelectionPending, permissionLocked: project,
+          engineLocked: tab.kind === "thread", engineSelectionPending, permissionLocked: false,
           selection: immutable(selection), nativeDefaults: immutable(nativeDefaults), worktree: immutable(worktree), engines, providers, providerModels,
           engineModelsLoading: owner.engineLoading, engineModelsError: owner.engineError, providerModelsLoading: owner.codex.loading, providerModelsError: owner.codex.error, selectionError: owner.selectionError });
       }
@@ -191,11 +188,11 @@ export class ApplicationComposerRuntime {
     if (this.disposed) throw new Error("Composer runtime is disposed");
     const state = this.host.getState();
     if (!state.initialized || this.host.isNavigationPending()) throw new Error("Workspace runtime is not ready");
-    const project = workspace.kind === "project" ? state.projects.find(project => project.id === workspace.project_id) : undefined;
+    const project = workspace.kind === "project" ? state.projects.find(row => row.id === workspace.project_id) : undefined;
     if (workspace.kind === "project" && (!project || project.missing)) throw new Error("Workspace is no longer available");
     const context: RuntimeContext = project ? { kind: "project", project_id: project.id, cwd: project.path } : { ...workspace };
     const configuration = state.initialized;
-    const inventory = await window.wuu.listEngines({ cwd: context.cwd }, context);
+    const inventory = await window.wuu.listEngines({ cwd: context.cwd, include_models: false }, context);
     if (this.disposed) throw new Error("Composer runtime is disposed");
     const engine = inventory.settings?.default_engine || "wuu";
     const selectedEngine = inventory.engines.find(row => row.id === engine);
@@ -262,15 +259,14 @@ export class ApplicationComposerRuntime {
       else if (action === "composer.choose-permission") {
         const value = input as Actions["composer.choose-permission"]["input"];
         const before = this.selection(owner, source.tab, source.thread);
-        if (source.tab.kind === "draft" && source.tab.project || source.thread && isProjectCoordinator(source.thread)) accepted = false;
-        else if (!source.thread && before.engine !== "wuu") { owner.permission = value.mode; if (value.approveForMe !== undefined) owner.approveForMe = value.approveForMe; accepted = true; }
+        if (!source.thread && before.engine !== "wuu") { owner.permission = value.mode; if (value.approveForMe !== undefined) owner.approveForMe = value.approveForMe; accepted = true; }
         else {
           accepted = before.permissionMode === value.mode && (value.approveForMe === undefined || before.approveForMe === value.approveForMe);
           await this.runtime(source, () => { accepted = true; }).selectPermissionMode(value.mode, value.approveForMe);
         }
       } else if (action === "composer.choose-worktree") {
         const value = input as Actions["composer.choose-worktree"]["input"];
-        if (source.tab.kind === "draft" && !source.tab.project && owner.git?.is_repo) {
+        if (source.tab.kind === "draft" && owner.git?.is_repo) {
           if (value.startBranch && !owner.git.branches?.includes(value.startBranch)) throw new Error("Unknown worktree start branch");
           owner.worktree = value.enabled ? { startBranch: value.startBranch ?? "" } : undefined; accepted = true;
         }
@@ -284,7 +280,7 @@ export class ApplicationComposerRuntime {
   private async choose(source: Source, choice: ApplicationComposerRuntimeChoiceV1): Promise<boolean> {
     const owner = source.owner; const selected = this.selection(owner, source.tab, source.thread);
     if (choice.kind === "engine") {
-      if (source.tab.kind !== "draft" || source.tab.project) return false;
+      if (source.tab.kind !== "draft") return false;
       if (owner.inventory && !owner.inventory.engines.some(engine => engine.id === choice.engine && engine.enabled && engine.binary_ok) || !owner.inventory && choice.engine !== "wuu") return false;
       // A failed discovery must not guess the default, but an explicit target
       // can still be attempted with legacy fail-closed model readiness. This
@@ -314,14 +310,27 @@ export class ApplicationComposerRuntime {
     if (!force && owner.inventory && Date.now() - owner.fetchedAt < engineFreshnessMS) return;
     if (!force && owner.enginePending && !owner.engineSignal?.aborted) return owner.enginePending.then(() => { source.signal?.throwIfAborted(); });
     const request = ++owner.engineRequest; owner.engineSignal = source.signal; owner.engineLoading = true; owner.engineError = ""; this.host.changed();
+    const publish = (result: EngineListResult): boolean => {
+      source.signal?.throwIfAborted();
+      if (!this.current(source) || request !== owner.engineRequest) return false;
+      owner.inventory = immutable(result); owner.explicitEngineAfterDiscoveryFailure = false; owner.fetchedAt = Date.now();
+      this.seed(owner, source.tab); this.host.changed(); return true;
+    };
     const pending = (async () => {
+      let availabilityPublished = false;
       try {
+        if (!force && !owner.inventory) {
+          const availability = await window.wuu.listEngines({ cwd: owner.cwd, include_models: false }, owner.context);
+          if (!publish(availability)) return;
+          availabilityPublished = true;
+        }
         const result = await window.wuu.listEngines({ cwd: owner.cwd, ...(force ? { refresh_models: true } : {}) }, owner.context);
-        source.signal?.throwIfAborted();
-        if (!this.current(source) || request !== owner.engineRequest) return;
-        owner.inventory = immutable(result); owner.explicitEngineAfterDiscoveryFailure = false; owner.fetchedAt = Date.now();
-        this.seed(owner, source.tab);
+        if (!publish(result) && availabilityPublished) owner.fetchedAt = 0;
       } catch (error) {
+        // A discarded or aborted full refresh must not leave the deferred
+        // availability publish marked fresh, or later refresh calls early-return
+        // and the catalog never completes. The owner outlives this source.
+        if (availabilityPublished) owner.fetchedAt = 0;
         if (source.signal?.aborted) throw error;
         if (this.current(source) && request === owner.engineRequest) {
           owner.engineError = error instanceof Error ? error.message : String(error);
@@ -334,7 +343,7 @@ export class ApplicationComposerRuntime {
     owner.enginePending = pending; return pending;
   }
   private seed(owner: Owner, tab: Tab): void {
-    if (owner.seeded || tab.kind !== "draft" || tab.project || !owner.inventory) return;
+    if (owner.seeded || tab.kind !== "draft" || !owner.inventory) return;
     const remembered = resolveDraftEngineMemory(owner.inventory);
     if (remembered) { owner.engine = remembered.engine; owner.native.set(remembered.engine, remembered); }
     else owner.engine = owner.inventory.settings?.default_engine || "wuu";

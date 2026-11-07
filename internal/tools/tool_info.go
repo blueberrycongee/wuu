@@ -212,13 +212,13 @@ func classifyToolKind(name string) ToolKind {
 		return ToolKindSearch
 	case "tool_search", "list_workspaces":
 		return ToolKindDiscovery
-	case "bash", "process", codeModeExecToolName:
+	case "bash", codeModeExecToolName:
 		return ToolKindShell
 	case "git":
 		return ToolKindGit
 	case "web_search", "web_fetch":
 		return ToolKindWeb
-	case "thread_get", "notes", projectSessionToolName:
+	case "thread_get", "notes":
 		return ToolKindSession
 	case "load_skill":
 		return ToolKindSkill

@@ -12,9 +12,9 @@ After the first send, the workspace sidebar immediately shows the pending conver
 
 The normal sidebar includes cross-workspace **Recent**. Opening the window orders running conversations first, then unread conversations, then the remaining conversations by latest update. Reading or switching conversations clears unread indicators without changing their positions, even after the pointer or keyboard focus leaves the list. Live output and title updates also preserve the order.
 
-Starting work or receiving a new result gives that conversation priority while preserving the relative order of other conversations. A conversation that finishes stays just below the remaining running conversations, including when you are already viewing it and its result is marked read immediately. These priorities last until the window is reloaded or reopened. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, activity-driven moves wait until the interaction ends; status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
+New conversations appear at the top of Recent, including while the first message is waiting to start. Existing conversations keep their relative positions when work starts or finishes. You can drag rows to save a preferred order; later arrivals appear above them. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, new entries wait until the interaction ends, except for the conversation you are creating or selecting. Status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
 
-These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
+These conversations remain in their workspace lists too. Pinned and archived conversations are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
 
 ## Dictate a message
 
@@ -33,6 +33,12 @@ A dropped response that already completed an assistant item stops automatic payl
 Automatic recovery is separate: a pending network connection shows **Waiting for the network**, other recoveries show **Retrying the request**, and terminal notices distinguish exhausted recovery from unsafe replay. Stop cancels the current request and its backoff; it does not schedule another turn. Double clicks and stale requests cannot start concurrent continuations.
 
 Automatic retries retain the existing workload and shared workflow limits. A new model round receives its own operation allowance; transport changes, nested recovery, ambiguous billable submissions and waiting still share the workflow budget. Confirmed progress does not reset that shared budget. Explicit Continue starts a new workflow after the preceding turn has settled.
+
+## Choose what continues after restarting
+
+After an unexpected exit or update restart interrupts running conversations, a notice shows how many were interrupted during the previous run. You can continue using Wuu while it is visible. Click **Continue all** to continue those conversations from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. An ordinary quit is excluded, as are previously completed, failed, or manually stopped turns and old background results.
+
+Dismiss the notice to keep those conversations paused. Opening their history or receiving another completion notification does not restart them. You can continue later from a conversation or send a new instruction. Dismissing the notice preserves saved history and pending results; it does not undo earlier effects or stop separately managed background commands. Archived conversations and plugin-private sessions are excluded.
 
 ## Recover unsent text
 
@@ -58,12 +64,14 @@ The composer supports these keyboard actions:
 
 | Key | Action |
 |---|---|
-| Enter | Send the draft; when the engine supports steering a running task, add it to that task |
-| Command + Enter (Ctrl + Enter on Windows and Linux) | Queue a non-empty draft for after the current turn, when queuing is available |
+| Enter | Send the draft; when the engine supports steering a running task, close the visible response at that point and continue the same turn |
+| Command + Enter (Ctrl + Enter on Windows and Linux) | Send the draft when no task is running; while one runs, queue a non-empty draft for after the current turn when queuing is available |
 | Shift + Enter | Insert a new line |
 | Escape | Interrupt a running task when the composer can do so |
 
 The `/` menu handles Enter and Tab as command selection while it is open. Tab otherwise moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
+
+Steering during a model response closes the visible assistant text at that point. The partial text remains as an interrupted response, the new message appears after it, and the same turn continues with the next model request instead of starting a separate turn. Steering while a tool is running waits for that tool batch to finish; it does not cancel tools that have already started. Queueing with Command + Enter (Ctrl + Enter) still waits for the next turn.
 
 In saved conversations, accepted queued messages and steering input are saved locally before acceptance is confirmed, including their attachments and document context. Edits and removals are saved too. After a core restart, input that had not reached conversation history appears as held work for you to review, edit, remove, or explicitly send. It does not run automatically. Input already admitted to history is not queued again, even if its execution was interrupted. Temporary conversations remain memory-only; this recovery does not save unsent drafts.
 

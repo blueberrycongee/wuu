@@ -1,4 +1,7 @@
-import { DictationButton, DictationRecording, useComposerDictation } from "./ComposerDictation";
+import { ComposerInput, composerInputElement, type ComposerInputHandle } from "./ComposerInput";
+import { useComposerPluginMenu } from "./ComposerPluginMenu";
+import { pluginReferenceParts } from "./ComposerPluginReferences";
+import { DictationButton, DictationErrorToast, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import { showActionErrorToast } from "./Toast";
 import { createPortal } from "react-dom";
 import { useComposerServices } from "./ComposerServicesContext";
@@ -242,9 +245,6 @@ export function Composer({
   onQueue,
   onInterrupt,
   telemetryTurnID,
-  tokensPerSecond = 0,
-  tokenSpeedSampledAt,
-  tokenSpeedSource,
   contextUsage,
   queryHistorySessionID,
   skillThreadID,
@@ -266,7 +266,7 @@ export function Composer({
   topAccessory?: ReactNode;
   statusAccessory?: ReactNode;
   inlineSelection?: ReactNode;
-  // The conversation's permission mode cannot change, as for a project coordinator.
+  // The conversation's permission mode cannot change.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
   runtimeControlsTarget?: HTMLElement | null;
@@ -370,9 +370,6 @@ export function Composer({
   onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
-  tokensPerSecond?: number;
-  tokenSpeedSampledAt?: number;
-  tokenSpeedSource?: "real" | "estimated" | "none";
   // contextUsage drives the model-adjacent context meter. When the active
   // model has no catalog window yet the AppState selector returns
   // undefined and the meter hides entirely.
@@ -521,7 +518,8 @@ export function Composer({
     : running
       ? t("composer.queueSend")
       : t("composer.send");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<ComposerInputHandle>(null);
+  const pluginMenu = useComposerPluginMenu(textareaRef, updateVisiblePrompt, queryHistorySessionID, readOnly || textOnly);
   const composerFrameRef = useRef<HTMLDivElement>(null);
   const workspacePillRef = useRef<HTMLButtonElement>(null);
   const permissionChipRef = useRef<HTMLButtonElement>(null);
@@ -835,7 +833,15 @@ export function Composer({
     if (submittedDraftSignatureRef.current === draftSignature) {
       return;
     }
-    const contentParts = collapsedContentPartsForPrompt(promptOverride);
+    const contentParts = pluginReferenceParts(promptOverride, collapsedContentPartsForPrompt(promptOverride));
+    if (contentParts?.some(part => part.type === "plugin_reference")) {
+      if (!services?.conversationPluginsSupported) { showActionErrorToast(new Error(t("composer.pluginsEngineUnsupported"))); return; }
+      if (mode === "steer") {
+        if (onQueue) submitComposerWith(onQueue, promptOverride, "queue");
+        else showActionErrorToast(new Error(t("composer.pluginsQueue")));
+        return;
+      }
+    }
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : promptOverride;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
     submittedDraftSignatureRef.current = draftSignature;
@@ -866,7 +872,7 @@ export function Composer({
     // Restore focus within the user action so software keyboards can open.
     // An already-focused editor must not blur/refocus or scroll on send.
     const textarea = textareaRef.current;
-    if (textarea && document.activeElement !== textarea) {
+    if (textarea && document.activeElement !== composerInputElement(textarea)) {
       textarea.focus({ preventScroll: true });
     }
   }
@@ -921,8 +927,9 @@ export function Composer({
     startTransition(() => commitPrompt(nextPrompt));
   }
 
-  function handleComposerPaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
+  function handleComposerPaste(event: ReactClipboardEvent<HTMLElement>): void {
     handleCollapsedComposerPaste(event, {
+      input: textareaRef.current,
       readOnly,
       fileAttachmentsEnabled: !textOnly,
       onPasteAttachmentFiles,
@@ -1086,16 +1093,17 @@ export function Composer({
     focusComposerSoon();
   }
 
-  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>, inline: ComposerInlineCompletionActions): void {
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLElement>, inline: ComposerInlineCompletionActions): void {
     if (readOnly) {
       return;
     }
     if (isComposerTextComposing(event)) {
       return;
     }
+    if (pluginMenu.handleKeyDown(event)) return;
     const currentPrompt = hasCollapsedPromptBlocks
-      ? `${collapsedPromptPrefix}${event.currentTarget.value}`
-      : event.currentTarget.value;
+      ? `${collapsedPromptPrefix}${textareaRef.current?.value ?? visiblePromptValue}`
+      : textareaRef.current?.value ?? visiblePromptValue;
     // One owner arbitrates Tab against the live value, which may be ahead of
     // the rendered slash menu. Modified Tab always retains native focus travel.
     if (event.key === "Tab") {
@@ -1172,7 +1180,9 @@ export function Composer({
       submitComposerWith(onQueue, currentPrompt, "queue");
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey && !primaryModifier) {
+    // Cmd/Ctrl+Enter queues a follow-up while a turn runs; otherwise it sends
+    // the draft instead of acting as an inert key combination.
+    if (event.key === "Enter" && !event.shiftKey && (!primaryModifier || !running)) {
       event.preventDefault();
       submitDraft(currentPrompt);
     }
@@ -1183,7 +1193,7 @@ export function Composer({
   // allow the gesture in a read-only composer so the user can copy
   // existing prompt text out — copy/select-all remain enabled; only
   // mutating actions (cut/paste/delete) are blocked.
-  function handleComposerContextMenu(event: ReactMouseEvent<HTMLTextAreaElement>): void {
+  function handleComposerContextMenu(event: ReactMouseEvent<HTMLElement>): void {
     // Mobile long-press belongs to the native text selection and paste UI.
     if (isTouchWebShell()) return;
     event.preventDefault();
@@ -1337,11 +1347,7 @@ export function Composer({
         <ComposerRuntimeMeters
           inToolRail={controlsInRail}
           compact={compactControls}
-          running={running}
           turnID={telemetryTurnID}
-          fallbackTokensPerSecond={tokensPerSecond}
-          fallbackSampledAt={tokenSpeedSampledAt}
-          fallbackSource={tokenSpeedSource}
           fallbackContextUsage={contextUsage}
           activeEngine={activeEngine}
         />
@@ -1380,11 +1386,12 @@ export function Composer({
     <div
       className="composer-stack"
       data-wuu-component="composer"
+      data-composer-owner-tab-id={services?.ownerTabId}
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       {statusAccessory}
-      {dictation.error && <div className="composer-dictation-error" role="alert">{dictation.error}</div>}
+      <DictationErrorToast key={dictation.sessionId} message={dictation.error} />
       <div className="composer-above-input">
         <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>
@@ -1397,6 +1404,7 @@ export function Composer({
             align="left"
             offset={variant === "hero" ? 10 : 8}
             width={commandMenuWidth}
+            matchAnchorWidth
           >
             <div
               className="composer-context-menu composer-plus-menu slash-command-menu"
@@ -1406,7 +1414,7 @@ export function Composer({
               style={{ "--composer-menu-width": `${commandMenuWidth}px` } as CSSProperties}
             >
               {visibleSlashCommands.length > 0 ? (
-                <div className="slash-command-list scrollbar-hidden">
+                <div className="slash-command-list composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
                   {visibleSlashCommands.map((command, index) => {
                     const selected = index === selectedSlashIndex;
                     const optionID = `${slashMenuID}-${command.id}`;
@@ -1436,18 +1444,22 @@ export function Composer({
                           onClick={() => applySlashCommand(command, slashDraft)}
                         >
                           <SlashCommandIcon command={command} />
-                          <span className="composer-plus-menu-item-title slash-command-name">
-                            /{command.name}
+                          <span className="composer-plus-menu-item-title slash-command-title">
+                            {command.kind === "skill" ? command.name : command.title}
                           </span>
-                          {command.disabledReason || command.title ? (
+                          {command.kind === "skill" ? (
+                            <span className={`composer-plus-menu-item-desc ${command.disabledReason ? "slash-command-meta" : "slash-command-summary"}`}>
+                              {command.disabledReason ?? command.description}
+                            </span>
+                          ) : (
                             <span
                               className={`composer-plus-menu-item-desc ${
-                                command.disabledReason ? "slash-command-meta" : "slash-command-summary"
+                                command.disabledReason ? "slash-command-meta" : "slash-command-command"
                               }`}
                             >
-                              {command.disabledReason ?? command.title}
+                              {command.disabledReason ?? `/${command.name}`}
                             </span>
-                          ) : null}
+                          )}
                         </button>
                       </Tooltip>
                     );
@@ -1522,6 +1534,7 @@ export function Composer({
                     variant={variant}
                     disabled={readOnly}
                     commands={slashCommands}
+                    pluginMenu={pluginMenu}
                     menuAnchorRef={composerFrameRef}
                     onAddAttachment={() => attachmentInputRef.current?.click()}
                     mobileAttachments={
@@ -1539,6 +1552,7 @@ export function Composer({
               </div>
               <ComposerTextarea
                 ref={textareaRef}
+                resetKey={queryHistorySessionID}
                 value={visiblePromptValue}
                 valueRevision={promptRevision}
                 submissionClearRevision={submissionClearRevision}
@@ -1568,7 +1582,7 @@ export function Composer({
                     : undefined
                 }
                 ariaExpanded={slashMenuOpen || undefined}
-                onValueChange={updateVisiblePrompt}
+                onValueChange={value => { updateVisiblePrompt(value); pluginMenu.observe(value); }}
                 onPaste={handleComposerPaste}
                 onBlurValue={(value) => {
                   if (slashMenuOpen) {
@@ -1595,7 +1609,7 @@ export function Composer({
                     aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
                     type="button"
                     onPointerDown={(event) => {
-                      if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
+                      if (!showComposerStopAction && event.button === 0 && textareaRef.current && document.activeElement === composerInputElement(textareaRef.current)) {
                         // Keep editing focus while the pointer activates Send;
                         // keyboard navigation and the Stop action stay native.
                         event.preventDefault();
@@ -1766,6 +1780,7 @@ function ComposerFooter({ collapsed, children }: { collapsed: boolean; children:
 }
 
 type ComposerTextareaProps = {
+  resetKey?: string;
   value: string;
   valueRevision: number;
   submissionClearRevision: number;
@@ -1791,16 +1806,17 @@ type ComposerTextareaProps = {
   ariaExpanded?: boolean;
   onValueChange: (value: string) => void;
   onBlurValue: (value: string) => void;
-  onPaste: (event: ReactClipboardEvent<HTMLTextAreaElement>) => void;
-  onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>, inline: ComposerInlineCompletionActions) => void;
-  onContextMenu: (event: ReactMouseEvent<HTMLTextAreaElement>) => void;
+  onPaste: (event: ReactClipboardEvent<HTMLElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>, inline: ComposerInlineCompletionActions) => void;
+  onContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
 };
 
 // Keep the browser's input-critical value below the rest of Composer. The
 // textarea paints synchronously, while slash menus, plugin presenters, meters,
 // and the surrounding chrome update in an interruptible transition.
-const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
+const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextareaProps>(
   function ComposerTextarea({
+    resetKey,
     value: committedValue,
     valueRevision,
     submissionClearRevision,
@@ -1827,7 +1843,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     onContextMenu,
   }, ref): JSX.Element {
     const { t } = useI18n();
-    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const inputRef = useRef<ComposerInputHandle>(null);
     useImperativeHandle(ref, () => inputRef.current!, []);
     const [value, setValue] = useState(committedValue);
     useComposerHeight(inputRef, value);
@@ -1894,8 +1910,9 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
 
     return (
       <>
-      <textarea
+      <ComposerInput
         ref={inputRef}
+        resetKey={`${resetKey ?? ""}:${submissionClearRevision}`}
         data-wuu-component="composer-input"
         value={value}
         placeholder={inline.text ? "" : placeholder}
@@ -1907,7 +1924,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
         aria-describedby={inline.text ? inline.descriptionId : undefined}
         onFocus={() => inline.observe()}
         onSelect={() => inline.observe()}
-        onChange={(event) => {
+        onValueChange={(nextValue) => {
           const pendingValue = pendingProgrammaticValueRef.current;
           if (!compositionActiveRef.current && pendingValue !== null) {
             pendingProgrammaticValueRef.current = null;
@@ -1915,7 +1932,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
             setValue(pendingValue.value);
             return;
           }
-          publishValue(event.target.value);
+          publishValue(nextValue);
           inline.observe();
         }}
         onCompositionStart={() => {

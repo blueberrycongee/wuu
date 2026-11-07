@@ -35,7 +35,24 @@ func (s *Server) userMessageWithInputImages(ctx context.Context, threadID, promp
 		msg.Content = content
 		msg.DisplayContent = strings.TrimSpace(prompt)
 	}
-	return s.persistInputWorkingCopies(ctx, threadID, msg, received, selected)
+	guidance := ""
+	if hasPluginReferences(msg.ContentParts) {
+		guidance, err = s.resolvePluginReferences(ctx, msg.ContentParts, s.rt.PluginHost, nil)
+		if err != nil {
+			return msg, err
+		}
+	}
+	msg, err = s.persistInputWorkingCopies(ctx, threadID, msg, received, selected)
+	if err != nil {
+		return msg, err
+	}
+	if guidance != "" {
+		if msg.DisplayContent == "" {
+			msg.DisplayContent = strings.TrimSpace(prompt)
+		}
+		msg.Content += guidance
+	}
+	return msg, nil
 }
 
 // persistInputWorkingCopies shares byte retention with explicitly admitted

@@ -67,6 +67,16 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   steerTurn: async (...args) => {
     record("steerTurn", args);
     const turn = threads.find(value => value.id === args[0]).turns.find(value => value.id === args[1]);
+    // Mirror the server's steering settlement: accepting new input completes
+    // the in-flight agent message as a visible steered fragment before the
+    // steering user message lands after it.
+    const active = [...turn.items].reverse().find(item => item.type === "agent_message" && item.status === "in_progress");
+    if (active) {
+      active.status = "completed";
+      active.cause = "steered_stream_fragment";
+      for (const listener of listeners) listener({ kind: "notification", workdir: cwd,
+        message: { method: "item/completed", params: { thread_id: args[0], turn_id: turn.id, item: { ...active } } } });
+    }
     acceptUserMessage(args[0], turn, args[4], args[2], args[7]);
     return { steer: { id: args[4], thread_id: args[0] } };
   },

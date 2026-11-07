@@ -112,7 +112,7 @@ function fileEdits(parameters: Record<string, unknown>): Array<{old_text: string
 function ruleDescription(rule: Pick<ReviewRule, "operation" | "target" | "description" | "decision">, locale: string): string {
   if (!locale.startsWith("zh")) return rule.description;
   if (rule.operation === "write_file" || rule.operation === "edit_file") return rule.decision === "ask" ? `修改“${rule.target.split(/[\\/]/).pop()}”前，每次先问我。` : `以后允许修改“${rule.target.split(/[\\/]/).pop()}”的内容，仅限这个文件。`;
-  if (["bash", "process", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "在相同位置重复这条完全相同的操作前，每次先问我。" : "以后允许在相同位置，使用相同权限重复这条完全相同的操作。";
+  if (["bash", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "在相同位置重复这条完全相同的操作前，每次先问我。" : "以后允许在相同位置，使用相同权限重复这条完全相同的操作。";
   return rule.description;
 }
 const systemReasonsZH: Record<string, string> = {

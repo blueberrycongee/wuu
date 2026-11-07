@@ -177,7 +177,7 @@ func TestPersonalProcessInputRequiresIndependentApproval(t *testing.T) {
 	t.Cleanup(func() { _, _ = manager.Stop(process.ID) })
 	input := func(text string) providers.ToolCall {
 		raw, _ := json.Marshal(map[string]any{"action": "write", "process_id": process.ID, "input": text})
-		return providers.ToolCall{ID: "stdin", Name: "process", Arguments: string(raw)}
+		return providers.ToolCall{ID: "stdin", Name: "bash", Arguments: string(raw)}
 	}
 	rejected := decide(input("unapproved\n"), "reject")
 	if rejected.Status != personalreview.Denied {

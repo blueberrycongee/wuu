@@ -174,7 +174,7 @@ wuu state migrate-personal-review --user-space local --composition-profile perso
 
 ### 有范围限制的 Personal 连接器
 
-Personal 本地主机通过 `host.personal` 提供 Gmail、Notion、Drive、GitHub、
+Personal 本地主机通过 `host.personal` 提供 Gmail、Notion、Drive、
 Google Calendar，以及隔离的 Slack/飞书适配器；这些不是 Coding 或 MCP 工具。
 连接元数据、所选资源、读写权限与账号身份分别核验；安装适配器不等于账号已连接。
 旧 Calendar 日程读取/缓存仍保留，日历写操作走连接器动作流程，不暗中升级只读授权。
@@ -190,8 +190,7 @@ Personal 设置中主动开始、查看或取消账号授权，宿主打开授�
 
 Gmail 支持线程搜索/读取、附件、草稿与发送。Notion 的搜索、读取、查询、报告追加
 限定所选资源。Drive 的 `drive.file` 是选定或分享给应用的文件，不是全盘搜索；Docs
-导出文本，PDF 作为受管理附件交付，不声称已提取正文。GitHub 仅跟踪所选仓库的
-PR、Issue、checks 和 releases；本地只读功能不等于 OAuth/App 权限天然只读。
+导出文本，PDF 作为受管理附件交付，不声称已提取正文。
 Calendar 创建、改期、取消须明确通知行为，已有事件修改须提供当前 ETag。
 Slack/飞书搜索和 mentions 是所选频道当前有界分页内筛选，不是全企业索引，后页须续读 cursor。
 

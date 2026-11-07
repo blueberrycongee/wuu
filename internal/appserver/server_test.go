@@ -15,6 +15,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/engineusage"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -55,6 +57,8 @@ import (
 )
 
 func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
+	var identityCalls atomic.Int32
+	var identityFailure atomic.Bool
 	var baseURL string
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -67,7 +71,41 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 		case "/token":
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "app-server-secret", "refresh_token": "refresh-secret", "expires_in": 3600})
 		default:
-			http.NotFound(w, r)
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer app-server-secret" {
+				http.NotFound(w, r)
+				return
+			}
+			var req struct {
+				ID     int64  `json:"id"`
+				Method string `json:"method"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				return
+			}
+			var result any
+			switch req.Method {
+			case "initialize":
+				result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "fixture", "version": "1"}}
+			case "tools/list":
+				result = map[string]any{"tools": []any{map[string]any{"name": "get-self", "inputSchema": map[string]any{"type": "object"}}}}
+			case "tools/call":
+				identityCalls.Add(1)
+				if identityFailure.Load() {
+					result = map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": "app-server-secret"}}}
+				} else {
+					result = map[string]any{"content": []any{}, "structuredContent": map[string]any{"id": "owner", "name": "Account", "raw_secret": "app-server-secret"}}
+				}
+			default:
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 		}
 	}))
 	defer authServer.Close()
@@ -75,10 +113,13 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 
 	rt := newTestRuntime(t, &fakeClient{})
 	manager := mcp.NewManager()
+	defer manager.Close()
+	readonly := true
 	manager.Configure(map[string]mcp.ServerConfig{
 		"docs": {
-			Name: "docs",
-			URL:  baseURL,
+			Name:           "docs",
+			URL:            baseURL,
+			IdentitySource: "trusted-fixture", IdentityProbe: &config.MCPIdentityProbe{Tool: "get-self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id", Label: "/name"}}, ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
 			OAuth: &mcp.OAuthConfig{
 				ClientID:    "desktop-client",
 				RedirectURI: "http://127.0.0.1/callback",
@@ -125,6 +166,29 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	finish := remarshal[MCPAuthFinishResult](t, responseByID(t, parseOutput(t, out.String()), "finish")["result"])
 	if !finish.Auth.Authenticated || finish.Server.AuthStatus != string(mcp.MCPAuthStatusOAuth) {
 		t.Fatalf("finish result = %+v", finish)
+	}
+	if identityCalls.Load() != 0 {
+		t.Fatal("OAuth or status triggered identity probe")
+	}
+	for _, raw := range []string{`{"id":"connect","method":"mcp/connect","params":{"name":"docs"}}`, `{"id":"verified","method":"mcp/auth/status","params":{"name":"docs"}}`} {
+		if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if response := responseByID(t, parseOutput(t, out.String()), "connect"); response["error"] != nil {
+		t.Fatal(response)
+	}
+	verified := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "verified")["result"])
+	if identityCalls.Load() != 1 || verified.Identity == nil || verified.Identity.State != "verified" || verified.Identity.Account.ID != "owner" {
+		t.Fatalf("verified=%+v, calls=%d", verified, identityCalls.Load())
+	}
+	identityFailure.Store(true)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"identity-retry","method":"mcp/identity/refresh","params":{"name":"docs","tool":"unsafe","arguments":{"override":true}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	retry := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "identity-retry")["result"])
+	if identityCalls.Load() != 2 || !retry.Authenticated || retry.Identity == nil || retry.Identity.State != "unavailable" || !manager.Status()["docs"].Connected {
+		t.Fatalf("retry=%+v, calls=%d", retry, identityCalls.Load())
 	}
 	if strings.Contains(out.String(), "app-server-secret") || strings.Contains(out.String(), "refresh-secret") {
 		t.Fatalf("OAuth RPC leaked credentials: %s", out.String())
@@ -727,7 +791,7 @@ func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 		t.Fatalf("expected xiaomi catalog models, got %+v", xiaomi)
 	}
 	xiaomiModel := providerModelByID(t, xiaomi, "mimo-v2.5-pro")
-	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "models.dev" {
+	if xiaomiModel.DisplayName != "MiMo-V2.5-Pro" || xiaomiModel.Source != "selected" {
 		t.Fatalf("unexpected xiaomi model summary: %+v", xiaomiModel)
 	}
 	if xiaomiModel.Capabilities.ContextWindow != 1048576 || !xiaomiModel.Capabilities.Reasoning {
@@ -2228,7 +2292,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
+	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/advanced/update: %v", err)
 	}
@@ -2251,7 +2315,6 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("unexpected verification model: %+v", role)
 	}
 	if rt.StreamRunner.MaxSteps != 12 ||
-		result.ProjectModels.Side.Model != "side-model" || result.ProjectModels.Worker.Model != "worker-model" ||
 		rt.StreamRunner.Temperature != 0.4 ||
 		rt.StreamRunner.CompactThresholdPct != 0.5 ||
 		rt.StreamRunner.CompactKeepRecentTokens != 20000 ||
@@ -5599,9 +5662,15 @@ func TestServerQueuesUserTurnWhileThreadIsRunning(t *testing.T) {
 }
 
 func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) {
-	client := newBlockingStreamClient("done")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
+	client := &fakeClient{
+		responses: []providers.ChatResponse{
+			{ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "wait_for_steer", Arguments: `{}`}}},
+			{Content: "done"},
+		},
+	}
+	rt := newTestRuntime(t, client)
+	blockingTool := newBlockingToolExecutor()
+	rt.StreamRunner.Tools = blockingTool
 	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -5616,7 +5685,9 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 		t.Fatalf("turn/start: %v", err)
 	}
 	started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
-	<-client.started
+	// Keep the turn inside a running tool so the steer is still pending when
+	// the interrupt freezes input, preserving the original hold order.
+	<-blockingTool.started
 
 	queueReq := fmt.Sprintf(`{"id":"3","method":"turn/queue","params":{"thread_id":%q,"prompt":"queued follow-up","client_id":"queued-1"}}`, threadID)
 	if err := srv.handleLine(context.Background(), []byte(queueReq)); err != nil {
@@ -5693,7 +5764,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	if len(held) != 2 || held[0].id != "guide-1" || held[1].id != "queued-2" {
 		t.Fatalf("releasing queued-1 changed other held messages: %+v", held)
 	}
-	close(client.release)
+	close(blockingTool.release)
 	waitForTurnCompletedCountForThread(t, out, threadID, 1)
 	held, err = srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
@@ -6752,7 +6823,6 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		{name: "unknown workspace", params: ThreadStartParams{Workspace: "elsewhere"}},
 		{name: "start point without worktree", params: ThreadStartParams{BaseRevision: "HEAD"}},
 		{name: "ephemeral worktree", params: ThreadStartParams{Workspace: "worktree", Ephemeral: true}},
-		{name: "project worktree", params: ThreadStartParams{Workspace: "worktree", WorkspaceID: "project", CWD: rt.RootDir, Project: &ThreadProjectParams{Name: "Project"}}},
 		{name: "missing start point", params: ThreadStartParams{Workspace: "worktree", BaseRevision: "no-such-branch"}},
 	}
 	for index, tc := range cases {
@@ -6762,12 +6832,6 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		}
 		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
 			t.Fatalf("%s: thread/start should fail", tc.name)
-		}
-		if tc.params.Project != nil {
-			failure := fmt.Sprint(responseByID(t, parseOutput(t, out.String()), id)["error"])
-			if !strings.Contains(failure, "a project starts in the shared workspace") {
-				t.Fatalf("project worktree request should be rejected explicitly: %s", failure)
-			}
 		}
 	}
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list"}`)); err != nil {
@@ -8409,50 +8473,71 @@ func TestServerFailedTurnPersistsPairedToolHistoryAndReloadsFailure(t *testing.T
 }
 
 func TestServerInterruptedPartialTurnReloadsInterrupted(t *testing.T) {
-	client := newPartialBlockingStreamClient("partial answer")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
-	attachTestModelGeneration(t, rt)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
+	for _, shutdown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shutdown=%t", shutdown), func(t *testing.T) {
+			client := newPartialBlockingStreamClient("partial answer")
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.StreamRunner.Client = client
+			attachTestModelGeneration(t, rt)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
 
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
-		t.Fatalf("thread/start: %v", err)
-	}
-	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
-	startTurn := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
-	if err := srv.handleLine(context.Background(), []byte(startTurn)); err != nil {
-		t.Fatalf("turn/start: %v", err)
-	}
-	<-client.started
-	deltaMessages := waitForMethod(t, out, NotificationAgentMessageDelta)
-	delta := remarshal[AgentMessageDeltaNotification](t, notificationByMethod(t, deltaMessages, NotificationAgentMessageDelta)["params"])
-	if delta.Delta != "partial answer" {
-		t.Fatalf("live partial delta = %q", delta.Delta)
-	}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+				t.Fatalf("thread/start: %v", err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+			startTurn := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID)
+			if err := srv.handleLine(context.Background(), []byte(startTurn)); err != nil {
+				t.Fatalf("turn/start: %v", err)
+			}
+			<-client.started
+			deltaMessages := waitForMethod(t, out, NotificationAgentMessageDelta)
+			delta := remarshal[AgentMessageDeltaNotification](t, notificationByMethod(t, deltaMessages, NotificationAgentMessageDelta)["params"])
+			if delta.Delta != "partial answer" {
+				t.Fatalf("live partial delta = %q", delta.Delta)
+			}
 
-	interrupt := fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID)
-	if err := srv.handleLine(context.Background(), []byte(interrupt)); err != nil {
-		t.Fatalf("turn/interrupt: %v", err)
-	}
-	waitForMethod(t, out, NotificationTurnError)
+			if shutdown {
+				srv.Close()
+			} else {
+				interrupt := fmt.Sprintf(`{"id":"interrupt","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID)
+				if err := srv.handleLine(context.Background(), []byte(interrupt)); err != nil {
+					t.Fatalf("turn/interrupt: %v", err)
+				}
+				waitForMethod(t, out, NotificationTurnError)
+				srv.Close()
+			}
 
-	reloadOut := &lockedBuffer{}
-	reloaded := New(rt, reloadOut)
-	resume := fmt.Sprintf(`{"id":"reload","method":"thread/resume","params":{"session_id":%q}}`, threadID)
-	if err := reloaded.handleLine(context.Background(), []byte(resume)); err != nil {
-		t.Fatalf("thread/resume: %v", err)
-	}
-	result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadOut.String()), "reload")["result"])
-	if len(result.Thread.Turns) != 1 {
-		t.Fatalf("reloaded turns = %+v, want one interrupted turn", result.Thread.Turns)
-	}
-	turn := result.Thread.Turns[0]
-	if turn.Status != TurnStatusInterrupted || turn.Error == nil || !strings.Contains(turn.Error.Message, context.Canceled.Error()) || turn.CompletedAt == nil {
-		t.Fatalf("reloaded turn did not restore interruption: %+v", turn)
-	}
-	if len(turn.Items) < 3 || turn.Items[1].Type != ThreadItemAgentMessage || turn.Items[1].Text != "partial answer" || turn.Items[len(turn.Items)-1].Type != ThreadItemError {
-		t.Fatalf("reloaded partial turn items = %+v", turn.Items)
+			reloadOut := &lockedBuffer{}
+			reloaded := New(rt, reloadOut)
+			defer reloaded.Close()
+			dispatchPayload(t, reloaded, "recovery", "thread/recovery/list", struct{}{})
+			recovery := remarshal[struct {
+				Items []RestartRecoveryItem `json:"items"`
+			}](t, waitForResponseByID(t, reloadOut, "recovery")["result"])
+			if shutdown {
+				if len(recovery.Items) != 1 || recovery.Items[0].Thread.ID != threadID || recovery.Items[0].Reason != "interrupted" {
+					t.Fatalf("shutdown recovery = %+v", recovery.Items)
+				}
+			} else if len(recovery.Items) != 0 {
+				t.Fatalf("user stop must not be offered for restart: %+v", recovery.Items)
+			}
+			resume := fmt.Sprintf(`{"id":"reload","method":"thread/resume","params":{"session_id":%q}}`, threadID)
+			if err := reloaded.handleLine(context.Background(), []byte(resume)); err != nil {
+				t.Fatalf("thread/resume: %v", err)
+			}
+			result := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadOut.String()), "reload")["result"])
+			if len(result.Thread.Turns) != 1 {
+				t.Fatalf("reloaded turns = %+v, want one interrupted turn", result.Thread.Turns)
+			}
+			turn := result.Thread.Turns[0]
+			if turn.Status != TurnStatusInterrupted || turn.Error == nil || !strings.Contains(turn.Error.Message, context.Canceled.Error()) || turn.CompletedAt == nil {
+				t.Fatalf("reloaded turn did not restore interruption: %+v", turn)
+			}
+			if len(turn.Items) < 3 || turn.Items[1].Type != ThreadItemAgentMessage || turn.Items[1].Text != "partial answer" || turn.Items[len(turn.Items)-1].Type != ThreadItemError {
+				t.Fatalf("reloaded partial turn items = %+v", turn.Items)
+			}
+		})
 	}
 }
 
@@ -10562,6 +10647,136 @@ func TestSettingsUsageAggregatesAcrossSessions(t *testing.T) {
 	}
 	if result.ModelBreakdowns[1].Provider != "anthropic" {
 		t.Fatalf("expected anthropic second, got %q", result.ModelBreakdowns[1].Provider)
+	}
+}
+
+func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	now := time.Now().UTC()
+
+	// A wuu-engine thread and a claude-engine thread, each with one usage row.
+	wuuSess, err := rt.Sessions.CreateWithMetadata("usage-wuu", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecord(wuuSess.ID, session.HistoryRecord{
+		Role: "meta", Content: "token_usage",
+		Provider: "openai", Model: "gpt-4o",
+		At: now.Add(-time.Hour), InputTokens: 100, OutputTokens: 40,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claudeSess, err := rt.Sessions.CreateWithMetadata("usage-claude", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngine(claudeSess.ID, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngineRef(claudeSess.ID, "sess-bound"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecord(claudeSess.ID, session.HistoryRecord{
+		Role: "meta", Content: "token_usage",
+		Provider: "claude", Model: "",
+		At: now.Add(-time.Hour), InputTokens: 60, OutputTokens: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fake claude ledger: the bound session file must be excluded from
+	// "outside" because the in-Wuu row above already counts it; the free
+	// session file becomes outside usage on its own day.
+	claudeDir := filepath.Join(t.TempDir(), "projects")
+	outsideDay := now.Add(-48 * time.Hour)
+	claudeLine := func(sessionID string, at time.Time, input, output int) string {
+		line, err := json.Marshal(map[string]any{
+			"type": "assistant", "timestamp": at.Format(time.RFC3339Nano), "sessionId": sessionID,
+			"message": map[string]any{"model": "claude-sonnet-4-5", "usage": map[string]any{
+				"input_tokens": input, "output_tokens": output,
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(line)
+	}
+	for name, lines := range map[string][]string{
+		"sess-bound.jsonl": {claudeLine("sess-bound", outsideDay, 999, 999)},
+		"sess-free.jsonl":  {claudeLine("sess-free", outsideDay, 300, 120)},
+	} {
+		path := filepath.Join(claudeDir, "-tmp", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	srv.usageScanner = &engineusage.Scanner{
+		ClaudeDir:  claudeDir,
+		CodexDirs:  []string{filepath.Join(t.TempDir(), "missing")},
+		OpenCodeDB: filepath.Join(t.TempDir(), "missing.db"),
+	}
+	raw, err := json.Marshal(map[string]any{"id": "1", "method": MethodSettingsUsage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+
+	msgs := parseOutput(t, out.String())
+	result := remarshal[SettingsUsageResponse](t, responseByID(t, msgs, "1")["result"])
+
+	breakdowns := make(map[string]SettingsEngineUsage, len(result.EngineBreakdowns))
+	for _, b := range result.EngineBreakdowns {
+		breakdowns[b.Engine] = b
+	}
+	wuu := breakdowns["wuu"]
+	if wuu.Name != "Wuu" || wuu.InWuu.TotalTokens() != 140 || wuu.InWuu.Sessions != 1 {
+		t.Fatalf("wuu breakdown: %+v", wuu)
+	}
+	if wuu.Outside != nil {
+		t.Fatalf("wuu has no local ledger, outside must be nil: %+v", wuu.Outside)
+	}
+	claude := breakdowns["claude"]
+	if claude.Name != "Claude Code" || claude.InWuu.TotalTokens() != 80 || claude.InWuu.Sessions != 1 {
+		t.Fatalf("claude breakdown: %+v", claude)
+	}
+	if claude.Outside == nil || claude.Outside.TotalTokens() != 420 || claude.Outside.Sessions != 1 {
+		t.Fatalf("claude outside should hold only the unbound session: %+v", claude.Outside)
+	}
+
+	// The same outside rows land on the daily series: the bound session's
+	// tokens stay excluded, and the outside-only day keeps in-Wuu fields at
+	// zero rather than inventing activity.
+	daysByDate := make(map[string]SettingsUsageDay, len(result.Days))
+	for _, day := range result.Days {
+		daysByDate[day.Date] = day
+	}
+	outsideDate := outsideDay.Format("2006-01-02")
+	day, ok := daysByDate[outsideDate]
+	if !ok || day.Outside == nil {
+		t.Fatalf("outside day %s missing from daily series: %+v", outsideDate, result.Days)
+	}
+	if day.Outside.TotalTokens() != 420 || day.Outside.Sessions != 1 {
+		t.Fatalf("outside day should hold only the unbound session: %+v", day.Outside)
+	}
+	if day.InputTokens != 0 || day.OutputTokens != 0 || day.Turns != 0 {
+		t.Fatalf("outside-only day must keep in-Wuu fields at zero: %+v", day)
+	}
+	inWuuDate := now.Add(-time.Hour).Format("2006-01-02")
+	if day, ok := daysByDate[inWuuDate]; !ok || day.Outside != nil || day.InputTokens+day.OutputTokens != 220 {
+		t.Fatalf("in-Wuu day %s must keep its own trail untouched: %+v", inWuuDate, day)
+	}
+	for i := 1; i < len(result.Days); i++ {
+		if result.Days[i].Date < result.Days[i-1].Date {
+			t.Fatalf("days must stay date-ascending after merge: %+v", result.Days)
+		}
 	}
 }
 

@@ -5,15 +5,15 @@
 }
 .composer-action-button.composer-dictation-button::before,
 .composer-dictation-recording .composer-action-button::before {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 .composer-action-button.composer-dictation-button:hover:not(:disabled)::before,
-.composer-dictation-recording .composer-action-button:hover:not(:disabled)::before { background: var(--surface-3); }
+.composer-dictation-recording .composer-action-button:hover:not(:disabled)::before { background: var(--surface-4); }
 .composer-editor.is-dictating,
 .composer-bar.is-dictating { align-items: center; }
-.composer-editor.is-dictating > textarea,
+.composer-editor.is-dictating > :is(textarea, .composer-rich-input),
 .composer-editor.is-dictating > .composer-bar-left,
-.composer-bar.is-dictating > textarea,
+.composer-bar.is-dictating > :is(textarea, .composer-rich-input),
 .composer-bar.is-dictating > .composer-bar-left { display: none; }
 .composer-bar.is-dictating > .composer-dictation-recording { flex: 1 1 auto; }
 .composer-bar.is-dictating > .composer-bar-right { width: auto; flex: 0 0 auto; }
@@ -34,7 +34,6 @@
 .composer-dictation-stop svg { width: 14px; height: 14px; fill: currentColor; }
 .composer-dictation-stop svg.is-spinning { fill: none; }
 .composer-dictation-recording[data-phase="finalizing"] .composer-dictation-dot { animation: none; opacity: .4; }
-.composer-dictation-error { margin: var(--space-2) var(--space-3); color: var(--danger, var(--ink)); font-size: var(--font-body); }
 @keyframes dictation-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes dictation-pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .composer-dictation-recording, .composer-dictation-dot { animation: none; } .composer-dictation-wave > span { transition: none; } }

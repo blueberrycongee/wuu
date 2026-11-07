@@ -148,6 +148,8 @@ type Env struct {
 	// External engines use a direct browser/CUA surface and receive screenshot
 	// pixels without needing access to the workspace's file tools.
 	externalCapabilitiesOnly bool
+	conversationMCPServers   map[string]bool
+	conversationPluginTools  map[string]bool
 
 	// Optional dependencies — nil means the feature is unavailable.
 	// Tools check for nil and return a clear error rather than panic.
@@ -189,9 +191,6 @@ type Env struct {
 	// ShellEarlyHandoffDisabled preserves the requested foreground wait for
 	// hosts that cannot deliver background completion to this conversation.
 	ShellEarlyHandoffDisabled bool
-	// ProjectSessions is set only for a project coordinator conversation;
-	// it exposes the session tool and the coordinator's tool surface.
-	ProjectSessions ProjectSessionHandler
 	// BrowserBridge routes the browser tool's actions to the desktop host that
 	// owns the hidden WebContentsView + CDP session. Nil means no embedded
 	// browser backend is attached (for example the CLI/headless runtime), and

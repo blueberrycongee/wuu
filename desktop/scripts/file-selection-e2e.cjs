@@ -1,11 +1,13 @@
 // Build and run from desktop: npm run test:e2e:file-selection
 // To rerun an existing build: ./node_modules/.bin/electron scripts/file-selection-e2e.cjs
 // WUU_E2E_VISIBLE=true shows the fixture window. WUU_E2E_OUTPUT selects artifacts.
+// CI may select WUU_FILE_SELECTION_SHARD=1/2 or 2/2; absent runs all variants.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
+const { selectVariants } = require("./file-selection-variants.cjs");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const renderer = process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out/renderer/index.html");
@@ -39,12 +41,7 @@ async function run() {
   console.log(`File selection E2E artifacts: ${output}`);
   assert.ok(fs.existsSync(renderer), "Renderer missing. Run npm run test:e2e:file-selection from desktop.");
   // Pairwise visual coverage, with every action repeated on all three formats.
-  const variants = [
-    { name: "light-default-wide", theme: "light", size: 14, width: 1380, height: 900 },
-    { name: "dark-large-wide", theme: "dark", size: 20, width: 1380, height: 900 },
-    { name: "light-large-narrow", theme: "light", size: 20, width: 760, height: 900 },
-    { name: "dark-default-narrow", theme: "dark", size: 14, width: 760, height: 900 },
-  ];
+  const variants = selectVariants(process.env.WUU_FILE_SELECTION_SHARD);
   for (const variant of variants) {
     phase = `${variant.name}: startup`;
     win = new BrowserWindow({

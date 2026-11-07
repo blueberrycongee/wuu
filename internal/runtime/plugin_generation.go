@@ -42,40 +42,43 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
-	productParent     *kernelHostServices
-	composition       productCompositionBinding
-	systemPrompt      string
-	promptSections    []prompt.SectionInfo
-	tools             agent.ToolExecutor
-	toolkit           *tools.Toolkit
-	codeMode          *codemode.Service
-	modelSelection    *generationModelSelection
-	models            *generationModelBindings
-	id                string
-	state             *runtimeState
-	credentials       credentialstore.Store
-	configClient      *config.Client
-	chatGPTManager    *siwc.Manager
-	artifactClient    *ArtifactClient
-	mcpOAuth          *mcp.OAuthManager
-	requiredPlugins   map[string]bool
-	selectedPluginIDs []string
-	settings          config.Config
-	plugins           []pluginpkg.Plugin
-	active            []pluginpkg.Plugin
-	host              *pluginhost.Host
-	hooks             *hooks.Dispatcher
-	skills            []skills.Skill
-	pluginSkills      pluginSkillSnapshot
-	mcp               *mcp.Manager
-	mcpBinding        map[string]tools.MCPActivityBinding
-	activityRegistry  *activity.Registry
-	requestTransforms *agent.RequestTransformChain
-	systemPrompts     *agent.SystemPromptAssembler
-	compactions       *agent.CompactionRegistry
-	ownedRoots        []string
-	revocation        *GenerationRevocationReport
-	closeErr          error
+	productParent      *kernelHostServices
+	composition        productCompositionBinding
+	systemPrompt       string
+	promptSections     []prompt.SectionInfo
+	tools              agent.ToolExecutor
+	toolkit            *tools.Toolkit
+	codeMode           *codemode.Service
+	modelSelection     *generationModelSelection
+	models             *generationModelBindings
+	id                 string
+	state              *runtimeState
+	credentials        credentialstore.Store
+	credentialScope    []string
+	credentialSettings map[string]string
+	configClient       *config.Client
+	chatGPTManager     *siwc.Manager
+	artifactClient     *ArtifactClient
+	mcpOAuth           *mcp.OAuthManager
+	mcpOAuthOverride   *mcp.OAuthManager
+	requiredPlugins    map[string]bool
+	selectedPluginIDs  []string
+	settings           config.Config
+	plugins            []pluginpkg.Plugin
+	active             []pluginpkg.Plugin
+	host               *pluginhost.Host
+	hooks              *hooks.Dispatcher
+	skills             []skills.Skill
+	pluginSkills       pluginSkillSnapshot
+	mcp                *mcp.Manager
+	mcpBinding         map[string]tools.MCPActivityBinding
+	activityRegistry   *activity.Registry
+	requestTransforms  *agent.RequestTransformChain
+	systemPrompts      *agent.SystemPromptAssembler
+	compactions        *agent.CompactionRegistry
+	ownedRoots         []string
+	revocation         *GenerationRevocationReport
+	closeErr           error
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
@@ -630,6 +633,7 @@ type PluginCatalogPreparation struct {
 	discovered        []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
 	selectedPluginIDs []string
+	packagePlan       pluginpkg.ActivationPlan
 	required          map[string]bool
 	ownedRoots        []string
 	factories         []NativeProviderFactory
@@ -661,8 +665,9 @@ func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
 	var selectedPluginIDs []string
+	var activationPlan pluginpkg.ActivationPlan
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
+		activationPlan, err = ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
 			return nil, err
 		}
@@ -713,7 +718,7 @@ func (s *Session) preparePluginCatalog(cfg config.Config, discovered []pluginpkg
 	}
 	ownedRoots = append(ownedRoots, snapshotRoots...)
 	return &PluginCatalogPreparation{
-		storageTransfers: storageTransfers, session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
+		packagePlan: activationPlan, storageTransfers: storageTransfers, session: s, settings: cfg, discovered: append([]pluginpkg.Plugin(nil), discovered...), active: active,
 		selectedPluginIDs: selectedPluginIDs, required: required, ownedRoots: ownedRoots, factories: factories, start: start,
 	}, nil
 }
@@ -732,7 +737,7 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 		requiredRuntimes[id] = value
 	}
 	selection := productComposition(cfg.Composition, s.DesktopExecutionDefaults, active, factories)
-	host, kernel, err := buildPluginHostForBinding(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, s.UserBinding(), p.storageTransfers, factories...)
+	host, kernel, err := buildPluginHostWithPlan(ctx, active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(selection, s.SafeMode), cfg.Composition != nil, s.DriverProfile, s.UserBinding(), p.storageTransfers, &p.packagePlan, factories...)
 	if err != nil {
 		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
@@ -792,6 +797,9 @@ func (p *PluginCatalogPreparation) Build(ctx context.Context) (*PluginGeneration
 	}
 	// Activation acquires the Session reference. A prepared candidate has no
 	// live owners and must not keep an extra reference after publication.
+	generation.credentialScope = s.mcpCredentialScope()
+	generation.credentialSettings = kernel.credentialSettingsIdentity(generation.id)
+	s.shareMCPRefreshCoordinator(generation)
 	generation.bindActivityOwnership(s.ActivityRegistry)
 	return generation, nil
 }
@@ -894,6 +902,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
+	s.RetireRemovedMCPServers(candidate.settings)
 	// Local control cannot outlive provider replacement. Revoke leases before
 	// the replacement activates, so a pinned foreground turn cannot keep sending
 	// input or silently switch control surfaces after publication.
@@ -938,9 +947,11 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	activationErr = errors.Join(activationErr, s.hydratePluginGeneration(candidate))
+	s.prepareMCPAuthPublication(candidate)
 	s.pluginGenerationMu.Lock()
 	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
+	s.mcpAuthTransition = nil
 	// Conversations that already pinned the previous generation keep using it
 	// until they rebuild. The Session reference is released here; remaining
 	// thread runtimes keep the processes and tools alive.
@@ -1287,6 +1298,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		generation.systemPrompt = s.StreamRunner.SystemPrompt
 		generation.compactions = s.StreamRunner.CompactionRegistry
 	}
+	generation.credentialScope = s.mcpCredentialScope()
 	generation.bindActivityOwnership(s.ActivityRegistry)
 	if s.Toolkit != nil {
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
@@ -1679,4 +1691,40 @@ func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Pl
 		result[i] = copied
 	}
 	return result, roots, nil
+}
+
+// RetireRemovedMCPServers applies committed effective configuration to every
+// pinned generation. A project overlay that still defines a name preserves it.
+// Callers serialize this with generation/configuration publication.
+func (s *Session) RetireRemovedMCPServers(cfg config.Config) {
+	s.pluginGenerationMu.Lock()
+	generations := make([]*PluginGeneration, 0, len(s.retiredPluginGenerations)+1)
+	if s.pluginGeneration != nil {
+		s.pluginGeneration.retain()
+		generations = append(generations, s.pluginGeneration)
+	}
+	for g := range s.retiredPluginGenerations {
+		for refs := g.refs.Load(); refs > 0; refs = g.refs.Load() {
+			if g.refs.CompareAndSwap(refs, refs+1) {
+				generations = append(generations, g)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	for _, g := range generations {
+		if g.mcp != nil {
+			for name := range g.settings.MCPServers {
+				if IsPluginMCPServerName(name) {
+					continue
+				}
+				if _, exists := cfg.MCPServers[name]; !exists {
+					if err := g.mcp.Retire(name); err != nil {
+						providers.DebugLogf("retire removed MCP server %q: %v", name, err)
+					}
+				}
+			}
+		}
+		s.releasePluginGeneration(g)
+	}
 }

@@ -160,6 +160,7 @@ type RenderOptions = {
   onCollapseComplete?: () => void;
   onOpenAgent?: (agentID: string) => void;
   onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
+  superseded?: boolean;
 };
 
 function defaultItemRenderer(
@@ -211,6 +212,7 @@ function renderShell(
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
         onOpenURL: options.onOpenURL,
+        superseded: options.superseded,
       })}</ArtifactThreadContext.Provider></ConversationControlsTestProvider>,
     );
   });
@@ -241,6 +243,7 @@ function rerenderShell(
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
         onOpenURL: options.onOpenURL,
+        superseded: options.superseded,
       })}</ArtifactThreadContext.Provider></ConversationControlsTestProvider>,
     );
   });
@@ -867,6 +870,35 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
     expect(container.querySelector(".process-surface")).not.toBeNull();
   });
 
+  it("collapses superseded process work behind the fold and lets the reader expand it", () => {
+    const { container } = renderShell(
+      makeTurn("interrupted", [makeCommentary("partial narration")]),
+      { superseded: true },
+    );
+
+    expect(processFoldOpen(container)).toBe(false);
+    expect(container.querySelector(".turn-process-title")?.textContent).toBe(
+      "已暂停回答",
+    );
+    expect(container.textContent).not.toContain("partial narration");
+    const toggle = container.querySelector<HTMLElement>(".turn-process-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => toggle?.click());
+
+    expect(processFoldOpen(container)).toBe(true);
+    expect(container.textContent).toContain("partial narration");
+  });
+
+  it("keeps interrupted process work open while it is still the latest surface", () => {
+    const { container } = renderShell(
+      makeTurn("interrupted", [makeCommentary("partial narration")]),
+    );
+
+    expect(processFoldOpen(container)).toBe(true);
+    expect(container.textContent).toContain("partial narration");
+  });
+
 });
 
 describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
@@ -895,16 +927,12 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
           workdir: "/repo",
           message: {
             method: "turn/usage",
-            params: { turn_id: turn.id, input_tokens: 115_300, output_tokens: 1_300 },
+            params: { turn_id: turn.id, input_tokens: 115_300, context_tokens: 80_000, context_window_tokens: 200_000 },
           },
         });
         vi.advanceTimersByTime(1_000);
       });
 
-      expect(turnTelemetryStore.getSnapshot(turn.id)).toMatchObject({
-        inputTokens: 115_300,
-        outputTokens: 1_300,
-      });
       expect(summary?.textContent).toBe(label);
       expect(summary?.getAttribute("data-text")).toBe(waveLabel);
     },

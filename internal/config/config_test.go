@@ -1331,10 +1331,6 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
     "model_roles": {
       "review": { "provider": " drop ", "model": "drop-model" },
       "compact": { "provider": "keep", "model": "keep-model" }
-    },
-    "project_models": {
-      "side": {"provider": " drop ", "model": "drop-model"},
-      "executor": {"provider": "keep", "model": "keep-model"}
     }
   }
 }`
@@ -1356,9 +1352,6 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
 	}
 	if saved.Agent.ModelRoles.Review != (ModelRoleConfig{}) {
 		t.Fatalf("removed provider's role must inherit the complete default selection: %+v", saved.Agent.ModelRoles.Review)
-	}
-	if saved.Agent.ProjectModels.Side != (ModelRoleConfig{}) || saved.Agent.ProjectModels.Executor.Provider != "keep" {
-		t.Fatalf("project model cleanup = %+v", saved.Agent.ProjectModels)
 	}
 	if !strings.Contains(string(data), `"provider": "keep"`) {
 		t.Fatalf("compact role provider was unexpectedly removed: %s", data)
@@ -1686,5 +1679,66 @@ func TestChatGPTConnectionReferencePersistsWithoutChangingDefault(t *testing.T) 
 	}
 	if cfg.Providers["personal"].ChatGPTAccountID != id {
 		t.Fatal("model edit lost account registration")
+	}
+}
+
+// Connector descriptors cross the configuration and public plugin boundaries.
+func TestConfigValidatesMCPConnectorDescriptor(t *testing.T) {
+	for _, test := range []struct {
+		name, descriptor string
+		valid            bool
+	}{
+		{"minimal", `{"title":"Documents"}`, true},
+		{"full", `{"title":"Documents","description":"Search documents","documentation_url":"https://docs.example.test/setup","setup_required":"Ask your administrator to allow access."}`, true},
+		{"empty title", `{"title":" "}`, false},
+		{"relative docs", `{"title":"Documents","documentation_url":"/setup"}`, false},
+		{"http docs", `{"title":"Documents","documentation_url":"http://docs.example.test"}`, false},
+		{"credential docs", `{"title":"Documents","documentation_url":"https://secret@docs.example.test"}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			if err := json.Unmarshal([]byte(`{"mcp_servers":{"docs":{"url":"https://example.test/mcp","connector":`+test.descriptor+`}}}`), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			err := cfg.Validate()
+			if (err == nil) != test.valid {
+				t.Fatalf("Validate() = %v, valid = %v", err, test.valid)
+			}
+			if err != nil && !strings.Contains(err.Error(), "mcp_servers.docs.connector") {
+				t.Fatalf("missing field context: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigRejectsUnsafeConnectorIdentityProbe(t *testing.T) {
+	valid := `{"tool":"get-self","arguments":{},"result":"single_text_json","account":{"id":"/user/id","label":"/user/name","email":"/user/email","kind":"/user/type"},"workspace":{"id":"/workspace/id","label":"/workspace/name"}}`
+	for _, tc := range []struct {
+		name, probe string
+		valid       bool
+	}{
+		{"valid", valid, true}, {"structured", strings.Replace(valid, "single_text_json", "structured_content", 1), true},
+		{"missing account", `{"tool":"self","arguments":{},"result":"structured_content"}`, false},
+		{"missing arguments", strings.Replace(valid, `"arguments":{},`, "", 1), false},
+		{"null arguments", strings.Replace(valid, `"arguments":{}`, `"arguments":null`, 1), false},
+		{"expression", strings.Replace(valid, "/user/id", "$.user.id", 1), false},
+		{"bad escape", strings.Replace(valid, "/user/id", "/user/~2id", 1), false},
+		{"magic pointer", strings.Replace(valid, "/user/id", "/__proto__/id", 1), false},
+		{"magic argument", strings.Replace(valid, `"arguments":{}`, `"arguments":{"x":{"constructor":{}}}`, 1), false},
+		{"unsupported result", strings.Replace(valid, "single_text_json", "text", 1), false},
+		{"empty tool", strings.Replace(valid, "get-self", "", 1), false},
+		{"long pointer", strings.Replace(valid, "/user/id", "/"+strings.Repeat("a", 1024), 1), false},
+		{"large arguments", strings.Replace(valid, `"arguments":{}`, `"arguments":{"x":"`+strings.Repeat("a", 16384)+`"}`, 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var d MCPConnectorDescriptor
+			err := json.Unmarshal([]byte(`{"title":"Documents","identity_probe":`+tc.probe+`}`), &d)
+			if err == nil {
+				err = d.Validate()
+			}
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
 	}
 }

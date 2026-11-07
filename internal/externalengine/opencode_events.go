@@ -2,6 +2,7 @@ package externalengine
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type openCodeError struct {
@@ -53,6 +56,15 @@ type openCodeInfo struct {
 	} `json:"tokens"`
 }
 
+// openCodeFilePart mirrors OpenCode's FilePart: file-like output a tool
+// publishes alongside its text result (screenshots, generated downloads).
+type openCodeFilePart struct {
+	Type     string `json:"type"`
+	MIME     string `json:"mime"`
+	Filename string `json:"filename"`
+	URL      string `json:"url"`
+}
+
 type openCodePart struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionID"`
@@ -62,10 +74,11 @@ type openCodePart struct {
 	CallID    string `json:"callID"`
 	Tool      string `json:"tool"`
 	State     struct {
-		Status string          `json:"status"`
-		Input  json.RawMessage `json:"input"`
-		Output string          `json:"output"`
-		Error  string          `json:"error"`
+		Status      string             `json:"status"`
+		Input       json.RawMessage    `json:"input"`
+		Output      string             `json:"output"`
+		Error       string             `json:"error"`
+		Attachments []openCodeFilePart `json:"attachments"`
 	} `json:"state"`
 }
 
@@ -140,10 +153,54 @@ func (s *openCodeTurn) part(part openCodePart) error {
 		if status == "error" {
 			status, output = "failed", part.State.Error
 		}
-		s.turn.tool(part.CallID, part.Tool, string(part.State.Input), status, output)
+		s.turn.tool(part.CallID, part.Tool, string(part.State.Input), status, output, openCodeToolDetail(part.State.Attachments))
 	}
 	s.parts[part.ID] = part
 	return nil
+}
+
+// openCodeToolDetail converts OpenCode file attachments into the shared rich
+// result detail. data: URLs decode into inline media; other URLs stay as
+// references the renderer resolves against the workspace.
+func openCodeToolDetail(attachments []openCodeFilePart) *toolresult.Result {
+	if len(attachments) == 0 {
+		return nil
+	}
+	contents := make([]mcp.ToolContent, 0, len(attachments))
+	for _, file := range attachments {
+		mime, data, uri := file.MIME, "", file.URL
+		if decoded, decodedMIME, ok := decodeDataURL(file.URL); ok {
+			data, uri = decoded, ""
+			if decodedMIME != "" {
+				mime = decodedMIME
+			}
+		}
+		kind := toolresult.ContentTypeFile
+		if strings.HasPrefix(mime, "image/") {
+			kind = toolresult.ContentTypeImage
+		}
+		contents = append(contents, mcp.ToolContent{Type: kind, Data: data, MIMEType: mime, URI: uri, Name: file.Filename})
+	}
+	mapped, err := mcp.MapCallToolResult(&mcp.CallToolResult{Content: contents})
+	if err != nil {
+		return nil
+	}
+	return &mapped
+}
+
+func decodeDataURL(raw string) (data, mime string, ok bool) {
+	rest, found := strings.CutPrefix(raw, "data:")
+	if !found {
+		return "", "", false
+	}
+	meta, payload, found := strings.Cut(rest, ",")
+	if !found || !strings.HasSuffix(meta, ";base64") {
+		return "", "", false
+	}
+	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
+		return "", "", false
+	}
+	return payload, strings.TrimSuffix(meta, ";base64"), true
 }
 
 func (s *Session) openCodeEvent(ctx context.Context, client *openCodeClient, state *openCodeTurn, raw json.RawMessage) error {

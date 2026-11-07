@@ -158,12 +158,12 @@ app.whenReady().then(async () => {
       const tagged = await evaluate(() => {
         const titles = {
           "Review the changes in PR 499": "hover-running",
-          "Release checklist": "hover-project",
+          "Release checklist": "hover-checklist",
           "Older conversation 10": "hover-filler-9",
           "Older conversation 9": "hover-filler-8",
         };
         let count = 0;
-        for (const node of document.querySelectorAll(".thread-row")) {
+        for (const node of document.querySelectorAll(".project-thread-list .thread-row")) {
           const text = node.querySelector(".thread-row-title")?.textContent ?? "";
           const id = text.startsWith("Refactor the extension host") ? "hover-failed" : titles[text];
           if (id) { node.dataset.e2eThread = id; count += 1; }
@@ -231,18 +231,18 @@ app.whenReady().then(async () => {
       await waitFor(() => !document.querySelector(".sidebar-hover-card"));
 
 
-      // Project coordinator rows summarize the sessions the sidebar hides.
-      const project = await anchorPoint(threadRow("hover-project"));
-      move(project.x, project.y);
+      // Completed conversations retain the same hover and press behavior.
+      const completed = await anchorPoint(threadRow("hover-checklist"));
+      move(completed.x, completed.y);
       await waitFor(() => document.querySelector(".sidebar-hover-card-title")?.textContent === "Release checklist", null, 2000);
-      const projectCard = await measure(threadRow("hover-project"));
-      assertPlacement(`${label} project`, projectCard);
-      results.push({ label, case: "project", ...projectCard });
+      const completedCard = await measure(threadRow("hover-checklist"));
+      assertPlacement(`${label} completed`, completedCard);
+      results.push({ label, case: "completed", ...completedCard });
 
       // Pressing a row retires the card until the pointer leaves.
-      win.webContents.sendInputEvent({ type: "mouseDown", x: Math.round(project.x), y: Math.round(project.y), button: "left", clickCount: 1 });
+      win.webContents.sendInputEvent({ type: "mouseDown", x: Math.round(completed.x), y: Math.round(completed.y), button: "left", clickCount: 1 });
       await waitFor(() => !document.querySelector(".sidebar-hover-card"), null, 1000);
-      win.webContents.sendInputEvent({ type: "mouseUp", x: Math.round(project.x), y: Math.round(project.y), button: "left", clickCount: 1 });
+      win.webContents.sendInputEvent({ type: "mouseUp", x: Math.round(completed.x), y: Math.round(completed.y), button: "left", clickCount: 1 });
       await new Promise((resolve) => setTimeout(resolve, 700));
       assert.equal(await evaluate(() => document.querySelector(".sidebar-hover-card")), null,
         `${label}: a pressed row stays quiet while the pointer remains`);
@@ -356,7 +356,7 @@ app.whenReady().then(async () => {
       // A portaled session card belongs to the hover drawer, not just the row.
       // Exercise the actual collapsed rail, including its animated geometry.
       await rest();
-      await click('.sidebar [data-wuu-component="sidebar-toggle"]');
+      await click('.section-sidebar-toggle');
       move(width - 40, 410);
       await waitFor(() => {
         const shell = document.querySelector(".app-shell");
@@ -431,7 +431,7 @@ app.whenReady().then(async () => {
         !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
       results.push({ label, case: "drawer-gap-exit-retires-both" });
       // Restore the docked preference for the next theme/size case.
-      await click('.conversation-pane [data-wuu-component="sidebar-toggle"]');
+      await click('.section-sidebar-toggle');
       await waitFor(() => !document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
     }
     console.log(`PASS: ${results.length} sidebar hover card cases; evidence: ${output}`);

@@ -5,7 +5,7 @@ import { WuuMascot } from "./WuuMascot";
 import "./styles/context-chat-capsule.css";
 
 /** Shared rendering only. The native website surface has no general Wuu API. */
-export function ContextChatCapsuleSurface({ model, send }: { model: ChromeCapsuleModel; send: (command: ChromeOverlayCommand) => void }): JSX.Element {
+export function ContextChatCapsuleSurface({ model, send, focusReady = true }: { model: ChromeCapsuleModel; send: (command: ChromeOverlayCommand) => void; focusReady?: boolean }): JSX.Element {
   const [draft, setDraft] = useState(model.draft);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -22,10 +22,10 @@ export function ContextChatCapsuleSurface({ model, send }: { model: ChromeCapsul
     previousBusy.current = model.busy;
   }, [model.draft, model.busy, model.error]);
   useLayoutEffect(() => {
-    if (!model.expanded) return;
+    if (!focusReady || !model.expanded) return;
     if (model.menuOpen) menu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     else input.current?.focus();
-  }, [model.expanded, model.menuOpen]);
+  }, [model.expanded, model.menuOpen, focusReady]);
   const collapse = (restore = false) => {
     send({ type: "capsule-collapse", text: draft });
     if (restore && !("wuuChromeOverlay" in window)) {

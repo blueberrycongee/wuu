@@ -73,7 +73,12 @@ func (s *documentStore) deleteSession(id string, onlyIfArchived bool) (Session, 
 				}
 			}
 		}
-		work, err := readDocumentRows[ProjectWork](tx, "project_work", "")
+		// Keep deletion of historical records without the retired work API.
+		type retiredWork struct {
+			ID        string `json:"id"`
+			ProjectID string `json:"project_id"`
+		}
+		work, err := readDocumentRows[retiredWork](tx, "project_work", "")
 		if err != nil {
 			return err
 		}
@@ -92,7 +97,7 @@ func (s *documentStore) deleteSession(id string, onlyIfArchived bool) (Session, 
 			return err
 		}
 		for _, document := range operations {
-			var work ProjectWork
+			var work retiredWork
 			if _, err := tx.Get(document.Namespace, document.Key, &work); err != nil {
 				return err
 			}

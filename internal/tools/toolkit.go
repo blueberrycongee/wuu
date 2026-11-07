@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -298,6 +298,8 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		AllowMutations:              t.env.AllowMutations,
 		boundaryConfigured:          t.env.boundaryConfigured,
 		externalCapabilitiesOnly:    t.env.externalCapabilitiesOnly,
+		conversationMCPServers:      maps.Clone(t.env.conversationMCPServers),
+		conversationPluginTools:     maps.Clone(t.env.conversationPluginTools),
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
@@ -404,7 +406,6 @@ func (t *Toolkit) rebuildRegistry() {
 		// process owns the background-process lifecycle. Both are emitted by
 		// the model profile compiler.
 		NewBashTool(e),
-		NewProcessTool(e),
 		// Git
 		NewGitTool(e),
 		// Web
@@ -436,9 +437,6 @@ func (t *Toolkit) rebuildRegistry() {
 	}
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
-	}
-	if e.ProjectSessions != nil {
-		registered = append(registered, NewProjectSessionTool(e))
 	}
 	// Register the PTC entry only with a session runtime; model exposure is
 	// separately controlled by the optional global and family settings.
@@ -1165,25 +1163,10 @@ func (t *Toolkit) ConfigureSurfaceForProviderModel(providerName, model string, f
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
 	kind := modelprofile.SurfaceWorker
-	if t.env != nil && t.env.ProjectSessions != nil {
-		kind = modelprofile.SurfaceProjectSession
-	} else if forMainAgent {
+	if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
-}
-
-// SetProjectSessions adds project operations to the ordinary session toolkit.
-func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
-	if t == nil || t.env == nil {
-		return
-	}
-	if t.env.ProjectSessions == nil && handler == nil {
-		return
-	}
-	t.env.ProjectSessions = handler
-	t.rebuildRegistry()
-	t.SetActiveProfile(t.ActiveProfile(), true)
 }
 
 func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelprofile.SurfaceKind) {
@@ -1193,8 +1176,7 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	// A project surface includes its session tool even without a model profile.
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectSession {
+	if (p == modelprofile.Profile{}) {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return
@@ -1909,58 +1891,6 @@ func suggestSimilarFile(absPath string) string {
 	return bestName
 }
 
-func matchGlob(pattern, path string) bool {
-	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
-	path = filepath.ToSlash(path)
-	if pattern == "" {
-		return false
-	}
-	if !strings.Contains(pattern, "/") {
-		matched, _ := filepath.Match(pattern, filepath.Base(path))
-		return matched
-	}
-	re, err := regexp.Compile(globToRegexp(pattern))
-	if err != nil {
-		return false
-	}
-	return re.MatchString(path)
-}
-
-func globToRegexp(pattern string) string {
-	var b strings.Builder
-	b.WriteString("^")
-	for i := 0; i < len(pattern); i++ {
-		switch pattern[i] {
-		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				if i+2 < len(pattern) && pattern[i+2] == '/' {
-					b.WriteString("(?:.*/)?")
-					i += 2
-					continue
-				}
-				if i+2 >= len(pattern) && i > 0 && pattern[i-1] == '/' {
-					b.WriteString(".*")
-					i++
-					continue
-				}
-				b.WriteString("[^/]*")
-				i++
-				continue
-			}
-			b.WriteString("[^/]*")
-		case '?':
-			b.WriteString("[^/]")
-		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(pattern[i])
-		default:
-			b.WriteByte(pattern[i])
-		}
-	}
-	b.WriteString("$")
-	return b.String()
-}
-
 // ── Ripgrep helpers ────────────────────────────────────────────────
 
 type grepMatch struct {
@@ -1999,29 +1929,17 @@ type rgJSONEvent struct {
 var (
 	rgLookupPath = exec.LookPath
 	rgCommand    = exec.CommandContext
-	rgPathOnce   sync.Once
-	rgPath       string
 )
 
 func lookupRG() string {
-	rgPathOnce.Do(func() {
-		path, err := rgLookupPath("rg")
-		if err == nil {
-			rgPath = path
-		}
-	})
-	return rgPath
-}
-
-func resetRGForTests() {
-	rgPathOnce = sync.Once{}
-	rgPath = ""
+	path, err := rgLookupPath("rg")
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
-	if protectedPathEnv(ctx) != nil {
-		return nil
-	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -2031,9 +1949,6 @@ func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
 }
 
 func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string, opts grepOptions) *exec.Cmd {
-	if protectedPathEnv(ctx) != nil {
-		return nil
-	}
 	name := lookupRG()
 	if name == "" {
 		return nil

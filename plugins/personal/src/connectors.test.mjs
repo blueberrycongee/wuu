@@ -53,8 +53,8 @@ test('Gmail thread decodes text and hides binary MIME bodies while retaining att
  const r=await executeConnectorTool(f.host,'space',call('personal_connector_call',{connection_id:'mail',operation:'gmail.thread',arguments:{thread_id:'thread'}}));assert(r.result.content[0].text.includes('actual plain message'));assert(r.result.content[0].text.includes('attachment'));assert(!r.result.content[0].text.includes('SECRETBASE64'));
 });
 test('poll binds a read source to the real session and rejects missing source identity',async()=>{
- const f=fixture();await executeConnectorTool(f.host,'space',call('personal_connector_poll',{source_id:'selected-pr',connection_id:'github',operation:'github.pr',arguments:{repository:'owner/repo',number:1}}));assert.equal(f.calls[1].input.params.operation,'connectors.poll');assert.equal(f.calls[1].input.params.session_id,'session');assert.equal(f.calls[1].input.params.input.source_id,'selected-pr');
- await assert.rejects(executeConnectorTool(f.host,'space',call('personal_connector_poll',{connection_id:'github',operation:'github.pr',arguments:{}})),/source/);
+ const f=fixture();await executeConnectorTool(f.host,'space',call('personal_connector_poll',{source_id:'selected-mail',connection_id:'mail',operation:'gmail.search',arguments:{}}));assert.equal(f.calls[1].input.params.operation,'connectors.poll');assert.equal(f.calls[1].input.params.session_id,'session');assert.equal(f.calls[1].input.params.input.source_id,'selected-mail');
+ await assert.rejects(executeConnectorTool(f.host,'space',call('personal_connector_poll',{connection_id:'mail',operation:'gmail.search',arguments:{}})),/source/);
 });
 
 test('automatic denial is a terminal failed effect both immediately and after waiting',async()=>{

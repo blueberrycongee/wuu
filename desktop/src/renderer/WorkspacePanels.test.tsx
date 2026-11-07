@@ -243,7 +243,7 @@ function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
       activeContext: props.activeContext, workspaceContext: props.workspaceContext, threadId: props.terminalThread?.id,
       fileRefreshKey: props.fileRefreshKey, browserActivity: props.browserActivity, browserDockTarget: props.browserDockTarget },
     conversationWorkspace: { threads: props.terminalThread ? [props.terminalThread] : [], activePane: "primary" },
-    navigationWorkspace: { threads: [], projectAgentEnabled: false },
+    navigationWorkspace: { threads: [] },
     sideConversation: { turns: [], commands: [], contextChatPending: [] },
   };
   const selection = { enabled: false, interactionOwnerKey: "draft:one", comments: [] };
@@ -1194,6 +1194,24 @@ describe("WorkspaceRightPanel", () => {
     });
     expect(onCloseTab).toHaveBeenCalledTimes(1);
     expect(onCloseTab).toHaveBeenCalledWith(diffTab.id);
+  });
+
+  it("does not repeat a workspace tab's visible label as its hover hint", async () => {
+    const newTab: WorkspaceViewTab = { kind: "new", id: "new:one" };
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[newTab, filesTab]}
+        activeTabID={newTab.id}
+      />,
+    );
+
+    const tabButtons = container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-tab-main") ?? [];
+    expect(tabButtons).toHaveLength(2);
+    expect(await hoverTooltipText(tabButtons[0])).toBeNull();
+    expect(await hoverTooltipText(tabButtons[1])).toBeNull();
   });
 
   it("supports several diff tabs open side by side alongside tool tabs", () => {

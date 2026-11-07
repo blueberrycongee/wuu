@@ -42,14 +42,13 @@ func TestPersonalCommandGateCoversNativeAndHostProcessEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	clone.SetApproveForMe(false)
-	for _, name := range []string{"bash", "process"} {
-		args := `{"command":"printf denied > marker"}`
-		if name == "process" {
-			args = `{"action":"write","process_id":"unstarted","input":"printf injected\\n"}`
-		}
-		_, err = clone.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: args})
+	for _, call := range []providers.ToolCall{
+		{Name: "bash", Arguments: `{"command":"printf denied > marker"}`},
+		{Name: "bash", Arguments: `{"action":"write","process_id":"unstarted","input":"printf injected\\n"}`},
+	} {
+		_, err = clone.Execute(context.Background(), call)
 		if err == nil || !strings.Contains(err.Error(), "needs owner") {
-			t.Fatalf("%s bypass: %v", name, err)
+			t.Fatalf("%s bypass: %v", call.Arguments, err)
 		}
 	}
 	_, err = clone.ExecuteEnvironmentResult(context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"command":"printf denied > marker"}`})
@@ -77,7 +76,7 @@ func TestPersonalCommandGateCoversNativeAndHostProcessEntries(t *testing.T) {
 	if identities[3] == "" || identities[4] != "worker-operation" || identities[5] != "host-request-key" {
 		t.Fatalf("host invocation identities lost: %v", identities)
 	}
-	if strings.Join(calls, ",") != "bash,process,bash,process_start,process_start,process_start" {
+	if strings.Join(calls, ",") != "bash,bash,bash,process_start,process_start,process_start" {
 		t.Fatalf("gated calls: %v", calls)
 	}
 	if _, err = os.Stat(filepath.Join(kit.RootDir(), "marker")); !os.IsNotExist(err) {

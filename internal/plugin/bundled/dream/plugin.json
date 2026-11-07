@@ -3,7 +3,7 @@
   "id": "dream",
   "name": "Dream",
   "description": "Background consolidation of durable workspace memory.",
-  "icon": "moon",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "defaultEnabled": false,
   "author": { "name": "Wuu" },
@@ -12,7 +12,7 @@
   "desktop": { "entry": "desktop.js" },
   "contributes": {
     "settingsPages": [
-      { "id": "dream", "title": "Dream", "description": "Configure background memory consolidation", "view": "dream.settings", "icon": "moon", "order": 31 }
+      { "id": "dream", "title": "Dream", "description": "Configure background memory consolidation", "view": "dream.settings", "icon": { "path": "icon.webp" }, "order": 31 }
     ]
   },
   "interface": { "displayName": "Dream", "shortDescription": "Consolidate durable workspace knowledge in the background.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }

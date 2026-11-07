@@ -192,10 +192,10 @@ func (b *Broker) RegisterVerified(ctx context.Context, a Actor, g Grant) error {
 	if g.Connection.ID == "" || len(g.Connection.ID) > 128 || g.Connection.AccountID == "" || g.AccessToken == "" || strings.ContainsAny(g.AccessToken, "\r\n") || len(g.AccessToken) > 8192 || (!g.NonExpiring && !g.ExpiresAt.After(time.Now())) || len(g.Connection.Resources) == 0 {
 		return fault("invalid_grant")
 	}
-	if g.NonExpiring && !slices.Contains([]string{"notion", "github", "slack"}, g.Connection.Provider) {
+	if g.NonExpiring && !slices.Contains([]string{"notion", "slack"}, g.Connection.Provider) {
 		return fault("invalid_nonexpiring_grant")
 	}
-	if !slices.Contains([]string{"gmail", "google-calendar", "notion", "drive", "github", "slack", "feishu"}, g.Connection.Provider) {
+	if !slices.Contains([]string{"gmail", "google-calendar", "notion", "drive", "slack", "feishu"}, g.Connection.Provider) {
 		return fault("unsupported_provider")
 	}
 	if g.Connection.Domain != "personal" && g.Connection.Domain != "work" {
@@ -219,6 +219,9 @@ func (b *Broker) List(ctx context.Context, a Actor) ([]Connection, error) {
 	e := b.update(ctx, a, func(s *stored) error {
 		out = []Connection{}
 		for _, g := range s.Grants {
+			if g.Connection.Provider == "github" {
+				continue
+			}
 			c := g.Connection
 			if !b.activated(a, g) {
 				c.State = "needs_reauth"
@@ -243,8 +246,6 @@ func build(c Connection, op string, args json.RawMessage) (Plan, error) {
 		return buildNotion(c, op, args)
 	case "drive":
 		return buildDrive(c, op, args)
-	case "github":
-		return buildGitHub(c, op, args)
 	case "slack":
 		return buildSlack(c, op, args)
 	case "feishu":
@@ -659,7 +660,7 @@ func (b *Broker) Disconnect(ctx context.Context, a Actor, id string) error {
 }
 func (b *Broker) request(ctx context.Context, a Actor, g Grant, p Plan) (json.RawMessage, bool, error) {
 	u, e := url.Parse(p.URL)
-	hosts := map[string][]string{"gmail": {"gmail.googleapis.com"}, "google-calendar": {"www.googleapis.com"}, "drive": {"www.googleapis.com", "docs.googleapis.com"}, "notion": {"api.notion.com"}, "github": {"api.github.com"}, "slack": {"slack.com"}, "feishu": {"open.feishu.cn", "open.larksuite.com"}}
+	hosts := map[string][]string{"gmail": {"gmail.googleapis.com"}, "google-calendar": {"www.googleapis.com"}, "drive": {"www.googleapis.com", "docs.googleapis.com"}, "notion": {"api.notion.com"}, "slack": {"slack.com"}, "feishu": {"open.feishu.cn", "open.larksuite.com"}}
 	if e != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || !slices.Contains(hosts[g.Connection.Provider], u.Host) {
 		return nil, false, fault("endpoint_rejected")
 	}
