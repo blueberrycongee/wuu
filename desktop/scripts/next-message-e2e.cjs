@@ -541,11 +541,10 @@ app.whenReady().then(async () => {
     linkTurn.turn.items[0].related_session_id = "workspace-b-split";
     linkTurn.turn.items[0].input_text = "Open the synthetic workspace B split conversation.";
     linkTurn.turn.items[0].origin = "host";
-    linkTurn.turn.items[0].presentation_kind = "session_message";
     linkTurn.turn.items[0].name = "Workspace B split";
     await completeTurn(linkTurn);
-    await until(() => Boolean(document.querySelector('.session-message-source')));
-    await evaluate(() => [...document.querySelectorAll('.session-message-source')].at(-1).click());
+    await until(() => Boolean(document.querySelector('.message-action-button[aria-label="Open related session"]')));
+    await evaluate(() => [...document.querySelectorAll('.message-action-button[aria-label="Open related session"]')].at(-1).click());
     const splitSelector = '.conversation-split-pane[data-thread-id="workspace-b-split"] [data-wuu-component="composer-input"]';
     await until(selector => Boolean(document.querySelector(selector)), splitSelector);
     await evaluate(selector => document.querySelector(selector).focus(), splitSelector); await frames();
@@ -619,8 +618,6 @@ app.whenReady().then(async () => {
       document.documentElement.style.setProperty("--wuu-font-size-ui", "15px");
       if (document.querySelector('[data-wuu-sidebar-mode="collapsed"]')) document.querySelector('[data-wuu-component="sidebar-toggle"]').click();
     });
-    await until(() => Boolean(document.querySelector(".sidebar-account-trigger")));
-    await evaluate(() => document.querySelector(".sidebar-account-trigger").click());
     await until(() => Boolean(document.querySelector('[data-settings-entry="settings"]')));
     await evaluate(() => document.querySelector('[data-settings-entry="settings"]').click());
     const settingsButton = () => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message");

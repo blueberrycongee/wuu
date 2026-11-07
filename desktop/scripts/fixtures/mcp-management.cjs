@@ -4,19 +4,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createServer } = require("node:http");
 const { createHash } = require("node:crypto");
-const { shell, dialog, Menu } = require("electron");
+const { shell, dialog, Menu, ipcMain } = require("electron");
 const clickReady = require("./mcp-click.cjs");
 
 module.exports = async function prepareMCPFixture({ fixture, output }) {
   let endpoint, authorizationURL;
   let failedInitializations = 0;
+  let droppedInitializations = 0;
   let pauseToolList = null;
   let markBusyStarted, releaseBusy;
   const busyStarted = new Promise(resolve => { markBusyStarted = resolve; });
   const busyRelease = new Promise(resolve => { releaseBusy = resolve; });
   const manualRedirect = "https://callback.example.test/mcp";
   const codes = new Map();
-  const evidence = { registration: 0, exchanges: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, conversationCalls: [], offeredTools: [], checks: [] };
+  const evidence = { registration: 0, exchanges: 0, initializationDrops: 0, authenticatedLists: 0, connectorRequests: 0, identityCalls: 0, conversationCalls: [], offeredTools: [], checks: [] };
   const peer = createServer(async (request, response) => {
     const url = new URL(request.url, endpoint);
     if (url.pathname === "/connector-mcp") evidence.connectorRequests++;
@@ -90,6 +91,11 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
     }
     if (request.method !== "POST") { response.writeHead(request.method === "DELETE" ? 204 : 405).end(); return; }
     const rpc = JSON.parse(body);
+    if (rpc.method === "initialize" && droppedInitializations > 0) {
+      droppedInitializations--;
+      evidence.initializationDrops++;
+      response.destroy(); return;
+    }
     if (rpc.method === "initialize" && failedInitializations > 0) {
       failedInitializations--;
       response.writeHead(503).end(); return;
@@ -315,7 +321,14 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => window.wuu.setThemePreference("dark"));
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));
       win.setSize(800, 900);
-      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: "center" }), row);
+      // Configuration publication can replace the row after import. Resolve
+      // and scroll it in the same renderer turn once it is available again.
+      await until(selector => {
+        const node = document.querySelector(selector);
+        if (!node) return false;
+        node.scrollIntoView({ block: "center" });
+        return true;
+      }, row);
       await capture("mcp-dark-narrow-large");
       await click([row, "编辑"]);
       await until(() => document.querySelector(".mcp-editor"));
@@ -367,8 +380,35 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, false);
       await connectorAction("connect");
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      // Authorization can succeed while the subsequent transport handshake fails.
+      // Retry that connection without consuming another OAuth grant.
+      droppedInitializations = 1;
       await fetch(authorizationURL);
-      await until(selector => !document.querySelector('[role="dialog"]') && document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-wuu-component="notice"][role="alert"]'));
+      assert.equal(evidence.initializationDrops, 1, "The transport must actually close during the authorized handshake");
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
+      const registrationsAfterAuthorization = evidence.registration;
+      const exchangesAfterAuthorization = evidence.exchanges;
+      await capture("connector-authorized-connection-failed");
+      await evaluate(async () => {
+        await window.wuu.setThemePreference("dark");
+        document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+      });
+      win.setSize(800, 900);
+      await capture("connector-authorized-connection-failed-dark-narrow-large");
+      await until(selector => document.querySelector(selector)?.getAttribute("data-connected") === "false" && document.querySelector(`${selector} [data-connector-action="connect"]`), connectorRow);
+      assert.equal(await evaluate(selector => document.querySelector(selector).querySelectorAll("button").length, connectorRow), 1, "A disconnected connector exposes only the add action, even with saved authorization");
+      await capture("connector-disconnected-with-saved-access-dark-narrow-large");
+      await evaluate(async () => {
+        await window.wuu.setThemePreference("light");
+        document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+      });
+      win.setSize(1280, 900);
+      await capture("connector-disconnected-with-saved-access");
+      await connectorAction("connect");
+      await until(selector => document.querySelector(selector)?.getAttribute("data-connected") === "true", connectorRow);
+      assert.equal(evidence.registration, registrationsAfterAuthorization, "Adding a disconnected connector with saved access must not reauthorize");
+      assert.equal(evidence.exchanges, exchangesAfterAuthorization, "Reconnecting must preserve the same grant");
       assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName)).authenticated, true);
       assert.equal(evidence.identityCalls, 1, "Only user Connect runs the admitted account probe");
       await capture("connector-connected-compact-light");
@@ -395,8 +435,103 @@ module.exports = async function prepareMCPFixture({ fixture, output }) {
       await evaluate(() => document.documentElement.style.setProperty("--conversation-message-font-size", "15px"));
       await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
       await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      failedInitializations = 1;
+      await fetch(authorizationURL);
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-wuu-component="notice"][role="alert"]'));
+      const registrationsBeforeRetry = evidence.registration;
+      const exchangesBeforeRetry = evidence.exchanges;
+      const alternateName = "plugin.mcp-journey.alternate";
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), alternateName)).authenticated, true);
+      await click(['[data-wuu-component="notice"]', "清除授权"]);
+      await clickElement('[data-confirm-action="confirm"]');
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("aria-busy") === "false");
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), alternateName)).authenticated, false, "Explicit cleanup removes the saved grant without a working connection");
+      assert.equal((await evaluate(name => window.wuu.readMCPDefinition(name), alternateName)).config.enabled, false);
+      assert.equal(evidence.exchanges, exchangesBeforeRetry, "Cleanup does not start another OAuth exchange");
+      await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
       await fetch(authorizationURL);
       await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("data-connected") === "true");
+      assert.equal(evidence.registration, registrationsBeforeRetry + 1, "A new login starts only after explicit cleanup");
+      assert.equal(evidence.exchanges, exchangesBeforeRetry + 1);
+      // A local credential-store failure can occur after the transport has
+      // stopped. The retry must survive a plugin graph replacement and let the
+      // user finish cleanup without reconnecting the service.
+      const failAuthRemoval = () => {
+        const handler = ipcMain._invokeHandlers.get("wuu:mcp-auth-remove");
+        assert.ok(handler);
+        ipcMain.removeHandler("wuu:mcp-auth-remove");
+        ipcMain.handle("wuu:mcp-auth-remove", async (_event, name) => {
+          assert.equal(name, alternateName);
+          throw new Error("Synthetic credential-store write failure");
+        });
+        return () => { ipcMain.removeHandler("wuu:mcp-auth-remove"); ipcMain.handle("wuu:mcp-auth-remove", handler); };
+      };
+      const previousSuspensions = await evaluate(() => window.__mcpFixtureHandoff.filter(event => event.phase === "suspend").length);
+      let restoreAuthRemoval = failAuthRemoval();
+      try {
+        await menuSelect('[data-connector="plugin.mcp-journey.alternate"]', "断开");
+        await clickElement('[data-confirm-action="confirm"]');
+        await until(previous => window.__mcpFixtureHandoff.filter(event => event.phase === "suspend").length > previous
+          && !document.querySelector('[role="dialog"]') && document.querySelector('[data-wuu-component="notice"][role="alert"]')?.textContent.includes("重试"), previousSuspensions);
+      } finally {
+        restoreAuthRemoval();
+      }
+      // A click during publication can be interrupted; the replacement view
+      // must reoffer the action rather than silently consuming the intent.
+      let retryResult;
+      for (let attempt = 0; attempt < 3 && retryResult !== "confirm"; attempt++) {
+        await evaluate(() => { window.__previousRecoveryNotice = document.querySelector('[data-wuu-component="notice"]'); });
+        await click(['[data-wuu-component="notice"]', "重试"]);
+        retryResult = await until(() => {
+          if (document.querySelector('[data-confirm-action="confirm"]')) return "confirm";
+          const notice = document.querySelector('[data-wuu-component="notice"]');
+          return notice && notice !== window.__previousRecoveryNotice && notice.textContent.includes("重试") ? "reoffered" : undefined;
+        }, undefined, true);
+      }
+      assert.equal(retryResult, "confirm", "Retry remains available when controls are replaced");
+      await clickElement('[data-confirm-action="confirm"]');
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("aria-busy") === "false");
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), alternateName)).authenticated, false, "Retry finishes local credential cleanup after a storage failure");
+      await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      await fetch(authorizationURL);
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("data-connected") === "true");
+      restoreAuthRemoval = failAuthRemoval();
+      try {
+        await menuSelect('[data-connector="plugin.mcp-journey.alternate"]', "断开");
+        await clickElement('[data-confirm-action="confirm"]');
+        await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-wuu-component="notice"][role="alert"]')?.textContent.includes("重试"));
+      } finally { restoreAuthRemoval(); }
+      await clickElement('[data-wuu-component="notice"] [aria-label="关闭提示"]');
+      await until(() => !document.querySelector('[data-wuu-component="notice"]'));
+      await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
+      await until(() => [...document.querySelectorAll('[role="dialog"] button')].some(button => button.textContent.trim() === "清除授权"));
+      await capture("connector-sign-in-with-saved-access");
+      await evaluate(async () => {
+        await window.wuu.setThemePreference("dark");
+        document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+      });
+      win.setSize(800, 900);
+      await capture("connector-sign-in-with-saved-access-dark-narrow-large");
+      await evaluate(async () => {
+        await window.wuu.setThemePreference("light");
+        document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+      });
+      win.setSize(1280, 900);
+      const exchangesBeforeClear = evidence.exchanges;
+      await click(['[role="dialog"]', "清除授权"]);
+      await clickElement('[data-confirm-action="confirm"]');
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("aria-busy") === "false");
+      assert.equal((await evaluate(name => window.wuu.getMCPAuthStatus(name), alternateName)).authenticated, false, "Saved access can be cleared from sign-in after the notice is dismissed");
+      assert.equal(evidence.exchanges, exchangesBeforeClear, "Clearing saved access does not require another authorization");
+      await clickElement('[data-connector="plugin.mcp-journey.alternate"] [data-connector-action="connect"]');
+      await until(() => document.querySelector('[role="dialog"]')?.textContent.includes("在浏览器中完成授权"));
+      await fetch(authorizationURL);
+      await until(() => !document.querySelector('[role="dialog"]') && document.querySelector('[data-connector="plugin.mcp-journey.alternate"]')?.getAttribute("data-connected") === "true");
+      evidence.checks.push("Connection failures use actionable notices; users can reconnect with the saved grant or explicitly clear it while disconnected");
+      evidence.checks.push("An interrupted disconnect can be retried after a credential-store failure and graph replacement");
+      evidence.checks.push("After the notice is dismissed, a disabled connector with retained authorization can still be cleared from sign-in");
       const retainedIdentity = await evaluate(name => window.wuu.getMCPAuthStatus(name), connectorName);
       assert.equal(retainedIdentity.identity?.account?.id, "fixture-user-42", "Enabling a sibling connection must retain verified identity across runtime snapshots");
       assert.equal(evidence.identityCalls, 2, "A runtime refresh must not re-probe accounts");

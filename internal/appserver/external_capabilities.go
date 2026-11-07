@@ -27,17 +27,18 @@ import (
 // externalCapabilities owns one turn's authority. The unguessable endpoint is
 // handed only to its engine process; request data never supplies scope or grants.
 type externalCapabilities struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	server   *http.Server
-	host     string
-	path     string
-	executor agent.ToolExecutor
-	tools    []mcp.Tool
-	allowed  map[string]bool
-	serial   chan struct{}
-	binding  *runtime.State
-	journal  providers.InferenceJournal
+	ctx             context.Context
+	cancel          context.CancelFunc
+	server          *http.Server
+	host            string
+	path            string
+	executor        agent.ToolExecutor
+	tools           []mcp.Tool
+	allowed         map[string]bool
+	serial          chan struct{}
+	binding         *runtime.State
+	journal         providers.InferenceJournal
+	publishArtifact func(context.Context, providers.ToolCall, toolresult.Result) error
 
 	mu       sync.Mutex
 	closed   bool
@@ -270,6 +271,7 @@ func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall
 	if err := activity.ControlErr(ctx); err != nil {
 		return capabilityToolResult(toolresult.Result{}, err)
 	}
+	publicationCtx := ctx
 	var result toolresult.Result
 	var err error
 	var finishReceipts func() error
@@ -285,6 +287,22 @@ func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall
 	defer func() {
 		if finishReceipts != nil {
 			err = errors.Join(err, finishReceipts())
+		}
+		if call.Name == "present_artifact" && err != nil {
+			result = toolresult.Result{}
+		}
+		if err == nil && !result.IsError && call.Name == "present_artifact" {
+			err = activity.ControlErr(publicationCtx)
+			if err == nil && b.publishArtifact == nil {
+				err = errors.New("artifact publication is unavailable for this turn")
+			} else if err == nil {
+				err = b.publishArtifact(publicationCtx, call, result)
+			}
+			if err == nil {
+				result = toolresult.FromText("Artifact presented to the user.")
+			} else {
+				result = toolresult.Result{}
+			}
 		}
 		response = capabilityToolResult(result, err)
 	}()
@@ -357,3 +375,27 @@ func writeCapabilityRPC(w http.ResponseWriter, id json.RawMessage, result any, r
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 }
+
+// externalCapabilityInstructions hands external engines the usage contract for
+// capability tools whose cross-call semantics the tool schema cannot express.
+// Internal agents learn the same rules from bundled plugin skills, which the
+// per-turn MCP bridge does not deliver.
+func externalCapabilityInstructions(definitions []providers.ToolDefinition) string {
+	for _, definition := range definitions {
+		// control_epoch marks the CUA input protocol: the host injects the
+		// lease token and the helper consumes one snapshot_id per input.
+		properties, _ := definition.InputSchema["properties"].(map[string]any)
+		if _, ok := properties["control_epoch"]; ok {
+			return fmt.Sprintf(externalCUAInstructions, definition.Name)
+		}
+	}
+	return ""
+}
+
+const externalCUAInstructions = `%s drives macOS apps through Accessibility, screenshots, and synthesized input:
+- Find the target with list_apps, then copy the exact Target app="..." value into app. Give every call a short display_title; it names the visible activity.
+- observe returns a snapshot_id. element_id values and coordinates are valid only against the latest snapshot, and each input consumes it. On stale_snapshot, call observe once and retry with the fresh ids; do not replay the failed call.
+- Prefer snapshot-free actions (activate_control, press_key/press_keys, type_text, paste); they survive UI changes.
+- Use sequence for multi-step input: every step needs risk, and non-safe steps need confirmed=true only after explicit user confirmation.
+- Set after to "ax" or "both" to return a fresh observation with the input result instead of a separate observe call.
+- Apps that mirror your own live output change constantly; prefer non-snapshot actions there.`

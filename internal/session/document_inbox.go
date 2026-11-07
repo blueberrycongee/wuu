@@ -148,24 +148,9 @@ func validateInboxDocument(tx *persistence.Tx, clientID string) error {
 	if err != nil || !found {
 		return err
 	}
+	// Retired project assignments must never resume as ordinary input.
 	if row.WorkID != "" {
-		var work ProjectWork
-		found, err := tx.Get(documentNamespace("project_work"), row.WorkID, &work)
-		if err != nil {
-			return err
-		}
-		if !found || work.Revision != row.WorkRevision || work.Phase == "stopped" || row.WorkVersion > 0 && work.Version != row.WorkVersion {
-			return ErrControlChanged
-		}
-		if row.Cause == "project" {
-			current := work.LeadInput
-			if row.SessionID == work.ExecutorID {
-				current = work.ExecutorInput
-			}
-			if current == nil || current.ClientID != clientID {
-				return ErrControlChanged
-			}
-		}
+		return ErrControlChanged
 	}
 	for _, control := range row.Controls {
 		if err := validateControlDocument(tx, control); err != nil {

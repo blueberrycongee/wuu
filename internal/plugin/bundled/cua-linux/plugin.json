@@ -3,7 +3,7 @@
   "name": "cua-linux",
   "version": "0.1.0",
   "description": "Control Linux X11 windows through native capture and input.",
-  "icon": "layout-grid",
+  "icon": { "path": "icon.webp" },
   "author": {
     "name": "Wuu"
   },

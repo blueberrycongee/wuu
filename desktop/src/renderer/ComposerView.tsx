@@ -245,9 +245,6 @@ export function Composer({
   onQueue,
   onInterrupt,
   telemetryTurnID,
-  tokensPerSecond = 0,
-  tokenSpeedSampledAt,
-  tokenSpeedSource,
   contextUsage,
   queryHistorySessionID,
   skillThreadID,
@@ -269,7 +266,7 @@ export function Composer({
   topAccessory?: ReactNode;
   statusAccessory?: ReactNode;
   inlineSelection?: ReactNode;
-  // The conversation's permission mode cannot change, as for a project coordinator.
+  // The conversation's permission mode cannot change.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
   runtimeControlsTarget?: HTMLElement | null;
@@ -373,9 +370,6 @@ export function Composer({
   onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
-  tokensPerSecond?: number;
-  tokenSpeedSampledAt?: number;
-  tokenSpeedSource?: "real" | "estimated" | "none";
   // contextUsage drives the model-adjacent context meter. When the active
   // model has no catalog window yet the AppState selector returns
   // undefined and the meter hides entirely.
@@ -1186,7 +1180,9 @@ export function Composer({
       submitComposerWith(onQueue, currentPrompt, "queue");
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey && !primaryModifier) {
+    // Cmd/Ctrl+Enter queues a follow-up while a turn runs; otherwise it sends
+    // the draft instead of acting as an inert key combination.
+    if (event.key === "Enter" && !event.shiftKey && (!primaryModifier || !running)) {
       event.preventDefault();
       submitDraft(currentPrompt);
     }
@@ -1351,11 +1347,7 @@ export function Composer({
         <ComposerRuntimeMeters
           inToolRail={controlsInRail}
           compact={compactControls}
-          running={running}
           turnID={telemetryTurnID}
-          fallbackTokensPerSecond={tokensPerSecond}
-          fallbackSampledAt={tokenSpeedSampledAt}
-          fallbackSource={tokenSpeedSource}
           fallbackContextUsage={contextUsage}
           activeEngine={activeEngine}
         />
@@ -1412,6 +1404,7 @@ export function Composer({
             align="left"
             offset={variant === "hero" ? 10 : 8}
             width={commandMenuWidth}
+            matchAnchorWidth
           >
             <div
               className="composer-context-menu composer-plus-menu slash-command-menu"
@@ -1421,7 +1414,7 @@ export function Composer({
               style={{ "--composer-menu-width": `${commandMenuWidth}px` } as CSSProperties}
             >
               {visibleSlashCommands.length > 0 ? (
-                <div className="slash-command-list scrollbar-hidden">
+                <div className="slash-command-list composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
                   {visibleSlashCommands.map((command, index) => {
                     const selected = index === selectedSlashIndex;
                     const optionID = `${slashMenuID}-${command.id}`;
@@ -1451,18 +1444,22 @@ export function Composer({
                           onClick={() => applySlashCommand(command, slashDraft)}
                         >
                           <SlashCommandIcon command={command} />
-                          <span className="composer-plus-menu-item-title slash-command-name">
-                            /{command.name}
+                          <span className="composer-plus-menu-item-title slash-command-title">
+                            {command.kind === "skill" ? command.name : command.title}
                           </span>
-                          {command.disabledReason || command.title ? (
+                          {command.kind === "skill" ? (
+                            <span className={`composer-plus-menu-item-desc ${command.disabledReason ? "slash-command-meta" : "slash-command-summary"}`}>
+                              {command.disabledReason ?? command.description}
+                            </span>
+                          ) : (
                             <span
                               className={`composer-plus-menu-item-desc ${
-                                command.disabledReason ? "slash-command-meta" : "slash-command-summary"
+                                command.disabledReason ? "slash-command-meta" : "slash-command-command"
                               }`}
                             >
-                              {command.disabledReason ?? command.title}
+                              {command.disabledReason ?? `/${command.name}`}
                             </span>
-                          ) : null}
+                          )}
                         </button>
                       </Tooltip>
                     );

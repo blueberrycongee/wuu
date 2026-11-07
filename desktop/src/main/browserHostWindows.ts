@@ -199,6 +199,9 @@ type TabEntry = {
   // Painted in the workspace panel. Picture-in-picture sets `presented`
   // without setting this, so the mirror can stay up while the panel is closed.
   inPanel: boolean;
+  // The panel temporarily resizes the live page. Retain its background layout
+  // across panel resizes so closing does not leave automation in a narrow viewport.
+  panelRestoreBounds?: Rectangle;
   // An explicit hide ignores in-flight rectangles until the panel asks again
   // with force. Otherwise a late bounds report puts the page back on screen.
   blockPresent: boolean;
@@ -1322,6 +1325,7 @@ export class BrowserHostCoordinator {
       entry.presented = true;
       entry.inPanel = true;
       this.resetPreviewScale(entry);
+      entry.panelRestoreBounds ??= entry.view.getBounds();
     }
     const current = entry.view.getBounds();
     if (current.x !== rect.x || current.y !== rect.y || current.width !== rect.width || current.height !== rect.height) {
@@ -1344,6 +1348,10 @@ export class BrowserHostCoordinator {
     const wasPanel = entry.inPanel;
     this.clearCursor(entry);
     this.reparent(entry, this.ensureHostWindow());
+    if (entry.panelRestoreBounds) {
+      entry.view.setBounds(entry.panelRestoreBounds);
+      entry.panelRestoreBounds = undefined;
+    }
     entry.inPanel = false;
     entry.presented = false;
     this.applyEntryActivity(entry);

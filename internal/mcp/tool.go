@@ -116,7 +116,7 @@ func (t *MCPTool) ExecuteResult(ctx context.Context, args string) (toolresult.Re
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	mapped, mapErr := mapCallToolResult(result)
+	mapped, mapErr := MapCallToolResult(result)
 	if mapErr != nil {
 		return toolresult.Result{}, mapErr
 	}
@@ -185,7 +185,12 @@ func (t *MCPTool) metadata() (readOnly bool, concurrencySafe bool) {
 	return readOnly, concurrencySafe
 }
 
-func mapCallToolResult(result *CallToolResult) (toolresult.Result, error) {
+// MapCallToolResult normalizes an MCP-shaped tool result into Wuu's canonical
+// rich result, applying the shared validation and bounded downgrade. External
+// engine adapters reuse it for native results that already use MCP content
+// blocks (ACP tool content, Codex mcpToolCall, OpenCode attachments) so size
+// and validity handling stays identical to real MCP calls.
+func MapCallToolResult(result *CallToolResult) (toolresult.Result, error) {
 	if result == nil {
 		return toolresult.Result{}, fmt.Errorf("MCP tool result is nil")
 	}

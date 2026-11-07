@@ -117,6 +117,10 @@ returns focus to the opener.
 Markdown tables reveal copy and expand controls on hover or keyboard focus;
 touch surfaces keep them visible. Copy preserves the table's Markdown source.
 Wide tables scroll horizontally with an edge fade indicating hidden columns.
+In answers, a wide table can extend up to 120px past each side of the reading
+column when the window has room — never while the environment panel is open —
+and scrolls beyond that. Markdown column alignment (`---:`, `:---:`) applies to
+headers and cells.
 Expand opens a larger, independently scrollable table in the same preview shell
 as images, using the selected theme and text size. The upper-right close button,
 Escape, and the backdrop dismiss it and restore focus to the opener. Opening an

@@ -78,7 +78,7 @@ function Fixture() {
   const [title, setTitle] = useState(titles[0]);
   const titleApplication = useMemo(() => {
     const base = application.getSnapshot();
-    const preview = createFixtureApplication({ tabs: {...base.tabs, activeTabId:"draft:sample-0", items:[{id:"draft:sample-0",kind:"draft",title,workspaceRoot:"/preview",project:false,draftText:"",hasAttachments:false}]},
+    const preview = createFixtureApplication({ tabs: {...base.tabs, activeTabId:"draft:sample-0", items:[{id:"draft:sample-0",kind:"draft",title,workspaceRoot:"/preview",draftText:"",hasAttachments:false}]},
       conversationWorkspace: {...base.conversationWorkspace, primaryThreadId:undefined, threads:[]} });
     return {...preview, invoke: ((action, input, options) => {
       if (action === "draft.rename") { setTitle((input as {title:string}).title); return Promise.resolve(); }

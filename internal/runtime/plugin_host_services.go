@@ -193,6 +193,19 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 			return nil, err
 		}
 		return marshalServiceResult(result)
+	case pluginhost.HostServiceSessionModel:
+		if s.turnRouter == nil {
+			return nil, serviceError("service_unavailable", "session model service is unavailable")
+		}
+		var params pluginhost.SessionModelParams
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		result, err := s.turnRouter.Model(ctx, s.pluginID, params)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionCreate:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")

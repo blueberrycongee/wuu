@@ -40,7 +40,7 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
     if (method === "agents.proposals") return { proposals: [] };
     if (method === "tasks.list") return { tasks: fixtures.tasks ?? [{ task_id: "t1", agent_id: "a-travel", title: "Plan a trip", goal: "Find a route", state: "running", revision: 3, requirements_revision: 1 }] };
     if (method === "memory.query") return { records: fixtures.memories ?? [] };
-    if (method === "settings.get") return { settings: { revision: 1, notifications: true, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" } } };
+    if (method === "model.get") return { provider: "fixture", model: "fixture-model" };
     return (await mutate?.(method, input)) ?? {};
   });
   // Personal hides search; search-contract fixtures opt into the shared surface without changing product defaults.
@@ -345,11 +345,6 @@ it("searches only the main conversation and marks partial history results withou
   expect(document.querySelector('[data-history-search-partial]')).not.toBeNull();
   expect(document.body.textContent).not.toContain("Hidden process data"); expect(document.body.textContent).not.toContain("private-search-session");
   await ui.click('[data-action="close-history-search"]', document); expect(document.body.textContent).not.toContain("Remembered Kyoto");
-});
-it("saves reversible notification grouping without altering reply or quiet-hours settings", async () => {
-  const ui=await mount(async method=>method==="settings.update"?{settings:{revision:2,notifications:true,notification_batch_seconds:300,quiet_hours:{enabled:false,start:"22:00",end:"08:00",timezone:"UTC"}}}:{});
-  await ui.settings(); await changeField(ui.container,'[data-notification-batch]',"300"); await ui.click('[data-action="save-notifications"]');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"settings.update",input:{expected_revision:1,notifications:true,notification_batch_seconds:300,quiet_hours:{enabled:false,start:"22:00",end:"08:00",timezone:"UTC"}}}));
 });
 it("pages timestamp-bounded agent history and reads the original hit by exact owned sequence", async () => {
   const ui = await mount(async (method, input) => method === "agents.search" ? input.cursor ? { matches: [{ seq: 21, role: "user", excerpt: "Kyoto legacy" }], has_more: false } : { matches: [{ seq: 20, role: "assistant", excerpt: "Kyoto excerpt", at: "2026-10-18T09:00:00Z" }], has_more: true, next_cursor: "page-two" } : {}, main,
@@ -1452,7 +1447,8 @@ it("recovers the GenUI error boundary after a corrected same-ID snapshot", async
 
 it("mounts connection and review controls in existing preferences without implying configured authority", async () => {
   const view = await mount(async method => {
-    if (method === "connections.status") return { ok: true, value: { product_domain: "personal", provider: "google-calendar", user_space_id: "local", state: "unavailable", selected_calendars: [], error_code: "oauth_client_not_configured" } };
+    if (method === "connectors.list") return { ok: true, value: { connections: [] } };
+    if (method === "connectors.actions") return { ok: true, value: { actions: [] } };
     if (method === "review.list") return { ok: true, value: { schema: "personal-review.v1", kind: "unavailable", reason: "Production authorization resolver is unavailable" } };
   });
   await view.settings();
@@ -1460,60 +1456,8 @@ it("mounts connection and review controls in existing preferences without implyi
   expect(view.container.querySelector('.personal-review')).not.toBeNull();
   expect(view.container.textContent).toContain("Production authorization resolver is unavailable");
   expect(view.container.querySelector('[data-review-choice]')).toBeNull();
-  expect(view.container.querySelector('[data-action="save-notifications"]')).not.toBeNull();
-});
-
-it("keeps the Calendar CAS error and stale result visible through the shipped settings bridge", async () => {
-  let calls=0;
-  const connection={product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"account",connection_id:"connection",selection_revision:"1",state:"connected",selected_calendars:["primary"]};
-  const view=await mount(async(method,input)=>{
-    if(method==="connections.status")return {ok:true,value:connection};
-    if(method==="connections.calendars")return {ok:true,value:[{id:"primary",summary:"Synthetic",timeZone:"UTC"}]};
-    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
-    if(method==="connections.agenda")return {state:++calls===1?"ready":"error",freshness:calls===1?"fresh":"stale",error_code:calls===1?undefined:"provider_unavailable",read_only:true,source:{...(input as object),provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"account",connection_id:"connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"event",status:"confirmed",summary:"Previously fetched appointment",all_day:true}],cancelled_events:[]};
-  });
-  await view.settings();
-  const ask=async()=>{await act(async()=>{view.container.querySelector('form.gcal-agenda-form')!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));await new Promise(resolve=>setTimeout(resolve,0));});};
-  await ask();expect(view.container.textContent).toContain("Previously fetched appointment");
-  await ask();expect(view.container.textContent).toContain("Previously fetched appointment");
-  expect(view.container.querySelector('.gcal-notice[role="alert"]')?.textContent).toContain("过期");
-});
-
-it("keeps old authorization diagnostics separate from the new Calendar connection in shipped settings", async () => {
-  const view=await mount(async method=>{
-    if(method==="connections.status")return {ok:true,value:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"new-account",connection_id:"new-connection",selection_revision:"2",state:"connected",selected_calendars:["new-calendar"],authorization_diagnostics:[{attempt_id:"old-attempt",error_code:"credential_cleanup_failed"}]}};
-    if(method==="connections.calendars")return {ok:true,value:[{id:"new-calendar",summary:"Current calendar",timeZone:"UTC"}]};
-    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
-  });
-  await view.settings();
-  expect(view.container.querySelector('form.gcal-agenda-form')).not.toBeNull();
-  expect(view.container.textContent).toContain("Current calendar");
-  const diagnostic=view.container.querySelector('[data-calendar-attempt-diagnostic="old-attempt"]');
-  expect(diagnostic).not.toBeNull();
-  expect(diagnostic?.getAttribute('role')).toBe('alert');
-  expect(view.container.querySelector('.gcal-connection [role="alert"]')).toBeNull();
-});
-
-it("keeps the current Calendar grant usable when an older authorization promise fails cleanup", async () => {
-  // This test leaves both lifetime signals live; jsdom lacks Chromium's any().
-  const previousAny=Object.getOwnPropertyDescriptor(AbortSignal,'any');
-  Object.defineProperty(AbortSignal,'any',{configurable:true,value:(signals:AbortSignal[])=>signals[0]});
-  cleanups.push(()=>{if(previousAny)Object.defineProperty(AbortSignal,'any',previousAny);else Reflect.deleteProperty(AbortSignal,'any');});
-  let connected=false,finish: ((value:unknown)=>void)|undefined;
-  const view=await mount(async method=>{
-    if(method==="connections.status")return {ok:true,value:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"new-account",connection_id:"new-connection",selection_revision:"2",state:connected?"connected":"unconnected",selected_calendars:connected?["new-calendar"]:[]}};
-    if(method==="connections.calendars")return {ok:true,value:[{id:"new-calendar",summary:"Current calendar",timeZone:"UTC"}]};
-    if(method==="connections.start")return new Promise(resolve=>{finish=resolve;});
-    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
-  });
-  await view.settings();
-  await act(async()=>{Array.from(view.container.querySelectorAll('button')).find(button=>button.textContent==='连接 Google Calendar')!.click();});
-  expect(finish).toBeDefined();
-  await act(async()=>{connected=true;finish!({ok:false,error:{code:'credential_cleanup_failed'}});});
-  expect(view.container.querySelector('form.gcal-agenda-form')).not.toBeNull();
-  const notices=Array.from(view.container.querySelectorAll('.gcal-notice[role="alert"]'));
-  expect(notices.length).toBeGreaterThan(0);
-  expect(notices.every(notice=>!notice.textContent?.includes('连接已停用'))).toBe(true);
+  expect(view.container.querySelector('[data-connector-approve]')).toBeNull();
+  expect(view.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "connectors.list" }));
 });
 
 it("freezes current GenUI input for ordinary chat before autosync finishes and across uncertain retries", async () => {

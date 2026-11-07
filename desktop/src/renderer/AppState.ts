@@ -47,7 +47,6 @@ import {
   streamTextStore,
   type StreamTextField,
 } from "./StreamText";
-import { estimateStreamingOutputTokens } from "./TurnTelemetryStore";
 import { statusMessageForError } from "./UserFacingErrors";
 import {
   formatCurrentDate,
@@ -110,9 +109,6 @@ type SessionTab =
       files: ComposerFile[];
       createdAt: number;
       selections?: ResponseSelection[];
-      // The draft starts a project: its first message names the project and
-      // becomes the coordinator's first instruction.
-      project?: true;
     }
   | {
       id: string;
@@ -165,9 +161,7 @@ type AppState = {
   running: boolean;
   status: string;
   // turnTokenUsage tracks per-turn cumulative token counts
-  // pushed by the appserver's "turn/usage" notification. The samples field
-  // is a rolling window used to derive a smoothed tokens-per-second read
-  // for the live token-speed gauge in the composer.
+  // pushed by the appserver's "turn/usage" notification.
   turnTokenUsage: Record<string, TurnTokenUsage>;
   // turnRequestContext tracks the latest request-shape telemetry emitted
   // during a turn. It explains cache-sensitive context structure without
@@ -215,30 +209,19 @@ type ThreadRunningCandidate = {
 type TurnAnswerReadyCandidate = Pick<Turn, "status"> &
   Partial<Pick<Turn, "answer_ready_at" | "items">>;
 
-type TurnTokenSample = {
-  tokens: number;
-  at: number;
-};
-
-type TokenSpeedSource = "real" | "estimated" | "none";
-
 type TurnTokenUsage = {
   threadID: string;
   inputTokens: number;
-  outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  speedTokens: number;
-  speedSource: Exclude<TokenSpeedSource, "none">;
-  samples: TurnTokenSample[];
   // contextTokens is the retained conversation estimate produced by the
   // agent loop after request-only context has been excluded. It is what the
   // composer context meter displays.
   contextTokens?: number;
   // contextWindowTokens is the resolved runtime window size for the active
-  // model at the time of the latest real (provider-reported) usage sample.
-  // Streaming estimates preserve it from the previous real sample so the
-  // context meter does not flicker to "unknown" between provider reports.
+  // model at the time of the latest provider usage report. Reports that omit
+  // the ceiling preserve the previous value so the context meter does not
+  // flicker to "unknown" between provider reports.
   contextWindowTokens?: number;
   model?: string;
 };
@@ -276,21 +259,14 @@ export type TurnContextUsage = {
   requestContext?: TurnRequestContextDigest;
 };
 
-type TurnTokenSpeedSnapshot = {
-  tokensPerSecond: number;
-  source: TokenSpeedSource;
-  sampledAt?: number;
-};
-
 type ContextUsageFallback = {
   model?: string;
   contextWindowTokens?: number;
 };
 
-const TOKEN_SPEED_WINDOW_MS = 2000;
 const STREAM_TEXT_FIELDS: StreamTextField[] = ["text", "arguments", "result"];
-// Live token speed and request-shape telemetry are UI caches, not the durable
-// turn history. Completed turns already persist their usage totals on Turn.
+// Turn usage and request-shape telemetry are UI caches, not the durable turn
+// history. Completed turns already persist their usage totals on Turn.
 // Keeping a generous recent window preserves model/context fallbacks while
 // preventing every 250ms stream sample from copying an ever-growing record.
 export const RETAINED_TURN_TELEMETRY_LIMIT = 256;
@@ -702,7 +678,6 @@ function reduceNotification(
           variant: params.variant,
           model_roles: params.model_roles,
           model_aliases: params.model_aliases,
-          project_models: params.project_models,
           providers: params.providers,
         },
       };
@@ -916,15 +891,13 @@ function reduceNotification(
       if (!turnID) {
         return state;
       }
-      return appendTurnTokenSample(
+      return recordTurnTokenUsage(
         state,
         turnID,
         stringValue(params, "thread_id") ?? "",
         numberValue(params, "input_tokens") ?? 0,
-        numberValue(params, "output_tokens") ?? 0,
         numberValue(params, "cache_creation_tokens") ?? 0,
         numberValue(params, "cache_read_tokens") ?? 0,
-        Date.now(),
         numberValue(params, "context_window_tokens") ?? 0,
         stringValue(params, "model"),
         numberValue(params, "context_tokens") ?? 0,
@@ -1641,9 +1614,6 @@ function summarizeThreadForSidebar(
     title: thread.title,
     title_revision: thread.title_revision,
     source: thread.source,
-    project_id: thread.project_id,
-    project_exists: thread.project_exists,
-    project_role: thread.project_role,
     model_provider: thread.model_provider,
     model: thread.model,
     engine_id: thread.engine_id,
@@ -1856,10 +1826,6 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
   const turns = mergeListedThreadTurns(existing.turns, listed.turns);
   return {
     ...listed,
-    project_exists: listed.project_exists ?? (
-      listed.source === existing.source && listed.project_id === existing.project_id
-        ? existing.project_exists : undefined
-    ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
     status: reconciledThreadStatus(listed, existing, turns),
@@ -2662,20 +2628,63 @@ function threadForPane(
   return pane === "secondary" ? state.secondaryThread : state.thread;
 }
 
-function queryTextsForThread(thread: Thread | undefined): string[] {
+const EMPTY_QUERY_TEXTS: readonly string[] = Object.freeze([]);
+// Turn objects are structurally shared across AppState updates, so per-turn
+// and per-turns-array results stay valid until the runtime replaces them.
+const queryTextsForTurnCache = new WeakMap<Turn, readonly string[]>();
+const queryTextsForThreadCache = new WeakMap<readonly Turn[], readonly string[]>();
+
+function queryTextsForThread(thread: Thread | undefined): readonly string[] {
   if (!thread) {
-    return [];
+    return EMPTY_QUERY_TEXTS;
+  }
+  const cached = queryTextsForThreadCache.get(thread.turns);
+  if (cached) {
+    return cached;
   }
   const queries: string[] = [];
   for (const turn of thread.turns) {
-    for (const item of turn.items) {
-      const text = queryTextForUserItem(item);
-      if (text) {
-        queries.push(text);
+    let turnTexts = queryTextsForTurnCache.get(turn);
+    if (!turnTexts) {
+      const texts: string[] = [];
+      for (const item of turn.items) {
+        const text = queryTextForUserItem(item);
+        if (text) {
+          texts.push(text);
+        }
       }
+      turnTexts = Object.freeze(texts);
+      queryTextsForTurnCache.set(turn, turnTexts);
+    }
+    queries.push(...turnTexts);
+  }
+  const frozen = Object.freeze(queries);
+  queryTextsForThreadCache.set(thread.turns, frozen);
+  return frozen;
+}
+
+const handoffIntentForTurnCache = new WeakMap<Turn, string | null>();
+
+function requestedHandoffIntentForTurn(turn: Turn): string | null {
+  const cached = handoffIntentForTurnCache.get(turn);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const items = turn.items;
+  for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = items[itemIndex];
+    if (item.type !== "tool_call" || item.status !== "completed") {
+      continue;
+    }
+    const payload = item.result ?? item.text ?? "";
+    const intent = parseRequestedHandoffIntent(payload);
+    if (intent !== null) {
+      handoffIntentForTurnCache.set(turn, intent);
+      return intent;
     }
   }
-  return queries;
+  handoffIntentForTurnCache.set(turn, null);
+  return null;
 }
 
 function requestedHandoffIntentForThread(thread: Thread | undefined): string | undefined {
@@ -2683,17 +2692,9 @@ function requestedHandoffIntentForThread(thread: Thread | undefined): string | u
     return undefined;
   }
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
-    const items = thread.turns[turnIndex]?.items ?? [];
-    for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = items[itemIndex];
-      if (item.type !== "tool_call" || item.status !== "completed") {
-        continue;
-      }
-      const payload = item.result ?? item.text ?? "";
-      const intent = parseRequestedHandoffIntent(payload);
-      if (intent !== null) {
-        return intent;
-      }
+    const intent = requestedHandoffIntentForTurn(thread.turns[turnIndex]);
+    if (intent !== null) {
+      return intent;
     }
   }
   return undefined;
@@ -3311,45 +3312,24 @@ function agentPathDepth(path: string | undefined): number {
   return trimmed ? trimmed.split("/").length : 0;
 }
 
-function appendTurnTokenSample(
+function recordTurnTokenUsage(
   state: AppState,
   turnID: string,
   threadID: string,
   inputTokens: number,
-  outputTokens: number,
   cacheCreationTokens: number,
   cacheReadTokens: number,
-  at: number,
   contextWindowTokens: number = 0,
   model?: string,
   contextTokens: number = 0,
 ): AppState {
   const turnTokenUsage = state.turnTokenUsage ?? {};
   const previous = turnTokenUsage[turnID];
-  const cutoff = at - TOKEN_SPEED_WINDOW_MS;
-  const hasRealHistory = previous?.speedSource === "real";
-  const previousSpeedTokens = hasRealHistory ? previous.speedTokens : 0;
-  const speedTokens = hasRealHistory
-    ? Math.max(previousSpeedTokens, outputTokens)
-    : outputTokens;
-  const outputIncreased = outputTokens > previousSpeedTokens;
-  const shouldAppendSample = outputTokens > 0 && outputIncreased;
-  const samples: TurnTokenSample[] = [];
-  if (hasRealHistory) {
-    for (const sample of previous.samples) {
-      if (!shouldAppendSample || sample.at >= cutoff) {
-        samples.push(sample);
-      }
-    }
-  }
-  if (shouldAppendSample) {
-    samples.push({ tokens: speedTokens, at });
-  }
-  // A real usage snapshot is the authoritative source for both the speed
-  // samples and the context ceiling. If Go omitted the ceiling (zero
-  // or undefined) we still want the meter to keep showing the last known
-  // value rather than collapse to "unknown" — most providers emit usage
-  // and ceiling together, but a transient omission should not erase state.
+  // A real usage snapshot is the authoritative source for the context
+  // ceiling. If Go omitted the ceiling (zero or undefined) we still want the
+  // meter to keep showing the last known value rather than collapse to
+  // "unknown" — most providers emit usage and ceiling together, but a
+  // transient omission should not erase state.
   const resolvedWindow =
     contextWindowTokens && contextWindowTokens > 0
       ? contextWindowTokens
@@ -3365,142 +3345,13 @@ function appendTurnTokenSample(
       {
         threadID,
         inputTokens,
-        outputTokens,
         cacheCreationTokens,
         cacheReadTokens,
-        speedTokens,
-        speedSource: "real",
-        samples,
         ...(resolvedContextTokens
           ? { contextTokens: resolvedContextTokens }
           : {}),
         ...(resolvedWindow ? { contextWindowTokens: resolvedWindow } : {}),
         ...(resolvedModel ? { model: resolvedModel } : {}),
-      },
-    ),
-  };
-}
-
-function appendStreamingTokenSample(
-  state: AppState,
-  params: Record<string, unknown> | undefined,
-  at: number,
-): AppState {
-  const turnID = stringValue(params, "turn_id");
-  const delta = stringValue(params, "delta");
-  if (!turnID || !delta) {
-    return state;
-  }
-  const estimatedTokens = estimateStreamingOutputTokens(delta);
-  if (estimatedTokens <= 0) {
-    return state;
-  }
-  const threadID = stringValue(params, "thread_id") ?? "";
-  return appendEstimatedTokenSample(state, turnID, threadID, estimatedTokens, at);
-}
-
-/**
- * Deltas arrive far faster than the token-speed gauge needs samples, and a
- * setState per delta re-renders the whole App tree. Callers accumulate the
- * per-turn estimates in a plain Map and flush them into state on a coarse
- * timer instead.
- */
-export type PendingStreamingTokenSamples = Map<
-  string,
-  { threadID: string; tokens: number }
->;
-
-/** Accumulate a delta's estimated tokens; returns true when it recorded any. */
-function recordPendingStreamingTokenSample(
-  pending: PendingStreamingTokenSamples,
-  params: Record<string, unknown> | undefined,
-): boolean {
-  const turnID = stringValue(params, "turn_id");
-  const delta = stringValue(params, "delta");
-  if (!turnID || !delta) {
-    return false;
-  }
-  const estimatedTokens = estimateStreamingOutputTokens(delta);
-  if (estimatedTokens <= 0) {
-    return false;
-  }
-  const threadID = stringValue(params, "thread_id") ?? "";
-  const existing = pending.get(turnID);
-  if (existing) {
-    existing.tokens += estimatedTokens;
-    if (!existing.threadID) {
-      existing.threadID = threadID;
-    }
-    return true;
-  }
-  pending.set(turnID, { threadID, tokens: estimatedTokens });
-  return true;
-}
-
-function flushPendingStreamingTokenSamples(
-  state: AppState,
-  pending: PendingStreamingTokenSamples,
-  at: number,
-): AppState {
-  let next = state;
-  for (const [turnID, sample] of pending) {
-    next = appendEstimatedTokenSample(
-      next,
-      turnID,
-      sample.threadID,
-      sample.tokens,
-      at,
-    );
-  }
-  return next;
-}
-
-function appendEstimatedTokenSample(
-  state: AppState,
-  turnID: string,
-  threadID: string,
-  estimatedTokens: number,
-  at: number,
-): AppState {
-  const turnTokenUsage = state.turnTokenUsage ?? {};
-  const previous = turnTokenUsage[turnID];
-  const cutoff = at - TOKEN_SPEED_WINDOW_MS;
-  const samples: TurnTokenSample[] = [];
-  if (previous) {
-    for (const sample of previous.samples) {
-      if (sample.at >= cutoff) {
-        samples.push(sample);
-      }
-    }
-  }
-  const speedTokens =
-    (previous?.speedTokens ?? previous?.outputTokens ?? 0) + estimatedTokens;
-  samples.push({ tokens: speedTokens, at });
-  return {
-    ...state,
-    turnTokenUsage: withRetainedTurnTelemetry<TurnTokenUsage>(
-      turnTokenUsage,
-      turnID,
-      {
-        threadID: previous?.threadID || threadID,
-        inputTokens: previous?.inputTokens ?? 0,
-        outputTokens: previous?.outputTokens ?? 0,
-        cacheCreationTokens: previous?.cacheCreationTokens ?? 0,
-        cacheReadTokens: previous?.cacheReadTokens ?? 0,
-        speedTokens,
-        speedSource: "estimated",
-        samples,
-        ...(previous?.contextTokens
-          ? { contextTokens: previous.contextTokens }
-          : {}),
-        // Streaming estimates are byte-deltas, not real usage; they do not
-        // know the context window. Carry the previously-resolved window
-        // forward so the meter stays visible while we wait for the next
-        // real provider usage snapshot.
-        ...(previous?.contextWindowTokens
-          ? { contextWindowTokens: previous.contextWindowTokens }
-          : {}),
-        ...(previous?.model ? { model: previous.model } : {}),
       },
     ),
   };
@@ -3520,43 +3371,6 @@ function withRetainedTurnTelemetry<T>(
   }
   next[turnID] = value;
   return next;
-}
-
-function activeTurnTokenSpeed(state: AppState, turnID?: string): number {
-  return activeTurnTokenSpeedSnapshot(state, turnID).tokensPerSecond;
-}
-
-function activeTurnTokenSpeedSnapshot(
-  state: AppState,
-  turnID?: string,
-): TurnTokenSpeedSnapshot {
-  if (!turnID) {
-    return { tokensPerSecond: 0, source: "none" };
-  }
-  const usage = state.turnTokenUsage?.[turnID];
-  if (!usage || usage.samples.length < 2) {
-    return {
-      tokensPerSecond: 0,
-      source: usage?.speedSource ?? "none",
-      sampledAt: usage?.samples.at(-1)?.at,
-    };
-  }
-  const first = usage.samples[0];
-  const last = usage.samples[usage.samples.length - 1];
-  const delta = last.tokens - first.tokens;
-  const elapsed = last.at - first.at;
-  if (elapsed <= 0 || delta <= 0) {
-    return {
-      tokensPerSecond: 0,
-      source: usage.speedSource,
-      sampledAt: last.at,
-    };
-  }
-  return {
-    tokensPerSecond: (delta / elapsed) * 1000,
-    source: usage.speedSource,
-    sampledAt: last.at,
-  };
 }
 
 function activeTurnContextUsage(
@@ -3695,15 +3509,10 @@ export {
   latestContextUsageForThread,
   activeTurnForThread,
   activeTurnIDForThread,
-  activeTurnTokenSpeed,
-  activeTurnTokenSpeedSnapshot,
   turnStreamStatusForThread,
   agentFromRecord,
   applyLoadedRuntimeWithDraftCarry,
-  appendStreamingTokenSample,
-  appendTurnTokenSample,
-  flushPendingStreamingTokenSamples,
-  recordPendingStreamingTokenSample,
+  recordTurnTokenUsage,
   bindActiveSessionTabToThread,
   cloneComposerDraft,
   cloneSessionTabDraft,

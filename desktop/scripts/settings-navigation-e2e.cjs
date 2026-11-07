@@ -33,8 +33,6 @@ app.whenReady().then(async () => {
   try {
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     win.setContentSize(1180, 820);
-    await until(() => document.querySelector(".sidebar-account-trigger"));
-    await evaluate(() => document.querySelector(".sidebar-account-trigger").click());
     await until(() => document.querySelector('[data-settings-entry="settings"]'));
     await evaluate(() => document.querySelector('[data-settings-entry="settings"]').click());
     await until(() => document.querySelector('.app-shell[data-settings-open]'));

@@ -86,7 +86,6 @@ async function settle() {
 async function input() { return evaluate(() => document.querySelector("[data-main-conversation-composer] textarea").value); }
 async function stored(target = win) { return evaluate(key => JSON.parse(sessionStorage.getItem(key) || "null"), key, target); }
 async function inspectSettings() {
-  await click(".sidebar-account-trigger");
   await until(() => Boolean(document.querySelector('[data-settings-entry="settings"]')));
   await click('[data-settings-entry="settings"]');
   await until(() => Boolean(document.querySelector(".settings-nav-item")));
@@ -281,7 +280,7 @@ app.whenReady().then(async () => {
     await select("Primary recovery conversation"); assert.equal(await input(), "A newer unsent revision");
   });
   await check("both split composers retain independent text through reload", async () => {
-    await evaluate(() => document.querySelector(".session-message-source").click());
+    await evaluate(() => document.querySelector('.message-action-button[aria-label="Open related session"]').click());
     await until(() => document.querySelectorAll(".conversation-split-pane textarea").length === 2);
     await settle();
     for (const [id, text] of [["resize-thread", "Split primary text"], ["draft-other", "Split secondary text"]]) {
@@ -301,7 +300,7 @@ app.whenReady().then(async () => {
   await check("failed split sends retain their own workspace context", async () => {
     otherThreadCwd = profile + "-secondary";
     await reload();
-    await click(".session-message-source");
+    await click('.message-action-button[aria-label="Open related session"]');
     await until(() => document.querySelectorAll(".conversation-split-pane textarea").length === 2); await settle();
     const selector = '.conversation-split-pane[data-thread-id="draft-other"] textarea';
     async function fillSecondary(text) {

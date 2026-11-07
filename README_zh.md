@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-icon.png" width="88" height="88" alt="Wuu">
+  <img src="landing/assets/readme/banner.webp" alt="Wuu 在文件和工具构成的工作空间中探索" width="100%">
 </p>
 
 <h1 align="center">wuu</h1>
@@ -11,8 +11,15 @@
 
 <p align="center">
   <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>下载 Mac 版</b></a> ·
+  <a href="#开始使用">开始使用</a> ·
   <a href="https://blueberrycongee.github.io/wuu/zh-cn/">文档</a> ·
   <a href="README.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><img src="https://img.shields.io/badge/macOS-Apple%20silicon-52647a?style=flat-square&logo=apple&logoColor=white" alt="支持 Apple 芯片的 macOS"></a>
+  <a href="https://blueberrycongee.github.io/wuu/zh-cn/"><img src="https://img.shields.io/badge/docs-read%20the%20guide-52647a?style=flat-square" alt="阅读文档"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-52647a?style=flat-square" alt="MIT 许可证"></a>
 </p>
 
 <picture>
@@ -22,21 +29,28 @@
 
 选一个文件夹，说清楚要做什么，Agent 就会去读代码、跑命令、改文件。每一步都实时显示在对话里；旁边的审查面板是磁盘上真实的 diff。结果对不对，你自己看得到，不用只信它的总结。
 
+## 一眼了解 wuu
+
+| 功能 | 你可以做什么 |
+| --- | --- |
+| **选择你的 Agent** | 接入模型服务，也可以使用已有的编程 Agent 作为引擎。 |
+| **工作过程看得见** | 一边跟进对话，一边查看文件、终端、浏览器和 Git diff。 |
+| **随时调整方向** | 任务运行时插话、排队发送消息，或将对话分叉到独立 worktree。 |
+| **按自己的习惯扩展** | 用插件、技能、MCP 服务和 hooks 组合工作流程。 |
+
+## 开始使用
+
+桌面预览版支持 Apple 芯片的 Mac。
+
+1. 从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，把 `wuu.app` 放进 `/Applications` 后打开。
+2. 接上模型服务，再把项目文件夹添加为工作区。
+3. 从一个小任务开始，完成后在审查面板里检查改动和测试结果。
+
+[快速开始](docs/zh-cn/getting-started/index.md)里有完整示例。发布流水线要求 Apple Developer ID 正式签名和公证；早期预览版仅使用 ad-hoc 签名，请按下载版本的发布说明和[安装指南](docs/zh-cn/getting-started/installation.md)确认。
+
 ## 看它怎么干活
 
 ![wuu 演示](landing/assets/readme/demo-zh.webp)
-
-## Agent 基准测试
-
-在 [PR #630](https://github.com/blueberrycongee/wuu/pull/630) 记录的 Terminal-Bench 4 实验中，三个 Agent 框架各运行了同一组 18 道任务。Wuu 的通过率与 Codex 持平，**记录的 API 总费用低 11.0%**；相比 Pi，Wuu 多通过一道任务，**总费用低 6.6%**。
-
-| Agent 框架 | 通过任务数 | 通过率 | 记录的 API 总费用（美元） | 每个成功任务的成本（美元） |
-| --- | ---: | ---: | ---: | ---: |
-| **Wuu** | **10/18** | **55.6%** | **$32.40** | **$3.24** |
-| Codex（Code Mode） | 10/18 | 55.6% | $36.42 | $3.64 |
-| Pi | 9/18 | 50.0% | $34.68 | $3.85 |
-
-三个框架均使用 GPT-6 Astra，推理强度设为 high，每个框架运行 18 道任务，共 54 次运行，并关闭技能、记忆、向用户提问和子 Agent。Codex 0.150.1 与 Pi 0.84.4 保留各自的原生提示词。Codex 开启 Code Mode（`code_mode=true`、`code_mode_only=true`）；Wuu 直接暴露基础工具，同时支持按需用 Code Mode 编排调用。费用包含缓存输入，不包含标题生成；每个成功任务的成本按 API 总费用除以通过任务数计算。
 
 ## 预览版能做什么
 
@@ -91,13 +105,17 @@ Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS �
   <img src="landing/assets/readme/plugins-zh.jpg" width="640" alt="插件">
 </p>
 
-## 开始使用
+## Agent 基准测试
 
-桌面预览版支持 Apple 芯片的 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，把 `wuu.app` 放进 `/Applications` 后打开。
+在 [PR #630](https://github.com/blueberrycongee/wuu/pull/630) 记录的 Terminal-Bench 4 实验中，三个 Agent 框架各运行了同一组 18 道任务。Wuu 的通过率与 Codex 持平，**记录的 API 总费用低 11.0%**；相比 Pi，Wuu 多通过一道任务，**总费用低 6.6%**。
 
-发布流水线要求 Apple Developer ID 正式签名和公证。早期预览版仅使用 ad-hoc 签名，请按下载版本的发布说明和[安装指南](docs/zh-cn/getting-started/installation.md)确认。
+| Agent 框架 | 通过任务数 | 通过率 | 记录的 API 总费用（美元） | 每个成功任务的成本（美元） |
+| --- | ---: | ---: | ---: | ---: |
+| **Wuu** | **10/18** | **55.6%** | **$32.40** | **$3.24** |
+| Codex（Code Mode） | 10/18 | 55.6% | $36.42 | $3.64 |
+| Pi | 9/18 | 50.0% | $34.68 | $3.85 |
 
-第一次打开时，先接上模型服务，再把项目文件夹添加为工作区。可以从一个小任务开始，完成后在审查面板里检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有完整的示例。
+三个框架均使用 GPT-6 Astra，推理强度设为 high，每个框架运行 18 道任务，共 54 次运行，并关闭技能、记忆、向用户提问和子 Agent。Codex 0.150.1 与 Pi 0.84.4 保留各自的原生提示词。Codex 开启 Code Mode（`code_mode=true`、`code_mode_only=true`）；Wuu 直接暴露基础工具，同时支持按需用 Code Mode 编排调用。费用包含缓存输入，不包含标题生成；每个成功任务的成本按 API 总费用除以通过任务数计算。
 
 ## 命令行
 

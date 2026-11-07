@@ -1,5 +1,6 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
+import { RestartRecovery } from "./RestartRecoveryNotice";
 import { AccountScreen } from "./AccountScreen";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
@@ -89,9 +90,6 @@ import { useApplicationNavigationState } from "./modules/ApplicationNavigationSt
 import { motionDurationMs } from "./motion";
 import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
-import { ProjectActionsProvider } from "./ProjectActions";
-import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
-import { ProjectStatusCapsule } from "./ProjectViews";
 import {
   pullRequestUnavailableReason
 } from "./RuntimeHelpers";
@@ -192,7 +190,6 @@ export function App({ application, slots, shellPluginId }: {
       ? { kind: "project", project_id: workspaceSnapshot.activeWorkspaceId, cwd: workspaceSnapshot.activeRoot }
       : { kind: "no_project", cwd: workspaceSnapshot.activeRoot }
     : undefined, [workspaceSnapshot.activeRoot, workspaceSnapshot.activeWorkspaceId]);
-  const projectAgentEnabled = configuration?.features?.project_agent === true;
   // Conversation notices share the latest settings navigation callback.
   useEffect(() => {
     const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
@@ -428,7 +425,6 @@ export function App({ application, slots, shellPluginId }: {
     ensureWorkspaceToolTab,
     openWorkspaceTool,
     openWorkspaceArtifactTab,
-    syncWorkspaceProjectTab,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
@@ -743,7 +739,7 @@ export function App({ application, slots, shellPluginId }: {
   // A visible agent browser view is a main-owned WebContentsView that floats
   // above the DOM; any full-window overlay would occlude it, so we tell main to
   // hide the view while one is open. This covers the common full-window
-  // surfaces: settings (which replaces the whole app), the commit / PR
+  // surfaces: settings (a modal panel over the workbench), the commit / PR
   // dialogs, the fork dialog, and the conversation search overlay. TODO: other
   // ad-hoc modals/portals (e.g. participant panels) are not yet
   // enumerated here; extend this predicate as more full-window overlays land.
@@ -1534,20 +1530,6 @@ export function App({ application, slots, shellPluginId }: {
     if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
   }
 
-  const selectedProjectID = activeThread && isProjectCoordinator(activeThread)
-    ? activeThread.id
-    : activeThread?.source === PROJECT_SESSION_SOURCE ? activeThread.project_id : undefined;
-  const selectedProject = sidebarThreads.find((thread) => thread.id === selectedProjectID);
-  const selectedProjectTitle = selectedProject ? baseThreadTitle(selectedProject) : selectedProjectID;
-  useEffect(() => {
-    syncWorkspaceProjectTab(selectedProjectID && selectedProjectTitle
-      ? { id: selectedProjectID, title: selectedProjectTitle }
-      : undefined);
-  }, [selectedProjectID, selectedProjectTitle, syncWorkspaceProjectTab]);
-  const activeProjectSessions = useMemo(
-    () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
-    [activeThread, sidebarThreads],
-  );
   useEffect(() => { scheduleStreamScroll(); }, [conversationDetails, scheduleStreamScroll]);
 
   async function submitContextChat(text: string, page: PageContextSnapshot, context: RuntimeContext, sessionId?: string): Promise<{ sessionId: string; sent: boolean }> {
@@ -1603,7 +1585,6 @@ export function App({ application, slots, shellPluginId }: {
         ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
         : application.getSnapshot().drafts.activeTabId }}>
       <ImagePreviewProvider>
-      <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
       <ArtifactInteractionProvider application={application}>
@@ -1836,9 +1817,6 @@ export function App({ application, slots, shellPluginId }: {
               inline
             />
           ) : null}
-          hostStatus={projectAgentEnabled && activeProjectSessions.length > 0 && activeThread ? (
-            <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
-          ) : undefined}
           threadId={activeThreadID}
         />
       </main>
@@ -1882,6 +1860,7 @@ export function App({ application, slots, shellPluginId }: {
       )}
       </>
 
+      {!poppedOutMode && initialized && onboardingComplete && <RestartRecovery application={application} />}
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={gitStatus}
@@ -1956,7 +1935,6 @@ export function App({ application, slots, shellPluginId }: {
     </ArtifactInteractionProvider>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
-    </ProjectActionsProvider>
     </ImagePreviewProvider>
     </FileSelectionProvider>
     </SideConversationAvailableContext.Provider>

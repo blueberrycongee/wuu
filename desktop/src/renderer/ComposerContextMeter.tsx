@@ -1,16 +1,13 @@
 // Composer-toolbar retained-history meter.
 //
-// Sits next to the live token-speed gauge and shows retained conversation
-// history against the active provider/model input ceiling. The current
-// in-flight request can be larger than this when the user attaches large
-// files or images; /context is the surface for inspecting that full request.
+// Shows retained conversation history against the active provider/model
+// input ceiling. The current in-flight request can be larger than this when
+// the user attaches large files or images; /context is the surface for
+// inspecting that full request.
 //
-// The progress stroke reuses the token-speed gauge's color palette so the
-// two meters read as a coordinated pair: idle gray when the window is empty,
+// The progress stroke uses three tiers: idle gray when the window is empty,
 // warm amber while context is filling, accent-warm red once usage crosses
-// the high-water mark. The 0.7 threshold mirrors the token-speed gauge's
-// 70/100 tps break, so both meters shift into "high" at the same fraction
-// of their scale.
+// the high-water mark at 0.7 of the window.
 
 import type { TurnContextUsage } from "./AppState";
 import { useId, useRef, useState } from "react";
@@ -29,10 +26,8 @@ type ComposerContextMeterProps = {
 
 const TOOLTIP_WIDTH = 212;
 
-// Fill-level thresholds mirror the token-speed gauge's idle/mid/high
-// tiers so the two meters step into "high" at the same fraction of their
-// own scale. The progress stroke inherits currentColor from the SVG; the
-// container keeps --ink-strong so the inline label is unaffected.
+// The progress stroke inherits currentColor from the SVG; the container
+// keeps --ink-strong so the inline label is unaffected.
 const FILL_HIGH_THRESHOLD = 0.7;
 
 type FillLevel = "idle" | "mid" | "high";
@@ -44,9 +39,9 @@ function fillLevel(ratio: number): FillLevel {
 }
 
 function fillColor(level: FillLevel): string {
-  if (level === "idle") return "var(--token-gauge-idle)";
-  if (level === "mid") return "var(--token-gauge-mid)";
-  return "var(--token-gauge-high)";
+  if (level === "idle") return "var(--context-meter-idle)";
+  if (level === "mid") return "var(--context-meter-mid)";
+  return "var(--context-meter-high)";
 }
 
 export function ComposerContextMeter({
@@ -65,10 +60,8 @@ export function ComposerContextMeter({
   const used = Math.max(0, usage.used);
   const ratio = Math.min(1, Math.max(0, used / usage.window));
   const percent = Math.round(ratio * 100);
-  // Color tier mirrors the token-speed gauge so the two meters read as a
-  // coordinated pair: gray when empty, amber while filling, warm red as
-  // the window approaches its limit. The 0.7 cutoff matches the gauge's
-  // 70/100 tps break so both step into "high" at the same fraction.
+  // Gray when empty, amber while filling, warm red as the window
+  // approaches its limit.
   const level = fillLevel(ratio);
   const ringColor = fillColor(level);
   const percentLabel = `${percent}%`;

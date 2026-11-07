@@ -132,11 +132,7 @@ async function run() {
     win.setContentSize(width, 820);
     await evaluate(({ theme, size }) => { document.documentElement.dataset.theme = theme; document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px'); }, { theme, size });
     for (const section of ['conversations', 'settings']) {
-      if (section === 'settings') {
-        clickAt(await point('.sidebar-account-trigger'));
-        await until(() => !!document.querySelector('.sidebar-account-menu'), 'account menu opens');
-      }
-      const target = section === 'conversations' ? '[data-wuu-component="conversations-section"]' : '.sidebar-account-menu [data-settings-entry="settings"]';
+      const target = section === 'conversations' ? '[data-wuu-component="conversations-section"]' : '[data-settings-entry="settings"]';
       clickAt(await point(target));
       await until(section === 'settings' ? () => !!document.querySelector('.settings-embedded') : () => !document.querySelector('.settings-embedded'), 'section navigation');
       await settle();

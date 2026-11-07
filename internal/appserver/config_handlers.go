@@ -110,12 +110,11 @@ func (s *Server) handleInitialize(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
-		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
 		CatalogProviders:   catalogProviderSummaries(),
-		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode, ProjectAgent: projectAgentEnabled},
+		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode},
 	}, nil)
 }
 
@@ -137,7 +136,6 @@ func (s *Server) handleConfigRead(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
-		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -680,6 +678,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		presentation := pluginPresentation(pluginpkg.Manifest{Interface: module.Interface})
 		records = append(records, ExtensionInventoryRecord{
 			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
+			Icon:       extensionIconDescriptor(module.Icon),
 			Family:     presentation.Family,
 			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
 			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
@@ -1205,7 +1204,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
+	if modelAliases != nil || verificationModel != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1220,9 +1219,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		}
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
-		}
-		if params.ProjectModels != nil {
-			candidate.Agent.ProjectModels = *params.ProjectModels
 		}
 		if err := candidate.Validate(); err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1239,7 +1235,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 			ProviderContextWindow:   params.ProviderContextWindow,
 			ModelAliases:            modelAliases,
 			VerificationModel:       verificationModel,
-			ProjectModels:           params.ProjectModels,
 		})
 	})
 	if err != nil {
@@ -1265,7 +1260,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.rt.ModelRoles = roleSelections
-	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 	s.rt.ModelBudget = modelBudget
 	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
@@ -1288,7 +1282,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
-		ProjectModels:    cfg.Agent.ProjectModels,
 		ModelRoles:       s.currentModelRoleSummaries(),
 		Providers:        s.providerSummaries(),
 	}, nil)
@@ -1813,7 +1806,6 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
 		ModelAliases:     s.currentModelAliasSummaries(),
-		ProjectModels:    s.rt.ProjectModels,
 		Provider:         resolvedName,
 		Model:            model,
 		Effort:           effort,
@@ -1899,7 +1891,6 @@ func (s *Server) applyModelSelectionToRuntime(
 	}
 
 	s.rt.ModelRoles = roleSelections
-	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
 	if explicitSelection && s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
@@ -1973,7 +1964,6 @@ func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return ConfigModelUpdateResult{
 		ModelAliases:     s.currentModelAliasSummaries(),
-		ProjectModels:    s.rt.ProjectModels,
 		Provider:         s.rt.ProviderName,
 		Model:            s.rt.Model,
 		Effort:           s.currentDisplayEffort(),
@@ -2206,7 +2196,6 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		}
 		return s.writeResponse(req.ID, ConfigProviderRemoveResult{
 			ModelAliases:     s.currentModelAliasSummaries(),
-			ProjectModels:    s.rt.ProjectModels,
 			Provider:         s.rt.ProviderName,
 			Model:            s.rt.Model,
 			Variant:          s.currentVariant(),
@@ -2429,11 +2418,7 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 }
 
 func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
-	begin := s.beginThreadRuntimeSelectionMutation
-	if params.ApplyAt == "next_step" {
-		begin = s.beginNextStepModelSelection
-	}
-	th, release, err := begin(params.ThreadID)
+	th, intent, release, err := s.selectThreadModel(params)
 	if err != nil {
 		if errors.Is(err, errThreadRuntimeSelectionBusy) {
 			return s.writeRunError(req.ID, "thread_busy", err)
@@ -2441,6 +2426,26 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer release()
+	if intent != nil {
+		return s.writeThreadModelSelectionResponse(req, th, intent)
+	}
+	return s.writeThreadModelSelectionResponse(req, th)
+}
+
+func (s *Server) selectThreadModel(params ConfigModelUpdateParams) (selected *threadState, selectedIntent *session.Session, releaseSelection func(), resultErr error) {
+	begin := s.beginThreadRuntimeSelectionMutation
+	if params.ApplyAt == "next_step" {
+		begin = s.beginNextStepModelSelection
+	}
+	th, release, err := begin(params.ThreadID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			release()
+		}
+	}()
 	th.mu.Lock()
 
 	provider, model := th.ModelProvider, th.Model
@@ -2451,21 +2456,21 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if params.ModelOptions != nil && len(*params.ModelOptions) > 0 {
 		entry, ok := enginecatalog.Lookup(engineID)
 		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
-			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
+			return nil, nil, nil, errors.New("this engine does not expose additional model options")
 		}
 	}
 	if agentengine.NormalizeEngineID(engineID) == agentengine.EngineWuu && params.ResetModel {
-		return s.writeResponse(req.ID, nil, errors.New("reset_model applies only to external engines"))
+		return nil, nil, nil, errors.New("reset_model applies only to external engines")
 	}
 	if params.Speed != nil {
 		speed = strings.TrimSpace(*params.Speed)
 		if err := validateSpeed(speed); err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
 	}
 	if params.ApplyAt != "next_step" && agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
 		if params.Provider != "" && params.Provider != provider {
-			return s.writeResponse(req.ID, nil, errors.New("an external engine owns its provider selection"))
+			return nil, nil, nil, errors.New("an external engine owns its provider selection")
 		}
 		if params.ResetModel {
 			model, effort, speed, modelOptions = "", "", "", nil
@@ -2489,9 +2494,9 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 			permission = config.NormalizePermissionMode(*params.PermissionMode)
 		}
 		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, "", effort, speed, permission, false, modelOptions); err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
-		return s.writeThreadModelSelectionResponse(req, th)
+		return th, nil, release, nil
 	}
 	if provider == "" {
 		provider = s.rt.ProviderName
@@ -2508,22 +2513,22 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}
 	services, err := th.state.Services()
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	view, err := services.Config.Read(context.Background())
 	cfg := view.Config
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	if params.ApplyAt != "next_step" {
 		cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
 	}
 	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
 	if providerCfg.Type == "chatgpt" {
@@ -2533,11 +2538,11 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		err := s.validateChatGPTModel(ctx, selected, services.ChatGPT)
 		cancel()
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
 	}
 	if providerCfg.Models[model].Disabled {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("model %s is disabled", model))
+		return nil, nil, nil, fmt.Errorf("model %s is disabled", model)
 	}
 	ruleName, ruleCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
 	if params.Variant != nil {
@@ -2556,7 +2561,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if variant != "" {
 		if _, ok := modelvariant.OptionsForProvider(ruleName, ruleCfg, model, variant); !ok {
 			if provider == previousProvider && model == previousModel && (params.Variant != nil || params.Effort != nil) {
-				return s.writeResponse(req.ID, nil, fmt.Errorf("model %s does not support variant %s", model, variant))
+				return nil, nil, nil, fmt.Errorf("model %s does not support variant %s", model, variant)
 			}
 			variant, effort = "", ""
 		}
@@ -2568,7 +2573,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		}
 	}
 	if err := modelvariant.ApplySpeed(ruleCfg, model, speed, &selection); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
 	if permission == "" {
 		permission = config.NormalizePermissionMode(s.rt.Permissions.Mode)
@@ -2587,21 +2592,21 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if params.ApplyAt == "next_step" {
 		intent, err := s.commitNextStepModelSelection(th, session.RuntimeSelection{Provider: resolvedName, Model: model, Variant: selection.Variant, Effort: selection.LegacyEffort, Speed: speed, PermissionMode: permission, ApproveForMe: approveForMe})
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return nil, nil, nil, err
 		}
-		return s.writeThreadModelSelectionResponse(req, th, &intent)
+		return th, &intent, release, nil
 	}
 	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe, nil); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, nil, nil, err
 	}
-	return s.writeThreadModelSelectionResponse(req, th)
+	return th, nil, release, nil
 }
 
 func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState, intents ...*session.Session) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	result := ConfigModelUpdateResult{
-		ModelAliases: s.currentModelAliasSummaries(), ProjectModels: s.rt.ProjectModels,
-		Provider: s.rt.ProviderName, Model: s.rt.Model,
+		ModelAliases: s.currentModelAliasSummaries(),
+		Provider:     s.rt.ProviderName, Model: s.rt.Model,
 		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
 		MaxParallel: s.rt.MaxParallel(), Permissions: s.permissionSummaryForThread(th),
 		ExtensionTrust: s.currentExtensionTrustSummary(), ModelProfile: modelProfile,

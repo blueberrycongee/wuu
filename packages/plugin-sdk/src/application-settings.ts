@@ -16,10 +16,9 @@ export interface ApplicationSettingsConfigurationV1 {
  readonly providers?: SettingsReadonly<ApplicationSettingsProviderSummaryV1[]>;
  readonly catalog_providers?: SettingsReadonly<ApplicationSettingsCatalogProviderSummaryV1[]>;
  readonly model_aliases?: SettingsReadonly<Record<string, ApplicationSettingsModelAliasSummaryV1>>;
- readonly project_models?: SettingsReadonly<ApplicationSettingsProjectModelsConfigV1>;
  readonly advanced_settings?: SettingsReadonly<ApplicationSettingsAdvancedSettingsSummaryV1>;
  readonly general_settings?: SettingsReadonly<ApplicationSettingsGeneralSettingsSummaryV1>;
- readonly features?: { readonly project_agent?: boolean; readonly browser?: boolean; readonly safe_mode?: boolean };
+ readonly features?: { readonly browser?: boolean; readonly safe_mode?: boolean };
  readonly extension_inventory?: SettingsReadonly<ApplicationSettingsExtensionInventoryRecordV1[]>;
 }
 
@@ -266,13 +265,6 @@ export type ApplicationSettingsModelAliasSummaryV1 = {
   variant?: string;
 };
 
-export type ApplicationSettingsProjectModelsConfigV1 = {
-  technical_lead?: Partial<ApplicationSettingsModelAliasSummaryV1>;
-  executor?: Partial<ApplicationSettingsModelAliasSummaryV1>;
-  side?: Partial<ApplicationSettingsModelAliasSummaryV1>;
-  worker?: Partial<ApplicationSettingsModelAliasSummaryV1>;
-};
-
 export type ApplicationSettingsAdvancedSettingsSummaryV1 = {
   max_steps: number;
   max_context_tokens: number;
@@ -395,7 +387,7 @@ export type ApplicationSettingsEngineInfoV1 = {
   binary_ok: boolean;
   error?: string;
   models?: ApplicationSettingsEngineModelInfoV1[];
-  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale";
+  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale" | "deferred";
   models_error?: string;
   permission_modes?: ApplicationSettingsEnginePermissionModeInfoV1[];
   latest_request?: ApplicationSettingsEngineLatestRequestV1;
@@ -473,7 +465,6 @@ export type ApplicationSettingsRuntimeAdvancedSettingsUpdateV1 = {
   disable_auto_compact?: boolean;
   provider_context_window?: number;
   model_aliases?: Record<string, ApplicationSettingsModelAliasSummaryV1>;
-  project_models?: ApplicationSettingsProjectModelsConfigV1;
   verification_model?: ApplicationSettingsModelAliasSummaryV1;
 };
 

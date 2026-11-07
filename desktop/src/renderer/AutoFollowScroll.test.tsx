@@ -374,6 +374,27 @@ describe("useAutoFollowScrollContainer", () => {
     expect(handle?.autoFollowRef.current).toBe(false);
   });
 
+  it("stops following when an upward move stays inside the bottom band", () => {
+    if (!layout || !handle || !scrollNode) throw new Error("probe not mounted");
+    act(() => handle!.scrollToBottom());
+    expect(layout.scrollTop).toBe(800);
+
+    act(() => {
+      // Scrollbar drags and scroll chaining can deliver only the scroll event.
+      // Eight pixels is still inside the 16px band, but the viewport has left
+      // the bottom and the next streamed line must not pull it back down.
+      layout!.scrollTop = 792;
+      scrollNode!.dispatchEvent(new Event("scroll"));
+    });
+    expect(handle.autoFollowRef.current).toBe(false);
+
+    act(() => {
+      layout!.scrollHeight += 80;
+      notifyResize();
+    });
+    expect(layout.scrollTop).toBe(792);
+  });
+
   it("does not resume following when keyboard dismissal clamps history to the bottom", () => {
     if (!layout || !handle || !scrollNode) throw new Error("probe not mounted");
     act(() => {

@@ -30,6 +30,7 @@ type ApplicationShellBinding struct {
 type RendererModule struct {
 	ID, SubjectID, Fingerprint, Entry string
 	Name, Description                 string
+	Icon                              *pluginpkg.IconSpec
 	Interface                         json.RawMessage
 	Services                          []pluginhost.ServiceDescriptor
 	Requirements                      []pluginhost.ServiceRequirement
@@ -43,34 +44,34 @@ func applicationShellDescriptor() pluginhost.ServiceDescriptor {
 
 func nativeRendererModules() []RendererModule {
 	modules := []RendererModule{{ID: defaultShellModule, SubjectID: defaultShellModule,
-		Name: "Wuu App Layout", Description: "Application frame and layout for selected interface modules.",
+		Name: "Wuu App Layout", Icon: &pluginpkg.IconSpec{Name: "app-layout"}, Description: "Application frame and layout for selected interface modules.",
 		Fingerprint: "ui-shell-v1:" + version.Info().Version + ":" + version.Info().Commit,
 		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}},
 		{ID: defaultSettingsModule, SubjectID: defaultSettingsModule,
-			Name: "Wuu Settings", Description: "Application settings and extension management.",
+			Name: "Wuu Settings", Icon: &pluginpkg.IconSpec{Name: "app-settings"}, Description: "Application settings and extension management.",
 			Fingerprint: "ui-settings-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}},
 		{ID: defaultNavigationModule, SubjectID: defaultNavigationModule,
-			Name: "Wuu Navigation", Description: "Workspace and conversation navigation.",
+			Name: "Wuu Navigation", Icon: &pluginpkg.IconSpec{Name: "app-navigation"}, Description: "Workspace and conversation navigation.",
 			Fingerprint: "ui-navigation-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-navigation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}}},
 		{ID: defaultConversationModule, SubjectID: defaultConversationModule,
-			Name: "Wuu Conversations", Description: "Conversation messages and activity.",
+			Name: "Wuu Conversations", Icon: &pluginpkg.IconSpec{Name: "app-conversations"}, Description: "Conversation messages and activity.",
 			Fingerprint: "ui-conversation-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-conversation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.conversation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.conversation.describe.input.v1", OutputSchema: "ui.conversation.describe.output.v1"}}}}},
 		{ID: defaultComposerModule, SubjectID: defaultComposerModule,
-			Name: "Wuu Message Composer", Description: "Message drafts, attachments, and submission controls.",
+			Name: "Wuu Message Composer", Icon: &pluginpkg.IconSpec{Name: "app-composer"}, Description: "Message drafts, attachments, and submission controls.",
 			Fingerprint: "ui-composer-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-composer", Services: []pluginhost.ServiceDescriptor{{Name: "ui.composer", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.composer.describe.input.v1", OutputSchema: "ui.composer.describe.output.v1"}}}}},
 		{ID: defaultPreviewModule, SubjectID: defaultPreviewModule,
-			Name: "Wuu File Preview", Description: "Workspace files, documents, and previews.",
+			Name: "Wuu File Preview", Icon: &pluginpkg.IconSpec{Name: "app-preview"}, Description: "Workspace files, documents, and previews.",
 			Fingerprint: "ui-preview-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-preview", Services: []pluginhost.ServiceDescriptor{{Name: "ui.preview", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.preview.describe.input.v1", OutputSchema: "ui.preview.describe.output.v1"}}}}}}
 	for index := range modules {
 		modules[index].Requirements = []pluginhost.ServiceRequirement{{Name: "ui.application", MajorVersion: 1, Required: true}}
 	}
 	modules = append(modules, RendererModule{ID: defaultApplicationModule, SubjectID: defaultApplicationModule,
-		Name: "Wuu Application", Description: "Application state, actions and background work.",
+		Name: "Wuu Application", Icon: &pluginpkg.IconSpec{Name: "app-application"}, Description: "Application state, actions and background work.",
 		Fingerprint: "ui-application-v1:" + version.Info().Version + ":" + version.Info().Commit,
 		Entry:       "wuu-builtin:default-application", Services: []pluginhost.ServiceDescriptor{{Name: "ui.application", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.application.describe.input.v1", OutputSchema: "ui.application.describe.output.v1"}}}}})
 

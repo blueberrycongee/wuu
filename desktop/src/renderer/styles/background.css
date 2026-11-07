@@ -61,57 +61,13 @@ html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-vis
 
 .background-file-picker.disabled { opacity: 0.5; }
 
+/* Skin chips use the shared segmented control; many installed skins wrap. */
 .shell-skin-options {
-  display: inline-flex;
   flex-wrap: wrap;
-  align-items: center;
-  min-height: var(--control-field-height);
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  background: var(--surface-1);
 }
 
 .shell-skin-options[hidden] {
   display: none !important;
-}
-
-.shell-skin-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: calc(var(--control-field-height) - 6px);
-  padding: 0 12px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--ink-soft);
-  font: inherit;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  transition:
-    background var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.shell-skin-chip:hover {
-  color: var(--ink);
-}
-
-.shell-skin-chip:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
-.shell-skin-chip[aria-checked="true"] {
-  background: var(--paper);
-  color: var(--ink-strong);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.06),
-    0 0 0 1px var(--hairline-soft);
 }
 
 @media (forced-colors: active), print { .app-background { display: none; } }

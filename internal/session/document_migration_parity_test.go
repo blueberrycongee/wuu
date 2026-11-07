@@ -83,11 +83,18 @@ func TestLegacyDomainMigrationParity(t *testing.T) {
 			if err := UpsertParticipantRun(dir, run); err != nil {
 				t.Fatal(err)
 			}
-			work, err := SaveProjectWork(dir, ProjectWork{ID: "work", ProjectID: metadata.ID, Revision: 3, Title: "work", Brief: "brief", Acceptance: "acceptance", Authority: "authority", Phase: "done", LeadID: "lead", ExecutorID: "executor", Workspace: "/workspace", Evidence: "evidence"}, 0, "work-operation")
+			work := `{"id":"work","project_id":"all-fields","version":1,"revision":3,"phase":"done","evidence":"retained"}`
+			db, err := OpenStore(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := ReconcileProjectWork(dir, work.ID, work.Version); err != nil {
+			if _, err := db.Exec("INSERT INTO project_work(id,project_id,version,revision,phase,created_at,payload,reconciled_version) VALUES(?,?,?,?,?,?,?,?)", "work", metadata.ID, 1, 3, "done", timeText(now), work, 1); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("INSERT INTO project_work_operations(id,work_id,payload) VALUES(?,?,?)", "work-operation", "work", work); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
 			receipt := ModelInputReceiptRecord{OperationID: "large", ContractVersion: 1, DriverID: "driver", DriverVersion: "1", Payload: json.RawMessage("{\n \"large\": \"" + strings.Repeat("raw", 5000) + "\"\n}"), CreatedAt: now}
@@ -163,13 +170,21 @@ func TestLegacyDomainMigrationParity(t *testing.T) {
 			equal("participant", gotPerson, person, err)
 			gotRuns, err := store.ListParticipantRuns(person.ID, 10)
 			equal("participant runs", gotRuns, []ParticipantRun{run}, err)
-			gotWork, err := store.ReadProjectWork(work.ID)
-			equal("work", gotWork, work, err)
-			gotReceipt, _, err := store.ProjectWorkOperation("work-operation")
-			equal("work operation", gotReceipt, work, err)
-			pending, err := store.PendingProjectWork(metadata.ID)
-			if err != nil || len(pending) != 0 {
-				t.Fatalf("reconciliation lost: %v", err)
+			var expectedWork map[string]any
+			if err := json.Unmarshal([]byte(work), &expectedWork); err != nil {
+				t.Fatal(err)
+			}
+			err = store.transaction(func(tx *persistence.Tx) error {
+				var got map[string]any
+				_, err := tx.Get(documentNamespace("project_work_operations"), "work-operation", &got)
+				equal("retired work operation", got, expectedWork, err)
+				expectedWork["reconciled_version"] = float64(1)
+				_, err = tx.Get(documentNamespace("project_work"), "work", &got)
+				equal("retired work", got, expectedWork, err)
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
 			}
 			receipts, err := store.LoadModelInputReceipts(metadata.ID)
 			equal("compressed receipt", receipts, []ModelInputReceiptRecord{receipt}, err)

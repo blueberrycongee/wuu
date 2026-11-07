@@ -3,7 +3,7 @@
   "id": "generative-ui",
   "name": "Generative UI (Experimental)",
   "description": "Render bounded declarative tables, charts and local forms in conversation.",
-  "icon": "layout-grid",
+  "icon": { "path": "icon.webp" },
   "version": "0.1.0",
   "defaultEnabled": false,
   "author": {

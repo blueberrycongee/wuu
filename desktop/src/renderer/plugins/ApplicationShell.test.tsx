@@ -6,7 +6,6 @@ import type { HostApplicationService } from "./HostApplicationService";
 import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
 import { ApplicationBrowser } from "./ApplicationBrowser";
 import { ApplicationController } from "./ApplicationController.test-support";
-import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import * as React from "react";
 import { act } from "react";
@@ -44,7 +43,6 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
     get onboarding() { return new ApplicationController().onboarding; },
     browser: new ApplicationBrowser({ api: {}, onActivityChanged: () => {} }),
     get fileSelection() { return new ApplicationController().fileSelection; },
-    projects: new ApplicationProjects({ getSource: () => ({ contextKey: "test", enabled: false }), updateThread: () => {} }),
     terminals: new ApplicationTerminals({ unsupportedMethods: ["startTerminalSession"] } as never),
     settingsControls: createApplicationSettingsControls(),
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },

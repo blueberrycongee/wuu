@@ -372,11 +372,14 @@ export function useAutoFollowScrollContainer({
     if (
       autoFollowRef.current &&
       scrolledUp &&
-      !atLatestScrollView(node, bottomThreshold)
+      node.scrollTop < maxScrollTop(node) - 1
     ) {
       // Native scrollbar drags and some platform scroll paths arrive without
-      // a preceding wheel, key, or touch event. An upward move away from the
-      // latest content is still enough evidence that the user took control.
+      // a preceding wheel, key, or touch event. Any upward move away from the
+      // exact latest position is evidence that the user took control. A
+      // bottom band would let the next streamed line pull a reader who moved
+      // only a few pixels back down; a layout clamp that lands at the latest
+      // position still keeps following through `layoutClamp`.
       setAutoFollow(false);
       return;
     }

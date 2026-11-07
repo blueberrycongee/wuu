@@ -190,6 +190,23 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 			applyGoogleGemini4Catalog(provider)
 		case "openrouter":
 			applyOpenRouterLatestCatalog(provider)
+		case "tencent-tokenhub", "tencent-token-plan":
+			// Remove when models.dev includes HY4 and the current Token Plan URL.
+			// https://cloud.tencent.com/document/product/1823/132252
+			// https://cloud.tencent.com/document/product/1823/131208
+			// https://cloud.tencent.com/document/product/1823/130060
+			model := hy4Model("hy4")
+			model.Limit = &Limit{Context: 1_024_000, Input: 960_000, Output: 64_000}
+			model.ReasoningOptions = officialEffortOptions(false, "none", "high")
+			model.SupportedEfforts = []string{"none", "high"}
+			model.Variants = map[string]map[string]any{
+				"none": {"reasoningEffort": "no_think"},
+				"high": {"reasoningEffort": "high"},
+			}
+			upsertOfficialModel(provider, model)
+			if provider.ID == "tencent-token-plan" {
+				provider.API = "https://tokenhub.tencentmaas.com/plan/v3"
+			}
 		case "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan":
 			applyMiniMaxLatestCatalog(provider)
 		case "deepseek":
@@ -277,12 +294,35 @@ func applyGoogleGemini4Catalog(provider *Provider) {
 // corrections alongside the direct vendors so an OpenRouter connection exposes
 // the same new models before the next embedded models.dev refresh.
 func applyOpenRouterLatestCatalog(provider *Provider) {
+	// https://openrouter.ai/api/v1/models/tencent/hy4/endpoints
+	hy4 := hy4Model("tencent/hy4")
+	hy4.Cost = map[string]any{"input": 0.417, "output": 1.2505, "cache_read": 0.021}
+	hy4.Variants = map[string]map[string]any{
+		"none": {"reasoning": map[string]any{"effort": "none"}},
+		"low":  {"reasoning": map[string]any{"effort": "low"}},
+		"high": {"reasoning": map[string]any{"effort": "high"}},
+	}
+	upsertOfficialModel(provider, hy4)
 	upsertOfficialModel(provider, gemini4ArgonModel("google/gemini-4-argon", 943_718, map[string]any{
 		"input": 2, "output": 10, "reasoning": 10, "cache_read": 0.1, "cache_write": 0.1875,
 	}))
 	upsertOfficialModel(provider, miniMaxM31Model("minimax/minimax-m3.1-flash:free", "MiniMax M3.1 Flash (free)", map[string]any{
 		"input": 0, "output": 0, "cache_read": 0,
 	}))
+}
+
+func hy4Model(id string) Model {
+	return Model{
+		ID: id, Name: "Hy4", Family: "Hy", ReleaseDate: "2026-11-04",
+		Reasoning: true, ReasoningOptions: officialEffortOptions(false, "none", "low", "high"),
+		Attachment: officialBool(true), ToolCall: officialBool(true),
+		StructuredOutput: officialBool(true), Temperature: officialBool(true),
+		Interleaved:      map[string]any{"field": "reasoning_content"},
+		Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+		Limit:            &Limit{Context: 1_048_576, Output: 65_536},
+		SupportedEfforts: []string{"none", "low", "high"},
+		DefaultVariant:   "high",
+	}
 }
 
 func gemini4ArgonModel(id string, outputLimit int, cost map[string]any) Model {

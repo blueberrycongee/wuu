@@ -886,10 +886,6 @@ export class RemoteDesktopBridge {
         this.call("thread/delete", { thread_id: threadId, ...(options?.onlyIfArchived ? { only_if_archived: true } : {}) }),
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
-      returnManagedSession: (params) => this.call("thread/control/return", params),
-      takeOverManagedSession: (params) => this.call("thread/control/take", params),
-      projectSession: (params) => this.call("project/session", params),
-
       startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId, resumeAfterTurnId) =>
         this.call("turn/start", {
           thread_id: threadId,

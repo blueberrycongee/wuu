@@ -1,14 +1,21 @@
-/* Settings use readable section headings and grouped rows. Neutral fills
- * distinguish editable controls; selection uses fill, never a border. */
+/* Settings share one anatomy: a page title, quiet section titles above
+ * rounded cards, and rows inside the cards with the name on the left and the
+ * control on the right edge. Every page, including extension pages, draws its
+ * groups, rows and controls from the tokens below. */
 
 :root {
   --settings-canvas: var(--paper);
-  --settings-card: color-mix(in srgb, var(--surface-1) 55%, var(--paper));
-  /* A group is a sheet lifted off the canvas: a large corner, a faint edge
-   * and a soft shadow, so grouping reads without a gray frame. */
-  --settings-group-radius: var(--radius-md);
-  --settings-group-shadow: none;
-  /* Row breathing room; empty lines and list rows share it. */
+  /* A card is the canvas with a hairline edge; the edge, not a tonal step,
+   * carries the grouping so fields and buttons keep their own fills. */
+  --settings-card-bg: var(--paper);
+  --settings-card-border: var(--hairline);
+  --settings-card-radius: var(--radius-md);
+  --settings-card-pad-inline: var(--space-4);
+  /* Rows inside a card are separated by an inset rule, lighter than the
+   * card's own edge. */
+  --settings-divider: var(--hairline-soft);
+  --settings-button-bg: var(--ink-overlay-6);
+  --settings-button-hover-bg: var(--ink-overlay-12);
   --settings-row-pad-block: var(--space-3);
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
@@ -115,7 +122,8 @@
   white-space: nowrap;
 }
 
-/* Search is a subtle filter bar in the rail. */
+/* Search is a pill-shaped filter in the rail; its icon sits in the nav
+ * icon column so the placeholder starts where nav labels do. */
 .settings-search {
   position: relative;
   display: flex;
@@ -133,14 +141,14 @@
 
 .settings-search input {
   width: 100%;
-  min-height: 28px;
+  min-height: var(--sidebar-row-height);
   border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--ink-overlay-4);
+  border-radius: var(--radius-pill);
+  background: var(--ink-overlay-6);
   box-shadow: none;
   color: var(--ink);
   font: inherit;
-  font-size: var(--font-sm);
+  font-size: var(--font-ui);
   padding: 0 var(--control-padding-inline) 0 calc(var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
   transition:
     background var(--motion-fast) var(--ease-out),
@@ -148,7 +156,7 @@
 }
 
 .settings-search input:hover {
-  background: var(--ink-overlay-6);
+  background: var(--ink-overlay-8);
 }
 
 .settings-search input:focus {
@@ -176,7 +184,7 @@
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   overflow-y: auto;
   margin-top: var(--space-1);
   padding-bottom: var(--space-3);
@@ -208,7 +216,7 @@
   height: auto;
   align-items: center;
   gap: var(--sidebar-nav-column-gap);
-  border-radius: 6px;
+  border-radius: var(--sidebar-row-radius);
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
@@ -223,12 +231,11 @@
   color: var(--ink);
 }
 
-/* Share the navigation selection surface without changing label metrics. */
+/* Same selected row as the app sidebar; the label keeps its weight. */
 .settings-nav-item.active {
-  background: var(--selection-surface);
-  box-shadow: none;
-  color: var(--ink-strong);
-  font-weight: var(--weight-medium);
+  background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
+  color: var(--ink);
 }
 
 /* =========================================================================
@@ -293,31 +300,6 @@
   -webkit-app-region: drag;
 }
 
-/* The strip carries no edge at rest. Once the page scrolls under it,
- * a hairline separates the fixed strip from the moving
- * content. Engines without scroll timelines keep the edge-free strip. */
-@supports (timeline-scope: --settings-scroll) and (animation-timeline: --settings-scroll) {
-  .settings-main {
-    timeline-scope: --settings-scroll;
-  }
-
-  .settings-scroll {
-    scroll-timeline: --settings-scroll block;
-  }
-
-  .settings-titlebar {
-    animation: settings-titlebar-edge linear both;
-    /* Must follow the shorthand, which resets timeline and range. */
-    animation-timeline: --settings-scroll;
-    animation-range: 0px 16px;
-  }
-
-  @keyframes settings-titlebar-edge {
-    from { box-shadow: inset 0 -1px 0 transparent; }
-    to { box-shadow: inset 0 -1px 0 var(--hairline); }
-  }
-}
-
 /* Once the settings rail is collapsed, the titlebar starts at the window
  * edge. Keep the toggle clear of the macOS traffic lights, matching the
  * main conversation titlebar reservation. */
@@ -351,7 +333,8 @@
 /* Every page shares one column so the title stays put while navigating. The
  * column is measured in UI text so rows keep their proportions at large
  * sizes; forms read best when a label and its control stay within one
- * glance, which a full reading column would pull apart. */
+ * glance, which a full reading column would pull apart. Controls use the
+ * product's field height, so native and extension pages share one rhythm. */
 .settings-page {
   display: flex;
   min-height: 100%;
@@ -361,16 +344,17 @@
    * hundreds of px of slack left in the column. */
   container-name: settings-page;
   container-type: inline-size;
-  --settings-column-width: 660px;
+  --settings-column-width: calc(var(--font-ui) * 46);
   /* Every picker and text field on a page shares one width, so trailing
    * controls start on one edge down a group instead of following their
    * current value's length. */
-  --settings-control-width: 200px;
-  --settings-number-control-width: 112px;
-  --control-field-height: 32px;
-  --settings-row-pad-block: 12px;
+  --settings-control-width: calc(var(--font-ui) * 14);
+  --settings-number-control-width: calc(var(--font-ui) * 7.5);
   --settings-pad: var(--page-padding);
-  --settings-gap: 28px;
+  /* Sections are separated by two text widths; a title attaches to its card
+   * by less than a row's padding. */
+  --settings-gap: var(--space-8);
+  --settings-heading-gap: var(--space-3);
   width: min(calc(var(--settings-column-width) + var(--settings-pad) * 2), 100%);
   /* flex-shrink: 0 keeps the bottom padding inside the scrollable area
    * when content exceeds the viewport height. */
@@ -378,7 +362,7 @@
   flex-direction: column;
   gap: var(--settings-gap);
   margin: 0 auto;
-  padding: 8px var(--settings-pad) calc(var(--settings-pad) * 2);
+  padding: var(--space-2) var(--settings-pad) calc(var(--settings-pad) * 2);
 }
 
 /* --- Page title ----------------------------------------------------------
@@ -425,18 +409,17 @@
  * ------------------------------------------------------------------------- */
 
 .settings-page-header {
-  --settings-title-line: 28px;
+  --settings-title-line: calc(var(--font-heading) * 1.3);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px var(--space-6);
-  padding-bottom: 2px;
+  gap: var(--space-1) var(--space-6);
 }
 
 .settings-page-heading {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .settings-page-title {
@@ -445,7 +428,7 @@
   font-size: var(--font-heading);
   font-weight: var(--weight-semibold);
   letter-spacing: -0.015em;
-  line-height: 28px;
+  line-height: var(--settings-title-line);
 }
 
 .settings-page-description {
@@ -505,33 +488,28 @@
 }
 
 /* --- Section --------------------------------------------------------------
- * A section title is a quiet label above its group. The settings inside
+ * A section title is a quiet label above its card. The settings inside
  * carry the weight, so the eye lands on what can be changed.
  * ------------------------------------------------------------------------- */
 
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--settings-heading-gap);
 }
 
-/* Headerless sections merge seamlessly into the preceding section's table. */
+/* A headerless section continues the one before it, so it follows at the
+ * distance between cards rather than between sections. */
 .settings-section + .settings-section:not(:has(> .settings-section-header)) {
-  margin-top: calc(-1 * var(--settings-gap, 28px));
+  margin-top: calc(var(--settings-heading-gap) - var(--settings-gap));
 }
 
-.settings-inline-row-anchor,
-.settings-inline-section-anchor {
-  display: contents;
-}
-
-/* The heading attaches to the body by half an em. Related body blocks
- * need a full em, independently of how many groups a section contains. */
+/* Cards and notes inside one section sit a heading gap apart. */
 .settings-section-body {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--settings-heading-gap);
 }
 
 .settings-section-header {
@@ -547,12 +525,14 @@
   gap: 2px;
 }
 
+/* The title is set at UI size and differs from row names by weight and
+ * position alone; it labels the card instead of competing with the page
+ * title. */
 .settings-section-title {
   margin: 0;
   color: var(--ink-strong);
-  font-size: var(--font-title);
+  font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
   line-height: 1.4;
 }
 
@@ -573,7 +553,7 @@
   align-self: flex-start;
   align-items: center;
   gap: var(--space-2);
-  margin-block: calc((var(--font-title) * 1.4 - var(--control-field-height)) / 2);
+  margin-block: calc((var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
 }
 
 /* An inline form: its rows, then the actions that commit or discard them,
@@ -592,20 +572,22 @@
   gap: var(--space-2);
 }
 
-/* Text fields, pickers, unit inputs, and paired file actions take the page's
- * control width so their left and right edges align down a group. */
-.settings-row-control > :is(.settings-input:not(.settings-input-num-center), .settings-input-unit, .select-menu),
-.settings-row-control:has(> .background-file-picker) {
+/* Text fields, pickers, and paired file actions take the page's control
+ * width so their left and right edges align down a group. */
+.settings-row-control > :is(.settings-input:not(.settings-input-num-center), .select-menu) {
   width: var(--settings-control-width);
   max-width: 100%;
 }
 
-.settings-row-control > .settings-input-unit > .settings-input-num {
-  width: 100%;
+/* File actions fill that width too, but grow past it rather than wrap a
+ * button label onto two lines at large text sizes. */
+.settings-row-control:has(> .background-file-picker) {
+  min-width: min(var(--settings-control-width), 100%);
 }
 
 .settings-row-control:has(> .background-file-picker) > .settings-button {
-  flex: 1 1 0;
+  flex: 1 0 auto;
+  white-space: nowrap;
 }
 
 /* Notes below a group: font loading, save failures, list errors. */
@@ -617,88 +599,46 @@
 }
 
 /* --- Group ----------------------------------------------------------------
- * Clean divided rows directly on the reading column (Linear / Notion style);
- * rows inside are separated by a soft hairline without a boxed card frame.
+ * A group is a rounded card. Its children are rows (or row-like lists) that
+ * span the card's padded width, so the inset rule between two of them stops
+ * short of the card's edge on both sides.
  * ------------------------------------------------------------------------- */
 
 .settings-group {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 0;
-  border-top: 1px solid var(--hairline-soft);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  padding-inline: 0;
+  border: 1px solid var(--settings-card-border);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
+  padding-inline: var(--settings-card-pad-inline);
 }
 
-.settings-group > .settings-row:last-child,
-.settings-group > .settings-inline-row-anchor:last-child > .settings-row:last-child {
-  border-bottom: 0;
+/* Hidden children (an inert radiogroup kept for its state) must not claim
+ * the first slot, or the first visible row would draw a rule under the
+ * card's own border. */
+.settings-group > :not([hidden]) ~ :not([hidden]),
+.settings-group > :not([hidden]) ~ .settings-inline-row-anchor > .settings-row {
+  border-top: 1px solid var(--settings-divider);
 }
 
-/* Progressive disclosure for low-level runtime & execution parameters. */
-.settings-advanced-disclosure {
-  min-width: 0;
-  border: 0;
-  border-top: 1px solid var(--hairline-soft);
-  border-bottom: 1px solid var(--hairline-soft);
-  border-radius: 0;
-  background: transparent;
+/* A labelled anchor around a row (the About region) adds no box of its own;
+ * its row takes the divider instead. */
+.settings-inline-row-anchor {
+  display: contents;
 }
 
-.settings-advanced-disclosure-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--settings-row-pad-block) 0;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  transition: color var(--motion-fast) var(--ease-out);
-}
-
-.settings-advanced-disclosure-summary::-webkit-details-marker {
-  display: none;
-}
-
-.settings-advanced-disclosure-summary:hover .settings-advanced-disclosure-title {
-  color: var(--ink);
-}
-
-.settings-advanced-disclosure-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.settings-advanced-disclosure-title {
-  color: var(--ink-strong);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: 1.4;
-}
-
-.settings-advanced-disclosure-description {
+/* A status or failure line between rows reads as a short row of its own. */
+.settings-group > p {
+  margin: 0;
+  padding-block: var(--settings-row-pad-block);
   color: var(--ink-soft);
   font-size: var(--font-sm);
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
-.settings-advanced-disclosure[open] > .settings-advanced-disclosure-summary > .settings-disclosure-chevron {
-  transform: rotate(90deg);
-}
-
-.settings-advanced-disclosure-body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-6);
-  padding: var(--space-4) 0 var(--space-2);
-  border-top: 1px solid var(--hairline-soft);
+.settings-group > p[role="alert"] {
+  color: var(--danger);
 }
 
 /* Empty and loading lines stand in for rows at a row's height. */
@@ -707,6 +647,7 @@
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   margin: 0;
+  padding-block: var(--settings-row-pad-block);
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
 }
@@ -728,7 +669,6 @@
   align-items: center;
   gap: var(--space-2) var(--space-6);
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
-  border-bottom: 1px solid var(--hairline-soft);
   padding: var(--settings-row-pad-block) 0;
 }
 
@@ -798,10 +738,6 @@
   min-width: 0;
 }
 
-.browser-extension-entry + .browser-extension-entry {
-  border-top: 1px solid var(--hairline-soft);
-}
-
 .browser-extension-entry > .settings-row {
   border-bottom: 0;
 }
@@ -856,12 +792,12 @@
  * one control family. */
 .settings-row .settings-select-trigger {
   min-height: var(--control-field-height);
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
   background: var(--field-bg);
   box-shadow: none;
-  font-size: var(--font-sm);
-  padding: 0 10px;
+  font-size: var(--font-ui);
+  padding: 0 var(--control-padding-inline);
 }
 
 .settings-row-control-value {
@@ -890,7 +826,7 @@
   --chevron-tip-inset: calc(8.125 / 24);
 }
 
-:is(.catalog-row, .plugin-contribution, .model-service-card, .settings-advanced-disclosure-summary) > .settings-disclosure-chevron {
+:is(.catalog-row, .plugin-contribution, .model-service-card) > .settings-disclosure-chevron {
   margin-inline-end: calc(var(--icon-size) * var(--chevron-tip-inset) * -1);
 }
 
@@ -898,20 +834,20 @@
   transform: rotate(90deg);
 }
 
-/* --- Inputs (32px, the one control height) --------------------------------- */
+/* --- Inputs (the product field height and control corner) ------------------ */
 
 .settings-input {
   width: 100%;
   min-height: var(--control-field-height);
   height: auto;
   line-height: 1.4;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
   background: var(--field-bg);
   color: var(--ink);
-  font-size: var(--font-sm);
-  font-weight: 400;
-  padding: 4px 10px;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
     background var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
@@ -930,9 +866,8 @@
 
 /* Compact numeric input for small-value rows (thresholds, limits): sits
  * in the right-hand control slot instead of stretching the row tall. One
- * width fits a token count with its unit, so the numeric fields of a group
- * share their edges whether or not they carry a unit. The width follows the
- * text, so the default and its unit still fit at large sizes. */
+ * width in em fits a token count at every font size, so the numeric fields
+ * of a group share their edges. */
 .settings-input-num {
   flex: 0 0 auto;
   width: 9.5em;
@@ -940,40 +875,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* A unit sits inside its field after the number. An empty field whose
- * placeholder is a word ("Auto") shows it alone; a unit would read as part
- * of the word. */
-.settings-input-unit {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.settings-input-unit::after {
-  content: attr(data-unit);
-  position: absolute;
-  top: 50%;
-  right: var(--control-padding-inline);
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  line-height: 1;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.settings-input-unit > .settings-input-num:not(:placeholder-shown),
-.settings-input-unit[data-unit-placeholder] > .settings-input-num {
-  padding-right: calc(var(--control-padding-inline) + var(--settings-unit-chars) * 1ch + var(--space-1));
-}
-
-.settings-input-unit:not([data-unit-placeholder]):has(> .settings-input-num:placeholder-shown)::after {
-  content: none;
-}
-
-/* Keep native steppers available on hover and keyboard focus. */
+/* A short number beside a picker (a font size). The width fits a decimal
+ * value plus the native stepper, which stays available on hover and focus. */
 .settings-input-num-center {
-  width: 4.25em;
-  padding: 0;
+  width: 4.75em;
+  padding-inline: var(--space-2) var(--space-1);
   text-align: center;
 }
 
@@ -991,7 +897,11 @@
   animation: wuu-spin var(--motion-spin) linear infinite;
 }
 
-/* --- Buttons (32px, same rhythm as inputs) ---------------------------------- */
+/* --- Buttons (same box as fields) --------------------------------------------
+ * The default button is a soft fill without an edge; a field keeps its edge,
+ * so "type here" and "press this" never look alike. Primary is the one
+ * filled action of a view; ghost is for quiet trailing actions.
+ * ------------------------------------------------------------------------- */
 
 .settings-button {
   display: inline-flex;
@@ -1000,16 +910,16 @@
   line-height: 1.4;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  background: var(--control-secondary-bg);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--settings-button-bg);
   box-shadow: none;
-  color: var(--ink);
-  font-size: var(--font-sm);
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
   font-weight: var(--weight-medium);
-  padding: 4px 12px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
     background var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
@@ -1025,8 +935,7 @@
 }
 
 .settings-button:hover:not(:disabled) {
-  background: var(--control-secondary-hover-bg);
-  border-color: var(--hairline-strong);
+  background: var(--settings-button-hover-bg);
 }
 
 .settings-button:active:not(:disabled) {
@@ -1038,40 +947,33 @@
   opacity: 0.55;
 }
 
-/* Filled action: strongest contrast pair in the ramp. The hover mixes a
+/* Filled action in the theme accent (ink by default). The hover mixes a
  * paper tint so it lightens in light theme and dims in dark theme. */
 .settings-button-primary {
-  border-color: transparent;
-  background: var(--ink-strong);
-  color: var(--paper);
+  background: var(--wuu-accent);
+  color: var(--ink-on-accent);
 }
 
 .settings-button-primary:hover:not(:disabled) {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--ink-strong) 90%, var(--paper));
+  background: color-mix(in srgb, var(--wuu-accent) 90%, var(--paper));
 }
 
 .settings-button-ghost {
-  border-color: transparent;
-  box-shadow: none;
   background: transparent;
   color: var(--ink-soft);
 }
 
 .settings-button-ghost:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--ink-overlay-6);
-  color: var(--ink);
+  background: var(--settings-button-bg);
+  color: var(--ink-strong);
 }
 
 .settings-button-danger {
-  border-color: transparent;
   background: var(--danger-soft);
   color: var(--danger);
 }
 
 .settings-button-danger:hover:not(:disabled) {
-  border-color: transparent;
   background: var(--danger-border);
 }
 
@@ -1361,9 +1263,8 @@ button.settings-engine-expand:hover {
   gap: var(--space-4);
   padding: var(--card-padding);
   border: 1px solid var(--hairline-soft);
-  border-radius: var(--settings-group-radius);
-  background: var(--settings-card);
-  box-shadow: var(--settings-group-shadow);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
   container: subscription-card / inline-size;
 }
 
@@ -1721,17 +1622,16 @@ button.settings-engine-expand:hover {
 /* --- Theme picker ------------------------------------------------------------
  * Visual radio cards, each a miniature window of the theme. "System" stacks the
  * dark window over the light one and clips it at the middle, so one skeleton
- * meets itself at a single seam. Selection is a radio mark beside the label
- * and an ink edge on the preview, so it never rests on a heavy frame alone.
+ * meets itself at a single seam. The preview itself carries the selection: a
+ * two-pixel ring in the control accent, with the label below it emphasized.
  * Preview colors are fixed local colors, never theme tokens.
  * ----------------------------------------------------------------------------- */
 
 .settings-theme-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--space-3);
   min-width: 0;
-  margin-bottom: 2px;
 }
 
 /* The cards split the column, so their edges meet the groups below, and
@@ -1741,10 +1641,14 @@ button.settings-engine-expand:hover {
   min-width: 0;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--space-2);
   padding: 0;
+  border: 0;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 /* The preview is a container so its skeleton scales with the card. */
@@ -1756,7 +1660,7 @@ button.settings-engine-expand:hover {
   aspect-ratio: 2.25 / 1;
   container-type: inline-size;
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   transition:
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
@@ -1767,41 +1671,22 @@ button.settings-engine-expand:hover {
 }
 
 .settings-theme-card.active .settings-theme-preview {
-  border-color: var(--wuu-accent);
-  box-shadow: inset 0 0 0 1px var(--wuu-accent);
+  border-color: var(--interaction-accent);
+  box-shadow: 0 0 0 1px var(--interaction-accent);
 }
 
 .settings-theme-card-label {
-  display: flex;
   min-width: 0;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
   color: var(--ink-soft);
   font-size: var(--font-sm);
-  line-height: 1.35;
+  line-height: 1.4;
+  text-align: center;
   overflow-wrap: anywhere;
 }
 
 .settings-theme-card.active .settings-theme-card-label {
-  color: var(--ink);
+  color: var(--ink-strong);
   font-weight: var(--weight-medium);
-}
-
-/* Drawn like the native radios in onboarding: a boundary ring at rest, a
- * thick ink ring around a paper center when chosen. */
-.settings-theme-card-radio {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-  flex: 0 0 auto;
-  border-radius: var(--radius-circle);
-  background: var(--paper);
-  box-shadow: inset 0 0 0 1px var(--control-boundary);
-  transition: box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.settings-theme-card.active .settings-theme-card-radio {
-  box-shadow: inset 0 0 0 calc(var(--icon-size-sm) * 0.3) var(--wuu-accent);
 }
 
 .settings-palette-swatch {
@@ -1904,7 +1789,7 @@ button.settings-engine-expand:hover {
 }
 
 /* --- Generated plugin settings ----------------------------------------------
- * A plugin's settings read as one settings group: its notices (an isolated
+ * A plugin's settings read as one settings card: its notices (an isolated
  * contribution, a conflict to settle) come first as rows that lead with a
  * symbol, then one row per setting with a status line only when there is
  * something to say (saving, an error with its retry, a restart still due).
@@ -1922,19 +1807,6 @@ button.settings-engine-expand:hover {
   font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
   line-height: 1.4;
-}
-
-.plugin-settings-editor-body {
-  display: grid;
-  min-width: 0;
-  border: 0;
-  border-top: 1px solid var(--hairline-soft);
-  border-radius: 0;
-  padding-inline: 0;
-}
-
-.plugin-settings-editor-body > .settings-row:last-child {
-  border-bottom: 0;
 }
 
 .plugin-notice-title {
@@ -1958,10 +1830,6 @@ button.settings-engine-expand:hover {
 
 .plugin-setting.settings-row {
   row-gap: 0;
-}
-
-.plugin-setting .settings-input:not(.settings-input-num) {
-  width: min(15em, 100%);
 }
 
 .plugin-setting-status {
@@ -1995,12 +1863,6 @@ button.settings-engine-expand:hover {
 .plugin-setting-status-message .icon-sm {
   margin-inline-end: var(--space-1);
   vertical-align: -0.2em;
-}
-
-@container settings-page (max-width: 32em) {
-  .plugin-setting .settings-input:not(.settings-input-num) {
-    width: 100%;
-  }
 }
 
 /* --- MCP servers + pets --------------------------------------------------------- */
@@ -2072,8 +1934,8 @@ button.settings-engine-expand:hover {
 
 :is(.settings-usage-card, .settings-usage-stats) {
   border: 1px solid var(--hairline-soft);
-  border-radius: var(--settings-group-radius);
-  background: var(--settings-card);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
 }
 
 .settings-usage-card {
@@ -2899,7 +2761,7 @@ button.settings-engine-expand:hover {
   /* Switches, numbers, short values, buttons and icon actions are narrow
    * enough to stay beside their label. Action groups with a text button
    * need their own line so recovery guidance keeps its reading space. */
-  .settings-row:not(.settings-row-block):not(:has(> .settings-row-control > .settings-row-actions > .settings-button:not(.settings-icon-button))):not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num, .settings-input-unit))) {
+  .settings-row:not(.settings-row-block):not(:has(> .settings-row-control > .settings-row-actions > .settings-button:not(.settings-icon-button))):not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
@@ -2931,141 +2793,131 @@ button.settings-engine-expand:hover {
   }
 }
 
-/* Settings shares the native workbench frame and drawer controller. The
-   existing settings presentation still owns its navigation and form pages. */
+/* Settings is a modal surface over the live workbench. The app remains
+   visible behind a scrim so the user keeps their place; the panel owns its
+   navigation, page scroll and focus. */
 .app-shell.navigation-ribbon-layout[data-settings-open] .sidebar {
   pointer-events: none;
 }
 
-.app-shell.navigation-ribbon-layout[data-settings-open] .sidebar > .sidebar-content,
-.app-shell.navigation-ribbon-layout[data-settings-open] > :is(
-  .conversation-pane,
-  .workspace-right-panel,
-  .workspace-right-panel-resizer,
-  .shell-right-sidebar-toggle
-) {
-  visibility: hidden;
+.app-shell.navigation-ribbon-layout[data-settings-open] .sidebar > .sidebar-content {
   pointer-events: none;
 }
 
-.settings-standalone-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 119;
-  min-width: 0;
-  min-height: 0;
-}
-
-.app-shell:has(> .settings-standalone-layer) > .sidebar {
-  visibility: hidden;
-}
-
-.app-shell:has(> .settings-standalone-layer) > :is(
-  .sidebar-resizer,
-  .sidebar-hover-zone,
-  .globalized-sidebar-toggle-region,
-  .section-sidebar-toggle
-) {
-  display: none;
-}
-
+.settings-overlay-layer,
+.settings-standalone-layer,
 .settings-workbench-layer {
-  position: absolute;
-  inset: var(--workbench-top, var(--window-titlebar-height)) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--sidebar-ribbon-width);
-  z-index: 119;
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
   min-width: 0;
   min-height: 0;
-  border-radius: var(--conversation-canvas-radius);
-  background: var(--workbench-canvas-bg);
+  border-radius: 0;
+  padding: clamp(20px, 4.5vh, 56px) clamp(20px, 4.5vw, 64px);
+  animation: wuu-fade-in var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
-/* Lazy settings load inside their existing pane so window chrome stays usable. */
-.settings-workbench-layer > .view-switch-loading-inline,
-.settings-standalone-layer > .view-switch-loading-inline {
-  height: 100%;
+/* The lazy chunk sits inside the scrim. Give its waiting state the same
+   footprint as the panel so loading never flashes a full-window surface. */
+.settings-overlay-layer > .view-switch-loading-inline {
+  width: min(1120px, 100%);
+  height: min(820px, 100%);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-lg);
+  background: var(--settings-canvas);
+  box-shadow: var(--shadow-modal);
 }
 
-.app-shell .settings-shell.settings-embedded {
-  --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
-  grid-template-columns: max(0px, calc(var(--sidebar-width) - var(--sidebar-ribbon-compact-width, 52px))) minmax(0, 1fr);
-  height: 100%;
+/* --- Floating panel ------------------------------------------------------ */
+
+.settings-shell.settings-floating {
+  --canvas-titlebar-height: 52px;
+  display: grid;
+  width: min(1120px, 100%);
+  height: min(820px, 100%);
+  max-height: 100%;
+  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   padding: 0;
-  border-radius: inherit;
-  background: transparent;
+  overflow: hidden;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-lg);
+  background: var(--settings-canvas);
+  box-shadow: var(--shadow-modal);
+  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+  --enter-y: 8px;
+  --enter-scale: 0.992;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar {
+.settings-floating .settings-sidebar {
   grid-column: 1;
+  grid-row: 1;
   min-width: 0;
+  overflow: hidden;
   border: 0;
   border-right: 1px solid var(--hairline-soft);
   border-radius: 0;
-  background: color-mix(in srgb, var(--surface-1) 60%, var(--paper));
+  background: var(--theme-override-color-surface, var(--sidebar-material-fill));
   box-shadow: none;
 }
 
-:root[data-theme="dark"] .app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar {
-  background: var(--workbench-canvas-bg);
-}
-
-.app-shell.navigation-ribbon-layout .settings-embedded .settings-sidebar .sidebar-content {
-  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
-  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+.settings-floating .settings-sidebar .sidebar-content {
+  width: 100%;
+  min-width: 0;
   height: 100%;
+  /* The workbench rail offsets its content past the ribbon and titlebar.
+     The floating panel already starts there, so that offset is not local. */
   margin: 0;
+  padding-top: var(--space-2);
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded .settings-main {
+.settings-floating .settings-navigation-title {
+  margin: 0 0 var(--space-1);
+  padding: var(--space-3) var(--sidebar-row-pad-x) 0;
+  color: var(--ink-strong);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-floating .settings-main {
+  grid-column: 2;
+  grid-row: 1;
   margin: 0;
   border-radius: 0;
   background: var(--settings-canvas);
 }
 
-.app-shell .settings-embedded .settings-main::before {
+.settings-floating .settings-main::before {
   content: none;
 }
 
-.app-shell .settings-embedded .settings-titlebar {
-  padding: 0 var(--window-titlebar-padding-inline);
+.settings-floating .settings-titlebar {
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  -webkit-app-region: no-drag;
 }
 
-.app-shell .settings-embedded .settings-navigation-title {
-  margin: 0 0 2px;
-  padding-block: 0;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+.settings-floating .settings-titlebar-slot {
+  flex: 1 1 auto;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed .settings-sidebar,
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-drawer-docking .settings-sidebar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
-  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
-  transform: none;
+.settings-close-button {
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
 }
 
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .settings-sidebar {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing) .settings-sidebar {
-  box-shadow: var(--shadow-drawer-right);
-}
-
-.app-shell.navigation-ribbon-layout .settings-embedded.sidebar-drawer-closing .settings-sidebar .sidebar-content {
-  opacity: 0;
-  transform: translate3d(-18px, 0, 0);
-  pointer-events: none;
-}
-
-.app-shell.navigation-ribbon-layout[data-settings-open] > .sidebar-resizer,
-.app-shell.navigation-ribbon-layout[data-settings-open] > .sidebar-hover-zone {
-  z-index: 121;
+@container style(--motion-reduced: 1) {
+  .settings-overlay-layer,
+  .settings-standalone-layer,
+  .settings-workbench-layer,
+  .settings-shell.settings-floating {
+    animation: none;
+  }
 }
 
 /* Blocking settings feedback stays in the section that owns recovery. */

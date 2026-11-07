@@ -16,6 +16,7 @@ type PluginSessionSendHandler func(context.Context, string, pluginhost.SessionSe
 type PluginSessionListHandler func(context.Context, string, pluginhost.SessionListParams) (pluginhost.SessionListResult, error)
 type PluginSessionCancelHandler func(context.Context, string, pluginhost.SessionCancelParams) (pluginhost.SessionCancelResult, error)
 type PluginSessionInspectHandler func(context.Context, string, pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, error)
+type PluginSessionModelHandler func(context.Context, string, pluginhost.SessionModelParams) (pluginhost.SessionModelResult, error)
 type PluginSessionControlHandler func(context.Context, string, pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error)
 type PluginWorkspaceStatusHandler func(context.Context, string, pluginhost.WorkspaceStatusParams) (pluginhost.WorkspaceStatusResult, error)
 type PluginWorkspaceApplyHandler func(context.Context, string, pluginhost.WorkspaceApplyParams) (pluginhost.WorkspaceApplyResult, error)
@@ -24,6 +25,7 @@ type PluginWorkspaceDiscardHandler func(context.Context, string, pluginhost.Work
 // PluginSessionRouter lets plugin processes outlive individual app-server
 // bindings without coupling runtime construction to an app-server package.
 type PluginSessionRouter struct {
+	modelBinding                  uint64
 	sessionResourceBinding        uint64
 	sessionResourceAccess         SessionResourceAccessHandler
 	executionAuthorizationBinding uint64
@@ -39,6 +41,7 @@ type PluginSessionRouter struct {
 	cancel                        PluginSessionCancelHandler
 	inspect                       PluginSessionInspectHandler
 	control                       PluginSessionControlHandler
+	model                         PluginSessionModelHandler
 	workspaceStatus               PluginWorkspaceStatusHandler
 	workspaceApply                PluginWorkspaceApplyHandler
 	workspaceDiscard              PluginWorkspaceDiscardHandler
@@ -96,6 +99,37 @@ func (r *PluginSessionRouter) BindExtended(create PluginSessionCreateHandler, se
 			r.mu.Unlock()
 		})
 	}
+}
+
+func (r *PluginSessionRouter) BindModel(handler PluginSessionModelHandler) func() {
+	r.mu.Lock()
+	r.modelBinding++
+	binding := r.modelBinding
+	r.model = handler
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			if r.modelBinding == binding {
+				r.model = nil
+			}
+			r.mu.Unlock()
+		})
+	}
+}
+
+func (r *PluginSessionRouter) Model(ctx context.Context, pluginID string, params pluginhost.SessionModelParams) (pluginhost.SessionModelResult, error) {
+	if r == nil {
+		return pluginhost.SessionModelResult{}, errors.New("session model service unavailable")
+	}
+	r.mu.RLock()
+	handler := r.model
+	r.mu.RUnlock()
+	if handler == nil {
+		return pluginhost.SessionModelResult{}, errors.New("session model service unavailable")
+	}
+	return handler(ctx, pluginID, params)
 }
 
 func (r *PluginSessionRouter) Control(ctx context.Context, pluginID string, params pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {

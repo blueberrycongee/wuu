@@ -32,49 +32,83 @@ func NewDocumentStoreWithLegacyResolver(documents persistence.Documents, session
 
 func (s *Store) access(body func(*Store) error) error {
 	now := time.Now().UTC()
-	return persistence.AccessDocumentImage(context.Background(), s.documents, DocumentNamespace, s.documentKey, func(image *persistence.DocumentImage) error {
-		dirs := s.legacyDirs
-		if s.legacyDirsResolver != nil {
-			var err error
-			dirs, err = s.legacyDirsResolver()
-			if err != nil {
-				return err
-			}
+	return persistence.AccessDocumentImage(context.Background(), s.documents, DocumentNamespace, s.documentKey, s.importLegacy, func(image *persistence.DocumentImage) error {
+		return body(&Store{dir: s.dir, documentKey: s.documentKey, image: image, operationTime: now})
+	})
+}
+
+// InitializeDocumentStores fences legacy imports for a catalog in one commit.
+// Committing an empty image per session would continuously invalidate concurrent
+// history reads, whose multi-document snapshots require a stable revision.
+func InitializeDocumentStores(ctx context.Context, documents persistence.Documents, sessionIDs []string, legacyDirs func(string) ([]string, error)) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	if documents == nil {
+		return persistence.ErrClosed
+	}
+	return persistence.Update(ctx, documents, func(tx *persistence.Tx) error {
+		existing, err := tx.Read(persistence.Query{Namespace: DocumentNamespace, Keys: sessionIDs})
+		if err != nil {
+			return err
 		}
-		for _, dir := range dirs {
-			if dir == "" {
+		found := make(map[string]bool, len(existing))
+		for _, document := range existing {
+			found[document.Key] = true
+		}
+		for _, id := range sessionIDs {
+			if found[id] {
 				continue
 			}
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				continue
-			} else if err != nil {
-				return err
-			}
-			legacy := NewStore(dir)
-			release, err := legacy.lockStore()
-			if err != nil {
-				return err
-			}
-			threads, readErr := legacy.ListThreads()
-			events, eventErr := persistence.ReadLegacyEvents(filepath.Join(dir, "events.jsonl"))
-			release()
-			if readErr != nil {
-				return readErr
-			}
-			if eventErr != nil {
-				return eventErr
-			}
-			if err := persistence.MergeLegacyCollection(image, "threads", threads); err != nil {
-				return err
-			}
-			if err := persistence.MergeLegacyCollection(image, "events", events); err != nil {
+			store := NewDocumentStoreWithLegacyResolver(documents, id, func() ([]string, error) { return legacyDirs(id) })
+			if err := persistence.AccessDocumentImageInTransaction(tx, DocumentNamespace, id, store.importLegacy, func(*persistence.DocumentImage) error { return nil }); err != nil {
 				return err
 			}
 		}
 		return nil
-	}, func(image *persistence.DocumentImage) error {
-		return body(&Store{dir: s.dir, documentKey: s.documentKey, image: image, operationTime: now})
 	})
+}
+
+func (s *Store) importLegacy(image *persistence.DocumentImage) error {
+	dirs := s.legacyDirs
+	if s.legacyDirsResolver != nil {
+		var err error
+		dirs, err = s.legacyDirsResolver()
+		if err != nil {
+			return err
+		}
+	}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		legacy := NewStore(dir)
+		release, err := legacy.lockStore()
+		if err != nil {
+			return err
+		}
+		threads, readErr := legacy.ListThreads()
+		events, eventErr := persistence.ReadLegacyEvents(filepath.Join(dir, "events.jsonl"))
+		release()
+		if readErr != nil {
+			return readErr
+		}
+		if eventErr != nil {
+			return eventErr
+		}
+		if err := persistence.MergeLegacyCollection(image, "threads", threads); err != nil {
+			return err
+		}
+		if err := persistence.MergeLegacyCollection(image, "events", events); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) now() time.Time {

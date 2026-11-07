@@ -131,9 +131,14 @@ func TestAcceptanceJointLegacyMigration(t *testing.T) {
 			require.Len(t, pending, 2)
 			require.Equal(t, "z-first", pending[0].ClientID)
 			require.Equal(t, "a-second", pending[1].ClientID)
-			work, found, err := sessions.ProjectWorkOperation("work-operation")
+			workView, err := documents.Read(ctx, persistence.Query{Namespace: "wuu.project_work_operations.v1", Keys: []string{"work-operation"}})
 			require.NoError(t, err)
-			require.True(t, found)
+			require.Len(t, workView.Documents, 1)
+			var work struct {
+				ID      string `json:"id"`
+				Version int    `json:"version"`
+			}
+			require.NoError(t, json.Unmarshal(workView.Documents[0].Value, &work))
 			require.Equal(t, "work-1", work.ID)
 			require.Equal(t, 3, work.Version)
 

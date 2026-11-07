@@ -511,7 +511,7 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	}
 	newThread := &threadState{ID: "new", state: testRuntimeState(t, rt)}
 	newThread.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(newThread, 0)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(newThread)
 	newThread.mu.Unlock()
 	if err != nil {
 		release()
@@ -524,7 +524,7 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	release()
 
 	newThread.mu.Lock()
-	acquired, err = srv.tryAcquireThreadExecutionLeaseLocked(newThread, 0)
+	acquired, err = srv.tryAcquireThreadExecutionLeaseLocked(newThread)
 	if acquired {
 		newThread.releaseThreadExecutionLeaseLocked()
 	}
@@ -666,7 +666,7 @@ func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing
 	thread := &threadState{ID: "other-server-turn", state: testRuntimeState(t, rt)}
 
 	thread.mu.Lock()
-	acquired, err := executingServer.tryAcquireThreadExecutionLeaseLocked(thread, 0)
+	acquired, err := executingServer.tryAcquireThreadExecutionLeaseLocked(thread)
 	thread.mu.Unlock()
 	if err != nil || !acquired {
 		t.Fatalf("acquire execution generation: acquired=%v err=%v", acquired, err)
@@ -729,7 +729,7 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	admit := func(id string) {
 		thread := &threadState{ID: id, state: binding}
 		thread.mu.Lock()
-		ok, err := srv.tryAcquireThreadExecutionLeaseLocked(thread, 0)
+		ok, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
 		if ok {
 			thread.releaseThreadExecutionLeaseLocked()
 		}

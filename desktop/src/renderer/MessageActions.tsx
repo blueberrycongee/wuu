@@ -1,4 +1,3 @@
-import { Tooltip } from "./Tooltip";
 import { VideoAttachment } from "./VideoAttachment";
 import {
   AlertCircle,
@@ -35,7 +34,6 @@ export function AgentMessageActions({
   onFork,
   placement,
   timestamp,
-  trailingAction,
   showFork = true,
   showCopy = true,
   hidden = false,
@@ -46,7 +44,6 @@ export function AgentMessageActions({
   onFork?: () => void;
   placement: "overlay" | "persistent";
   timestamp?: string | null;
-  trailingAction?: ReactNode;
   showFork?: boolean;
   showCopy?: boolean;
   hidden?: boolean;
@@ -87,7 +84,6 @@ export function AgentMessageActions({
       {showCopy ? <MessageCopyButton getText={getText} className="message-action-button" iconSize={15} /> : null}
       {showFork ? <MessageForkButton onFork={onFork} /> : null}
       {children}
-      {trailingAction}
       <MessageTime timestamp={timestamp} />
     </div>
   );
@@ -110,7 +106,7 @@ export function MessageTime({ timestamp, className = "" }: { timestamp?: string 
 export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Element {
   const { t } = useI18n();
   return (
-    <Tooltip asChild content={t("message.fork")}><button
+    <button
       className="message-action-button"
       type="button"
       aria-label={t("message.fork")}
@@ -118,7 +114,7 @@ export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Elem
       onClick={onFork}
     >
       <Split size={15} />
-    </button></Tooltip>
+    </button>
   );
 }
 

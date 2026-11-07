@@ -4,7 +4,6 @@ import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
 import { navigateToResponseSelection } from "./ResponseSelection";
-import { TruncatedText } from "./TruncatedText";
 import { CornerUpLeft, Quote } from "./WuuIcons";
 import "./ComposerResponseSelectionCard.css";
 
@@ -49,7 +48,7 @@ export function ComposerQuoteCard({ text, comment = "", meta, className, notice,
     <ComposerDocumentCard ref={anchorRef}
       className={`composer-response-selection-card${className ? ` ${className}` : ""}`}
       icon={<Quote className="icon" />}
-      title={<TruncatedText as="strong" className="composer-document-card-title" text={singleLine(text)} />}
+      title={<strong className="composer-document-card-title">{singleLine(text)}</strong>}
       meta={singleLine(comment) || meta || t("responseSelection.cardMeta")}
       openLabel={t("responseSelection.open")} onOpen={() => setOpen(value => !value)}
       removeLabel={t("responseSelection.remove")} onRemove={onRemove} />

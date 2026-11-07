@@ -88,7 +88,6 @@ export function SideThreadComposer({
       sendDisabled={running}
       forceStopWhileRunning
       runtimeControlsDisabled
-      tokensPerSecond={0}
       status={disabledReason ?? ""}
       disabledReason={disabledReason}
       readOnly={readOnly}

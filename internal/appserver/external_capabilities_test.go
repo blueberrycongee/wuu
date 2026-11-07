@@ -363,3 +363,28 @@ func TestExternalCapabilitiesCloseRetainsAdmittedReceipts(t *testing.T) {
 		t.Fatal("HTTP call did not exit after Close")
 	}
 }
+
+func TestExternalCapabilityInstructions(t *testing.T) {
+	cua := providers.ToolDefinition{Name: "mcp_cua_computer", InputSchema: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"control_epoch": map[string]any{"type": "string"}},
+	}}
+	plain := providers.ToolDefinition{Name: "wuu_browser", InputSchema: map[string]any{"type": "object"}}
+	if got := externalCapabilityInstructions(nil); got != "" {
+		t.Errorf("nil surface guidance = %q, want empty", got)
+	}
+	if got := externalCapabilityInstructions([]providers.ToolDefinition{plain}); got != "" {
+		t.Errorf("non-CUA surface guidance = %q, want empty", got)
+	}
+	malformed := providers.ToolDefinition{Name: "odd", InputSchema: map[string]any{"properties": "nope"}}
+	if got := externalCapabilityInstructions([]providers.ToolDefinition{malformed}); got != "" {
+		t.Errorf("malformed schema guidance = %q, want empty", got)
+	}
+	got := externalCapabilityInstructions([]providers.ToolDefinition{plain, cua})
+	if got == "" {
+		t.Fatal("CUA surface produced no guidance")
+	}
+	if !strings.Contains(got, cua.Name) {
+		t.Errorf("guidance does not name the bound tool: %q", got)
+	}
+}

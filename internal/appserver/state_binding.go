@@ -69,7 +69,12 @@ func (s *Server) retainThreadAdmissionState(id string) (*runtime.State, *threadS
 		th.mu.Unlock()
 		return current, th, nil
 	}
-	if s.activeExecutionRunID(id) != "" || (th.execRuntime != nil && threadRuntimeHasOutstandingWork(id, th.execRuntime)) {
+	// A running turn, an in-flight admission, or retained background work owns
+	// this projection even after a newer generation is published. Reporting it
+	// as an external owner makes queue and completion drains retry until the
+	// turn ends instead of simply waiting for it.
+	if s.activeExecutionRunID(id) != "" || th.running || th.admissionReserved || th.executionLease != nil ||
+		(th.execRuntime != nil && threadRuntimeHasOutstandingWork(id, th.execRuntime)) {
 		held := th.state.Retain()
 		th.mu.Unlock()
 		_ = current.Close()
@@ -138,8 +143,6 @@ func copyEphemeralAdmissionProjectionLocked(th *threadState) *threadState {
 		Owner:            th.Owner,
 		Visibility:       th.Visibility,
 		Instructions:     th.Instructions,
-		ProjectID:        th.ProjectID,
-		ProjectRole:      th.ProjectRole,
 		ParentID:         th.ParentID,
 		AgentPath:        th.AgentPath,
 		historyHeadSeq:   th.historyHeadSeq,

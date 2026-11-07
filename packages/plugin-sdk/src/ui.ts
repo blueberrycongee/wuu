@@ -9,7 +9,6 @@ import type { ApplicationOnboardingV1, OnboardingCallOptionsV1 } from "./ui-onbo
 import type { ApplicationBrowserV1, BrowserActivityV1, BrowserDockTargetV1, BrowserOperationOptionsV1, BrowserSurfaceHandleV1 } from "./ui-browser.js";
 import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "./ui-side-conversation.js";
 import type { ApplicationFileSelectionServiceV1, FileSelectionCallOptionsV1 } from "./ui-file-selection.js";
-import type { ApplicationProjectsV1, ApplicationProjectCallOptionsV1 } from "./ui-projects.js";
 import type { ApplicationTerminalsV1 } from "./ui-terminals.js";
 export { scopeApplicationTerminals } from "./ui-terminals.js";
 import type { ApplicationSearchActionMapV1, ApplicationSearchViewV1 } from "./ui-search.js";
@@ -104,6 +103,14 @@ export interface ApplicationSnapshotV1 {
     readonly loading: boolean;
     readonly error?: string;
   };
+  /** Conversations interrupted by the last exit and awaiting a user choice after restart. Reading it never resumes execution. */
+  readonly restartRecovery?: readonly {
+    readonly threadId: string;
+    readonly title: string;
+    readonly workspace: string;
+    readonly updatedAt: string;
+    readonly reason: "interrupted" | "background_result";
+  }[];
   readonly composer: ComposerSnapshotV1;
   readonly activities: readonly ApplicationActivityV1[];
   readonly browserDockTarget?: BrowserDockTargetV1;
@@ -129,7 +136,6 @@ export interface ApplicationTabV1 {
   readonly workspaceId?: string;
   readonly workspaceRoot: string;
   readonly threadId?: string;
-  readonly project: boolean;
   readonly draftText: string;
   readonly hasAttachments: boolean;
 }
@@ -160,6 +166,8 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
   "navigation.cancel": { input: { readonly requestId?: number }; result: void };
   "conversation.load-earlier": { input: { readonly threadId: string; readonly cursor: string }; result: void };
+  /** Continue selected recovery candidates and leave the remaining ones paused. */
+  "conversation.resolve-recovery": { input: { readonly threadIds: readonly string[] }; result: void };
   "conversation.continue": { input: { readonly threadId: string; readonly turnId?: string; readonly text: string }; result: { readonly accepted: boolean } };
   "conversation.read-usage": { input: { readonly timezone: string }; result: SettingsReadonly<Pick<ApplicationSettingsUsageResponseV1, "total_sessions" | "metrics" | "days">> };
   "conversation.load-item": { input: { readonly threadId: string; readonly turnId: string; readonly itemId: string }; result: ApplicationConversationThreadItemV1 };
@@ -175,9 +183,8 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "tab.select": { input: { readonly tabId: string }; result: void };
   "tab.close": { input: { readonly tabId: string }; result: void };
   "tab.reorder": { input: { readonly tabId: string; readonly beforeTabId: string }; result: void };
-  "tab.new": { input: { readonly workspaceId?: string; readonly project?: boolean }; result: { readonly tabId: string } };
+  "tab.new": { input: { readonly workspaceId?: string }; result: { readonly tabId: string } };
   "draft.rename": { input: { readonly tabId: string; readonly title: string }; result: void };
-  "draft.set-project-mode": { input: { readonly project: boolean }; result: void };
   "navigation.show-section": { input: { readonly section: "conversations" | "catalog" }; result: void };
   "catalog.select-section": { input: { readonly section: "plugins" | "skills" }; result: void };
   "catalog.select-plugin": { input: { readonly pluginId: string }; result: void };
@@ -212,7 +219,6 @@ export interface ApplicationServiceV1 {
   readonly onboarding: ApplicationOnboardingV1;
   readonly browser: ApplicationBrowserV1;
   readonly fileSelection: ApplicationFileSelectionServiceV1;
-  readonly projects: ApplicationProjectsV1;
   readonly terminals: ApplicationTerminalsV1;
   readonly catalog: ApplicationCatalogV1;
   getSnapshot(): ApplicationSnapshotV1;
@@ -289,7 +295,6 @@ export interface UICompositionV1 {
 /** Context for the default conversation's welcome slot. Render each part at most once.
  * Each node includes its own independently replaceable slot and native fallback. */
 export interface ConversationWelcomeContextV1 extends Readonly<Record<string, unknown>> {
-  readonly projectDraft: boolean;
   readonly greeting: ReactNode;
   readonly mascot: ReactNode;
   readonly usage: ReactNode;
@@ -631,28 +636,6 @@ export function scopeApplicationCatalog(source: () => ApplicationCatalogV1,
     install: (options?: CatalogCallOptionsV1) => invoke(signal => source().install({ signal }), options),
     remove: (id: string, options?: CatalogCallOptionsV1) => invoke(signal => source().remove(id, { signal }), options),
     loadIcon: (id: string, fingerprint: string, path: string, options?: CatalogCallOptionsV1) => invoke(signal => source().loadIcon(id, fingerprint, path, { signal }), options),
-  });
-}
-
-/** Ledger observation ends with its UI scope; project execution stays in the core. */
-export function scopeApplicationProjects(source: () => ApplicationProjectsV1,
-  signal: AbortSignal, assertActive: () => void): ApplicationProjectsV1 {
-  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: ApplicationProjectCallOptionsV1) =>
-    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
-  return Object.freeze<ApplicationProjectsV1>({
-    getSnapshot: projectId => { assertActive(); signal.throwIfAborted(); return source().getSnapshot(projectId); },
-    subscribe: (projectId, listener) => {
-      assertActive(); signal.throwIfAborted();
-      const stop = source().subscribe(projectId, () => { if (!signal.aborted) listener(); });
-      let stopped = false;
-      const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
-      signal.addEventListener("abort", dispose, { once: true });
-      if (signal.aborted) dispose();
-      return dispose;
-    },
-    refresh: (projectId, options) => invoke(signal => source().refresh(projectId, { signal }), options),
-    control: (input, options) => invoke(signal => source().control(input, { signal }), options),
-    releaseSession: (input, options) => invoke(signal => source().releaseSession(input, { signal }), options),
   });
 }
 

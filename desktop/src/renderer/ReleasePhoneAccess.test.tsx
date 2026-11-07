@@ -24,12 +24,11 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     vi.stubEnv("VITE_ENABLE_ACCOUNT", override);
     vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);
     vi.resetModules();
-    const { SidebarAccountMenu } = await import("./SidebarAccountMenu");
+    const { SidebarSettingsMenu } = await import("./SidebarSettingsMenu");
     const { DesktopControlsProvider } = await import("./DesktopControlsContext");
     const { ApplicationDesktop } = await import("./plugins/ApplicationDesktop");
     const { SettingsView } = await import("./SettingsView");
     const { translateCurrent: t } = await import("./i18n");
-    const { PhoneNavigationContext } = await import("./PhoneNavigationContext");
     const remoteAccount = vi.fn().mockResolvedValue({ username: "test-user" });
     const getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_running: false, pair_uri: null });
     const onRemoteControlEvent = vi.fn(() => () => {});
@@ -46,25 +45,19 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     document.body.append(container);
     root = createRoot(container);
     const onOpenSettings = vi.fn();
-    const onOpenAccount = vi.fn();
-    const openDevices = vi.fn();
     const desktop = new ApplicationDesktop();
     const lifetime = new AbortController();
     await act(async () => root!.render(
-      <PhoneNavigationContext.Provider value={{ openDevices }}>
-        <DesktopControlsProvider controls={desktop.createScope(lifetime.signal)}>
-          <SidebarAccountMenu disabled={false} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
-        </DesktopControlsProvider>
-      </PhoneNavigationContext.Provider>,
+      <DesktopControlsProvider controls={desktop.createScope(lifetime.signal)}>
+        <SidebarSettingsMenu disabled={false} onOpenSettings={onOpenSettings} />
+      </DesktopControlsProvider>,
     ));
-    await act(async () => container!.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
-    const menuItems = Array.from(document.querySelectorAll<HTMLButtonElement>('.sidebar-account-menu [role="menuitem"]'));
-    expect(menuItems.map(item => item.textContent)).toEqual([t("settings.usage"), t("sidebar.settings")]);
-    expect(remoteAccount).not.toHaveBeenCalled();
-    await act(async () => menuItems.find(item => item.textContent === t("sidebar.settings"))!.click());
+    expect(container.querySelectorAll(".sidebar-account-trigger")).toHaveLength(1);
+    expect(container.querySelector(".sidebar-account-menu-trigger")).toBeNull();
+    await act(async () => container!.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
     expect(onOpenSettings).toHaveBeenCalledWith();
-    expect(onOpenAccount).not.toHaveBeenCalled();
-    expect(openDevices).not.toHaveBeenCalled();
+    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
+    expect(remoteAccount).not.toHaveBeenCalled();
 
     const pets = { home: "", enabled: false, selected_id: "", pets: [], errors: [] };
     const engines = { engines: [] };

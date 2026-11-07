@@ -30,7 +30,7 @@ function setup() {
   const base = createPreviewApplication();
   const source = "draft-one";
   let state: ApplicationSnapshotV1 = { ...base.getSnapshot(),
-    tabs: { ...base.getSnapshot().tabs, activeTabId: source, canSubmit: true, items: [{ id: source, kind: "draft" as const, title: "Source", workspaceRoot: "/synthetic", project: false, draftText: "", hasAttachments: false }] },
+    tabs: { ...base.getSnapshot().tabs, activeTabId: source, canSubmit: true, items: [{ id: source, kind: "draft" as const, title: "Source", workspaceRoot: "/synthetic", draftText: "", hasAttachments: false }] },
     drafts: { ...base.getSnapshot().drafts, activeTabId: source, primary: { revision: 0, ownerTabId: source, text: "", imageIds: [], fileIds: [], selections: [] } },
     composerRuntime: { owners: [{ ownerTabId: source, cwd: "/synthetic", available: true, readOnly: false, busy: false, engineLocked: false, engineSelectionPending: false, permissionLocked: false,
       selection: { engine: "wuu", provider: "fixture", model: "Model", effort: "", variant: "", speed: "", modelOptions: {}, permissionMode: "standard", approveForMe: false },
@@ -43,7 +43,7 @@ function setup() {
   let presentationView = Object.freeze({ runtimeMenu: null as "model" | null, ownerTabId: source, threadId: source, available: true, running: false, turnRunning: false, canSteer: false, readOnly: false, status: "Ready",
     configuration: { provider: "fixture", model: "Model", providers: [] }, queryHistory: [], skillRevision: "one", workspaceCapabilities: { create: false, open: false } });
   const empty = Object.freeze([]);
-  const telemetry = Object.freeze({ tokensPerSecond: 0, source: "none" as const, inputTokens: 0, outputTokens: 0 });
+  const telemetry = Object.freeze({});
   const emptyStatus = Object.freeze({ items: empty });
   const presentation: ApplicationComposerPresentationV1 = {
     getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},

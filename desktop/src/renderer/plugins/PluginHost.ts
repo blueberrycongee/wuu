@@ -8,7 +8,7 @@ import { scopeApplicationWorkbench, type UIContributionRegistryV1 } from "../../
 import { ApplicationProviders, type ApplicationProviderBinding, type ApplicationProviderRecord } from "./ApplicationProviders";
 import type { HostApplicationService } from "./HostApplicationService";
 import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
-import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1, ApplicationProviderDefinition,
@@ -185,6 +185,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   setNavigationTitle(id: string, title: string): boolean;
   /** Override an owned navigation icon. null retains prior artwork while loading; undefined restores its manifest icon. */
   setNavigationAvatar(id: string, avatarKey: string | null | undefined): boolean;
+  /** Presentation only: update the visible title of one registered View type. */
+  setViewTitle(id: string, title: string): boolean;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   /** Register a custom content renderer (message, tool result, document, file). */
@@ -511,6 +513,7 @@ interface GenerationState {
   readonly declaredContributions?: PluginContributionDeclarations;
   readonly navigationTitles: Map<string, string>;
   readonly navigationAvatars: Map<string, string | null>;
+  readonly viewTitles: Map<string, string>;
   readonly commands: CommandRecord[];
   readonly conversationCards: ConversationCardRecord[];
   readonly styles: StyleRecord[];
@@ -918,7 +921,6 @@ export class PluginHost {
       onboarding: scopeApplicationOnboarding(() => service().onboarding, lifetime.signal, assertApplicationActive),
       browser: scopeApplicationBrowser(() => service().browser, lifetime.signal, assertApplicationActive),
       fileSelection: scopeApplicationFileSelection(() => service().fileSelection, lifetime.signal, assertApplicationActive),
-      projects: scopeApplicationProjects(() => service().projects, lifetime.signal, assertApplicationActive),
       terminals: scopeApplicationTerminals(() => service().terminals, lifetime.signal, assertApplicationActive),
       catalog: scopeApplicationCatalog(() => service().catalog, lifetime.signal, assertApplicationActive),
       previewContent: scopeApplicationPreviewContent(() => service().previewContent, lifetime.signal, assertApplicationActive),
@@ -1654,6 +1656,17 @@ export class PluginHost {
         return true;
       },
 
+      setViewTitle: (id: string, title: string) => {
+        this.assertUsable(state);
+        if (!state.views.some(record => !record.removed && record.id === id)) return false;
+        const normalized = typeof title === "string" ? title.trim() : "";
+        if (!normalized || Array.from(normalized).length > 64) throw new Error("View title must contain 1–64 characters");
+        if (state.viewTitles.get(id) === normalized) return true;
+        state.viewTitles.set(id, normalized);
+        if (state.active) this.refreshPublicState();
+        return true;
+      },
+
       registerViewType: (definition: ViewTypeDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "view", definition.id);
@@ -2056,7 +2069,10 @@ export class PluginHost {
       commands.push(...state.commands.filter((record) => !record.removed));
       locales.push(...state.locales.filter((record) => !record.removed));
       styles.push(...state.styles.filter((record) => !record.removed));
-      views.push(...state.views.filter((record) => !record.removed));
+      views.push(...state.views.filter((record) => !record.removed).map((record) => {
+        const title = state.viewTitles.get(record.id);
+        return title === undefined ? record : { ...record, definition: { ...record.definition, title } };
+      }));
       viewPlacements.push(...state.viewPlacements.filter((record) => !record.removed));
       renderers.push(...state.renderers.filter((record) => !record.removed));
       themeTokens.push(...state.themeTokens.filter((record) => !record.removed));
@@ -2082,7 +2098,7 @@ export class PluginHost {
     }
 
     const nextViews = Object.freeze(views.sort(compareOrdered).map(toPublicViewType));
-    if (replaceSnapshots || !sameContributions(this.viewSnapshot, nextViews)) {
+    if (replaceSnapshots || !sameContributions(this.viewSnapshot, nextViews) || this.viewSnapshot.some((view, index) => view.title !== nextViews[index]?.title)) {
       this.viewSnapshot = nextViews;
       changed = true;
     }
@@ -2335,6 +2351,7 @@ function createGenerationState(
     declaredContributions,
     navigationTitles: new Map(),
     navigationAvatars: new Map(),
+    viewTitles: new Map(),
     shells: [],
     applicationProviders: [],
     uiSlots: [],

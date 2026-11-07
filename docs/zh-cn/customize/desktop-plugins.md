@@ -55,7 +55,7 @@ api.registerUIContribution({
 
 默认会话 provider 仅在会话为空时渲染 `wuu.default-conversation/welcome`；输入框和消息流位于该 Slot 之外。内容贡献可替换整个欢迎页，也可分别替换 `wuu.default-conversation/welcome.greeting`、`welcome.mascot` 或 `welcome.usage`。返回 `null` 可隐藏某一部分。每个 Slot 只接受一个内容提供方，并遵循上述冲突、包装和卸载规则。
 
-欢迎页的 context 为 `ConversationWelcomeContextV1`：包含 `projectDraft` 和三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。各部分的 context 包含 `projectDraft`；项目草稿或没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
+欢迎页的 context 为 `ConversationWelcomeContextV1`：包含三个 React 节点 `greeting`、`mascot`、`usage`。每个节点都包含自己的 Slot 和默认内容，因此替换布局可以排列或省略这些节点，无需导入私有组件。每个节点最多渲染一次。没有用量时默认不显示用量摘要。默认问候在适用时包含工作区切换控件；替换问候也会替换该控件。默认吉祥物和用量卡片的闲置互动依赖默认欢迎页容器及这两个默认内容。
 
 例如，以下布局将用量摘要移到问候上方并隐藏吉祥物：
 
@@ -285,9 +285,9 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 注册项属于插件 generation，卸载时一起移除。原生桌面退出时，Wuu 先卸载 React 消费者、取消待完成的激活、按依赖反序清理插件并发送完激活报告，然后断开 renderer 并停止后端进程。renderer 若在十秒内无法确认清理完成，会被关闭，失败会记录到日志。这种生命周期管理不是安全沙箱，受信任的 renderer 代码和 CSS 仍可能出错。应保留默认界面的恢复路径、处理异步动作错误，并测试禁用和重载，而不只检查初次渲染。包的信任和更新行为见[插件管理](plugins.md)。
 
-### 运行时导航显示名称
+### 运行时显示名称
 
-`api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。入口未声明时返回 `false`；无效标题及已卸载代次的调用会报错。这只是显示覆盖，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。
+`api.setNavigationTitle(id, title)` 只更新调用方插件当前代次已声明的导航入口；`api.setViewTitle(id, title)` 更新一个已注册 View 类型的可见标题。标题会去除首尾空白，长度须为 1–64 个 Unicode 字符。ID 不存在时返回 `false`；无效标题及已卸载代次的调用会报错。这些覆盖只影响显示，重新加载后重置，不改变路由、设置页标签或其他插件。用户偏好仍由插件已有运行时服务持久化，加载或保存后再同步已存标题。
 
 `api.setNavigationAvatar(id, avatarKey)` 使用同一格式的样式键，为自己声明的导航入口设置静态 `Avatar`。个人助手、项目智能体等入口都可使用，不改变全局品牌。加载时传入 `null` 可保留上一代次的头像，冷启动时显示空图标占位；传入 `undefined` 则恢复声明的图标。未声明入口返回 `false`，无效样式和已卸载代次的调用会报错。覆盖仅为当前入口的临时呈现，持久化身份与 revision 顺序仍由插件管理。运行时调用要求代次已激活：订阅贡献变化并通过 `getGenerationActivation` 确认激活后再读取身份，加载或保存后发布。导航提供者可读取入口上的可选 `avatarKey`，其中 `null` 表示加载占位。兼容旧宿主时先检测该方法。
 

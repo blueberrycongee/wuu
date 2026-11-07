@@ -10,7 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 )
 
-//go:generate go run ../../cmd/wuu-modelcatalog-gen -input https://models.dev/api.json -output models_dev_catalog.json
+//go:generate go run ../../cmd/wuu-modelcatalog-gen -input https://models.dev/api.json -output models_dev_catalog.json -legacy-output retired_models.json
 
 //go:embed models_dev_catalog.json
 var catalogJSON []byte
@@ -118,6 +118,12 @@ func CodexSubscriptionCatalogProvider(modelIDs ...string) (Provider, bool) {
 	for _, model := range openai.Models {
 		id := strings.TrimSpace(model.ID)
 		apiID := strings.TrimSpace(model.APIID)
+		// Subscription discovery establishes access to the base model. Only
+		// priority processing is a supported local alias; API-only Pro and
+		// Ultrafast modes do not imply subscription entitlement.
+		if apiID != "" && model.Options["serviceTier"] != "priority" {
+			continue
+		}
 		if requested[id] || (apiID != "" && requested[apiID]) {
 			filtered.Models = append(filtered.Models, model)
 		}
@@ -813,6 +819,18 @@ func normalizeEndpoint(value string) string {
 		// while treating both official hosts as the same catalog identity.
 		if parsed.Host == "api.minimax.cn" {
 			parsed.Host = "api.minimaxi.com"
+		}
+		// Keep saved connection identities after official endpoint migrations.
+		if parsed.Host == "api.lkeap.cloud.tencent.com" && strings.HasPrefix(parsed.Path, "/plan/") {
+			parsed.Host = "tokenhub.tencentmaas.com"
+		}
+		if parsed.Host == "opencode.ai" {
+			switch strings.TrimRight(parsed.Path, "/") {
+			case "/zen", "/zen/v1":
+				parsed.Path = "/inference/openai/v1"
+			case "/zen/go", "/zen/go/v1":
+				parsed.Path = "/inference/go/openai/v1"
+			}
 		}
 		parsed.RawQuery = ""
 		parsed.Fragment = ""

@@ -17,7 +17,7 @@ async function readRibbonInteraction(win) {
       mounted: Boolean(rail), expanded: rail?.dataset.expanded ?? null, docked: rail?.dataset.docked ?? null,
       focusedWithin: Boolean(rail?.contains(active)), activeElement: active ? { tag: active.tagName, className: active.className,
         ribbonID: active.getAttribute('data-ribbon-id'), role: active.getAttribute('role') } : null,
-      accountExpanded: document.querySelector('.sidebar-account-trigger')?.getAttribute('aria-expanded') ?? null };
+      accountExpanded: document.querySelector('.sidebar-account-menu-trigger')?.getAttribute('aria-expanded') ?? null };
   })()`).catch(error => ({ unavailable: String(error) }));
   snapshot.native = await Promise.all(['account'].map(async kind => {
     const view = win.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
@@ -291,18 +291,6 @@ async function runWebsiteAcceptance(h, fixture) {
     }
     return point(target);
   }
-  async function liveChrome(kind, wc, label) {
-    await until(() => chromeView(kind)?.getVisible(), `${label}: trusted native ${kind} painted`);
-    const overlay = chromeView(kind), view = win.contentView.children.find(view => view.webContents === wc);
-    assert.ok(view?.getVisible(), `${label}: the real website stays visible`);
-    const bounds = view.getBounds(), ticks = await wc.executeJavaScript('window.fixtureFrames'), animation = await wc.executeJavaScript("getComputedStyle(document.querySelector('#live-marker')).transform");
-    await delay(160);
-    assert.ok(view.getVisible() && await wc.executeJavaScript('window.fixtureFrames') > ticks, `${label}: guest frames continue under native chrome`);
-    assert.notEqual(await wc.executeJavaScript("getComputedStyle(document.querySelector('#live-marker')).transform"), animation, `${label}: visible fixture animation advances`);
-    assert.deepEqual(view.getBounds(), bounds, `${label}: native chrome does not resize the page`);
-    assert.ok(win.contentView.children.indexOf(overlay) > win.contentView.children.indexOf(view), `${label}: native chrome is stacked above the live website`);
-    report.actions.push({ label: `${label}-live-native-chrome`, kind, contentsID: wc.id, bounds, overlayBounds: overlay.getBounds(), atMs: Date.now() - started }); save();
-  }
   async function until(predicate, label, timeout = 12000) {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) { if (await predicate()) return; await delay(40); }
@@ -498,9 +486,7 @@ async function runWebsiteAcceptance(h, fixture) {
     await settle();
     if (evidence) await capture(`after-${label}`);
     if (inRail && !retainHover) {
-      // An open account menu intentionally retains the rail until dismissal.
-      const menuRetains = chromeView('account')?.getVisible() || await evaluate(() => [...document.querySelectorAll('.sidebar-account-menu[role=menu]')].some(node => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== 'hidden'));
-      await leaveRail(!menuRetains);
+      await leaveRail(true);
     }
   }
   async function mascotGaze() {
@@ -752,7 +738,7 @@ async function runWebsiteAcceptance(h, fixture) {
     assert.ok(win.contentView.children.indexOf(layer.top) > win.contentView.children.indexOf(view), `${label}: native popover is above the page`);
     report.actions.push({ label: `${label}-live-popover`, contentsID: layer.view.webContents.id, pageID: wc.id, bounds, clip: layer.top.getBounds(), atMs: Date.now() - started }); save();
   }
-  async function profileMenu(label, wc) {
+  async function settingsOverlay(label, wc) {
     if (label === 'narrow-new-tab') await pointAtTab((await readSite()).activeTabId);
     if (label === 'narrow-new-tab') {
       const alignment = await evaluateRibbon(() => {
@@ -769,47 +755,29 @@ async function runWebsiteAcceptance(h, fixture) {
       `Narrow large-type footer rows and icons share the upper tab axes in the current ribbon width: ${JSON.stringify(alignment)}`);
       report.actions.push({ label: 'narrow-ribbon-footer-alignment', atMs: Date.now() - started, alignment }); save();
     }
-    await click('.sidebar-account-trigger', `open-profile-${label}`);
-    await until(() => chromeView('account')?.getVisible(), 'Native account panel paints');
-    const account = chromeView('account');
-    if (wc) await liveChrome('account', wc, `profile-${label}`);
-    const geometry = await evaluateContents(account.webContents, () => {
-      const menu = document.querySelector('.sidebar-account-menu'), r = menu.getBoundingClientRect();
+    await click('[data-settings-entry="settings"]', `open-settings-${label}`);
+    await until(() => evaluate(() => Boolean(document.querySelector('.settings-shell'))), 'Settings layer paints');
+    const liveView = wc ? win.contentView.children.find(view => view.webContents === wc) : undefined;
+    if (liveView) await until(() => !liveView.getVisible(), 'Settings occludes the live website');
+    const geometry = await evaluate(() => {
+      const layer = document.querySelector('.settings-shell'), r = layer.getBoundingClientRect();
       return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, viewport: { width: innerWidth, height: innerHeight },
-        hit: [r.left + 8, r.right - 8].every(x => menu.contains(document.elementFromPoint(x, r.top + r.height / 2))),
-        items: [...menu.querySelectorAll('[role="menuitem"]')].map(item => {
-          const b = item.getBoundingClientRect();
-          return { text: item.textContent, hit: item.contains(document.elementFromPoint(b.right - 8, b.top + b.height / 2)) };
-        }) };
+        hit: [r.left + 8, r.right - 8].every(x => layer.contains(document.elementFromPoint(x, r.top + r.height / 2))) };
     });
-    const nativeBounds = account.getBounds(), [windowWidth, windowHeight] = win.getContentSize();
+    const [windowWidth, windowHeight] = win.getContentSize();
     assert.ok(geometry.left >= 0 && geometry.top >= 0 && geometry.right <= geometry.viewport.width + 1
-      && geometry.bottom <= geometry.viewport.height + 1 && geometry.hit && geometry.items.every(item => item.hit)
-      && nativeBounds.x >= 0 && nativeBounds.y >= 0 && nativeBounds.x + nativeBounds.width <= windowWidth && nativeBounds.y + nativeBounds.height <= windowHeight,
-    `Full native account panel is readable and hit-testable: ${JSON.stringify({geometry,nativeBounds})}`);
-    await capture(`profile-over-${label}`);
+      && geometry.bottom <= geometry.viewport.height + 1 && geometry.hit
+      && geometry.viewport.width === windowWidth && geometry.viewport.height === windowHeight,
+    `Full settings layer is readable and hit-testable: ${JSON.stringify(geometry)}`);
+    await capture(`settings-over-${label}`);
     xinput(['key', '--clearmodifiers', 'Escape']);
-    await until(() => !account.getVisible(), 'Escape dismisses native account panel');
-    await finishRailInteraction(wc, 'profile-dismissal');
+    await until(() => evaluate(() => !document.querySelector('.settings-shell')), 'Escape dismisses the settings layer');
+    await finishRailInteraction(wc, 'settings-dismissal');
     if (wc) {
-      geometry.keyboardDepartures = [];
-      for (const chord of ['Tab', 'shift+Tab']) {
-        await click('.sidebar-account-trigger', `profile-${chord}-departure`, false);
-        await until(() => account.getVisible() && account.webContents.isFocused(), 'Native account panel owns keyboard focus');
-        xinput(['key', '--clearmodifiers', chord]);
-        await until(() => !account.getVisible(), `${chord} dismisses native account`);
-        await waitFor(() => document.activeElement?.matches('.sidebar-account-trigger'));
-        assert.ok(win.webContents.isFocused(), `${chord} returns keyboard ownership to the shell account trigger`);
-        assert.ok(win.contentView.children.find(view => view.webContents === wc)?.getVisible(), 'Keyboard dismissal never hides the live website');
-        await finishRailInteraction(wc, `profile-${chord}`);
-        geometry.keyboardDepartures.push({ chord, nativeContentsID: wc.id });
-      }
-      await click('.sidebar-account-trigger', 'profile-first-outside-click', false);
-      await until(() => account.getVisible(), 'Account shown before outside input');
-      await pageClick(wc, '#draft', 'first-click-outside-native-account');
-      await until(() => !account.getVisible(), 'Outside page click dismisses account');
-      assert.ok(wc.isFocused() && await wc.executeJavaScript('document.activeElement.id === "draft"'), 'The first click outside the bounded overlay reaches the website');
-      await capture('profile-keyboard-departures');
+      await until(() => liveView.getVisible(), 'Live website is restored once settings closes');
+      await pageClick(wc, '#draft', 'page-input-after-settings');
+      assert.ok(wc.isFocused() && await wc.executeJavaScript('document.activeElement.id === "draft"'), 'The website receives input once the settings layer is dismissed');
+      await capture('settings-dismissed-live-page');
     }
     return geometry;
   }
@@ -1188,8 +1156,9 @@ async function runWebsiteAcceptance(h, fixture) {
   await testNative('ribbon reorders Chat away from first with real keyboard and pointer', async () => {
     await openSite('Fixture Alpha', '/alpha');
     const before = await evaluate(() => [...document.querySelectorAll('.sidebar-ribbon-main [data-ribbon-id]')].map(node => node.dataset.ribbonId));
-    await click('.sidebar-account-trigger', 'anchor-ribbon-keyboard'); xinput(['key', 'Escape']);
-    await waitFor(() => document.activeElement?.matches('.sidebar-account-trigger'));
+    await evaluate(() => document.querySelector('[data-settings-entry="settings"]').focus());
+    report.actions.push({ label: 'anchor-ribbon-keyboard', input: 'focus', atMs: Date.now() - started });
+    await waitFor(() => document.activeElement?.matches('[data-settings-entry="settings"]'));
     for (let step = 0; step < before.length * 2 + 4; step++) {
       xinput(['key', '--clearmodifiers', 'shift+Tab']); await delay(60);
       if (await evaluateRibbon(id => document.activeElement?.dataset.ribbonId === id, alphaID)) break;
@@ -1326,7 +1295,7 @@ async function runWebsiteAcceptance(h, fixture) {
           await waitFor(selector => document.activeElement?.matches(selector), startInput);
           await hidden('new-tab start page');
           await capture(`new-tab-${theme}-${width}-font-${size}`);
-          if (width === 440) await profileMenu('narrow-new-tab');
+          if (width === 440) await settingsOverlay('narrow-new-tab');
           await closeActiveTab('return-from-visual-new-tab');
           visualTabID = undefined;
           await openSite('Fixture Alpha', '/alpha');
@@ -1524,9 +1493,9 @@ async function runWebsiteAcceptance(h, fixture) {
     await click(suggestion(origin + '/history-target'), 'choose-history-with-pointer');
     await until(() => nativeView('/history-target')?.getVisible() && !nativeView('/history-target').webContents.isLoading(), 'Pointer selection opens stored history URL');
     const selectedPage = nativeView('/history-target').webContents;
-    const profile = await profileMenu('live-website', selectedPage);
+    const settingsGeometry = await settingsOverlay('live-website', selectedPage);
     assert.equal(selectedPage.getURL(), origin + '/history-target');
-    await capture('profile-dismissed-native-page-restored');
+    await capture('settings-dismissed-native-page-restored');
     await closeActiveTab('close-suggestion-journey-tab');
     assert.equal((await readSite()).tabs.length, tabsBeforeStart, 'Closing suggestion journey removes exactly its one tab');
     await openSite('Fixture Alpha', '/history-target');
@@ -1548,7 +1517,7 @@ async function runWebsiteAcceptance(h, fixture) {
     assert.ok(state.bookmarks.some(bookmark => bookmark.url === origin + '/alpha'), 'Clearing history retains bookmarks');
     clearedHistoryURL = origin + '/history-target';
     await capture('cleared-history-retained-bookmark'); xinput(['key', 'Escape']);
-    return { history: state.history.length, bookmarks: state.bookmarks.length, keyboardAndPointerSuggestions: true, profile, gaze };
+    return { history: state.history.length, bookmarks: state.bookmarks.length, keyboardAndPointerSuggestions: true, settingsGeometry, gaze };
   });
 
   await testNative('failed website navigation retries requested destination', async () => {

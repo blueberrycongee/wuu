@@ -17,7 +17,7 @@ import { visibleWorkbenchView } from "./Workbench";
 import type { ThreadMutationActions } from "../ThreadMutationActions";
 
 const actions = new Set<keyof Actions>([
-  "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread", "navigation.adopt-thread",
+  "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread",
   "navigation.create-folder", "navigation.rename-folder", "navigation.delete-folder", "navigation.reorder-folders", "navigation.move-to-folder",
   "navigation.close-plugin", "navigation.reveal-region", "navigation.open-plugin", "navigation.show-native", "navigation.show-search", "navigation.show-account", "navigation.focus-workspace", "navigation.focus-composer",
   "navigation.reveal-thread", "navigation.open-external", "navigation.load-icon", "navigation.account-status", "navigation.account-logout", "navigation.install-update",
@@ -43,6 +43,9 @@ export class ApplicationNavigation {
   private composerFocusRequest?: { id: number; tabId: string };
   private snapshot?: ApplicationNavigationViewV1;
   private snapshotKey = "";
+  private threadInputs: readonly unknown[] = [];
+  private threadRows: NavigationReadonly<ThreadSummary[]> = [];
+  private threadRowsKey = "";
   private folderRevision = 0;
   private runningThreadIds: ReadonlySet<string> = new Set();
   private folderQueue: Promise<unknown> = Promise.resolve();
@@ -94,8 +97,21 @@ export class ApplicationNavigation {
     const workbench = this.host.getWorkbench().getSnapshot();
     const active = visibleWorkbenchView(workbench, "primary");
     const browser = this.browser.getSnapshot();
-    const threads = this.threads().filter(row => !row.ephemeral);
-    const rows = summarizeThreadsForSidebar(threads, presentationRunningThreadIDs(threads, this.runningThreadIds));
+    const cache = this.host.sidebarCache.getSnapshot();
+    const inputs = [cache.workspaceThreadsByWorkspaceID, state.threads, state.thread, state.secondaryThread, this.runningThreadIds];
+    if (inputs.some((input, index) => input !== this.threadInputs[index])) {
+      this.threadInputs = inputs;
+      const threads = this.threads().filter(row => !row.ephemeral);
+      const rows = summarizeThreadsForSidebar(threads, presentationRunningThreadIDs(threads, this.runningThreadIds));
+      const key = JSON.stringify(rows);
+      // History deltas and composer changes often leave navigation unchanged.
+      // Retain the frozen projection so every sidebar consumer can reuse it.
+      if (key !== this.threadRowsKey) {
+        this.threadRowsKey = key;
+        this.threadRows = immutable(rows);
+      }
+    }
+    const rows = this.threadRows;
     const view = {
       initialized: Boolean(state.initialized), activeContextKind: state.activeContext?.kind, selectedWorkspaceId: state.activeProjectId,
       workspaces: state.projects, threads: rows,
@@ -111,18 +127,19 @@ export class ApplicationNavigation {
         || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, viewTypeId: active.view.viewTypeId, context: active.view.context, pluginId: active.view.pluginId, title: active.definition.title, layout: active.definition.layout, webPage: workbench.webPageViewIds.includes(active.view.id) },
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
-      projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
+      accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
       update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < this.host.getWebWorkspace().limits.tabs, canReopenTab: Boolean(browser.canReopenTab) },
       activeWebsiteId: this.activeWebsiteId && browser?.tabs?.some(row => row.id === this.activeWebsiteId) ? this.activeWebsiteId : undefined,
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
     };
-    const key = JSON.stringify(view);
-    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.activePluginView?.context !== active?.view.context) {
+    const key = JSON.stringify({ ...view, threads: undefined });
+    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.threads !== rows || this.snapshot.activePluginView?.context !== active?.view.context) {
       this.snapshotKey = key;
       // Page-local stores use the workbench's frozen context as their instance key.
       // Copy data rows, but retain that object for the page and its contextual UI.
       this.snapshot = Object.freeze({
-        ...immutable({ ...view, activePluginView: undefined }),
+        ...immutable({ ...view, threads: undefined, activePluginView: undefined }),
+        threads: rows,
         activePluginView: view.activePluginView && Object.freeze(view.activePluginView),
       }) as ApplicationNavigationViewV1;
     }
@@ -277,11 +294,6 @@ export class ApplicationNavigation {
         result = await this.host.mutationActions(signal).archiveThread(this.thread(threadId), { force }); break;
       }
       case "navigation.delete-thread": await this.host.mutationActions().deleteThread(this.thread((input as Actions["navigation.delete-thread"]["input"]).threadId)); break;
-      case "navigation.adopt-thread": {
-        const { threadId, projectId } = input as Actions["navigation.adopt-thread"]["input"];
-        const response = await window.wuu.projectSession!({ action: "adopt", project_id: projectId, session_id: threadId });
-        this.host.sidebarCache.updateCachedSidebarThread(response.thread); break;
-      }
       case "navigation.create-folder": {
         const { name, threadId } = input as Actions["navigation.create-folder"]["input"];
         const { group } = await window.wuu.createSessionFolder(name);

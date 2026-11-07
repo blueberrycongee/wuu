@@ -66,6 +66,8 @@ import { SettingsRow } from "./SettingsRow";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
+import { Switch } from "./ui/Switch";
+import { SegmentedControl } from "./ui/SegmentedControl";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -870,7 +872,7 @@ function ServiceDetail({
       />
 
       <details className="connection-engine-advanced">
-        <summary>{t("connection.advanced")}</summary>
+        <summary><ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("connection.advanced")}</summary>
         <p className="settings-muted-line">{t("connection.localPreferences")}</p>
         {canMakeDefault ? <button type="button" className="settings-button" data-testid="settings-provider-make-default" disabled={disabled}
           onClick={() => void run(() => onSave(provider.name, provider.model, undefined, undefined, normalizedVariantForProviderModel(currentVariant, provider, provider.model)))}>{t("provider.makeDefault")}</button> : null}
@@ -1306,8 +1308,8 @@ function ModelChoices({
                 <span className="model-choice-label"><span className="model-choice-name">{name}</span>{selected ? <Check className="icon model-choice-selected" aria-hidden="true" /> : null}</span>
               </button>
               <code className="connection-model-id">{model.id}</code>
-              <button type="button" className="settings-switch connection-model-enabled" role="switch" aria-label={`${t("connection.enabled")} ${name}`} aria-checked={!preferences.get(preferenceKey).hiddenModels.includes(model.id)} disabled={disabled || selected}
-                onClick={() => updatePreference(() => preferences.setModelVisible(preferenceKey, model.id, preferences.get(preferenceKey).hiddenModels.includes(model.id)))}><span className="settings-switch-thumb" /></button>
+              <Switch className="connection-model-enabled" aria-label={`${t("connection.enabled")} ${name}`} checked={!preferences.get(preferenceKey).hiddenModels.includes(model.id)} disabled={disabled || selected}
+                onClick={() => updatePreference(() => preferences.setModelVisible(preferenceKey, model.id, preferences.get(preferenceKey).hiddenModels.includes(model.id)))} />
               <span className="connection-model-order">
                 <GripHorizontal className="icon" aria-hidden="true" />
                 <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("connection.moveUp", { name })} disabled={disabled || models[0]?.id === model.id} onClick={() => updatePreference(() => preferences.moveModel(preferenceKey, models, model.id, -1))}><ArrowUp className="icon" /></button>
@@ -1736,13 +1738,12 @@ function ConnectServiceDialog({
         {target.kind === "custom" ? (
           <div className="model-connect-field">
             <span>{t("provider.protocol")}</span>
-            <div className="theme-segmented" role="group" aria-label={t("provider.protocol")}>
-              {(["openai-compatible", "anthropic"] as const).map((value) => (
-                <button key={value} type="button" aria-pressed={protocol === value} onClick={() => setProtocol(value)}>
-                  {value === "anthropic" ? t("provider.anthropicCompatible") : t("provider.openaiCompatible")}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl label={t("provider.protocol")} value={protocol}
+              options={[
+                { value: "openai-compatible", label: t("provider.openaiCompatible") },
+                { value: "anthropic", label: t("provider.anthropicCompatible") },
+              ]}
+              onChange={setProtocol} />
           </div>
         ) : null}
         {target.kind === "custom" ? (
@@ -1801,17 +1802,12 @@ function ConnectServiceDialog({
         </div>
         <div className="model-connect-toggle">
           <span id={`${fieldID}-default`}>{t("provider.useAsDefault")}</span>
-          <button
-            type="button"
-            className="settings-switch"
-            role="switch"
-            aria-checked={makeDefault}
+          <Switch
+            checked={makeDefault}
             aria-labelledby={`${fieldID}-default`}
             data-testid="settings-provider-connect-default"
             onClick={() => setMakeDefault((value) => !value)}
-          >
-            <span className="settings-switch-thumb" aria-hidden="true" />
-          </button>
+          />
         </div>
         <details className="model-connect-advanced">
           <summary><ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("provider.advanced")}</summary>

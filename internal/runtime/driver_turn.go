@@ -170,7 +170,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		} else {
 			round, runErr = turn.CallModel(ctx, request)
 		}
-		result := pluginprotocol.DriverTurnModelResult{CompletedMessages: modelwire.DriverMessagesToWire(round.CompletedMessages), Messages: modelwire.DriverMessagesToWire(round.Messages), ToolBatchID: round.ToolBatchID, ToolWorkStarted: round.ToolWorkStarted}
+		result := pluginprotocol.DriverTurnModelResult{CompletedMessages: modelwire.DriverMessagesToWire(round.CompletedMessages), Messages: modelwire.DriverMessagesToWire(round.Messages), ToolBatchID: round.ToolBatchID, ToolWorkStarted: round.ToolWorkStarted, Preempted: round.Preempted}
 		result.Failure = loopdriver.FailureToWire(runErr)
 		if round.Usage != nil {
 			usage := modelwire.TokenUsageToWire(*round.Usage)

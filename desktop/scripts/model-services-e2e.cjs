@@ -194,7 +194,6 @@ async function run() {
   main.setSize(1280, 900);
   await waitFor(main, () => document.querySelector('.composer textarea'));
 
-  await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-entry="settings"]'));
   await click(main, '[data-settings-entry="settings"]');
   await waitFor(main, () => document.querySelector('.settings-nav [data-wuu-page="providers"]'));
@@ -322,7 +321,6 @@ async function run() {
   await capture(main, '05b-selected-model-removed.png');
   main.reload();
   await waitFor(main, () => document.querySelector('.composer textarea'));
-  await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-entry="settings"]'));
   await click(main, '[data-settings-entry="settings"]');
   await waitFor(main, () => document.querySelector('.settings-nav [data-wuu-page="providers"]'));

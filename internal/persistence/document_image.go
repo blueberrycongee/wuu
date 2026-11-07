@@ -52,34 +52,40 @@ func AccessDocumentImage(ctx context.Context, documents Documents, namespace, ke
 	if documents == nil {
 		return fmt.Errorf("%w: selected document provider is unavailable", ErrClosed)
 	}
+	return Update(ctx, documents, func(tx *Tx) error {
+		return AccessDocumentImageInTransaction(tx, namespace, key, importLegacy, body)
+	})
+}
+
+// AccessDocumentImageInTransaction shares one migration commit across a catalog
+// of domain images. Import and body follow the same retry rules as Update.
+func AccessDocumentImageInTransaction(tx *Tx, namespace, key string, importLegacy func(*DocumentImage) error, body func(*DocumentImage) error) error {
 	if key == "" {
 		return fmt.Errorf("%w: domain scope is required", ErrInvalid)
 	}
-	return Update(ctx, documents, func(tx *Tx) error {
-		image := &DocumentImage{Version: 1, Values: make(map[string]json.RawMessage)}
-		found, err := tx.Get(namespace, key, image)
-		if err != nil {
-			return err
-		}
-		if !found {
-			if importLegacy != nil {
-				if err := importLegacy(image); err != nil {
-					return err
-				}
+	image := &DocumentImage{Version: 1, Values: make(map[string]json.RawMessage)}
+	found, err := tx.Get(namespace, key, image)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if importLegacy != nil {
+			if err := importLegacy(image); err != nil {
+				return err
 			}
-			image.dirty = true
 		}
-		if image.Version != 1 {
-			return fmt.Errorf("%w: unsupported domain image version %d", ErrCorrupt, image.Version)
-		}
-		if err := body(image); err != nil {
-			return err
-		}
-		if !image.dirty {
-			return nil
-		}
-		return tx.Put(namespace, key, image)
-	})
+		image.dirty = true
+	}
+	if image.Version != 1 {
+		return fmt.Errorf("%w: unsupported domain image version %d", ErrCorrupt, image.Version)
+	}
+	if err := body(image); err != nil {
+		return err
+	}
+	if !image.dirty {
+		return nil
+	}
+	return tx.Put(namespace, key, image)
 }
 
 // MergeLegacyCollection combines copies discovered under historical workspace

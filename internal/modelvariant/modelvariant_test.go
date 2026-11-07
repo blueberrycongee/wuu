@@ -134,7 +134,7 @@ func TestSummariesUseExplicitXAIReasoningEfforts(t *testing.T) {
 		model string
 		want  string
 	}{
-		{model: "grok-4.3", want: "none,low,medium,high"},
+		{model: "grok-4.3", want: "none,low,medium,high,xhigh"},
 		{model: "grok-4.20-multi-agent-0309", want: "low,medium,high,xhigh"},
 	}
 	for _, tc := range tests {

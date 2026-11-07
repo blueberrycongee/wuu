@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func openCodeTestSession(t *testing.T, scenario string, binding agentengine.ThreadBinding) agentengine.Session {
@@ -94,9 +95,41 @@ func TestOpenCodeStreamingReconciliationAndResume(t *testing.T) {
 		if ref != "ses_native" || result.Result.Content != "Hello world" || text.String() != "Hello world" || done != 1 || approvals != 1 || ends != 1 {
 			t.Fatalf("ref=%s result=%+v text=%q done=%d approvals=%d ends=%d", ref, result, text.String(), done, approvals, ends)
 		}
-		if result.Result.InputTokens != 10 || result.Result.OutputTokens != 5 || result.Result.CacheReadTokens != 2 || len(result.Result.NewMessages) != 1 || result.Result.NewMessages[0].ReasoningContent != "Thinking" {
+		if result.Result.InputTokens != 10 || result.Result.OutputTokens != 5 || result.Result.CacheReadTokens != 2 || len(result.Result.NewMessages) != 2 || result.Result.NewMessages[0].ReasoningContent != "Thinking" {
 			t.Fatalf("missing or duplicated usage/reasoning: %+v", result)
 		}
+		if result.Result.NewMessages[1].Role != "tool" || result.Result.NewMessages[1].Content != "file contents" {
+			t.Fatalf("missing tool result message: %+v", result.Result.NewMessages)
+		}
+	}
+}
+
+func TestOpenCodeToolAttachmentsFlowIntoResultDetail(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var detail *toolresult.Result
+	_, err := openCodeTestSession(t, "media", testBinding()).RunTurn(ctx, testInput(), func(event providers.StreamEvent) {
+		if event.Type == providers.EventToolUseEnd {
+			detail = event.ToolResultDetail
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail == nil {
+		t.Fatal("tool result detail missing")
+	}
+	var sawImage, sawFile bool
+	for _, part := range detail.Content {
+		switch part.Type {
+		case toolresult.ContentTypeImage:
+			sawImage = part.Data == "aW1hZ2U=" && part.MIMEType == "image/png" && part.Name == "shot.png"
+		case toolresult.ContentTypeFile:
+			sawFile = part.URI == "file:///tmp/report.pdf" && part.Name == "report.pdf" && part.MIMEType == "application/pdf"
+		}
+	}
+	if !sawImage || !sawFile {
+		t.Fatalf("detail content = %+v", detail.Content)
 	}
 }
 
@@ -334,6 +367,12 @@ func TestOpenCodeHelper(t *testing.T) {
 			}
 			tool := part("prt_tool", "tool", "")
 			tool["callID"], tool["tool"], tool["state"] = "tool_read", "read", map[string]any{"status": "completed", "input": map[string]string{"path": "README.md"}, "output": "file contents"}
+			if scenario == "media" {
+				tool["state"].(map[string]any)["attachments"] = []any{
+					map[string]string{"type": "file", "mime": "image/png", "filename": "shot.png", "url": "data:image/png;base64,aW1hZ2U="},
+					map[string]string{"type": "file", "mime": "application/pdf", "filename": "report.pdf", "url": "file:///tmp/report.pdf"},
+				}
+			}
 			if scenario == "unfinished-tool" {
 				tool["state"] = map[string]string{"status": "running"}
 			}

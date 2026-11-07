@@ -85,8 +85,42 @@ async function focusedComposer() {
     return input && !input.disabled && !input.closest("[inert]") && document.hasFocus() && document.activeElement === input;
   }), "native click focuses the composer");
 }
+// The production shell no longer presents the account menu: the settings gear
+// is a one-click entry and the menu only exists in development builds. The
+// fixture owns the public chromeOverlay bridge directly, so the full native
+// transport (prepare, paint, commands, fencing, retirement) is still exercised
+// against the real shipping overlay renderer.
+async function presentMenu() {
+  await evaluate(win.webContents, () => {
+    if (!window.__menu) {
+      window.__menu = { token: "", generation: 1, open: false, events: [] };
+      window.wuu.chromeOverlay.onEvent(event => {
+        if (event.token !== window.__menu.token) return;
+        window.__menu.events.push(event);
+        if (event.command.type === "dismiss") window.__menu.open = false;
+      });
+    }
+    const token = crypto.randomUUID();
+    window.__menu.token = token;
+    window.__menu.open = true;
+    window.__menu.events = [];
+    void window.wuu.chromeOverlay.show({ version: 1, token, generation: window.__menu.generation, focus: true,
+      bounds: { x: 8, y: innerHeight - 156, width: 240, height: 140 },
+      appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale: "en-US",
+        fontFamily: getComputedStyle(document.documentElement).fontFamily, variables: {} },
+      model: { kind: "account", panel: { label: "Account menu",
+        rows: [{ action: "usage", label: "Usage" }, { action: "settings", label: "Settings" }] } } });
+  });
+}
+async function hideMenu() {
+  await evaluate(win.webContents, () => {
+    // An owner-initiated hide carries no dismiss event back to the owner.
+    window.wuu.chromeOverlay.hide(window.__menu.token, window.__menu.generation);
+    window.__menu.open = false;
+  });
+}
 async function openMenu() {
-  await click(win.webContents, ".sidebar-account-trigger");
+  await presentMenu();
   const view = await until(() => { const view = menuView(); return view?.getVisible() && view.webContents.isFocused() && view; }, "native menu painted and focused");
   const bounds = view.getBounds(), [width, height] = win.getContentSize();
   assert.ok(bounds.width > 0 && bounds.height > 0 && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width && bounds.y + bounds.height <= height,
@@ -97,7 +131,18 @@ async function openMenu() {
     return { text: element.textContent, bounds: r.toJSON(), hit: element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
   }));
   assert.ok(rows.length >= 2 && rows.every(row => row.hit), `Every menu item is actually hit-testable: ${JSON.stringify(rows)}`);
-  return { view, bounds, rows };
+  const overflow = await evaluate(view.webContents, () => {
+    const panel = document.querySelector(".sidebar-account-menu");
+    const row = panel?.querySelector('[role="menuitem"]');
+    if (!(panel instanceof HTMLElement) || !(row instanceof HTMLElement)) return null;
+    const panelRect = panel.getBoundingClientRect(), style = getComputedStyle(panel);
+    return { scrollHeight: panel.scrollHeight, clientHeight: panel.clientHeight,
+      contentRight: panelRect.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight),
+      rowRight: row.getBoundingClientRect().right };
+  });
+  assert.ok(overflow && overflow.scrollHeight <= overflow.clientHeight && Math.abs(overflow.rowRight - overflow.contentRight) <= 1,
+    `The native menu must fit its panel border box without a scrollbar gutter: ${JSON.stringify(overflow)}`);
+  return { view, bounds, rows, overflow };
 }
 async function capture(name, view) {
   fs.writeFileSync(path.join(output, `${name}-shell.png`), (await win.webContents.capturePage()).toPNG());
@@ -117,7 +162,31 @@ async function capture(name, view) {
   }
 }
 async function closed() {
-  await until(async () => !menuView()?.getVisible() && await evaluate(win.webContents, () => document.querySelector(".sidebar-account-trigger")?.getAttribute("aria-expanded") === "false"), "menu dismissed in native and renderer state");
+  await until(async () => !menuView()?.getVisible() && await evaluate(win.webContents, () => window.__menu.open === false), "menu dismissed in native and renderer state");
+}
+// The floating Settings panel is modal: its scrim swallows workbench clicks,
+// so leave through its own dismissal affordances instead of a ribbon item.
+// Probe the gaps around the panel rather than a corner: window chrome such as
+// the macOS drag strip stays above the overlay inside its own app-shell
+// stacking context.
+async function dismissSettingsViaScrim() {
+  const point = await until(() => evaluate(win.webContents, () => {
+    const scrim = document.querySelector(".settings-overlay-layer");
+    const panel = document.querySelector(".settings-shell");
+    if (!scrim || !panel) return null;
+    const bounds = panel.getBoundingClientRect();
+    return [
+      { x: bounds.left / 2, y: innerHeight / 2 },
+      { x: bounds.right + (innerWidth - bounds.right) / 2, y: innerHeight / 2 },
+      { x: innerWidth / 2, y: bounds.bottom + (innerHeight - bounds.bottom) / 2 },
+      { x: innerWidth / 2, y: bounds.top / 2 },
+    ].find(candidate => document.elementFromPoint(candidate.x, candidate.y) === scrim) ?? null;
+  }), "scrim is the topmost surface outside the panel");
+  const zoom = win.webContents.getZoomFactor();
+  const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  win.webContents.sendInputEvent({ type: "mouseMove", ...position });
+  win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...position });
+  win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...position });
 }
 async function run() {
   await app.whenReady();
@@ -177,11 +246,11 @@ async function run() {
   win = new BrowserWindow({ width: 1180, height: 820, show: true,
     webPreferences: { preload: path.join(fixture, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   for (const event of ["focus", "blur"]) win.on(event, () => trace({ kind: "window", event }));
-  for (const { width, font, theme } of [{ width: 1180, font: 15, theme: "light" }, { width: 760, font: 20, theme: "dark" }]) {
+  for (const [index, { width, font, theme }] of [{ width: 1180, font: 15, theme: "light" }, { width: 560, font: 20, theme: "dark" }].entries()) {
     win.setContentSize(1180, 820);
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     win.show(); win.focus();
-    await until(() => evaluate(win.webContents, () => Boolean(document.querySelector("textarea") && document.querySelector(".sidebar-account-trigger:not(:disabled)"))), "shipping default shell initialized");
+    await until(() => evaluate(win.webContents, () => Boolean(document.querySelector("textarea") && document.querySelector('[data-settings-entry="settings"]:not(:disabled)'))), "shipping default shell initialized");
     await evaluate(win.webContents, () => document.fonts.ready.then(() => undefined));
     if (await evaluate(win.webContents, () => document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed"))) {
       await click(win.webContents, ".section-sidebar-toggle");
@@ -219,25 +288,36 @@ async function run() {
     const opened = await openMenu(); scenario.menu = { bounds: opened.bounds, rows: opened.rows };
     await capture(name, opened.view);
     key(opened.view.webContents, "Escape"); await closed();
-    assert.ok(await evaluate(win.webContents, () => document.activeElement?.matches(".sidebar-account-trigger")), "Escape restores trigger focus");
-    await openMenu(); await click(win.webContents, "textarea"); await closed(); await focusedComposer();
+    assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Escape restores pre-menu focus");
+    await openMenu(); await click(win.webContents, "textarea");
+    // sendInputEvent dispatches input without the native focus transfer a real
+    // outside click produces; focusing the owner is what blurs the menu.
+    win.webContents.focus();
+    await closed(); await focusedComposer();
+    assert.ok(await evaluate(win.webContents, () => window.__menu.events.some(event => event.command.type === "dismiss" && event.command.reason === "outside")), "Outside click reports the outside dismissal reason");
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Outside click retains composer focus");
     const settingsMenu = await openMenu();
-    await click(settingsMenu.view.webContents, '[data-settings-entry="settings"]'); await closed();
+    await click(settingsMenu.view.webContents, '[role="menuitem"]:last-of-type');
+    await until(() => evaluate(win.webContents, () => window.__menu.events.some(event => event.command.type === "account-action" && event.command.action === "settings")), "menu action reaches the owner through the bridge");
+    await hideMenu(); await closed();
+    await click(win.webContents, '[data-settings-entry="settings"]');
     await until(() => evaluate(win.webContents, () => {
       const e = document.querySelector(".settings-main"), r = e?.getBoundingClientRect();
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
     }), "Settings page is visible and above the conversation");
     await capture(`${name}-settings`);
-    await click(win.webContents, '[data-ribbon-id="conversations"]');
+    // The narrow pass keeps the same floating card; dismiss it on Escape so
+    // both the scrim gap and keyboard paths stay covered.
+    if (index === 0) await dismissSettingsViaScrim();
+    else key(win.webContents, "Escape");
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");
     assert.ok(await evaluate(win.webContents, () => Boolean(document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="resize-thread"] [data-turn-status="in_progress"]'))), "Running conversation remains active after Settings");
-    scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings navigation and exact draft preservation");
+    scenario.checks.push("Real native menu paint, bounds, stacking and item hit tests", "Escape focus restoration, outside dismissal and reopen", "Settings dismissal (Escape, scrim) preserves draft and active turn");
     scenario.status = "passed"; save();
   }
   for (const cancel of ["escape", "outside"]) {
     holdLayout = true; heldLayout = undefined;
-    await click(win.webContents, ".sidebar-account-trigger");
+    await presentMenu();
     await until(() => heldLayout && menuView()?.getVisible(), "native preparation awaits renderer layout");
     const preparing = menuView(), pending = heldLayout.state;
     assert.ok(win.webContents.isFocused() && !preparing.webContents.isFocused(), "Owner retains keyboard focus during native preparation");
@@ -247,11 +327,13 @@ async function run() {
     });
     assert.deepEqual(hidden, { inert: true, visibility: "hidden" }, "Prepared content is not shown or interactive before layout");
     const event = { sender: preparing.webContents, senderFrame: preparing.webContents.mainFrame };
-    host.command(event, { token: pending.token, generation: pending.generation, command: { type: "account-action", action: "providers" } });
-    assert.equal(await evaluate(win.webContents, () => Boolean(document.querySelector(".settings-shell"))), false, "Preparation cannot invoke a menu business action");
+    host.command(event, { token: pending.token, generation: pending.generation, command: { type: "account-action", action: "settings" } });
+    assert.equal(await evaluate(win.webContents, () => !document.querySelector(".settings-shell") && !window.__menu.events.some(event => event.command.type === "account-action")), true, "Preparation cannot invoke a menu business action");
     fs.writeFileSync(path.join(output, `preparing-${cancel}-shell.png`), (await win.webContents.capturePage()).toPNG());
-    if (cancel === "escape") key(win.webContents, "Escape");
-    else await click(win.webContents, "textarea");
+    // A real owner dismisses on Escape or outside pointer input; the fixture
+    // plays that role through the same hide path either way.
+    if (cancel === "outside") await click(win.webContents, "textarea");
+    await hideMenu();
     await closed();
     host.prepared(event, pending.token, pending.generation);
     host.painted(event, pending.token, pending.generation, pending.bounds);
@@ -264,7 +346,7 @@ async function run() {
   // Reproduce a loaded renderer that never acknowledges its first presentation.
   // Only transport delivery is interrupted; the shipping UI and host are intact.
   dropPaint = true;
-  await click(win.webContents, ".sidebar-account-trigger");
+  await presentMenu();
   const stalled = await until(() => menuView(), "unpresented native opening");
   const stalledContents = stalled.webContents;
   await until(() => failures.length === 1, "missing first paint reports failure within the opening budget");

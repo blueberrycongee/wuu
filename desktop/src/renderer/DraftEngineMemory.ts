@@ -103,7 +103,7 @@ export function resolveDraftEngineMemory(
   if (!engine) return undefined;
   const runtime = runtimeWithinCatalog(engine, memory.model, memory.effort)
     ?? { model: "", effort: "" };
-  return { engine: memory.engine, ...runtime, model_options: runtime.model === memory.model ? memory.model_options : undefined, ...(memory.speed === undefined ? {} : { speed: engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) };
+  return { engine: memory.engine, ...runtime, model_options: runtime.model === memory.model ? memory.model_options : undefined, ...(memory.speed === undefined ? {} : { speed: engineCatalogPending(engine) || engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) };
 }
 
 /**
@@ -124,7 +124,7 @@ export function rememberedEngineRuntime(
   const engine = engineForMemory(id, inventory);
   if (!engine) return undefined;
   const runtime = runtimeWithinCatalog(engine, memory.model, memory.effort);
-  return runtime ? { ...runtime, model_options: memory.model_options, ...(memory.speed === undefined ? {} : { speed: engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) } : undefined;
+  return runtime ? { ...runtime, model_options: memory.model_options, ...(memory.speed === undefined ? {} : { speed: engineCatalogPending(engine) || engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) } : undefined;
 }
 
 function engineForMemory(
@@ -137,6 +137,10 @@ function engineForMemory(
   return engine;
 }
 
+function engineCatalogPending(engine: EngineInfo): boolean {
+  return engine.models_status === "deferred";
+}
+
 // Drop a model/effort the engine no longer reports so the caller's default
 // fallback takes over. Efforts are checked against the resolved model because
 // the supported set is per-model. An engine that reports no catalog
@@ -147,6 +151,7 @@ function runtimeWithinCatalog(
   model: string,
   effort: string,
 ): { model: string; effort: string } | undefined {
+  if (engineCatalogPending(engine)) return { model, effort };
   const models = engine.models ?? [];
   if (models.length === 0) {
     return engine.models_error ? { model, effort } : { model: "", effort: "" };

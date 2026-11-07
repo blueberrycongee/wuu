@@ -382,7 +382,6 @@
   --composer-surface-bg: var(--surface-raised);
   --composer-textarea-disabled: var(--theme-override-color-text-muted, #6d7471);
   --composer-project-menu-icon: var(--theme-override-color-text-muted, #6b7176);
-  --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
 }
 
 .composer-wrap {
@@ -832,7 +831,7 @@ html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-
 .composer-queue-row {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 8px;
   min-height: 36px;
   padding: 4px 8px;
@@ -867,15 +866,14 @@ html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-
 
 .composer-queue-preview {
   min-width: 0;
-  overflow: hidden;
   background: transparent;
   border: 0;
   padding: 0;
   color: inherit;
   font: inherit;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
   cursor: text;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -1069,6 +1067,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   /* Drafts read at the message rhythm: typed text keeps its leading once
    * it is sent. */
   line-height: var(--conversation-reading-line-height);
+}
+
+/* The Chinese placeholder's glyphs sit high beside the centered controls. */
+:lang(zh) .composer :is(textarea, .composer-rich-input) {
+  padding-block: calc(var(--composer-text-padding-block) + 1px)
+    calc(var(--composer-text-padding-block) - 1px);
 }
 
 /* The Plus button's hit box and one grid gap already separate it from the
@@ -1846,14 +1850,26 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 /* The plus and slash menus are one compact card above the input: rows of a
  * symbol, the command, and one quieter piece of text on the same line. */
 .composer-context-menu.composer-plus-menu {
-  width: var(--composer-menu-width);
+  display: flex;
+  flex-direction: column;
+  width: var(--floating-menu-available-width, var(--composer-menu-width));
   max-height: min(
     360px,
     var(--floating-menu-available-height, calc(100vh - 180px))
   );
   gap: 0;
   padding: var(--menu-inset);
+  overflow: hidden;
+}
+
+/* Fade only the scrolling choices, keeping the menu surface and entrance intact. */
+.composer-menu-scroll {
+  display: grid;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: var(--scroll-fade-size, var(--menu-inset));
 }
 
 .composer-plus-menu-section {
@@ -1884,28 +1900,19 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   max-width: 100%;
 }
 
+/* In the plus and slash menus the title leads and gives way first, and the
+ * command that runs it trails at the row's end like a shortcut. */
 .composer-plus-menu button .composer-plus-menu-item-desc {
-  flex: 1 1 0%;
+  flex: 0 0 auto;
+  max-width: 50%;
   color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 
-/* In the plus menu the title leads and gives way first, and the command that
- * runs it trails at the row's end like a shortcut. */
-.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-title {
-  flex: 1 1 auto;
-}
-
-.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-desc {
-  flex: 0 0 auto;
-  max-width: 50%;
-}
-
-.composer-menu-note,
 .composer-menu-empty {
   display: grid;
   gap: 4px;
@@ -1913,15 +1920,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
-}
-
-.composer-menu-note strong {
-  color: var(--ink);
-  font-size: var(--font-menu);
-}
-
-.composer-menu-note.warning strong {
-  color: var(--composer-menu-note-warning-strong);
 }
 
 .hero-composer-wrap .composer-project-menu {
@@ -1980,13 +1978,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.branch-worktree-action {
-  display: block;
-  color: var(--ink-soft);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-regular);
 }
 
 .composer-project-menu button svg {

@@ -121,6 +121,13 @@ var PUBLIC_SYNTAX_TOKEN_NAMES = [
   "--wuu-syntax-meta"
 ];
 var PUBLIC_ICON_NAMES = [
+  "app-application",
+  "app-composer",
+  "app-conversations",
+  "app-layout",
+  "app-navigation",
+  "app-preview",
+  "app-settings",
   "archive",
   "bot",
   "brain",
@@ -199,7 +206,6 @@ var ARTIFACT_STORE_DESCRIPTOR = {
 };
 
 // packages/plugin-sdk/src/coordination.ts
-var PROJECT_COORDINATION_SERVICE = "project.coordination";
 var MANAGED_SESSION_SERVICE = "host.managed-session";
 function descriptor2(name, methods) {
   return { name, version: "1.0.0", methods: methods.map((method) => ({
@@ -208,28 +214,6 @@ function descriptor2(name, methods) {
     output_schema: `${name}.${method}.output.v1`
   })) };
 }
-var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
-  "scheduler",
-  "session",
-  "work",
-  "membership",
-  "create",
-  "turn",
-  "user-input",
-  "inbox",
-  "schedule",
-  "recover",
-  "instructions",
-  "member-work",
-  "coordinator",
-  "enqueue",
-  "capacity",
-  "work-list",
-  "tool-policy",
-  "tool-validate",
-  "tool-config",
-  "admission"
-]);
 var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
 
 // packages/plugin-sdk/src/tool-service.ts
@@ -363,7 +347,6 @@ var sessionDomainArity = {
   "ListParticipantRuns": [2, 1],
   "ListParticipants": [1, 1],
   "ListPluginTurnLifecycleOutbox": [0, 1],
-  "ListProjectWork": [1, 1],
   "ListTokenUsage": [0, 1],
   "LoadActiveHistoryRecords": [2, 1],
   "LoadCompactionNote": [2, 2],
@@ -382,8 +365,6 @@ var sessionDomainArity = {
   "MostRecentForCWD": [2, 1],
   "NewInferenceJournalRuntime": [1, 1],
   "PendingInbox": [1, 1],
-  "PendingProjectWork": [1, 1],
-  "ProjectWorkOperation": [1, 2],
   "PutContextSeed": [1, 1],
   "PutPluginTurnLifecycleOutbox": [3, 0],
   "PutSessionLaunch": [1, 1],
@@ -392,9 +373,7 @@ var sessionDomainArity = {
   "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],
-  "ReadProjectWork": [1, 1],
   "RebuildSessionIndexes": [0, 0],
-  "ReconcileProjectWork": [2, 0],
   "ReleaseHeldUserWork": [2, 0],
   "RenameFolder": [2, 1],
   "ReorderFolders": [1, 0],
@@ -407,7 +386,6 @@ var sessionDomainArity = {
   "RewriteHistoryRecordsForEngineEdit": [6, 0],
   "SaveDriverCheckpoint": [2, 0],
   "SaveModelInputReceipt": [2, 0],
-  "SaveProjectWork": [3, 1],
   "SaveRequestContextCheckpoint": [2, 0],
   "SearchHistoryPage": [4, 1],
   "SearchHistoryQuery": [1, 1],
@@ -415,7 +393,6 @@ var sessionDomainArity = {
   "SetEngineRef": [2, 1],
   "SetHistoryEngineTurnID": [5, 0],
   "SetModelSelection": [4, 1],
-  "SetProjectMembership": [4, 1],
   "SetNextStepModelSelection": [2, 1],
   "SetRuntimeSelection": [2, 1],
   "SetSource": [2, 1],
@@ -578,6 +555,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.inspect": "host.session.inspect",
   "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
   "host.session.attachment.snapshot": "host.session.attachment.snapshot",
   "host.session.history.read": "host.session.history.read",
@@ -2918,7 +2896,7 @@ var routeActions = ["session/route/send", "session/route/inspect", "session/rout
 var existingTargetSchema = { type: "object", additionalProperties: false, properties: { version: { type: "integer", const: 1 }, execution_host: { type: "string" }, session_id: { type: "string" }, storage_host: { type: "string" }, display_host: { type: "string" } }, required: ["version", "execution_host", "session_id"] };
 var string2 = { type: "string" };
 var integer = { type: "integer", minimum: 0 };
-var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+var methodNames = ["actions.resume", "actions.sync", "agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "model.get", "model.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "memory.operations", "memory.reconcile", "routines.list", "routines.history", "routines.create", "routines.authorize", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 var PersonalPlugin = class {
   concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle", "agent.request.transform"];
   concurrentServices = [service, "automation.trigger", PERSONAL_MEMORY_SERVICE, "agent.prompt", "personal.recovery"];
@@ -2976,7 +2954,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
       needsAuthorization: async (routineID) => (await this.list("task")).some((task) => task.routine_id === routineID && task.authorization_state === "needs_authorization" && !terminalTask(task)),
       preferences: () => this.preferences()
     });
-    const services = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
+    const services = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.model", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3,
       required_services: [{ name: "host.session.attachment.snapshot", major_version: 1, required: false }, { name: "agent.tools", major_version: 1, required: false }, { name: "session.transport", major_version: 1, required: false }, requireExecutionGrants(), requireBackgroundService(), ...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: "host.artifact.import", major_version: 1, required: false }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
@@ -3149,7 +3127,8 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
     const saved = (await this.read("settings", "preferences")).value;
     const notification_batch_seconds = saved?.notification_batch_seconds ?? 0;
     if (!Number.isSafeInteger(notification_batch_seconds) || notification_batch_seconds < 0 || notification_batch_seconds > 900) throw new Error("notification_batch_seconds must be an integer from 0 to 900");
-    return { ...saved ?? { revision: 0, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" }, notifications: true }, notification_batch_seconds };
+    const settings = saved ?? { revision: 0, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, notifications: true };
+    return { ...settings, notification_batch_seconds };
   }
   async agent(agentID, allowInactive = false) {
     const { value } = await this.read("agent", agentID);
@@ -5160,6 +5139,12 @@ ${t.result?.summary ?? t.worker_result?.text ?? ""}`.toLocaleLowerCase().include
         const params = { ...input, session_id: agent.main_session_id };
         delete params.agent_id;
         return this.host.call("host.service.call", { service: "calendar.personal", method: method.slice(9), params });
+      }
+      case "model.get":
+      case "model.update": {
+        if (!ownerClient || !clientHost) throw new Error("Model selection requires a live owner client");
+        const agent = await this.main();
+        return clientHost.call("host.session.model", { session_id: agent.main_session_id, ...method === "model.update" ? { provider: text3(input, "provider", true), model: text3(input, "model", true) } : {} }, { signal: execution?.signal });
       }
       case "settings.get":
         return { settings: await this.preferences() };

@@ -8,6 +8,7 @@ const licenseSupplements: Record<string, string> = {
   'remark-math@6.0.0': 'remark-math-MIT.txt',
   'rehype-katex@7.0.1': 'remark-math-MIT.txt',
   'cordis@4.0.0-rc.8': 'cordis-MIT.txt',
+  'lru_map@0.4.1': 'lru_map-MIT.txt',
 };
 
 /** Keep dependency notices in the renderer output when packaging prunes devDependencies. */

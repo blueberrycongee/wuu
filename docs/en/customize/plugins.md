@@ -47,7 +47,7 @@ An optional add-on that fails initialization, preparation, or activation does no
 
 If an operation reports that the change was committed but runtime activation failed, the settings or package change has already taken effect. Read the new inventory's failure diagnostics before retrying; the old runtime is not automatically restored. See the [generation lifecycle](plugin-system.md#runtime-generations).
 
-The detail page distinguishes pending trust, disabled, starting, active, failed, and update states. Read the actual error instead of treating every missing feature as an installation failure. A package may also be blocked by a missing requirement or an incompatible peer package.
+Catalog entries keep their name and description: **+** enables a plugin, and **…** manages an enabled plugin. A family uses **…** when any component is enabled; otherwise **+** opens its component page. Component counts appear on that page. Permission and update decisions remain in plugin details. Runtime failures and dependency diagnostics use shared toast notifications without changing the catalog layout; failed plugins retain a **Retry** action in their details.
 
 If desktop code fails to render, Wuu isolates the failing contribution where possible and keeps plugin management and default-UI recovery available. Disable the suspected plugin and retry with the default interface. The CLI is useful when the desktop contribution itself is broken. Safe mode provides a recovery path after plugin-related startup failure; it does not certify the package as safe to re-enable.
 
