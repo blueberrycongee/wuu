@@ -827,7 +827,8 @@ var personalDesktop = (() => {
       const pending = records.filter((record) => ["awaiting_confirmation", "approved", "ready", "blocked", "executing"].includes(record.status));
       const history = records.filter((record) => !pending.includes(record)).sort((a, b) => (b.action.expires_at === null ? 0 : Date.parse(b.action.expires_at)) - (a.action.expires_at === null ? 0 : Date.parse(a.action.expires_at)));
       const settings = snapshot?.kind === "ready" ? snapshot.settings : void 0;
-      if (conversation && !records.length && (!error || !hadActions.current)) return null;
+      if (conversation && !pending.length && (!error || !hadActions.current)) return null;
+      const showOverview = !conversation || pending.length > 0 || Boolean(error) || unverified;
       return h(
         "div",
         { className: `personal-review${conversation ? " personal-review-conversation" : ""}`, "data-personal-action-review": true, "data-review-variant": variant },
@@ -835,7 +836,7 @@ var personalDesktop = (() => {
         h(
           ui.Section,
           { title: conversation ? void 0 : words.title, description: conversation ? void 0 : words.description },
-          h(
+          showOverview && h(
             "div",
             { className: "personal-review-overview" },
             h("div", { className: "personal-review-heading" }, h("h3", null, conversation ? pending.some((record) => record.status === "awaiting_confirmation") ? `${pending.filter((record) => record.status === "awaiting_confirmation").length} ${words.pendingCount}` : words.recentResults : words.mode), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
@@ -874,7 +875,7 @@ var personalDesktop = (() => {
           !conversation && snapshot?.kind === "unavailable" && h(ui.EmptyState, { title: words.unavailable, description: snapshot.reason }),
           !conversation && snapshot?.kind === "ready" && !records.length && h(ui.EmptyState, { title: words.noActions, description: words.noActionsBody }),
           pending.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.pending }, pending.map(renderRecord)),
-          history.length > 0 && (conversation ? h("details", { className: "personal-review-history" }, h("summary", null, words.recentResults), h("section", { className: "personal-review-list" }, history.slice(0, 5).map(renderRecord))) : h("section", { className: "personal-review-list", "aria-label": words.recent }, h("h3", null, words.recent), history.map(renderRecord))),
+          !conversation && history.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.recent }, h("h3", null, words.recent), history.map(renderRecord)),
           snapshot?.kind === "ready" && !conversation && h("p", { className: "personal-review-footnote" }, words.single)
         )
       );

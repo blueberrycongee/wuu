@@ -102,15 +102,16 @@ describe("Personal action approval component",()=>{
     expect(container.querySelector('[data-review-id="read-only"]')).toBeNull();
     expect(container.querySelector('[role="switch"]')).toBeNull();
   });
-  it("polls saved action outcomes without replaying the approval and stops after unmount",async()=>{
+  it("removes completed actions from chat without replaying the approval and stops after unmount",async()=>{
     vi.useFakeTimers();
     let snapshot=ready();const list=vi.fn(async()=>snapshot),resolve=vi.fn(async()=>ready());
     await render({list,resolve,revoke:async()=>ready()},"conversation");
+    expect(container.querySelector('[data-personal-action-review]')).not.toBeNull();
     snapshot=ready();if(snapshot.kind==="ready"){snapshot.requests[0].status="succeeded";snapshot.requests[0].receipt_json='{ "receipt_id": "synthetic-only" }';}
     await React.act(async()=>vi.advanceTimersByTimeAsync(5000));
     expect(list).toHaveBeenCalledTimes(2);expect(resolve).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-review-state="succeeded"]')).not.toBeNull();
-    expect(container.textContent).toContain("synthetic-only");
+    expect(container.querySelector('[data-personal-action-review]')).toBeNull();
+    expect(container.textContent).not.toContain("synthetic-only");
     React.act(()=>root?.unmount());root=undefined;
     await React.act(async()=>vi.advanceTimersByTimeAsync(5000));expect(list).toHaveBeenCalledTimes(2);
   });

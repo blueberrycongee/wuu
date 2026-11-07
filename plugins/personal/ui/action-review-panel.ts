@@ -374,10 +374,13 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
     const pending = records.filter(record=>["awaiting_confirmation", "approved", "ready", "blocked", "executing"].includes(record.status));
     const history = records.filter(record=>!pending.includes(record)).sort((a,b)=>(b.action.expires_at === null ? 0 : Date.parse(b.action.expires_at))-(a.action.expires_at === null ? 0 : Date.parse(a.action.expires_at)));
     const settings = snapshot?.kind === "ready" ? snapshot.settings : undefined;
-    if (conversation && !records.length && (!error || !hadActions.current)) return null;
+    // Chat only carries decisions that still need the owner. Completed action
+    // history remains in Personal settings instead of trailing every reply.
+    if (conversation && !pending.length && (!error || !hadActions.current)) return null;
+    const showOverview = !conversation || pending.length > 0 || Boolean(error) || unverified;
     return h("div",{className:`personal-review${conversation ? " personal-review-conversation" : ""}`,"data-personal-action-review":true,"data-review-variant":variant},h("style",null,personalReviewStyles),
       h(ui.Section,{title:conversation ? undefined : words.title,description:conversation ? undefined : words.description},
-        h("div",{className:"personal-review-overview"},h("div",{className:"personal-review-heading"},h("h3",null,conversation ? (pending.some(record=>record.status === "awaiting_confirmation") ? `${pending.filter(record=>record.status === "awaiting_confirmation").length} ${words.pendingCount}` : words.recentResults) : words.mode),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
+        showOverview && h("div",{className:"personal-review-overview"},h("div",{className:"personal-review-heading"},h("h3",null,conversation ? (pending.some(record=>record.status === "awaiting_confirmation") ? `${pending.filter(record=>record.status === "awaiting_confirmation").length} ${words.pendingCount}` : words.recentResults) : words.mode),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
           !conversation && h(react.Fragment,null,h("p",{className:"personal-review-muted"},words.scope),
             settings && h(react.Fragment,null,
               service.settings && h(ui.Button,{variant:"secondary",role:"switch","aria-checked":settings.auto_review_enabled,"aria-label":words.mode,disabled:Boolean(busy)||unverified||(!settings.auto_review_enabled&&settings.scope.length===0),onClick:()=>void changeSettings()},busy==="settings"?words.working:settings.auto_review_enabled?words.disable:words.enable),
@@ -394,7 +397,7 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
         !conversation && snapshot?.kind === "unavailable" && h(ui.EmptyState,{title:words.unavailable,description:snapshot.reason}),
         !conversation && snapshot?.kind === "ready" && !records.length && h(ui.EmptyState,{title:words.noActions,description:words.noActionsBody}),
         pending.length>0 && h("section",{className:"personal-review-list","aria-label":words.pending},pending.map(renderRecord)),
-        history.length>0 && (conversation ? h("details",{className:"personal-review-history"},h("summary",null,words.recentResults),h("section",{className:"personal-review-list"},history.slice(0,5).map(renderRecord))) : h("section",{className:"personal-review-list","aria-label":words.recent},h("h3",null,words.recent),history.map(renderRecord))),
+        !conversation && history.length>0 && h("section",{className:"personal-review-list","aria-label":words.recent},h("h3",null,words.recent),history.map(renderRecord)),
         snapshot?.kind === "ready" && !conversation && h("p",{className:"personal-review-footnote"},words.single)));
   };
 }
