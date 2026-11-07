@@ -166,7 +166,11 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if !s.binding.Matches(binding) {
 			return nil, serviceError("domain_denied", "session belongs to another user space or product domain")
 		}
-		return marshalServiceResult(map[string]string{"session_id": metadata.ID, "user_space_id": metadata.UserSpaceID, "product_domain": binding.Domain(), "agent_id": metadata.AgentID, "parent_session_id": metadata.ParentID})
+		visibility := pluginhost.SessionVisibilityUser
+		if metadata.Visibility == pluginhost.SessionVisibilityPlugin {
+			visibility = pluginhost.SessionVisibilityPlugin
+		}
+		return marshalServiceResult(map[string]string{"session_id": metadata.ID, "user_space_id": metadata.UserSpaceID, "product_domain": binding.Domain(), "agent_id": metadata.AgentID, "parent_session_id": metadata.ParentID, "visibility": visibility})
 	case pluginhost.HostServiceSessionRoute:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")

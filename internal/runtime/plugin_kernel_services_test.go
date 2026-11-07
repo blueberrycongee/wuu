@@ -653,9 +653,25 @@ func TestKernelSessionContextRejectsCrossDomainAndSpoofedBindings(t *testing.T) 
 				if err := json.Unmarshal(result, &got); err != nil {
 					t.Fatal(err)
 				}
-				if got["product_domain"] != hostBinding.Domain() || got["user_space_id"] != hostBinding.UserSpaceID {
+				if got["product_domain"] != hostBinding.Domain() || got["user_space_id"] != hostBinding.UserSpaceID || got["visibility"] != pluginhost.SessionVisibilityUser {
 					t.Fatalf("untrusted memory context: %s", result)
 				}
+			}
+			// Session observers such as Dream use visibility to skip another
+			// plugin's background sessions without learning their owner.
+			if _, err := handler.sessions.CreateInitialized(session.Session{ID: "plugin-owned", UserSpaceID: hostBinding.UserSpaceID, ProductDomain: hostBinding.ProductDomain, Owner: "plugin:user:other", Visibility: pluginhost.SessionVisibilityPlugin, CWD: home, CreatedAt: time.Now().UTC()}, nil); err != nil {
+				t.Fatal(err)
+			}
+			result, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionContext, json.RawMessage(`{"session_id":"plugin-owned"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var owned map[string]string
+			if err := json.Unmarshal(result, &owned); err != nil {
+				t.Fatal(err)
+			}
+			if owned["visibility"] != pluginhost.SessionVisibilityPlugin || strings.Contains(string(result), "plugin:user:other") {
+				t.Fatalf("plugin-owned context: %s", result)
 			}
 			for _, raw := range []json.RawMessage{json.RawMessage(`{}`), json.RawMessage(`{"session_id":"personal","product_domain":"coding"}`), json.RawMessage(`{"session_id":"personal","user_space_id":"other"}`)} {
 				if _, err := handler.HandleHostService(context.Background(), pluginhost.HostServiceSessionContext, raw); err == nil {
