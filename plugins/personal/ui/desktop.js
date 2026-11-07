@@ -61,7 +61,7 @@ export async function activate(api) {
       "oversizedAttachment": "This attachment exceeds the 20 MB download limit.",
       "today": "Today",
       "settings": "Settings",
-      "modelTitle": "Model", "modelHelp": "Used for twin replies and new tasks. Existing tasks keep their model.", "modelChoice": "Provider and model", "modelUnavailable": "No configured models are available. Add a connection in External connections.", "modelCurrentUnavailable": "Current selection is unavailable", "modelBusy": "Wait for the current reply to finish before changing the model.", "notificationsTitle": "Notifications",
+      "modelTitle": "Model", "modelUnavailable": "No configured models are available. Add a connection in External connections.", "modelCurrentUnavailable": "Current selection is unavailable", "modelBusy": "Wait for the current reply to finish before changing the model.", "notificationsTitle": "Notifications",
       "placeholder": "Message",
       "rendererContextLimited": "Only the most recently updated interfaces fit in the next message; older interface values will be omitted.",
       "stopped": "Stopped",
@@ -158,7 +158,7 @@ export async function activate(api) {
       "oversizedAttachment": "附件超过 20 MB 下载上限。",
       "today": "今天",
       "settings": "设置",
-      "modelTitle": "模型", "modelHelp": "用于 twin 回复和新任务。已有任务继续使用原来的模型。", "modelChoice": "服务商与模型", "modelUnavailable": "暂无可选模型。请先在外部连接中配置。", "modelCurrentUnavailable": "当前选择不可用", "modelBusy": "请等待当前回复结束后再切换模型。", "notificationsTitle": "通知",
+      "modelTitle": "模型", "modelUnavailable": "暂无可选模型。请先在外部连接中配置。", "modelCurrentUnavailable": "当前选择不可用", "modelBusy": "请等待当前回复结束后再切换模型。", "notificationsTitle": "通知",
       "placeholder": "发送消息",
       "rendererContextLimited": "下一条消息只能附带最近更新的部分界面，较早的界面内容不会附带。",
       "stopped": "已停止",
@@ -420,16 +420,8 @@ export async function activate(api) {
     .mosaic-routines summary.mosaic-task::-webkit-details-marker { display:none; }
     .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
-    .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
-    .mosaic-settings p { color:var(--ink-muted); }
-    .mosaic-settings-group { display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-3); }
-    .mosaic-settings-group h3, .mosaic-settings-group p { margin:0; }
-    .mosaic-settings-group > .plugin-ui-field:has(> .mosaic-model-select) {
-      display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:var(--space-2);width:100%;
-    }
-    .mosaic-model-select { width:100%;min-width:0; }
-    .mosaic-model-full { display:none;overflow-wrap:anywhere; }
-    @media (max-width:850px) { .mosaic-model-full { display:block; } }
+    .mosaic-settings { display:flex;flex-direction:column;min-width:0; }
+    .mosaic-settings > [role="alert"] { margin:var(--space-3) 0 0;color:var(--danger-text,var(--ink)); }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -751,12 +743,12 @@ export async function activate(api) {
     };
     const currentAvailable = availableModels.some(item => modelKey(item) === selectedModel);
     return h("section", { className: "mosaic-settings", "data-personal-preferences": true },
-      h("section", { className: "mosaic-settings-group" }, h("h3", null, t("modelTitle")), h("p", null, t("modelHelp")), modelError && h("p", {role:"alert"}, modelError), !model ? (!modelError && h(LoadingState, {label:t("modelTitle")})) : h(React.Fragment, null,
-        h(Select, {className:"mosaic-model-select", label:t("modelChoice"), value:selectedModel, disabled:modelSaving || !availableModels.length, onChange:event => void saveModel(event.target.value) },
-          !currentAvailable && h("option", {value:selectedModel}, `${model.provider} · ${model.model} (${t("modelCurrentUnavailable")})`),
-          ...availableModels.map(item => h("option", {key:modelKey(item),value:modelKey(item)}, `${item.provider} · ${item.label}`))),
-        h("p", {className:"mosaic-model-full"}, (() => { const selected = availableModels.find(item => modelKey(item) === selectedModel) ?? model; return `${selected.provider} · ${selected.label || selected.model}`; })()),
-        !availableModels.length && h("p", null, t("modelUnavailable")))),
+      h(Card, null,
+        h(Select, {className:"mosaic-model-select", label:t("modelTitle"), description:model && !availableModels.length ? t("modelUnavailable") : undefined, value:selectedModel, disabled:!model || modelSaving || !availableModels.length, onChange:event => void saveModel(event.target.value) },
+          !model && h("option", {value:""}, "…"),
+          model && !currentAvailable && h("option", {value:selectedModel}, `${model.provider} · ${model.model} (${t("modelCurrentUnavailable")})`),
+          ...availableModels.map(item => h("option", {key:modelKey(item),value:modelKey(item)}, `${item.provider} · ${item.label}`)))),
+      modelError && h("p", {role:"alert"}, modelError),
       h(settingsPanels.Review, { locale }));
   }
 
