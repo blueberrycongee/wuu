@@ -112,6 +112,26 @@ describe("PluginSettingsEditor", () => {
     expect(field("display.name").querySelector(".plugin-setting-status")?.textContent).toBe("");
   });
 
+  it("paints the last confirmed values while a return revalidates them", async () => {
+    const getPluginSetting = vi.fn(({ id, key }: { id: string; key: string }) =>
+      Promise.resolve(result(id, key, values[key])),
+    );
+    installAPI({ getPluginSetting });
+    const controls = createApplicationSettingsControls({ host: registry });
+    await renderEditor(pluginRecord(), controls);
+    expect(field("display.name").querySelector<HTMLInputElement>("input")?.value).toBe("Custom name");
+    expect(field("display.mode").querySelector(".select-menu-value")?.textContent).toBe("roomy");
+
+    const pending = deferred<PluginSettingResult>();
+    getPluginSetting.mockReturnValue(pending.promise);
+    act(() => root?.unmount());
+    root = null;
+    await renderEditor(pluginRecord(), controls);
+    expect(field("display.name").querySelector<HTMLInputElement>("input")?.value).toBe("Custom name");
+    expect(field("display.mode").querySelector(".select-menu-value")?.textContent).toBe("roomy");
+    expect(field("retry.count").querySelector<HTMLInputElement>("input")?.value).toBe("5");
+  });
+
   it("shows read API errors with a retry action", async () => {
     const getPluginSetting = vi
       .fn()
@@ -267,11 +287,17 @@ function installAPI(overrides: Partial<WuuDesktopApi> = {}): void {
   (window as { wuu?: Partial<WuuDesktopApi> }).wuu = api;
 }
 
-async function renderEditor(plugin: ExtensionInventoryRecord): Promise<void> {
+async function renderEditor(plugin: ExtensionInventoryRecord, controls = createApplicationSettingsControls({ host: registry })): Promise<void> {
   await act(async () => {
     root = createRoot(container);
-    root.render(<SettingsControlsProvider controls={createApplicationSettingsControls({ host: registry })}>{<PluginSettingsEditor plugin={plugin} />}</SettingsControlsProvider>);
+    root.render(<SettingsControlsProvider controls={controls}>{<PluginSettingsEditor plugin={plugin} />}</SettingsControlsProvider>);
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
 }
 
 function field(key: string): HTMLElement {

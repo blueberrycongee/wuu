@@ -10,6 +10,7 @@ import type {
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsGroup } from "./SettingsSection";
+import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
 import { AlertCircle, AlertTriangle } from "./WuuIcons";
 import type { SettingsControlsConflictV1 as PluginContributionConflict, SettingsControlsDiagnosticV1 as PluginGenerationDiagnostic } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 
@@ -195,10 +196,12 @@ function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: 
   const controls = scope.controls;
   const { t } = useI18n();
   const controlId = useId();
+  const secretDataKey = `plugin-secret:${fingerprint}:${target}`;
+  const retainedConfigured = readRetainedSettingsData<boolean>(controls, secretDataKey);
   const [draft, setDraft] = useState("");
   const [draftTarget, setDraftTarget] = useState(target);
   const [loadedScope, setLoadedScope] = useState<typeof scope>();
-  const [configured, setConfigured] = useState(false);
+  const [configured, setConfigured] = useState(() => retainedConfigured ?? false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -207,17 +210,21 @@ function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: 
   useEffect(() => { setDraft(""); setDraftTarget(target); }, [target]);
   useEffect(() => {
     let cancelled = false;
-    setConfigured(false); setSaving(false); setError(""); setLoadedScope(undefined);
+    setConfigured(readRetainedSettingsData<boolean>(controls, secretDataKey) ?? false);
+    setSaving(false); setError(""); setLoadedScope(undefined);
     setLoading(true);
     void controls.getPluginSetting(params).then((result) => {
-      if (!cancelled && scope.active) setConfigured(result.configured === true);
+      if (!cancelled && scope.active) {
+        setConfigured(result.configured === true);
+        writeRetainedSettingsData(controls, secretDataKey, result.configured === true);
+      }
     }).catch((failure: unknown) => {
       if (!cancelled && scope.active && !isPluginLifecycleCancellation(failure)) setError(errorMessage(failure, t("skills.pluginSettingLoadFailed")));
     }).finally(() => {
       if (!cancelled && scope.active) { setLoading(false); setLoadedScope(scope); }
     });
     return () => { cancelled = true; };
-  }, [scope, pluginId, fingerprint, setting.id]);
+  }, [controls, scope, pluginId, fingerprint, setting.id, secretDataKey]);
 
   async function save(value: string): Promise<void> {
     if (!scope.active || loadedScope !== scope || loading || saving) return;
@@ -227,7 +234,10 @@ function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: 
     setDraft("");
     try {
       const result = await controls.setPluginSetting({ ...params, value });
-      if (scope.active) setConfigured(result.configured === true);
+      if (scope.active) {
+        setConfigured(result.configured === true);
+        writeRetainedSettingsData(controls, secretDataKey, result.configured === true);
+      }
     } catch (failure) {
       if (scope.active && !isPluginLifecycleCancellation(failure)) setError(errorMessage(failure, t("skills.pluginSettingSaveFailed")));
     } finally {
@@ -278,19 +288,22 @@ function PluginSettingControl({
   const controls = scope.controls;
   const { locale, t } = useI18n();
   const controlId = useId();
-  const [draft, setDraft] = useState<SettingValue>(setting.default);
+  const valueDataKey = `plugin-value:${fingerprint}:${target}`;
+  const retainedValue = readRetainedSettingsData<SettingValue>(controls, valueDataKey);
+  const [draft, setDraft] = useState<SettingValue>(() => retainedValue ?? setting.default);
   const [draftTarget, setDraftTarget] = useState(target);
   const dirty = useRef(false);
   const [loadedScope, setLoadedScope] = useState<typeof scope>();
-  const [committed, setCommitted] = useState<SettingValue>(setting.default);
+  const [committed, setCommitted] = useState<SettingValue>(() => retainedValue ?? setting.default);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    const retained = readRetainedSettingsData<SettingValue>(controls, valueDataKey);
     dirty.current = false;
-    setDraftTarget(target); setDraft(setting.default); setCommitted(setting.default);
+    setDraftTarget(target); setDraft(retained ?? setting.default); setCommitted(retained ?? setting.default);
   }, [target]);
   useEffect(() => {
     let cancelled = false;
@@ -313,6 +326,7 @@ function PluginSettingControl({
           setLoadedScope(scope);
           if (!dirty.current) setDraft(result.value);
           setCommitted(result.value);
+          writeRetainedSettingsData(controls, valueDataKey, result.value);
         }
       } catch (loadError) {
         if (!cancelled && scope.active && !isPluginLifecycleCancellation(loadError)) {
@@ -322,7 +336,7 @@ function PluginSettingControl({
         if (!cancelled && scope.active) setLoading(false);
       }
     }
-  }, [scope, fingerprint, locale, pluginId, setting.id]);
+  }, [scope, fingerprint, locale, pluginId, setting.id, valueDataKey]);
 
   async function save(value: SettingValue): Promise<void> {
     if (!scope.active || loadedScope !== scope || loading || saving || Object.is(value, committed)) return;
@@ -341,6 +355,7 @@ function PluginSettingControl({
       setDraft(result.value);
       setCommitted(result.value);
       setSaved(true);
+      writeRetainedSettingsData(controls, valueDataKey, result.value);
     } catch (saveError) {
       if (scope.active && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t("skills.pluginSettingSaveFailed")));
     } finally {
@@ -362,6 +377,7 @@ function PluginSettingControl({
       setLoadedScope(scope);
       if (!dirty.current) setDraft(result.value);
       setCommitted(result.value);
+      writeRetainedSettingsData(controls, valueDataKey, result.value);
     } catch (retryError) {
       if (scope.active && !isPluginLifecycleCancellation(retryError)) setError(errorMessage(retryError, t("skills.pluginSettingLoadFailed")));
     } finally {

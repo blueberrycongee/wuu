@@ -24,6 +24,32 @@ function renewalControls(overrides: Partial<ApplicationSettingsControlsV1> = {})
     listChatGPTAccounts: vi.fn().mockResolvedValue({ accounts: [] }), ...overrides };
 }
 
+it("keeps the last allowance snapshot visible while a return refreshes it", async () => {
+  const container = document.createElement("div"); document.body.appendChild(container);
+  let root = createRoot(container);
+  const provider: ProviderSummary = { name: "api", type: "openai", model: "m", api_key_configured: true };
+  const snapshot = (used: number): EngineListResult => ({ engines: [], subscription_providers: [{ ...provider,
+    quota: { status: "available", checked_at: new Date().toISOString(), windows: [{ id: "weekly", used_percent: used }] } }] });
+  const pending = deferred<EngineListResult>();
+  const controls = renewalControls({ listEngines: vi.fn().mockResolvedValueOnce(snapshot(25)).mockReturnValueOnce(pending.promise) });
+  const props = { initialized: { protocol_version: "test", workspace_root: "/fixture", provider: provider.name, model: provider.model, providers: [provider] },
+    running: false, runningProviderNames: new Set<string>(), onSave: vi.fn(), onRemoveProvider: vi.fn(), onRefreshModelCatalog: vi.fn() };
+  const view = <SettingsControlsProvider controls={controls}><ModelServicesPage {...props} /></SettingsControlsProvider>;
+  try {
+    await act(async () => root.render(view));
+    expect(container.querySelector("meter")?.value).toBe(75);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(view));
+    expect(container.querySelector("meter")?.value).toBe(75);
+    expect(controls.listEngines).toHaveBeenCalledTimes(2);
+
+    await act(async () => pending.resolve(snapshot(10)));
+    expect(container.querySelector("meter")?.value).toBe(90);
+  } finally { act(() => root.unmount()); container.remove(); }
+});
+
 it("refreshes retained catalog and quota reads with new controls and ignores old results", async () => {
   const container = document.createElement("div"); document.body.appendChild(container);
   const root = createRoot(container);

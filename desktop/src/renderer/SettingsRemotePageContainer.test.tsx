@@ -16,7 +16,8 @@ function setup(read: () => Promise<unknown>) {
   const controls = { getRemoteControlSnapshot: vi.fn(read), subscribeRemote: vi.fn((listener: () => void) => { refresh=listener; return vi.fn(); }), setRemoteHostEnabled: vi.fn() } as unknown as ApplicationSettingsControlsV1;
   container=document.createElement("div"); document.body.append(container); root=createRoot(container);
   const render = (value = controls) => act(() => root.render(<SettingsControlsProvider controls={value}><SettingsRemotePageContainer /><ToastViewport /></SettingsControlsProvider>));
-  render(); return { controls, render, refresh: () => act(() => refresh()) };
+  const remount = () => { act(() => root.unmount()); root = createRoot(container); render(); };
+  render(); return { controls, render, remount, refresh: () => act(() => refresh()) };
 }
 async function flush() { await act(async () => { await Promise.resolve(); }); }
 describe("remote settings read recovery", () => {
@@ -56,6 +57,18 @@ describe("remote settings read recovery", () => {
     act(() => container.querySelector<HTMLButtonElement>('[role="switch"]')!.click()); await flush();
     await act(async () => pending.resolve(snapshot));
     expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+  });
+  it("keeps the last successful snapshot visible while a return refreshes", async () => {
+    const { controls, remount } = setup(async () => snapshot); await flush();
+    const pending = deferred<unknown>();
+    vi.mocked(controls.getRemoteControlSnapshot).mockReturnValueOnce(pending.promise as never);
+    remount();
+    expect(container.textContent).toContain("My phone");
+    expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).not.toContain("Loading…");
+    await act(async () => pending.resolve({ ...snapshot, status: { ...snapshot.status, devices: [] } }));
+    expect(container.textContent).not.toContain("My phone");
+    expect(controls.getRemoteControlSnapshot).toHaveBeenCalledTimes(2);
   });
   it("does not surface a rejected read after unmount", async () => {
     const pending=deferred<unknown>(); setup(() => pending.promise);

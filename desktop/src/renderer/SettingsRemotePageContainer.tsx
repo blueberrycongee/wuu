@@ -5,12 +5,17 @@ import { useSettingsControls } from "./SettingsControlsContext";
 import { SettingsFailure } from "./SettingsFailure";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { useI18n } from "./i18n";
+import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
+
+const REMOTE_SNAPSHOT_DATA = "remote.snapshot";
 
 /** Remote state belongs to this settings provider, not to a default off switch. */
 export function SettingsRemotePageContainer(): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
-  const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(null);
+  const retainedSnapshot = readRetainedSettingsData<RemoteControlSnapshot>(controls, REMOTE_SNAPSHOT_DATA);
+  const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(() => retainedSnapshot ?? null);
+  const [snapshotControls, setSnapshotControls] = useState(() => retainedSnapshot ? controls : undefined);
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -24,6 +29,8 @@ export function SettingsRemotePageContainer(): JSX.Element {
       const next = await controls.getRemoteControlSnapshot();
       if (!authority.active || request !== revision.current) return;
       setSnapshot(next);
+      setSnapshotControls(controls);
+      writeRetainedSettingsData(controls, REMOTE_SNAPSHOT_DATA, next);
       setReadError("");
     } catch (error) {
       if (authority.active && request === revision.current && !isPluginLifecycleCancellation(error)) setReadError(error instanceof Error ? error.message : String(error));
@@ -33,7 +40,10 @@ export function SettingsRemotePageContainer(): JSX.Element {
   }, [controls, authority]);
   useEffect(() => {
     authority.active = true;
-    setSnapshot(null); setReadError(""); setActionError(""); setBusy(false);
+    const retained = readRetainedSettingsData<RemoteControlSnapshot>(controls, REMOTE_SNAPSHOT_DATA);
+    setSnapshot(retained ?? null);
+    setSnapshotControls(retained ? controls : undefined);
+    setReadError(""); setActionError(""); setBusy(false);
     void refresh();
     const off = controls.subscribeRemote(() => { void refresh(); });
     return () => { authority.active = false; off(); };
@@ -45,19 +55,25 @@ export function SettingsRemotePageContainer(): JSX.Element {
     setLoading(false); setBusy(true); setActionError("");
     try {
       const next = await action();
-      if (authority.active) { ++revision.current; setLoading(false); setSnapshot(next); setReadError(""); }
+      if (authority.active) {
+        ++revision.current;
+        setLoading(false); setSnapshot(next); setSnapshotControls(controls);
+        writeRetainedSettingsData(controls, REMOTE_SNAPSHOT_DATA, next);
+        setReadError("");
+      }
     } catch (error) {
       if (authority.active && !isPluginLifecycleCancellation(error)) setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       if (authority.active) setBusy(false);
     }
   };
+  const currentSnapshot = snapshotControls === controls ? snapshot : null;
   const failure = readError ? <SettingsFailure message={t("remote.readFailed")} diagnostic={readError}
     onRetry={() => { void refresh(); }} retrying={loading} /> : null;
-  if (!snapshot) return failure ?? <p role="status">{t("settings.loading")}</p>;
-  return <>{failure}<SettingsRemotePage status={snapshot.status ?? null} statusError={actionError || snapshot.status_error || ""}
-    hostRunning={snapshot.host_running ?? false} hostEnabled={snapshot.host_enabled ?? snapshot.host_running ?? false}
-    pairUri={snapshot.pair_uri ?? null} webUrl={snapshot.web_url ?? null} busy={busy}
+  if (!currentSnapshot) return failure ?? <p role="status">{t("settings.loading")}</p>;
+  return <>{failure}<SettingsRemotePage status={currentSnapshot.status ?? null} statusError={actionError || currentSnapshot.status_error || ""}
+    hostRunning={currentSnapshot.host_running ?? false} hostEnabled={currentSnapshot.host_enabled ?? currentSnapshot.host_running ?? false}
+    pairUri={currentSnapshot.pair_uri ?? null} webUrl={currentSnapshot.web_url ?? null} busy={busy}
     onToggleHost={enabled => { void run(() => controls.setRemoteHostEnabled(enabled)); }}
     onOpenPairing={() => { void run(() => controls.startRemotePairing()); }}
     onRemoveDevice={device => { void run(() => controls.removeRemoteDevice(device.fingerprint)); }} />

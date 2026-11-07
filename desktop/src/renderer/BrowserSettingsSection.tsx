@@ -12,6 +12,14 @@ import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSe
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
 import { Switch } from "./ui/Switch";
+import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
+
+type BrowserPageData = {
+  profiles: BrowserProfile[];
+  extensions: BrowserExtensionRecord[];
+};
+
+const BROWSER_PAGE_DATA = "browser";
 
 export function BrowserSettingsSection(): JSX.Element | null {
   const scope = useSettingsOperationScope();
@@ -19,9 +27,12 @@ export function BrowserSettingsSection(): JSX.Element | null {
   const { t } = useI18n();
   const supported = controls.capabilities.browser;
   const platform = controls.capabilities.platform;
-  const [profiles, setProfiles] = useState<BrowserProfile[]>([]);
-  const [loadedScope, setLoadedScope] = useState<typeof scope>();
-  const [extensions, setExtensions] = useState<BrowserExtensionRecord[]>([]);
+  const retained = readRetainedSettingsData<BrowserPageData>(controls, BROWSER_PAGE_DATA);
+  const [profiles, setProfiles] = useState<BrowserProfile[]>(() => retained?.profiles ?? []);
+  const [extensions, setExtensions] = useState<BrowserExtensionRecord[]>(() => retained?.extensions ?? []);
+  const [loadedControls, setLoadedControls] = useState(() => retained ? controls : undefined);
+  const [profilesLoaded, setProfilesLoaded] = useState(Boolean(retained));
+  const [extensionsLoaded, setExtensionsLoaded] = useState(Boolean(retained));
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState("");
   const [extensionError, setExtensionError] = useState("");
@@ -29,6 +40,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
   const [expandedExtension, setExpandedExtension] = useState("");
   const [result, setResult] = useState<BrowserCookieImportResult>();
   const revision = useRef(0);
+  const loaded = loadedControls === controls;
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!scope.active || !supported) return;
@@ -39,23 +51,40 @@ export function BrowserSettingsSection(): JSX.Element | null {
       Promise.resolve().then(() => controls.listBrowserExtensions()),
     ]);
     if (!scope.active || current !== revision.current) return;
-    if (profileResult.status === "fulfilled") setProfiles(profileResult.value);
+    if (profileResult.status === "fulfilled") { setProfiles(profileResult.value); setProfilesLoaded(true); }
     else if (!isPluginLifecycleCancellation(profileResult.reason)) setProfileError(messageOf(profileResult.reason));
-    if (extensionResult.status === "fulfilled") setExtensions(extensionResult.value);
+    if (extensionResult.status === "fulfilled") { setExtensions(extensionResult.value); setExtensionsLoaded(true); }
     else if (!isPluginLifecycleCancellation(extensionResult.reason)) setExtensionError(messageOf(extensionResult.reason));
-    setLoadedScope(scope);
+    setLoadedControls(controls);
     setLoading(false);
-  }, [scope, supported]);
+  }, [controls, scope, supported]);
 
   useEffect(() => {
-    setLoadedScope(undefined); setProfiles([]); setExtensions([]); setBusy(""); setResult(undefined); setExpandedExtension("");
+    const retained = readRetainedSettingsData<BrowserPageData>(controls, BROWSER_PAGE_DATA);
+    setProfiles(retained?.profiles ?? []);
+    setExtensions(retained?.extensions ?? []);
+    setProfilesLoaded(Boolean(retained));
+    setExtensionsLoaded(Boolean(retained));
+    setLoadedControls(retained ? controls : undefined);
+    setBusy(""); setResult(undefined); setExpandedExtension("");
     setProfileError(""); setExtensionError("");
     if (supported) void refresh();
     else setLoading(false);
-  }, [scope, supported, refresh]);
+  }, [controls, scope, supported, refresh]);
+
+  useEffect(() => {
+    if (!loaded || !profilesLoaded || !extensionsLoaded) return;
+    writeRetainedSettingsData(controls, BROWSER_PAGE_DATA, { profiles, extensions });
+  }, [controls, extensions, extensionsLoaded, loaded, profiles, profilesLoaded]);
 
   if (!supported) return null;
-  const unavailable = loadedScope !== scope || loading;
+  const unavailable = !loaded || loading;
+
+  function applyExtensions(next: BrowserExtensionRecord[]): void {
+    if (!scope.active) return;
+    setExtensions(next);
+    setExtensionsLoaded(true);
+  }
 
   const importCookies = async (profile: BrowserProfile): Promise<void> => {
     if (!scope.active || unavailable || busy) return;
@@ -78,7 +107,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setExtensionError("");
     try {
       const next = await controls.addBrowserExtension!();
-      if (scope.active) setExtensions(next);
+      applyExtensions(next);
     } catch (reason) {
       if (scope.active && !isPluginLifecycleCancellation(reason)) setExtensionError(messageOf(reason));
     } finally {
@@ -95,7 +124,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
         extension.id,
         !extension.enabled,
       );
-      if (scope.active) setExtensions(next);
+      applyExtensions(next);
     } catch (reason) {
       if (scope.active && !isPluginLifecycleCancellation(reason)) setExtensionError(messageOf(reason));
     } finally {
@@ -109,13 +138,13 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setExtensionError("");
     try {
       const next = await controls.reloadBrowserExtension(extension.id);
-      if (scope.active) setExtensions(next);
+      applyExtensions(next);
     } catch (reason) {
       if (!scope.active || isPluginLifecycleCancellation(reason)) return;
       setExtensionError(messageOf(reason));
       try {
         const next = await controls.listBrowserExtensions();
-        if (scope.active) setExtensions(next);
+        applyExtensions(next);
       } catch (refreshError) {
         if (scope.active && !isPluginLifecycleCancellation(refreshError)) setExtensionError(messageOf(refreshError));
       }
@@ -130,7 +159,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setExtensionError("");
     try {
       const next = await controls.removeBrowserExtension!(extension.id);
-      if (scope.active) setExtensions(next);
+      applyExtensions(next);
     } catch (reason) {
       if (scope.active && !isPluginLifecycleCancellation(reason)) setExtensionError(messageOf(reason));
     } finally {
@@ -173,11 +202,11 @@ export function BrowserSettingsSection(): JSX.Element | null {
         testID="settings-browser-import"
       >
         <SettingsGroup>
-          {loading ? (
+          {!loaded || (!profilesLoaded && loading) ? (
             <SettingsRow title={t("settings.browserLoading")}>
               <Loader2 className="icon settings-spin" aria-hidden="true" />
             </SettingsRow>
-          ) : profiles.length === 0 ? (
+          ) : !profilesLoaded ? null : profiles.length === 0 ? (
             <div className="settings-group-empty" role="status">
               <span>{t("settings.browserNoProfiles")}</span>
             </div>
@@ -238,7 +267,11 @@ export function BrowserSettingsSection(): JSX.Element | null {
         testID="settings-browser-extensions"
       >
         <SettingsGroup>
-          {extensions.length === 0 ? (
+          {!loaded || (!extensionsLoaded && loading) ? (
+            <SettingsRow title={t("settings.browserLoading")}>
+              <Loader2 className="icon settings-spin" aria-hidden="true" />
+            </SettingsRow>
+          ) : !extensionsLoaded ? null : extensions.length === 0 ? (
             <div className="settings-group-empty" role="status">
               <span>{t("settings.browserExtensionsEmpty")}</span>
             </div>
