@@ -352,10 +352,6 @@ function firstPartyRuntimeResponse(method: string, workspaceId?: string): unknow
         candidates: {},
         last_status: "",
       };
-    case "memory.overview.start":
-      return { id: "overview-job" };
-    case "memory.job.get":
-      return { state: "completed", output: "" };
     case "memory.read":
       return { index_raw: "", files: [] };
     default:

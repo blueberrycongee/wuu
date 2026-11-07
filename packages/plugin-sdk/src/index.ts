@@ -1038,6 +1038,27 @@ export interface MemoryNotebookReadRequest {
   max_bytes?: number;
 }
 
+/** Notebook metadata from service version 1.1; topic bodies are omitted. */
+export interface MemoryNotebookListV1 {
+  version: 1;
+  index: { found: boolean; bytes: number; lines: number; max_bytes: number; max_lines: number; truncated: boolean };
+  files: {
+    file: string; title?: string; type?: string; description?: string;
+    /** Frontmatter date the note was last confirmed against evidence. */
+    verified?: string;
+    /** Frontmatter evidence references such as session:<id>. */
+    sources?: string[];
+    bytes: number;
+    /** Whether MEMORY.md names this file. */
+    indexed: boolean;
+    /** Agent memory_read calls across workspaces, an advisory ranking signal. */
+    reads: number;
+    last_read_at?: string;
+  }[];
+  /** Plain topic filenames named by MEMORY.md that do not exist. */
+  dangling: string[];
+}
+
 /** Fresh file evidence, not a model summary or an instruction authority. */
 export interface MemoryNotebookSnapshotV1 {
   version: 1;
@@ -1682,7 +1703,11 @@ export interface HostServiceContracts {
     params: { session_id: string; provider?: string; model?: string };
     result: { provider: string; model: string };
   };
-  "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: { session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string } };
+  "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: {
+    session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string;
+    /** "plugin" for plugin-owned background sessions; absent from hosts before this field existed. */
+    visibility?: "user" | "plugin";
+  } };
   "host.session.inspect": {
     params: {
       execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;
