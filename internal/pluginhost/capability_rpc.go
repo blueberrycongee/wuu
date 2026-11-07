@@ -404,10 +404,11 @@ type SessionAttachmentHandoff struct {
 const MaxSessionHandoffBytes = 20 * 1024 * 1024
 
 type SessionInput struct {
-	AttachmentHandoff *SessionAttachmentHandoff `json:"attachment_handoff,omitempty"`
-	Attachments       []SessionInputAttachment  `json:"attachments,omitempty"`
-	Prompt            string                    `json:"prompt"`
-	ContextBlocks     []SessionContextBlock     `json:"context_blocks,omitempty"`
+	AttachmentHandoff *SessionAttachmentHandoff    `json:"attachment_handoff,omitempty"`
+	ContentParts      []providers.MessageContentPart `json:"content_parts,omitempty"`
+	Attachments       []SessionInputAttachment       `json:"attachments,omitempty"`
+	Prompt            string                         `json:"prompt"`
+	ContextBlocks     []SessionContextBlock          `json:"context_blocks,omitempty"`
 }
 
 type SessionInputPresentation struct {

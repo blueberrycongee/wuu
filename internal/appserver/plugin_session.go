@@ -933,8 +933,8 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.Input.AttachmentHandoff == nil && params.ResumeReceiptID == "") {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
 	}
-	if len(params.Input.Attachments) > 0 && params.UserInputRequestID == "" {
-		return pluginhost.SessionSendResult{}, errors.New("attachments require an explicit client user input")
+	if (len(params.Input.Attachments) > 0 || len(params.Input.ContentParts) > 0) && params.UserInputRequestID == "" {
+		return pluginhost.SessionSendResult{}, errors.New("attachments and content parts require an explicit client user input")
 	}
 	if err := s.validateMessageRelation(binding, pluginID, params.SessionID, params.Relation); err != nil {
 		return pluginhost.SessionSendResult{}, err
@@ -947,13 +947,16 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, handoffErr
 	}
 	if params.ResumeReceiptID != "" {
-		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools || params.ToolPolicy != nil {
+		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || len(params.Input.ContentParts) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools || params.ToolPolicy != nil {
 			return pluginhost.SessionSendResult{}, errors.New("resume must reference only the immutable accepted input")
 		}
 		if err := runtime.AuthorizeClientInputResume(ctx, pluginID, params.UserInputRequestID, params.ResumeReceiptID, params.SessionID, params.RequestID); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
 	} else if params.UserInputRequestID != "" {
+		if err := runtime.AuthorizeClientUserInputContentParts(ctx, pluginID, params.UserInputRequestID, params.Input.ContentParts); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
 		if err := runtime.AuthorizeClientUserInputRelation(ctx, pluginID, params.UserInputRequestID, params.Relation); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
@@ -1137,6 +1140,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			return pluginhost.SessionSendResult{}, err
 		}
 	}
+	msg.ContentParts = providers.CloneMessageContentParts(params.Input.ContentParts)
 	msg.Relation = providers.CloneMessageRelation(params.Relation)
 	msg.ClientID = clientID
 	msg.Origin = pluginhost.SessionInputPlugin

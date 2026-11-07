@@ -2,8 +2,8 @@ import SwiftUI
 import WuuCore
 
 let personalAccent = Color(red: 53 / 255, green: 102 / 255, blue: 240 / 255)
-let personalSectionNames = ["对话", "事项", "今天", "记忆", "设置", "日历", "查找历史"]
-let personalSectionIcons = ["bubble.left", "checklist", "sun.max", "brain", "slider.horizontal.3", "calendar", "magnifyingglass"]
+let personalSectionNames = ["对话", "事项", "今天", "记忆", "设置", "查找历史"]
+let personalSectionIcons = ["bubble.left", "checklist", "sun.max", "brain", "slider.horizontal.3", "magnifyingglass"]
 
 struct PersonalAgentOption: Identifiable {
     let id: String

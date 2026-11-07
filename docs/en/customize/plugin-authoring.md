@@ -106,6 +106,8 @@ still need an explicit composition choice.
 
 ### MCP connector cards
 
+Personal uses the same globally installed MCP connector plugins and selected credential provider as Coding when its embedding host explicitly admits account sharing. Project-only MCP definitions remain in Coding. The desktop grants sharing only to its own account user space; other embeddings must set `SharedMCPConnectors` through trusted bootstrap. Verified-isolation hosts do not share accounts.
+
 A plugin-owned MCP server's optional `connector` metadata presents it as an account connector. It uses the existing server definition, connection lifecycle, OAuth store, and plugin ownership; it does not register a second service. Metadata on a standalone service is informational and does not change its ordinary MCP controls. A declarative-only plugin needs no `runtime` or `desktop` entry:
 
 ```json
@@ -151,7 +153,7 @@ Automatic login is started once by the owner, not by a mounted dialog. Optional 
 
 A terminal login error can include `authorized: true` when OAuth completed but the subsequent connection failed. Retry the connection with the saved grant; the flag does not mean that the server is connected or will accept the grant.
 
-The current picker supports the Coding/current-project host only. OAuth storage is keyed by the canonical server name, not project identity: projects using that name and the same credential provider share the account, including replacement and local sign-out. User-bound Personal/twin hosts exclude shared MCP configuration from their runtime; the backend reports setup unavailable and rejects connector mutations instead of mixing domain preferences or credentials. Existing dedicated Personal connectors are unaffected. Extending this flow requires domain-scoped connection identity, preferences, and credential storage, not a permanent product-ID check. A resource URL binds credentials to a remote endpoint; it grants neither display-location nor domain authority. Without an admitted identity probe, the card leaves account identity unverified.
+The current picker supports the Coding/current-project host only. OAuth storage is keyed by the canonical server name, not project identity: projects using that name and the same credential provider share the account, including replacement and local sign-out. User-bound Personal/twin hosts exclude shared MCP configuration from their runtime; the backend reports setup unavailable and rejects connector mutations instead of mixing domain preferences or credentials. Extending this flow requires domain-scoped connection identity, preferences, and credential storage, not a permanent product-ID check. A resource URL binds credentials to a remote endpoint; it grants neither display-location nor domain authority. Without an admitted identity probe, the card leaves account identity unverified.
 
 Use a real provider endpoint and truthful setup requirements. A URL is not proof that the provider supports dynamic client registration. Do not ship a Connect action when a fixed OAuth client, preview enrollment, or administrator setup is still missing. See the [bundled account connector guide](mcp.md#connect-an-account) for the current provider limitations.
 
@@ -489,7 +491,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON. The result describes the completed comparison: `swapped: false` returns the current value, while `swapped: true` returns the replacement value (`null` after deletion).
 
-For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
+For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Authenticated client input can include `content_parts` containing text, pasted text, and plugin references. Forward these unchanged in `input.content_parts`; the host rejects substitutions or omissions and includes the selection in the durable request fingerprint. Plugin references retain resource and authorization identity and are revalidated before execution, including external engines with conversation-plugin support. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
 `host.session.model` reads the current provider and model for a session owned by the calling plugin. To change it, supply both `provider` and `model`. The call requires a live owner UI in the same user space, checks session ownership, and rejects a change while the session is busy. An accepted selection is persisted to that session; other sessions and global defaults are unchanged. Previously admitted delegated work retains its own authorization and selection. This service does not configure credentials or select an external engine.
 
@@ -1161,35 +1163,9 @@ read these facts before completing the original call. Do not queue that read
 behind the invocation waiting for the host. Keep mutations synchronized through
 storage and the inspection contract rather than serializing the entire service.
 
-### Personal account provider lifecycle
-
-Calendar and connector operations use the selected `personal.accounts@1` service.
-The Personal bundle selects `wuu.personal-account-client` and the native
-`wuu.personal-accounts` provider; a composition can bind the client to another
-provider or disable the native module without an implicit fallback.
-
-Its `call` method accepts `{operation, input, session_id?}` using the calendar and
-connector operation names of `host.personal`. The host resolves the execution
-session, checks resource policy, and requires live owner admission for account
-controls before calling the selected service. A serialized session ID is not
-permission. Results are `{value}` or `{calendar_error: {code,
-persistence_failed?}}` / `{connector_error: {code}}`; transport and admission
-failures remain service errors. Credentials and authorization URLs are not
-returned through this contract.
-
-Native embeddings configure `RuntimeBindings.SetPersonalAccountsFactory` before
-creating the runtime. The factory creates fresh account resources only on the
-first call to that selected generation. It must not return a broker already owned
-by another generation. The provider declares its credential dependency and owns
-its OAuth attempts and cleanup. Accepted calls retain their exact graph until
-completion; closing an old generation cannot close the new generation's broker.
-`NewUserHost` with runtime bindings does not accept preconstructed account brokers.
-The review/memory coordinator and native file-review gate are separate from this
-account service.
-
 ### Personal coordination and host effects
 
-`personal.coordination@1` is the replaceable review/memory/file/connector policy
+`personal.coordination@1` is the replaceable review/memory/file policy
 service. The Personal bundle selects `wuu.personal-client`, the native
 `wuu.personal-actions-consumer` coordinator, and `wuu.personal-effects` host
 mechanisms. Binding the client to another provider or disabling the coordinator
@@ -1201,11 +1177,6 @@ Coordinator requests are `{operation?, input?, session_id?, call?, scopes?}`.
 `file-gate` receives a tool call and returns a tool result; `scope` and `cancel`
 support exact session/task cancellation; `inspection` handles owner-admitted
 review-policy/settings/session recovery, serialized with live Personal effects. `initialize` and `drain` are lifecycle/scheduler methods.
-Connector methods use `input`: `connector-snapshot` accepts `{actor}` and returns
-`{authority}`, while `connector-commit` accepts `{actor, expected, effect_id}`.
-The actor is the existing `{ProductDomain, UserSpaceID, SessionID}` wire shape.
-The native coordinator executes the effect *inside* its durable authority
-inspections; a boolean authorization response is not an effect commit.
 
 A replacement declares `host.personal-effects@1`. Its public methods are:
 

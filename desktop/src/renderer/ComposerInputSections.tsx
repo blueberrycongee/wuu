@@ -2,7 +2,7 @@ import { ComposerInput, composerInputElement, type ComposerInputHandle } from ".
 import { showActionErrorToast } from "./Toast";
 import { useComposerPluginMenu } from "./ComposerPluginMenu";
 import { pluginReferenceParts } from "./ComposerPluginReferences";
-import { useComposerServices } from "./ComposerServicesContext";
+import { useComposerServices, useComposerPluginServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
 import { DictationButton, DictationErrorToast, DictationRecording, useComposerDictation } from "./ComposerDictation";
 import type { PluginHost } from "./plugins/PluginHost";
@@ -324,6 +324,7 @@ export function SplitPaneComposer({
     setPrompt(nextPrompt);
   }
   const services = useComposerServices();
+  const pluginServices = useComposerPluginServices();
   const inline = useComposerInlineCompletion({
     host: pluginHost ?? services?.presentation ?? desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
@@ -399,7 +400,7 @@ export function SplitPaneComposer({
     if (readOnly || sendDisabled || submittedDraftRef.current === currentSignature) return;
     resetQueryHistoryNavigation();
     const contentParts = pluginReferenceParts(currentPrompt, collapsedContentPartsForPrompt(currentPrompt));
-    if (contentParts?.some(part => part.type === "plugin_reference") && !services?.conversationPluginsSupported) {
+    if (contentParts?.some(part => part.type === "plugin_reference") && !pluginServices?.conversationPluginsSupported) {
       showActionErrorToast(new Error(t("composer.pluginsEngineUnsupported")));
       return;
     }

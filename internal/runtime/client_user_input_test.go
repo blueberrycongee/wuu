@@ -137,3 +137,30 @@ func TestClientResumeProofCannotMintNewInputOrChangeReceipt(t *testing.T) {
 		t.Fatal("detached proof revived")
 	}
 }
+
+func TestClientPluginReferencesCannotBeChangedOmittedOrDetached(t *testing.T) {
+	input := ClientUserInput{RequestID: "r", Prompt: "@Issue inspect", ContentParts: []providers.MessageContentPart{{Type: "plugin_reference", Text: "@Issue", Plugin: &providers.PluginReference{PluginID: "connector", MCPServer: "plugin.connector.issue", AuthorizationID: "grant-one"}}, {Type: "text", Text: " inspect"}}}
+	if err := ValidateClientUserInput(input); err != nil {
+		t.Fatal(err)
+	}
+	original := providers.CloneMessageContentParts(input.ContentParts)
+	admission, cancel := context.WithCancel(context.Background())
+	ctx := WithClientUserInput(admission, "personal", input)
+	input.ContentParts[0].Plugin.AuthorizationID = "grant-two"
+	if err := AuthorizeClientUserInputContentParts(ctx, "personal", "r", original); err != nil {
+		t.Fatal(err)
+	}
+	for _, parts := range [][]providers.MessageContentPart{nil, input.ContentParts, original[1:]} {
+		if err := AuthorizeClientUserInputContentParts(ctx, "personal", "r", parts); err == nil {
+			t.Fatal("changed reference admitted")
+		}
+	}
+	input.Prompt = "different"
+	if err := ValidateClientUserInput(input); err == nil {
+		t.Fatal("references detached from literal message")
+	}
+	cancel()
+	if err := AuthorizeClientUserInputContentParts(context.WithoutCancel(ctx), "personal", "r", original); err == nil {
+		t.Fatal("detached reference admitted")
+	}
+}

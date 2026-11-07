@@ -5,22 +5,16 @@ import type { NamedAgent, PersonalTask } from "./index.js";
 
 const hash = (...parts: string[]) => createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 28);
 const now = () => new Date().toISOString();
-const calendarObservationActions = ["service/calendar.personal/status","service/calendar.personal/refresh","service/calendar.personal/changes","personal/calendar.read.status","personal/calendar.read.events","personal/calendar.read.authorize","user/session/context"] as const;
 const required = (input: Record<string, unknown>, key: string) => { if (typeof input[key] !== "string" || !(input[key] as string).trim()) throw new Error(`${key} is required`); return (input[key] as string).trim(); };
 interface Binding { binding_id: string; revision: number; status: string; next_run_at?: string; pending_event?: { event_id: string; binding_revision: number; scheduled_at?: string }; payload?: Record<string, unknown>; last_event_id?: string }
-interface CalendarSource { kind: "calendar"; account_id: string; generation: string; calendar_id: string; time_min: string; time_max: string; timezone: string }
-export interface CalendarChange { event_id: string; calendar_event_id: string; kind: "created" | "updated" | "cancelled" | "removed"; occurred_at: string; before?: unknown; after?: unknown; source: Record<string, unknown> }
-interface CalendarPage { available: boolean; reset_required?: boolean; reason?: string; baseline?: boolean; cursor?: string; changes: CalendarChange[]; source?: Record<string, unknown> }
 export interface Routine {
   routine_id: string; agent_id: string; request_id: string; revision: number; config_revision: number;
   title: string; prompt: string; kind: "reminder" | "task"; cron?: string; run_at?: string; timezone: string; missed_policy: "run_once" | "skip";
   status: "active" | "stopping" | "paused" | "stopped" | "completed" | "needs_authorization"; authorization?: PersonalAuthorization; authorization_request?: PersonalAuthorizationIntent; stop_target?: "paused" | "stopped"; binding: { binding_id: string; revision: number; status: "pending" | "active" | "unknown"; next_run_at?: string };
   created_at: string; updated_at: string; last_event_id?: string; last_result_hash?: string; last_error?: string; cancellation_pending?: boolean;
-  observation?: {request_id:string;session_id:string;config_revision:number;authorization?:PersonalAuthorization};
-  source?: CalendarSource; source_cursor?: string; source_blocked?: boolean; source_pending?: { cursor: string; changes: CalendarChange[] };
 }
-interface EventRecord { context_digest?: string; authorization?: PersonalAuthorization; kind?: "reminder" | "task" | "calendar"; state?: string; created_at?: string; updated_at?: string; scheduled_at?: string; started_at?: string; completed_at?: string; output?: string; error?: string; revision: number; event_id: string; routine_id: string; routine_revision?: number; status: "pending" | "accepted"; request_id: string; session_id?: string; previous_delivery?: { request_id: string; session_id: string } }
-const routineContextDigest = (routine: Routine) => createHash("sha256").update(JSON.stringify({routine_id:routine.routine_id,revision:routine.config_revision,title:routine.title,prompt:routine.prompt,kind:routine.kind,cron:routine.cron,run_at:routine.run_at,timezone:routine.timezone,source:routine.source})).digest("hex");
+interface EventRecord { context_digest?: string; authorization?: PersonalAuthorization; kind?: "reminder" | "task"; state?: string; created_at?: string; updated_at?: string; scheduled_at?: string; started_at?: string; completed_at?: string; output?: string; error?: string; revision: number; event_id: string; routine_id: string; routine_revision?: number; status: "pending" | "accepted"; request_id: string; session_id?: string; previous_delivery?: { request_id: string; session_id: string } }
+const routineContextDigest = (routine: Routine) => createHash("sha256").update(JSON.stringify({routine_id:routine.routine_id,revision:routine.config_revision,title:routine.title,prompt:routine.prompt,kind:routine.kind,cron:routine.cron,run_at:routine.run_at,timezone:routine.timezone})).digest("hex");
 interface Preferences { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean }
 interface Services {
   active(): void;
@@ -28,7 +22,7 @@ interface Services {
   agent(id: string, allowInactive?: boolean): Promise<NamedAgent>;
   main(): Promise<NamedAgent>;
   send(agentID: string, params: HostServiceContracts["host.session.send"]["params"]): Promise<HostServiceContracts["host.session.send"]["result"]>;
-  task(routine: Routine, eventID: string, agent: NamedAgent, change?: CalendarChange): Promise<unknown>;
+  task(routine: Routine, eventID: string, agent: NamedAgent): Promise<unknown>;
   stopTasks(routineID: string): Promise<string[]>;
   needsAuthorization(routineID: string): Promise<boolean>;
   preferences(): Promise<Preferences>;
@@ -119,8 +113,8 @@ export class PersonalRoutines {
         tasks.push(task); continue;
       }
       const record = parsed as EventRecord;
-      if (typeof record.event_id !== "string" || typeof record.request_id !== "string" || !["pending", "accepted"].includes(record.status) || [record.created_at, record.updated_at, record.scheduled_at, record.started_at, record.completed_at, record.session_id, record.state, record.output, record.error].some(value => value !== undefined && typeof value !== "string") || record.kind !== undefined && !["reminder", "task", "calendar"].includes(record.kind)) { skipped_records++; continue; }
-      const kind = record.kind ?? (record.routine_revision === routine.config_revision ? routine.source ? "calendar" : routine.kind : "unknown");
+      if (typeof record.event_id !== "string" || typeof record.request_id !== "string" || !["pending", "accepted"].includes(record.status) || [record.created_at, record.updated_at, record.scheduled_at, record.started_at, record.completed_at, record.session_id, record.state, record.output, record.error].some(value => value !== undefined && typeof value !== "string") || record.kind !== undefined && !["reminder", "task"].includes(record.kind)) { skipped_records++; continue; }
+      const kind = record.kind ?? (record.routine_revision === routine.config_revision ? routine.kind : "unknown");
       const event = { ...record, kind, state: record.state ?? (kind === "reminder" || kind === "unknown" ? "unknown" : record.status === "accepted" ? "dispatched" : "pending") };
       if (kind === "reminder") {
         const sessionID = record.session_id || agent.main_session_id;
@@ -167,18 +161,7 @@ export class PersonalRoutines {
     if (run_at && !Number.isFinite(Date.parse(run_at))) throw new Error("invalid run_at timestamp");
     const missed_policy = input.missed_policy ?? previous?.missed_policy ?? "run_once";
     if (missed_policy !== "run_once" && missed_policy !== "skip") throw new Error("invalid missed policy");
-    let source = previous?.source;
-    if (input.source !== undefined) {
-      if (!input.source || typeof input.source !== "object" || Array.isArray(input.source)) throw new Error("invalid calendar source");
-      const raw = input.source as Record<string, unknown>;
-      if (raw.kind !== "calendar") throw new Error("only the calendar change source is supported");
-      const time_min = new Date(required(raw, "time_min")).toISOString(), time_max = new Date(required(raw, "time_max")).toISOString();
-      if (Date.parse(time_max) <= Date.parse(time_min) || Date.parse(time_max) - Date.parse(time_min) > 31 * 86400000) throw new Error("calendar source window must be positive and at most 31 days");
-      source = { kind: "calendar", account_id: required(raw, "account_id"), generation: required(raw, "generation"), calendar_id: required(raw, "calendar_id"), time_min, time_max, timezone: required(raw, "timezone") };
-      new Intl.DateTimeFormat("en", { timeZone: source.timezone });
-    }
-    if (source && (kind !== "task" || !cron)) throw new Error("calendar change responsibility requires kind task and one recurring cron binding");
-    return { title, prompt, timezone, kind, cron, run_at, missed_policy, source } as Pick<Routine, "title" | "prompt" | "timezone" | "kind" | "cron" | "run_at" | "missed_policy" | "source">;
+    return { title, prompt, timezone, kind, cron, run_at, missed_policy } as Pick<Routine, "title" | "prompt" | "timezone" | "kind" | "cron" | "run_at" | "missed_policy">;
   }
   async create(input: Record<string, unknown>): Promise<{ routine: Routine }> {
     const agent = await this.services.agent(required(input, "agent_id")); const requestID = required(input, "request_id");
@@ -196,13 +179,10 @@ export class PersonalRoutines {
     const routine = await this.readRoutine(input.task_id);
     if (!routine) return undefined;
     const cleanup=input.action === "user/session/cancel" || input.action === "user/session/inspect";
-    if (!cleanup && (!["active","completed"].includes(routine.status) || routine.cancellation_pending || routine.source_blocked)) throw new Error("routine lineage is no longer active");
+    if (!cleanup && (!["active","completed"].includes(routine.status) || routine.cancellation_pending)) throw new Error("routine lineage is no longer active");
     if (input.parent && (!authorizationCurrent(routine.authorization) || !sameAuthorization(routine.authorization.reference,input.parent.reference) || input.parent.scope.task_id !== routine.routine_id || input.parent.scope.revision !== routine.config_revision)) throw new Error("routine parent authorization changed");
     let runID = "", authorization=routine.authorization, revision=routine.config_revision, context_digest=routineContextDigest(routine);
-    if (input.kind === "exact-run" && routine.source && routine.observation?.config_revision === routine.config_revision && routine.observation.request_id === input.request_id && routine.observation.session_id === input.session_id) {
-      if (input.session_id !== main.main_session_id) throw new Error("source observation is not bound to the main session");
-      runID=routine.observation.request_id; authorization=routine.observation.authorization;
-    } else if (input.kind === "exact-run") {
+    if (input.kind === "exact-run") {
       const {keys} = await this.host.call("host.storage.keys",{scope:"user"});
       let event: EventRecord | undefined;
       for (const key of keys.filter(key=>key.startsWith(this.key("event","")))) {
@@ -234,7 +214,7 @@ export class PersonalRoutines {
         return current.authorization_request?.request_id === request_id ? current : {...current,authorization_request:{request_id,expires_at}};
       });
     }
-    const authorization = await issueAuthorization(this.host, {request_id,expires_at:routine.authorization_request!.expires_at,kind:"task-lineage",task_id:routine.routine_id,session_id:main.main_session_id,max_depth:2,requested_actions:[...new Set([...(routine.kind === "task" ? ["user/session/create",...TASK_EXECUTION_ACTIONS] : SESSION_DELIVERY_ACTIONS),...(routine.source ? calendarObservationActions : []),"execution/grant/derive"])]});
+    const authorization = await issueAuthorization(this.host, {request_id,expires_at:routine.authorization_request!.expires_at,kind:"task-lineage",task_id:routine.routine_id,session_id:main.main_session_id,max_depth:2,requested_actions:[...new Set([...(routine.kind === "task" ? ["user/session/create",...TASK_EXECUTION_ACTIONS] : SESSION_DELIVERY_ACTIONS),"execution/grant/derive"])]});
     return this.update<Routine>("routine", routine.routine_id, current => {
       if (!current || current.config_revision !== routine.config_revision) throw new Error("routine authorization revision changed");
       return {...current,authorization};
@@ -247,13 +227,13 @@ export class PersonalRoutines {
       if (previous.cancellation_pending) throw new Error("routine cancellation is still stopping");
       if (previous.run_at && Date.parse(previous.run_at) <= Date.now()) throw new Error("expired one-time routine needs a new future run_at before authorization");
       await this.validateSchedule(previous);
-      let routine = await this.update<Routine>("routine",previous.routine_id,current => ({...current!,status:"active",config_revision:current!.config_revision+1,authorization:undefined,source_pending:undefined,binding:{...current!.binding,status:"pending"},last_error:undefined}), Number(input.expected_revision));
+      let routine = await this.update<Routine>("routine",previous.routine_id,current => ({...current!,status:"active",config_revision:current!.config_revision+1,authorization:undefined,binding:{...current!.binding,status:"pending"},last_error:undefined}), Number(input.expected_revision));
       routine = await this.authorize(routine);
       return {routine:await this.sync(routine)};
     });
   }
   private async expire(routine: Routine, settle = true): Promise<Routine> {
-    const expired = await this.update<Routine>("routine",routine.routine_id,current => current?.config_revision === routine.config_revision && current.status === "active" ? {...current,status:"needs_authorization",config_revision:current.config_revision+1,cancellation_pending:true,source_pending:undefined,binding:{...current.binding,status:"pending"},last_error:"needs_authorization: unattended authorization is no longer valid; renew from the owner UI"} : current!);
+    const expired = await this.update<Routine>("routine",routine.routine_id,current => current?.config_revision === routine.config_revision && current.status === "active" ? {...current,status:"needs_authorization",config_revision:current.config_revision+1,cancellation_pending:true,binding:{...current.binding,status:"pending"},last_error:"needs_authorization: unattended authorization is no longer valid; renew from the owner UI"} : current!);
     if (settle) await this.cancelWork(expired);
     return this.sync((await this.readRoutine(expired.routine_id))!);
   }
@@ -275,7 +255,6 @@ export class PersonalRoutines {
       if (!["update", "pause", "resume", "stop"].includes(method)) throw new Error("unknown routine action");
       const stopping = method === "pause" || method === "stop";
       return { ...current, ...(config ?? {}), status: stopping ? "stopping" : method === "update" && ["paused","needs_authorization"].includes(current.status) ? current.status : "active", ...(method === "update" ? { cancellation_pending: true } : {}), ...(stopping ? { stop_target: method === "pause" ? "paused" as const : "stopped" as const, cancellation_pending: true } : {}), config_revision: current.config_revision + 1,
-        ...(current.source || input.source ? { source_pending: undefined, ...(method === "resume" || input.source !== undefined ? { source_cursor: undefined, source_blocked: false } : {}) } : {}),
         binding: { ...current.binding, status: "pending" }, updated_at: now(), last_error: undefined };
     }, Number(input.expected_revision));
     if (routine.cancellation_pending || routine.status === "stopping") await this.cancelWork(routine);
@@ -392,11 +371,10 @@ export class PersonalRoutines {
   async canExecute(task: PersonalTask): Promise<boolean> {
     if (!task.routine_id) return true;
     const routine = await this.read<Routine>("routine", task.routine_id);
-    if (!routine || !authorizationCurrent(routine.authorization) || routine.agent_id !== task.agent_id || routine.config_revision !== task.routine_revision || routine.cancellation_pending || routine.source_blocked) return false;
-    if (routine.source && Date.now() >= Date.parse(routine.source.time_max)) return false;
+    if (!routine || !authorizationCurrent(routine.authorization) || routine.agent_id !== task.agent_id || routine.config_revision !== task.routine_revision || routine.cancellation_pending) return false;
     // A one-time binding can finish admitting its event before that event's task
     // finishes. It retains authority only for the unchanged admitted revision.
-    return routine.status === "active" || routine.status === "completed" && !routine.cron && !routine.source;
+    return routine.status === "active" || routine.status === "completed" && !routine.cron;
   }
   async reminderAttention(requestID: string, agentID: string): Promise<boolean> {
     const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
@@ -410,69 +388,6 @@ export class PersonalRoutines {
         (routine.status === "active" || routine.status === "completed" && !routine.cron));
     }
     return false;
-  }
-  private sourceMatches(source: Record<string, unknown> | undefined, expected: CalendarSource): boolean {
-    return Boolean(source && source.user_space_id === this.space && ["account_id", "generation", "calendar_id", "time_min", "time_max", "timezone"].every(key => source[key] === expected[key as keyof CalendarSource]));
-  }
-  private async sourceError(routine: Routine, message: string, blocked = false): Promise<void> {
-    await this.update<Routine>("routine", routine.routine_id, current => {
-      if (current?.config_revision !== routine.config_revision || current.source_blocked && !blocked) return current!;
-      const source_blocked = current.source_blocked || blocked;
-      return current.last_error !== message || current.source_blocked !== source_blocked ? { ...current, last_error: message, source_blocked } : current;
-    });
-  }
-  private async calendarCall<T>(routine: Routine, method: "status" | "refresh" | "changes", params: unknown): Promise<T> {
-    if (!routine.source || !authorizationCurrent(routine.authorization)) throw Object.assign(new Error("Calendar source authority requires renewal"),{code:"execution_authorization_required"});
-    const main=await this.services.main();
-    if (routine.observation?.config_revision !== routine.config_revision) {
-      routine=await this.update<Routine>("routine",routine.routine_id,current => {
-        if (!current || current.config_revision !== routine.config_revision || current.status !== "active") throw new Error("Calendar source changed before observation");
-        return current.observation?.config_revision === current.config_revision ? current : {...current,observation:{request_id:`personal-observation-${hash(current.routine_id,String(current.config_revision))}`,session_id:main.main_session_id,config_revision:current.config_revision}};
-      });
-    }
-    let observation=routine.observation!;
-    if (!observation.authorization) {
-      const authorization=await issueAuthorization(this.host,{request_id:observation.request_id,expires_at:routine.authorization!.expires_at,kind:"exact-run",task_id:routine.routine_id,session_id:observation.session_id,parent:routine.authorization!.reference,requested_actions:calendarObservationActions});
-      routine=await this.update<Routine>("routine",routine.routine_id,current => current?.observation?.request_id === observation.request_id ? {...current,observation:{...current.observation,authorization}} : current!);
-      observation=routine.observation!;
-    }
-    return executionGrants(this.host).callService<T>({reference:observation.authorization!.reference,service:"calendar.personal",method,params});
-  }
-  private async calendarChanges(routine: Routine, agent: NamedAgent): Promise<void> {
-    const source = routine.source!;
-    if (routine.source_blocked) return;
-    if (Date.now() >= Date.parse(source.time_max)) {
-      const expired = await this.update<Routine>("routine", routine.routine_id, current => current?.config_revision === routine.config_revision ? { ...current, status: "completed", config_revision: current.config_revision + 1, source_pending: undefined, binding: { ...current.binding, status: "pending" }, last_error: undefined } : current!);
-      await this.sync(expired); return;
-    }
-    const query = { session_id: (await this.services.main()).main_session_id, account_id: source.account_id, calendar_id: source.calendar_id, time_min: source.time_min, time_max: source.time_max, timezone: source.timezone };
-    try {
-      const refreshed = await this.calendarCall(routine,"refresh",query) as { state?: string; source?: Record<string, unknown>; error_code?: string };
-      this.services.active();
-      if (refreshed.state !== "ready") { await this.sourceError(routine, `Calendar source unavailable: ${refreshed.error_code || refreshed.state || "refresh failed"}`, ["unconnected", "reconnect_required"].includes(refreshed.state || "")); return; }
-      if (!this.sourceMatches(refreshed.source, source)) { await this.sourceError(routine, "Calendar account, generation, or query changed; review and rebind this responsibility", true); return; }
-      let pending = routine.source_pending;
-      if (!pending) {
-        const page = await this.calendarCall(routine,"changes",{ ...query, generation: source.generation, ...(routine.source_cursor ? { cursor: routine.source_cursor } : {}) }) as CalendarPage;
-        this.services.active();
-        if (!page.available || page.reset_required) { await this.sourceError(routine, `Calendar source requires reconciliation: ${page.reason || "unavailable"}`, page.reset_required === true); return; }
-        if (!this.sourceMatches(page.source, source) || !page.cursor || typeof page.cursor !== "string" || !Array.isArray(page.changes) || page.changes.length > 128) throw new Error("invalid Calendar source page");
-        if (page.baseline && page.changes.length) throw new Error("Calendar baseline must not replay historical events");
-        for (const change of page.changes) if (!change.event_id || !["created", "updated", "cancelled", "removed"].includes(change.kind) || !this.sourceMatches(change.source, source) || JSON.stringify(change).length > 32000) throw new Error("invalid Calendar change provenance");
-        pending = { cursor: page.cursor, changes: page.changes };
-        const saved = await this.update<Routine>("routine", routine.routine_id, current => current?.status === "active" && !current.source_blocked && current.config_revision === routine.config_revision ? { ...current, source_pending: pending, last_error: undefined } : current!);
-        if (saved.status !== "active" || saved.source_blocked || saved.config_revision !== routine.config_revision) return;
-      }
-      for (const change of pending.changes) {
-        const current = await this.read<Routine>("routine", routine.routine_id);
-        if (current?.status !== "active" || current.source_blocked || current.config_revision !== routine.config_revision) return;
-        this.services.active();
-        if (calendarChangeExpired(change, source.timezone)) continue;
-        await this.services.task(routine, `calendar-change-${hash(routine.routine_id, source.generation, change.event_id)}`, agent, change);
-      }
-      this.services.active();
-      await this.update<Routine>("routine", routine.routine_id, current => current?.status === "active" && !current.source_blocked && current.config_revision === routine.config_revision ? { ...current, source_cursor: pending!.cursor, source_pending: undefined, last_error: undefined } : current!);
-    } catch (error) { this.services.active(); if (authorizationRequired(error)) throw error; await this.sourceError(routine, `Calendar source pending reconciliation: ${String(error)}`); }
   }
   private async fireBound(input: Record<string, unknown>): Promise<{ accepted?: boolean; defer_until?: string }> {
     this.services.active();
@@ -491,7 +406,7 @@ export class PersonalRoutines {
     if (deferred) return { defer_until: deferred };
     const eventID = required(input, "event_id");
     const main = await this.services.main();
-    let record = await this.update<EventRecord>("event", hash(eventID), current => current ?? { context_digest:routineContextDigest(routine), kind: routine.source ? "calendar" : routine.kind, created_at: now(), updated_at: now(), scheduled_at: binding.pending_event!.scheduled_at, event_id: eventID, routine_id: routine.routine_id, routine_revision: routine.config_revision, revision: 0, status: "pending", request_id: `personal-reminder-${hash(routine.routine_id, eventID)}`, session_id: main.main_session_id });
+    let record = await this.update<EventRecord>("event", hash(eventID), current => current ?? { context_digest:routineContextDigest(routine), kind: routine.kind, created_at: now(), updated_at: now(), scheduled_at: binding.pending_event!.scheduled_at, event_id: eventID, routine_id: routine.routine_id, routine_revision: routine.config_revision, revision: 0, status: "pending", request_id: `personal-reminder-${hash(routine.routine_id, eventID)}`, session_id: main.main_session_id });
     if (record.status === "accepted") return { accepted: true };
     if (routine.kind === "reminder" && (record.session_id || agent.main_session_id) !== main.main_session_id) {
       const previous = { request_id: record.request_id, session_id: record.session_id || agent.main_session_id };
@@ -507,8 +422,7 @@ export class PersonalRoutines {
     const current = await this.read<Routine>("routine", routine.routine_id);
     if (current?.status !== "active" || current.config_revision !== routine.config_revision) return { accepted: true };
     this.services.active();
-    if (routine.source) await this.calendarChanges(routine, agent);
-    else if (routine.kind === "task") {
+    if (routine.kind === "task") {
       const result = await this.services.task(routine, eventID, agent) as {task:PersonalTask};
       if (result.task.authorization_state === "needs_authorization") throw Object.assign(new Error("Task authority requires renewal"),{code:"execution_authorization_required"});
     }
@@ -539,36 +453,13 @@ export class PersonalRoutines {
     await this.update<Routine>("routine", routine.routine_id, previous => previous?.config_revision === routine.config_revision ? { ...previous, last_event_id: eventID } : previous!);
     return { accepted: true };
   }
-  async resultAttention(task: PersonalTask): Promise<boolean> {
-    if (!task.routine_id) return true;
-    const routine = await this.read<Routine>("routine", task.routine_id);
-    if (!routine || !await this.canExecute(task)) return false;
-    const authority = await this.sourceAuthority(routine, false);
-    return !authority.suppress && !authority.defer && await this.canExecute(task);
-  }
-  private async sourceAuthority(routine: Routine, clearDiagnostic = true): Promise<{ suppress?: boolean; defer?: boolean }> {
-    if (routine.source_blocked) return { suppress: true };
-    if (routine.source) {
-      try {
-        const agent = await this.services.agent(routine.agent_id);
-        const status = await this.calendarCall(routine,"status",{ session_id: (await this.services.main()).main_session_id, account_id: routine.source.account_id, calendar_id: routine.source.calendar_id, time_min: routine.source.time_min, time_max: routine.source.time_max, timezone: routine.source.timezone }) as { state?: string; freshness?: string; account_id?: string; source?: Record<string, unknown> };
-        const changed = status.account_id !== undefined && status.account_id !== routine.source.account_id || status.source && (status.source.user_space_id !== undefined && status.source.user_space_id !== this.space || ["account_id", "generation", "calendar_id", "time_min", "time_max", "timezone"].some(key => status.source![key] !== undefined && status.source![key] !== routine.source![key as keyof CalendarSource]));
-        if (changed) { await this.sourceError(routine, "Calendar source changed before result delivery; review the current account and source", true); return { suppress: true }; }
-        if (status.state !== "ready" || status.freshness !== "fresh" || !this.sourceMatches(status.source, routine.source)) { await this.sourceError(routine, `Calendar result waiting for source verification: ${status.state || "unavailable"}`); return { defer: true }; }
-        if (clearDiagnostic) await this.update<Routine>("routine", routine.routine_id, current => current?.config_revision === routine.config_revision && current.last_error?.startsWith("Calendar result waiting") ? { ...current, last_error: undefined } : current!);
-      } catch (error) { if (authorizationRequired(error)) {await this.expire(routine,false);return {suppress:true};} await this.sourceError(routine, `Calendar result waiting for source verification: ${String(error)}`); return { defer: true }; }
-    }
-    return {};
-  }
   async notification(task: PersonalTask): Promise<{ suppress?: boolean; defer?: boolean }> {
     if (!task.routine_id) return {};
     const routine = await this.read<Routine>("routine", task.routine_id);
-    if (!routine || routine.source_blocked || ["stopping", "paused", "stopped"].includes(routine.status)) return { suppress: true };
+    if (!routine || ["stopping", "paused", "stopped"].includes(routine.status)) return { suppress: true };
     if (task.routine_revision !== undefined && task.routine_revision !== routine.config_revision) return { suppress: true };
-    const authority = await this.sourceAuthority(routine);
-    if (authority.suppress || authority.defer) return authority;
     const preferences = await this.services.preferences();
-    if (!preferences.notifications || task.result?.meaningful === false || !routine.source && routine.last_result_hash === hash(task.result?.summary ?? "")) return { suppress: true };
+    if (!preferences.notifications || task.result?.meaningful === false || routine.last_result_hash === hash(task.result?.summary ?? "")) return { suppress: true };
     if (quietUntil(preferences.quiet_hours)) return { defer: true };
     return {};
   }
@@ -576,19 +467,6 @@ export class PersonalRoutines {
     if (!task.routine_id || !task.result) return;
     await this.update<Routine>("routine", task.routine_id, current => current ? { ...current, last_result_hash: hash(task.result!.summary) } : current!);
   }
-}
-
-function calendarChangeExpired(change: CalendarChange, timezone: string): boolean {
-  const after = change.after as { end?: { date_time?: string; date?: string } } | undefined;
-  const before = change.before as typeof after;
-  const end = after?.end?.date_time || after?.end?.date ? after.end : before?.end;
-  if (end?.date_time) return Date.parse(end.date_time) <= Date.now();
-  if (end?.date) {
-    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-    const part = (type: string) => parts.find(item => item.type === type)?.value;
-    return end.date <= `${part("year")}-${part("month")}-${part("day")}`;
-  }
-  return false;
 }
 
 /** Evaluate local wall-clock quiet hours without assuming every day has 24 hours. */

@@ -49,6 +49,12 @@ func (s *Session) candidateToolScope(generation *PluginGeneration, required map[
 		var manager *mcp.Manager
 		if !s.UserBinding().IsUser() {
 			manager, err = startMCPManager(cfg, generation.active, required, generation.mcpOAuth)
+			_, sharedPlugins := sharedConnectorInputs(cfg, generation.active)
+			s.bindSharedMCPAdmission(manager, sharedPlugins)
+		} else if s.sharedMCPConnectors {
+			sharedCfg, sharedPlugins := sharedConnectorInputs(cfg, generation.active)
+			manager, err = startMCPManager(sharedCfg, sharedPlugins, required, generation.mcpOAuth)
+			s.bindSharedMCPAdmission(manager, sharedPlugins)
 		}
 		if err != nil {
 			return toolservice.Backend{}, err

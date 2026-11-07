@@ -21,7 +21,7 @@ const main = { agent_id: "a-main", user_space_id: "local", name: "Mosaic", kind:
 const cleanups: Array<() => void> = [];
 beforeEach(() => { window.localStorage.clear(); Object.assign(window, { wuu: { ...window.wuu, reportPluginDesktopActivation: vi.fn(async () => {}) } }); });
 afterEach(() => { cleanups.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); });
-async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean; registerGenUI?: (api: PluginGenerationApi) => void } = {}) {
+async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean; registerGenUI?: (api: PluginGenerationApi) => void } = {}) {
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input }) => {
     if (method === "agents.ensure_default") return { agent: mainAgent };
     if (method === "agents.list") return { agents: [mainAgent], default_agent_id: mainAgent.agent_id };
@@ -48,11 +48,10 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
   const controller = await selectPersonalTestApplication(host);
   await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal", generation: "one", register: activate });
   if (fixtures.registerGenUI) await host.activateGeneration({ pluginId: "generative-ui", generation: "one", graphGeneration: "test-graph", register: fixtures.registerGenUI });
-  if (fixtures.calendarView) await host.activateGeneration({ graphGeneration: "test-graph", pluginId: "personal-calendar", generation: "one", register: api => { api.registerViewType({ id: "personal-calendar.confirmation", title: "Calendar confirmation", defaultRegion: "overlay", persistence: "session", render: () => null }); } });
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
   let disposed = false;
-  const dispose = () => { if (disposed) return; disposed = true; act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("test.application"); host.unload("personal-calendar"); container.remove(); };
+  const dispose = () => { if (disposed) return; disposed = true; act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("test.application"); container.remove(); };
   cleanups.push(dispose);
   await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />));
   const click = async (selector: string, scope: ParentNode = container) => { const button = (scope === container && selector.startsWith(".composer-") ? container.querySelector(".mosaic-replies") ?? scope : scope).querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); await act(async () => button!.click()); };
@@ -915,41 +914,6 @@ it.each([true, false])("holds and submits a custom Personal offer (reply_to_tool
   expect(ui.container.querySelector('.composer-attachment-tray')?.textContent).toContain("draft.txt");
 });
 
-it.each([{ operations: [] }, { operations: [{ operation_id: "done", status: "completed" }, { operation_id: "cancelled", status: "cancelled" }] }])("keeps ordinary chat free of calendar entry points when no pending operation exists (%j)", async ({ operations }) => {
-  const ui = await mount(async method => {
-    if (method === "calendar.status") return { state: "unconnected", read_only: true };
-    if (method === "calendar.operations.list") return { operations };
-    return {};
-  }, main, undefined, { calendarView: true });
-  expect(ui.container.querySelector('[data-calendar-proposals]')).toBeNull();
-  expect(ui.container.querySelector('[data-action="review-calendar"], [data-calendar-read-only]')).toBeNull();
-  expect(ui.controller.getSnapshot().views.some(view => view.region === "overlay")).toBe(false);
-  expect(ui.invoke.mock.calls.some(([request]) => /calendar\.operations\.(confirm|cancel)/.test(request.method))).toBe(false);
-});
-
-it("opens a selected Calendar proposal as a contextual overlay without changing the main conversation", async () => {
-  const ui = await mount(async method => {
-    if (method === "calendar.status") return { state: "unconnected", read_only: true };
-    if (method === "calendar.operations.list") return { operations: [{ operation_id: "calendar-a", status: "proposed", fields: { summary: "Synthetic calendar proposal" } }, { operation_id: "calendar-b", status: "uncertain", fields: { summary: "Synthetic unconfirmed outcome" } }] };
-    return {};
-  }, main, undefined, { calendarView: true });
-  await ui.edit("Keep the main draft");
-  const conversation = ui.container.querySelector('.plugin-conversation');
-  expect(ui.container.querySelector('[data-calendar-read-only], [data-action="review-calendar"]')).toBeNull();
-  expect(ui.container.querySelector('.plugin-conversation [data-calendar-operation="calendar-a"]')).not.toBeNull();
-  expect(ui.controller.getSnapshot().views.some(view => view.region === "overlay")).toBe(false);
-  for (const operationId of ["calendar-a", "calendar-b"]) {
-    await ui.click(`[data-calendar-operation="${operationId}"]`);
-    const overlay = ui.controller.getSnapshot().views.find(view => view.region === "overlay")!;
-    expect(overlay).toEqual(expect.objectContaining({ viewTypeId: "personal-calendar.confirmation", context: { operationId }, persistence: "session" }));
-    expect(ui.container.querySelector('.plugin-conversation')).toBe(conversation);
-    expect(ui.container.querySelector('textarea')!.value).toBe("Keep the main draft");
-    await act(async () => ui.controller.closeView(overlay.id));
-  }
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "calendar.operations.list", input: { agent_id: "a-main" } }));
-  expect(ui.invoke.mock.calls.some(([request]) => /calendar\.operations\.(confirm|cancel)/.test(request.method))).toBe(false);
-});
-
 it("keeps non-blocking offer option admission retryable by question ID when broker resolution fails", async () => {
   const prior = window.wuu;
   const question = { request_id: "offer-retry", plugin_id: "personal", execution_id: "exec", thread_id: "hidden-task", turn_id: "turn-offer", created_at: "2026-10-19T08:00:00Z", mode: "offer", questions: [{ id: "destination", question: "Which folder?", options: [{ label: "Travel" }] }] };
@@ -1445,19 +1409,14 @@ it("recovers the GenUI error boundary after a corrected same-ID snapshot", async
   expect(container.querySelector('input[type="range"]')).not.toBeNull();
 });
 
-it("mounts connection and review controls in existing preferences without implying configured authority", async () => {
+it("keeps action review unavailable when its resolver is not configured", async () => {
   const view = await mount(async method => {
-    if (method === "connectors.list") return { ok: true, value: { connections: [] } };
-    if (method === "connectors.actions") return { ok: true, value: { actions: [] } };
     if (method === "review.list") return { ok: true, value: { schema: "personal-review.v1", kind: "unavailable", reason: "Production authorization resolver is unavailable" } };
   });
   await view.settings();
-  expect(view.container.querySelector('[data-personal-connections]')).not.toBeNull();
   expect(view.container.querySelector('.personal-review')).not.toBeNull();
   expect(view.container.textContent).toContain("Production authorization resolver is unavailable");
   expect(view.container.querySelector('[data-review-choice]')).toBeNull();
-  expect(view.container.querySelector('[data-connector-approve]')).toBeNull();
-  expect(view.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "connectors.list" }));
 });
 
 it("freezes current GenUI input for ordinary chat before autosync finishes and across uncertain retries", async () => {

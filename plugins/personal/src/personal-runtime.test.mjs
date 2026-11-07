@@ -147,6 +147,15 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   await optional.close(); assert.deepEqual(storage, beforeOptional, "optional Memory has no Personal activation or storage effects");
   const binding = (await runtime.call("capability.invoke", { capability: "plugin.client.request", input: { method: "agents.ensure_default", input: {} }, execution_id: "create-main" })).output.result.agent;
   mainSession = binding.main_session_id; mainAgent = binding.agent_id;
+  // A retry cannot silently replace the account selected in the original message.
+  const connectorParts = [{ type: "plugin_reference", text: "@Notion", plugin: { plugin_id: "account-connectors", mcp_server: "plugin.account-connectors.notion", authorization_id: "grant-original" } }];
+  const sendConnector = content_parts => runtime.call("capability.invoke", { capability: "plugin.client.request", input: { method: "agents.send", input: { agent_id: mainAgent, request_id: "connector-message", prompt: "@Notion", content_parts } }, execution_id: "send-connector" });
+  await sendConnector(connectorParts);
+  const sentConnector = frames.findLast(entry => entry.direction === "plugin" && entry.frame.params?.service === "host.session.send").frame.params.params;
+  assert.deepEqual(sentConnector.input.content_parts, connectorParts);
+  await sendConnector(connectorParts);
+  await assert.rejects(sendConnector([{ ...connectorParts[0], plugin: { ...connectorParts[0].plugin, authorization_id: "replacement-grant" } }]), /request_id_conflict/);
+
   const observe = session_id => runtime.call("service.invoke", {service:"personal.agents",method:"observe-execution",caller:"wuu.personal-actions-consumer",params:{session_id},execution_id:"facts-observer"});
   assert.deepEqual(await observe(mainSession), {session_id:mainSession,agent_id:mainAgent,main_session_id:mainSession,active:true});
   await assert.rejects(observe("unknown-session"), /owning agent/);
@@ -341,6 +350,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   const client = (method, input = {}) => runtime.call("capability.invoke", { capability: "plugin.client.request", input: { method, input }, execution_id: `client-${frames.length}` }).then(r => r.output.result);
   const binding = (await client("agents.ensure_default")).agent;
   mainSession = binding.main_session_id; mainAgent = binding.agent_id;
+
   const react = (extra = {}) => client("agents.react", { agent_id: mainAgent, session_id: mainSession, message_seq: 2, emoji: "👍", expected_revision: 0, request_id: "owner-1", ...extra });
   const first = await react(); assert.deepEqual(first.reactions, { owner: "👍", revision: 1 });
   assert.deepEqual(await react(), first, "transport retry returns the same persisted result");

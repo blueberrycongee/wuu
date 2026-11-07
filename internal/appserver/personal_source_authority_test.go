@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -15,7 +14,7 @@ import (
 
 // Logical source edits retain physical audit rows. A different store handle can
 // retract the source while this host still retains the admitted implementation.
-func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *testing.T) {
+func TestPersonalReviewRetractedSourceRevokesIntentAuthority(t *testing.T) {
 	f := newPersonalBoundaryFixture(t, nil)
 	f.enableAuto()
 	state, err := f.rt.RetainState()
@@ -31,10 +30,6 @@ func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *test
 		}
 		return nil
 	}); err != nil {
-		t.Fatal(err)
-	}
-	actor := personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: f.rt.UserSpaceID, SessionID: f.id}
-	if _, err := f.host.actionsForTest(t).connectorAuthority(ctx, actor); err != nil {
 		t.Fatal(err)
 	}
 	external := newAppserverTestStore(t, filepath.Join(f.rt.SessionDir, "documents"))
@@ -56,9 +51,6 @@ func TestPersonalReviewRetractedSourceRevokesIntentAndConnectorAuthority(t *test
 		return nil
 	}); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := f.host.actionsForTest(t).connectorAuthority(ctx, actor); err == nil {
-		t.Error("retracted latest human source retained connector authority")
 	}
 	if _, err := f.kit.Execute(ctx, f.call()); err == nil {
 		t.Error("retracted source authorized a file effect")

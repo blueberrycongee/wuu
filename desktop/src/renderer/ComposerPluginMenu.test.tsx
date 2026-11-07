@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposerPluginChoices, type ComposerPluginMenu } from "./ComposerPluginMenu";
-import { ComposerServicesProvider, type ComposerServices } from "./ComposerServicesContext";
+import { ComposerPluginServicesProvider, ComposerServicesProvider, type ComposerServices } from "./ComposerServicesContext";
 import { I18nProvider, translateCurrent } from "./i18n";
 import { clearToasts, ToastViewport } from "./Toast";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
@@ -59,6 +59,26 @@ describe("ComposerPluginChoices engine support notice", () => {
     container.remove();
     clearToasts();
     root = null;
+  });
+
+  it("uses an independent conversation's MCP inventory instead of Coding's connections", async () => {
+    const choose = vi.fn();
+    const coding = composerServices(true);
+    coding.settingsControls.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "coding-only", connected: true, tool_names: ["private"] }] });
+    const personal = { catalog: coding.catalog, settingsControls: { listMCPServers: vi.fn().mockResolvedValue({ servers: [{ name: "shared", connected: true, plugin_active: true, tool_names: ["lookup"], authorization_id: "original-grant" }] }) }, conversationPluginsSupported: true, includePluginTools: false };
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<I18nProvider><ComposerServicesProvider value={coding}><ComposerPluginServicesProvider value={personal}><ComposerPluginChoices menu={{ ...pluginMenu(), choose }} /></ComposerPluginServicesProvider></ComposerServicesProvider></I18nProvider>);
+    });
+    expect(coding.settingsControls.listMCPServers).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("coding-only");
+    const choice = container.querySelector<HTMLButtonElement>('[data-plugin-key="mcp:shared"]')!;
+    act(() => choice.click());
+    expect(choose).toHaveBeenCalledWith("@shared", expect.objectContaining({ mcp_server: "shared", authorization_id: "original-grant" }));
+    const next = { ...personal, settingsControls: { listMCPServers: () => new Promise<{ servers: [] }>(() => {}) } };
+    await act(async () => root!.render(<I18nProvider><ComposerServicesProvider value={coding}><ComposerPluginServicesProvider value={next}><ComposerPluginChoices menu={pluginMenu()} /></ComposerPluginServicesProvider></ComposerServicesProvider></I18nProvider>));
+    expect(container.querySelector('[data-plugin-key="mcp:shared"]')).toBeNull();
+
   });
 
   it("surfaces the unsupported engine notice as a toast instead of in the menu", async () => {

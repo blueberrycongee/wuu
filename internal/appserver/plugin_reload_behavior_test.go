@@ -1004,8 +1004,11 @@ func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
 				client := &fakeClient{response: providers.ChatResponse{Content: "answer"}, onChat: func(call int, _ providers.ChatRequest) {
 					if call == 1 {
 						close(entered)
-						<-release
 					}
+					// Human steering preempts the in-flight request, so later
+					// calls carry the drained steers. Hold every call or the
+					// turn would complete and start draining queued input.
+					<-release
 				}}
 				rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
 				publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
@@ -1039,22 +1042,44 @@ func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
 					}
 					return response
 				}
+				queueID := "guide-queue"
 				if mode == "steer" {
 					check("guide-cancel", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "cancel this guide", ClientID: "guide-cancel"})
-					if result := remarshal[OKResult](t, check("unsteer", MethodTurnUnsteer, TurnUnsteerParams{ThreadID: threadID, SteerID: "guide-cancel"})["result"]); !result.OK {
-						t.Fatal("guide could not be removed")
-					}
 					check("guide-queue", MethodTurnSteer, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turnID, Prompt: "convert this guide", ClientID: "guide-queue"})
-					if result := remarshal[TurnRequeueResult](t, check("requeue", MethodTurnRequeue, TurnRequeueParams{ThreadID: threadID, SteerID: "guide-queue"})["result"]); !result.OK || result.State != "queued" {
-						t.Fatalf("guide could not be queued: %+v", result)
+					// Human steering preempts the in-flight model call, so
+					// delivery drains both steers into the next request while
+					// the blocked calls keep the turn running. Poll the live
+					// state instead of racing that drain with unsteer/requeue.
+					waitPluginGenerationWatchTest(t, func() bool {
+						original.mu.Lock()
+						defer original.mu.Unlock()
+						for _, pending := range original.pendingSteers {
+							if pending.ClientID == "guide-cancel" || pending.ClientID == "guide-queue" {
+								return false
+							}
+						}
+						return true
+					})
+					if result := remarshal[TurnRequeueResult](t, check("requeue", MethodTurnRequeue, TurnRequeueParams{ThreadID: threadID, SteerID: "guide-queue"})["result"]); result.OK || result.State != "consumed" {
+						t.Fatalf("delivered guide reported %+v, want consumed", result)
 					}
-				} else {
-					check("queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queue this message", ClientID: "guide-queue"})
+					// A durable unsteer would cancel a held-work row that the
+					// pending history archive still expects; ephemeral threads
+					// have no row, so the consumed steer reports OK=false.
+					if ephemeral {
+						if result := remarshal[OKResult](t, check("unsteer", MethodTurnUnsteer, TurnUnsteerParams{ThreadID: threadID, SteerID: "guide-cancel"})["result"]); result.OK {
+							t.Fatal("delivered guide could be removed")
+						}
+					}
+					// The steer client_id is already accepted, so the queued
+					// input exercised below needs its own identifier.
+					queueID = "queue-entry"
 				}
-				if result := remarshal[TurnUpdateQueuedResult](t, check("edit", MethodTurnUpdateQueued, TurnUpdateQueuedParams{ThreadID: threadID, QueueID: "guide-queue", Prompt: "edited queued message"})["result"]); !result.OK {
+				check("queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queue this message", ClientID: queueID})
+				if result := remarshal[TurnUpdateQueuedResult](t, check("edit", MethodTurnUpdateQueued, TurnUpdateQueuedParams{ThreadID: threadID, QueueID: queueID, Prompt: "edited queued message"})["result"]); !result.OK {
 					t.Fatal("queued input could not be edited")
 				}
-				if result := remarshal[OKResult](t, check("dequeue", MethodTurnDequeue, TurnDequeueParams{ThreadID: threadID, QueueID: "guide-queue"})["result"]); !result.OK {
+				if result := remarshal[OKResult](t, check("dequeue", MethodTurnDequeue, TurnDequeueParams{ThreadID: threadID, QueueID: queueID})["result"]); !result.OK {
 					t.Fatal("queued input could not be removed")
 				}
 				if current := srv.thread(threadID); current != original {

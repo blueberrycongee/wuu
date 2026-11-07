@@ -21,7 +21,7 @@ const PersonalCoordinationConsumer = "wuu.personal-client"
 
 func PersonalCoordinationDescriptor() pluginhost.ServiceDescriptor {
 	methods := []pluginhost.ServiceMethodDescriptor{}
-	for _, name := range []string{"initialize", "drain", "call", "file-gate", "scope", "cancel", "inspection", "connector-snapshot", "connector-commit"} {
+	for _, name := range []string{"initialize", "drain", "call", "file-gate", "scope", "cancel", "inspection"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: "personal.coordination." + name + ".input.v1", OutputSchema: "personal.coordination." + name + ".output.v1"})
 	}
 	return pluginhost.ServiceDescriptor{Name: PersonalCoordinationService, Version: "1.0.0", Methods: methods}
@@ -337,8 +337,6 @@ func (p *personalCoordinationProvider) InvokeService(ctx context.Context, call p
 			return nil, err
 		}
 		return json.Marshal(result)
-	case "connector-snapshot", "connector-commit":
-		return actions.coordinateConnector(ctx, call.Method, input.Input)
 	case "inspection":
 		var params stateInspectionParams
 		if err := decodeParams(input.Input, &params); err != nil {

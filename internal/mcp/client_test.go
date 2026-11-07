@@ -408,3 +408,21 @@ func TestClientRetirementDrainsAcceptedCall(t *testing.T) {
 		t.Fatal("retired connection leaked")
 	}
 }
+
+// Admission is checked on every call, including an already captured tool.
+func TestClientCallToolRechecksSharedConnectionAdmission(t *testing.T) {
+	calls := 0
+	c := &Client{name: "fixture"}
+	c.SetCallAdmission(func(context.Context, string) error {
+		calls++
+		return errors.New("connector disabled")
+	})
+	for range 2 {
+		if _, err := c.CallTool(context.Background(), "write", nil); err == nil || err.Error() != "connector disabled" {
+			t.Fatalf("revoked call was admitted: %v", err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("admission checks = %d", calls)
+	}
+}

@@ -348,6 +348,8 @@ export interface PluginUIConversationAttachmentProps {
 export interface PluginUIConversationComposerProps {
   replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
   conversationId: string;
+  /** Discover connectors in this independent conversation's host. */
+  sessionScope?: PluginUIConversationViewProps["sessionScope"];
   prompt: string;
   placeholder?: string;
   running: boolean;
@@ -361,7 +363,7 @@ export interface PluginUIConversationComposerProps {
   onChangePrompt(value: string): void;
   onAddAttachments(files: File[]): void;
   onRemoveAttachment(id: string): void;
-  onSend(prompt: string): void;
+  onSend(prompt: string, contentParts?: import("./protocol").MessageContentPart[]): void;
   onStop(): void;
 }
 
