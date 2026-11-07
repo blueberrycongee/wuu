@@ -1134,6 +1134,58 @@ func TestTurnsFromHistoryKeepsSteeredUserMessageInCurrentTurn(t *testing.T) {
 	}
 }
 
+func TestTurnsFromHistoryPreservesSteeredFragmentCause(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	turns := turnsFromHistory("thread", []providers.ChatMessage{
+		{Role: "user", Content: "start"},
+		{Role: "assistant", Content: "partial answer", Cause: providers.SteeredStreamFragment},
+		{Role: "user", ClientID: "steer-1", Content: "steer now", Steered: true},
+		{Role: "assistant", Content: "done"},
+	}, now)
+
+	if len(turns) != 1 {
+		t.Fatalf("steered input must stay in the interrupted turn, got %+v", turns)
+	}
+	items := turns[0].Items
+	if len(items) != 4 {
+		t.Fatalf("expected user, fragment, steer, answer; got %+v", items)
+	}
+	fragment := items[1]
+	if fragment.Type != ThreadItemAgentMessage || fragment.Text != "partial answer" || fragment.Terminal {
+		t.Fatalf("fragment shape changed on reload: %+v", fragment)
+	}
+	if fragment.Cause != providers.SteeredStreamFragment {
+		t.Fatalf("reloaded fragment lost its interrupted-stream cause: %+v", fragment)
+	}
+	if items[2].Type != ThreadItemUserMessage || items[2].Text != "steer now" {
+		t.Fatalf("steer bubble moved on reload: %+v", items)
+	}
+	if items[3].Type != ThreadItemAgentMessage || items[3].Text != "done" || !items[3].Terminal {
+		t.Fatalf("successor answer moved on reload: %+v", items[3])
+	}
+}
+
+func TestApplyMessageItemPreservesSteeredFragmentCause(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
+	th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
+
+	th.applyMessageItemLocked("turn", providers.ChatMessage{
+		Role:    "assistant",
+		Content: "partial answer",
+		Cause:   providers.SteeredStreamFragment,
+	}, now)
+
+	turn := th.ensureTurnLocked("turn", now)
+	if len(turn.Items) != 2 {
+		t.Fatalf("expected user and fragment items, got %+v", turn.Items)
+	}
+	fragment := turn.Items[1]
+	if fragment.Cause != providers.SteeredStreamFragment || fragment.Terminal {
+		t.Fatalf("replayed fragment lost its interrupted-stream cause: %+v", fragment)
+	}
+}
+
 func TestThreadStateReplacesActiveAgentMessageText(t *testing.T) {
 	now := time.Unix(0, 0).UTC()
 	th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
