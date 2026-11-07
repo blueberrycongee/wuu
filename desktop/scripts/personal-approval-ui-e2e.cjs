@@ -64,13 +64,17 @@ async function capture(name) {
     ['chat-expired','expired',{},1000,950],['chat-blocked','blocked',{},1000,950],
     ['chat-uncertain','uncertain',{},1000,950],['chat-stale','stale',{},1000,950],
     ['chat-denied','denied',{},1000,950],['chat-revoked','revoked',{},1000,950],['chat-succeeded','succeeded',{},1000,950]]) {
-    await open(scenario,extra);await page.setViewportSize({width,height});await wait('[data-review-variant="conversation"]');
+    await open(scenario,extra);await page.setViewportSize({width,height});
+    const terminal=['uncertain','stale','denied','revoked','succeeded'].includes(scenario);
+    if(terminal)await wait('.mosaic-main textarea');else await wait('[data-review-variant="conversation"]');
     if(await page.locator('.personal-review-history').count())await page.locator('.personal-review-history').evaluate(node=>node.open=true);
-    await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();await capture(name);
-    assert.equal(await page.locator('[data-personal-action-review] [role="switch"]').count(),0,'chat cannot opt into AutoReview');
+    if(await page.locator('[data-personal-action-review]').count())await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();
+    await capture(name);
+    if(terminal)assert.equal(await page.locator('[data-personal-action-review]').count(),0,`${scenario}: completed action history must stay out of chat`);
+    else assert.equal(await page.locator('[data-personal-action-review] [role="switch"]').count(),0,'chat cannot opt into AutoReview');
     if(['expired','uncertain','stale','denied','revoked','succeeded'].includes(scenario))assert.equal(await page.locator('[data-review-choice="approve_once"]:enabled').count(),0);
   }
-  report.cases.push('Main chat renders consequential file approval and saved terminal states; expired/stale/unknown actions are not confirmable');
+  report.cases.push('Main chat renders consequential file approval; expired/stale/unknown action history stays out of chat and is not confirmable');
   for(const [scenario,name] of [['empty','home-empty-actions'],['unavailable','home-no-approval-service']]){
     for(const narrow of [false,true]){
       await open(scenario,narrow?{font:'20'}:{},narrow?{width:430,height:1100}:{width:1100,height:950});await wait('.mosaic-main textarea');
@@ -112,14 +116,15 @@ async function capture(name) {
     await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-review-state="approved"]');
     assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve').length),1);
     assert(await page.locator('.mosaic-main textarea').isEnabled());await capture(name==='wide'?'chat-approved':`chat-approved-${name}`);
-    await page.locator('[data-review-choice="revoke"]').click();await wait('[data-review-state="revoked"]');
-    assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.revoke').length),1);
+    await page.locator('[data-review-choice="revoke"]').click();await page.waitForFunction(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.revoke').length===1);
+    await page.waitForSelector('[data-personal-action-review]',{state:'detached'});
     // The fix must preserve the ribbon, not make navigation inert with its aside.
     await page.locator('.sidebar-ribbon [data-wuu-plugin="automations"]').click();
-    await page.locator('.sidebar-ribbon [data-wuu-plugin="personal"]').click();await wait('[data-review-state="revoked"]');
+    await page.locator('.sidebar-ribbon [data-wuu-plugin="personal"]').click();await wait('.mosaic-main textarea');
+    assert.equal(await page.locator('[data-personal-action-review]').count(),0);
     report.cases.push(`${name}: pointer approval and withdrawal reach the exact action; ribbon remains usable`);
   }
-  await open();await wait('[data-review-choice="reject"]');await page.locator('[data-review-choice="reject"]').click();await wait('[data-review-state="denied"]');
+  await open();await wait('[data-review-choice="reject"]');await page.locator('[data-review-choice="reject"]').click();await page.waitForSelector('[data-personal-action-review]',{state:'detached'});
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls[0].input.choice),'reject');report.cases.push('Reject stops the precise action in the displayed synthetic state');
   for(const narrow of [false,true]){
   await open('ready',narrow?{theme:'dark',font:'20'}:{},narrow?{width:430,height:1100}:{width:1100,height:950});await wait('[data-review-choice="remember"]');
@@ -129,7 +134,10 @@ async function capture(name) {
   await page.locator('[data-review-choice="save_rule"]').click();await wait('[data-review-state="approved"]');
   assert.deepEqual(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.rules'||c.method==='review.resolve').map(c=>c.method)),['review.rules','review.resolve']);
   await page.locator('[data-review-open-settings]').click();await wait('[data-review-rule]');
-  if(narrow){await page.locator('[data-wuu-component="sidebar-toggle"]:visible').click();await page.waitForSelector('.settings-embedded.sidebar-collapsed');}
+  // On narrow viewports settings opens as a floating modal whose internal
+  // sidebar is already compact; collapse only applies when a settings-scoped
+  // toggle exists.
+  if(narrow){const toggle=page.locator('[data-wuu-component="settings-overlay"] [data-wuu-component="sidebar-toggle"]:visible');if(await toggle.count()){await toggle.click();await page.waitForSelector('.settings-embedded.sidebar-collapsed');}}
   await page.locator('[data-review-rule]').scrollIntoViewIfNeeded();await capture(narrow?'settings-saved-rule-narrow-dark':'settings-saved-rule');
   await page.locator('[data-review-rule-ask]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules[0].decision==='ask');
   await page.locator('[data-review-rule-delete]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules.length===0);
@@ -143,7 +151,7 @@ async function capture(name) {
   assert(await page.locator('[data-review-choice="approve_once"]').isDisabled());await capture('chat-lost-ack');
   await page.locator('[data-review-refresh]').click();await wait('[data-review-state="approved"]');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.resolve').length),1);report.cases.push('Lost ACK locks mutations; read-only refresh restores saved decision without replay');
-  await open('stale-response');await wait('[data-review-choice="approve_once"]');await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-personal-action-review] [role="alert"]');await page.locator('[data-review-refresh]').click();await wait('[data-review-state="stale"]');report.cases.push('Stale decision refreshes to changed task state without resubmission');
+  await open('stale-response');await wait('[data-review-choice="approve_once"]');await page.locator('[data-review-choice="approve_once"]').click();await wait('[data-personal-action-review] [role="alert"]');await page.locator('[data-review-refresh]').click();await page.waitForSelector('[data-personal-action-review]',{state:'detached'});report.cases.push('Stale decision refreshes to changed task state without resubmission');
   await open();await page.locator('[data-review-open-settings]').click();await wait('[data-review-variant="settings"]');await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();await capture('settings-manual-default');
   const toggle=page.locator('[data-personal-action-review] [role="switch"]');assert.equal(await toggle.getAttribute('aria-checked'),'false');await toggle.click();await page.waitForFunction(()=>document.querySelector('[data-personal-action-review] [role="switch"]')?.getAttribute('aria-checked')==='true');
   assert.equal(await page.evaluate(()=>window.__reviewFixture.calls.filter(c=>c.method==='review.settings').length),1);await capture('settings-opted-in');report.cases.push('Existing explicit manual preference is preserved; version-bound opt-in saves once without changing Coding');

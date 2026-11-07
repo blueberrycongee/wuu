@@ -392,9 +392,33 @@ func (b *PersonalEffectBridge) drain(match func(*personalEffectResource) bool, c
 	b.mu.Unlock()
 }
 
+// Command preparation resolves its working directory through EvalSymlinks;
+// compare containment on resolved paths so /var→/private/var roots still match.
+func personalEffectResolvedPath(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	// Targets of a create do not exist yet; resolve the deepest existing
+	// ancestor so a symlinked workspace root still compares correctly.
+	suffix := ""
+	for ancestor := clean; ; {
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return clean
+		}
+		suffix = filepath.Join(filepath.Base(ancestor), suffix)
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			return filepath.Join(resolved, suffix)
+		}
+		ancestor = parent
+	}
+}
+
 func personalEffectSafeFile(s *Server, a tools.FileAction) error {
-	root := s.rt.RootDir
-	rel, err := filepath.Rel(root, a.Target)
+	root := personalEffectResolvedPath(s.rt.RootDir)
+	target := personalEffectResolvedPath(a.Target)
+	rel, err := filepath.Rel(root, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return errors.New("Personal file action must stay inside its own files workspace")
 	}
@@ -403,14 +427,14 @@ func personalEffectSafeFile(s *Server, a tools.FileAction) error {
 		stateRoot = filepath.Dir(s.rt.SessionDir)
 	}
 	protectedRoots := []string{stateRoot, s.rt.SessionDir}
-	if s.rt.WuuHome != "" && filepath.Clean(root) != filepath.Clean(s.rt.UserBinding().Root(s.rt.WuuHome)) {
+	if s.rt.WuuHome != "" && filepath.Clean(root) != filepath.Clean(personalEffectResolvedPath(s.rt.UserBinding().Root(s.rt.WuuHome))) {
 		protectedRoots = append(protectedRoots, s.rt.WuuHome)
 	}
 	for _, protected := range protectedRoots {
 		if protected == "" {
 			continue
 		}
-		relative, err := filepath.Rel(protected, a.Target)
+		relative, err := filepath.Rel(personalEffectResolvedPath(protected), target)
 		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return errors.New("Personal file actions cannot change application state or Coding settings")
 		}
