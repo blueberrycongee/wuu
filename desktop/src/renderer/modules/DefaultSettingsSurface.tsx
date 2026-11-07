@@ -56,7 +56,7 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
   return <>
     {settings.open && catalogNotice && <ScopedToast key={catalogNotice.id} message={catalogNotice.message} tone={catalogNotice.isError ? "error" : "info"} />}
     {settings.open && <div
-      className={`settings-overlay-layer${layout.embedded ? " settings-workbench-layer" : " settings-standalone-layer"}`}
+      className={`app-modal-backdrop settings-overlay-layer${layout.embedded ? " settings-workbench-layer" : " settings-standalone-layer"}`}
       data-wuu-component="settings-overlay"
       onPointerDown={event => { if (event.target === event.currentTarget) closeSettings(); }}
     >

@@ -113,8 +113,9 @@ async function presentMenu() {
   });
 }
 async function hideMenu() {
-  await evaluate(win.webContents, async () => {
-    await window.wuu.chromeOverlay.hide(window.__menu.token, window.__menu.generation);
+  await evaluate(win.webContents, () => {
+    // An owner-initiated hide carries no dismiss event back to the owner.
+    window.wuu.chromeOverlay.hide(window.__menu.token, window.__menu.generation);
     window.__menu.open = false;
   });
 }
@@ -288,7 +289,12 @@ async function run() {
     await capture(name, opened.view);
     key(opened.view.webContents, "Escape"); await closed();
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Escape restores pre-menu focus");
-    await openMenu(); await click(win.webContents, "textarea"); await closed(); await focusedComposer();
+    await openMenu(); await click(win.webContents, "textarea");
+    // sendInputEvent dispatches input without the native focus transfer a real
+    // outside click produces; focusing the owner is what blurs the menu.
+    win.webContents.focus();
+    await closed(); await focusedComposer();
+    assert.ok(await evaluate(win.webContents, () => window.__menu.events.some(event => event.command.type === "dismiss" && event.command.reason === "outside")), "Outside click reports the outside dismissal reason");
     assert.ok(await evaluate(win.webContents, () => document.activeElement?.tagName === "TEXTAREA"), "Outside click retains composer focus");
     const settingsMenu = await openMenu();
     await click(settingsMenu.view.webContents, '[role="menuitem"]:last-of-type');

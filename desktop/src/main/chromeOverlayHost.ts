@@ -292,7 +292,7 @@ export class ChromeOverlayHost {
       };
       const pointer = (_event: Electron.Event, mouse: Electron.MouseInputEvent) => {
         const account = this.surfaces.get("account");
-        if (account?.request && (mouse.type === "mouseDown" || mouse.type === "mouseWheel")) this.dismiss(account, "outside");
+        if (account?.request && account.phase !== "presented" && (mouse.type === "mouseDown" || mouse.type === "mouseWheel")) this.dismiss(account, "outside");
       };
       this.focusSources.set(contents, () => {
         contents.removeListener("focus", focus);
