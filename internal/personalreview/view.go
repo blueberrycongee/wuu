@@ -27,14 +27,14 @@ type ViewRecord struct {
 	ReceiptJSON string     `json:"receipt_json,omitempty"`
 }
 type ViewAction struct {
-	ID            string    `json:"id"`
-	Digest        string    `json:"digest"`
-	Operation     string    `json:"operation"`
-	Scope         Scope     `json:"scope"`
-	Effect        Effect    `json:"effect"`
-	Summary       Summary   `json:"summary"`
-	ArgumentsJSON string    `json:"arguments_json"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	ID            string     `json:"id"`
+	Digest        string     `json:"digest"`
+	Operation     string     `json:"operation"`
+	Scope         Scope      `json:"scope"`
+	Effect        Effect     `json:"effect"`
+	Summary       Summary    `json:"summary"`
+	ArgumentsJSON string     `json:"arguments_json"`
+	ExpiresAt     *time.Time `json:"expires_at"`
 }
 
 // OwnerSnapshot must be served only through the authenticated owner transport.
@@ -71,10 +71,14 @@ func (e *Engine) OwnerSnapshot(ctx context.Context) (OwnerView, error) {
 		if len(receipt) > 64*1024 {
 			receipt = nil
 		}
+		var expiresAt *time.Time
+		if !action.ExpiresAt.IsZero() {
+			expiresAt = &action.ExpiresAt
+		}
 		view.Requests = append(view.Requests, ViewRecord{
 			Revision: record.Revision, Status: record.Status, Outcome: record.Outcome, Reason: record.Reason, ReceiptJSON: string(receipt),
 			Action: ViewAction{ID: action.ID, Digest: action.Digest, Operation: action.Operation, Scope: action.Scope,
-				Effect: action.Effect, Summary: action.Summary, ArgumentsJSON: string(action.Arguments), ExpiresAt: action.ExpiresAt},
+				Effect: action.Effect, Summary: action.Summary, ArgumentsJSON: string(action.Arguments), ExpiresAt: expiresAt},
 		})
 	}
 	return view, nil

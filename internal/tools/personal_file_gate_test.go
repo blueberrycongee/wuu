@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -128,5 +130,36 @@ func TestFileActionRequiresSelectedEffectFenceAndPreservesLocalBoundary(t *testi
 				t.Fatalf("unfenced write: %s %v %v", data, err, readErr)
 			}
 		})
+	}
+}
+
+// A small UTF-8 original can expand sixfold when encoded as JSON. The optional
+// preview must not prevent an otherwise bounded action from entering approval.
+func TestPersonalFilePreviewFitsActionEnvelope(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := bytes.Repeat([]byte{1}, 16*1024)
+	if err := os.WriteFile(filepath.Join(kit.RootDir(), "note.txt"), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	action, err := kit.PrepareFileAction(context.Background(), providers.ToolCall{Name: "write_file", Arguments: `{"path":"note.txt","content":"replacement"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(action)
+	if err != nil || len(raw) > 64*1024 {
+		t.Fatalf("preview exceeded approval envelope: %d %v", len(raw), err)
+	}
+	if action.SHA256 != sha256Hex(original) {
+		t.Fatal("omitted preview lost exact original binding")
+	}
+	if _, err := kit.ExecuteFileAction(context.Background(), action); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(kit.RootDir(), "note.txt"))
+	if err != nil || string(data) != "replacement" {
+		t.Fatalf("file action failed: %q %v", data, err)
 	}
 }

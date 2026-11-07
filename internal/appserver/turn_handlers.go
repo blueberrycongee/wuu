@@ -3273,6 +3273,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if threadRuntime != nil {
 		if threadRuntime.Toolkit != nil && s.rt.UserBinding().Domain() == "personal" {
 			threadRuntime.Toolkit.SetFileActionGate(s.personalFileGate)
+			threadRuntime.Toolkit.SetCommandActionGate(s.personalCommandGate)
 		}
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)

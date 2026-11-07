@@ -99,10 +99,10 @@ func newPersonalBoundaryFixtureWithProvider(t *testing.T, client *fakeClient, pr
 	})
 	return f
 }
-func (f *personalBoundaryFixture) openHost() {
+func (f *personalBoundaryFixture) openHost(options ...ServerOption) {
 	f.t.Helper()
 	var err error
-	f.host, err = NewUserHost(f.rt, personalhost.Options{})
+	f.host, err = NewUserHost(f.rt, personalhost.Options{}, options...)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -158,12 +158,15 @@ func (f *personalBoundaryFixture) snapshot() personalreview.OwnerView {
 	return view
 }
 func (f *personalBoundaryFixture) enableAuto() personalreview.OwnerView {
+	return f.setReviewMode(true)
+}
+func (f *personalBoundaryFixture) setReviewMode(enabled bool) personalreview.OwnerView {
 	f.t.Helper()
 	before := f.snapshot()
 	if before.Settings == nil {
 		f.t.Fatal("missing explicit Personal settings")
 	}
-	raw, _ := json.Marshal(map[string]any{"enabled": true, "expected_revision": before.Settings.Revision})
+	raw, _ := json.Marshal(map[string]any{"enabled": enabled, "expected_revision": before.Settings.Revision})
 	response, err := f.host.personal.Call(f.owner, "review.settings", raw, "")
 	if err != nil {
 		f.t.Fatal(err)
@@ -172,8 +175,8 @@ func (f *personalBoundaryFixture) enableAuto() personalreview.OwnerView {
 	if err := json.Unmarshal(response, &after); err != nil {
 		f.t.Fatal(err)
 	}
-	if after.Settings == nil || !after.Settings.AutoReviewEnabled {
-		f.t.Fatal("opt-in not persisted")
+	if after.Settings == nil || after.Settings.AutoReviewEnabled != enabled {
+		f.t.Fatal("review mode not persisted")
 	}
 	if err := f.host.actionsForTest(f.t).drain(context.Background()); err != nil {
 		f.t.Fatal(err)
@@ -315,10 +318,10 @@ func TestPersonalAutoReviewSettingsAreExplicitScopedAndDoNotChangeCoding(t *test
 		t.Fatalf("Coding fixture did not retain its review requirement: %v", codingBefore)
 	}
 	before := f.snapshot()
-	if before.Settings == nil || before.Settings.AutoReviewEnabled {
-		t.Fatal("default was not manual")
+	if before.Settings == nil || !before.Settings.AutoReviewEnabled {
+		t.Fatal("new Personal settings did not enable automatic review")
 	}
-	after := f.enableAuto()
+	after := f.setReviewMode(false)
 	if after.Settings.Revision != before.Settings.Revision+1 {
 		t.Fatal("opt-in revision did not advance")
 	}
@@ -346,7 +349,7 @@ func TestPersonalAutoReviewSettingsAreExplicitScopedAndDoNotChangeCoding(t *test
 	}
 	f.assertContents(filepath.Join(codingRoot, "coding.txt"), "ordinary Coding path")
 	other, err := f.host.actionsForTest(f.t).store.GetSettings(context.Background(), "other-space")
-	if err != nil || other.AutoReviewEnabled {
+	if err != nil || !other.AutoReviewEnabled {
 		t.Fatalf("Personal opt-in crossed spaces: %+v %v", other, err)
 	}
 	events, err := f.host.actionsForTest(f.t).store.SettingsEvents(context.Background(), f.rt.UserSpaceID)
@@ -365,8 +368,8 @@ func TestPersonalAutoReviewProductionEntryUsesTrustedSourceAndNativeModelRequest
 	f.client.mu.Lock()
 	requests := append([]providers.ChatRequest(nil), f.client.requests...)
 	f.client.mu.Unlock()
-	if len(requests) < 2 {
-		t.Fatalf("assessment and execution require fresh native review, got %d requests", len(requests))
+	if len(requests) != 1 {
+		t.Fatalf("one exact action should be model-reviewed once, got %d requests", len(requests))
 	}
 	for _, request := range requests {
 		if request.Provider != f.rt.ProviderName || request.Model != f.rt.Model || len(request.Tools) != 0 || len(request.Messages) != 2 {

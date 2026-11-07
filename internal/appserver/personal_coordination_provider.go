@@ -21,7 +21,7 @@ const PersonalCoordinationConsumer = "wuu.personal-client"
 
 func PersonalCoordinationDescriptor() pluginhost.ServiceDescriptor {
 	methods := []pluginhost.ServiceMethodDescriptor{}
-	for _, name := range []string{"initialize", "drain", "call", "file-gate", "scope", "cancel", "inspection"} {
+	for _, name := range []string{"initialize", "drain", "call", "file-gate", "command-gate", "scope", "cancel", "inspection"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: "personal.coordination." + name + ".input.v1", OutputSchema: "personal.coordination." + name + ".output.v1"})
 	}
 	return pluginhost.ServiceDescriptor{Name: PersonalCoordinationService, Version: "1.0.0", Methods: methods}
@@ -328,7 +328,7 @@ func (p *personalCoordinationProvider) InvokeService(ctx context.Context, call p
 			return actions.callMemory(ctx, input.Operation, input.Input, input.SessionID)
 		}
 		return nil, errors.New("Personal coordination operation unavailable")
-	case "file-gate":
+	case "file-gate", "command-gate":
 		if scope.kit == nil || scope.kit.SessionID() != input.SessionID {
 			return nil, errors.New("captured file toolkit is unavailable")
 		}

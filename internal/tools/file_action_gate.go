@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -19,13 +20,14 @@ type FileActionGate func(context.Context, *Toolkit, providers.ToolCall) (toolres
 func (t *Toolkit) SetFileActionGate(gate FileActionGate) { t.fileActionGate = gate }
 
 type FileAction struct {
-	CallID    string          `json:"call_id"`
-	Operation string          `json:"operation"`
-	Arguments json.RawMessage `json:"arguments"`
-	CWD       string          `json:"cwd"`
-	Target    string          `json:"target"`
-	Exists    bool            `json:"exists"`
-	SHA256    string          `json:"sha256"`
+	CallID        string          `json:"call_id"`
+	Operation     string          `json:"operation"`
+	Arguments     json.RawMessage `json:"arguments"`
+	CWD           string          `json:"cwd"`
+	Target        string          `json:"target"`
+	Exists        bool            `json:"exists"`
+	SHA256        string          `json:"sha256"`
+	BeforeContent *string         `json:"before_content,omitempty"`
 }
 type fileActionContextKey struct{}
 
@@ -75,6 +77,17 @@ func (t *Toolkit) PrepareFileAction(ctx context.Context, call providers.ToolCall
 	a.Exists = err == nil
 	if a.Exists {
 		a.SHA256 = sha256Hex(data)
+		if len(data) <= 32*1024 && utf8.Valid(data) {
+			content := string(data)
+			a.BeforeContent = &content
+			encoded, err := json.Marshal(a)
+			if err != nil {
+				return FileAction{}, err
+			}
+			if len(encoded) > 64*1024 {
+				a.BeforeContent = nil
+			}
+		}
 	}
 	return a, nil
 }
@@ -143,7 +156,7 @@ func (t *Toolkit) ExecuteFileAction(ctx context.Context, a FileAction) (toolresu
 			return errors.New("authorization effect context unavailable")
 		}
 		var err error
-		result, err = execute(context.WithValue(effectCtx, fileAuthorizationContextKey{}, fileAuthorization{t, request}))
+		result, err = execute(context.WithValue(effectCtx, effectAuthorizationContextKey{}, effectAuthorization{t, request}))
 		return err
 	})
 	if err == nil && !entered {

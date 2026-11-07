@@ -9,9 +9,9 @@ func OperationAccess(operation string) (read, execution, known bool) {
 		return true, true, true
 	case "memory.commit":
 		return false, true, true
-	case "memory.operations", "owner.check", "review.list":
+	case "memory.operations", "owner.check", "review.list", "review.rule.preview":
 		return true, false, true
-	case "memory.reconcile", "review.settings", "review.resolve", "review.revoke":
+	case "memory.reconcile", "review.settings", "review.resolve", "review.revoke", "review.rules":
 		return false, false, true
 	default:
 		return false, false, false

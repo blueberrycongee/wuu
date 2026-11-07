@@ -138,8 +138,8 @@ func TestPersonalSettingsDefaultIsolationCASAndRestart(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 	settings, err := store.GetSettings(ctx, "personal-one")
-	if err != nil || settings.AutoReviewEnabled || settings.Revision != 1 {
-		t.Fatalf("default must remain manual: %+v %v", settings, err)
+	if err != nil || !settings.AutoReviewEnabled || settings.Revision != 1 {
+		t.Fatalf("new spaces must enable automatic review: %+v %v", settings, err)
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -148,7 +148,7 @@ func TestPersonalSettingsDefaultIsolationCASAndRestart(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := store.SetSettings(ctx, "personal-one", true, settings.Revision)
+			_, err := store.SetSettings(ctx, "personal-one", false, settings.Revision)
 			if err == nil {
 				mu.Lock()
 				successes++
@@ -163,7 +163,7 @@ func TestPersonalSettingsDefaultIsolationCASAndRestart(t *testing.T) {
 		t.Fatalf("CAS winners=%d", successes)
 	}
 	other, err := store.GetSettings(ctx, "personal-two")
-	if err != nil || other.AutoReviewEnabled || other.Revision != 1 {
+	if err != nil || !other.AutoReviewEnabled || other.Revision != 1 {
 		t.Fatalf("settings crossed spaces: %+v %v", other, err)
 	}
 	if err := store.Close(); err != nil {
@@ -174,8 +174,8 @@ func TestPersonalSettingsDefaultIsolationCASAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := store.GetSettings(ctx, "personal-one")
-	if err != nil || !loaded.AutoReviewEnabled || loaded.Revision != 2 {
-		t.Fatalf("opt-in was not durable: %+v %v", loaded, err)
+	if err != nil || loaded.AutoReviewEnabled || loaded.Revision != 2 {
+		t.Fatalf("manual choice was not durable: %+v %v", loaded, err)
 	}
 	if _, err := store.SetSettings(ctx, "personal-one", false, 1); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale update accepted: %v", err)

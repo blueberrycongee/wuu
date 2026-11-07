@@ -3,6 +3,7 @@ package appserver
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -33,8 +34,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-// This adapter covers only the native local file operations below. It neither
-// grants account access nor changes Coding policy, MCP, shell or plugin tools.
+// This adapter coordinates bounded Personal file and command effects through
+// the selected providers. Coding policy and account authorization stay separate.
 type personalActions struct {
 	server          *Server
 	store           *personalreview.Store
@@ -111,9 +112,10 @@ func newPersonalActionsForState(s *Server, state *runtime.State) (*personalActio
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	operations := map[string]personalreview.Operation{}
 	for _, name := range []string{"write_file", "edit_file"} {
-		operations[name] = personalreview.Operation{Version: "personal-local-file.v1", Effect: personalreview.DataWrite, Describe: p.describe, Execute: p.execute}
+		operations[name] = personalreview.Operation{Version: "personal-local-file.v1", Effect: personalreview.DataWrite, Describe: p.describe, Execute: p.execute, RuleScope: p.fileRuleScope}
 	}
-	p.engine, err = personalreview.New(personalreview.Options{Store: store, Operations: operations, Authenticate: p.authenticate, WithAuthority: p.withAuthority, WithExecutionAuthority: p.withExecutionAuthority, Review: p.review})
+	p.registerCommandOperations(operations)
+	p.engine, err = personalreview.New(personalreview.Options{Store: store, Operations: operations, ActionExpiry: personalActionExpiry, Authenticate: p.authenticate, WithAuthority: p.withAuthority, WithExecutionAuthority: p.withExecutionAuthority, Review: p.review})
 	if err == nil {
 		err = p.engine.Recover(startup)
 	}
@@ -428,12 +430,25 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 	if err != nil {
 		return toolresult.Result{}, err
 	}
+	invocationID := ""
+	if call.Name != "write_file" && call.Name != "edit_file" {
+		invocationID = call.ID
+		if invocationID == "" {
+			invocationID = rand.Text()
+			call.ID = invocationID
+		}
+	}
 	identity, _ := json.Marshal(struct {
 		Scope     personalreview.Scope
 		Operation string
 		Arguments string
-	}{scope, call.Name, personalreview.ArgumentsDigest(json.RawMessage(call.Arguments))})
-	key := personalreview.Key{SpaceID: scope.SpaceID, ID: "file-" + personalHash(identity)}
+		CallID    string `json:"CallID,omitempty"`
+	}{scope, call.Name, personalreview.ArgumentsDigest(json.RawMessage(call.Arguments)), invocationID})
+	prefix := "file-"
+	if call.Name != "write_file" && call.Name != "edit_file" {
+		prefix = "command-"
+	}
+	key := personalreview.Key{SpaceID: scope.SpaceID, ID: prefix + personalHash(identity)}
 	var wake chan struct{}
 	if !strings.HasPrefix(scope.TaskID, "conversation:") {
 		p.waitMu.Lock()
@@ -465,25 +480,6 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 			p.fileAdmissionMu.Unlock()
 		}
 	}()
-	r, err := p.engine.GetExecution(ctx, key)
-	if errors.Is(err, personalreview.ErrNotFound) {
-		prepared, err := p.prepareFileEffect(ctx, kit, call)
-		a := prepared.File
-		if err != nil {
-			return toolresult.Result{}, err
-		}
-		p.kitsMu.Lock()
-		p.effects[key.ID] = prepared.EffectID
-		preparedToken = prepared.EffectID
-		p.kitsMu.Unlock()
-		raw, _ := json.Marshal(a)
-		r, err = p.engine.Propose(ctx, personalreview.Proposal{ID: key.ID, Scope: scope, Operation: call.Name, Arguments: raw})
-		if err != nil {
-			return toolresult.Result{}, err
-		}
-	} else if err != nil {
-		return toolresult.Result{}, err
-	}
 	p.kitsMu.Lock()
 	dispatchKit, cloneErr := kit.CloneForRoot(kit.RootDir())
 	if cloneErr != nil {
@@ -494,6 +490,24 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 		p.kits[key.ID] = dispatchKit
 	}
 	p.kitsMu.Unlock()
+	r, err := p.engine.GetExecution(ctx, key)
+	if errors.Is(err, personalreview.ErrNotFound) {
+		prepared, err := p.prepareActionEffect(ctx, kit, call)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		p.kitsMu.Lock()
+		p.effects[key.ID] = prepared.EffectID
+		preparedToken = prepared.EffectID
+		p.kitsMu.Unlock()
+		raw := prepared.Arguments
+		r, err = p.engine.Propose(ctx, personalreview.Proposal{ID: key.ID, Scope: scope, Operation: call.Name, Arguments: raw})
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+	} else if err != nil {
+		return toolresult.Result{}, err
+	}
 
 	if err := p.rememberAdmission(ctx, key, scope.SessionID); err != nil {
 		return toolresult.Result{}, err
@@ -591,7 +605,7 @@ func (p *personalActions) execute(ctx context.Context, action personalreview.Act
 	if kit == nil {
 		return nil, errors.New("reviewed native runtime is unavailable")
 	}
-	result, err := p.executeFileEffect(ctx, action.ID)
+	result, err := p.executeActionEffect(ctx, action.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -601,6 +615,9 @@ func (p *personalActions) execute(ctx context.Context, action personalreview.Act
 	return json.Marshal(map[string]any{"receipt": map[string]any{"operation": a.Operation, "target": a.Target, "status": "succeeded", "action_id": action.ID}, "tool_result": result})
 }
 func (p *personalActions) review(ctx context.Context, input personalreview.ReviewInput) (approvefor.Decision, error) {
+	if input.Action.Operation == "bash" || input.Action.Operation == "process_start" {
+		return p.reviewCommand(ctx, input)
+	}
 	var a tools.FileAction
 	if err := decodePersonalAction(input.Action.Arguments, &a); err != nil {
 		return approvefor.Decision{Outcome: "deny", Reason: "Invalid frozen file action"}, nil
@@ -640,15 +657,25 @@ func (p *personalActions) review(ctx context.Context, input personalreview.Revie
 			_ = p.callEffect(ctx, nil, "release", PersonalEffectReference{EffectID: prepared.EffectID}, nil)
 		}
 	}
+	return p.reviewDecision(ctx, input)
+}
+
+func (p *personalActions) reviewDecision(ctx context.Context, input personalreview.ReviewInput) (approvefor.Decision, error) {
 	if input.Confirmation != nil && input.Confirmation.Choice == personalreview.ApproveOnce && input.Confirmation.Digest == input.Action.Digest && input.Confirmation.OwnerID == input.Action.OwnerID {
-		return approvefor.Decision{Outcome: "allow", Reason: "Authenticated owner confirmed this exact bounded file action"}, nil
+		return approvefor.Decision{Outcome: "allow", Reason: "Authenticated owner confirmed this exact action"}, nil
+	}
+	if input.RuleApproved {
+		return approvefor.Decision{Outcome: "allow", Reason: "Allowed by your saved rule"}, nil
+	}
+	if input.PreviouslyReviewed {
+		return approvefor.Decision{Outcome: "allow", Reason: "Automatic review already approved this exact action"}, nil
 	}
 	settings, err := p.store.GetSettings(ctx, input.Action.Scope.SpaceID)
 	if err != nil {
 		return approvefor.Decision{}, err
 	}
 	if !settings.AutoReviewEnabled {
-		return approvefor.Decision{Outcome: "unsure", Reason: "Review the file target and exact changes before approving once"}, nil
+		return approvefor.Decision{Outcome: "unsure", Reason: "Review what will happen before allowing this action"}, nil
 	}
 	if len(input.UserMessages) == 0 {
 		return approvefor.Decision{Outcome: "unsure", Reason: "Original authenticated user request is unavailable; confirm this exact action manually"}, nil
@@ -703,6 +730,9 @@ func (p *personalActions) Call(ctx context.Context, operation string, raw json.R
 	}
 	if _, err := p.authenticate(ctx); err != nil {
 		return nil, err
+	}
+	if operation == "review.rules" || operation == "review.rule.preview" {
+		return p.callRules(ctx, operation, raw)
 	}
 	switch operation {
 	case "review.list":
@@ -791,6 +821,7 @@ func (p *personalActions) Call(ctx context.Context, operation string, raw json.R
 	if err != nil {
 		return nil, err
 	}
+	settings.Scope = []string{"write_file", "edit_file", "bash", "process_start", "connectors"}
 	view.Settings = &settings
 	return json.Marshal(view)
 }
@@ -1000,4 +1031,11 @@ func (p *personalActions) schedulerSelected(state *runtime.State) bool {
 	}
 	id, ok := state.Host.ServiceRegistry().ProviderPluginIDFor(PersonalCoordinationConsumer, PersonalCoordinationService, 1)
 	return ok && id == personalActionsConsumerID
+}
+
+func personalActionExpiry(scope personalreview.Scope, at time.Time) time.Time {
+	if strings.HasPrefix(scope.TaskID, "conversation:") {
+		return time.Time{}
+	}
+	return at.Add(30 * time.Minute)
 }

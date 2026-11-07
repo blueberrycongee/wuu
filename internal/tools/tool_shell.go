@@ -208,7 +208,7 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 	}
 	cmd := exec.Command(shell.Path, shell.CommandArgs(executedCommand)...)
 	cmd.Dir = workDir
-	cmd.Env = shellpath.CommandEnv(shellCommandEnv(os.Environ()))
+	cmd.Env = shellpath.CommandEnv(commandEnvironment(ctx))
 	sandboxPolicy, sandboxTempDir, err := env.processSandboxPolicy(ctx)
 	if err != nil {
 		return shellExecutionResult{}, fmt.Errorf("prepare filesystem process sandbox: %w", err)
@@ -425,6 +425,7 @@ func shellCommandEnv(base []string) []string {
 }
 
 func resolveShellWorkingDir(ctx context.Context, env *Env, cwd string) (string, error) {
+	cwd = commandWorkingDirectory(ctx, cwd)
 	if env == nil {
 		env = &Env{}
 	}

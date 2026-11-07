@@ -997,7 +997,8 @@ var TASK_EXECUTION_ACTIONS = [
   "personal/review.execution.status",
   "personal/actions.sync",
   "personal/actions.resume",
-  "personal/file.execute"
+  "personal/file.execute",
+  "personal/command.execute"
 ];
 var FEEDBACK_ACTIONS = ["personal/memory.read", "user/session/send", "user/session/inspect", "user/session/context", "user/session/history.read"];
 var SESSION_DELIVERY_ACTIONS = ["personal/memory.read", "user/session/send", "user/session/inspect", "user/session/cancel", "user/session/context", "user/session/history.read"];

@@ -20,6 +20,46 @@ async function render(service:ReviewService, variant: "settings" | "conversation
 }
 function button(selector:string){const value=container.querySelector<HTMLButtonElement>(selector);if(!value)throw new Error(`missing ${selector}`);return value}
 describe("Personal action approval component",()=>{
+  // Lasting authority failures: preview must not save; a failed save must not
+  // silently approve once; an acknowledgement must precede the current decision.
+  it("previews a rule without granting permission, then saves before approving this action",async()=>{
+    const events:string[]=[];
+    const rules={schema:"personal-review-rules.v1",revision:1,rules:[]};
+    const preview=vi.fn(async()=>({...rules,preview:{description:"Allow future messages to this exact recipient",operation:"synthetic.send",target:"reader@example.invalid",decision:"allow"}}));
+    const saveRules=vi.fn(async()=>{events.push("saved");return {...rules,revision:2}});
+    const resolve=vi.fn(async()=>{events.push("approved");return ready()});
+    await render({list:async()=>ready(),resolve,revoke:async()=>ready(),rules:saveRules,previewRule:preview},"conversation");
+    await React.act(async()=>button('[data-review-choice="remember"]').click());
+    expect(preview).toHaveBeenCalledWith({space_id:"synthetic",id:"synthetic-1",digest:"a".repeat(64),expected_revision:2});
+    expect(saveRules).not.toHaveBeenCalled();expect(resolve).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-review-rule-preview]')?.textContent).toContain("exact recipient");
+    await React.act(async()=>button('[data-review-choice="save_rule"]').click());
+    expect(saveRules).toHaveBeenCalledWith({expected_revision:1,action:"save",source:{space_id:"synthetic",id:"synthetic-1",digest:"a".repeat(64),expected_revision:2},decision:"allow"});
+    expect(events).toEqual(["saved","approved"]);
+    expect(resolve).toHaveBeenCalledWith({space_id:"synthetic",id:"synthetic-1",digest:"a".repeat(64),expected_revision:2,choice:"approve_once"});
+  });
+  it("does not approve after a failed rule save and permits an explicit once-only decision",async()=>{
+    const resolve=vi.fn(async()=>ready());
+    const rules={schema:"personal-review-rules.v1",revision:1,rules:[]};
+    await render({list:async()=>ready(),resolve,revoke:async()=>ready(),previewRule:async()=>({...rules,preview:{description:"Only this destination",operation:"synthetic.send",target:"reader@example.invalid",decision:"allow"}}),rules:async command=>{if(command)throw new Error("Save unavailable");return rules}});
+    await React.act(async()=>button('[data-review-choice="remember"]').click());
+    await React.act(async()=>button('[data-review-choice="save_rule"]').click());
+    expect(resolve).not.toHaveBeenCalled();expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await React.act(async()=>button('[data-review-refresh]').click());
+    await React.act(async()=>button('[data-review-choice="approve_once"]').click());
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+  it("updates and removes saved rules using the displayed rules revision",async()=>{
+    const rule={id:"rule-1",description:"Allow this destination",operation:"synthetic.send",target:"reader@example.invalid",decision:"allow",enabled:true,created_at:"2026-11-01T00:00:00Z",updated_at:"2026-11-01T00:00:00Z"};
+    const rules=vi.fn(async command=>command?.action==="delete"?{schema:"personal-review-rules.v1",revision:4,rules:[]}:{schema:"personal-review-rules.v1",revision:command?3:2,rules:[{...rule,decision:command?"ask":"allow"}]});
+    await render({list:async()=>ready(),resolve:async()=>ready(),revoke:async()=>ready(),rules});
+    await React.act(async()=>button('[data-review-rule-ask="rule-1"]').click());
+    expect(rules).toHaveBeenLastCalledWith({action:"update",expected_revision:2,id:"rule-1",decision:"ask",enabled:true});
+    await React.act(async()=>button('[data-review-rule-delete="rule-1"]').click());
+    expect(rules).toHaveBeenLastCalledWith({action:"delete",expected_revision:3,id:"rule-1"});
+    expect(container.querySelector('[data-review-rule="rule-1"]')).toBeNull();
+  });
+
   it("can turn AutoReview off after the last registered handler disappears",async()=>{
     const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
     snapshot.settings={auto_review_enabled:true,revision:4,policy_version:"personal.v1",scope:[]};
@@ -62,15 +102,16 @@ describe("Personal action approval component",()=>{
     expect(container.querySelector('[data-review-id="read-only"]')).toBeNull();
     expect(container.querySelector('[role="switch"]')).toBeNull();
   });
-  it("polls saved action outcomes without replaying the approval and stops after unmount",async()=>{
+  it("removes completed actions from chat without replaying the approval and stops after unmount",async()=>{
     vi.useFakeTimers();
     let snapshot=ready();const list=vi.fn(async()=>snapshot),resolve=vi.fn(async()=>ready());
     await render({list,resolve,revoke:async()=>ready()},"conversation");
+    expect(container.querySelector('[data-personal-action-review]')).not.toBeNull();
     snapshot=ready();if(snapshot.kind==="ready"){snapshot.requests[0].status="succeeded";snapshot.requests[0].receipt_json='{ "receipt_id": "synthetic-only" }';}
     await React.act(async()=>vi.advanceTimersByTimeAsync(5000));
     expect(list).toHaveBeenCalledTimes(2);expect(resolve).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-review-state="succeeded"]')).not.toBeNull();
-    expect(container.textContent).toContain("synthetic-only");
+    expect(container.querySelector('[data-personal-action-review]')).toBeNull();
+    expect(container.textContent).not.toContain("synthetic-only");
     React.act(()=>root?.unmount());root=undefined;
     await React.act(async()=>vi.advanceTimersByTimeAsync(5000));expect(list).toHaveBeenCalledTimes(2);
   });
@@ -159,6 +200,41 @@ describe("Personal action approval component",()=>{
     expect(button('[data-review-choice="approve_once"]').disabled).toBe(true);
     await React.act(async()=>button('[data-review-refresh]').click());
     expect(button('[data-review-choice="approve_once"]').disabled).toBe(false);
+  });
+  it("shows the captured original when a file will be replaced",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.requests[0].action.operation="write_file";
+    snapshot.requests[0].action.arguments_json=JSON.stringify({operation:"write_file",exists:true,before_content:"Original contents",arguments:{path:"note.txt",content:"Replacement contents"}});
+    await render({list:async()=>snapshot,resolve:async()=>ready(),revoke:async()=>ready()});
+    const diff=container.querySelector('[data-review-changes]');
+    expect(diff?.querySelectorAll('pre')).toHaveLength(2);expect(diff?.textContent).toContain("Original contents");expect(diff?.textContent).toContain("Replacement contents");
+  });
+  it("shows every frozen file edit before the owner allows it",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    snapshot.requests[0].action.operation="edit_file";
+    snapshot.requests[0].action.arguments_json=JSON.stringify({operation:"edit_file",arguments:{path:"note.txt",edits:[{old_text:"First old",new_text:"First new",replace_all:true},{old_text:"Second old",new_text:"Second new"}]}});
+    await render({list:async()=>snapshot,resolve:async()=>ready(),revoke:async()=>ready()});
+    const diff=container.querySelector('[data-review-changes]');
+    expect(diff?.querySelectorAll('pre')).toHaveLength(4);
+    expect(diff?.textContent).toContain("First old");expect(diff?.textContent).toContain("Second new");
+  });
+  it("accepts a host-bound original request caption and rejects malformed source data",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    const withSource={...snapshot,requests:snapshot.requests.map(record=>({...record,action:{...record.action,summary:{...record.action.summary,source:"Prepare my weekly report"}}}))};
+    await render({list:async()=>withSource,resolve:async()=>ready(),revoke:async()=>ready()});
+    expect(container.querySelector('[data-review-source]')?.textContent).toContain("Prepare my weekly report");
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(false);
+    await React.act(async()=>root?.unmount());root=undefined;container.remove();
+    const malformed={...withSource,requests:withSource.requests.map(record=>({...record,action:{...record.action,summary:{...record.action.summary,source:42}}}))};
+    await render({list:async()=>malformed,resolve:async()=>ready(),revoke:async()=>ready()});
+    expect(container.querySelector('[data-review-choice]')).toBeNull();
+  });
+  it("keeps a main-chat action without a time limit confirmable",async()=>{
+    const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
+    const raw={...snapshot,requests:snapshot.requests.map(record=>({...record,action:{...record.action,expires_at:null}}))};
+    const resolve=vi.fn(async()=>ready());await render({list:async()=>raw,resolve,revoke:async()=>ready()});
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(false);
+    await React.act(async()=>button('[data-review-choice="approve_once"]').click());expect(resolve).toHaveBeenCalledTimes(1);
   });
   it("disables expired cards without sending a decision",async()=>{
     const snapshot=ready();if(snapshot.kind==="ready")snapshot.requests[0].action.expires_at="2000-01-01T00:00:00Z";

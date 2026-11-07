@@ -240,6 +240,7 @@ jobs:
         if: matrix.suite == 'plugins'
         run: make test-plugins
 
+
       - name: Guard single-file plugins under desktop CSP
         if: matrix.suite == 'plugins'
         run: |
@@ -1965,6 +1966,23 @@ jobs:
           git rev-parse HEAD > "$WUU_ERROR_FEEDBACK_OUTPUT/source-commit.txt"
           set -o pipefail
           desktop/node_modules/.bin/electron desktop/scripts/error-feedback-e2e.cjs 2>&1 | tee "$WUU_ERROR_FEEDBACK_OUTPUT/run.log"
+      - uses: actions/setup-go@v5
+        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' && steps.install-personal-chromium.outcome == 'success' }}
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Exercise Personal approval buttons against native effects
+        if: ${{ !cancelled() && steps.build-personal-fixture.outcome == 'success' && steps.install-personal-chromium.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        env:
+          TMPDIR: /private/tmp
+          WUU_PERSONAL_BROWSER_E2E: '1'
+          WUU_REVIEW_PLAYWRIGHT_PATH: ${{ github.workspace }}/clients/mobile-web/node_modules/playwright
+          WUU_APPROVAL_NATIVE_OUTPUT: ${{ github.workspace }}/desktop/out/personal-desktop-acceptance/native
+        run: |
+          set -o pipefail
+          go test ./internal/appserver -run '^TestPersonalApprovalBrowserToNativeEffect$' -count=1 -v 2>&1 | tee desktop/out/personal-desktop-acceptance/native.log
       - name: Upload hosted macOS Personal desktop evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -1980,6 +1998,9 @@ jobs:
             desktop/out/personal-desktop-acceptance/settings/*.txt
             desktop/out/personal-desktop-acceptance/approval/*.json
             desktop/out/personal-desktop-acceptance/approval/*.png
+            desktop/out/personal-desktop-acceptance/native/*.json
+            desktop/out/personal-desktop-acceptance/native/*.png
+            desktop/out/personal-desktop-acceptance/native/*.log
             desktop/out/personal-desktop-acceptance/message-flow/*.json
             desktop/out/personal-desktop-acceptance/message-flow/*.png
           if-no-files-found: warn

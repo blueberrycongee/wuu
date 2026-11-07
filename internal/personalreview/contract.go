@@ -67,6 +67,7 @@ type Summary struct {
 	Account     string `json:"account"`
 	Target      string `json:"target"`
 	Consequence string `json:"consequence"`
+	Source      string `json:"source,omitempty"`
 }
 type Action struct {
 	Proposal
@@ -87,10 +88,11 @@ func (a Action) Key() Key { return Key{SpaceID: a.Scope.SpaceID, ID: a.ID} }
 // Bookkeeping handlers must never dispatch work, write user data, schedule work,
 // grant authority, or communicate externally, including through callbacks.
 type Operation struct {
-	Version  string
-	Effect   Effect
-	Describe func(json.RawMessage) (Summary, error)
-	Execute  func(context.Context, Action) (json.RawMessage, error)
+	Version   string
+	Effect    Effect
+	Describe  func(json.RawMessage) (Summary, error)
+	Execute   func(context.Context, Action) (json.RawMessage, error)
+	RuleScope func(json.RawMessage) (RuleScope, error)
 }
 type HumanMessage struct {
 	ID   string `json:"id"`
@@ -156,14 +158,16 @@ type Approval struct {
 	At      time.Time `json:"at"`
 }
 type Record struct {
-	Action    Action          `json:"action"`
-	Revision  int64           `json:"revision"`
-	Status    Status          `json:"status"`
-	Outcome   string          `json:"outcome"`
-	Reason    string          `json:"reason"`
-	Approval  *Approval       `json:"approval,omitempty"`
-	ConsentID string          `json:"consent_id,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
+	Action       Action          `json:"action"`
+	Revision     int64           `json:"revision"`
+	Status       Status          `json:"status"`
+	Outcome      string          `json:"outcome"`
+	Reason       string          `json:"reason"`
+	Approval     *Approval       `json:"approval,omitempty"`
+	ConsentID    string          `json:"consent_id,omitempty"`
+	RuleID       string          `json:"rule_id,omitempty"`
+	RuleRevision int64           `json:"rule_revision,omitempty"`
+	Result       json.RawMessage `json:"result,omitempty"`
 }
 type Event struct {
 	Revision int64     `json:"revision"`
@@ -178,11 +182,18 @@ type ReviewInput struct {
 	UserMessages []HumanMessage
 	Confirmation *Approval
 	Consent      *Consent
+	// These host-owned flags reuse a decision only after the operation revalidates
+	// the frozen arguments and current execution boundary.
+	RuleApproved       bool
+	PreviouslyReviewed bool
 }
 type Options struct {
 	Store      *Store
 	Operations map[string]Operation
 	Clock      func() time.Time
+	// ActionExpiry returns zero for interactive requests without a deadline.
+	// Scope or authority changes still invalidate them before dispatch.
+	ActionExpiry func(Scope, time.Time) time.Time
 	// WithAuthority reads a consistent selected authority snapshot for proposals,
 	// review and owner decisions. It does not authorize external effects.
 	WithAuthority func(context.Context, Scope, func(Authority) error) error

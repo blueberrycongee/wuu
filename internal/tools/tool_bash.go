@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
@@ -242,7 +241,7 @@ func (t *BashTool) startBackground(ctx context.Context, args bashArgs, tty bool,
 	if err != nil {
 		return nil, fmt.Errorf("prepare filesystem process sandbox: %w", err)
 	}
-	commandEnv := shellCommandEnv(os.Environ())
+	commandEnv := commandEnvironment(ctx)
 	if sandboxTempDir != "" {
 		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
 	}
@@ -256,7 +255,7 @@ func (t *BashTool) startBackground(ctx context.Context, args bashArgs, tty bool,
 	return m.Start(startCtx, proc.StartOptions{
 		Command:               args.Command,
 		CommandPrefix:         commandPrefix,
-		CWD:                   args.CWD,
+		CWD:                   commandWorkingDirectory(ctx, args.CWD),
 		WorkspaceRoot:         t.env.RootDir,
 		OwnerKind:             proc.OwnerKind(defaultProcessOwnerKind(t.env, "")),
 		OwnerID:               defaultProcessOwnerID(t.env),
@@ -304,6 +303,9 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Re
 		command = resolved.Command
 	}
 
+	if frozen, ok := ctx.Value(commandActionContextKey{}).(CommandAction); ok && command != frozen.ResolvedCommand {
+		return toolresult.Result{}, errors.New("reviewed command resolution changed")
+	}
 	timeout := args.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = defaultShellTimeoutSeconds

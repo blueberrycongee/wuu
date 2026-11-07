@@ -15,6 +15,7 @@ type Engine struct {
 	store                  *Store
 	operations             map[string]Operation
 	clock                  func() time.Time
+	actionExpiry           func(Scope, time.Time) time.Time
 	withAuthority          func(context.Context, Scope, func(Authority) error) error
 	withExecutionAuthority func(context.Context, Scope, func(context.Context, Authority) error) error
 	authenticate           func(context.Context) (Identity, error)
@@ -28,6 +29,9 @@ func New(options Options) (*Engine, error) {
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
+	if options.ActionExpiry == nil {
+		options.ActionExpiry = func(_ Scope, at time.Time) time.Time { return at.Add(10 * time.Minute) }
+	}
 	operations := make(map[string]Operation, len(options.Operations))
 	for name, operation := range options.Operations {
 		if strings.TrimSpace(name) == "" || operation.Version == "" || operation.Describe == nil || operation.Execute == nil {
@@ -35,7 +39,7 @@ func New(options Options) (*Engine, error) {
 		}
 		operations[name] = operation
 	}
-	return &Engine{store: options.Store, operations: operations, clock: options.Clock, withAuthority: options.WithAuthority, withExecutionAuthority: options.WithExecutionAuthority, authenticate: options.Authenticate, review: options.Review}, nil
+	return &Engine{store: options.Store, operations: operations, clock: options.Clock, actionExpiry: options.ActionExpiry, withAuthority: options.WithAuthority, withExecutionAuthority: options.WithExecutionAuthority, authenticate: options.Authenticate, review: options.Review}, nil
 }
 
 func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error) {
@@ -59,7 +63,7 @@ func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error)
 	var created Record
 	err = e.withAuthority(ctx, proposal.Scope, func(authority Authority) error {
 		action := Action{Proposal: proposal, OwnerID: authority.OwnerID, PolicyRevision: authority.PolicyRevision, CreatedAt: e.clock().UTC(), Effect: Unknown}
-		action.ExpiresAt = action.CreatedAt.Add(10 * time.Minute)
+		action.ExpiresAt = e.actionExpiry(proposal.Scope, action.CreatedAt)
 		operation, known := e.operations[proposal.Operation]
 		if known {
 			action.HandlerVersion = operation.Version
@@ -72,6 +76,14 @@ func (e *Engine) Propose(ctx context.Context, proposal Proposal) (Record, error)
 			if action.Summary.Title == "" || action.Summary.Target == "" || action.Summary.Consequence == "" {
 				return errors.New("operation omitted its reviewable summary")
 			}
+		}
+		action.Summary.Source = ""
+		if len(authority.UserMessages) > 0 {
+			source := []rune(strings.TrimSpace(authority.UserMessages[0].Text))
+			if len(source) > 100 {
+				source = append(source[:99], '…')
+			}
+			action.Summary.Source = string(source)
 		}
 		action.Digest = digest(action)
 		created = Record{Action: action, Status: Proposed, Outcome: "ask", Reason: "Awaiting action assessment"}
@@ -118,10 +130,25 @@ func (e *Engine) Assess(ctx context.Context, key Key) (Record, error) {
 	}
 	status, outcome, reason := Ready, "allow", "Registered read or internal bookkeeping within the current host boundary"
 	consent := e.matchConsent(r.Action, authority, r.ConsentID)
+	rule, ruleReason, err := e.actionRule(ctx, r, false)
+	if err != nil {
+		return Record{}, err
+	}
 	if needsConfirmation(r.Action.Effect) {
-		decision, reviewErr := e.review(ctx, reviewInput(r, authority, consent))
+		var decision approvefor.Decision
+		var reviewErr error
+		if ruleReason != "" {
+			decision = approvefor.Decision{Outcome: "unsure", Reason: ruleReason}
+		} else {
+			input := reviewInput(r, authority, consent)
+			input.RuleApproved = rule != nil && rule.Decision == RuleAllow
+			decision, reviewErr = e.review(ctx, input)
+		}
+		if rule != nil && rule.Decision == RuleAllow {
+			r.RuleID, r.RuleRevision = rule.ID, rule.Revision
+		}
 		status, outcome, reason = reviewStatus(decision, reviewErr)
-		if status == Ready && consent == nil && !validApproval(r) && !canReviewIntent(authority) {
+		if status == Ready && consent == nil && !validApproval(r) && r.RuleID == "" && !canReviewIntent(authority) {
 			status = AwaitingConfirmation
 			outcome = "ask"
 			reason = "Owner confirmation required for this exact action"
@@ -134,7 +161,7 @@ func (e *Engine) Assess(ctx context.Context, key Key) (Record, error) {
 	err = e.withAuthority(ctx, r.Action.Scope, func(current Authority) error {
 		if s, why := e.check(r, current); s != "" {
 			status, outcome, reason = s, "deny", why
-		} else if status == Ready && needsConfirmation(r.Action.Effect) && consent == nil && !validApproval(r) && !canReviewIntent(current) {
+		} else if status == Ready && needsConfirmation(r.Action.Effect) && consent == nil && !validApproval(r) && r.RuleID == "" && !canReviewIntent(current) {
 			status, outcome, reason = AwaitingConfirmation, "ask", "Exact owner confirmation is required; automatic intent review is unavailable"
 		}
 		r.Status, r.Outcome, r.Reason = status, outcome, reason
@@ -223,10 +250,22 @@ func (e *Engine) Execute(ctx context.Context, key Key) (Record, error) {
 		return stopped, nil
 	}
 	if needsConfirmation(r.Action.Effect) {
-		if !validApproval(r) && r.ConsentID == "" && !canReviewIntent(authority) {
+		rule, reason, err := e.actionRule(ctx, r, true)
+		if err != nil {
+			return Record{}, err
+		}
+		if reason != "" {
+			r.Status, r.Outcome, r.Reason = AwaitingConfirmation, "ask", reason
+			r.RuleID, r.RuleRevision = "", 0
+			return e.store.save(ctx, r, r.Revision, "policy", e.clock())
+		}
+		if !validApproval(r) && r.ConsentID == "" && rule == nil && !canReviewIntent(authority) {
 			return Record{}, ErrUnauthorized
 		}
-		decision, reviewErr := e.review(ctx, reviewInput(r, authority, e.matchConsent(r.Action, authority, r.ConsentID)))
+		input := reviewInput(r, authority, e.matchConsent(r.Action, authority, r.ConsentID))
+		input.RuleApproved = rule != nil && rule.Decision == RuleAllow
+		input.PreviouslyReviewed = r.Status == Ready && r.RuleID == "" && r.Outcome == "allow"
+		decision, reviewErr := e.review(ctx, input)
 		status, outcome, reason := reviewStatus(decision, reviewErr)
 		if status != Ready {
 			r.Status, r.Outcome, r.Reason = status, outcome, reason
@@ -259,16 +298,25 @@ func (e *Engine) Execute(ctx context.Context, key Key) (Record, error) {
 			claimed, err = e.store.save(ctx, r, r.Revision, "host", e.clock())
 			return err
 		}
+		rule, reason, err := e.actionRule(ctx, r, true)
+		if err != nil {
+			return err
+		}
+		if reason != "" {
+			r.Status, r.Outcome, r.Reason = AwaitingConfirmation, "ask", reason
+			r.RuleID, r.RuleRevision = "", 0
+			claimed, err = e.store.save(ctx, r, r.Revision, "policy", e.clock())
+			return err
+		}
 		// Opt-in and complete original source evidence must still exist at the
 		// dispatch boundary, even if a host forgot to advance its policy revision.
-		if needsConfirmation(r.Action.Effect) && !validApproval(r) && r.ConsentID == "" && !canReviewIntent(current) {
+		if needsConfirmation(r.Action.Effect) && !validApproval(r) && r.ConsentID == "" && rule == nil && !canReviewIntent(current) {
 			r.Status, r.Outcome, r.Reason = AwaitingConfirmation, "ask", "Exact owner confirmation is required; automatic intent review is unavailable"
 			var err error
 			claimed, err = e.store.save(ctx, r, r.Revision, "host", e.clock())
 			return err
 		}
 		r.Status, r.Outcome, r.Reason = Executing, "allow", "Durable dispatch claim; result not yet known"
-		var err error
 		claimed, err = e.store.save(ctx, r, r.Revision, "host", e.clock())
 		if err != nil {
 			return err
@@ -500,7 +548,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 		}
 		if r.Status == Executing {
 			r.Status, r.Outcome, r.Reason = Uncertain, "deny", "Host interrupted after dispatch; reconcile without replay"
-		} else if (r.Status == Proposed || r.Status == Ready || r.Status == Approved || r.Status == AwaitingConfirmation || r.Status == Blocked) && !e.clock().Before(r.Action.ExpiresAt) {
+		} else if (r.Status == Proposed || r.Status == Ready || r.Status == Approved || r.Status == AwaitingConfirmation || r.Status == Blocked) && !r.Action.ExpiresAt.IsZero() && !e.clock().Before(r.Action.ExpiresAt) {
 			r.Status, r.Outcome, r.Reason = Expired, "deny", "Action confirmation expired"
 		} else {
 			continue
@@ -550,7 +598,7 @@ func (e *Engine) check(r Record, a Authority) (Status, string) {
 	if a.OwnerID == "" || a.PolicyRevision < 1 || !a.Active || a.Scope != r.Action.Scope || a.OwnerID != r.Action.OwnerID || a.PolicyRevision != r.Action.PolicyRevision {
 		return Stale, "Task, owner, execution or policy changed"
 	}
-	if !e.clock().Before(r.Action.ExpiresAt) {
+	if !r.Action.ExpiresAt.IsZero() && !e.clock().Before(r.Action.ExpiresAt) {
 		return Expired, "Action confirmation expired"
 	}
 	if r.Approval != nil && !validApproval(r) {

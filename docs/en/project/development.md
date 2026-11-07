@@ -63,12 +63,29 @@ WUU_REVIEW_PLAYWRIGHT_PATH="$PWD/clients/mobile-web/node_modules/playwright" \
 
 Both renderers retain their sandbox. Checks cover light/dark, wide/narrow and
 large-text layouts, unavailable services, approval/rejection, revocation,
-lost-response recovery and explicit Auto Review opt-in. CI uploads
+lost-response recovery, automatic review controls and remembered rules. CI uploads
 `personal-desktop-hosted-macos-evidence-<PR head SHA>` with screenshots, reports,
 logs, exact checkout/PR identity and fixture hashes, including failure evidence.
 It excludes browser profiles and uses no real accounts, model or external effects.
 Review the pixels as well as the assertions; this is not mobile, native host
 authorization, real provider or physical-device acceptance.
+
+To test production approval buttons against a real UserHost and temporary local
+shell effect, first build the fixture above, then run:
+
+```bash
+WUU_PERSONAL_BROWSER_E2E=1 go test ./internal/appserver -run '^TestPersonalApprovalBrowserToNativeEffect$' -count=1 -v
+```
+
+The test writes screenshots and a receipt report to
+`desktop/out/personal-approval-native/`. Navigation and model transport remain
+fixtures. `WUU_REVIEW_CHROMIUM` can select an installed Chromium executable.
+On macOS use `TMPDIR=/private/tmp` to avoid temporary-directory symlink aliases.
+The account chain uses a synthetic HTTP provider and a real bundled runtime:
+
+```bash
+WUU_CONNECTOR_CHAIN_E2E=1 go test -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)-dev" ./internal/appserver -run '^TestPersonalConnectorRealBundleOwnerReceiptChain$' -count=1 -v
+```
 
 For CLI-only development:
 

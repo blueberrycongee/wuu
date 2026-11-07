@@ -20,7 +20,7 @@ type Settings struct {
 
 const PersonalFilesPolicyVersion = "personal-files.v1"
 
-// GetSettings creates the conservative, manual-only default on first use.
+// GetSettings creates the automatic review default on first use.
 // The host must authenticate callers and serialize policy changes with dispatch.
 func (s *Store) GetSettings(ctx context.Context, spaceID string) (Settings, error) {
 	if s.documents != nil {
@@ -29,7 +29,7 @@ func (s *Store) GetSettings(ctx context.Context, spaceID string) (Settings, erro
 	if strings.TrimSpace(spaceID) == "" {
 		return Settings{}, errors.New("Personal review settings require a space")
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO personal_review_settings(space,revision,policy_version,auto_review_enabled) VALUES(?,1,?,0) ON CONFLICT DO NOTHING`, spaceID, PersonalFilesPolicyVersion); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO personal_review_settings(space,revision,policy_version,auto_review_enabled) VALUES(?,1,?,1) ON CONFLICT DO NOTHING`, spaceID, PersonalFilesPolicyVersion); err != nil {
 		return Settings{}, err
 	}
 	settings := Settings{Scope: []string{"write_file", "edit_file"}}

@@ -1412,6 +1412,7 @@ it("recovers the GenUI error boundary after a corrected same-ID snapshot", async
 it("keeps action review unavailable when its resolver is not configured", async () => {
   const view = await mount(async method => {
     if (method === "review.list") return { ok: true, value: { schema: "personal-review.v1", kind: "unavailable", reason: "Production authorization resolver is unavailable" } };
+    if (method === "review.rules") return { ok: true, value: { schema: "personal-review-rules.v1", revision: 1, rules: [] } };
   });
   await view.settings();
   expect(view.container.querySelector('.personal-review')).not.toBeNull();

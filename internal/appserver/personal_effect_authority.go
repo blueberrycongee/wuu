@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/blueberrycongee/wuu/internal/access"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -109,9 +108,8 @@ func (p *personalActions) withExecutionAuthority(ctx context.Context, scope pers
 		if err != nil {
 			return err
 		}
-		if err := p.server.AuthorizeResource(effectCtx, "personal/file.execute", access.Resource{Kind: "user-space", ID: scope.SpaceID}, access.Resource{Kind: "session", ID: scope.SessionID}); err != nil {
-			return err
-		}
+		// The retained effect checks its own file or command capability. This
+		// shared fence must not require an unrelated operation's authority.
 		return use(effectCtx, authority)
 	})
 }

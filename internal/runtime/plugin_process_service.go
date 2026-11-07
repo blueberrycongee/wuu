@@ -332,7 +332,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		if err != nil {
 			return nil, err
 		}
-		started, manager, err := processScope.Start(startCtx, input.Command, input.CWD)
+		started, manager, err := processScope.StartOperation(startCtx, input.Command, input.CWD, params.Caller+":"+key)
 		if err != nil {
 			return nil, err
 		}

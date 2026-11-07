@@ -128,6 +128,7 @@ func NewUserHost(rt *runtime.Session, personalOptions personalhost.Options, serv
 		personalOptions.Memory = h.server.callPersonalCoordination
 		if rt.Toolkit != nil {
 			rt.Toolkit.SetFileActionGate(h.server.personalFileGate)
+			rt.Toolkit.SetCommandActionGate(h.server.personalCommandGate)
 		}
 	}
 

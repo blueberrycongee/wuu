@@ -158,7 +158,13 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	if resumed && (frozen.Operation != call.Name || string(frozen.Arguments) != call.Arguments) {
 		return toolresult.Result{}, errors.New("reviewed file action binding mismatch")
 	}
-	if t.fileActionGate != nil && fileMutation(call.Name) && !resumed {
+	command, commandResumed := ctx.Value(commandActionContextKey{}).(CommandAction)
+	if commandResumed && (command.Operation != call.Name || string(command.Arguments) != call.Arguments) {
+		return toolresult.Result{}, errors.New("reviewed command action binding mismatch")
+	}
+	if t.commandActionGate != nil && commandMutation(call) && !commandResumed {
+		result, err = t.commandActionGate(ctx, t, call)
+	} else if t.fileActionGate != nil && fileMutation(call.Name) && !resumed {
 		result, err = t.fileActionGate(ctx, t, call)
 	} else if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
 		if len(t.env.ProtectedPaths) > 0 {

@@ -39,12 +39,12 @@ func (p *personalActions) prepareFileEffect(ctx context.Context, kit *tools.Tool
 	err := p.callEffect(ctx, kit, "prepare-file", call, &prepared)
 	return prepared, err
 }
-func (p *personalActions) executeFileEffect(ctx context.Context, id string) (toolresult.Result, error) {
+func (p *personalActions) executeActionEffect(ctx context.Context, id string) (toolresult.Result, error) {
 	p.kitsMu.Lock()
 	token := p.effects[id]
 	p.kitsMu.Unlock()
 	if token == "" {
-		return toolresult.Result{}, errors.New("reviewed file effect is unavailable")
+		return toolresult.Result{}, errors.New("reviewed action effect is unavailable")
 	}
 	var result PersonalEffectResult
 	err := p.callEffect(ctx, nil, "execute", PersonalEffectReference{EffectID: token}, &result)
