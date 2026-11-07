@@ -567,6 +567,31 @@
   line-height: 1.5;
 }
 
+/* Model menu takes the free width; the level menu keeps a stable width and wraps below when space runs out. */
+.plugin-ui-model-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.plugin-ui-model-picker-model {
+  flex: 999 1 12em;
+  min-width: 0;
+}
+
+.plugin-ui-model-picker-level {
+  flex: 1 1 9em;
+  min-width: 0;
+}
+
+/* The model and level menus together need about two settings controls of width. */
+@container settings-page not (max-width: 32em) {
+  .settings-page .plugin-ui-card .plugin-ui-field:has(> .plugin-ui-model-picker) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--settings-control-width) * 2));
+  }
+}
+
 /* Text fields share a stable fill and boundary with settings inputs. */
 .plugin-ui-input {
   width: 100%;

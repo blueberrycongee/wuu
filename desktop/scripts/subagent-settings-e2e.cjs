@@ -114,6 +114,18 @@ async function main() {
   await setLook();
 
   if (phaseName !== 'before') {
+    // Opens the host menu, captures it, and picks the option with this value.
+    const pick = async (menu, value, shot) => {
+      await evaluate(m => document.querySelector(`${m} .select-menu-trigger`).click(), menu);
+      await until(() => evaluate(v => Boolean(document.querySelector(`.select-menu-item[data-value='${v}']`)), value), `${shot} option`);
+      await capture(shot);
+      const picked = await evaluate(v => {
+        const option = document.querySelector(`.select-menu-item[data-value='${v}']`);
+        option?.click();
+        return option ? 'clicked' : [...document.querySelectorAll('.select-menu-item')].map(n => n.dataset.value).join('|');
+      }, value);
+      if (picked !== 'clicked') throw new Error(`${shot}: option ${value} missing; menu has ${picked}`);
+    };
     const rows = () => evaluate(() => document.querySelectorAll('.plugin-subagent-alias').length);
     check('seeded aliases render as rows', await rows() === 2, String(await rows()));
     // A new alias is saved once it has a valid name and a model.
@@ -125,17 +137,21 @@ async function main() {
     await capture('invalid-name');
     await setField('.plugin-subagent-alias:last-child .plugin-subagent-name', 'review');
     await evaluate(() => document.querySelector('.plugin-subagent-alias:last-child .plugin-subagent-name').blur());
-    await setField('.plugin-subagent-alias:last-child .plugin-subagent-model', JSON.stringify(['anthropic-proxy', 'claude-haiku-4-5']), 'change');
+    await pick('.plugin-subagent-alias:last-child .plugin-ui-model-picker-model', JSON.stringify(['anthropic-proxy', 'claude-haiku-4-5']), 'model-menu');
     await until(() => Boolean(aliasesOnDisk().review), 'review alias saved');
     check('new alias saved with picked model', aliasesOnDisk().review.model === 'claude-haiku-4-5', JSON.stringify(aliasesOnDisk()));
     check('other aliases kept', aliasesOnDisk().fast?.model === 'deepseek-chat' && aliasesOnDisk().deep?.effort === 'high', JSON.stringify(aliasesOnDisk()));
     await capture('added');
     // Changing the level saves it as the alias variant.
-    await setField('.plugin-subagent-alias:first-child .plugin-subagent-level', 'medium', 'change');
+    await pick('.plugin-subagent-alias:first-child .plugin-ui-model-picker-level', 'medium', 'level-menu');
     await until(() => aliasesOnDisk().deep?.variant === 'medium', 'deep level saved');
     check('level replaces legacy effort', !aliasesOnDisk().deep.effort, JSON.stringify(aliasesOnDisk().deep));
     // Removing a row saves immediately.
-    await evaluate(() => document.querySelector('.plugin-subagent-alias:first-child .plugin-subagent-remove').click());
+    await until(() => evaluate(() => {
+      const button = document.querySelector('.plugin-subagent-alias:first-child .plugin-subagent-remove:not(:disabled)');
+      button?.click();
+      return Boolean(button);
+    }), 'first remove button');
     await until(() => Object.keys(aliasesOnDisk()).length === 2, 'alias removed');
     check('removed alias leaves config', !aliasesOnDisk().deep && aliasesOnDisk().fast && aliasesOnDisk().review, JSON.stringify(aliasesOnDisk()));
     // Empty state.

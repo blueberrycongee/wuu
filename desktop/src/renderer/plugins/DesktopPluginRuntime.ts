@@ -2,6 +2,7 @@ import { decodePluginRuntimeResponse } from "../../shared/pluginRuntimeIPC";
 import { PluginConversationAttachment, PluginConversationView, PluginConversationComposer, PluginConversationMessage } from "./PluginConversation";
 import { MarkdownContent } from "../RichContent";
 import { PluginAvatar } from "../PluginAvatar";
+import { PluginModelPicker } from "./PluginModelPicker";
 import * as React from "react";
 import { useEffect } from "react";
 
@@ -35,6 +36,7 @@ export const desktopPluginHost = new PluginHost({
   reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
   avatarComponent: PluginAvatar,
+  modelPickerComponent: PluginModelPicker,
   conversationComponents: { View: PluginConversationView, Attachment: PluginConversationAttachment, Composer: PluginConversationComposer, Message: PluginConversationMessage },
   renderConversationContent: ({ content, linkPolicy }) => React.createElement(MarkdownContent, { text: content, linkPolicy }),
   invokeRuntime: async ({ pluginId, generation, graphGeneration, service, method, input, workspaceId, workspaceRoot, userSpaceId, productDomain, compositionProfile, userInput, signal }) => {

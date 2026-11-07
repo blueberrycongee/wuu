@@ -5,12 +5,6 @@ export async function activate(api) {
     "subagent.aliases.title": "Model aliases",
     "subagent.aliases.help": "The agent picks a model by alias when delegating a task. Next message and Dream can use aliases too.",
     "subagent.aliases.name": "Alias", "subagent.aliases.namePlaceholder": "e.g. fast",
-    "subagent.aliases.model": "Model", "subagent.aliases.chooseModel": "Choose a model",
-    "subagent.aliases.unavailable": "(unavailable)",
-    "subagent.aliases.level": "Reasoning level", "subagent.aliases.defaultLevel": "Default level",
-    "subagent.level.none": "None", "subagent.level.minimal": "Minimal", "subagent.level.low": "Low",
-    "subagent.level.medium": "Medium", "subagent.level.high": "High", "subagent.level.xhigh": "Very high",
-    "subagent.level.max": "Max", "subagent.level.ultra": "Ultra",
     "subagent.aliases.add": "Add alias", "subagent.aliases.remove": "Remove alias",
     "subagent.aliases.empty": "No aliases yet. Add one to run child tasks on a faster or stronger model.",
     "subagent.aliases.noModels": "Connect a model service under Connections before adding aliases.",
@@ -22,12 +16,6 @@ export async function activate(api) {
     "subagent.aliases.title": "模型别名",
     "subagent.aliases.help": "Agent 委派子任务时按别名选用模型，下一句建议和 Dream 也可使用。",
     "subagent.aliases.name": "别名", "subagent.aliases.namePlaceholder": "如 fast",
-    "subagent.aliases.model": "模型", "subagent.aliases.chooseModel": "选择模型",
-    "subagent.aliases.unavailable": "（不可用）",
-    "subagent.aliases.level": "思考强度", "subagent.aliases.defaultLevel": "默认强度",
-    "subagent.level.none": "无", "subagent.level.minimal": "极低", "subagent.level.low": "低",
-    "subagent.level.medium": "中", "subagent.level.high": "高", "subagent.level.xhigh": "超高",
-    "subagent.level.max": "最高", "subagent.level.ultra": "极高",
     "subagent.aliases.add": "添加别名", "subagent.aliases.remove": "删除别名",
     "subagent.aliases.empty": "还没有别名。添加一个，让子任务用更快或更强的模型。",
     "subagent.aliases.noModels": "请先在「外部连接」中接入模型服务，再添加别名。",
@@ -39,12 +27,11 @@ export async function activate(api) {
     .plugin-subagent-settings { min-width:0; }
     .plugin-subagent-list { display:flex; flex-direction:column; min-width:0; margin:0; padding:0 var(--settings-card-pad-inline, var(--space-4)); list-style:none; border:1px solid var(--settings-card-border, var(--hairline)); border-radius:var(--settings-card-radius, var(--radius-md)); background:var(--settings-card-bg, var(--paper)); }
     .plugin-subagent-list > li + li { border-top:1px solid var(--settings-divider, var(--hairline-soft)); }
-    .plugin-subagent-alias { display:grid; grid-template-columns:minmax(0,9em) minmax(0,1fr) minmax(0,9em) var(--control-field-height); grid-template-areas:"name model level remove" "hint hint hint hint"; align-items:center; column-gap:var(--space-3); padding:var(--settings-row-pad-block, var(--space-3)) 0; }
+    .plugin-subagent-alias { display:grid; grid-template-columns:minmax(0,9em) minmax(0,1fr) var(--control-field-height); grid-template-areas:"name picker remove" "hint hint hint"; align-items:center; column-gap:var(--space-3); padding:var(--settings-row-pad-block, var(--space-3)) 0; }
     .plugin-subagent-alias .plugin-ui-input { width:100%; min-width:0; }
     .plugin-subagent-name { grid-area:name; font-weight:var(--weight-medium); }
     .plugin-subagent-alias .plugin-subagent-name:not(:hover):not(:focus):not([aria-invalid]) { border-color:transparent; background:transparent; }
-    .plugin-subagent-model { grid-area:model; }
-    .plugin-subagent-level { grid-area:level; }
+    .plugin-subagent-picker { grid-area:picker; }
     .plugin-subagent-remove { grid-area:remove; display:inline-grid; place-items:center; width:var(--control-field-height); height:var(--control-field-height); padding:0 !important; color:var(--ink-tertiary); }
     .plugin-subagent-remove:hover:not(:disabled) { color:var(--ink); }
     .plugin-subagent-remove svg { width:14px; height:14px; }
@@ -53,7 +40,7 @@ export async function activate(api) {
     .plugin-subagent-add { align-self:flex-start; display:inline-flex; align-items:center; gap:var(--space-2); }
     .plugin-subagent-add svg { width:14px; height:14px; }
     @container settings-page (max-width:32em) {
-      .plugin-subagent-alias { grid-template-columns:minmax(0,3fr) minmax(0,2fr) var(--control-field-height); grid-template-areas:"name name remove" "model level ." "hint hint hint"; row-gap:var(--space-2); }
+      .plugin-subagent-alias { grid-template-columns:minmax(0,1fr) var(--control-field-height); grid-template-areas:"name remove" "picker picker" "hint hint"; row-gap:var(--space-2); }
     }
   ` });
   const emptyStatusItems = Object.freeze([]);
@@ -139,12 +126,11 @@ export async function activate(api) {
   };
 
   function ModelAliases({ host, translate }) {
-    const { Page, Section, Stack, Button } = api.ui;
+    const { Page, Section, Stack, Button, ModelPicker } = api.ui;
     const tr = typeof translate === "function" ? translate : (key) => key;
     const settings = host.settings;
     const aliases = settings ? settings.getValue("runtime.modelAliases") : {};
     const models = settings?.listAvailableModels?.() ?? [];
-    const providers = [...new Set(models.map((model) => model.provider))];
     const nextId = React.useRef(0);
     const persisted = React.useRef(canonical(aliases));
     const toRows = () => Object.keys(aliases).sort().map((name) => {
@@ -185,23 +171,24 @@ export async function activate(api) {
       setBusy(true);
       try {
         await settings.updateValue("runtime.modelAliases", value);
-        setRows((current) => current.map((row) => complete(row, current) ? { ...row, name: row.name.trim(), saved: { name: row.name.trim(), value: aliasValue(row) } } : row));
-      } catch {
+      } catch (error) {
+        // A save that retires this page reloads it with the stored aliases.
+        if (error?.name === "AbortError") return;
         persisted.current = previous;
+        setBusy(false);
         api.showNotice({ message: tr("subagent.aliases.saveFailed"), tone: "error", key: `subagent-aliases-${Date.now()}` });
-      } finally { setBusy(false); }
+        return;
+      }
+      setBusy(false);
+      setRows((current) => current.map((row) => complete(row, current) ? { ...row, name: row.name.trim(), saved: { name: row.name.trim(), value: aliasValue(row) } } : row));
     };
     const patch = (id, change) => rows.map((row) => row.id === id ? { ...row, ...change } : row);
     const commitName = (id) => {
       setTouched((current) => new Set(current).add(id));
       void persist(patch(id, {}).map((row) => row.id === id ? { ...row, name: row.name.trim().toLowerCase() } : row));
     };
-    const levelLabel = (level) => ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level) ? tr(`subagent.level.${level}`) : level;
 
     const renderRow = (row) => {
-      const selected = models.find((model) => model.provider === row.provider && model.model === row.model);
-      const level = row.variant || row.effort;
-      const levels = selected?.variants ?? [];
       const problem = touched.has(row.id) && row.name.trim() ? nameProblem(row, rows) : "";
       const hintId = `plugin-subagent-hint-${row.id}`;
       return h("li", { key: row.id, className: "plugin-subagent-alias" },
@@ -213,27 +200,11 @@ export async function activate(api) {
           onBlur: () => commitName(row.id),
           onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
         }),
-        h("select", {
-          className: "plugin-ui-input plugin-ui-select plugin-subagent-model", "aria-label": tr("subagent.aliases.model"),
-          value: row.model ? modelKey(row.provider, row.model) : "", disabled: busy,
-          onChange: (event) => {
-            const [provider, model] = JSON.parse(event.target.value);
-            void persist(patch(row.id, { provider, model, variant: "", effort: "" }));
-          },
-        },
-        h("option", { value: "", disabled: true }, tr("subagent.aliases.chooseModel")),
-        providers.map((provider) => h("optgroup", { key: provider, label: provider },
-          models.filter((model) => model.provider === provider).map((model) =>
-            h("option", { key: model.model, value: modelKey(model.provider, model.model) }, model.label)))),
-        row.model && !selected ? h("option", { value: modelKey(row.provider, row.model) }, `${row.model} · ${row.provider} ${tr("subagent.aliases.unavailable")}`) : null),
-        h("select", {
-          className: "plugin-ui-input plugin-ui-select plugin-subagent-level", "aria-label": tr("subagent.aliases.level"),
-          value: level, disabled: busy || (levels.length === 0 && !level),
-          onChange: (event) => void persist(patch(row.id, { variant: event.target.value, effort: "" })),
-        },
-        h("option", { value: "" }, tr("subagent.aliases.defaultLevel")),
-        levels.map((id) => h("option", { key: id, value: id }, levelLabel(id))),
-        level && !levels.includes(level) ? h("option", { value: level }, levelLabel(level)) : null),
+        h(ModelPicker, {
+          className: "plugin-subagent-picker", models, disabled: busy,
+          value: row.model ? { provider: row.provider, model: row.model, variant: row.variant || row.effort } : undefined,
+          onChange: ({ provider, model, variant }) => void persist(patch(row.id, { provider, model, variant, effort: "" })),
+        }),
         h(Button, {
           className: "plugin-subagent-remove", variant: "ghost", disabled: busy,
           "aria-label": tr("subagent.aliases.remove"), title: tr("subagent.aliases.remove"),

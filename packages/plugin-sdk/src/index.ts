@@ -278,6 +278,22 @@ export interface PluginUILiveDurationProps extends PluginUIContainerProps {
   readonly active?: boolean;
 }
 
+/** A configured model with an optional reasoning level ("" is the model default), or a named alias. */
+export type PluginUIModelPickerValue =
+  | { readonly provider: string; readonly model: string; readonly variant?: string }
+  | { readonly alias: string };
+
+/** Host model and reasoning-level menus, fed by the caller's model list such as host.settings.listAvailableModels(). */
+export interface PluginUIModelPickerProps {
+  readonly models: readonly Pick<SettingsAvailableModelV1, "provider" | "model" | "label" | "variants">[];
+  /** Offered after the models; an alias keeps its own level. */
+  readonly aliases?: Readonly<Record<string, SettingsModelAliasV1>>;
+  readonly value?: PluginUIModelPickerValue;
+  readonly onChange: (value: PluginUIModelPickerValue) => void;
+  readonly disabled?: boolean;
+  readonly className?: string;
+}
+
 /** A desktop Chromium page inside an existing plugin View. */
 export interface PluginUIWebPageProps {
   /** Initial HTTP(S) destination. Changing it navigates this page. */
@@ -428,6 +444,7 @@ export interface PluginUIKit {
   readonly LoadingState: HostUIComponent<PluginUILoadingStateProps>;
   readonly ErrorState: HostUIComponent<PluginUIErrorStateProps>;
   readonly LiveDuration: HostUIComponent<PluginUILiveDurationProps>;
+  readonly ModelPicker: HostUIComponent<PluginUIModelPickerProps>;
 }
 
 export interface OpenViewOptions {
