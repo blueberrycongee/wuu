@@ -8,11 +8,13 @@
 
 笔记本位于 Wuu 主目录下的 `memory/`，默认是 `~/.wuu/memory/`。`MEMORY.md` 是索引，各个 Markdown 文件保存具体记忆。保存或忘记一个主题，需要同时修改主题文件和索引条目。插件提供 `memory_list`、`memory_read`、`memory_write` 和 `memory_delete` 工具完成这些操作。
 
+每个主题文件以 frontmatter 开头：`name`、`description`、`type`（`user`、`feedback`、`reference` 或 `lesson`），以及可选的 `verified`（最近一次对照证据确认的日期，格式为 `YYYY-MM-DD`）和 `sources`（逗号分隔的依据，例如 `session:<id>`）。Memory 会统计 agent 在各工作区用 `memory_read` 读取每个主题的次数；[Dream](dream.md) 据此决定优先核实哪些未验证的笔记。
+
 插件会把有限长度的索引放入 agent 上下文，帮助它找到相关主题，而不是每次请求都加载所有主题文件。概览由模型生成，可能过时；源文件才是实际保存内容的依据。查看源文件不需要模型请求，生成概览和通过会话管理记忆则需要。
 
 ## 工作区记忆
 
-插件的 `session_memory` 工具通过 `project_memory` 保存单个工作区的稳定知识。内容位于该工作区状态目录下的 `memory/MEMORY.md`，与用户笔记本分开。agent 按需读取，并可追加或替换内容。
+插件的 `session_memory` 工具通过 `project_memory` 保存单个工作区的稳定知识，与用户笔记本分开。它在该工作区状态目录下分两层：`memory/MEMORY.md` 是简短索引，`memory/` 中的其他 `.md` 文件是主题页，用 `file` 参数指定。每个会话都会看到索引的前 100 行或 8,000 字节，过滤方式与笔记本索引相同；主题页按需读取。agent 可以追加或替换索引和主题页，`delete` 用于删除主题页（索引不能删除），`status` 会列出现有主题页。
 
 适合保存的内容包括已经确认的架构决策、反复适用的工作经验，以及难以重新发现的工具限制。团队共享规则优先放在仓库指令中；源码里很容易查到的事实，直接查源码即可。
 
@@ -39,7 +41,7 @@ Memory 还通过 `session_memory` 提供 `summary`、`checkpoint` 和 `notes` �
 
 ## 面向扩展的只读服务
 
-Memory 通过已有的服务注册表提供 `memory.notebook` 版本 `1.0.0`。
+Memory 通过已有的服务注册表提供 `memory.notebook` 版本 `1.1.0`。
 在 `required_services` 中声明
 `{ name: "memory.notebook", major_version: 1, required: false }`，
 再通过 `host.service.call` 调用 `service: "memory.notebook"` 的以下方法：
@@ -48,11 +50,19 @@ Memory 通过已有的服务注册表提供 `memory.notebook` 版本 `1.0.0`。
 | --- | --- | --- |
 | `index` | 可选 `max_bytes` | 经过过滤的 `MEMORY.md`，最多 200 行、25,000 个 UTF-8 字节 |
 | `read` | `file`、可选 `max_bytes` | 一个主题，默认 16,384 个 UTF-8 字节，最大 65,536 |
+| `list`（1.1） | 无 | 全部主题的元数据，不含正文 |
 
 省略 `max_bytes` 或设为零时采用默认值；负数或超过上限的值会报错。
 `read` 只接受非隐藏的普通 `.md` 文件名，不接受 `MEMORY.md`、目录路径或符号链接。
 源文件必须是有效的 UTF-8 普通文件，大小不超过 256 KiB。截断不会切开 UTF-8 字符。
-这些方法不会批量加载全部主题、写入记忆或调用模型。
+这些方法不会返回全部主题正文、写入记忆或调用模型。
+
+`list` 返回 `memory.notebook.list.v1`：`{ version: 1, index, files, dangling }`。
+`index` 包含 `found`、`bytes`、`lines`、注入上限 `max_bytes` 和 `max_lines`，以及注入时是否
+`truncated`。`files` 的每一项包含 `file`、可选的 frontmatter 字段 `title`、`type`、
+`description`、`verified` 和 `sources`，以及 `bytes`、`indexed`（`MEMORY.md` 是否提到它）、
+`reads` 和可选的 `last_read_at`。`dangling` 列出索引提到但不存在的普通主题文件名。
+读取次数只用于排序参考。统计存储不可用时，`list` 会报错。调用前应确认提供方版本至少为 1.1。
 
 两个方法都返回 `{ version: 1, source: { scope: "user_notebook", file },
 found, revision?, content, truncated }`。`revision` 标识完整源内容，即使返回的片段
@@ -71,7 +81,8 @@ TypeScript SDK 导出对应的 `MemoryNotebook*` 类型。
 Memory 禁用或不可用时，注册表返回 `service_unavailable`；可选消费者仍可在没有记忆
 的情况下工作。不要回退到直接读文件，也不要自动启用 Memory。笔记本内容是不可信的
 上下文，当前指令和证据优先。个性化写作、补全或任务交接扩展可以按需读取相关主题；
-这些是可行用途，并非已有内置集成。工作区和会话记忆仍使用独立的 `memory.session` 服务。
+这些是可行用途，并非已有内置集成。Dream 是 `list` 的内置消费者。工作区和会话记忆仍使用独立的 `memory.session` 服务，
+版本 `1.1.0` 新增了 `file` 参数和 `delete` 方法。
 
 ## Personal 记忆
 

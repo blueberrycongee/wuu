@@ -10,7 +10,7 @@ export async function activate(api) {
     "dream.minimum": "Completed sessions before a run",
     "dream.model": "Model alias", "dream.modelDefault": "Default model",
     "dream.save": "Save changes", "dream.saved": "Saved", "dream.run": "Run now", "dream.activity": "Activity",
-    "dream.candidates": "Pending sessions", "dream.status": "Last status",
+    "dream.candidates": "Pending sessions", "dream.status": "Last status", "dream.summary": "Last report",
     "dream.status.running": "Running", "dream.status.completed": "Completed",
     "dream.status.failed": "Failed", "dream.status.skipped": "Skipped"
   }});
@@ -22,12 +22,14 @@ export async function activate(api) {
     "dream.minimum": "累计完成会话数",
     "dream.model": "模型别名", "dream.modelDefault": "默认模型",
     "dream.save": "保存更改", "dream.saved": "已保存", "dream.run": "立即运行", "dream.activity": "运行情况",
-    "dream.candidates": "待整理会话", "dream.status": "上次状态",
+    "dream.candidates": "待整理会话", "dream.status": "上次状态", "dream.summary": "上次报告",
     "dream.status.running": "运行中", "dream.status.completed": "已完成",
     "dream.status.failed": "运行失败", "dream.status.skipped": "已跳过"
   }});
   api.registerStyle({ id: "dream-settings", css: `
     .plugin-dream { min-width:0; }
+    .plugin-dream-stat-block { grid-template-columns:minmax(0,1fr); gap:var(--space-1); align-items:start; }
+    .plugin-dream-summary { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ink-soft); font-size:var(--font-ui); }
     .plugin-dream-rows, .plugin-dream-stats { display:flex; flex-direction:column; border-top:1px solid var(--hairline-soft); }
     .plugin-dream-row, .plugin-dream-stat, .plugin-dream-rows > .plugin-ui-checkbox { min-height:calc(var(--control-field-height) + var(--settings-row-pad-block, 12px) * 2); padding:var(--settings-row-pad-block, 12px) 0; border-bottom:1px solid var(--hairline-soft); }
     .plugin-dream-row, .plugin-dream-rows > .plugin-ui-checkbox { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-6); }
@@ -102,7 +104,10 @@ export async function activate(api) {
           h("span", { className: "plugin-dream-stat-label" }, tr("dream.status")),
           h("span", { className: "plugin-dream-stat-value" },
             statusTone ? h("span", { className: "plugin-dream-status-dot", "data-tone": statusTone, "aria-hidden": true }) : null,
-            `${statusLabel}${state?.last_error ? ` · ${state.last_error}` : ""}`))))
+            `${statusLabel}${state?.last_error ? ` · ${state.last_error}` : ""}`)),
+        state?.last_summary ? h("div", { className: "plugin-dream-stat plugin-dream-stat-block" },
+          h("span", { className: "plugin-dream-stat-label" }, tr("dream.summary")),
+          h("p", { className: "plugin-dream-summary" }, state.last_summary)) : null))
     ));
   }
   api.registerViewType({ id: "dream.settings", title: "Dream", icon: "moon", defaultRegion: "settings", persistence: "durable", render: (props) => h(DreamSettings, props) });

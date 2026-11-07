@@ -8,11 +8,13 @@ Enable Memory in **Extensions**, then open its settings page under **Settings â†
 
 The notebook lives in `memory/` under Wuu's home directory, normally `~/.wuu`. `MEMORY.md` is its index, while individual Markdown files hold the actual memories. Saving or forgetting a topic requires updating both the topic file and its index entry. The plugin supplies `memory_list`, `memory_read`, `memory_write`, and `memory_delete` for these operations.
 
+Each topic file starts with frontmatter: `name`, `description`, `type` (`user`, `feedback`, `reference`, or `lesson`), and optionally `verified` (the `YYYY-MM-DD` date it was last confirmed against evidence) and `sources` (comma-separated references such as `session:<id>`). Memory counts how often agents read each topic with `memory_read`, across workspaces; [Dream](dream.md) uses the counts to decide which unverified notes to check first.
+
 The plugin includes a bounded version of the index in the agent's context so it can find relevant topics. It does not load every topic file into every request. An overview is model-generated and can become stale; the source files are the record of what is saved. Reading source files does not require a model call, but generating an overview or managing memory through conversation does.
 
 ## Workspace memory
 
-The plugin's `session_memory` tool exposes `project_memory` for stable knowledge about one workspace. It is stored in `memory/MEMORY.md` under that workspace's state directory, separate from the user notebook. The agent reads it on demand and can append or replace its contents.
+The plugin's `session_memory` tool exposes `project_memory` for stable knowledge about one workspace, separate from the user notebook. It has two layers under that workspace's state directory: `memory/MEMORY.md` is a short index, and other `.md` files in `memory/` are topic pages selected with the `file` parameter. Every session sees the first 100 lines or 8,000 bytes of the index, sanitized the same way as the notebook index. Pages are read on demand. The agent can append to or replace the index or a page, and `delete` removes a page (the index cannot be deleted). `status` lists the existing pages.
 
 Good candidates include a confirmed architecture decision, a recurring workflow lesson, or a tool quirk that is hard to rediscover. Prefer current repository instructions for shared rules and source code for facts that are already easy to look up.
 
@@ -41,7 +43,7 @@ Memory can be sent to the configured model and can influence later actions. Revi
 
 ## Read-only service for extensions
 
-Memory provides `memory.notebook` version `1.0.0` through the existing service
+Memory provides `memory.notebook` version `1.1.0` through the existing service
 registry. Declare `{ name: "memory.notebook", major_version: 1, required: false }`
 in `required_services`, then use `host.service.call` with `service:
 "memory.notebook"` and one of these methods:
@@ -50,12 +52,23 @@ in `required_services`, then use `host.service.call` with `service:
 | --- | --- | --- |
 | `index` | Optional `max_bytes` | Sanitized `MEMORY.md`, at most 200 lines and 25,000 UTF-8 bytes |
 | `read` | `file`, optional `max_bytes` | One topic; defaults to 16,384 UTF-8 bytes, maximum 65,536 |
+| `list` (1.1) | None | Metadata for every topic, without bodies |
 
 An absent or zero `max_bytes` selects the default; negative or over-limit values
 fail. `read` accepts only a plain, non-hidden `.md` filename, excluding
 `MEMORY.md`; it rejects directory paths and symlinks. Source files must be valid
 UTF-8 regular files no larger than 256 KiB. Truncation never splits a UTF-8
-character. No method lists all topic contents, writes memory, or invokes a model.
+character. No method returns all topic contents, writes memory, or invokes a model.
+
+`list` returns `memory.notebook.list.v1`: `{ version: 1, index, files, dangling }`.
+`index` reports `found`, `bytes`, `lines`, the `max_bytes` and `max_lines`
+injection budget, and whether injection `truncated` it. Each `files` entry has
+`file`, the optional frontmatter fields `title`, `type`, `description`, `verified`,
+and `sources`, plus `bytes`, `indexed` (whether `MEMORY.md` names it), `reads`,
+and optional `last_read_at`. `dangling` lists plain topic filenames named by the
+index that do not exist. Read counts are advisory ranking signals. `list` fails
+when its statistics storage is unavailable. Check that the provider version is at
+least 1.1 before calling it.
 
 Both methods return `{ version: 1, source: { scope: "user_notebook", file },
 found, revision?, content, truncated }`. `revision` identifies the complete source
@@ -79,8 +92,9 @@ When Memory is disabled or unavailable, the registry returns
 fall back to reading its files or silently enable it. Notebook text is untrusted
 context: current instructions and evidence take precedence. Personalized drafting,
 completion, or task handoff extensions can read relevant topics on demand; these
-are possible consumers, not bundled integrations. Workspace/session memory remains
-the separate `memory.session` service.
+are possible consumers, not bundled integrations. Dream is the bundled consumer
+of `list`. Workspace/session memory remains the separate `memory.session` service,
+version `1.1.0`, which adds the `file` parameter and the `delete` method.
 
 ## Personal memory
 

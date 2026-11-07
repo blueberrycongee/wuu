@@ -17,20 +17,28 @@ Settings and run state belong to the plugin's workspace storage. Changes take ef
 
 ## How a run starts
 
-A successful conversation turn makes its session a candidate. Further successful turns update that session's timestamp rather than increasing the candidate count. The plugin checks candidates after completion and from its timer.
+A successful conversation turn makes its session a candidate. Further successful turns update that session's timestamp rather than increasing the candidate count. Plugin-owned background sessions, including Dream's own runs and Memory jobs, never become candidates. The plugin checks candidates after completion and from its timer.
 
 An automatic run needs Dream enabled, enough candidates, and the configured interval since the last successful run. Only one run starts at a time; a failed run also has a one-hour retry backoff.
 
-Dream reads current `project_memory`, selects the most recent candidate, and forks that conversation into a private session. It does **not** combine the full histories of all candidates into one prompt. After a successful run, it clears the candidate set and records the completion time.
+Dream reads the current `project_memory` index and, when the optional `memory.notebook` service is available, a health report of the user notebook: index size against its injection budget, index links to missing files, topic files missing from the index, and unverified notes ranked by how often agents read them. It then forks the most recent candidate into a private session and lists up to 20 of the newest candidates. Rather than pasting every transcript into one prompt, the run uses `history_search` and `history_read` to look up evidence in those sessions.
+
+After a successful run, Dream removes only the sessions it reviewed. Older candidates beyond the batch and sessions that completed during the run stay queued for the next run. A failed or interrupted run keeps every candidate. The run's final report appears as **Last report** on the settings page.
 
 ## What it saves
 
-The consolidation prompt asks for durable architecture decisions, conventions, tool quirks, and recurring workflow lessons. It directs the model to update `project_memory` through `session_memory`, avoid source changes, and omit secrets, raw transcripts, temporary progress, PR numbers, and commit hashes.
+The consolidation prompt asks the model to do three things, in order:
+
+1. Verify existing entries against the transcripts and the current repository, then fix or remove what is wrong or stale. Confirmed notebook notes get a `verified` date and a `sources` reference.
+2. Consolidate durable decisions, conventions, tool quirks, and lessons that recur across sessions, merging duplicates.
+3. Keep both indexes small by moving detail into topic pages and fixing the reported health problems.
+
+Workspace knowledge goes to `project_memory` through `session_memory`. Notebook notes are changed only when the reviewed sessions show they are wrong or stale. The prompt forbids source changes, secrets, raw transcripts, temporary progress, PR numbers, and commit hashes.
 
 These are instructions to the model, not proof that every proposed memory is correct. Inspect [workspace memory](memory.md#workspace-memory) and correct unwanted entries. Deleting an entry does not guarantee that a later conversation will never cause similar information to be saved again.
 
 ## Cost and lifecycle
 
-Each run sends the forked context and current workspace memory to the selected model. It can add cost and write information that later conversations read. Use Dream only when that background processing is appropriate for the workspace.
+Each run sends the forked context, current workspace memory, the notebook health report, and any history it looks up to the selected model. It can add cost and write information that later conversations read. Use Dream only when that background processing is appropriate for the workspace.
 
 Disabling or unloading the plugin stops its timer. Persisted settings and run state are restored when it loads again; interrupted runs are recorded as failures rather than left permanently running. See the [security model](../reference/security-model.md) before enabling it for sensitive work.
