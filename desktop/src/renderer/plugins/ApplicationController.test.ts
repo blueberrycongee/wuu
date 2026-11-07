@@ -1237,3 +1237,73 @@ describe("shared application state", () => {
   });
 
 });
+
+// Background sessions stream through the same bridge as the visible one. Their
+// tokens must not drive the shell at frame cadence, and unrelated publications
+// must not replace snapshot fields whose content did not change.
+describe("background streaming publication", () => {
+  const context = { kind: "no_project" as const, cwd: "/fixture" };
+  const thread = (id: string, turnID: string): Thread => ({ id, cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle",
+    turns: [{ id: turnID, status: "in_progress", items_view: "full", items: [{ id: `${turnID}-answer`, type: "agent_message", status: "in_progress", text: "" }] }] });
+  const delta = (threadID: string, turnID: string, text: string) => ({ workdir: context.cwd, kind: "notification" as const,
+    message: { jsonrpc: "2.0" as const, method: "item/agentMessage/delta", params: { thread_id: threadID, turn_id: turnID, item_id: `${turnID}-answer`, delta: text } } });
+
+  it("publishes background session text at reading cadence while the visible session keeps frame cadence", async () => {
+    vi.useFakeTimers();
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => frames.push(callback));
+    let emit!: (event: Parameters<Parameters<NonNullable<WuuDesktopApi["onServerEvent"]>>[0]>[0]) => void;
+    window.wuu = { onServerEvent: (handler: typeof emit) => { emit = handler; return () => {}; } } as unknown as WuuDesktopApi;
+    const active = thread("active", "active-turn"), background = thread("background", "background-turn");
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: active, threads: [active, background] });
+    const stop = controller.start();
+    // start() loads the runtime asynchronously; settle that publication first.
+    await vi.advanceTimersByTimeAsync(0);
+    let publications = 0;
+    const off = controller.subscribe(() => { publications++; });
+    try {
+      for (const text of ["one ", "two ", "three "]) emit(delta(background.id, "background-turn", text));
+      expect(publications).toBe(0);
+      expect(frames).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(publications).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(publications).toBe(1);
+      expect(controller.getSnapshot().conversationWorkspace.threads.find(row => row.id === background.id)?.turns[0].items[0].text).toBe("one two three ");
+
+      // Visible text for the session the user is reading updates immediately.
+      emit(delta(active.id, "active-turn", "visible "));
+      expect(publications).toBe(2);
+      expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("visible ");
+      emit(delta(background.id, "background-turn", "four "));
+      expect(publications).toBe(2);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(publications).toBe(3);
+      expect(controller.getSnapshot().conversationWorkspace.threads.find(row => row.id === background.id)?.turns[0].items[0].text).toBe("one two three four ");
+    } finally {
+      off(); stop(); raf.mockRestore(); vi.useRealTimers();
+      streamTextStore.clearTurn("active-turn"); streamTextStore.clearTurn("background-turn");
+    }
+  });
+
+  it("retains snapshot fields whose content did not change across unrelated publications", async () => {
+    const active = thread("active", "active-turn");
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: active, threads: [active],
+      projects: [{ id: "project", path: "/project", name: "Project", created_at: "", updated_at: "" }] });
+    const before = controller.getSnapshot();
+    controller.setSettings(true);
+    const after = controller.getSnapshot();
+    expect(after).not.toBe(before);
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.settings.open).toBe(true);
+    expect(after.workspaces).toBe(before.workspaces);
+    expect(after.tabs).toBe(before.tabs);
+    expect(after.navigation).toBe(before.navigation);
+    expect(after.conversationWorkspace).toBe(before.conversationWorkspace);
+    expect(after.conversation).toBe(before.conversation);
+    expect(after.activities).toBe(before.activities);
+    await controller.invoke("composer.set-draft", { text: "typing" });
+    expect(controller.getSnapshot().composer.draftText).toBe("typing");
+    expect(controller.getSnapshot().conversation).toBe(before.conversation);
+  });
+});
