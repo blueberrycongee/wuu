@@ -24,5 +24,3 @@ everything is unchanged.
   `api.registerLocale` for copy).
 - Disabling the plugin restores the default frame artwork and the default
   welcome; nothing leaves residue behind.
-EOF
-node --check desktop.js && echo node-ok
