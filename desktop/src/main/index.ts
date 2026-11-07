@@ -2272,10 +2272,11 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; include_models?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
     appServerRequest<EngineListResult>(event, "engine/list", {
       include_quota: options?.include_quota === true,
       include_activity: options?.include_activity,
+      include_models: options?.include_models,
       refresh_models: options?.refresh_models === true,
       cwd: options?.cwd,
     }, context),

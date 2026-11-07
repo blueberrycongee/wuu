@@ -387,7 +387,7 @@ export type ApplicationSettingsEngineInfoV1 = {
   binary_ok: boolean;
   error?: string;
   models?: ApplicationSettingsEngineModelInfoV1[];
-  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale";
+  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale" | "deferred";
   models_error?: string;
   permission_modes?: ApplicationSettingsEnginePermissionModeInfoV1[];
   latest_request?: ApplicationSettingsEngineLatestRequestV1;
