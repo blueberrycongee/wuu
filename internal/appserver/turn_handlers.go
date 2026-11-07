@@ -47,6 +47,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
@@ -2931,9 +2932,19 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	var capabilities *externalCapabilities
 	if capabilityErr == nil {
-		capabilities, capabilityErr = startExternalCapabilities(ctx, binding, threadRuntime)
+		capabilityCtx := ctx
+		th.mu.Lock()
+		worktreePath := strings.TrimSpace(th.WorktreePath)
+		th.mu.Unlock()
+		if worktreePath != "" && turnKit != nil {
+			capabilityCtx = toolctx.WithWorktreeBinding(capabilityCtx, turnKit.RootDir(), worktreePath)
+		}
+		capabilities, capabilityErr = startExternalCapabilities(capabilityCtx, binding, threadRuntime)
 	}
 	if capabilities != nil {
+		capabilities.publishArtifact = func(ctx context.Context, call providers.ToolCall, result toolresult.Result) error {
+			return s.publishExternalArtifact(ctx, binding, th, turnID, call, result)
+		}
 		defer capabilities.Close()
 	}
 	var mcpServers []agentengine.MCPServer
@@ -3647,6 +3658,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	var historyErr error
 	var persistErr error
 	turnKind := th.currentTurnKind
+	res.NewMessages = th.trimExternalArtifactMessagesLocked(turnID, res.NewMessages)
+	if res.DurableMessagesTracked {
+		res.DurableNewMessages = th.trimExternalArtifactMessagesLocked(turnID, res.DurableNewMessages)
+	}
 	// Retain every valid message the loop produced, including partial assistant
 	// output and paired tool calls/results from failed or interrupted turns.
 	persistNewMessages := err == nil || len(res.NewMessages) > 0

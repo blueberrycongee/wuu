@@ -58,6 +58,9 @@ func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 	if catalog := t.registry.Lookup("list_workspaces"); catalog != nil && !t.IsToolDisabled(catalog.Name()) {
 		definitions = append(definitions, catalog.Definition())
 	}
+	if present := t.registry.Lookup("present_artifact"); present != nil && !t.IsToolDisabled(present.Name()) {
+		definitions = append(definitions, present.Definition())
+	}
 	for _, tool := range t.mcpToolsSnapshot() {
 		if t.externalCapabilityAllowed(tool.Name()) && !t.IsToolDisabled(tool.Name()) {
 			definitions = append(definitions, tool.Definition())
@@ -67,7 +70,7 @@ func (t *Toolkit) ExternalCapabilityDefinitions() []providers.ToolDefinition {
 }
 
 func (t *Toolkit) externalCapabilityAllowed(name string) bool {
-	if name == browserToolName || name == "list_workspaces" || t.env.conversationPluginTools[name] {
+	if name == browserToolName || name == "list_workspaces" || name == "present_artifact" || t.env.conversationPluginTools[name] {
 		return true
 	}
 	for _, tool := range t.mcpToolsSnapshot() {

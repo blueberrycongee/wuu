@@ -1614,6 +1614,10 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			if current != nil && rec.Content == externalArtifactHistoryRecord && rec.ToolResult != nil {
+				appendItem(externalArtifactItem(nextItemID(current.ID), rec), historyIndex, true)
+				continue
+			}
 			if rec.Content == turnContinueHistoryRecord {
 				itemIndex = 0
 				toolItems = make(map[string]int)

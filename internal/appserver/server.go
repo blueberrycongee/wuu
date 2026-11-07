@@ -177,13 +177,19 @@ type threadState struct {
 	frozenTreeContext   []agent.ContextSegment
 	frozenTreeResultIDs []string
 
-	nextItemIndex         int
-	activeAgentItemID     string
-	agentStream           *agentMessageStream
-	activeReasoningItemID string
-	toolItems             map[string]string
-	streamText            map[string]*strings.Builder
-	hiddenToolEvent       bool
+	nextItemIndex     int
+	activeAgentItemID string
+	// externalArtifactTurnID and externalArtifactText remember how much
+	// assistant text was already written before external artifact rows. The
+	// final engine message is split at that boundary so replay preserves the
+	// live text/artifact/text order.
+	externalArtifactTurnID string
+	externalArtifactText   string
+	agentStream            *agentMessageStream
+	activeReasoningItemID  string
+	toolItems              map[string]string
+	streamText             map[string]*strings.Builder
+	hiddenToolEvent        bool
 }
 
 type threadRuntimeSubscription struct {
