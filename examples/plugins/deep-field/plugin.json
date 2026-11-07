@@ -2,31 +2,18 @@
   "schemaVersion": 1,
   "id": "deep-field",
   "name": "Deep Field",
-  "description": "Canvas-placement shell skin that renders your background image (or its own artwork) as a pixel screen, with paired themes and a dashboard-style welcome.",
+  "description": "Canvas-placement shell skin that renders your background image, or its own artwork, as a pixel screen behind the main area.",
   "icon": "sparkles",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Wuu"
   },
   "minimumWuuVersion": "2026.11.8",
-  "desktop": {
-    "entry": "desktop.js",
-    "required_services": [
-      {
-        "name": "ui.application",
-        "major_version": 1,
-        "required": true
-      }
-    ]
-  },
   "interface": {
     "displayName": "Deep Field",
-    "shortDescription": "Pixel-screen canvas artwork from your own image, paired themes, and a welcome dashboard.",
+    "shortDescription": "Your picture as a pixel screen behind the main area.",
     "developerName": "Wuu",
-    "category": "Appearance",
-    "capabilities": [
-      "Read"
-    ]
+    "category": "Appearance"
   },
   "contributes": {
     "skins": [
@@ -60,44 +47,6 @@
             "size": 3,
             "shape": "square"
           }
-        }
-      }
-    ],
-    "themes": [
-      {
-        "id": "deep-field",
-        "name": "Deep Field",
-        "base": "dark",
-        "tokens": {
-          "--wuu-color-canvas": "#141517",
-          "--wuu-color-surface": "#1b1c1f",
-          "--wuu-color-surface-muted": "#222327",
-          "--wuu-color-surface-elevated": "#26272b",
-          "--wuu-color-text": "#ececef",
-          "--wuu-color-text-muted": "#9b9da4",
-          "--wuu-color-border-subtle": "#ffffff14",
-          "--wuu-color-border-strong": "#ffffff26",
-          "--wuu-color-accent": "#6f9bff",
-          "--wuu-color-focus": "#6f9bff",
-          "--wuu-color-link": "#8fb0ff"
-        }
-      },
-      {
-        "id": "deep-field-light",
-        "name": "Deep Field Light",
-        "base": "light",
-        "tokens": {
-          "--wuu-color-canvas": "#fbfbfc",
-          "--wuu-color-surface": "#f3f4f6",
-          "--wuu-color-surface-muted": "#eceef1",
-          "--wuu-color-surface-elevated": "#ffffff",
-          "--wuu-color-text": "#17181b",
-          "--wuu-color-text-muted": "#62656d",
-          "--wuu-color-border-subtle": "#0000001a",
-          "--wuu-color-border-strong": "#0000002e",
-          "--wuu-color-accent": "#2f6bff",
-          "--wuu-color-focus": "#2f6bff",
-          "--wuu-color-link": "#2457d6"
         }
       }
     ]
