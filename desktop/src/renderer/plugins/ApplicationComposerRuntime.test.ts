@@ -262,6 +262,29 @@ it("retries a deferred catalog after background discovery fails without relockin
 });
 
 
+it("refetches a catalog left deferred by an aborted refresh", async () => {
+  const pending: Array<{ resolve(result: EngineListResult): void; reject(error: Error): void }> = [];
+  window.wuu = { listEngines: vi.fn(() => new Promise<EngineListResult>((resolve, reject) => pending.push({ resolve, reject }))) } as unknown as typeof window.wuu;
+  const h = fixture();
+  const availability: EngineListResult = { settings: { default_engine: "devin" }, engines: [{ id: "devin", enabled: true, binary_ok: true, models_status: "deferred" }] };
+  const cancellation = new AbortController();
+  const refresh = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" }, cancellation.signal);
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  pending[0].resolve(availability);
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  cancellation.abort();
+  pending[1].resolve({ ...availability, engines: [{ ...availability.engines[0], models: [{ id: "native-default" }], models_status: "ready" }] });
+  await expect(refresh).rejects.toThrow();
+
+  const retry = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  await vi.waitFor(() => expect(window.wuu.listEngines).toHaveBeenCalledTimes(3));
+  expect(window.wuu.listEngines).toHaveBeenNthCalledWith(3, { cwd: "/one" }, context);
+  pending[2].resolve({ ...availability, engines: [{ ...availability.engines[0], models: [{ id: "native-default" }], models_status: "ready" }] });
+  await retry;
+  expect(h.view().engines[0].models?.map(model => model.id)).toEqual(["native-default"]);
+});
+
+
 it("captures workspace defaults before asynchronous engine discovery", async () => {
   const h = fixture();
   let finish!: (value: EngineListResult) => void;

@@ -325,11 +325,14 @@ export class ApplicationComposerRuntime {
           availabilityPublished = true;
         }
         const result = await window.wuu.listEngines({ cwd: owner.cwd, ...(force ? { refresh_models: true } : {}) }, owner.context);
-        publish(result);
+        if (!publish(result) && availabilityPublished) owner.fetchedAt = 0;
       } catch (error) {
+        // A discarded or aborted full refresh must not leave the deferred
+        // availability publish marked fresh, or later refresh calls early-return
+        // and the catalog never completes. The owner outlives this source.
+        if (availabilityPublished) owner.fetchedAt = 0;
         if (source.signal?.aborted) throw error;
         if (this.current(source) && request === owner.engineRequest) {
-          if (availabilityPublished) owner.fetchedAt = 0;
           owner.engineError = error instanceof Error ? error.message : String(error);
           throw error;
         }
