@@ -12,6 +12,7 @@ import {
   browserPiPScreenRect,
   browserPiPSizeForAspect,
   PIP_CARD_SIZE,
+  PIP_RESIZE_EDGES,
 } from "./browserPiPPlacement";
 
 const host = { x: 0, y: 0, width: 800, height: 600 };
@@ -61,19 +62,50 @@ describe("browser preview placement", () => {
     expect(browserPiPSizeForAspect(2)).toEqual({ width: 320, height: 160 });
     expect(browserPiPFitCard(host, { width: 400, height: 200 })).toEqual({ width: 400, height: 200 });
     expect(browserPiPFitCard({ x: 0, y: 0, width: 200, height: 600 }, { width: 400, height: 200 }))
-      .toEqual({ width: 152, height: 200 });
+      .toEqual({ width: 152, height: 76 });
   });
 
   it("resizes the dragged edges and leaves the opposite edges fixed", () => {
     const start = { x: 100, y: 80, width: 200, height: 150 };
     const limits = { min: { width: 160, height: 120 }, frame: { x: 0, y: 0, width: 1000, height: 800 } };
     expect(browserPiPResizeRect(start, "e", { x: 40, y: 0 }, limits))
-      .toEqual({ x: 100, y: 80, width: 240, height: 150 });
+      .toEqual({ x: 100, y: 65, width: 240, height: 180 });
     const grown = browserPiPResizeRect(start, "nw", { x: -40, y: -20 }, limits);
-    expect(grown).toEqual({ x: 60, y: 60, width: 240, height: 170 });
+    expect(grown).toEqual({ x: 60, y: 50, width: 240, height: 180 });
     expect(browserPiPResizeCommand("wuu-pip://resize?phase=move&edge=se&x=3&y=4"))
       .toEqual({ phase: "move", edge: "se", x: 3, y: 4 });
     expect(browserPiPResizeCommand("wuu-pip://resize?phase=move&edge=nope&x=1&y=2")).toBeNull();
+  });
+
+  it.each(PIP_RESIZE_EDGES)("locks %s resizing to content aspect and its opposite anchor", (edge) => {
+    const start = { x: 200, y: 200, width: 200, height: 100 };
+    const frame = { x: 0, y: 0, width: 800, height: 600 };
+    for (const delta of [40, -1000, 1000]) {
+      const resized = browserPiPResizeRect(start, edge, {
+        x: edge.includes("w") ? -delta : delta,
+        y: edge.includes("n") ? -delta : delta,
+      }, { min: { width: 160, height: 120 }, frame, aspect: 2 });
+      expect(resized.width / resized.height).toBeCloseTo(2);
+      expect(resized.width).toBeGreaterThanOrEqual(240);
+      expect(resized.height).toBeGreaterThanOrEqual(120);
+      expect(resized.x).toBeGreaterThanOrEqual(0);
+      expect(resized.y).toBeGreaterThanOrEqual(0);
+      expect(resized.x + resized.width).toBeLessThanOrEqual(800);
+      expect(resized.y + resized.height).toBeLessThanOrEqual(600);
+      const anchorX = edge.includes("w") ? 1 : edge.includes("e") ? 0 : .5;
+      const anchorY = edge.includes("n") ? 1 : edge.includes("s") ? 0 : .5;
+      expect(resized.x + resized.width * anchorX).toBeCloseTo(start.x + start.width * anchorX);
+      expect(resized.y + resized.height * anchorY).toBeCloseTo(start.y + start.height * anchorY);
+    }
+  });
+
+  it("uses the dominant corner axis and lets a small frame take priority over minimum size", () => {
+    const start = { x: 0, y: 0, width: 200, height: 100 };
+    const limits = { min: { width: 160, height: 120 }, frame: { x: 0, y: 0, width: 1000, height: 800 } };
+    expect(browserPiPResizeRect(start, "se", { x: 80, y: 10 }, limits)).toMatchObject({ width: 280, height: 140 });
+    expect(browserPiPResizeRect(start, "se", { x: 10, y: 80 }, limits)).toMatchObject({ width: 360, height: 180 });
+    expect(browserPiPResizeRect(start, "se", { x: 80, y: 80 }, { ...limits, frame: { ...limits.frame, width: 100, height: 80 } }))
+      .toEqual({ x: 0, y: 0, width: 100, height: 50 });
   });
 
   it("projects client rectangles by the window zoom and parses drag commands", () => {
