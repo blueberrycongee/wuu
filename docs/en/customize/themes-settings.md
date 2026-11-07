@@ -12,9 +12,13 @@ Disabling or removing a plugin also removes its contributed themes. If a theme m
 
 ## Shell skins
 
-Shell skins decorate the ribbon and window frame. Choose a preview under **Settings → Appearance → Shell skin** to apply it immediately. The rounded workbench keeps its own content background, independently of the skin.
+Shell skins decorate the ribbon and window frame; skins that opt into **canvas placement** also paint their artwork behind the main workbench canvas. Choose a preview under **Settings → Appearance → Shell skin** to apply it immediately.
 
-Plugins contribute paired light and dark variants. Disabling or removing a skin plugin restores the default frame; the saved choice returns when that plugin becomes available again. Safe mode also removes plugin skins. The shell skin example in `examples/plugins/shell-skins` provides two complete skins without a runtime or desktop module.
+With frame placement (the default), the rounded workbench keeps its own content background, independently of the skin. With canvas placement, the empty conversation home exposes the artwork directly, conversations sit under a translucent veil, and Settings, Skills and plugin pages stay opaque unless a plugin view opts in. Floating panels such as the composer and cards become frosted over the artwork, and a skin may declare a dot screen that renders the artwork as a halftone. Under **Reduce transparency** the canvases stay opaque.
+
+Plugins contribute paired light and dark variants. Disabling or removing a skin plugin restores the default frame; the saved choice returns when that plugin becomes available again. Safe mode also removes plugin skins. The shell skin example in `examples/plugins/shell-skins` provides two frame-placement skins without a runtime or desktop module; `examples/plugins/deep-field` demonstrates canvas placement, a dot screen, paired themes, and a custom welcome.
+
+Your own **Background image** always uses frame placement.
 
 ## Use a background image
 
