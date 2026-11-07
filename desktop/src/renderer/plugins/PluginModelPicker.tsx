@@ -40,7 +40,7 @@ export function PluginModelPicker({ models, aliases = {}, value, onChange, disab
   const level = aliasTarget ? aliasTarget.variant || aliasTarget.effort || "" : direct?.variant ?? "";
   const levels = selected?.variants ?? [];
   const levelOptions: SelectMenuOption[] = [
-    { value: "", label: t("plugins.modelPicker.defaultLevel") },
+    { value: "", label: t("runtime.effort.default") },
     ...levels.map((id) => ({ value: id, label: variantLabel(id) })),
   ];
   if (level && !levels.includes(level)) levelOptions.push({ value: level, label: variantLabel(level), disabled: true });

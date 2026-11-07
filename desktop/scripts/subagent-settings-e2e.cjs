@@ -115,16 +115,23 @@ async function main() {
 
   if (phaseName !== 'before') {
     // Opens the host menu, captures it, and picks the option with this value.
+    // A save republishes the plugin and can remount the page, closing an open menu, so reopen until the pick lands.
     const pick = async (menu, value, shot) => {
-      await evaluate(m => document.querySelector(`${m} .select-menu-trigger`).click(), menu);
-      await until(() => evaluate(v => Boolean(document.querySelector(`.select-menu-item[data-value='${v}']`)), value), `${shot} option`);
-      await capture(shot);
-      const picked = await evaluate(v => {
-        const option = document.querySelector(`.select-menu-item[data-value='${v}']`);
-        option?.click();
-        return option ? 'clicked' : [...document.querySelectorAll('.select-menu-item')].map(n => n.dataset.value).join('|');
-      }, value);
-      if (picked !== 'clicked') throw new Error(`${shot}: option ${value} missing; menu has ${picked}`);
+      let captured = false;
+      await until(async () => {
+        const open = await evaluate(([m, v]) => {
+          if (document.querySelector(`.select-menu-item[data-value='${v}']`)) return true;
+          document.querySelector(`${m} .select-menu-trigger:not(:disabled)`)?.click();
+          return false;
+        }, [menu, value]);
+        if (!open) return false;
+        if (!captured) { await capture(shot); captured = true; }
+        return evaluate(v => {
+          const option = document.querySelector(`.select-menu-item[data-value='${v}']`);
+          option?.click();
+          return Boolean(option);
+        }, value);
+      }, `${shot}: option ${value}`);
     };
     const rows = () => evaluate(() => document.querySelectorAll('.plugin-subagent-alias').length);
     check('seeded aliases render as rows', await rows() === 2, String(await rows()));
