@@ -55,9 +55,32 @@ func (s *Server) publishExternalArtifact(ctx context.Context, binding *runtime.S
 		_ = s.persistExternalArtifactPrefixLocked(nil, th, turnID, now)
 	}
 	batch := th.completeActiveAgentItemLocked(turnID, now, false)
-	item := externalArtifactItem(th.nextItemIDLocked(turnID), record)
-	th.upsertItemLocked(turnID, item, now)
-	batch = append(batch, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
+	item, replaced := th.claimExternalArtifactToolItemLocked(turnID)
+	if replaced {
+		item.Seq = record.Seq
+		item.SourceID = record.ToolCallID
+		item.Name = record.Name
+		item.Arguments = record.DisplayContent
+		item.Result = ""
+		item.ResultDetail = cloneToolResult(record.ToolResult)
+		item.Status = ThreadItemStatusCompleted
+		item.externalArtifact = true
+		th.upsertItemLocked(turnID, item, now)
+		batch = append(batch, outboundNotification{
+			method: NotificationToolCallOutput,
+			params: ToolCallOutputNotification{
+				ThreadID: th.ID,
+				TurnID:   turnID,
+				ItemID:   item.ID,
+				Detail:   cloneToolResult(item.ResultDetail),
+			},
+		}, itemCompleted(th.ID, turnID, item, now))
+	} else {
+		item = externalArtifactItem(th.nextItemIDLocked(turnID), record)
+		item.externalArtifact = true
+		th.upsertItemLocked(turnID, item, now)
+		batch = append(batch, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
+	}
 	th.mu.Unlock()
 	s.notifyOutboundBatch(binding, batch)
 	return nil
@@ -99,6 +122,45 @@ func (s *Server) persistExternalArtifactPrefixLocked(binding *runtime.State, th 
 	th.stampExternalArtifactPrefixLocked(turnID, segment, seq)
 	th.externalArtifactText = liveText
 	return nil
+}
+
+// External adapters name the host MCP tool differently: Codex prefixes the
+// server, Claude uses mcp__server__tool, and OpenCode may join both with an
+// underscore. The artifact bridge owns the only present_artifact tool.
+func externalArtifactToolName(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "present_artifact" {
+		return true
+	}
+	for _, separator := range []string{":", "__", "_", ".", "/"} {
+		if strings.HasSuffix(normalized, separator+"present_artifact") {
+			return true
+		}
+	}
+	return false
+}
+
+// claimExternalArtifactToolItemLocked reuses the engine's in-progress tool row
+// for this artifact instead of adding a second row. The engine continues to
+// emit its own tool result after the MCP call returns; stream handling ignores
+// later updates once the row is marked externalArtifact.
+func (th *threadState) claimExternalArtifactToolItemLocked(turnID string) (ThreadItem, bool) {
+	turnIndex := th.turnIndexLocked(turnID)
+	if turnIndex < 0 {
+		return ThreadItem{}, false
+	}
+	items := th.Turns[turnIndex].Items
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Type != ThreadItemToolCall || item.externalArtifact || !externalArtifactToolName(item.Name) {
+			continue
+		}
+		if item.Status != ThreadItemStatusInProgress && item.Status != ThreadItemStatusCompleted {
+			continue
+		}
+		return item, true
+	}
+	return ThreadItem{}, false
 }
 
 func (th *threadState) turnAgentTextLocked(turnID string) string {

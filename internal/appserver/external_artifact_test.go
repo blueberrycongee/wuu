@@ -13,6 +13,54 @@ import (
 // The live transcript keeps text, artifact, text as separate rows. Replay must
 // persist the same boundary instead of appending the whole assistant message
 // after the artifact.
+func TestExternalArtifactToolNamesMatchAdapterPrefixes(t *testing.T) {
+	for _, name := range []string{
+		"present_artifact",
+		"mcp:wuu_host:present_artifact",
+		"mcp__wuu_host__present_artifact",
+		"wuu_host_present_artifact",
+		"wuu_host.present_artifact",
+	} {
+		if !externalArtifactToolName(name) {
+			t.Errorf("externalArtifactToolName(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"browser_screenshot", "present_artifact_result"} {
+		if externalArtifactToolName(name) {
+			t.Errorf("externalArtifactToolName(%q) = true", name)
+		}
+	}
+}
+
+// A real adapter announces the host MCP call before Wuu publishes the
+// artifact. Reuse that row and ignore the engine's later completion so the
+// transcript keeps one artifact instead of a generic tool row plus a preview.
+func TestExternalArtifactToolRowIgnoresEngineCompletion(t *testing.T) {
+	now := time.Now().UTC()
+	turnID := "thread-turn-0001"
+	detail := toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeFile, Name: "preview.png", MIMEType: "image/png"}}}
+	item := ThreadItem{
+		ID: turnID + "-item-2", Type: ThreadItemToolCall, Status: ThreadItemStatusCompleted,
+		Name: "present_artifact", SourceID: "bridge-call", ResultDetail: &detail, externalArtifact: true,
+	}
+	th := &threadState{
+		Turns:     []Turn{{ID: turnID, Items: []ThreadItem{item}}},
+		toolItems: map[string]string{"engine-call": item.ID},
+	}
+	batch := th.applyStreamEventLocked(turnID, providers.StreamEvent{
+		Type:       providers.EventToolUseEnd,
+		ToolCall:   &providers.ToolCall{ID: "engine-call", Name: "mcp:wuu_host:present_artifact"},
+		ToolResult: "Artifact presented to the user.",
+	}, now)
+	if len(batch) != 0 {
+		t.Fatalf("engine completion emitted %d notifications", len(batch))
+	}
+	items := th.Turns[0].Items
+	if len(items) != 1 || items[0].ID != item.ID || items[0].Result != "" || items[0].ResultDetail == nil {
+		t.Fatalf("engine completion changed the artifact row: %+v", items)
+	}
+}
+
 func TestExternalArtifactReplayKeepsTextAroundArtifact(t *testing.T) {
 	store := newAppserverTestStore(t, t.TempDir())
 	sess, err := store.Create()

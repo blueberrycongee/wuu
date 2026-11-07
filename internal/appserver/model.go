@@ -859,6 +859,11 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			return nil
 		}
 		out = append(out, th.completeActiveAgentItemLocked(turnID, now, false)...)
+		if itemID := th.toolItems[ev.ToolCall.ID]; itemID != "" {
+			if item, ok := th.itemLocked(turnID, itemID); ok && item.externalArtifact {
+				return out
+			}
+		}
 		item := th.toolItemFromCallLocked(turnID, *ev.ToolCall, now)
 		out = append(out, itemStarted(th.ID, turnID, item, now))
 	case providers.EventToolUseDelta:
@@ -869,7 +874,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if ev.ToolCall != nil && ev.ToolCall.ID != "" {
 			item, ok = th.itemLocked(turnID, th.toolItems[ev.ToolCall.ID])
 		}
-		if !ok || item.Status != ThreadItemStatusInProgress {
+		if !ok || item.Status != ThreadItemStatusInProgress || item.externalArtifact {
 			return nil
 		}
 		item.Arguments = th.appendStreamTextLocked(item.ID, item.Arguments, ev.Content)
@@ -886,6 +891,11 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 	case providers.EventToolUseEnd:
 		if ev.ToolCall == nil {
 			return nil
+		}
+		if itemID := th.toolItems[ev.ToolCall.ID]; itemID != "" {
+			if item, ok := th.itemLocked(turnID, itemID); ok && item.externalArtifact {
+				return nil
+			}
 		}
 		item := th.toolItemFromCallLocked(turnID, *ev.ToolCall, now)
 		if ev.ToolResult != "" || ev.ToolResultDetail != nil {
@@ -1146,6 +1156,9 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 			return nil
 		}
 		item, ok := th.itemLocked(turnID, th.toolItems[msg.ToolCallID])
+		if ok && item.externalArtifact {
+			return nil
+		}
 		if !ok {
 			item = ThreadItem{
 				ID:     th.nextItemIDLocked(turnID),
