@@ -10,6 +10,9 @@ import { toastErrorMessage } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 import { Switch } from "./ui/Switch";
+import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
+
+const MCP_SERVERS_DATA = "mcp.servers";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -43,8 +46,11 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
-  const [mcpServers, setMCPServers] = useState<MCPServerStatus[]>([]);
-  const [mcpLoading, setMCPLoading] = useState(false);
+  const retainedServers = readRetainedSettingsData<MCPServerStatus[]>(controls, MCP_SERVERS_DATA);
+  const [mcpServers, setMCPServers] = useState<MCPServerStatus[]>(() => retainedServers ?? []);
+  const [mcpServersControls, setMCPServersControls] = useState(() => retainedServers ? controls : undefined);
+  const [mcpServersLoaded, setMCPServersLoaded] = useState(Boolean(retainedServers));
+  const [mcpLoading, setMCPLoading] = useState(true);
   const [mcpError, setMCPError] = useState("");
   const [mcpActionErrors, setMCPActionErrors] = useState<Record<string, MCPActionFailure>>({});
   const [mcpListRevision, setMCPListRevision] = useState(0);
@@ -52,9 +58,12 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
   const currentMCPControls = useRef(controls);
   currentMCPControls.current = controls;
   useEffect(() => {
+    const retained = readRetainedSettingsData<MCPServerStatus[]>(controls, MCP_SERVERS_DATA);
     setMCPActionErrors({});
     setMCPBusyServer("");
-    setMCPServers([]);
+    setMCPServers(retained ?? []);
+    setMCPServersControls(retained ? controls : undefined);
+    setMCPServersLoaded(Boolean(retained));
     setMCPAuthStates({});
     setMCPAuthCodes({});
     setMCPToggleErrors({});
@@ -70,6 +79,9 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
       .then((result) => {
         if (!cancelled) {
           setMCPServers(result.servers ?? []);
+          setMCPServersControls(controls);
+          setMCPServersLoaded(true);
+          writeRetainedSettingsData(controls, MCP_SERVERS_DATA, result.servers ?? []);
         }
       })
       .catch((err: unknown) => {
@@ -214,9 +226,17 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
     }
   }
 
-  const mcpServerByName = new Map(mcpServers.map((server) => [server.name, server]));
+  useEffect(() => {
+    if (mcpServersLoaded && mcpServersControls === controls) {
+      writeRetainedSettingsData(controls, MCP_SERVERS_DATA, mcpServers);
+    }
+  }, [controls, mcpServers, mcpServersControls, mcpServersLoaded]);
+
+  const currentServers = mcpServersControls === controls ? mcpServers : [];
+  const hasServerList = mcpServersControls === controls && mcpServersLoaded;
+  const mcpServerByName = new Map(currentServers.map((server) => [server.name, server]));
   const mcpRowNames = Array.from(
-    new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft), ...Object.keys(mcpActionErrors)]),
+    new Set([...currentServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft), ...Object.keys(mcpActionErrors)]),
   ).sort((a, b) => a.localeCompare(b));
 
   // Servers are defined only in the user configuration; the page says where,
@@ -232,8 +252,8 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
       <SettingsPageHeader title={t("settings.mcpServers")} description={description} />
       <SettingsSection testID="settings-mcp">
         {mcpLoading || mcpRowNames.length > 0 || !mcpError ? <SettingsGroup>
-          {mcpLoading && mcpRowNames.length === 0 ? (
-            <p className="settings-group-empty">{t("settings.loading")}</p>
+          {!hasServerList && mcpRowNames.length === 0 ? (
+            mcpError ? null : <p className="settings-group-empty">{t("settings.loading")}</p>
           ) : mcpRowNames.length > 0 ? (
             mcpRowNames.map((name) => {
               const server = mcpServerByName.get(name);

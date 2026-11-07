@@ -62,6 +62,7 @@ import {
 } from "./RuntimeHelpers";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
+import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
 import { SettingsRow } from "./SettingsRow";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { useI18n } from "./i18n";
@@ -75,6 +76,7 @@ type Translate = ReturnType<typeof useI18n>["t"];
 // during ordinary settings, composer or first-run catalog initialization.
 const ChatGPTAccountRows = lazy(() => import("./ChatGPTAccountRows").then(module => ({ default: module.ChatGPTAccountRows })));
 const ChatGPTConnectionDialog = lazy(() => import("./ChatGPTConnectionDialog").then(module => ({ default: module.ChatGPTConnectionDialog })));
+const PROVIDER_QUOTA_DATA = "providers.quota";
 
 // Model connections keep vendor identity separate from authentication method.
 // Account status and usage live with the connection that owns them.
@@ -334,8 +336,9 @@ export function ModelServicesPage({
   const providers = initialized?.providers ?? [];
   const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
-  const [quotaSnapshot, setQuotaSnapshot] = useState<EngineListResult>();
-  const [quotaLoading, setQuotaLoading] = useState(false);
+  const retainedQuota = readRetainedSettingsData<EngineListResult>(controls, PROVIDER_QUOTA_DATA);
+  const [quotaSnapshot, setQuotaSnapshot] = useState<EngineListResult | undefined>(() => retainedQuota);
+  const [quotaControls, setQuotaControls] = useState(() => retainedQuota ? controls : undefined);
   const [quotaFailed, setQuotaFailed] = useState(false);
   const [quotaVersion, setQuotaVersion] = useState(0);
   const [quotaNow, setQuotaNow] = useState(Date.now);
@@ -344,27 +347,45 @@ export function ModelServicesPage({
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) { setQuotaLoading(false); return; }
+    const retained = readRetainedSettingsData<EngineListResult>(controls, PROVIDER_QUOTA_DATA);
+    setQuotaSnapshot(retained);
+    setQuotaControls(retained ? controls : undefined);
+    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) return;
     let active = true;
-    setQuotaLoading(true);
     void controls.listEngines({ include_quota: true, include_activity: false }).then(snapshot => {
-      if (active) { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }
-    }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setQuotaFailed(true); })
-      .finally(() => { if (active) setQuotaLoading(false); });
+      if (active) {
+        setQuotaSnapshot(snapshot); setQuotaControls(controls); setQuotaFailed(false); setQuotaNow(Date.now());
+      }
+    }, cause => {
+      if (active) {
+        setQuotaControls(controls);
+        if (!isPluginLifecycleCancellation(cause)) setQuotaFailed(true);
+      }
+    });
     return () => { active = false; };
   }, [controls, quotaVersion]);
+  useEffect(() => {
+    if (quotaControls === controls && quotaSnapshot !== undefined) {
+      writeRetainedSettingsData(controls, PROVIDER_QUOTA_DATA, quotaSnapshot);
+    }
+  }, [controls, quotaControls, quotaSnapshot]);
+  const visibleQuotaSnapshot = quotaControls === controls ? quotaSnapshot : undefined;
+  // A completed read is a known state even when a service has no allowance to
+  // show. Only a first read or a new authority may claim that quota is loading.
+  const quotaSettled = quotaControls === controls && (quotaSnapshot !== undefined || quotaFailed);
+  const quotaPending = ENABLE_SUBSCRIPTIONS && controls.capabilities.engines && !quotaSettled;
   const observedQuota = (quota: SubscriptionQuota | undefined): SubscriptionQuota | undefined =>
     quotaFailed && quota?.status === "available" ? { ...quota, status: "stale" } : quota;
   const overviewProviders = providers.map(provider => {
-    const snapshot = quotaSnapshot?.subscription_providers?.find(item => item.name === provider.name
+    const snapshot = visibleQuotaSnapshot?.subscription_providers?.find(item => item.name === provider.name
       && item.type === provider.type && item.chatgpt_account_id === provider.chatgpt_account_id
       && item.base_url === provider.base_url);
     return { ...provider, quota: observedQuota(snapshot?.quota ?? provider.quota) };
   });
   const overviewInventory = inventory ? { ...inventory, engines: inventory.engines.map(engine => {
-    const snapshot = quotaSnapshot?.engines.find(item => item.id === engine.id && item.binary_path === engine.binary_path);
+    const snapshot = visibleQuotaSnapshot?.engines.find(item => item.id === engine.id && item.binary_path === engine.binary_path);
     const currentPath = (inventory.settings as Record<string, EngineBinarySettings | undefined> | undefined)?.[engine.id]?.binary_path ?? "";
-    const observedPath = (quotaSnapshot?.settings as Record<string, EngineBinarySettings | undefined> | undefined)?.[engine.id]?.binary_path ?? "";
+    const observedPath = (visibleQuotaSnapshot?.settings as Record<string, EngineBinarySettings | undefined> | undefined)?.[engine.id]?.binary_path ?? "";
     return { ...engine, quota: observedQuota(currentPath === observedPath ? snapshot?.quota ?? engine.quota : engine.quota) };
   }) } : inventory;
   const [openService, setOpenService] = useState("");
@@ -421,10 +442,10 @@ export function ModelServicesPage({
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
           aria-label={t("provider.addConnection")}
           onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
-      {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaLoading} now={quotaNow}
+      {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaPending} now={quotaNow}
         onOpenService={setOpenService} /> : null}
       {onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
-        result={overviewInventory} quotaFailed={quotaFailed} quotaLoading={quotaLoading} quotaNow={quotaNow} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
+        result={overviewInventory} quotaFailed={quotaFailed} quotaLoading={quotaPending} quotaNow={quotaNow} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
@@ -469,7 +490,7 @@ export function ModelServicesPage({
           setCatalogVersion(value => value + 1);
           setQuotaVersion(value => value + 1);
         }}
-        onQuotaLoaded={snapshot => { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }}
+        onQuotaLoaded={snapshot => { setQuotaSnapshot(snapshot); setQuotaControls(controls); setQuotaFailed(false); setQuotaNow(Date.now()); }}
         onProvidersChanged={onProvidersChanged} onProviderModelsChanged={onProviderModelsChanged}
         label={labels.get(detailProvider.name) ?? detailProvider.name} initialized={initialized} running={running}
         inUse={runningProviderNames.has(detailProvider.name)} onBack={closeService} onSave={onSave}

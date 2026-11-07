@@ -3,7 +3,7 @@ import { createApplicationSettingsControls } from "./plugins/hostApplicationSett
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { WuuDesktopApi } from "../shared/protocol";
+import type { BrowserExtensionRecord, BrowserProfile, WuuDesktopApi } from "../shared/protocol";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
 import { I18nProvider } from "./i18n";
 
@@ -71,11 +71,11 @@ function stubBrowserAPI(overrides: Partial<BrowserApi> = {}): BrowserApi {
   return stub;
 }
 
-async function render(): Promise<void> {
+async function render(controls = createApplicationSettingsControls()): Promise<void> {
   act(() => {
     root = createRoot(container);
     root.render(
-      <SettingsControlsProvider controls={createApplicationSettingsControls()}>{<I18nProvider>
+      <SettingsControlsProvider controls={controls}>{<I18nProvider>
         <BrowserSettingsSection />
       </I18nProvider>}</SettingsControlsProvider>,
     );
@@ -84,6 +84,20 @@ async function render(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function remount(controls: ReturnType<typeof createApplicationSettingsControls>): Promise<void> {
+  act(() => {
+    root!.unmount();
+  });
+  root = null;
+  return render(controls);
 }
 
 describe("BrowserSettingsSection", () => {
@@ -127,5 +141,55 @@ describe("BrowserSettingsSection", () => {
     await render();
 
     expect(container.textContent).toContain("No supported browser profiles");
+  });
+
+  it("does not report an empty extension list before the first read settles", async () => {
+    const pending = deferred<never[]>();
+    stubBrowserAPI({ listBrowserExtensions: vi.fn(() => pending.promise) });
+    await render();
+
+    expect(container.textContent).not.toContain("No extensions loaded");
+    await act(async () => pending.resolve([]));
+    expect(container.textContent).toContain("No extensions loaded");
+  });
+
+  it("keeps the last browser read visible while a return refreshes it", async () => {
+    const api = stubBrowserAPI({
+      listBrowserExtensions: vi.fn().mockResolvedValue([
+        { id: "fixture", name: "Fixture extension", version: "1", path: "/fixture", enabled: true, loaded: true },
+      ]),
+    });
+    const controls = createApplicationSettingsControls();
+    await render(controls);
+    expect(container.textContent).toContain("Test Browser · Work");
+    expect(container.textContent).toContain("Fixture extension");
+
+    const profiles = deferred<BrowserProfile[]>();
+    const extensions = deferred<BrowserExtensionRecord[]>();
+    api.listBrowserProfiles = vi.fn(() => profiles.promise);
+    api.listBrowserExtensions = vi.fn(() => extensions.promise);
+    await remount(controls);
+
+    expect(container.textContent).toContain("Test Browser · Work");
+    expect(container.textContent).toContain("Fixture extension");
+    expect(container.textContent).not.toContain("Loading browser data");
+    expect(container.textContent).not.toContain("No extensions loaded");
+    await act(async () => {
+      profiles.resolve([{
+        browserId: "next",
+        appName: "Next Browser",
+        profileDirectoryName: "Default",
+        profileName: "Work",
+        profilePath: "/tmp/next-browser/Default",
+        hasCookies: false,
+        hasPasswords: false,
+      }]);
+      extensions.resolve([
+        { id: "next", name: "Next extension", version: "2", path: "/next", enabled: false, loaded: false },
+      ]);
+    });
+    expect(container.textContent).toContain("Next Browser · Work");
+    expect(container.textContent).toContain("Next extension");
+    expect(container.textContent).not.toContain("Test Browser · Work");
   });
 });
