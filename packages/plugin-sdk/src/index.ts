@@ -360,6 +360,8 @@ export interface PluginUIConversationAttachmentProps {
 export interface PluginUIConversationComposerProps {
  replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
   conversationId: string;
+  /** Discover connectors in this independent conversation's host. */
+  sessionScope?: PluginUIConversationViewProps["sessionScope"];
   submitting?: boolean;
   queuedCount?: number;
   pendingCount?: number;
@@ -373,7 +375,7 @@ export interface PluginUIConversationComposerProps {
   onChangePrompt(value: string): void;
   onAddAttachments(files: File[]): void;
   onRemoveAttachment(id: string): void;
-  onSend(prompt: string): void;
+  onSend(prompt: string, contentParts?: import("./ui-submission.js").ApplicationSubmissionContentPartV1[]): void;
   onStop(): void;
 }
 
@@ -714,7 +716,7 @@ export interface PluginRuntimeInvokeOptions {
    * dependencies before admitting the target graph. This is not a graph ID or
    * an authority grant; unavailable/unbound profiles fail without substitution. */
   readonly compositionProfile?: string;
- readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly relation?: MessageRelation; readonly attachments?: readonly ClientInputAttachment[] };
+ readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly contentParts?: readonly import("./ui-submission.js").ApplicationSubmissionContentPartV1[]; readonly relation?: MessageRelation; readonly attachments?: readonly ClientInputAttachment[] };
   readonly userSpaceId?: string;
   readonly productDomain?: "personal" | "coding";
   readonly workspaceId?: string;
@@ -1611,6 +1613,7 @@ export interface HostServiceContracts {
       session_id: string;
       input: {
         prompt: string;
+        content_parts?: readonly import("./ui-submission.js").ApplicationSubmissionContentPartV1[];
         attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };

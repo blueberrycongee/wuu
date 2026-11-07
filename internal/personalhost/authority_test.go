@@ -25,9 +25,9 @@ func TestHostRequiresResourceAuthorityBeforeBroker(t *testing.T) {
 			}
 			host := New(binding, options)
 			defer host.Close()
-			operation := "calendar.read.status"
+			operation := "memory.read"
 			if mode == "unknown" {
-				operation = "calendar.read.unknown"
+				operation = "memory.unknown"
 			}
 			if _, err := host.Call(context.Background(), operation, nil, "verified"); err == nil {
 				t.Fatal("missing authority accepted")

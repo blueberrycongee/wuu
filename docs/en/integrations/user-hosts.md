@@ -10,7 +10,7 @@ Internal SDK embeddings can explicitly select `UserHostIsolationMode: "verified_
 
 `initialize` returns `user_host_isolation: { memory: "logical", host: "unverified" }` for ordinary user hosts. A successfully verified embedding reports `host: "verified"`. These additive capabilities are separate from the immutable `user_space_id` and `product_domain`. Ordinary Coding initialization and permissions are unchanged.
 
-The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` with the default logical-memory policy. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Model access, connector grants, remote pairing, notification credentials and deployment remain separate setup responsibilities.
+The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` with the default logical-memory policy. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Model access, remote pairing, notification credentials and deployment remain separate setup responsibilities.
 
 ## Selected composition and desktop routing
 
@@ -40,7 +40,7 @@ With the bundled local storage providers, user data is separated as follows. The
 - `user-spaces/<user-space>/<domain>/state`: sessions, private plugin storage, memory and managed artifacts
 - `user-spaces/<user-space>/<domain>/files`: permitted user working files and explicit attachment working copies
 
-User hosts load an explicit absolute configuration or the user configuration. They do not inherit project instructions, global Coding skills, MCP servers, hooks or external execution environments. Protected private-state paths are excluded from Personal file and process tools. Installed extensions remain trusted code; this is not an untrusted-extension sandbox.
+User hosts load an explicit absolute configuration or the user configuration. They do not inherit project instructions, global Coding skills, project MCP servers, hooks or external execution environments. The desktop explicitly binds its own Personal user space to globally installed MCP connectors and the selected credential provider. Other user spaces have no shared-connector access by default. Protected private-state paths are excluded from Personal file and process tools. Installed extensions remain trusted code; this is not an untrusted-extension sandbox.
 
 twin exposes one persistent main conversation per Personal user space. Its main Session ID is reused across navigation, reconnect and restart; it is not rotated or rebuilt by joining other sessions. Hidden task executions retain separate Session IDs and requirements versions. Missing main sessions report recovery errors instead of silently creating replacements. Historical identities and task data are retained, while current questions and results return to the main conversation.
 
@@ -54,7 +54,7 @@ A slow consumer has a bounded queue and is disconnected without blocking other c
 
 User-host transports expose `initialize`, `plugin/client/request`, `plugin/client/cancel`, user-question decision methods, device-bound push registration and connection shutdown. Generic Coding thread, workspace, storage, configuration and package-mutation APIs are unavailable on this transport. Desktop extension management retains its normal host context. The Coding account-history exporter detects user-host scope and stops; it does not export Personal data or interpret its inventory as Coding deletions.
 
-Non-interactive remote hosts do not provide generic `ask_user` interaction. A plugin-specific confirmation contract, such as Calendar's immutable operation preview, is a separate client operation.
+Non-interactive remote hosts do not provide generic `ask_user` interaction.
 
 The persisted owner admits user attention through `session.attention` under its current notification and quiet-hours policy. Raw terminal events do not authorize Personal push. `Runtime.SubscribeUserAttention` is a host-lifetime observer independent of phone attachment. Its bounded, content-free startup buffer rechecks current ownership, generation and policy before replay; it is best-effort notification transport, not a durable provider-delivery receipt. Closing or disabling the owner suppresses late attention.
 
@@ -164,11 +164,13 @@ AutoReview is **off by default** and explicitly enabled only in Personal setting
 
 Coverage exclusions: shell commands, `apply_patch`, MCP/plugin write tools, remote execution, account/OAuth grants and external send/calendar writes are not routed through this adapter. Selected authorization providers are supported only when they implement the fenced `acquire-authorization` / `release-authorization` contract; the same captured provider remains retained through the local effect and cleanup. File-change or permission-request callbacks without a captured local-only guarantee remain unsupported, including callbacks retained by an older toolkit generation. The adapter fails closed rather than skipping security checks or calling arbitrary extension hooks under the file commit lock. The UI preview uses synthetic state and is not evidence of native execution or account connectivity.
 
-The bundled Calendar adapter starts unconnected. The read and write interfaces accept a trusted, user-space/account-bound provider for an already authorized grant; tool input and plugin configuration cannot supply credentials. The shipped default does not wire an authorization provider or writer. An embedding must supply that integration after separate account authorization; source adapter tests do not complete this setup. Its write contract requires a full immutable preview, explicit client confirmation, exact revision and digest, and read-back verification. A lost acknowledgment produces an uncertain outcome that is reconciled without blindly replaying a write. Provider-injected tests do not establish a real OAuth or account outcome.
+
+Personal's independent account connectors and Calendar OAuth adapter have been removed. Manage accounts through the shared plugin catalog, then select a connected plugin in the Personal composer. Native Wuu and external engines with conversation-plugin support use the same enabled shared connectors, including fresh background sessions. An explicit message selection narrows the external-engine bridge and rechecks the selected account identity. Background tasks still require their admitted execution authorization and tool policy; account sharing does not authorize a new task or bypass permission checks. Personal's local file approval adapter does not approve MCP writes.
+
+Hosts using one selected credential authority coordinate OAuth refresh through an atomic stored attempt. A canceled, lost, or interrupted refresh is not replayed: reconnect the account when its outcome is uncertain. Restart older app-server processes when adopting this version, because they do not participate in this coordination. Disconnecting or replacing an account invalidates its bound grant. A disabled connector rejects new tool dispatches; a request already admitted may finish remotely.
 
 See the [app-server protocol](app-server-protocol.md), [plugin authoring](../customize/plugin-authoring.md), and [native client setup](../../../clients/native/README.md) for the underlying integration surfaces.
 
-Calendar proposals are reachable from the main conversation without replacing its Session. The review overlay retains the full immutable preview and exact revision/digest confirmation. Personal exposes only a read-only operations-list adapter; confirmation and cancellation remain trusted Calendar client operations. With no authorized provider, the UI reports the disconnected/read-only state and cannot confirm a write.
 
 #### Migrating the legacy review ledger
 

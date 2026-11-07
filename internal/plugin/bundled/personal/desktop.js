@@ -485,7 +485,7 @@ var personalDesktop = (() => {
     };
   }
 
-  // plugins/personal-calendar/src/host-bridge.ts
+  // plugins/personal/src/host-bridge.ts
   function unwrapPersonalHost(value) {
     if (!value || typeof value !== "object" || !("ok" in value)) throw new Error("Invalid Personal host response");
     if (value.ok === true && "value" in value) return value.value;
@@ -804,13 +804,8 @@ var personalDesktop = (() => {
         "noOutputs": "Finished outputs will appear here",
         "showMore": "Show more",
         "showLess": "Show less",
-        "calendarReview": "Review calendar proposals",
         "applyingChanges": "Applying your changes; waiting for the previous run to stop before continuing.",
-        "calendarReadOnly": "Calendar changes are unavailable until an authorized connection is configured.",
-        "calendarUnconnected": "Calendar is not connected.",
-        "calendarProposed": "Waiting for your review",
         "confirmed": "Confirmed \xB7 awaiting execution",
-        "calendarUncertain": "Outcome needs verification",
         "reconciliation": "The external outcome still needs checking. Stopping does not undo completed actions."
       },
       "zh": {
@@ -926,13 +921,8 @@ var personalDesktop = (() => {
         "noOutputs": "\u5B8C\u6210\u7684\u8F93\u51FA\u4F1A\u663E\u793A\u5728\u8FD9\u91CC",
         "showMore": "\u663E\u793A\u66F4\u591A",
         "showLess": "\u6536\u8D77",
-        "calendarReview": "\u67E5\u770B\u65E5\u5386\u63D0\u6848",
         "applyingChanges": "\u6B63\u5728\u5E94\u7528\u4F60\u7684\u4FEE\u6539\uFF0C\u7B49\u4E0A\u4E00\u8F6E\u5904\u7406\u505C\u6B62\u540E\u7EE7\u7EED",
-        "calendarReadOnly": "\u5C1A\u672A\u914D\u7F6E\u6388\u6743\u8FDE\u63A5\uFF0C\u5F53\u524D\u65E0\u6CD5\u4FEE\u6539\u65E5\u5386\u3002",
-        "calendarUnconnected": "\u65E5\u5386\u5C1A\u672A\u8FDE\u63A5\u3002",
-        "calendarProposed": "\u7B49\u5F85\u4F60\u786E\u8BA4",
         "confirmed": "\u5DF2\u786E\u8BA4\uFF0C\u7B49\u5F85\u6267\u884C",
-        "calendarUncertain": "\u7ED3\u679C\u4ECD\u5F85\u6838\u5BF9",
         "reconciliation": "\u5916\u90E8\u7ED3\u679C\u4ECD\u9700\u6838\u5BF9\u3002\u505C\u6B62\u4E0D\u4F1A\u64A4\u9500\u5DF2\u7ECF\u53D1\u751F\u7684\u64CD\u4F5C\u3002"
       }
     };
@@ -1154,8 +1144,6 @@ var personalDesktop = (() => {
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
-    .mosaic-calendar-proposals { margin-block:var(--space-5);padding-top:var(--space-3);border-top:1px solid var(--hairline-soft); }
-    .mosaic-calendar-proposals p { margin:var(--space-2) 0;color:var(--ink-muted); }
     @media(max-width:480px) { .mosaic-sidebar { right:8px;width:calc(100% - 16px); } .mosaic-panel-scroll { padding:16px; } }
   ` });
     const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
@@ -1847,7 +1835,7 @@ var personalDesktop = (() => {
             history?.has_more && h("p", { className: "mosaic-eyebrow" }, label("Loaded records are sorted by time. Load more to see earlier or other records.", "\u5DF2\u52A0\u8F7D\u8BB0\u5F55\u6309\u65F6\u95F4\u6392\u5E8F\uFF1B\u52A0\u8F7D\u66F4\u591A\u53EF\u67E5\u770B\u66F4\u65E9\u6216\u5176\u4ED6\u8BB0\u5F55\u3002")),
             history?.skipped_records > 0 && h("p", { role: "status" }, label("Some unreadable historical records were skipped.", "\u90E8\u5206\u65E0\u6CD5\u8BFB\u53D6\u7684\u5386\u53F2\u8BB0\u5F55\u5DF2\u8DF3\u8FC7\u3002")),
             history?.has_more && h(Button, { "data-action": "more-routine-history", disabled: historyLoading, onClick: () => loadHistory(true) }, label("Load more history", "\u52A0\u8F7D\u66F4\u591A\u8BB0\u5F55")),
-            h("ol", { className: "mosaic-routine-history" }, rows.map((row) => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} \xB7 ${stateLabel(row.state)} \xB7 ${t("process")}` } : {} }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "\u4EFB\u52A1") : row.kind === "reminder" ? label("Reminder", "\u63D0\u9192") : row.kind === "calendar" ? label("Calendar trigger", "\u65E5\u5386\u89E6\u53D1") : label("Legacy run", "\u5386\u53F2\u8FD0\u884C")), row.output && h("details", null, h("summary", null, label("Result", "\u67E5\u770B\u7ED3\u679C")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))
+            h("ol", { className: "mosaic-routine-history" }, rows.map((row) => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} \xB7 ${stateLabel(row.state)} \xB7 ${t("process")}` } : {} }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "\u4EFB\u52A1") : row.kind === "reminder" ? label("Reminder", "\u63D0\u9192") : label("Legacy run", "\u5386\u53F2\u8FD0\u884C")), row.output && h("details", null, h("summary", null, label("Result", "\u67E5\u770B\u7ED3\u679C")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))
           ) : h(
             "form",
             { id: "mosaic-routine-editor", onSubmit: save },
@@ -1855,13 +1843,13 @@ var personalDesktop = (() => {
             h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "\u6267\u884C\u8BA1\u5212")), h(
               "div",
               { className: "mosaic-routine-fields" },
-              select("schedule_type", label("Repeat", "\u91CD\u590D"), [["daily", label("Every day", "\u6BCF\u5929")], ["weekly", label("Every week", "\u6BCF\u5468")], ["cron", label("Custom cron", "\u81EA\u5B9A\u4E49 cron")], ...!routine.source ? [["once", label("Once", "\u4EC5\u4E00\u6B21")]] : []]),
+              select("schedule_type", label("Repeat", "\u91CD\u590D"), [["daily", label("Every day", "\u6BCF\u5929")], ["weekly", label("Every week", "\u6BCF\u5468")], ["cron", label("Custom cron", "\u81EA\u5B9A\u4E49 cron")], ["once", label("Once", "\u4EC5\u4E00\u6B21")]]),
               ["daily", "weekly"].includes(form.schedule_type) && field("time", label("Time", "\u65F6\u95F4"), { type: "time", required: true }),
               form.schedule_type === "weekly" && select("weekday", label("Day", "\u661F\u671F"), Array.from({ length: 7 }, (_, day) => [String(day), new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 0, 4 + day)))])),
               form.schedule_type === "cron" && field("cron", label("Cron", "Cron"), { required: true }),
               form.schedule_type === "once" && h(React.Fragment, null, field("run_at", label("Date and time", "\u65E5\u671F\u548C\u65F6\u95F4"), { type: "datetime-local", required: true }), field("utc_offset", label("UTC offset", "UTC \u504F\u79FB"), { required: true, placeholder: "+08:00" }))
             ), h("p", { className: "mosaic-routine-meta" }, form.timezone, form.schedule_type === "once" ? label(" \xB7 Check the offset if this date crosses a daylight-saving change.", " \xB7 \u82E5\u8DE8\u8D8A\u590F\u4EE4\u65F6\u5207\u6362\uFF0C\u8BF7\u6838\u5BF9\u504F\u79FB\u3002") : "")),
-            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "\u9AD8\u7EA7\u8BBE\u7F6E")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "\u7C7B\u578B"), routine.source ? [["task", label("Task", "\u4EFB\u52A1")]] : [["task", label("Task", "\u4EFB\u52A1")], ["reminder", label("Reminder", "\u63D0\u9192")]]), select("missed_policy", label("If missed", "\u9519\u8FC7\u6267\u884C\u65F6"), [["run_once", label("Run once when available", "\u8865\u6267\u884C\u4E00\u6B21")], ["skip", label("Skip", "\u8DF3\u8FC7")]]))),
+            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "\u9AD8\u7EA7\u8BBE\u7F6E")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "\u7C7B\u578B"), [["task", label("Task", "\u4EFB\u52A1")], ["reminder", label("Reminder", "\u63D0\u9192")]]), select("missed_policy", label("If missed", "\u9519\u8FC7\u6267\u884C\u65F6"), [["run_once", label("Run once when available", "\u8865\u6267\u884C\u4E00\u6B21")], ["skip", label("Skip", "\u8DF3\u8FC7")]]))),
             h("p", { className: "mosaic-routine-meta" }, label("Saving stops the previous run. Completed actions are not undone.", "\u4FDD\u5B58\u4F1A\u505C\u6B62\u4E4B\u524D\u7684\u8FD0\u884C\uFF0C\u5DF2\u5B8C\u6210\u7684\u64CD\u4F5C\u4E0D\u4F1A\u64A4\u9500\u3002"))
           )
         ),
@@ -1938,7 +1926,6 @@ var personalDesktop = (() => {
         });
       };
       const changeRoutine = (value) => setRoutines((current) => current.map((item) => item.routine_id === value.routine_id && item.revision <= value.revision ? value : item));
-      const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
       const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
       const [sendRefreshError, setSendRefreshError] = React.useState("");
       const [rendererContextLimited, setRendererContextLimited] = React.useState(false);
@@ -2085,14 +2072,13 @@ var personalDesktop = (() => {
         if (identityAgent) setAgent(identityAgent);
         return () => identityListeners.delete(setAgent);
       }, []);
-      const calendarRead = React.useRef(0), calendarOpening = React.useRef(false), historyRecovery = React.useRef({ complete: false, endSeq: void 0 });
+      const historyRecovery = React.useRef({ complete: false, endSeq: void 0 });
       currentAgent.current = agent;
       const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
       const stream = streamFor(conversationID), running = stream.running, activeTurnID = stream.activeTurnID, queuedCount = draft.queueIds.size, liveMessages = [...stream.items.values()], liveTools = [...stream.tools.values()], stopState = draft.stopState;
       const task = tasks.find((item) => item.task_id === selection?.taskId);
       const artifactOutputs = records.flatMap((record) => (record.attachments || []).filter((attachment) => attachment.kind === "artifact").map((attachment) => ({ seq: record.seq, at: record.at, attachment })));
       const selectedArtifact = artifactOutputs.find((output) => output.seq === selection?.seq && output.attachment.sha256 === selection?.sha256);
-      const pendingCalendarOperations = calendar.operations.filter((item) => !["completed", "cancelled"].includes(item.status));
       const report = (cause) => {
         if (mounted.current && !api.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause));
       };
@@ -2172,32 +2158,6 @@ var personalDesktop = (() => {
           const previous = current.find((value) => value.routine_id === item.routine_id);
           return previous?.revision > item.revision ? previous : item;
         }));
-      };
-      const loadCalendar = async (identity) => {
-        if (!identity) return;
-        const version = ++calendarRead.current;
-        try {
-          const [status, result] = await Promise.all([call("calendar.status", { agent_id: identity.agent_id }), call("calendar.operations.list", { agent_id: identity.agent_id })]);
-          if (mounted.current && version === calendarRead.current) {
-            setCalendar({ status, operations: result.operations || [] });
-            setCalendarError("");
-          }
-        } catch (cause) {
-          if (mounted.current && version === calendarRead.current) setCalendarError(cause instanceof Error ? cause.message : String(cause));
-        }
-      };
-      const openCalendar = async (operationId) => {
-        if (calendarOpening.current) return;
-        calendarOpening.current = true;
-        setCalendarBusy(true);
-        try {
-          await host.openView("personal-calendar.confirmation", { region: "overlay", context: operationId ? { operationId } : {}, persistence: "session", reveal: false });
-        } catch (cause) {
-          if (mounted.current) setCalendarError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-          calendarOpening.current = false;
-          if (mounted.current) setCalendarBusy(false);
-        }
       };
       const loadConversation = async (identity) => {
         if (!identity) return;
@@ -2286,7 +2246,7 @@ var personalDesktop = (() => {
           const identity = publishIdentity(result.agent);
           mainSessionID = identity.main_session_id;
           currentAgent.current = identity;
-          await Promise.all([loadConversation(identity), loadTasks(), loadRoutines(), loadCalendar(identity)]);
+          await Promise.all([loadConversation(identity), loadTasks(), loadRoutines()]);
         } catch (cause) {
           report(cause);
         } finally {
@@ -2314,7 +2274,7 @@ var personalDesktop = (() => {
           }
           checking = true;
           try {
-            await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), loadCalendar(currentAgent.current), refreshReactions(currentAgent.current)]);
+            await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), refreshReactions(currentAgent.current)]);
           } catch (cause) {
             report(cause);
           } finally {
@@ -2523,11 +2483,11 @@ var personalDesktop = (() => {
         return { contexts: selected, limited };
       };
       const rendererContexts = () => structuredClone(rendererContextSelection().contexts);
-      const send = async (submitted, draftID = conversationID, rendererContext) => {
+      const send = async (submitted, draftID = conversationID, rendererContext, contentParts) => {
         const id = draftID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
         if (!agent || state.submitting || state.attachmentsMissing || readingRef.current || !text.trim() && !sentFiles.length) return false;
         const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
-        if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext)) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? void 0 : rendererContexts() };
+        if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext) || JSON.stringify(state.pending.contentParts) !== JSON.stringify(contentParts)) state.pending = { draftPrompt: state.prompt, contentParts: contentParts ? structuredClone(contentParts) : void 0, prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? void 0 : rendererContexts() };
         const requestID = state.pending.requestID, editVersion = state.editVersion;
         if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
         const stream2 = streamFor(conversationID), version = stream2.version;
@@ -2541,7 +2501,7 @@ var personalDesktop = (() => {
         };
         try {
           let result = state.pending.uncertain ? await recover().catch(() => null) : null;
-          if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}, ...state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}, ...state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
+          if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...state.pending.contentParts ? { content_parts: state.pending.contentParts } : {}, ...state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}, ...state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}, ...state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text, ...state.pending.contentParts ? { contentParts: state.pending.contentParts } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
           if (!acceptReceipt(result?.receipt, detail)) {
             result = await recover();
             if (!result) throw new Error(locale?.startsWith("zh") ? "\u5C1A\u672A\u786E\u8BA4\u6301\u4E45\u63A5\u6536\uFF0C\u8BF7\u4FDD\u7559\u8349\u7A3F\u5E76\u91CD\u8BD5\u3002" : "Durable delivery is not confirmed. Keep the draft and retry.");
@@ -2594,7 +2554,7 @@ var personalDesktop = (() => {
         const fileKey = originalInput?.fileKey || JSON.stringify(entry.attachments || []);
         const clearOriginalDraft = () => {
           if (originalDraft.pending && originalDraft.pending.requestID !== originalID) return;
-          const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === entry.prompt && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
+          const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === (originalInput?.draftPrompt ?? entry.prompt) && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
           updateDraft(entry.draftID, { pending: null, ...unchanged ? { prompt: "", files: [], attachmentsMissing: false } : {}, error: "" });
         };
         const retryID = `${conversationID}:retry:${originalID}`;
@@ -2620,7 +2580,7 @@ var personalDesktop = (() => {
             receiptStates.current.delete(originalID);
             if (originalDraft.pending?.requestID === originalID) updateDraft(entry.draftID, { pending: null });
           }
-          await send(entry.prompt, retryID, pending.rendererContext);
+          await send(entry.prompt, retryID, pending.rendererContext, pending.contentParts);
           if (receiptStates.current.get(pending.requestID)?.receipt) clearOriginalDraft();
         } finally {
           const latest = receiptStates.current.get(originalID);
@@ -2910,7 +2870,7 @@ var personalDesktop = (() => {
           showJumpToLatest: false,
           searchLabel: "",
           searchContent: null,
-          composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text) => send(text, replySelection.key), onStop: stopReply }))
+          composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { sessionScope: route, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, replySelection.key, void 0, contentParts), onStop: stopReply }))
         },
         replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
         replyRecords.map((record) => renderReplyMessage(record)),
@@ -2944,6 +2904,7 @@ var personalDesktop = (() => {
             searchLabel: t("historySearch"),
             searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
             composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, {
+              sessionScope: route,
               conversationId: conversationID,
               prompt: draft.prompt,
               placeholder: t("placeholder"),
@@ -2957,7 +2918,7 @@ var personalDesktop = (() => {
               onChangePrompt: (value) => updateDraft(conversationID, { prompt: value }),
               onAddAttachments: selectFiles,
               onRemoveAttachment: (id) => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }),
-              onSend: send,
+              onSend: (text, contentParts) => send(text, conversationID, void 0, contentParts),
               onStop: stopReply
             }))
           },
@@ -2983,13 +2944,7 @@ var personalDesktop = (() => {
           pendingReceipts.map((entry) => renderPendingReceipt(entry, conversationID)),
           liveMessages.filter((message) => !records.some((record) => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || message.source_id && message.source_id === record.provider_item_id))).map((message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })),
           !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
-          h(settingsPanels.ReviewConversation, { locale }),
-          pendingCalendarOperations.length > 0 && h(
-            "section",
-            { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
-            pendingCalendarOperations.map((item) => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} \xB7 ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-            calendarError && h("p", { role: "alert" }, calendarError)
-          )
+          h(settingsPanels.ReviewConversation, { locale })
         )
       ), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || void 0, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: (item) => {
         setTasks((current) => current.some((value) => value.task_id === item.task_id) ? current : [...current, item]);

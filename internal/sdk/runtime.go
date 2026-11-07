@@ -13,10 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
-	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -48,18 +45,16 @@ type Options struct {
 	// CompositionProfile explicitly selects a shipped or configured product profile.
 	// Empty preserves the configured profile; identity never selects a product.
 	CompositionProfile string
-	// PersonalCalendar is trusted local-host composition; zero stays unavailable.
-	// The SDK replaces StateDir with its resolved Personal state root.
-	PersonalCalendar                     personalcalendar.DesktopOptions
-	OpenPersonalCalendarAuthorizationURL func(context.Context, string) error
 	// UserHostIsolationMode defaults to logical_memory for a user binding. It
 	// separates memory APIs and automatic context by domain, but does not promise
 	// OS/file confidentiality. verified_host additionally requires a trusted verifier.
 	UserHostIsolationMode runtime.UserHostIsolationMode
 	// UserHostIsolationVerifier is a trusted host integration, never a client or environment assertion.
 	UserHostIsolationVerifier runtime.UserHostIsolationVerifier
-	UserSpaceID               string
-	ProductDomain             string
+	// SharedMCPConnectors admits this user host to the embedding owner's selected MCP accounts.
+	SharedMCPConnectors bool
+	UserSpaceID         string
+	ProductDomain       string
 	// WorkDir is the workspace root used for tools and project discovery.
 	WorkDir string
 	// WorkspaceID is a stable identity that keeps workspace state attached when
@@ -204,44 +199,9 @@ func New(opts Options) (*Runtime, error) {
 	}
 
 	bindings := appserver.NewRuntimeBindings()
-	bindings.SetPersonalAccountsFactory(func(input runtime.NativeProviderContext) (personalhost.Options, error) {
-		personalOptions := personalhost.Options{}
-		if input.UserBinding.Domain() != "personal" || host.Kind != runtime.HostLocal || opts.SafeMode {
-			return personalOptions, nil
-		}
-		credentials := credentialstore.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-			result, err := input.Registry.Call(ctx, appserver.PersonalAccountsModule, pluginhost.ServiceCallParams{Service: credentialstore.ServiceName, Method: method, Params: raw})
-			if err != nil {
-				return nil, err
-			}
-			return result, nil
-		})
-		stateHome, pathErr := statepath.Home(homeDir)
-		if pathErr != nil {
-			return personalOptions, pathErr
-		}
-		if opts.PersonalCalendar.ClientID != "" {
-			calendarOptions := opts.PersonalCalendar
-			calendarOptions.StateDir = filepath.Join(input.UserBinding.State(stateHome), "calendar")
-			if calendarOptions.Store == nil {
-				calendarOptions.Store = credentials
-			}
-			broker, calendarErr := personalcalendar.NewDesktop(calendarOptions)
-			if calendarErr != nil {
-				personalOptions.UnavailableCode = "secure_store_unavailable"
-				var failure *personalcalendar.Failure
-				if errors.As(calendarErr, &failure) {
-					personalOptions.UnavailableCode = failure.Code
-				}
-			} else {
-				personalOptions.Calendar = broker
-				personalOptions.OpenAuthorizationURL = opts.OpenPersonalCalendarAuthorizationURL
-			}
-		}
-		return personalOptions, nil
-	})
 	core, err := runtime.NewSession(runtime.Options{
-		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier, UserHostIsolationMode: opts.UserHostIsolationMode,
+		SharedMCPConnectors: opts.SharedMCPConnectors,
+		UserSpaceID:         binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier, UserHostIsolationMode: opts.UserHostIsolationMode,
 		NativeProviders:          bindings.NativeProviders(),
 		RootDir:                  rootDir,
 		Host:                     host,

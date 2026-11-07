@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.History
@@ -440,9 +439,9 @@ private fun personalAgentLabel(agent: JSONObject?): String {
 }
 
 private val personalAccent = Color(0xFF3566F0)
-private val personalSectionNames = listOf("对话", "事项", "今天", "记忆", "设置", "日历", "查找历史")
+private val personalSectionNames = listOf("对话", "事项", "今天", "记忆", "设置", "查找历史")
 private val personalSectionIcons = listOf(Icons.Default.ChatBubbleOutline, Icons.Default.Checklist, Icons.Default.Today,
-    Icons.Default.Psychology, Icons.Default.Tune, Icons.Default.CalendarMonth, Icons.Default.History)
+    Icons.Default.Psychology, Icons.Default.Tune, Icons.Default.History)
 
 private fun personalStatusText(personal: PersonalModel): String = when {
     !personal.available -> "离线"

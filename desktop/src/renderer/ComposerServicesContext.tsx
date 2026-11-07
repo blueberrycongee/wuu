@@ -26,3 +26,18 @@ export function useComposerConnectionDisplay() {
   useSyncExternalStore(controls?.subscribe ?? subscribeConnectionDisplay, controls?.getSnapshot ?? connectionDisplaySnapshot, () => "{}");
   return controls ?? connectionDisplayPreferences;
 }
+
+/** Connection discovery can be scoped without inheriting a Coding draft or its completions. */
+export type ComposerPluginServices = Pick<ComposerServices, "catalog" | "conversationPluginsSupported" | "openPlugins"> & {
+  settingsControls: Pick<ApplicationSettingsControlsV1, "listMCPServers">;
+  includePluginTools?: boolean;
+};
+const PluginContext = createContext<ComposerPluginServices | undefined>(undefined);
+export function ComposerPluginServicesProvider({ value, children }: { value: ComposerPluginServices; children: ReactNode }): JSX.Element {
+  return <PluginContext.Provider value={value}>{children}</PluginContext.Provider>;
+}
+export function useComposerPluginServices(): ComposerPluginServices | undefined {
+  const independent = useContext(PluginContext);
+  const composer = useComposerServices();
+  return independent ?? composer;
+}

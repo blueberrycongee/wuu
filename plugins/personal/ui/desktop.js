@@ -113,13 +113,8 @@ export async function activate(api) {
       "noOutputs": "Finished outputs will appear here",
       "showMore": "Show more",
       "showLess": "Show less",
-      "calendarReview": "Review calendar proposals",
       "applyingChanges": "Applying your changes; waiting for the previous run to stop before continuing.",
-      "calendarReadOnly": "Calendar changes are unavailable until an authorized connection is configured.",
-      "calendarUnconnected": "Calendar is not connected.",
-      "calendarProposed": "Waiting for your review",
       "confirmed": "Confirmed · awaiting execution",
-      "calendarUncertain": "Outcome needs verification",
       "reconciliation": "The external outcome still needs checking. Stopping does not undo completed actions."
     },
     "zh": {
@@ -215,13 +210,8 @@ export async function activate(api) {
       "noOutputs": "完成的输出会显示在这里",
       "showMore": "显示更多",
       "showLess": "收起",
-      "calendarReview": "查看日历提案",
       "applyingChanges": "正在应用你的修改，等上一轮处理停止后继续",
-      "calendarReadOnly": "尚未配置授权连接，当前无法修改日历。",
-      "calendarUnconnected": "日历尚未连接。",
-      "calendarProposed": "等待你确认",
       "confirmed": "已确认，等待执行",
-      "calendarUncertain": "结果仍待核对",
       "reconciliation": "外部结果仍需核对。停止不会撤销已经发生的操作。"
     }
   };
@@ -443,8 +433,6 @@ export async function activate(api) {
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
-    .mosaic-calendar-proposals { margin-block:var(--space-5);padding-top:var(--space-3);border-top:1px solid var(--hairline-soft); }
-    .mosaic-calendar-proposals p { margin:var(--space-2) 0;color:var(--ink-muted); }
     @media(max-width:480px) { .mosaic-sidebar { right:8px;width:calc(100% - 16px); } .mosaic-panel-scroll { padding:16px; } }
   ` });
   const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
@@ -857,11 +845,11 @@ export async function activate(api) {
             h("div", null, h("dt", null, label("Repeats", "重复规则")), h("dd", null, routineSchedule(routine, locale))), h("div", null, h("dt", null, t("timezone")), h("dd", null, routine.timezone)), h("div", null, h("dt", null, label("Next run", "下次执行")), h("dd", null, routine.status === "active" && routine.binding?.next_run_at ? stamp(routine.binding.next_run_at) : routine.status === "active" ? label("Awaiting scheduler", "等待调度确认") : routineStatus(routine.status, locale, t)))), h("p", { className: "mosaic-routine-meta" }, routine.kind === "task" ? label("Task", "任务") : label("Reminder", "提醒"), " · ", routine.missed_policy === "skip" ? label("Skip missed runs", "错过时跳过") : label("Catch up once after a missed run", "错过后补执行一次"))),
           h("button", { type: "button", className: "mosaic-routine-card mosaic-routine-link", "data-action": "routine-history", onClick: () => loadHistory() }, label("Run history", "运行记录"), h("span", { "aria-hidden": true }, "→")), h(Button, { variant: "ghost", className: "mosaic-routine-card mosaic-routine-link", "data-action": "edit-routine", disabled: busy || routine.cancellation_pending || ["stopping", "stopped"].includes(routine.status), onClick: beginEdit }, label("Edit routine", "编辑例行安排"))) : view === "history" ? h(React.Fragment, null,
             h("p", { className: "mosaic-eyebrow" }, routine.title, " · ", routine.timezone), h(Button, { variant: "ghost", disabled: historyLoading, "data-action": "refresh-routine-history", onClick: () => loadHistory() }, label("Refresh", "刷新")), historyLoading ? h("p", { role: "status" }, label("Loading run history…", "正在加载运行记录…")) : !error && !rows.length ? h("p", null, history?.has_more ? label("No runs in this page. More history is available.", "当前页没有运行记录，可继续加载。") : label("No runs recorded yet.", "暂无运行记录。")) : null,
-            history?.has_more && h("p", { className: "mosaic-eyebrow" }, label("Loaded records are sorted by time. Load more to see earlier or other records.", "已加载记录按时间排序；加载更多可查看更早或其他记录。")), history?.skipped_records > 0 && h("p", { role: "status" }, label("Some unreadable historical records were skipped.", "部分无法读取的历史记录已跳过。")), history?.has_more && h(Button, { "data-action": "more-routine-history", disabled: historyLoading, onClick: () => loadHistory(true) }, label("Load more history", "加载更多记录")), h("ol", { className: "mosaic-routine-history" }, rows.map(row => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...(row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} · ${stateLabel(row.state)} · ${t("process")}` } : {}) }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "任务") : row.kind === "reminder" ? label("Reminder", "提醒") : row.kind === "calendar" ? label("Calendar trigger", "日历触发") : label("Legacy run", "历史运行")), row.output && h("details", null, h("summary", null, label("Result", "查看结果")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))) : h("form", { id: "mosaic-routine-editor", onSubmit: save },
+            history?.has_more && h("p", { className: "mosaic-eyebrow" }, label("Loaded records are sorted by time. Load more to see earlier or other records.", "已加载记录按时间排序；加载更多可查看更早或其他记录。")), history?.skipped_records > 0 && h("p", { role: "status" }, label("Some unreadable historical records were skipped.", "部分无法读取的历史记录已跳过。")), history?.has_more && h(Button, { "data-action": "more-routine-history", disabled: historyLoading, onClick: () => loadHistory(true) }, label("Load more history", "加载更多记录")), h("ol", { className: "mosaic-routine-history" }, rows.map(row => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...(row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} · ${stateLabel(row.state)} · ${t("process")}` } : {}) }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "任务") : row.kind === "reminder" ? label("Reminder", "提醒") : label("Legacy run", "历史运行")), row.output && h("details", null, h("summary", null, label("Result", "查看结果")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))) : h("form", { id: "mosaic-routine-editor", onSubmit: save },
             h("div", { className: "mosaic-routine-editor-identity" }, field("title", label("Title", "标题"), { required: true }), h(TextArea, { label: label("Instruction", "完整指令"), name: "prompt", required: true, rows: 6, value: form.prompt, disabled: busy, onChange: e => setForm({ ...form, prompt: e.target.value }) })),
-            h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "执行计划")), h("div", { className: "mosaic-routine-fields" }, select("schedule_type", label("Repeat", "重复"), [["daily", label("Every day", "每天")],["weekly",label("Every week", "每周")],["cron",label("Custom cron", "自定义 cron")], ...(!routine.source ? [["once",label("Once", "仅一次")]] : [])]),
+            h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "执行计划")), h("div", { className: "mosaic-routine-fields" }, select("schedule_type", label("Repeat", "重复"), [["daily", label("Every day", "每天")],["weekly",label("Every week", "每周")],["cron",label("Custom cron", "自定义 cron")], ["once",label("Once", "仅一次")]]),
             ["daily","weekly"].includes(form.schedule_type) && field("time", label("Time", "时间"), { type: "time", required: true }), form.schedule_type === "weekly" && select("weekday", label("Day", "星期"), Array.from({ length: 7 }, (_, day) => [String(day), new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026,0,4+day)))])), form.schedule_type === "cron" && field("cron", label("Cron", "Cron"), { required: true }), form.schedule_type === "once" && h(React.Fragment, null, field("run_at", label("Date and time", "日期和时间"), { type: "datetime-local", required: true }), field("utc_offset", label("UTC offset", "UTC 偏移"), { required: true, placeholder: "+08:00" }))), h("p", { className: "mosaic-routine-meta" }, form.timezone, form.schedule_type === "once" ? label(" · Check the offset if this date crosses a daylight-saving change.", " · 若跨越夏令时切换，请核对偏移。") : "")),
-            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "高级设置")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "类型"), routine.source ? [["task",label("Task", "任务")]] : [["task",label("Task", "任务")],["reminder",label("Reminder", "提醒")]]), select("missed_policy", label("If missed", "错过执行时"), [["run_once",label("Run once when available", "补执行一次")],["skip",label("Skip", "跳过")]]))),
+            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "高级设置")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "类型"), [["task",label("Task", "任务")],["reminder",label("Reminder", "提醒")]]), select("missed_policy", label("If missed", "错过执行时"), [["run_once",label("Run once when available", "补执行一次")],["skip",label("Skip", "跳过")]]))),
             h("p", { className: "mosaic-routine-meta" }, label("Saving stops the previous run. Completed actions are not undone.", "保存会停止之前的运行，已完成的操作不会撤销。")))),
       view === "edit" && h("footer", { className: "mosaic-routine-footer", "data-view": view }, h(React.Fragment, null, h(Button, { variant: "ghost", "data-action": "cancel-routine-edit", disabled: busy, onClick: back }, label("Cancel", "取消")), h(Button, { variant: "primary", type: "submit", form: "mosaic-routine-editor", "data-action": "save-routine", disabled: busy }, busy ? t("savingName") : t("save"))))));
   }
@@ -922,7 +910,6 @@ export async function activate(api) {
     const selectedRoutine = routines.find(item => item.routine_id === routineID);
     const closeRoutine = () => { setRoutineID(null); requestAnimationFrame(() => { if (routineTrigger.current?.isConnected) routineTrigger.current.focus({ preventScroll: true }); }); };
     const changeRoutine = value => setRoutines(current => current.map(item => item.routine_id === value.routine_id && item.revision <= value.revision ? value : item));
-    const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
     const [sendRefreshError, setSendRefreshError] = React.useState("");
     const [rendererContextLimited, setRendererContextLimited] = React.useState(false);
@@ -1025,14 +1012,13 @@ export async function activate(api) {
       return () => document.removeEventListener("pointerdown", outside, true);
     }, [panelOpen]);
     React.useEffect(() => { identityListeners.add(setAgent); if (identityAgent) setAgent(identityAgent); return () => identityListeners.delete(setAgent); }, []);
-    const calendarRead = React.useRef(0), calendarOpening = React.useRef(false), historyRecovery = React.useRef({ complete: false, endSeq: undefined });
+    const historyRecovery = React.useRef({ complete: false, endSeq: undefined });
     currentAgent.current = agent;
     const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
     const stream = streamFor(conversationID), running = stream.running, activeTurnID = stream.activeTurnID, queuedCount = draft.queueIds.size, liveMessages = [...stream.items.values()], liveTools = [...stream.tools.values()], stopState = draft.stopState;
     const task = tasks.find(item => item.task_id === selection?.taskId);
     const artifactOutputs = records.flatMap(record => (record.attachments || []).filter(attachment => attachment.kind === "artifact").map(attachment => ({ seq: record.seq, at: record.at, attachment })));
     const selectedArtifact = artifactOutputs.find(output => output.seq === selection?.seq && output.attachment.sha256 === selection?.sha256);
-    const pendingCalendarOperations = calendar.operations.filter(item => !["completed", "cancelled"].includes(item.status));
     const report = cause => { if (mounted.current && !api.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); };
     const reactionKey = (identity, seq) => `${identity.main_session_id}:${seq}`;
     const acceptReaction = (identity, seq, reactions) => {
@@ -1092,21 +1078,7 @@ export async function activate(api) {
     };
     const loadTasks = async () => { const result = await call("tasks.list"); if (mounted.current) setTasks(current => (result.tasks || []).map(item => { const previous = current.find(value => value.task_id === item.task_id); return previous?.revision > item.revision ? previous : item; })); };
     const loadRoutines = async () => { const result = await call("routines.list"); if (mounted.current) setRoutines(current => (result.routines || []).map(item => { const previous = current.find(value => value.routine_id === item.routine_id); return previous?.revision > item.revision ? previous : item; })); };
-    const loadCalendar = async identity => {
-      if (!identity) return;
-      const version = ++calendarRead.current;
-      try {
-        const [status, result] = await Promise.all([call("calendar.status", { agent_id: identity.agent_id }), call("calendar.operations.list", { agent_id: identity.agent_id })]);
-        if (mounted.current && version === calendarRead.current) { setCalendar({ status, operations: result.operations || [] }); setCalendarError(""); }
-      } catch (cause) { if (mounted.current && version === calendarRead.current) setCalendarError(cause instanceof Error ? cause.message : String(cause)); }
-    };
-    const openCalendar = async operationId => {
-      if (calendarOpening.current) return;
-      calendarOpening.current = true; setCalendarBusy(true);
-      try { await host.openView("personal-calendar.confirmation", { region: "overlay", context: operationId ? { operationId } : {}, persistence: "session", reveal: false }); }
-      catch (cause) { if (mounted.current) setCalendarError(cause instanceof Error ? cause.message : String(cause)); }
-      finally { calendarOpening.current = false; if (mounted.current) setCalendarBusy(false); }
-    };
+
     const loadConversation = async identity => {
       if (!identity) return;
       const epoch = ++sequence.current, stream = streamFor(identity.main_session_id), version = stream.version;
@@ -1185,7 +1157,7 @@ export async function activate(api) {
         if (!mounted.current) return;
         const identity = publishIdentity(result.agent);
         mainSessionID = identity.main_session_id; currentAgent.current = identity;
-        await Promise.all([loadConversation(identity), loadTasks(), loadRoutines(), loadCalendar(identity)]);
+        await Promise.all([loadConversation(identity), loadTasks(), loadRoutines()]);
       } catch (cause) { report(cause); }
       finally { if (mounted.current) setLoading(false); }
     };
@@ -1201,7 +1173,7 @@ export async function activate(api) {
         if (!mounted.current || !currentAgent.current) return;
         if (checking) { recheck = true; return; }
         checking = true;
-        try { await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), loadCalendar(currentAgent.current), refreshReactions(currentAgent.current)]); } catch (cause) { report(cause); }
+        try { await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), refreshReactions(currentAgent.current)]); } catch (cause) { report(cause); }
         finally { checking = false; if (recheck) { recheck = false; void check(); } }
       };
       const timer = setInterval(check, 5000);
@@ -1355,11 +1327,11 @@ export async function activate(api) {
       return { contexts: selected, limited };
     };
     const rendererContexts = () => structuredClone(rendererContextSelection().contexts);
-    const send = async (submitted, draftID = conversationID, rendererContext) => {
+    const send = async (submitted, draftID = conversationID, rendererContext, contentParts) => {
       const id = draftID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
       if (!agent || state.submitting || state.attachmentsMissing || readingRef.current || (!text.trim() && !sentFiles.length)) return false;
       const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
-      if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext)) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? undefined : rendererContexts() };
+      if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey || JSON.stringify(state.pending.rendererContext) !== JSON.stringify(rendererContext) || JSON.stringify(state.pending.contentParts) !== JSON.stringify(contentParts)) state.pending = { draftPrompt: state.prompt, contentParts: contentParts ? structuredClone(contentParts) : undefined, prompt: text, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext(), rendererContext, rendererContexts: rendererContext ? undefined : rendererContexts() };
       const requestID = state.pending.requestID, editVersion = state.editVersion;
       if (!receiptStates.current.has(requestID)) sendMotion.begin(requestID, id);
       const stream = streamFor(conversationID), version = stream.version;
@@ -1369,7 +1341,7 @@ export async function activate(api) {
       const recover = async () => { const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: requestID }); return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null; };
       try {
         let result = state.pending.uncertain ? await recover().catch(() => null) : null;
-        if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}), ...(state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}), ...(state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}), ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
+        if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(state.pending.contentParts ? { content_parts: state.pending.contentParts } : {}), ...(state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}), ...(state.pending.rendererContext ? { renderer_context: state.pending.rendererContext } : {}), ...(state.pending.rendererContexts?.length ? { renderer_contexts: state.pending.rendererContexts } : {}), ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(state.pending.contentParts ? { contentParts: state.pending.contentParts } : {}), ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
         if (!acceptReceipt(result?.receipt, detail)) {
           result = await recover();
           if (!result) throw new Error(locale?.startsWith("zh") ? "尚未确认持久接收，请保留草稿并重试。" : "Durable delivery is not confirmed. Keep the draft and retry.");
@@ -1403,7 +1375,7 @@ export async function activate(api) {
       const fileKey = originalInput?.fileKey || JSON.stringify(entry.attachments || []);
       const clearOriginalDraft = () => {
         if (originalDraft.pending && originalDraft.pending.requestID !== originalID) return;
-        const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === entry.prompt && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
+        const unchanged = originalDraft.editVersion === originalEditVersion && originalDraft.prompt === (originalInput?.draftPrompt ?? entry.prompt) && JSON.stringify(originalDraft.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === fileKey && JSON.stringify(originalDraft.replyTarget?.relation) === JSON.stringify(entry.relation);
         updateDraft(entry.draftID, { pending: null, ...(unchanged ? { prompt: "", files: [], attachmentsMissing: false } : {}), error: "" });
       };
       const retryID = `${conversationID}:retry:${originalID}`;
@@ -1426,7 +1398,7 @@ export async function activate(api) {
           receiptStates.current.delete(originalID);
           if (originalDraft.pending?.requestID === originalID) updateDraft(entry.draftID, { pending: null });
         }
-        await send(entry.prompt, retryID, pending.rendererContext);
+        await send(entry.prompt, retryID, pending.rendererContext, pending.contentParts);
         // A message retry must never overwrite a newer composer draft.
         if (receiptStates.current.get(pending.requestID)?.receipt) clearOriginalDraft();
       } finally {
@@ -1583,7 +1555,7 @@ export async function activate(api) {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeReplies(); }
       if (event.key === "Tab") { const controls = [...replyPanelRef.current.querySelectorAll('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href]')].filter(node => node.tabIndex >= 0 && !node.closest('[hidden]')); const first = controls[0], last = controls[controls.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
     } }, h("div", { className: "mosaic-replies-toolbar" }, h("button", { type: "button", className: "icon-button mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" })))), sendRefreshNotice, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
-      composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply })) },
+      composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { sessionScope: route, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, replySelection.key, undefined, contentParts), onStop: stopReply })) },
       replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
       replyRecords.map(record => renderReplyMessage(record)), replyPending.map(entry => renderPendingReceipt(entry, replySelection.key))));
     return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(replySelection) || Boolean(selectedRoutine) || undefined },
@@ -1594,17 +1566,14 @@ export async function activate(api) {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
         actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("div", { className: "mosaic-avatar-editable", inert: panelOpen, "aria-hidden": panelOpen }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), editAvatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "编辑 twin" : "Edit twin"} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openIdentity }, h("strong", null, displayName))),
         showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
-        composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
+        composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, { sessionScope: route, conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
-          onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply }))
+          onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, conversationID, undefined, contentParts), onStop: stopReply }))
       }, records.filter(record => (record.ui_parts?.length || record.ui_resources?.length || !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id))) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
           className: sendMotion.className(record.receipt?.request_id), interactive: interactiveFor(record), resources: resourcesFor(record), footer: receiptFooter(record.receipt), reaction: reactionFor(record), replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_resources?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: (record.ui_parts?.length || record.ui_resources?.length) ? record.ui_text || "" : record.display_content || record.content || "", linkPolicy: "external-only",
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
         })), liveTools.filter(tool => !records.some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))).map(tool => h(ConversationMessage, { key: `tool-preview:${tool.turn_id}:${tool.id}`, id: `tool-preview:${conversationID}:${tool.turn_id}:${tool.id}`, role: "assistant", content: "", linkPolicy: "external-only", resources: [{ sessionId: conversationID, rendererScope: route, itemId: tool.call_id, partIndex: 0, part: { type: "resource" }, fallbackText: "", running: true, preview: { capability: tool.capability, turnId: tool.turn_id, argumentsText: tool.argumentsText, status: tool.status } }] })), pendingReceipts.map(entry => renderPendingReceipt(entry, conversationID)), liveMessages.filter(message => !records.some(record => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)))).map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
-        h(settingsPanels.ReviewConversation, { locale }),
-        pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
-          pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), avatarOpen && h(IdentityDialog, { agent, locale, onSave: saveIdentity, onClose: closeAvatar })));
+        h(settingsPanels.ReviewConversation, { locale }))), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), avatarOpen && h(IdentityDialog, { agent, locale, onSave: saveIdentity, onClose: closeAvatar })));
   }
   // Runtime calls require an active generation. Keep prior artwork while its identity loads.
   api.setNavigationAvatar?.("personal", null);

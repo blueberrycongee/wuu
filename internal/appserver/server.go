@@ -250,21 +250,20 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	ownerLocalOperations   federationOperations
-	personalCoordination   *personalCoordinatorBridge
-	personalEffects        *PersonalEffectBridge
-	personalAccountsRouted bool
-	clientInputMu          sync.Mutex
-	clientInputOwner       string
-	clientInputLease       *session.DocumentThreadExecutionLease
-	trustedTransport       trustedTransportState
-	sessionFederation      *SessionFederation
-	access                 connectionAccess
-	artifactReads          sync.Map
-	rpcTiming              *rpcTimingRecorder
-	rt                     *runtime.Session
-	out                    io.Writer
-	writeMu                sync.Mutex
+	ownerLocalOperations federationOperations
+	personalCoordination *personalCoordinatorBridge
+	personalEffects      *PersonalEffectBridge
+	clientInputMu        sync.Mutex
+	clientInputOwner     string
+	clientInputLease     *session.DocumentThreadExecutionLease
+	trustedTransport     trustedTransportState
+	sessionFederation    *SessionFederation
+	access               connectionAccess
+	artifactReads        sync.Map
+	rpcTiming            *rpcTimingRecorder
+	rt                   *runtime.Session
+	out                  io.Writer
+	writeMu              sync.Mutex
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry

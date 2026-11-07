@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/cliidentity"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
@@ -22,7 +23,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionworker"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
 	"github.com/blueberrycongee/wuu/internal/persistence"
-	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -108,8 +108,6 @@ func run(args []string) error {
 		return runInit(args[1:])
 	case "login":
 		return runLogin(args[1:])
-	case "calendar-client":
-		return runCalendarClient(args[1:])
 	case "models":
 		return runModels(args[1:])
 	case "run":
@@ -2167,7 +2165,6 @@ func runAppServer(args []string) (runErr error) {
 	safeMode := fs.Bool("safe-mode", false, "start without activating plugins")
 	desktopExecutionDefaults := fs.Bool("desktop-execution-defaults", false, "use unlimited steps and automatic temperature for desktop conversations")
 	desktopOwnerPipe := fs.Bool("desktop-owner-pipe", false, "read desktop-parent admission from inherited descriptor 3")
-	calendarClientID := fs.String("personal-calendar-client-id", "", "approved desktop Calendar client ID; credentials remain in the host secure store")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2210,18 +2207,9 @@ func runAppServer(args []string) (runErr error) {
 		}
 	}
 	rt, err := wuusdk.New(wuusdk.Options{
-		CompositionProfile: *compositionProfile,
-		PersonalCalendar:   personalcalendar.DesktopOptions{ClientID: *calendarClientID},
-		OpenPersonalCalendarAuthorizationURL: func(ctx context.Context, raw string) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := personalcalendar.ValidateAuthorizationURL(raw); err != nil {
-				return err
-			}
-			return openBrowser(raw)
-		},
-		UserSpaceID: *userSpaceID, ProductDomain: *productDomain,
+		CompositionProfile:  *compositionProfile,
+		SharedMCPConnectors: clientauthority.SharesMCPConnectors(connectionCtx, userspace.Binding{UserSpaceID: *userSpaceID, ProductDomain: *productDomain}),
+		UserSpaceID:         *userSpaceID, ProductDomain: *productDomain,
 		WorkDir:                  *workdir,
 		WorkspaceID:              *workspaceID,
 		HomeDir:                  os.Getenv("HOME"),

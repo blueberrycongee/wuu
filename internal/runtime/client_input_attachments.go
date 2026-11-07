@@ -27,7 +27,7 @@ type ClientInputAttachment struct {
 
 func ValidateClientUserInput(input ClientUserInput) error {
 	if input.ResumeReceiptID != "" {
-		if strings.TrimSpace(input.RequestID) == "" || len(input.RequestID) > 128 || strings.TrimSpace(input.ResumeReceiptID) == "" || len(input.ResumeReceiptID) > 128 || input.Prompt != "" || len(input.Attachments) > 0 || input.Relation != nil {
+		if strings.TrimSpace(input.RequestID) == "" || len(input.RequestID) > 128 || strings.TrimSpace(input.ResumeReceiptID) == "" || len(input.ResumeReceiptID) > 128 || input.Prompt != "" || len(input.Attachments) > 0 || len(input.ContentParts) > 0 || input.Relation != nil {
 			return errors.New("invalid explicit receipt resume intent")
 		}
 		return nil
@@ -35,6 +35,36 @@ func ValidateClientUserInput(input ClientUserInput) error {
 
 	if strings.TrimSpace(input.RequestID) == "" || len(input.RequestID) > 128 || (strings.TrimSpace(input.Prompt) == "" && len(input.Attachments) == 0) || len(input.Prompt) > 64000 {
 		return errors.New("invalid explicit client user_input")
+	}
+	if len(input.ContentParts) > 128 {
+		return errors.New("client input supports at most 128 content parts")
+	}
+	var flattened strings.Builder
+	references := 0
+	for _, part := range input.ContentParts {
+		switch part.Type {
+		case "text", "pasted_text":
+			if part.Plugin != nil {
+				return errors.New("plugin metadata requires a plugin reference")
+			}
+		case "plugin_reference":
+			if part.Plugin == nil || part.Plugin.PluginID == "" && part.Plugin.MCPServer == "" {
+				return errors.New("invalid plugin reference")
+			}
+			references++
+		default:
+			return errors.New("unsupported client content part")
+		}
+		if part.Text == "" || part.LocalPath != "" || part.Source != nil || part.Selection != nil {
+			return errors.New("invalid client content part")
+		}
+		flattened.WriteString(part.Text)
+	}
+	if references > 32 {
+		return errors.New("select at most 32 plugins per message")
+	}
+	if len(input.ContentParts) > 0 && flattened.String() != input.Prompt {
+		return errors.New("content parts do not match the client prompt")
 	}
 	if len(input.Attachments) > 16 {
 		return errors.New("client input supports at most 16 attachments")

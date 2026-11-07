@@ -1,6 +1,6 @@
 import type * as React from 'react';
 import { createPersonalReviewPanel, personalReviewStyles } from './action-review-panel.js';
-import { unwrapPersonalHost } from '../../personal-calendar/src/host-bridge.js';
+import { unwrapPersonalHost } from '../src/host-bridge.js';
 
 type Invoke = (method: string, input?: unknown) => Promise<unknown>;
 

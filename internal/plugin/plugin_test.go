@@ -185,7 +185,7 @@ func TestDiscoverWithOptionsHidesPersonalProductInReleaseBuilds(t *testing.T) {
 		LookupEnv: func(string) (string, bool) { return "", false },
 	})
 	for _, item := range plugins {
-		if item.ID == "personal" || item.ID == "personal-calendar" {
+		if item.ID == "personal" {
 			t.Fatalf("%s must stay out of release builds: %+v", item.ID, item)
 		}
 	}
@@ -203,7 +203,7 @@ func TestDiscoverWithOptionsIncludesPersonalProductInSourceBuilds(t *testing.T) 
 	})
 	found := map[string]bool{}
 	for _, item := range plugins {
-		if item.ID != "personal" && item.ID != "personal-calendar" {
+		if item.ID != "personal" {
 			continue
 		}
 		if !item.Official || item.Source != "bundled" {
@@ -211,7 +211,7 @@ func TestDiscoverWithOptionsIncludesPersonalProductInSourceBuilds(t *testing.T) 
 		}
 		found[item.ID] = true
 	}
-	for _, id := range []string{"personal", "personal-calendar"} {
+	for _, id := range []string{"personal"} {
 		if !found[id] {
 			t.Fatalf("bundled %s plugin missing from source build: %+v", id, plugins)
 		}

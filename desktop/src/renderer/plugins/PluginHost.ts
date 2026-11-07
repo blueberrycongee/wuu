@@ -206,7 +206,7 @@ export interface PluginRuntimeInvokeOptions {
   readonly userSpaceId?: string;
   readonly productDomain?: "personal" | "coding";
   readonly compositionProfile?: string;
-  readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly resumeReceiptId?: string; readonly relation?: import("../../shared/protocol").MessageRelation; readonly attachments?: readonly { readonly sha256: string; readonly filename: string; readonly media_type: string; readonly data: string }[] };
+  readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly contentParts?: readonly import("../../shared/protocol").MessageContentPart[]; readonly resumeReceiptId?: string; readonly relation?: import("../../shared/protocol").MessageRelation; readonly attachments?: readonly { readonly sha256: string; readonly filename: string; readonly media_type: string; readonly data: string }[] };
   /** Cancel this invocation and the host work owned by its execution. */
   readonly signal?: AbortSignal;
 }

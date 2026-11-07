@@ -107,7 +107,7 @@ func discoverBundled(wuuHome string, options DiscoverOptions) []Plugin {
 func bundledPluginEnabled(item Plugin, lookupEnv func(string) (string, bool)) bool {
 	var key string
 	switch item.ID {
-	case "personal", "personal-calendar":
+	case "personal":
 		return personalProductBuild != "0"
 	case "cua-mac":
 		key = EnableCUAMacEnv

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/userspace"
@@ -83,11 +82,6 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 	}
 	value, err := handler(ctx, call.Operation, call.Input, verifiedSession)
 	if err != nil {
-		var failure *personalcalendar.Failure
-		if errors.As(err, &failure) {
-			return json.Marshal(map[string]any{"ok": false, "error": failure})
-		}
-
 		return nil, err
 	}
 	return json.Marshal(map[string]any{"ok": true, "value": value})
