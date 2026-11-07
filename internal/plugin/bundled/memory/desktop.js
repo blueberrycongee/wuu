@@ -4,45 +4,25 @@ export async function activate(api) {
   const { Page, Section, Stack, Row, Button, TextArea, EmptyState } = api.ui;
 
   api.registerLocale({ id: "memory-en", locale: "en-US", entries: {
-    "memory.overview": "Overview", "memory.refresh": "Regenerate", "memory.refreshing": "Regenerating…",
     "memory.raw": "Notebook files",
     "memory.empty": "The memory notebook is empty.",
     "memory.chat": "Update memory",
     "memory.message": "What should the Agent remember, correct, or forget?", "memory.send": "Send",
     "memory.changed": "Changed files", "memory.failed": "Memory task failed",
     "memory.thinking": "Updating memory…",
-    "memory.loadFailed": "Memory overview could not be generated. Try again.",
     "memory.readFailed": "Could not read memory files. Try again.", "memory.updateFailed": "Could not update memory. Try again."
   }});
   api.registerLocale({ id: "memory-zh", locale: "zh-CN", entries: {
-    "memory.overview": "概览", "memory.refresh": "重新生成", "memory.refreshing": "正在生成…",
     "memory.raw": "笔记本原文",
     "memory.empty": "记忆笔记本还是空的。",
     "memory.chat": "更新记忆",
     "memory.message": "希望 Agent 记住、修正或忘记什么？", "memory.send": "发送",
     "memory.changed": "变更文件", "memory.failed": "记忆任务失败",
     "memory.thinking": "正在更新记忆…",
-    "memory.loadFailed": "暂时无法生成记忆概览，请重试。",
     "memory.readFailed": "无法读取记忆文件，请重试。", "memory.updateFailed": "无法更新记忆，请重试。"
   }});
   api.registerStyle({ id: "memory-settings", css: `
     .plugin-memory { min-width:0; }
-    .plugin-memory-overview { display:flex; flex-direction:column; gap:var(--space-3); padding:var(--space-3) 0; border-top:1px solid var(--hairline-soft); border-bottom:1px solid var(--hairline-soft); overflow-wrap:anywhere; --enter-y:2px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
-    .plugin-memory-overview h3 { margin:var(--space-2) 0 0; color:var(--ink); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
-    .plugin-memory-overview h3:first-child { margin-top:0; }
-    .plugin-memory-overview p { margin:0; max-width:68ch; color:var(--ink-soft); font-size:var(--font-ui); line-height:1.6; }
-    .plugin-memory-overview ul { display:flex; flex-direction:column; gap:var(--space-1); margin:0; padding-left:1.25em; }
-    .plugin-memory-overview li { color:var(--ink); font-size:var(--font-ui); line-height:1.55; }
-    .plugin-memory-overview li::marker { color:var(--ink-muted); }
-    .plugin-memory-overview code { font-family:var(--wuu-font-family-mono, ui-monospace, monospace); font-size:0.92em; }
-    .plugin-memory-overview-actions { justify-content:flex-end; }
-
-    .plugin-memory-skeleton { display:flex; flex-direction:column; gap:var(--space-3); padding:var(--space-3) 0; border-top:1px solid var(--hairline-soft); border-bottom:1px solid var(--hairline-soft); --pulse-opacity:0.55; animation:wuu-pulse 2.4s ease-in-out infinite; }
-    .plugin-memory-skeleton-bar { height:10px; border-radius:var(--radius-xs); background:var(--surface-2); }
-    .plugin-memory-skeleton-bar:nth-child(2) { width:82%; }
-    .plugin-memory-skeleton-bar:nth-child(3) { width:64%; }
-    .plugin-memory-skeleton-bar:nth-child(4) { width:74%; }
-    @container style(--motion-reduced: 1) { .plugin-memory-skeleton { animation:none; } }
 
     .plugin-memory-chat-log { display:flex; flex-direction:column; gap:var(--space-3); padding-top:var(--space-2); border-top:1px solid var(--hairline-soft); }
     .plugin-memory-chat-entry { display:flex; --enter-y:2px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
@@ -75,61 +55,16 @@ export async function activate(api) {
   const terminalStates = new Set(["completed", "failed", "interrupted", "discarded"]);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Render the overview's markdown-ish text as lightweight structure:
-  // "##" lines become group titles, "-" lines list items, the rest prose.
-  function OverviewProse({ text }) {
-    const blocks = [];
-    let list = null;
-    const flushList = () => { if (list) { blocks.push({ kind: "ul", items: list }); list = null; } };
-    for (const rawLine of String(text).split("\n")) {
-      const line = rawLine.trim();
-      if (!line) { flushList(); continue; }
-      const heading = line.match(/^#{1,3}\s+(.*)$/);
-      if (heading) { flushList(); blocks.push({ kind: "h3", text: heading[1] }); continue; }
-      const item = line.match(/^[-*]\s+(.*)$/);
-      if (item) { (list ||= []).push(item[1]); continue; }
-      flushList();
-      blocks.push({ kind: "p", text: line });
-    }
-    flushList();
-    return h("div", { className: "plugin-memory-overview" }, blocks.map((block, index) => {
-      if (block.kind === "h3") return h("h3", { key: index }, inline(block.text));
-      if (block.kind === "ul") return h("ul", { key: index }, block.items.map((item, itemIndex) => h("li", { key: itemIndex }, inline(item))));
-      return h("p", { key: index }, inline(block.text));
-    }));
-  }
-
-  // **strong** and `code` spans, so emphasis reads as emphasis instead of
-  // literal asterisks.
-  function inline(text) {
-    return String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/).filter(Boolean).map((part, index) =>
-      part.startsWith("**") && part.endsWith("**") && part.length > 4 ? h("strong", { key: index }, part.slice(2, -2))
-        : part.startsWith("`") && part.endsWith("`") && part.length > 2 ? h("code", { key: index }, part.slice(1, -1))
-        : part);
-  }
-
-  function OverviewSkeleton() {
-    return h("div", { className: "plugin-memory-skeleton", "aria-hidden": true },
-      h("div", { className: "plugin-memory-skeleton-bar" }),
-      h("div", { className: "plugin-memory-skeleton-bar" }),
-      h("div", { className: "plugin-memory-skeleton-bar" }),
-      h("div", { className: "plugin-memory-skeleton-bar" }));
-  }
-
   function MemorySettings(props) {
     const tr = props.translate;
     const [raw, setRaw] = React.useState({ index_raw: "", files: [] });
-    const [overview, setOverview] = React.useState("");
     const [draft, setDraft] = React.useState("");
     const [messages, setMessages] = React.useState([]);
-    const [busy, setBusy] = React.useState(false);
     const [chatBusy, setChatBusy] = React.useState(false);
-    const [overviewFailed, setOverviewFailed] = React.useState(false);
     const notify = React.useCallback((key, reason) => {
       console.error(`memory ${key}:`, reason);
       if (!api.signal.aborted) api.showNotice({ message: tr(`memory.${key}`), tone: "error", key: `memory-${key}` });
     }, [tr]);
-    const started = React.useRef(false);
 
     const refreshRaw = React.useCallback(async () => {
       try {
@@ -144,24 +79,7 @@ export async function activate(api) {
         await delay(750);
       }
     }, []);
-    const refreshOverview = React.useCallback(async () => {
-      setBusy(true); setOverviewFailed(false);
-      try {
-        const startedJob = await api.invokeRuntime("memory.overview.start", {});
-        const result = await waitForJob(startedJob.id);
-        if (result.state !== "completed") throw new Error(result.error || tr("memory.failed"));
-        setOverview(result.output || tr("memory.empty"));
-        await refreshRaw();
-      } catch (reason) { setOverviewFailed(true); notify("loadFailed", reason); } finally { setBusy(false); }
-    }, [notify, refreshRaw, tr, waitForJob]);
-    React.useEffect(() => {
-      if (started.current) return;
-      started.current = true;
-      // The raw notebook must render even when the LLM overview fails, so it
-      // loads independently instead of being gated behind overview success.
-      void refreshRaw();
-      void refreshOverview();
-    }, [refreshRaw, refreshOverview]);
+    React.useEffect(() => { void refreshRaw(); }, [refreshRaw]);
 
     const send = async () => {
       const message = draft.trim();
@@ -182,18 +100,12 @@ export async function activate(api) {
       }
       setChatBusy(false);
       await refreshRaw();
-      await refreshOverview();
     };
 
     const files = [];
     if (raw.index_raw) files.push({ name: "MEMORY.md", content: raw.index_raw });
     files.push(...raw.files);
     return h(Page, { className: "plugin-memory" }, h(Stack, { gap: "large" },
-      h(Section, { title: tr("memory.overview") },
-        busy && !overview ? h(OverviewSkeleton) : overview || !overviewFailed ? h(OverviewProse, { text: overview || tr("memory.empty") }) : null,
-        h(Row, { className: "plugin-memory-overview-actions" },
-          h(Button, { variant: "ghost", disabled: busy, onClick: () => { void refreshRaw(); void refreshOverview(); } },
-            tr(busy ? "memory.refreshing" : "memory.refresh")))),
       h(Section, { title: tr("memory.chat") }, h(Stack, null,
         messages.length || chatBusy ? h("div", { className: "plugin-memory-chat-log" },
           messages.map((entry, index) => h("div", { key: index, className: `plugin-memory-chat-entry ${entry.role}` },

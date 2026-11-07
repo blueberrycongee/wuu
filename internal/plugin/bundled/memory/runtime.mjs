@@ -1340,8 +1340,6 @@ var MemoryPlugin = class {
         if (!job) throw new Error(`memory job ${JSON.stringify(id)} not found`);
         return { ...job };
       }
-      case "memory.overview.start":
-        return this.startJob("overview", "Read the user's memory notebook with memory_list and memory_read. Produce a concise Markdown overview of what is actually recorded, grouped by useful themes. Do not modify memory. Clearly say when the notebook is empty.", host);
       case "memory.chat.start": {
         const message = string(object(raw).message).trim();
         if (!message) throw new Error("memory chat message is required");
