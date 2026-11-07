@@ -65,10 +65,14 @@ export async function activate(api) {
     const [busy, setBusy] = React.useState(false);
     const [savedTick, setSavedTick] = React.useState(0);
     const [loadFailed, setLoadFailed] = React.useState(false);
+    // translate may change identity every render; reading it through a ref
+    // keeps refresh stable so a re-render never refetches over the draft.
+    const trRef = React.useRef(tr);
+    trRef.current = tr;
     const notify = React.useCallback((key, reason) => {
       console.error(`dream ${key}:`, reason);
-      if (!api.signal.aborted) api.showNotice({ message: tr(`dream.${key}`), tone: "error", key: `dream-${key}` });
-    }, [tr]);
+      if (!api.signal.aborted) api.showNotice({ message: trRef.current(`dream.${key}`), tone: "error", key: `dream-${key}` });
+    }, []);
     const refresh = React.useCallback(async () => {
       setLoadFailed(false);
       try {
