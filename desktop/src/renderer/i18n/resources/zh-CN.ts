@@ -193,6 +193,7 @@ export const zhCN = {
   "mobile.pushConnecting": "正在连接…",
   "mobile.pushDisable": "关闭通知",
   "mobile.pushEnable": "开启通知",
+  "account.localLogout": "已退出本机账号，服务端撤销未确认。",
   "account.label": "自部署账号",
   "account.title": "{username} 的设备",
   "account.connect": "登录 Wuu",
